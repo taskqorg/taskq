@@ -3982,9 +3982,7 @@ finally:
             if mode == "explicit-default" { c.env("CLAUDE_CONFIG_DIR", dir.join(".claude")); }
             if mode == "custom" || mode == "unreadable" { c.env("CLAUDE_CONFIG_DIR", dir.join("custom")); }
             if mode == "nested" { c.env("CLAUDE_CONFIG_DIR", dir.join(".claude/taskq-accounts/work")); }
-            let started = std::time::Instant::now();
-            let out = coreq::process::output("qualification.account-env", &mut c, std::time::Duration::from_secs(if cfg!(windows) { 60 } else { 30 }));
-            eprintln!("account environment {mode}: {:?}", started.elapsed());
+            let out = coreq::process::output("qualification.account-env", &mut c, std::time::Duration::from_secs(30));
             assert!(out.is_ok(), "{mode}: {out:?}");
         }
         std::fs::remove_dir_all(root).unwrap();
