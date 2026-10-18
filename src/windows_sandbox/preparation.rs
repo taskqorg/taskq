@@ -20,17 +20,17 @@ pub(super) struct Preparation {
     _lock: fs::File,
 }
 
-fn tree(path: &Path, low: bool, protected: Option<&Path>, out: &mut Vec<(PathBuf, bool, bool)>) -> Result<(), String> {
+fn tree(path: &Path, low: bool, protected: Option<&Path>, shallow: Option<&Path>, out: &mut Vec<(PathBuf, bool, bool)>) -> Result<(), String> {
     use std::os::windows::fs::MetadataExt;
     let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
     // Links are not writable-root authority. Do not follow or relabel their targets.
     if metadata.file_attributes() & 0x400 != 0 { return Ok(()); }
     let low = low && protected != Some(path);
     out.push((path.to_owned(), low, false));
-    if metadata.is_dir() {
+    if metadata.is_dir() && shallow != Some(path) {
         let mut children = fs::read_dir(path).map_err(|e| e.to_string())?.map(|e| e.map(|e| e.path())).collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
         children.sort();
-        for child in children { tree(&child, low, protected, out)?; }
+        for child in children { tree(&child, low, protected, shallow, out)?; }
     }
     Ok(())
 }
@@ -77,11 +77,16 @@ impl Preparation {
         if journal.version != 1 || journal.phase != "complete" { return Err("Windows security preparation incomplete; keep journal for identity-bound recovery".into()); }
         let mut scopes = Vec::new();
         let protected = super::checked(&root.join(".codex"))?;
-        tree(root, true, Some(&protected), &mut scopes)?;
-        tree(temp, true, None, &mut scopes)?;
+        tree(root, true, Some(&protected), None, &mut scopes)?;
+        tree(temp, true, None, None, &mut scopes)?;
         scopes.push((home.to_owned(), false, false));
         scopes.push((install.to_owned(), false, false));
-        tree(state, false, None, &mut scopes)?;
+        // SDK preflight replaces generated tmp children. Journal the Medium boundary,
+        // whose label new children inherit, without pinning those volatile identities.
+        let state_temp = state.join("tmp");
+        super::security::create_directory(&state_temp)?;
+        let state_temp = super::checked(&state_temp)?;
+        tree(state, false, None, Some(&state_temp), &mut scopes)?;
         for path in binaries {
             let path = super::checked(path)?;
             if !path.starts_with(install) { return Err("Windows bootstrap/dependencies must be inside the protected installation".into()); }
@@ -91,7 +96,7 @@ impl Preparation {
             let path = home.join(name);
             super::security::create_directory(&path)?;
             super::checked(&path)?;
-            tree(&path, true, None, &mut scopes)?;
+            tree(&path, true, None, None, &mut scopes)?;
         }
         for name in DATABASES {
             for suffix in ["", "-wal", "-shm"] {
@@ -105,7 +110,7 @@ impl Preparation {
         }
         for entry in fs::read_dir(home).map_err(|e| e.to_string())? {
             let path = entry.map_err(|e| e.to_string())?.path();
-            if super::control(&path) { tree(&path, false, None, &mut scopes)?; }
+            if super::control(&path) { tree(&path, false, None, None, &mut scopes)?; }
         }
         let mut result = Self { file, journal, targets: vec![], home: home.to_owned(), _lock: lock };
         for (path, low, sidecar) in scopes {
@@ -192,6 +197,43 @@ pub(super) fn restore(install: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "native Windows security journal fixture"]
+    fn native_preparation_tolerates_sdk_temp_cleanup() {
+        let base = std::env::temp_dir().join(format!("taskq-preparation-temp-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let root = base.join("workspace"); let install = base.join("install"); let home = base.join("home");
+        let state = install.join("windows-native/state"); let temp = base.join("temp");
+        let state_temp = state.join("TMP"); let generated = state_temp.join("arg0/codex-arg0-fixture");
+        for path in [root.join(".codex"), generated.clone(), home.clone(), temp.clone()] { fs::create_dir_all(path).unwrap(); }
+        fs::write(generated.join(".lock"), "fixture lock").unwrap();
+        fs::write(generated.join("apply_patch.bat"), "fixture patch helper").unwrap();
+        let config = home.join("config.toml"); let control = state.join("control.json");
+        fs::write(&config, "# invented fixture configuration\n").unwrap();
+        fs::write(&control, "{}").unwrap();
+        let before = [Snapshot::capture(&config).unwrap(), Snapshot::capture(&control).unwrap(), Snapshot::capture(&state_temp).unwrap()];
+        let preparation = Preparation::begin(&root, &install, &home, &state, &temp, &[]).unwrap();
+        let boundary = super::super::checked(&state_temp).unwrap();
+        assert!(preparation.journal.records.iter().any(|r| r.original.path == boundary));
+        assert!(!preparation.journal.records.iter().any(|r| r.original.path != boundary && r.original.path.starts_with(&boundary)));
+        for original in &before {
+            assert!(preparation.journal.records.iter().any(|r| r.original == *original));
+        }
+        // The SDK legitimately removes previous generated helpers during preflight.
+        fs::remove_dir_all(state_temp.join("arg0")).unwrap();
+        preparation.apply().unwrap();
+        for path in [&state, &state_temp, &config, &control] {
+            assert!(Snapshot::capture(path).unwrap().descriptor.contains(";;;ME)"));
+        }
+        let fresh = state_temp.join("new-helper.bat"); fs::write(&fresh, "new SDK helper").unwrap();
+        assert!(Snapshot::capture(&fresh).unwrap().descriptor.contains(";;;ME)"));
+        fs::write(&config, "# owner changes survive rollback\n").unwrap();
+        restore(&install).unwrap();
+        for original in before { assert_eq!(Snapshot::capture(&original.path).unwrap(), original); }
+        assert_eq!(fs::read_to_string(&config).unwrap(), "# owner changes survive rollback\n");
+        assert_eq!(fs::read_to_string(&fresh).unwrap(), "new SDK helper");
+        fs::remove_dir_all(&base).unwrap();
+    }
+
     #[test]
     fn native_preparation_and_restore_preserve_controls_and_data() {
         let base = std::env::temp_dir().join(format!("taskq-preparation-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
