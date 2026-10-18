@@ -24,7 +24,7 @@ jobs:
         run: |
           from pathlib import Path
           import hashlib,json,os,re,shutil,subprocess,traceback
-          base='e35972224c7f7ac7952be75f04f02550f1edc09f';new_pin='93afad9dd18b322e06f32e6b35ae6cd2f490d011d67348e15535e0b82adb9c6b';old_pin='af65880153a66852d72edf1d2a22faf191abeee2ad3d9cd6e8ee1d59183b8cc4';assert re.fullmatch('[0-9a-f]{64}',new_pin)
+          base='e35972224c7f7ac7952be75f04f02550f1edc09f';new_pin='147d030711776227e5fe2fc5cab378601997deeace6555058474df30d41686bb';old_pin='af65880153a66852d72edf1d2a22faf191abeee2ad3d9cd6e8ee1d59183b8cc4';assert re.fullmatch('[0-9a-f]{64}',new_pin)
           sha=lambda p:hashlib.file_digest(p.open('rb'),'sha256').hexdigest()
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==base
           names=sorted(subprocess.check_output(['git','ls-files','-z'],text=True).strip('\0').split('\0'));assert len(names)==523
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: windows-native-f88-proposed
+          name: windows-native-f90-proposed
           path: ${{ runner.temp }}/taskq-native-stage
           retention-days: 14
           if-no-files-found: error
