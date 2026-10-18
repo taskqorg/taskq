@@ -229,7 +229,9 @@ impl Snapshot {
             return Err("Windows security: owner/group or SACL protection change refused".into());
         }
         target.owner = saved_owner; target.group = saved_group;
-        let protection = if target.control & 0x1000 != 0 { 0x80000000 } else { 0x20000000 };
+        // Reapplying UNPROTECTED re-inherits ACEs even when the saved protection state is unchanged.
+        let protection = if (expected.control ^ target.control) & 0x1000 == 0 { 0 }
+            else if target.control & 0x1000 != 0 { 0x80000000 } else { 0x20000000 };
         // The kernel consumes AUTO_INHERIT_REQ to retain the existing AUTO_INHERITED bits.
         target.control |= (target.control & 0xc00) >> 2;
         // SetSecurityInfo rewrites SACL control flags and propagates ACEs to unjournaled children.
