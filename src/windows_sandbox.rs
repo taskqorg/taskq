@@ -4,10 +4,14 @@ use serde_json::Value;
 mod security;
 mod preparation;
 
-// Exact privately qualified dependency; a stock or changed CLI is not this enforcement path.
-const NATIVE_SHA256: &str = "af65880153a66852d72edf1d2a22faf191abeee2ad3d9cd6e8ee1d59183b8cc4";
+// Historical binary identity does not qualify the failed containment boundary.
+const NATIVE_SHA256: Option<&str> = None;
 const CODE_HOST_SHA256: &str = "9f865a748c984492ca9b69aac75680e4954f31311c43ec33ddbdae0ed77bd4bd";
 const BOOT: &str = "__windows-codex";
+
+fn native_digest() -> Result<&'static str, String> {
+    NATIVE_SHA256.ok_or_else(|| "Windows sandbox: Workspace containment qualification incomplete".into())
+}
 
 fn hash(path: &Path) -> Result<String, String> {
     let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
@@ -47,11 +51,12 @@ fn paths(root: &Path, install: &Path, home: &Path) -> Result<Paths, String> {
 }
 
 pub fn ready(root: &Path, install: &Path) -> Result<(), String> {
+    let native = native_digest()?;
     let root = checked(root)?; let install = checked(install)?; let home = home()?;
     if install.starts_with(&root) || root.starts_with(&install) { return Err("Windows sandbox: installation and workspace overlap".into()); }
     for p in [root.join(".codex"), home.join("config.toml"), home.join("auth.json")] { checked(&p)?; }
     let bin = paths(&root, &install, &home)?.bin;
-    for (file, expected) in [(&bin, NATIVE_SHA256), (&bin.with_file_name("codex-code-mode-host.exe"), CODE_HOST_SHA256)] {
+    for (file, expected) in [(&bin, native), (&bin.with_file_name("codex-code-mode-host.exe"), CODE_HOST_SHA256)] {
         checked(file)?;
         if hash(file)? != expected { return Err("Windows sandbox: native dependency not qualified".into()); }
     }
@@ -133,6 +138,7 @@ pub fn command(env: &crate::runtime::Env) -> Result<Command, String> {
 }
 
 pub fn run(args: &[String]) -> Result<(), String> {
+    let native = native_digest()?;
     if args.len() < 4 || args[3] != "exec" || args[4..].iter().any(|a| a.contains("danger-full-access") || ["--yolo", "--dangerously-bypass-approvals-and-sandbox"].contains(&a.as_str())) {
         return Err("Windows sandbox: bounded Codex exec expected".into());
     }
@@ -144,7 +150,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         return Err("Windows sandbox: explicit Workspace project grant required".into());
     }
     let p = paths(&root, &install, &home)?;
-    if std::env::var_os("CODEX_HOME").map(PathBuf::from).as_ref() != Some(&p.state) || hash(&p.bin)? != NATIVE_SHA256
+    if std::env::var_os("CODEX_HOME").map(PathBuf::from).as_ref() != Some(&p.state) || hash(&p.bin)? != native
         || hash(&p.bin.with_file_name("codex-code-mode-host.exe"))? != CODE_HOST_SHA256 {
         return Err("Windows sandbox: control state or native dependency changed".into());
     }
@@ -177,6 +183,28 @@ pub fn restore(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // R9: unknown containment must refuse policy admission, command preparation and direct bootstrap alike.
+    #[test]
+    fn unqualified_workspace_refuses_all_launch_entries() {
+        let base = std::env::temp_dir().join(format!("taskq-unqualified-{}", crate::runtime::uuid()));
+        assert!(!base.exists());
+        let root = base.join("project"); let install = base.join("install"); let exe = base.join("taskq.exe");
+        let env = crate::runtime::Env { root: &root, install: &install, exe: &exe, codex: &[], permission_mode: "dontAsk", publish: "pr", board_env: &[] };
+        let args = [root.display().to_string(), install.display().to_string(), base.join("home").display().to_string(), "exec".into(), "--json".into(), "-".into()];
+        for result in [ready(&root, &install), command(&env).map(|_| ()), run(&args)] {
+            assert_eq!(result.unwrap_err(), "Windows sandbox: Workspace containment qualification incomplete");
+        }
+        let policy = Ok(crate::policy::Policy { revision: 1, grants: vec![crate::policy::Grant {
+            runtime: "codex".into(), mode: "workspace".into(), project: Some(root.display().to_string()), by: "fixture".into(), at: 1,
+        }] });
+        let host = crate::policy::Host { os: "windows", root: &root, install: &install, home: &base };
+        let requested = ["-s".into(), "workspace-write".into(), "-c".into(), "sandbox_workspace_write.network_access=true".into()];
+        let access = crate::policy::resolve(&policy, &host, "codex", "dontAsk", &requested);
+        assert_eq!(access.refused.as_deref(), Some("Windows sandbox: Workspace containment qualification incomplete"));
+        assert!(!access.windows && access.codex.is_none(), "a saved grant cannot enable unqualified enforcement");
+        assert!(!base.exists(), "unqualified launch must not prepare files or control state");
+    }
+
     // No paid turn: exercise the production preparation/bootstrap with controller-owned fake home.
     #[test]
     #[ignore = "requires an owned disposable fixture and exact private native dependencies"]
