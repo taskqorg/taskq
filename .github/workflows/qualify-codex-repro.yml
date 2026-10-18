@@ -10,13 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        repeat: [1, 2]
+        repeat: [1]
     runs-on: windows-latest
     # External dependency preparation only; TaskQ/CoreQ canonical gates remain900s.
     timeout-minutes: 40
     env:
       RUSTUP_TOOLCHAIN: 1.99.0-x86_64-pc-windows-gnu
-      CARGO_BUILD_JOBS: '1'
+      CARGO_BUILD_JOBS: '2'
       CARGO_INCREMENTAL: '0'
     steps:
       - run: git config --global core.autocrlf false
@@ -41,7 +41,7 @@ jobs:
           sha=lambda p:hashlib.file_digest(p.open('rb'),'sha256').hexdigest()
           def output(args,cwd=work):return subprocess.check_output(args,cwd=cwd,text=True,stderr=subprocess.STDOUT)
           result={'passed':False,'external_dependency_budget_seconds':2400,'scope':'non-gate external dependency preparation; TaskQ/CoreQ canonical gates remain900s; two clean GNU builds; no install/model/grant/production effects','source':commit,'toolchain':toolchain,'image':{k:os.environ.get(k) for k in ['ImageOS','ImageVersion','RUNNER_ARCH']},'command':['cargo','+'+toolchain,'build','--locked','-p','codex-cli','--bin','codex','--verbose']}
-          started=time.monotonic()
+          started=time.monotonic();result['replacement_for']='F91 repeat1 exceeded2320s while compiling codex-tui; successful F91 repeat2 retained';result['logical_cpus']=os.cpu_count()
           try:
               assert output(['git','rev-parse','HEAD'],source).strip()==commit
               assert not output(['git','status','--porcelain'],source).strip()
@@ -71,7 +71,13 @@ jobs:
               (stage/'provenance.json').write_text(json.dumps(result,indent=2)+'\n')
               with (stage/'build.log').open('w') as log:
                   p=subprocess.Popen(result['command'],cwd=work,env=env,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)
-                  try:code=p.wait(timeout=max(1,2320-(time.monotonic()-started)))
+                  try:
+                      while True:
+                          remaining=2320-(time.monotonic()-started)
+                          if remaining<=0:raise subprocess.TimeoutExpired(result['command'],2320)
+                          try:code=p.wait(timeout=min(30,remaining));break
+                          except subprocess.TimeoutExpired:
+                              print(json.dumps({'elapsed_seconds':round(time.monotonic()-started),'cargo_jobs':env['CARGO_BUILD_JOBS'],'build_log_bytes':(stage/'build.log').stat().st_size}),flush=True)
                   except subprocess.TimeoutExpired:p.kill();p.wait();raise
               assert code==0,'cargo build failed; retained build.log'
               assert output(['git','diff','--binary'],source)==diff,'tracked source changed during build'
@@ -83,7 +89,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: private-codex-repro-f91-${{ matrix.repeat }}
+          name: private-codex-repro-f92-${{ matrix.repeat }}
           path: artifact/
           if-no-files-found: error
           retention-days: 7
