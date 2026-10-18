@@ -2710,15 +2710,15 @@ mod tests {
         fs::remove_dir_all(&t).unwrap();
     }
 
-    // Chain: § 4 step 7 self-update cadence (#1200). Risk: a release waits 15 min per host again.
+    // Legacy migration input: test project timers independently of an installed host policy.
     #[test]
     fn update_every_defaults_to_60_and_keeps_override() {
         let t = std::env::temp_dir().join(format!("taskq-update-every-{}", std::process::id()));
         fs::create_dir_all(&t).unwrap();
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r"}"#).unwrap();
-        assert_eq!(load(&t).unwrap().0.update_every, 60);
+        assert_eq!(project_config(&t).unwrap().0.update_every, 60);
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "update_every": 900}"#).unwrap();
-        assert_eq!(load(&t).unwrap().0.update_every, 900);
+        assert_eq!(project_config(&t).unwrap().0.update_every, 900);
         fs::remove_dir_all(&t).unwrap();
     }
 

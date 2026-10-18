@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.18
+
+Stop retains each idle project's verified preparation while other projects drain. Repeated wakeups cannot reopen the barrier; active operators, native executions and unknown ownership still prevent stopping. No board change.
+
 ## v4.6.0
 
 Host service policy, exact execution ownership and command receipts share the supported CLI/tray paths. Host resource observations use the actual host revision; remote host mutation remains unsupported. Board comments remain task truth.

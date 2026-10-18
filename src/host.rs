@@ -442,9 +442,10 @@ impl Host {
         else {None}
     }
 
-    /// Once all projects prepared, none can re-enter before the coordinator switches images.
+    /// A drained Stop project cannot revoke preparation while other projects are still draining.
     pub fn begin_pass(&mut self, root:&Path) -> bool {
-        if self.handoff_ready() {return false;}
+        if self.handoff_ready() || self.stopping && self.prepared.contains(root)
+            && self.busy.get(root)==Some(&false) && !self.slots.keys().any(|(project,_,_)|project==root) {return false;}
         self.prepared.remove(root);
         self.recovered.remove(root);
         self.busy.insert(root.into(),true);
@@ -1331,6 +1332,26 @@ mod tests {
         assert!(h.handoff_ready(),"only the prepared host with no occupied work may stop");
 
     }
+    // H-A3: idle projects must not revoke Stop preparation while another project is still draining.
+    #[test]
+    fn six_project_stop_retains_idle_preparation() {
+        let roots:Vec<_>=(0..6).map(|n|PathBuf::from(format!("project-{n}"))).collect();
+        let mut h=Host::new(Err("fixture".into()));h.restart=true;h.stopping=true;
+        for root in &roots {h.busy.insert(root.clone(),true);}
+        h.prepared.insert(roots[0].clone());h.sync(&roots[0],vec![(1,7,"codex".into())]);h.busy.insert(roots[0].clone(),false);
+        assert!(h.begin_pass(&roots[0]),"an owned execution must continue to be monitored");
+        h.sync(&roots[0],vec![]);h.prepared.insert(roots[0].clone());
+        assert!(h.begin_pass(&roots[0]),"an active operator/project cannot freeze");
+        for (n,root) in roots.iter().enumerate() {
+            assert!(h.begin_pass(root));h.busy.insert(root.clone(),false);h.prepared.insert(root.clone());
+            if n+1<roots.len() {
+                assert!(!h.handoff_ready());
+                for ready in &roots[..=n] {assert!(!h.begin_pass(ready),"a drained project cannot reopen the Stop barrier");}
+            }
+        }
+        assert!(h.handoff_ready());
+    }
+
     fn temp(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("taskq-host-{name}-{}", std::process::id()));
         fs::create_dir_all(&p).unwrap(); p
