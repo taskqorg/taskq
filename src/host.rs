@@ -97,14 +97,16 @@ impl Policy {
         Ok(ring::digest::digest(&ring::digest::SHA256,&serde_json::to_vec(&json!([self.me,self.cap.json()])).map_err(|e|e.to_string())?).as_ref().iter().map(|v|format!("{v:02x}")).collect())
     }
 
-    pub fn read(install: &Path) -> Res<Self> {
+    pub fn read(install: &Path) -> Res<Self> { Self::read_for_hostname(install,crate::hostname) }
+
+    fn read_for_hostname(install:&Path,hostname:impl FnOnce()->String)->Res<Self> {
         match fs::symlink_metadata(install.join("host.json.pending")) {
             Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
             Err(e)=>return Err(format!("host policy prepare unknown: {e}")),
             Ok(_)=>return Err("host policy interrupted write retained; admission held for reconciliation".into()),
         }
         let v = fs::read(install.join("host.json")).map_err(|e| format!("host.json unknown: {e}"))?;
-        Self::parse(serde_json::from_slice(&v).map_err(|e| format!("host.json unknown: {e}"))?, &crate::hostname())
+        Self::parse(serde_json::from_slice(&v).map_err(|e| format!("host.json unknown: {e}"))?, &hostname())
     }
 
     pub fn project(&self, v: &Value) -> Res<Capacity> {
@@ -641,7 +643,9 @@ pub fn run(install: &Path) -> Res<()> {
         if message!=reported {crate::platform::log(&message);reported=message;}
         std::thread::sleep(std::time::Duration::from_secs(1));
     };
-    let shared = Arc::new(Mutex::new(Host::new(Policy::read(install))));
+    // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
+    let mut hostname=crate::hostname();
+    let shared = Arc::new(Mutex::new(Host::new(Policy::read_for_hostname(install,||hostname.clone()))));
     shared.lock().map_err(|_|"host occupancy recovery unknown")?.rebuilding=true;
     let native=coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.ok_or("host process identity missing")?;
     let instance=shared.lock().map_err(|_|"host owner unknown")?.instance.clone();
@@ -669,7 +673,8 @@ pub fn run(install: &Path) -> Res<()> {
         restart.refresh(install);
         roots.clone_from(&registry.roots);
         let old = legacy(install,&roots).and_then(|_|native_inventory_ready(&native_legacy,native_checked));
-        let configured = match &old { Ok(()) => migrate(install, &roots).and_then(|_| Policy::read(install)), Err(_) => Policy::read(install) };
+        if hostname.is_empty() {hostname=crate::hostname();}
+        let configured = match &old { Ok(()) => migrate_for_hostname(install, &roots,&hostname).and_then(|_| Policy::read_for_hostname(install,||hostname.clone())), Err(_) => Policy::read_for_hostname(install,||hostname.clone()) };
         let (policy,timers)=guarded_policy(configured,&old);
         let removal=restart.current.as_ref().ok().and_then(Option::as_ref).and_then(|p|p.removal().map(Path::to_path_buf));
         drained_roots.retain(|root|removal.as_ref()==Some(root));
@@ -1029,15 +1034,18 @@ impl Registry {
 }
 
 /// Compare all copies before any write. The durable plan is a configuration backup, never task state (R1).
-pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {
-    crate::resources::try_locked(install,||migrate_locked(install,roots))
+#[cfg(test)]
+pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {migrate_for_hostname(install,roots,&crate::hostname())}
+
+fn migrate_for_hostname(install:&Path,roots:&[PathBuf],hostname:&str)->Res<()> {
+    crate::resources::try_locked(install,||migrate_locked(install,roots,hostname))
 }
 
-fn migrate_locked(install: &Path, roots: &[PathBuf]) -> Res<()> {
+fn migrate_locked(install: &Path, roots: &[PathBuf],hostname:&str) -> Res<()> {
     let backup = install.join("host-policy-migration");
     let manifest = backup.join("plan.json");
-    if backup.join("complete").exists() { Policy::read(install)?; return Ok(()); }
-    if !manifest.exists() && install.join("host.json").exists() { Policy::read(install)?; return Ok(()); }
+    if backup.join("complete").exists() { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
+    if !manifest.exists() && install.join("host.json").exists() { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
     let plan: Value = if manifest.exists() {
         serde_json::from_slice(&fs::read(&manifest).map_err(|e| e.to_string())?).map_err(|e| format!("migration backup unknown: {e}"))?
     } else {
@@ -1049,7 +1057,7 @@ fn migrate_locked(install: &Path, roots: &[PathBuf]) -> Res<()> {
             let owner = ownership(&root.join("taskq.json")).map_err(|e| format!("migration input unknown: {e}"))?;
             let original = fs::read_to_string(root.join("taskq.json")).map_err(|e| format!("migration input unknown: {e}"))?;
             let mut v: Value = serde_json::from_str(&original).map_err(|e| format!("migration input unknown: {e}"))?;
-            let host = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).or_else(|| v["hosts"][crate::hostname()].as_str().map(String::from)).unwrap_or_else(crate::hostname);
+            let host = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).or_else(|| v["hosts"][hostname].as_str().map(String::from)).unwrap_or_else(||hostname.into());
             let cap = service::capacity(&v, &host)?;
             if !cap.auto { return Err(format!("migration owner choice: {} uses Fixed; originals unchanged", v["repo"].as_str().unwrap_or("project"))); }
             let mut policy = cap.json();
@@ -1058,7 +1066,7 @@ fn migrate_locked(install: &Path, roots: &[PathBuf]) -> Res<()> {
                 ("permission_mode", json!("dontAsk")), ("update_every", json!(60)), ("rollback_after", json!(600))] {
                 policy[key] = v.get(key).cloned().unwrap_or(default);
             }
-            Policy::parse(policy.clone(), &crate::hostname())?;
+            Policy::parse(policy.clone(), hostname)?;
             policies.push((v["repo"].as_str().unwrap_or("project").to_string(), policy));
             for key in ["capacity_hosts", "admission", "load_gate", "hosts", "has", "codex", "permission_mode", "update_every", "rollback_after"] {
                 v.as_object_mut().ok_or("migration input is not an object")?.remove(key);
@@ -1082,7 +1090,7 @@ fn migrate_locked(install: &Path, roots: &[PathBuf]) -> Res<()> {
         plan
     };
     let policy = plan.get("policy").ok_or("migration plan missing policy")?;
-    Policy::parse(policy.clone(), &crate::hostname())?;
+    Policy::parse(policy.clone(), hostname)?;
     let files = plan["files"].as_array().ok_or("migration plan missing files")?;
     let planned: BTreeSet<PathBuf> = files.iter().map(|f| f["root"].as_str().map(PathBuf::from).ok_or("migration plan invalid root")).collect::<Result<_, _>>()?;
     if planned != roots.iter().cloned().collect() || planned.len() != files.len() { return Err("migration registry changed; originals kept, launches held".into()); }
@@ -1132,7 +1140,7 @@ fn migrate_locked(install: &Path, roots: &[PathBuf]) -> Res<()> {
         }
         if fs::read_to_string(&path).map_err(|e| e.to_string())? != next || ownership(&path)? != f["owner"] { return Err("migration content/ownership readback differs; launches held".into()); }
     }
-    if Policy::read(install)?.raw != *policy { return Err("host.json migration readback differs".into()); }
+    if Policy::read_for_hostname(install,||hostname.into())?.raw != *policy { return Err("host.json migration readback differs".into()); }
     crate::platform::write_atomic(&backup.join("complete"), "verified\n")?;
     Ok(())
 }
@@ -1214,6 +1222,25 @@ impl Panics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A stable owner identity must not cache policy changes or hide an interrupted write.
+    #[test]
+    fn owner_identity_keeps_policy_readback_fresh() {
+        let root=std::env::temp_dir().join(format!("taskq-policy-reload-{}",crate::runtime::uuid()));fs::create_dir(&root).unwrap();
+        let value=json!({"hosts":{"owner-identity":"mapped-owner"},"limits":{"codex":2}});
+        fs::write(root.join("host.json"),value.to_string()).unwrap();
+        let first=Policy::read_for_hostname(&root,||"owner-identity".into()).unwrap();
+        if std::env::var("TASKQ_HOST").ok().filter(|s|!s.is_empty()).is_none() {assert_eq!(first.me,"mapped-owner");}
+        migrate_for_hostname(&root,&[],"owner-identity").unwrap();
+        let mut changed=value;changed["limits"]["codex"]=json!(0);fs::write(root.join("host.json"),changed.to_string()).unwrap();
+        assert_eq!(Policy::read_for_hostname(&root,||"owner-identity".into()).unwrap().cap.limits["codex"],0);
+        fs::write(root.join("host.json.pending"),"retained").unwrap();
+        assert!(Policy::read_for_hostname(&root,||panic!("identity ran before pending-write refusal")).unwrap_err().contains("interrupted"));
+        assert!(migrate_for_hostname(&root,&[],"owner-identity").is_err());fs::remove_file(root.join("host.json.pending")).unwrap();
+        fs::write(root.join("host.json"),"{").unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
+        fs::remove_file(root.join("host.json")).unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     // H-A5: a busy maintenance owner cannot prolong an old native absence observation.
     #[test]
