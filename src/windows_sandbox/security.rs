@@ -27,7 +27,7 @@ unsafe extern "system" {
 }
 #[link(name = "advapi32")]
 unsafe extern "system" {
-    fn GetSecurityInfo(handle: Handle, kind: u32, information: u32, owner: *mut Handle, group: *mut Handle, dacl: *mut Handle, sacl: *mut Handle, descriptor: *mut Handle) -> u32;
+    fn GetKernelObjectSecurity(handle: Handle, information: u32, descriptor: Handle, size: u32, needed: *mut u32) -> i32;
     fn SetSecurityInfo(handle: Handle, kind: u32, information: u32, owner: Handle, group: Handle, dacl: Handle, sacl: Handle) -> u32;
     fn ConvertStringSecurityDescriptorToSecurityDescriptorW(text: *const u16, revision: u32, descriptor: *mut Handle, size: *mut u32) -> i32;
     fn ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor: Handle, revision: u32, information: u32, text: *mut *mut u16, size: *mut u32) -> i32;
@@ -104,9 +104,14 @@ fn components(descriptor: Handle) -> Result<Descriptor, String> {
     Ok(result)
 }
 fn read_descriptor(handle: Handle) -> Result<String, String> {
-    let mut descriptor = ptr::null_mut();
-    status(unsafe { GetSecurityInfo(handle, 1, INFORMATION, ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), ptr::null_mut(), &mut descriptor) }, "read descriptor")?;
-    let descriptor = Local(descriptor); stringify(descriptor.0)
+    // GetSecurityInfo synthesizes inherited ACE flags for legacy ACLs; journals need stored state.
+    let mut needed = 0;
+    let result = unsafe { GetKernelObjectSecurity(handle, INFORMATION, ptr::null_mut(), 0, &mut needed) };
+    if result != 0 || std::io::Error::last_os_error().raw_os_error() != Some(122) { return Err(last("size descriptor")); }
+    if !(20..=1_048_576).contains(&needed) { return Err("Windows security: invalid descriptor size".into()); }
+    let mut descriptor = vec![0u32; (needed as usize).div_ceil(4)];
+    boolean(unsafe { GetKernelObjectSecurity(handle, INFORMATION, descriptor.as_mut_ptr().cast(), (descriptor.len() * 4) as u32, &mut needed) }, "read descriptor")?;
+    stringify(descriptor.as_mut_ptr().cast())
 }
 
 // Retained ancestor handles prevent replacing a checked directory with a junction.
@@ -229,13 +234,10 @@ impl Snapshot {
             return Err("Windows security: owner/group or SACL protection change refused".into());
         }
         target.owner = saved_owner; target.group = saved_group;
-        // Reapplying UNPROTECTED re-inherits ACEs even when the saved protection state is unchanged.
-        let protection = if (expected.control ^ target.control) & 0x1000 == 0 { 0 }
-            else if target.control & 0x1000 != 0 { 0x80000000 } else { 0x20000000 };
         // The kernel consumes AUTO_INHERIT_REQ to retain the existing AUTO_INHERITED bits.
         target.control |= (target.control & 0xc00) >> 2;
         // SetSecurityInfo rewrites SACL control flags and propagates ACEs to unjournaled children.
-        let result = unsafe { NtSetSecurityObject(opened.file.0, 4 | LABEL | protection, (&mut target as *mut Descriptor).cast()) };
+        let result = unsafe { NtSetSecurityObject(opened.file.0, 4 | LABEL, (&mut target as *mut Descriptor).cast()) };
         if result < 0 { status(unsafe { RtlNtStatusToDosError(result) }, "apply descriptor")?; }
         let actual = Self::from_open(&self.path, &opened)?;
         if actual != *replacement {
@@ -300,12 +302,34 @@ mod tests {
             assert_ne!(stringify(absent.0).unwrap(), stringify(other.0).unwrap());
         }
     }
+    // R9: preserve stored legacy/protected/inherited ACLs and leave unjournaled children untouched.
     #[test]
     fn native_identity_label_dacl_roundtrip() {
+        for control in [None, Some(0), Some(0x1000)] { native_identity_label_dacl_case(control); }
+    }
+    fn native_identity_label_dacl_case(initial_control: Option<u16>) {
         let root = std::env::temp_dir().join(format!("taskq-security-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
         std::fs::create_dir(&root).unwrap();
+        if let Some(control) = initial_control {
+            let opened = open(&root, true).unwrap();
+            let saved = Snapshot::from_open(&root, &opened).unwrap();
+            let storage = parse(&saved.descriptor).unwrap(); let mut descriptor = components(storage.0).unwrap();
+            descriptor.control = (descriptor.control & !0x1500) | control;
+            let count = unsafe { *descriptor.dacl.cast::<u16>().add(2) };
+            for index in 0..u32::from(count) {
+                let mut ace = ptr::null_mut();
+                boolean(unsafe { GetAce(descriptor.dacl, index, &mut ace) }, "read fixture ACE").unwrap();
+                unsafe { *ace.cast::<u8>().add(1) &= !0x10; }
+            }
+            let result = unsafe { NtSetSecurityObject(opened.file.0, 4, (&mut descriptor as *mut Descriptor).cast()) };
+            assert!(result >= 0, "legacy fixture creation failed: {result:#x}");
+        }
         let file = root.join("owner.txt"); std::fs::write(&file, "before").unwrap();
         let original = Snapshot::capture(&root).unwrap(); let child_original = Snapshot::capture(&file).unwrap();
+        if let Some(control) = initial_control {
+            let storage = parse(&original.descriptor).unwrap();
+            assert_eq!(components(storage.0).unwrap().control & 0x1500, control, "fixture inheritance state");
+        }
         let low = original.low().unwrap(); original.apply(&low).unwrap();
         assert_eq!(low.low().unwrap(), low, "preparation must be idempotent");
         assert_eq!(Snapshot::capture(&file).unwrap(), child_original, "no unjournaled child propagation");
