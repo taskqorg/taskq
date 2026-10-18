@@ -55,6 +55,13 @@ jobs:
                       changed.append(re.search(r'^name = "([^"]+)"',block,re.M).group(1));block=re.sub(r'^version = "0\.0\.0"$','version = "0.162.1"',block,count=1,flags=re.M)
                   repaired.append(block)
               assert changed and external(blocks)==external(repaired);lock.write_bytes(''.join(repaired).encode());assert sha(lock)=='765110795bf3385d734bf1acfcae77660d29a6c678d5b77015d7ffe49f26e69f';assert hashlib.sha256(lock.read_bytes().replace(b'\n',b'\r\n')).hexdigest()=='f8f5a633383724d40799953d82aa26d8631eb56ba1a5c0cdbcd2a78d08142976'
+              # SQLx embeds byte checksums: native Windows state uses CRLF migrations.
+              migrations=sorted((work/'state').glob('*migrations/*.sql'));assert len(migrations)==75
+              sql_inputs=[]
+              for p in migrations:
+                  raw=p.read_bytes();lf=raw.replace(b'\r\n',b'\n');assert b'\r' not in lf
+                  p.write_bytes(lf.replace(b'\n',b'\r\n'));sql_inputs.append({'path':str(p.relative_to(work)).replace('\\','/'),'sha256':sha(p),'sqlx_sha384':hashlib.sha384(p.read_bytes()).hexdigest()})
+              result['sql_migrations']={'representation':'canonical CRLF, compatible with existing Windows SQLx checksums; SQL semantics unchanged','files':sql_inputs}
               rustc=output(['rustc','+'+toolchain,'-vV']);assert rustc.startswith('rustc 1.99.0 ') and 'host: x86_64-pc-windows-gnu' in rustc
               gcc=shutil.which('gcc');assert gcc,'GNU linker driver missing';gcc=Path(gcc).resolve();triple=output([str(gcc),'-dumpmachine']).strip();assert triple=='x86_64-w64-mingw32',triple
               linker=Path(output([str(gcc),'-print-prog-name=ld']).strip());linker=linker.resolve() if linker.is_file() else Path(shutil.which(str(linker)) or '');assert linker.is_file(),'actual GNU linker unresolved'
@@ -76,7 +83,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: private-codex-repro-f86-${{ matrix.repeat }}
+          name: private-codex-repro-f91-${{ matrix.repeat }}
           path: artifact/
           if-no-files-found: error
           retention-days: 7
