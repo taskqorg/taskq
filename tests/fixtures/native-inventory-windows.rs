@@ -40,4 +40,3 @@ fn main() {
     let calls = env::current_exe().unwrap().with_extension("calls");
     fs::OpenOptions::new().create(true).append(true).open(calls).unwrap().write_all(b"read\n").unwrap();
 }
-
