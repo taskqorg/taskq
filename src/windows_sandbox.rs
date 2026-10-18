@@ -186,6 +186,8 @@ mod tests {
                 fs::write(root.join("stage"), turn.to_string()).unwrap();
                 fs::remove_file(root.join("proof.json")).ok();
                 if turn == 1 { l.resume = Some("Owner: repeat the fixture check against the changed stage; keep this session, no other actions.".into()); }
+                let path = crate::runtime::log_path(&root, &l);
+                let offset = fs::metadata(&path).map(|m| m.len() as usize).unwrap_or(0);
                 let mut child = crate::runtime::spawn(&env, &l).unwrap_or_else(|e| panic!("{e}"));
                 let began = std::time::Instant::now();
                 let code = loop {
@@ -193,11 +195,12 @@ mod tests {
                     if began.elapsed().as_secs() > 180 { crate::runtime::stop(child.as_mut()).expect("owned qualification cleanup"); panic!("owned qualification deadline"); }
                     std::thread::sleep(std::time::Duration::from_millis(200));
                 };
-                let log = fs::read_to_string(crate::runtime::log_path(&root, &l)).unwrap();
+                let appended = fs::read_to_string(path).unwrap();
+                let log = &appended[offset..];
                 let events: Vec<Value> = log.lines().filter_map(|s| serde_json::from_str(s).ok()).collect();
                 let ids: Vec<String> = events.iter().filter(|v| v["type"] == "thread.started").filter_map(|v| v["thread_id"].as_str().map(String::from)).collect();
                 if turn == 0 { l.session = ids.first().expect("native session").clone(); }
-                assert!(ids.iter().all(|id| *id == l.session), "same native session");
+                assert!(!ids.is_empty() && ids.iter().all(|id| *id == l.session), "same native session");
                 assert!(events.iter().any(|v| v["type"] == "turn.completed"), "native completion");
                 assert!(!events.iter().any(|v| v["type"] == "turn.failed"), "native failure: {log}");
                 let transcript = fs::read_to_string(crate::runtime::rollout(&l.session).expect("native transcript")).unwrap();
