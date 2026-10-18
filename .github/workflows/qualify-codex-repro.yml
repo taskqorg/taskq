@@ -12,7 +12,8 @@ jobs:
       matrix:
         repeat: [1, 2]
     runs-on: windows-latest
-    timeout-minutes: 15
+    # External dependency preparation only; TaskQ/CoreQ canonical gates remain900s.
+    timeout-minutes: 40
     env:
       RUSTUP_TOOLCHAIN: 1.99.0-x86_64-pc-windows-gnu
       CARGO_BUILD_JOBS: '1'
@@ -39,7 +40,7 @@ jobs:
           root=Path(os.environ['GITHUB_WORKSPACE']);source=root/'source';work=source/'codex-rs';stage=root/'artifact';stage.mkdir();toolchain='1.99.0-x86_64-pc-windows-gnu';commit='092d3acd6bec3e3a14bdc7e7a2810ab628ab759d';patch=root/'controller/docs/runtime/windows-codex.patch';target=Path(os.environ['RUNNER_TEMP'])/'codex-repro-target';assert not target.exists()
           sha=lambda p:hashlib.file_digest(p.open('rb'),'sha256').hexdigest()
           def output(args,cwd=work):return subprocess.check_output(args,cwd=cwd,text=True,stderr=subprocess.STDOUT)
-          result={'passed':False,'scope':'two independent clean GNU builds of same private source/patch; no install/model/grant/TaskQ production effects','source':commit,'toolchain':toolchain,'image':{k:os.environ.get(k) for k in ['ImageOS','ImageVersion','RUNNER_ARCH']},'command':['cargo','+'+toolchain,'build','--locked','-p','codex-cli','--bin','codex','--verbose']}
+          result={'passed':False,'external_dependency_budget_seconds':2400,'scope':'non-gate external dependency preparation; TaskQ/CoreQ canonical gates remain900s; two clean GNU builds; no install/model/grant/production effects','source':commit,'toolchain':toolchain,'image':{k:os.environ.get(k) for k in ['ImageOS','ImageVersion','RUNNER_ARCH']},'command':['cargo','+'+toolchain,'build','--locked','-p','codex-cli','--bin','codex','--verbose']}
           started=time.monotonic()
           try:
               assert output(['git','rev-parse','HEAD'],source).strip()==commit
@@ -63,7 +64,7 @@ jobs:
               (stage/'provenance.json').write_text(json.dumps(result,indent=2)+'\n')
               with (stage/'build.log').open('w') as log:
                   p=subprocess.Popen(result['command'],cwd=work,env=env,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)
-                  try:code=p.wait(timeout=max(1,850-(time.monotonic()-started)))
+                  try:code=p.wait(timeout=max(1,2320-(time.monotonic()-started)))
                   except subprocess.TimeoutExpired:p.kill();p.wait();raise
               assert code==0,'cargo build failed; retained build.log'
               assert output(['git','diff','--binary'],source)==diff,'tracked source changed during build'
