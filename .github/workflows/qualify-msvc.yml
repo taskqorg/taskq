@@ -7,50 +7,62 @@ permissions:
   contents: read
 jobs:
   ordinary-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [normal, control]
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
       - run: git config --global core.autocrlf false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 98e9db3645c8881096b29b3d5989eddd2f6943b3
+          ref: e35972224c7f7ac7952be75f04f02550f1edc09f
           persist-credentials: false
       - run: rustup default stable-x86_64-pc-windows-msvc
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: npm run build
       - name: Exact frozen source and ordinary build
         shell: python
+        env:
+          MODE: ${{ matrix.mode }}
         run: |
-          import hashlib,json,os,subprocess
+          import hashlib,json,os,subprocess,shutil
           from pathlib import Path
-          source='98e9db3645c8881096b29b3d5989eddd2f6943b3'; coreq='b2ad795286a5f1dab7fd20dfcde0ae0407f79b48'
+          source='e35972224c7f7ac7952be75f04f02550f1edc09f';coreq='8e6a9644976906271638569896b60949ed075ba3';mode=os.environ['MODE'];assert mode in ('normal','control')
           assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()==source
           names=sorted(subprocess.check_output(['git','ls-files','-z'],text=True).strip('\0').split('\0'))
           hashes=lambda:{n:hashlib.sha256(Path(n).read_bytes()).hexdigest() for n in names}
-          files=hashes(); assert len(files)==523
-          manifest={'source':source,'coreq':coreq,'version':'4.6.15','files':files}
-          raw=(json.dumps(manifest,indent=2)+'\n').encode()
-          assert hashlib.sha256(raw).hexdigest()=='db763813a73f56e0bec80e4049ac5bc28128715ae35da7debd4919fc39df9a29'
+          files=hashes();assert len(files)==523
+          manifest={'source':source,'coreq':coreq,'version':'4.6.16','files':files}
+          raw=(json.dumps(manifest,indent=2)+'\n').encode();assert hashlib.sha256(raw).hexdigest()=='17b4e84c0974b9da80489fa00d06bfda68e421d60d90bc4998b247e03c9a5ad6'
           stage=Path(os.environ['RUNNER_TEMP'])/'taskq-msvc-artifact';stage.mkdir()
-          (stage/'source-manifest.json').write_bytes(raw)
-          result={'source':source,'coreq':coreq,'version':'4.6.15','manifest_sha256':'db763813a73f56e0bec80e4049ac5bc28128715ae35da7debd4919fc39df9a29','target':'x86_64-pc-windows-msvc','profile':'release','command':['cargo','build','--release','--locked'],'rustc':subprocess.check_output(['rustc','-vV'],text=True),'cargo':subprocess.check_output(['cargo','-V'],text=True),'passed':False}
+          result={'source':source,'coreq':coreq,'version':'4.6.16','base_manifest_sha256':'17b4e84c0974b9da80489fa00d06bfda68e421d60d90bc4998b247e03c9a5ad6','target':'x86_64-pc-windows-msvc','profile':'release','command':['cargo','build','--release','--locked'],'rustc':subprocess.check_output(['rustc','-vV'],text=True),'cargo':subprocess.check_output(['cargo','-V'],text=True),'passed':False,'control':mode=='control'}
+          if mode=='control':
+              entry=Path('entry.rs');text=entry.read_text();assert text.count('(!maintenance).then')==1
+              entry.write_bytes(text.replace('(!maintenance).then','(false && !maintenance).then').encode())
+              changed=hashes();assert [n for n in names if files[n]!=changed[n]]==['entry.rs'];files=changed;manifest['files']=files
+              result.update(changed_source_files=['entry.rs'],scope='measurement-only capture-off control, never ship')
+          raw=(json.dumps(manifest,indent=2)+'\n').encode();expected='800877f1935ff54964a119fccbc71c875157ce8e38b0cba9e3a4932afd5180fd' if mode=='control' else '17b4e84c0974b9da80489fa00d06bfda68e421d60d90bc4998b247e03c9a5ad6';assert hashlib.sha256(raw).hexdigest()==expected
+          (stage/'source-manifest.json').write_bytes(raw);result['manifest_sha256']=expected
           subprocess.run(result['command'],check=True)
-          assert hashes()==files and not subprocess.check_output(['git','status','--porcelain'],text=True).strip()
-          import shutil
-          binary=stage/'taskq.exe';shutil.copy2('target/release/taskq.exe',binary)
-          result['binary_sha256']=hashlib.sha256(binary.read_bytes()).hexdigest()
-          smoke=Path(os.environ['RUNNER_TEMP'])/'taskq-msvc-smoke';smoke.mkdir()
-          env=dict(os.environ,TASKQ_INSTALL=str(smoke),TASKQ_SELFTEST_OFFLINE='1',TASKQ_INCIDENT_REPORTS='off')
-          run=subprocess.run([str(binary),'selftest'],env=env,capture_output=True,text=True,check=True,timeout=60)
-          exported=subprocess.run([str(binary),'profile','export'],env=env,capture_output=True,text=True,check=True,timeout=60)
-          rows=[json.loads(line) for line in exported.stdout.splitlines()[1:]]
-          assert rows and all(row['observation']['version']=='4.6.15' for row in rows)
-          result.update(passed=True,source_unchanged=True,selftest=run.stdout,committed_rows=len(rows),artifact_dlls=[p.name for p in stage.glob('*.dll')])
-          assert not result['artifact_dlls']
+          assert hashes()==files
+          assert subprocess.check_output(['git','diff','--name-only'],text=True).splitlines()==(['entry.rs'] if mode=='control' else [])
+          assert not subprocess.check_output(['git','ls-files','--others','--exclude-standard'],text=True).strip()
+          binary=stage/'taskq.exe';shutil.copy2('target/release/taskq.exe',binary);result['binary_sha256']=hashlib.sha256(binary.read_bytes()).hexdigest()
+          if mode=='normal':
+              smoke=Path(os.environ['RUNNER_TEMP'])/'taskq-msvc-smoke';smoke.mkdir()
+              env=dict(os.environ,TASKQ_INSTALL=str(smoke),TASKQ_SELFTEST_OFFLINE='1',TASKQ_INCIDENT_REPORTS='off')
+              run=subprocess.run([str(binary),'selftest'],env=env,capture_output=True,text=True,check=True,timeout=60)
+              exported=subprocess.run([str(binary),'profile','export'],env=env,capture_output=True,text=True,check=True,timeout=60)
+              rows=[json.loads(line) for line in exported.stdout.splitlines()[1:]];assert rows and all(row['observation']['version']=='4.6.16' for row in rows)
+              result.update(selftest=run.stdout,committed_rows=len(rows),selftest_run=True,profile_run=True)
+          else:result.update(selftest_run=False,profile_run=False)
+          result.update(passed=True,source_unchanged=True,artifact_dlls=[p.name for p in stage.glob('*.dll')]);assert not result['artifact_dlls']
           (stage/'provenance.json').write_bytes((json.dumps(result,indent=2)+'\n').encode())
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: windows-msvc-98e9db36
+          name: windows-msvc-f81-${{ matrix.mode }}
           path: ${{ runner.temp }}/taskq-msvc-artifact
           retention-days: 14
           if-no-files-found: error
