@@ -2591,6 +2591,11 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
 #[tracing::instrument(name="application",skip_all)]
 fn application() {
     #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("__windows-security-restore") {
+        if let Err(e) = windows_sandbox::restore(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); std::process::exit(1); }
+        return;
+    }
+    #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("__windows-codex") {
         if let Err(e) = windows_sandbox::run(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); std::process::exit(1); }
         return;

@@ -1,6 +1,8 @@
 //! Windows §8: one inherited native token; control state never lives in the writable runtime home.
 use std::{fs, io::Read, path::{Path, PathBuf}, process::Command};
 use serde_json::Value;
+mod security;
+mod preparation;
 
 // Exact privately qualified dependency; a stock or changed CLI is not this enforcement path.
 const NATIVE_SHA256: &str = "af65880153a66852d72edf1d2a22faf191abeee2ad3d9cd6e8ee1d59183b8cc4";
@@ -35,23 +37,25 @@ fn home() -> Result<PathBuf, String> {
 }
 
 struct Paths { bin: PathBuf, state: PathBuf, temp: PathBuf }
-fn paths(root: &Path, install: &Path, home: &Path) -> Paths {
+fn paths(root: &Path, install: &Path, home: &Path) -> Result<Paths, String> {
     let key = format!("{}\n{}", root.display(), home.display());
     let digest = ring::digest::digest(&ring::digest::SHA256, key.as_bytes());
     let id: String = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
-    Paths { bin: install.join("windows-native/codex.exe"), state: install.join("windows-native/state").join(&id),
-        temp: PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default()).join("Temp/taskq-windows").join(id) }
+    let local = checked(&PathBuf::from(std::env::var_os("LOCALAPPDATA").ok_or("Windows sandbox: LOCALAPPDATA missing")?))?;
+    Ok(Paths { bin: install.join("windows-native/codex.exe"), state: install.join("windows-native/state").join(&id),
+        temp: local.join("Temp/taskq-windows").join(id) })
 }
 
 pub fn ready(root: &Path, install: &Path) -> Result<(), String> {
     let root = checked(root)?; let install = checked(install)?; let home = home()?;
-    if install.starts_with(&root) { return Err("Windows sandbox: installation inside workspace".into()); }
+    if install.starts_with(&root) || root.starts_with(&install) { return Err("Windows sandbox: installation and workspace overlap".into()); }
     for p in [root.join(".codex"), home.join("config.toml"), home.join("auth.json")] { checked(&p)?; }
-    let bin = paths(&root, &install, &home).bin;
+    let bin = paths(&root, &install, &home)?.bin;
     for (file, expected) in [(&bin, NATIVE_SHA256), (&bin.with_file_name("codex-code-mode-host.exe"), CODE_HOST_SHA256)] {
         checked(file)?;
         if hash(file)? != expected { return Err("Windows sandbox: native dependency not qualified".into()); }
     }
+    preparation::ready(&install)?;
     Ok(())
 }
 
@@ -68,23 +72,30 @@ fn restricted() -> Result<bool, String> {
     Ok(result)
 }
 
-fn prepare(root: &Path, install: &Path, home: &Path, p: &Paths) -> Result<(), String> {
+fn control(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+    name.ends_with(".toml") || ["auth.json", "hooks.json", "agents.md", "cap_sid", ".sandbox", ".sandbox-bin", ".sandbox-secrets", "plugins", "skills", "packages", "app-server-control", "app-server-daemon"].contains(&name.as_str())
+}
+
+fn prepare(root: &Path, install: &Path, home: &Path, p: &mut Paths, bootstrap: &Path) -> Result<(), String> {
     if restricted()? { return Err("Windows sandbox preparation requires an unrestricted operator process".into()); }
-    fs::create_dir_all(&p.state).map_err(|e| e.to_string())?;
-    fs::create_dir_all(&p.temp).map_err(|e| e.to_string())?;
-    checked(&p.state)?; checked(&p.temp)?;
+    security::create_directory(&p.state)?; security::create_directory(&p.temp)?;
+    p.state = checked(&p.state)?; p.temp = checked(&p.temp)?;
     let mut entries = vec![(":root".to_string(), "read"), (root.display().to_string(), "write"),
         (home.display().to_string(), "write"), (p.temp.display().to_string(), "write"),
         (install.display().to_string(), "read"), (root.join(".codex").display().to_string(), "read")];
     for entry in fs::read_dir(home).map_err(|e| e.to_string())? {
         let f = entry.map_err(|e| e.to_string())?.path();
-        if f.extension().is_some_and(|e| e == "toml") || ["auth.json", "hooks.json", "AGENTS.md", "cap_sid", ".sandbox", ".sandbox-bin", ".sandbox-secrets", "plugins", "skills", "packages", "app-server-control", "app-server-daemon"].iter().any(|n| f.ends_with(n)) {
+        if control(&f) {
             checked(&f)?;
             entries.push((f.display().to_string(), "read"));
         }
     }
     let config = format!("[permissions.taskq.filesystem]\n{}\n[permissions.taskq.network]\nenabled=true\n", entries.iter()
         .map(|(p, mode)| format!("{} = \"{mode}\"", serde_json::to_string(&p.replace('\\', "/")).unwrap())).collect::<Vec<_>>().join("\n"));
+    let helper = p.bin.with_file_name("codex-code-mode-host.exe");
+    let protection = preparation::Preparation::begin(root, install, home, &p.state, &p.temp, &[bootstrap, &p.bin, &helper])?;
+    let preflight = (|| {
     fs::write(p.state.join("config.toml"), config).map_err(|e| e.to_string())?;
     let out = match coreq::process::output("sandbox.preflight", Command::new(&p.bin).args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--", "cmd.exe", "/d", "/c", "exit 0"])
         .current_dir(root).env("CODEX_HOME", &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
@@ -101,13 +112,18 @@ fn prepare(root: &Path, install: &Path, home: &Path, p: &Paths) -> Result<(), St
     for (key, sid) in aliases { roots.entry(key).or_insert(sid); }
     fs::write(sid_file, serde_json::to_vec(&caps).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     Ok(())
+    })();
+    match preflight {
+        Ok(()) => protection.apply(),
+        Err(error) => { protection.cancel()?; Err(error) },
+    }
 }
 
 pub fn command(env: &crate::runtime::Env) -> Result<Command, String> {
     ready(env.root, env.install)?;
     let root = checked(env.root)?; let install = checked(env.install)?; let home = home()?;
-    let p = paths(&root, &install, &home);
-    prepare(&root, &install, &home, &p)?;
+    let mut p = paths(&root, &install, &home)?;
+    prepare(&root, &install, &home, &mut p, env.exe)?;
     let mut c = Command::new(p.bin);
     c.args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--"])
         .arg(env.exe).arg(BOOT).arg(root).arg(install).arg(home)
@@ -127,7 +143,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if !policy.grants.iter().any(|g| g.runtime == "codex" && g.mode == "workspace" && g.project.as_deref() == Some(scope.as_str())) {
         return Err("Windows sandbox: explicit Workspace project grant required".into());
     }
-    let p = paths(&root, &install, &home);
+    let p = paths(&root, &install, &home)?;
     if std::env::var_os("CODEX_HOME").map(PathBuf::from).as_ref() != Some(&p.state) || hash(&p.bin)? != NATIVE_SHA256
         || hash(&p.bin.with_file_name("codex-code-mode-host.exe"))? != CODE_HOST_SHA256 {
         return Err("Windows sandbox: control state or native dependency changed".into());
@@ -146,15 +162,74 @@ pub fn run(args: &[String]) -> Result<(), String> {
         };
         if !valid { return Err("Windows sandbox: unsupported bootstrap argument".into()); }
     }
+    security::lower_restricted_process()?;
     let status = Command::new(p.bin).args(["exec", "--add-dir"]).arg(home).args(&args[4..])
         .env("CODEX_HOME", &args[2]).env("TASKQ_WINDOWS_SANDBOX_HOME", p.state)
         .current_dir(root).status().map_err(|e| e.to_string())?;
     std::process::exit(status.code().unwrap_or(1));
 }
 
+pub fn restore(args: &[String]) -> Result<(), String> {
+    if args.len() != 1 { return Err("Windows security restore requires one installation path".into()); }
+    preparation::restore(&checked(Path::new(&args[0]))?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    // No paid turn: exercise the production preparation/bootstrap with controller-owned fake home.
+    #[test]
+    #[ignore = "requires an owned disposable fixture and exact private native dependencies"]
+    fn native_security_without_model() {
+        let base = checked(Path::new(&std::env::var("TASKQ_SECURITY_FIXTURE").expect("owned fixture"))).unwrap();
+        assert_eq!(fs::read_to_string(base.join(".fixture-owner")).unwrap(), "taskq-owned-source-security-probe\n");
+        let root = base.join("project"); let install = base.join("install"); let home = base.join("home");
+        if std::env::var_os("TASKQ_SECURITY_CHILD").is_some() {
+            assert!(restricted().unwrap());
+            assert_eq!(security::lower_restricted_process().unwrap(), 4096);
+            let python = std::env::var("TASKQ_QUALIFY_PYTHON").expect("native Python");
+            let status = Command::new(python).arg(root.join("check.py")).current_dir(&root)
+                .env("CODEX_HOME", &home).env("TASKQ_INSTALL", &install).env("TASKQ_ROLE", "worker").status().unwrap();
+            assert!(status.success());
+            return;
+        }
+        assert!(!restricted().unwrap());
+        assert_eq!(std::env::var_os("CODEX_HOME").map(PathBuf::from), Some(home.clone()));
+        let mut p = paths(&root, &install, &home).unwrap();
+        let native_hash = std::env::var("TASKQ_SECURITY_CODEX_SHA256").expect("development artifact identity");
+        assert_eq!(hash(&p.bin).unwrap(), native_hash);
+        assert_eq!(hash(&p.bin.with_file_name("codex-code-mode-host.exe")).unwrap(), CODE_HOST_SHA256);
+        let before = security::Snapshot::capture(&root).unwrap();
+        prepare(&root, &install, &home, &mut p, &install.join("taskq.exe")).unwrap();
+        let mut child = Command::new(&p.bin);
+        child.args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--"])
+            .arg(install.join("harness.exe")).args(["windows_sandbox::tests::native_security_without_model", "--ignored", "--exact", "--nocapture"])
+            .current_dir(&root).env("CODEX_HOME", &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
+            .env("TEMP", &p.temp).env("TMP", &p.temp).env("TASKQ_SECURITY_CHILD", "1");
+        let output = coreq::process::output("sandbox.security-proof", &mut child, std::time::Duration::from_secs(60)).unwrap();
+        assert!(output.status.success(), "{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+        let proof: Value = serde_json::from_slice(&fs::read(root.join("proof.json")).unwrap()).unwrap();
+        assert_eq!(proof["allowed"], true, "{proof}");
+        assert_eq!(proof["allowed_mutations"]["write"]["readback"], true, "{proof}");
+        assert_eq!(proof["allowed_mutations"]["rename"]["readback"], true, "{proof}");
+        assert_eq!(proof["allowed_mutations"]["delete"]["deleted"], true, "{proof}");
+        for key in ["outside", "policy", "config", "runtime_config", "junction"] {
+            assert_eq!(proof[key]["native_error"], 5, "{proof}");
+            for action in ["delete", "rename", "replace"] {
+                let mutation = &proof["mutations"][key][action];
+                assert_eq!(mutation["allowed"], false, "{proof}");
+                assert_eq!(mutation["native_error"], 5, "{proof}");
+                assert!(mutation["before"]["ino"].as_u64().is_some_and(|id| id != 0), "{proof}");
+                assert_eq!(mutation["before"], mutation["after"], "{proof}");
+            }
+        }
+        assert_ne!(proof["child"]["exit"], 0, "{proof}");
+        assert_ne!(proof["acl"]["exit"], 0, "{proof}");
+        assert_ne!(proof["nested_launcher"]["exit"], 0, "{proof}");
+        preparation::restore(&install).unwrap();
+        assert_eq!(security::Snapshot::capture(&root).unwrap(), before);
+        println!("QUALIFIED no-model source security; development native digest {native_hash}; not a product-pin qualification");
+    }
     // Paid chain: real worker/reviewer start, continuation, rules and inherited native write boundaries.
     #[test]
     #[ignore = "requires the pinned native candidate and an explicit disposable Windows project grant"]
@@ -217,10 +292,21 @@ mod tests {
                 assert_eq!(proof["role"], *role);
                 assert_eq!(proof["allowed"], true);
                 assert_eq!(fs::read_to_string(root.join("allowed.txt")).unwrap(), format!("{role}:{turn}"));
+                assert_eq!(proof["allowed_mutations"]["write"]["readback"], true, "{proof}");
+                assert_eq!(proof["allowed_mutations"]["rename"]["readback"], true, "{proof}");
+                assert_eq!(proof["allowed_mutations"]["delete"]["deleted"], true, "{proof}");
                 for key in ["outside", "policy", "config", "runtime_config", "junction"] {
                     assert_eq!(proof[key]["result"], "denied", "{proof}");
                     assert_eq!(proof[key]["errno"], 13, "OS access denial, not a missing file: {proof}");
                     assert_eq!(proof[key]["native_error"], 5, "native write handle must be denied: {proof}");
+                    for action in ["delete", "rename", "replace"] {
+                        let mutation = &proof["mutations"][key][action];
+                        assert_eq!(mutation["allowed"], false, "native {action} {key}: {proof}");
+                        assert_eq!(mutation["native_error"], 5, "OS denial, not a missing target: {proof}");
+                        assert!(mutation["before"]["ino"].as_u64().is_some_and(|id| id != 0), "file identity missing: {proof}");
+                        assert!(mutation["before"]["sha256"].as_str().is_some_and(|s| s.len() == 64), "content digest missing: {proof}");
+                        assert_eq!(mutation["before"], mutation["after"], "native {action} changed {key}: {proof}");
+                    }
                 }
                 assert_ne!(proof["child"]["exit"], 0); assert_ne!(proof["acl"]["exit"], 0);
                 assert_eq!(proof["after_acl"]["errno"], 13);
