@@ -1,0 +1,81 @@
+name: Private Codex reproducibility qualification
+on:
+  push:
+    branches: [codex/qualify-msvc-98e9db36]
+    paths: [.github/workflows/qualify-codex-repro.yml]
+permissions:
+  contents: read
+jobs:
+  reproduce:
+    strategy:
+      fail-fast: false
+      matrix:
+        repeat: [1, 2]
+    runs-on: windows-latest
+    timeout-minutes: 15
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.0-x86_64-pc-windows-gnu
+      CARGO_BUILD_JOBS: '1'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: openai/codex
+          ref: 092d3acd6bec3e3a14bdc7e7a2810ab628ab759d
+          path: source
+          persist-credentials: false
+      - name: Install exact GNU toolchain
+        run: rustup toolchain install 1.99.0-x86_64-pc-windows-gnu --profile minimal
+      - name: Frozen inputs and bounded build
+        shell: python
+        run: |
+          from pathlib import Path
+          import hashlib,json,os,re,shutil,subprocess,time,traceback
+          root=Path(os.environ['GITHUB_WORKSPACE']);source=root/'source';work=source/'codex-rs';stage=root/'artifact';stage.mkdir();toolchain='1.99.0-x86_64-pc-windows-gnu';commit='092d3acd6bec3e3a14bdc7e7a2810ab628ab759d';patch=root/'controller/docs/runtime/windows-codex.patch';target=Path(os.environ['RUNNER_TEMP'])/'codex-repro-target';assert not target.exists()
+          sha=lambda p:hashlib.file_digest(p.open('rb'),'sha256').hexdigest()
+          def output(args,cwd=work):return subprocess.check_output(args,cwd=cwd,text=True,stderr=subprocess.STDOUT)
+          result={'passed':False,'scope':'two independent clean GNU builds of same private source/patch; no install/model/grant/TaskQ production effects','source':commit,'toolchain':toolchain,'image':{k:os.environ.get(k) for k in ['ImageOS','ImageVersion','RUNNER_ARCH']},'command':['cargo','+'+toolchain,'build','--locked','-p','codex-cli','--bin','codex','--verbose']}
+          started=time.monotonic()
+          try:
+              assert output(['git','rev-parse','HEAD'],source).strip()==commit
+              assert not output(['git','status','--porcelain'],source).strip()
+              assert sha(patch)=='595ded1066baaf597fa5e9c878b470988e9476e2c55c33188166e5dada9c3e28'
+              subprocess.run(['git','apply','--check',str(patch)],cwd=source,check=True);subprocess.run(['git','apply',str(patch)],cwd=source,check=True)
+              lock=work/'Cargo.lock';original=lock.read_bytes();blocks=re.split(r'(?m)(?=^\[\[package\]\])',original.decode());changed=[]
+              def external(parts):return sorted(p for p in parts if re.search(r'^source\s*=',p,re.M))
+              repaired=[]
+              for block in blocks:
+                  if not re.search(r'^source\s*=',block,re.M) and re.search(r'^version = "0\.0\.0"$',block,re.M):
+                      changed.append(re.search(r'^name = "([^"]+)"',block,re.M).group(1));block=re.sub(r'^version = "0\.0\.0"$','version = "0.162.1"',block,count=1,flags=re.M)
+                  repaired.append(block)
+              assert changed and external(blocks)==external(repaired);lock.write_bytes(''.join(repaired).encode());assert sha(lock)=='f8f5a633383724d40799953d82aa26d8631eb56ba1a5c0cdbcd2a78d08142976'
+              rustc=output(['rustc','+'+toolchain,'-vV']);assert rustc.startswith('rustc 1.99.0 ') and 'host: x86_64-pc-windows-gnu' in rustc
+              gcc=shutil.which('gcc');assert gcc,'GNU linker driver missing';gcc=Path(gcc).resolve();triple=output([str(gcc),'-dumpmachine']).strip();assert triple=='x86_64-w64-mingw32',triple
+              linker=Path(output([str(gcc),'-print-prog-name=ld']).strip());linker=linker.resolve() if linker.is_file() else Path(shutil.which(str(linker)) or '');assert linker.is_file(),'actual GNU linker unresolved'
+              epoch=output(['git','show','-s','--format=%ct',commit],source).strip();assert epoch.isdigit();env=os.environ.copy();env.pop('RUSTFLAGS',None);env.update(CARGO_TARGET_DIR=str(target),SOURCE_DATE_EPOCH=epoch,RUSTC_LOG='rustc_codegen_ssa::back::link=info');flags=['-C','debuginfo=0','--remap-path-prefix',str(root)+'=/codex-repro','-C','linker='+str(gcc),'-C','link-arg=-Wl,--no-insert-timestamp'];env['CARGO_ENCODED_RUSTFLAGS']='\x1f'.join(flags)
+              diff=output(['git','diff','--binary'],source);(stage/'source.patch').write_bytes(diff.encode());shutil.copy2(lock,stage/'Cargo.lock');shutil.copy2(patch,stage/'windows-codex.patch')
+              result.update(rustc=rustc,cargo=output(['cargo','+'+toolchain,'-V']),gcc={'path':str(gcc),'sha256':sha(gcc),'version':output([str(gcc),'--version']),'target':triple},linker={'path':str(linker),'sha256':sha(linker),'version':output([str(linker),'--version'])},normalized_packages=changed,lock_sha256=sha(lock),patched_diff_sha256=sha(stage/'source.patch'),rustflags=flags,environment={k:env.get(k) for k in ['PATH','CARGO_HOME','RUSTUP_HOME','CARGO_TARGET_DIR','CARGO_BUILD_JOBS','CARGO_INCREMENTAL','RUSTUP_TOOLCHAIN','SOURCE_DATE_EPOCH','CC','CXX','AR','RANLIB','CFLAGS','CXXFLAGS']},configs={str(p):p.read_text() for p in [source/'.cargo/config.toml',work/'.cargo/config.toml',Path.home()/'.cargo/config.toml'] if p.is_file()})
+              (stage/'provenance.json').write_text(json.dumps(result,indent=2)+'\n')
+              with (stage/'build.log').open('w') as log:
+                  p=subprocess.Popen(result['command'],cwd=work,env=env,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+                  try:code=p.wait(timeout=max(1,850-(time.monotonic()-started)))
+                  except subprocess.TimeoutExpired:p.kill();p.wait();raise
+              assert code==0,'cargo build failed; retained build.log'
+              assert output(['git','diff','--binary'],source)==diff,'tracked source changed during build'
+              binary=target/'debug/codex.exe';assert binary.is_file();shutil.copy2(binary,stage/'codex.exe');result.update(passed=True,binary_sha256=sha(stage/'codex.exe'),binary_bytes=binary.stat().st_size,old_pin_matches=sha(stage/'codex.exe')=='af65880153a66852d72edf1d2a22faf191abeee2ad3d9cd6e8ee1d59183b8cc4')
+          except Exception:result['error']=traceback.format_exc()
+          finally:
+              result['seconds']=time.monotonic()-started;(stage/'provenance.json').write_text(json.dumps(result,indent=2)+'\n');print(json.dumps(result))
+          assert result['passed']
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: private-codex-repro-f86-${{ matrix.repeat }}
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
