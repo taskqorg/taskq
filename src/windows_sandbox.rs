@@ -200,7 +200,23 @@ mod tests {
         assert_eq!(hash(&p.bin).unwrap(), native_hash);
         assert_eq!(hash(&p.bin.with_file_name("codex-code-mode-host.exe")).unwrap(), CODE_HOST_SHA256);
         let before = security::Snapshot::capture(&root).unwrap();
+        let other = base.join("outside");
+        let other_before = security::Snapshot::capture(&other).unwrap();
+        let policy = crate::policy::load(&install).unwrap();
+        for project in [&root, &other] {
+            let scope = project.canonicalize().unwrap().display().to_string();
+            assert!(policy.grants.iter().any(|g|g.runtime == "codex" && g.mode == "workspace" && g.project.as_deref() == Some(scope.as_str())), "both owned roots need explicit fixture grants");
+        }
+        let mut other_paths = paths(&other, &install, &home).unwrap();
+        prepare(&other, &install, &home, &mut other_paths, &install.join("taskq.exe")).unwrap();
         prepare(&root, &install, &home, &mut p, &install.join("taskq.exe")).unwrap();
+        let caps: Value = serde_json::from_slice(&fs::read(p.state.join("cap_sid")).unwrap()).unwrap();
+        let other_caps: Value = serde_json::from_slice(&fs::read(other_paths.state.join("cap_sid")).unwrap()).unwrap();
+        let ids = |value: &Value| value["workspace_by_cwd"].as_object().unwrap().values().map(|v|v.as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        assert!(ids(&caps).iter().all(|id|!ids(&other_caps).contains(id)), "independent SDK workspace capabilities");
+        let other_file = security::Snapshot::capture(&other.join("canary.txt")).unwrap();
+        assert!(other_file.descriptor.contains(";;;LW)"), "cross-root target must actually be Low");
+        fs::write(base.join("cross-root-capabilities.json"), serde_json::to_vec_pretty(&serde_json::json!({"root": root, "other_root": other, "root_caps": caps, "other_caps": other_caps, "other_root_security": security::Snapshot::capture(&other).unwrap(), "other_file_security":other_file})).unwrap()).unwrap();
         let mut child = Command::new(&p.bin);
         child.args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--"])
             .arg(install.join("harness.exe")).args(["windows_sandbox::tests::native_security_without_model", "--ignored", "--exact", "--nocapture"])
@@ -213,7 +229,7 @@ mod tests {
         assert_eq!(proof["allowed_mutations"]["write"]["readback"], true, "{proof}");
         assert_eq!(proof["allowed_mutations"]["rename"]["readback"], true, "{proof}");
         assert_eq!(proof["allowed_mutations"]["delete"]["deleted"], true, "{proof}");
-        for key in ["outside", "policy", "config", "runtime_config", "junction"] {
+        for key in ["outside", "policy", "config", "runtime_config", "junction", "git", "agents", "aws"] {
             assert_eq!(proof[key]["native_error"], 5, "{proof}");
             for action in ["delete", "rename", "replace"] {
                 let mutation = &proof["mutations"][key][action];
@@ -228,6 +244,7 @@ mod tests {
         assert_ne!(proof["nested_launcher"]["exit"], 0, "{proof}");
         preparation::restore(&install).unwrap();
         assert_eq!(security::Snapshot::capture(&root).unwrap(), before);
+        assert_eq!(security::Snapshot::capture(&other).unwrap(), other_before);
         println!("QUALIFIED no-model source security; development native digest {native_hash}; not a product-pin qualification");
     }
     // Paid chain: real worker/reviewer start, continuation, rules and inherited native write boundaries.
@@ -244,9 +261,10 @@ mod tests {
         let env = Env { root: &root, install: &install, exe: &exe, codex: &codex, permission_mode: "dontAsk", publish: "pr", board_env: &[] };
         fs::create_dir_all(root.join(".codex")).unwrap();
         fs::create_dir_all(root.join(".taskq")).unwrap();
+        for name in [".git", ".agents", ".aws"] { fs::create_dir_all(root.join(name)).unwrap(); }
         fs::create_dir_all(root.parent().unwrap().join("outside")).unwrap();
         let home = home().unwrap();
-        let canaries = [root.parent().unwrap().join("outside/canary.txt"), install.join("canary.txt"), root.join(".codex/canary.toml"), home.join("config-canary.toml")];
+        let canaries = [root.parent().unwrap().join("outside/canary.txt"), install.join("canary.txt"), root.join(".codex/canary.toml"), home.join("config-canary.toml"), root.join(".git/canary.toml"), root.join(".agents/canary.toml"), root.join(".aws/canary.toml")];
         for path in &canaries { fs::write(path, "UNCHANGED\n").unwrap(); }
         assert!(Command::new("cmd.exe").args(["/d", "/c", "mklink", "/J"]).arg(root.join("outside-junction")).arg(canaries[0].parent().unwrap()).status().unwrap().success());
         fs::write(root.join("check.py"), include_str!("../tests/fixtures/windows-boundary.py")).unwrap();
@@ -295,7 +313,7 @@ mod tests {
                 assert_eq!(proof["allowed_mutations"]["write"]["readback"], true, "{proof}");
                 assert_eq!(proof["allowed_mutations"]["rename"]["readback"], true, "{proof}");
                 assert_eq!(proof["allowed_mutations"]["delete"]["deleted"], true, "{proof}");
-                for key in ["outside", "policy", "config", "runtime_config", "junction"] {
+                for key in ["outside", "policy", "config", "runtime_config", "junction", "git", "agents", "aws"] {
                     assert_eq!(proof[key]["result"], "denied", "{proof}");
                     assert_eq!(proof[key]["errno"], 13, "OS access denial, not a missing file: {proof}");
                     assert_eq!(proof[key]["native_error"], 5, "native write handle must be denied: {proof}");

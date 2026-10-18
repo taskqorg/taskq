@@ -27,13 +27,17 @@ try:
 except OSError as error:
     proof["allowed"] = {"errno": error.errno, "winerror": error.winerror}
 
-for key, path in [
+protected = [
     ("outside", root.parent / "outside" / "canary.txt"),
     ("policy", install / "canary.txt"),
     ("config", root / ".codex" / "canary.toml"),
     ("runtime_config", pathlib.Path(os.environ["CODEX_HOME"]) / "config-canary.toml"),
     ("junction", root / "outside-junction" / "canary.txt"),
-]:
+    ("git", root / ".git" / "canary.toml"),
+    ("agents", root / ".agents" / "canary.toml"),
+    ("aws", root / ".aws" / "canary.toml"),
+]
+for key, path in protected:
     try:
         path.write_text("BAD")
         proof[key] = {"result": "ALLOWED"}
@@ -66,13 +70,7 @@ def native_mutation(path, call):
     return {"allowed": allowed, "native_error": native_error, "before": before, "after": snapshot(path)}
 
 proof["mutations"] = {}
-for key, path in [
-    ("outside", root.parent / "outside" / "canary.txt"),
-    ("policy", install / "canary.txt"),
-    ("config", root / ".codex" / "canary.toml"),
-    ("runtime_config", pathlib.Path(os.environ["CODEX_HOME"]) / "config-canary.toml"),
-    ("junction", root / "outside-junction" / "canary.txt"),
-]:
+for key, path in protected:
     if not path.exists():
         missing = snapshot(path)
         proof["mutations"][key] = {action: {"error": "missing target", "before": missing, "after": missing} for action in ("delete", "rename", "replace")}
