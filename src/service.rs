@@ -3036,6 +3036,22 @@ mod tests {
         assert_eq!(stale.json()["hosts"][0]["diagnostics"]["running"]["state"],"stale");
     }
 
+    // Chain: board entry, fold changes, snapshot row `since` (§ 4 Tray age). Risk: the age restarts on a comment that
+    // changes no state, or invents a time for a task with no logged state change.
+    #[test]
+    fn row_since_is_the_last_logged_state_change() {
+        let b=Fake::default();let c=cfg("mac");
+        let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
+        let since=||crate::snapshot::read(&b,&c,&Value::Null,&[]).tasks[0].json()["since"].clone();
+        assert_eq!(since(),Value::Null,"no logged state change: unknown");
+        b.advance(100);
+        let w=b.comment(n,"taskq: spawn worker codex:session mac").unwrap();
+        let at=b.comments(n).unwrap().into_iter().find(|x|x.id==w).unwrap().created;
+        assert_eq!(since(),at);
+        b.advance(100);b.raw(n,"a plain note",true,false);
+        assert_eq!(since(),at,"a comment that changes no state keeps the age");
+    }
+
     // Chain: § 4 heartbeat body, DashQ host join (dashq docs/design/hosts.md H2). Risk: a changed or missing line
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]

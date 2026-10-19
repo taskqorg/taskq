@@ -1399,7 +1399,15 @@ const SCROLLS: [(&str, &str); 3] = [
 /// `tray --snapshot --route` names: `actions` is Home with the [`ACTIONS`] script, `scroll` Home with the [`SCROLLS`]
 /// (only when named), `project` the first project's page.
 const RECOVERY: &str = include_str!("../tests/fixtures/recovery-review.js");
-const ROUTES: [&str; 16] = ["home", "actions", "scroll", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "workspace"];
+/// The `answers` snapshots (#1148, menu.md M3): Attention after four Later answers, with the accepted toast, Answered
+/// expanded, after dismissing, after the 6 s expiry; only when named.
+const ANSWERS: [(&str, &str); 4] = [
+    ("toast", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('toast')")),
+    ("expanded", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expanded')")),
+    ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
+    ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
+];
+const ROUTES: [&str; 17] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "workspace"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1407,22 +1415,23 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
     ["dark", "light"].iter().flat_map(|t| {
         let mut v = vec![(*t, "home".to_string(), 16, ""), (*t, "home".to_string(), 20, ""), (*t, "home".to_string(), 16, ACTIONS)];
         for font in [16, 20] { v.extend(SCROLLS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
+        for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "attention".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
-        for route in &ROUTES[4..] {
+        for route in &ROUTES[5..] {
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
-    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"workspace") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
+    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"answers"|"workspace") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
-    if script == RECOVERY { "recovery" } else if script == ACTIONS { "actions" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
+    if script == RECOVERY { "recovery" } else if script == ACTIONS { "actions" } else if ANSWERS.iter().any(|(_, s)| *s == script) { "answers" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
 }
 
 fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
     shots(install, routes).get(step).map_or(step.to_string(), |(t, p, f, js)| {
-        let suffix = if js.is_empty() || *js==RECOVERY { String::new() } else { format!("-{}", SCROLLS.iter().find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
-        let scroll = if route_of(p, js) == "scroll" { "-scroll" } else { "" };
+        let suffix = if js.is_empty() || *js==RECOVERY { String::new() } else { format!("-{}", SCROLLS.iter().chain(&ANSWERS).find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
+        let scroll = match route_of(p, js) { "scroll" => "-scroll", "answers" => "-answers", _ => "" };
         format!("{t}-{}{scroll}{suffix}-{f}", if Path::new(p).is_absolute() { "project" } else { p })
     })
 }
@@ -2196,9 +2205,11 @@ mod tests {
         assert_eq!(names(&["actions", "project"]), ["dark-home-actions-16", "dark-project-16", "light-home-actions-16", "light-project-16"]);
         assert_eq!(names(&["scroll"])[..3], ["dark-home-scroll-start-16", "dark-home-scroll-middle-16", "dark-home-scroll-end-16"]);
         assert_eq!(names(&["scroll"]).len(), 12, "start, middle and end at 16 and 20 px in both themes");
+        assert_eq!(names(&["answers"])[..4], ["dark-attention-answers-toast-16", "dark-attention-answers-expanded-16", "dark-attention-answers-dismissed-16", "dark-attention-answers-expired-16"]);
+        assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 5)), "no filter keeps the menu matrix without scroll or the separate workspace");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 6)), "no filter keeps the menu matrix without scroll, answers or the separate workspace");
         assert_eq!(names(&["workspace"]), ["dark-workspace-16", "dark-workspace-20", "light-workspace-16", "light-workspace-20"]);
         assert!(all.iter().all(|name|!name.contains("workspace")), "workspace uses its own native renderer");
         for route in ROUTES {

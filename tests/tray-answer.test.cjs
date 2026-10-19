@@ -57,6 +57,12 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   assert(!call('answerNotices').includes('Check delivery'));
   assert.equal((await latePromise).state,'unknown','an already settled promise stays one-shot');
   assert.equal(sent.length,lateSent,'late receipt must not resend the answer');
+  // #1148 M3: an accepted receipt toasts for 6 s and joins a bounded, dismissible Answered group in Attention.
+  assert(call('answerToast').includes('#841 · answer accepted'));
+  [...timers.values()].filter(t=>t.ms===6000).at(-1).f();assert.equal(call('answerToast'),'','the toast expires');
+  for(let i=0;i<25;i++){const o={...op,id:'bound-'+i};call('answerSend',board,o);call('answerReceipt',{root:'project',id:o.id,state:'accepted'});}
+  assert.equal(call('answerNotices').split('· accepted').length-1,20,'Answered keeps the newest 20');
+  assert(call('answerNotices').includes('data-a="answer-dismiss"'));
   context.S.projects=[];
   // Run the consumer's capability across shared stale/lost-response fixtures; component owns draft and op state.
   const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));

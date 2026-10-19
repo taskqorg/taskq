@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Answer notice options (#1148)</title>
+<!-- Illustration for the #1148 owner card; synthetic tasks, not a runtime capture. -->
+<style>
+body{margin:0;padding:16px;font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#1b2026;color:#eef2f5;display:grid;grid-template-columns:repeat(4,300px);gap:16px}
+h2{font-size:15px;margin:0 0 6px}
+.pane{background:#252b32;border:1px solid #46505b;border-radius:10px;padding:8px;position:relative;min-height:470px}
+.note{font-size:13px;color:#b9c3cd;margin:0 0 8px}
+.n{padding:4px 6px;border-radius:6px;background:#2f3741;margin:3px 0;font-size:14px}
+.n a{color:#9cc8ff}
+.x{float:right;color:#b9c3cd}
+.strip{font-size:13px;color:#b9c3cd;border-bottom:1px solid #46505b;padding-bottom:4px;margin-bottom:6px}
+.row{padding:4px 2px;border-top:1px solid #333b45;font-size:14px}
+.row b{color:#edbc96}.row i{color:#8dd2b8;font-style:normal}
+.age{color:#b9c3cd;font-size:13px}
+h3{font-size:14px;margin:8px 0 2px}
+details{font-size:14px;margin-top:6px}summary{color:#b9c3cd}
+.toast{position:absolute;left:12px;right:12px;bottom:12px;background:#36404c;border:1px solid #8dd2b8;border-radius:8px;padding:6px 8px;font-size:14px;box-shadow:0 4px 14px #0008}
+.bad{border-left:3px solid #ee96a5}
+</style>
+<section class="pane"><h2>Now</h2><p class="note">Every receipt stacks above Home forever; rows move down.</p>
+<div class="n">#1101 · accepted <a>Board ↗</a></div><div class="n">#1102 · accepted <a>Board ↗</a></div><div class="n">#1103 · accepted <a>Board ↗</a></div><div class="n">#1104 · accepted <a>Board ↗</a></div><div class="n">#1105 · accepted <a>Board ↗</a></div>
+<div class="strip">Home</div><h3>Attention</h3>
+<div class="row"><b>?</b> #1110 <span class="age">· 2h</span><br>Pick the release window</div>
+<div class="row"><i>▶</i> #1111 <span class="age">· 5m</span><br>Fix tray resize</div></section>
+
+<section class="pane"><h2>1 ★ Answered group</h2><p class="note">No top stack. Accepted goes to a collapsed group in Attention (last 20, × each). Unknown/rejected stay as Attention rows.</p>
+<div class="strip">Home</div><h3>Attention</h3>
+<div class="row"><b>?</b> #1110 <span class="age">· 2h</span><br>Pick the release window</div>
+<div class="n bad">#1105 · delivery unknown <a>Check delivery</a><span class="x">×</span></div>
+<details open><summary>Answered (4)</summary><div class="n">#1104 · accepted <a>Board ↗</a><span class="x">×</span></div><div class="n">#1103 · accepted <a>Board ↗</a><span class="x">×</span></div><div class="n">… older, up to 20</div></details>
+<div class="row"><i>▶</i> #1111 <span class="age">· 5m</span><br>Fix tray resize</div></section>
+
+<section class="pane"><h2>2 Toast + group</h2><p class="note">As 1, plus a 6 s overlay toast after each accepted answer. The overlay never moves rows.</p>
+<div class="strip">Home</div><h3>Attention</h3>
+<div class="row"><b>?</b> #1110 <span class="age">· 2h</span><br>Pick the release window</div>
+<details><summary>Answered (4)</summary></details>
+<div class="row"><i>▶</i> #1111 <span class="age">· 5m</span><br>Fix tray resize</div>
+<div class="toast">#1105 · answer accepted <a>Board ↗</a><span class="x">×</span></div></section>
+
+<section class="pane"><h2>3 Capped top stack</h2><p class="note">Keep the top stack, newest 3 with × and Show older. Rows still move by up to three lines.</p>
+<div class="n">#1105 · accepted <a>Board ↗</a><span class="x">×</span></div><div class="n">#1104 · accepted <a>Board ↗</a><span class="x">×</span></div><div class="n">#1103 · accepted <a>Board ↗</a><span class="x">×</span></div><div class="n"><a>Show older (2)</a></div>
+<div class="strip">Home</div><h3>Attention</h3>
+<div class="row"><b>?</b> #1110 <span class="age">· 2h</span><br>Pick the release window</div>
+<div class="row"><i>▶</i> #1111 <span class="age">· 5m</span><br>Fix tray resize</div></section>

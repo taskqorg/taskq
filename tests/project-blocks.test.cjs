@@ -20,6 +20,11 @@ assert(!q.task(p,{...row,url:'javascript:alert(1)'}).includes('href="javascript:
 assert(!q.task(p,{...row,local_session:false}).includes('codex://'));
 assert(q.task(p,{...row,local_session:false,session_reason:'Codex session opens only on WIN'}).includes('title="Codex session opens only on WIN">Session unavailable'));
 // R6/R12: the native snapshot's unresolved execution must remain visible in every shared task block.
+// § 4 Tray age: short units from the last logged state change; unknown names its reason; no `since`, no age.
+assert.deepEqual([59,300,7200,259200,-5].map(q.age),['<1m','5m','2h','3d','<1m']);
+assert(q.task({...p,now:1300},{...row,since:1000}).includes('data-since="1000" title="Since the last state change">5m<'));
+assert(q.task(p,{...row,since:null}).includes('title="Age unknown: no logged state change">age ?'));
+assert(!q.task(p,row).includes('tqp-age'));
 const waiting=require('./fixtures/status-snapshot.json').tasks.find(t=>t.n===2),waitRow=q.task(p,waiting);
 assert(waitRow.includes(waiting.execution_wait),'unknown execution reason is visible, not only a missing session link');
 assert(waitRow.indexOf(waiting.execution_wait)<waitRow.indexOf('tqp-task-title'),'execution status stays with metadata');

@@ -2,7 +2,7 @@
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 
-const {link,observation,counters,summary,aggregate,task,handle}=execution.module("project-blocks",{
+const {link,observation,counters,summary,aggregate,age,task,handle}=execution.module("project-blocks",{
 link:function(href,text,label,session=false){
     const target=url(href,session);
     return target?'<a href="'+target+'" data-url="'+target+'"'+(label?' aria-label="'+esc(label)+'" title="'+esc(label)+'"':'')+'>'+text+'</a>':text;
@@ -45,16 +45,20 @@ summary:function(p){
     return '<section class="tqp tqp-project" aria-label="'+esc(p.name)+'"><div class="tqp-identity"><button type="button" data-tqp="project" data-project="'+esc(p.id)+'">'+icon(p.pinned?'pin':'folder')+' '+esc(p.name)+'</button>'+link(p.board.url,icon(p.board.kind)+' Board','Open '+p.name+' Board')+'</div>'+counters(o.counts,p.id,p.name,o.partial)+'</section>';
   },
 aggregate:function(projects){const o=observation(projects);return '<section class="tqp" aria-label="All projects">'+counters(o.counts,'','All projects',o.partial)+'</section>';},
+// Short age since the last logged state change (taskq.md § 4 Tray): 5m, 2h, 3d.
+age:function(s){s=Math.max(0,s);return s<60?'<1m':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d';},
 task:function(p,row,global=false){
     const st=states.find(s=>s[0]===row.state),name=st?st[1]:row.state,mark=st?st[2]:'circle',kind=st?st[3]:'';
     const rt=row.runtime,brand=rt==='claude'?'claude':['codex','codex-app'].includes(rt)?'openai':'';
     const remote=row.host&&!row.local_session;
     // M3: a remote row puts the remote mark before the runtime mark; the host name is its only text.
     const marks=(remote?'<span title="Remote host" aria-label="Remote host">'+icon('network')+'</span> ':'')+(rt?icon(brand)+' '+esc(rt):'');
-    const metadata=[global?esc(p.name):'',row.host?esc(row.host):'',marks].filter(Boolean).join(' · ');
     // Adapters supply session URLs: an account-scoped https link on any host, a codex:// thread only on its owning host.
     const target=url(row.session_url,!!row.local_session);
     const session=target?link(row.session_url,icon('terminal'),'Open '+(rt||'agent')+' session',true):row.host?'<small'+(row.session_reason?' title="'+esc(row.session_reason)+'"':'')+'>'+(remote?'Session unavailable':'Session starting or unavailable')+'</small>':'';
+    // Rows without `since` (other consumers) show no age; null names why it is unknown.
+    const since=!('since' in row)?'':row.since==null?'<small class="tqp-age" title="Age unknown: no logged state change">age ?</small>':'<small class="tqp-age" data-since="'+Number(row.since)+'" title="Since the last state change">'+age((p.now??Date.now()/1000)-row.since)+'</small>';
+    const metadata=[since,global?esc(p.name):'',row.host?esc(row.host):'',marks].filter(Boolean).join(' · ');
     const wait=row.execution_wait?'<small class="tqp-execution-wait" role="status">'+esc(row.execution_wait)+'</small>':'';
     return '<div class="tqp tqp-task"><div class="tqp-task-head"><span class="'+kind+'" title="'+esc(name)+'" aria-label="'+esc(name)+'">'+icon(mark)+'</span> '+link(row.url,icon(p.board.kind)+' #'+esc(row.n),'Open task #'+row.n)+' <span class="tqp-meta">'+metadata+'</span> '+session+' '+wait+'</div><div class="tqp-task-title">'+esc(row.title)+'</div></div>';
   },
@@ -91,5 +95,5 @@ const root=globalThis;
 
   // Consumer adapter owns placement/routes; component emits navigation only, never task operations.
 
-  const api={states,assets,observation,counters,summary,aggregate,task,handle};
+  const api={states,assets,observation,counters,summary,aggregate,age,task,handle};
   module.exports=api;

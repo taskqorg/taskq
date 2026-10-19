@@ -40,12 +40,28 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       await page.locator('[data-a=answer-retry]').click();
       await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===3);
       assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='answer').map(m=>m.op)),[op,op,op]);
+      const rowTop=()=>page.locator('.tqp-task').first().evaluate(e=>e.getBoundingClientRect().top);
+      const before=await rowTop();
       await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:op.id,state:'accepted'});
       await page.waitForFunction(()=>[...document.querySelectorAll('[role=status]')].some(e=>e.textContent.includes('accepted')));
+      // #1148 M3: the accepted toast overlays; task rows keep their position.
+      assert.equal(await page.locator('.toast').evaluate(e=>getComputedStyle(e).position),'fixed');
+      assert.equal(await rowTop(),before,'a receipt must not move task rows');
       assert.equal(await page.locator('.qac').count(),0);
       assert.equal(await page.locator('.qac textarea').count(),0);
       assert.equal(await page.locator('.tqp-task a[data-url]').first().getAttribute('href'),board+'/'+rows[1].n);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+      // #1148 M3: Answered starts collapsed on Attention, whose other groups open; an explicit toggle survives refresh and Back.
+      const answeredOpen=()=>page.locator('details.answered').evaluate(d=>d.open);
+      await page.evaluate(s=>taskq.receive({...s,page:'attention'}),state);
+      assert.equal(await answeredOpen(),false,'Attention must not expand Answered');
+      await page.locator('details.answered > summary').click();
+      await page.evaluate(s=>taskq.receive({...s,page:undefined}),state);
+      assert.equal(await answeredOpen(),true,'refresh keeps an explicit toggle');
+      await page.locator('[data-route=settings]').click();await page.locator('[data-a=back]').click();
+      assert.equal(await answeredOpen(),true,'Back keeps an explicit toggle');
+      await page.locator('details.answered > summary').click();
+      await page.evaluate(s=>taskq.receive(s),state);
       const ask={...rows[1],n:42,state:'ask',card:'Reviewer cannot continue.',question:{parsed:false,text:'Reviewer cannot continue.',choices:[]}};
       state.projects[0].tasks=[ask,...['doing','review','ready','later','waiting'].map((state,i)=>({...rows[1],n:50+i,state}))];
       await page.evaluate(s=>taskq.receive(s),state);

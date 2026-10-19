@@ -38,7 +38,8 @@
       "blocked": [],
       "card": null,
       "question": null,
-      "failed": null
+      "failed": null,
+      "since": null
     },
     {
       "n": 2,
@@ -81,7 +82,6 @@
         }
       },
       "failed": null,
-      "execution_wait": "execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",
       "executions": [
         {
           "task": 2,
@@ -93,7 +93,9 @@
           "host": "mac",
           "observed": null
         }
-      ]
+      ],
+      "execution_wait": "execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",
+      "since": 4
     },
     {
       "n": 4,
@@ -119,7 +121,8 @@
       ],
       "card": null,
       "question": null,
-      "failed": null
+      "failed": null,
+      "since": null
     },
     {
       "n": 5,
@@ -137,7 +140,8 @@
       "blocked": [],
       "card": null,
       "question": null,
-      "failed": "Reason: no login"
+      "failed": "Reason: no login",
+      "since": 8
     }
   ],
   "hosts": [

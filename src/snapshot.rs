@@ -68,6 +68,8 @@ pub struct Row {
     pub failed: Option<String>,
     /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4).
     pub session_url: Option<String>,
+    /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
+    pub since: Option<i64>,
 }
 
 pub struct Host {
@@ -119,6 +121,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| s.starts_with("claude:")))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
+        since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
     let hosts = hosts.iter().map(|h| Host {
@@ -206,6 +209,7 @@ impl Row {
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
+        row["since"] = json!(self.since);
         row
     }
 }
