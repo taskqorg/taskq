@@ -25,6 +25,8 @@ Steady service, host and tray polling no longer writes one telemetry row per pol
 
 Recovery for v4.6.19–v4.6.22 hosts whose update fails with `telemetry IPC installation budget mismatch` (#1294): retry `taskq update` after this release is published, or run the new binary's `service install`. A full/unavailable old store can still prevent selftest or installation receipts; compatibility does not fabricate successful writes. The new Stop lifecycle can retain its durable intent and report telemetry receipts unknown while still requiring exact ownership, drain and native exit. Stop protocol 2 identifies that support; a new CLI refuses a degraded request to protocol 1 before writing intent. Older CLIs read protocol 2 as unknown; use the new CLI. Complete the service upgrade before using degraded Stop; exhausted legacy Stop remains safely refused. Released old CLIs are unchanged. No board change.
 
+DashQ receives the `taskq.resources/1` project-limits projection as record `taskq-resources/1` beside the board snapshot (#1299; [enrollment record](docs/design/shared-resource-controls.md#project-overlay)). Existing connections keep sending the board alone until `taskq enroll` is rerun and approved in the browser; host resource grants name the connection generation and may need to be made again. No board change.
+
 ## v4.6.22
 
 Telemetry keeps 30 days within a 1 GiB budget with half held in reserve; pruning and derived limits keep the service running instead of rejecting telemetry with `budget-exhausted` (#1278). Mac Drain and Full stop keep a durable hold (#1214), and after a reviewed Stop the owner can resume only selected local tasks (#1285). Mac activation follows [the repair handoff](docs/repair-1276.md); release publication does not prove activation.

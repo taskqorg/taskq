@@ -49,6 +49,20 @@
       "runtime_usage": [], "sample": null, "blockers": [], "completeness": "complete"
     }]
   },
+  "enrollment_record": {
+    "schema": "taskq-resources/1", "event_id": "171-0123456789abcdef", "observed_at": 171,
+    "payload": {
+      "schema": "taskq.resources/1", "observed_at": 110,
+      "targets": [{
+        "target": {"installation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "generation": 1, "project_id": "project-1", "runtime_id": "codex"},
+        "service_version": "4.6.23",
+        "supported": [{"policy_schema": "taskq.project-limits/1", "modes": [], "fields": ["runtime_limit"], "scopes": ["runtime"]}],
+        "current_revision": "1111111111111111111111111111111111111111111111111111111111111111", "effective_revision": null,
+        "current_policy": {"runtime_limit": 1}, "effective_policy": {"runtime_limit": null},
+        "runtime_usage": [], "sample": null, "blockers": [{"code": "sample", "knowledge": "unknown"}], "completeness": "unknown"
+      }]
+    }
+  },
   "traces": [
     {"name": "review-confirm and saved versus effective", "steps": [
       {"action": "confirm", "expect": "draft"}, {"action": "review", "expect": "reviewed"},

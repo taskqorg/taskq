@@ -784,13 +784,14 @@ pub fn report(install: &Path, now: u64) -> Res<Vec<String>> {
 /// override) at the project revision; effective is what a fresh status of this host ran, else unknown (null).
 /// `observed_at` is the oldest status time read, so a consumer ages the readback, never the print.
 /// `ponytail:` one observation time for all projects; per-project groups if one idle project hides the rest.
-pub fn projection(install: &Path, now: u64) -> Res<Value> {
+/// `wait: false` (the service's enrollment sender) never waits behind a policy writer; it retries on a later pass.
+pub fn projection(install: &Path, now: u64, wait: bool) -> Res<Value> {
     let host = crate::host::Policy::read(install)?;
     let conn = enrollment::active(install).ok().flatten();
     let (inst, generation) = conn.as_ref().map_or((Value::Null, Value::Null), |a| (a["installation"].clone(), a["generation"].clone()));
     let mut targets = vec![];
     let mut observed: Option<Option<u64>> = None;
-    with(install, |s| {
+    let body = |s: &mut State| {
         prepare(s, install, now)?;
         for (pid, p) in &s.projects {
             let root = PathBuf::from(&p.root);
@@ -818,7 +819,8 @@ pub fn projection(install: &Path, now: u64) -> Res<Value> {
             }
         }
         Ok(())
-    })?;
+    };
+    if wait { with(install, body) } else { try_with(install, body) }?;
     Ok(json!({"schema": SCHEMA, "observed_at": observed.flatten(), "targets": targets}))
 }
 
@@ -1148,32 +1150,32 @@ mod tests {
         let r = receipt_of(&t, "lower");
         assert_eq!((&r["state"], &r["effective_revision"], &r["observed_at"]), (&json!("applied"), &json!(r1), &json!(110)));
         // the projection: allowlisted keys, this root's saved overlay at r1, effective only from the fresh status
-        let pj = projection(&t.install, 111).unwrap();
+        let pj = projection(&t.install, 111, true).unwrap();
         let codex = pj["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap();
         let keys: Vec<&String> = codex.as_object().unwrap().keys().collect();
         assert_eq!(keys, fix()["overlay_projection"]["targets"][0].as_object().unwrap().keys().collect::<Vec<_>>());
         assert_eq!((&codex["target"]["project_id"], &codex["supported"][0]["policy_schema"]), (&json!("project-1"), &json!(OVERLAY)));
         assert_eq!((&codex["current_revision"], &codex["effective_revision"], &codex["current_policy"], &codex["effective_policy"]),
             (&json!(r1), &json!(r1), &json!({"runtime_limit": 1}), &json!({"runtime_limit": 1})));
-        assert_eq!(projection(&t.install, 200).unwrap()["targets"][0]["effective_revision"], Value::Null, "a stale status is unknown");
+        assert_eq!(projection(&t.install, 200, true).unwrap()["targets"][0]["effective_revision"], Value::Null, "a stale status is unknown");
         // the readback keeps its own age: observed_at is the status time, so 61 s later a consumer reads it stale
-        assert_eq!((&pj["observed_at"], &projection(&t.install, 200).unwrap()["observed_at"]), (&json!(110), &json!(110)));
+        assert_eq!((&pj["observed_at"], &projection(&t.install, 200, true).unwrap()["observed_at"]), (&json!(110), &json!(110)));
         // status reasons survive as blockers; an unknown one makes the target partial, never complete
         fs::write(crate::dot(&t.root).join("status.json"), json!({"at": 110, "host": policy.me, "capacity": {"project_revision": r1, "project_limits": {"codex": 1},
             "gate": "held", "reasons": [{"code": "cpu", "text": "busy"}, {"code": "future-reason", "text": "?"}]}}).to_string()).unwrap();
-        let codex = projection(&t.install, 111).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        let codex = projection(&t.install, 111, true).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!((codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(), &codex["completeness"]),
             (vec![("cpu", "known"), ("unknown", "unknown")], &json!("partial")));
         // 61 s later the same-host status is stale: last-known blockers stay, an unknown sample is added
-        let codex = projection(&t.install, 171).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        let codex = projection(&t.install, 171, true).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!((codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(), &codex["completeness"], &codex["effective_revision"], &codex["effective_policy"]["runtime_limit"]),
             (vec![("cpu", "known"), ("unknown", "unknown"), ("sample", "unknown")], &json!("unknown"), &Value::Null, &Value::Null));
         // an unreadable taskq.json keeps the project listed with a config blocker and nothing effective, fresh or stale
         fs::write(t.root.join("taskq.json"), "{").unwrap();
-        let codex = projection(&t.install, 111).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        let codex = projection(&t.install, 111, true).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!((&codex["blockers"][0]["code"], &codex["completeness"], &codex["effective_revision"], &codex["effective_policy"]["runtime_limit"]),
             (&json!("config"), &json!("unknown"), &Value::Null, &Value::Null));
-        let codex = projection(&t.install, 171).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        let codex = projection(&t.install, 171, true).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!(codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(),
             vec![("config", "known"), ("cpu", "known"), ("unknown", "unknown"), ("sample", "unknown")]);
         fs::write(t.root.join("taskq.json"), &project).unwrap();
@@ -1571,6 +1573,91 @@ mod tests {
         assert!(report(&t.install, 40).unwrap_err().contains("unreadable"));
         assert!(exchange(&t.install, &active(), &mut Dash { replies: vec![], posts: vec![], at: 0, cut: None }, 40).is_err());
         assert_eq!(fs::read_to_string(dir(&t.install).join(FILE)).unwrap(), "{");
+        fs::remove_dir_all(&t.base).unwrap();
+    }
+
+    /// DashQ ingest stand-in: the C4 payload allowlist of dashq src/enroll.rs `metadata` and `field`, one receipt per
+    /// record; `status` 401 is a revoke.
+    struct Ingest { status: u16, bodies: Vec<Value> }
+    impl Wire for Ingest {
+        fn post(&mut self, dest: &str, route: &str, auth: Option<&str>, body: &Value) -> Result<(u16, Value), String> {
+            assert_eq!((dest, route, auth), ("https://x/machine", "/ingest", Some("c")));
+            self.bodies.push(body.clone());
+            if self.status != 200 { return Ok((self.status, json!({"protocol": 1, "error": "revoked"}))) }
+            let receipts: Vec<Value> = body["records"].as_array().unwrap().iter().map(|r| match dashq_metadata(&r["payload"], 0) {
+                true => json!({"event_id": r["event_id"], "state": "accepted"}),
+                false => json!({"event_id": r["event_id"], "state": "rejected", "reason": "metadata"}),
+            }).collect();
+            Ok((200, json!({"protocol": 1, "receipts": receipts})))
+        }
+        fn now(&self) -> u64 { 0 }
+        fn sleep(&mut self, _: u64) {}
+        fn show(&mut self, _: &str, _: &str) {}
+    }
+
+    fn dashq_metadata(v: &Value, depth: usize) -> bool {
+        const DENY: [&str; 18] = ["prompt", "command", "cmd", "args", "stdout", "stderr", "output", "input", "content", "text", "message", "path", "cwd", "env", "token", "secret", "password", "credential"];
+        let field = |k: &str| k.len() <= 64 && !DENY.iter().any(|d| k == *d || k.ends_with(&format!("_{d}")));
+        match v {
+            Value::Null | Value::Bool(_) | Value::Number(_) => depth > 0,
+            Value::String(s) => depth > 0 && s.chars().count() <= 256 && !s.chars().any(char::is_control) && !s.starts_with(['/', '~', '\\']) && !s.get(1..3).is_some_and(|x| x == ":\\" || x == ":/"),
+            Value::Array(a) => depth > 0 && depth < 6 && a.len() <= 256 && a.iter().all(|x| dashq_metadata(x, depth + 1)),
+            Value::Object(o) => depth < 5 && o.len() <= 256 && o.iter().all(|(k, x)| field(k) && dashq_metadata(x, depth + 1)),
+        }
+    }
+
+    // Chain #1299: host overlay + service status -> projection -> enrollment record -> coreq deliver -> DashQ ingest.
+    // Risk: a record DashQ's allowlist refuses (blocker scope nests too deep), a path or credential in the payload, a
+    // grant without the schema sending it, stale or unreadable readback shown as effective, or delivery after a revoke.
+    #[test]
+    fn enrollment_delivers_the_projection_dashq_accepts() {
+        let t = setup("enrolled");
+        fs::write(t.install.join("host.json"), json!({"limits": {"codex": 5}, "projects": {t.root.display().to_string(): {"limits": {"codex": 1}}}}).to_string()).unwrap();
+        assert!(enrollment::resources_record(&t.install, &active(), 111).unwrap_err().contains("rerun taskq enroll"), "an old grant lacks the schema");
+        let mut a = active();
+        a["schemas"] = json!([enrollment::SCHEMA, enrollment::RESOURCES]);
+        fs::write(conn_file(&t.install), conn(Some(a.clone())).to_string()).unwrap();
+        let rev = projection(&t.install, 100, true).unwrap()["targets"][0]["current_revision"].clone();
+        fs::create_dir_all(crate::dot(&t.root)).unwrap();
+        fs::write(crate::dot(&t.root).join("status.json"), json!({"at": 110, "host": crate::host::Policy::read(&t.install).unwrap().me, "capacity": {"project_revision": rev, "project_limits": {"codex": 1}}}).to_string()).unwrap();
+        let codex = |r: &Value| r["payload"]["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        let deliver = |recs: &[Value], wire: &mut Ingest| coreq::enroll::deliver(&enrollment::dir(&t.install), recs, &mut Default::default(), wire);
+        locked(&t.install, || Ok(assert!(enrollment::resources_record(&t.install, &a, 111).unwrap_err().contains("lock unavailable"), "the service pass never waits behind a writer"))).unwrap();
+        // fresh: the effective revision and limit come from this host's status
+        let (_, fresh) = enrollment::resources_record(&t.install, &a, 111).unwrap();
+        assert_eq!((&codex(&fresh)["effective_revision"], &codex(&fresh)["effective_policy"]), (&rev, &json!({"runtime_limit": 1})));
+        // stale: the exact fixture shape, effective unknown with the sample reason
+        let (_, stale) = enrollment::resources_record(&t.install, &a, 171).unwrap();
+        let mut want = fix()["enrollment_record"].clone();
+        assert!(stale["event_id"].as_str().unwrap().starts_with("171-"));
+        want["event_id"] = stale["event_id"].clone();
+        want["payload"]["targets"][0]["current_revision"] = rev.clone();
+        want["payload"]["targets"][0]["service_version"] = json!(crate::platform::VERSION);
+        let mut got = stale.clone();
+        got.as_object_mut().unwrap().remove("grant");
+        got["payload"]["targets"] = json!([codex(&stale)]);
+        assert_eq!(got, want);
+        // unreadable taskq.json: a config blocker, nothing effective
+        fs::write(t.root.join("taskq.json"), "{").unwrap();
+        let (_, broken) = enrollment::resources_record(&t.install, &a, 111).unwrap();
+        assert_eq!((&codex(&broken)["blockers"][0], &codex(&broken)["effective_revision"]), (&json!({"code": "config", "knowledge": "known"}), &Value::Null));
+        let recs = [fresh, stale, broken];
+        let mut dash = Ingest { status: 200, bodies: vec![] };
+        let receipts = deliver(&recs, &mut dash).unwrap();
+        assert!(receipts.iter().all(|r| r["state"] == "accepted"), "{receipts:?}");
+        let sent = dash.bodies[0].to_string();
+        assert!(!sent.contains(&t.base.display().to_string()) && !sent.contains("\"c\"") && !sent.contains("grant"), "no path, credential or grant leaves");
+        // the projection as printed, blocker scope included, is what DashQ would refuse
+        let mut raw = recs[1].clone();
+        raw["payload"] = projection(&t.install, 171, true).unwrap();
+        assert!(!dashq_metadata(&raw["payload"], 0));
+        // revoked: coreq ends the connection; the next try is disconnected and sends nothing
+        let mut revoked = Ingest { status: 401, bodies: vec![] };
+        assert_eq!(deliver(&recs, &mut revoked), Err(coreq::enroll::Delivery::Stopped("revoked".into())));
+        assert!(enrollment::active(&t.install).unwrap().is_none());
+        assert_eq!(deliver(&recs, &mut revoked), Err(coreq::enroll::Delivery::Stopped("disconnected".into())));
+        assert_eq!(revoked.bodies.len(), 1);
+        assert!(enrollment::resources_record(&t.install, &a, 172).is_err(), "no record without a connection");
         fs::remove_dir_all(&t.base).unwrap();
     }
 }

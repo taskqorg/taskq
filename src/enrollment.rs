@@ -10,6 +10,9 @@ use serde_json::{Value, json};
 use std::{collections::BTreeMap, fs, io::{Read, Write}, path::{Path, PathBuf}, thread::JoinHandle};
 
 pub const SCHEMA: &str = "taskq-board/1";
+/// The `taskq.resources/1` projection as a DashQ record (shared-resource-controls.md#project-overlay); DashQ names
+/// record schemas `<product>-<name>/<n>` and accepts only those its grant lists.
+pub const RESOURCES: &str = "taskq-resources/1";
 /// DashQ C4 metadata: at most 256 array items.
 const MAX_TASKS: usize = 256;
 /// An unchanged projection is resent after this many seconds, so DashQ's observation time stays fresh.
@@ -59,7 +62,7 @@ pub fn pair(install: &Path, url: &str, host: &str, board: &BoardScope, browser: 
     let dest = destination(url)?;
     let id = installation_id(install)?;
     let value = board.value();
-    let req = enroll::Request { installation: Some(&id), product: "taskq", host_label: host, schemas: &[SCHEMA], scope: Some((SCHEMA, &value)), capabilities: &[] };
+    let req = enroll::Request { installation: Some(&id), product: "taskq", host_label: host, schemas: &[SCHEMA, RESOURCES], scope: Some((SCHEMA, &value)), capabilities: &[] };
     enroll::pair(&dir(install), &dest, &req, &mut resources::Fenced::new(install, Https { browser }))
 }
 
@@ -141,6 +144,24 @@ pub fn record(install: &Path, s: &Snapshot, active: &Value) -> Res<(String, Valu
     Ok((digest, r))
 }
 
+/// The resources record, only when the grant lists [`RESOURCES`] (a connection paired before it needs `taskq enroll`
+/// again). DashQ's metadata allowlist nests objects at most four deep, so each blocker drops its `scope`: the
+/// projection always scopes it to its own target. Payload `observed_at` keeps the status readback time.
+pub fn resources_record(install: &Path, active: &Value, now: u64) -> Res<(String, Value)> {
+    if !active["schemas"].as_array().is_some_and(|a| a.iter().any(|s| s == RESOURCES)) {
+        return Err(format!("grant lacks {RESOURCES}; rerun taskq enroll"));
+    }
+    let mut p = resources::projection(install, now, false)?;
+    for b in p["targets"].as_array_mut().into_iter().flatten().filter_map(|t| t["blockers"].as_array_mut()).flatten() {
+        b.as_object_mut().map(|o| o.remove("scope"));
+    }
+    let observed = p.as_object_mut().unwrap().remove("observed_at");
+    let digest = enroll::digest(&p);
+    p["observed_at"] = observed.unwrap_or_default();
+    let r = enroll::stamp(&dir(install), RESOURCES, &format!("{now}-{}", &digest[..16]), now, p)?;
+    Ok((digest, r))
+}
+
 type Job = JoinHandle<(Backoff, Result<String, Delivery>)>;
 
 /// The service's sender: one delivery at a time on its own thread, never blocking a pass; each try sends the
@@ -198,14 +219,24 @@ impl Sender {
         };
         // another project's board, or no board read yet: nothing to send from here
         let Some(s) = snap.filter(|s| speaks(&a, Some(s))) else { return Ok(()) };
-        let (digest, rec) = record(install, s, &a).map_err(|e| format!("not sent: {e}"))?;
+        let (mut digest, rec) = record(install, s, &a).map_err(|e| format!("not sent: {e}"))?;
+        let mut recs = vec![rec];
+        // the board record goes alone when the resources one cannot be built; the outcome names why
+        let skipped = match resources_record(install, &a, now) {
+            Ok((d, r)) => { digest = format!("{digest}:{d}"); recs.push(r); None }
+            Err(e) => Some(format!("resources not sent: {e}")),
+        };
         if self.sent.as_ref().is_some_and(|(d, at)| *d == digest && now < at + RESEND) { return Ok(()) }
         let mut backoff = std::mem::take(&mut self.backoff);
         let install = install.to_path_buf();
         self.job = Some((digest, now, std::thread::spawn(move || {
-            let r = enroll::deliver(&d, &[rec], &mut backoff, &mut resources::Fenced::new(&install, Https { browser: false })).map(|r| match r[0]["state"].as_str() {
-                Some("accepted") => "accepted".to_string(),
-                _ => format!("rejected: {}", r[0]["reason"].as_str().unwrap_or("unknown")),
+            let r = enroll::deliver(&d, &recs, &mut backoff, &mut resources::Fenced::new(&install, Https { browser: false })).map(|r| {
+                let state = |x: &Value| match x["state"].as_str() {
+                    Some("accepted") => "accepted".to_string(),
+                    _ => format!("rejected: {}", x["reason"].as_str().unwrap_or("unknown")),
+                };
+                let res = r.get(1).map(|x| format!("resources {}", state(x))).or(skipped);
+                std::iter::once(state(&r[0])).chain(res).collect::<Vec<_>>().join("; ")
             });
             (backoff, r)
         })));
