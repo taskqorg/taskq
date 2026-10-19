@@ -2,6 +2,22 @@
 
 The Mac workspace uses retained request/answer records and one editable native window. Home opens the selected exchange; opening and closing do not submit work. Follow-ups carry the selected project and leaf request. Confirmation carries the shown request/revision; partial and unknown outcomes remain explicit. R1, R9, R12, R13 and § 4 apply. No runtime, model, grants, working profile or other host was changed.
 
+## Reply dispatch repair
+
+Candidate source `aca86abae328f87d54e193f3b1a8b9f9b90e364e` fixes the review finding: Home Reply/Next previously saved a draft and acknowledged success without queuing the follow-up. The native Home handler now persists the draft, submits to the explicit project/current leaf, and only acknowledges accepted submission. Open/Review still selects without submitting or confirming. No contract decision changed (M7, A1, R12, § 7.4).
+
+`cargo test --locked --bin taskq home_workspace_followup_dispatch -- --nocapture` failed before the fix with `Home acknowledged a reply without queuing it` (1 request instead of 2), then passed after. The regression preserves target isolation, stale-click rejection, refused drafts and reopen-without-resend protection; no existing assertions were weakened.
+
+Fresh checks:
+
+- `env -u TASKQ_ATTEMPT -u TASKQ_TASK -u TASKQ_ROLE python3 scripts/check.py --base origin/main`: 395 unit tests passed, 31 ignored; host policy/restart, resource contract and service-log integrations passed. The telemetry process test remains **sandbox-blocked**: `sandbox-exec: sandbox_apply: Operation not permitted`. The first run inherited worker variables and had 16 host/lifecycle failures; only the test subprocess environment was isolated, with no sandbox or permission change.
+- All 18 `tests/*.test.cjs` scripts, `node tests/workspace.browser.cjs`, screenshot manifest tests and release script checks passed.
+- Isolated offline selftest: 85 golden traces, formats and local telemetry passed; board intentionally unknown. Live `cargo run --locked -- selftest`: failed with one terminal record older than TTL 300s; the host profile was not changed.
+- `docs/shots/update.sh` passed and refreshed the source manifest. [Fresh native workspace capture](review-fix-workspace-dark-20.png) was inspected: full reply, target/effect and revision control are visible. Release artifact SHA-256: `9685efa7ce1e8b297088f913489a3abe873d361f83eb500af4001c0438013f28`; same platform/rendering settings as below, 860×680 logical pixels, dark 20 px. The first temporary fixture mixed `/var` and `/private/var` root aliases and showed no selection; recreating the fixture with one canonical root restored the intended exchange.
+- Interactive native ownership remains **unverified**. The isolated bundle reported WebKit sandbox extension `Operation not permitted`; Computer Use timed out and could not resolve the app. No reopen/raise/close sequence was observed. The isolated fixture tray was stopped; no working service was changed.
+
+Owner visual acceptance of the linked before/after evidence, native ownership qualification and green `merge_group` CI remain required before publication. No CI wait, merge or deployment was performed.
+
 ## Before and after
 
 Baseline `bf41d2f6`: `node tests/tray-workspace.test.cjs` failed because Home had no `ai-open` route. The baseline Mac capture shows the inline exchange and confirmation. The same regression now passes. Native after captures show the full exchange, target/effect review, revision-bound Confirm and narrow conversation navigation.
