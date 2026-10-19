@@ -1,6 +1,6 @@
 #!/bin/sh
 # release.yml tag job (taskq.md § 8 item 1): prints `tag=v<version>` for GITHUB_OUTPUT when this run must release.
-# Tag push: that tag. Main push: only when the Cargo.toml version changed since BEFORE and tag v<version> is absent;
+# Tag push: that tag. Live push: only when the Cargo.toml version changed since BEFORE and tag v<version> is absent;
 # an unreadable or invalid version on either side fails without a tag. An existing tag never moves.
 set -eu
 if [ "$GITHUB_REF_TYPE" = tag ]; then echo "tag=$GITHUB_REF_NAME"; exit 0; fi

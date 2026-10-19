@@ -1,0 +1,24 @@
+#!/bin/sh
+# taskq.md § 8 item 1: install a local development build of origin/main (or the ref given) on this Mac.
+# Version <next patch>-dev.<unix seconds> sorts above the release on main and below the next one, so `current`
+# moves forward (coreq `newer`) and the next `live` release replaces it. Builds in a detached worktree beside the
+# primary checkout, so local edits there are never touched. Install hands running children over (#894).
+set -eu
+d=$HOME/.local/share/taskq
+repo=$(cd "$(dirname "$0")/.." && cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
+w=${TASKQ_DEV_WORKTREE:-$repo/.worktrees/dev-build}
+ref=${1:-origin/main}
+git -C "$repo" fetch -q origin main
+[ -d "$w" ] || git -C "$repo" worktree add -q --detach "$w" "$ref"
+cd "$w"
+git checkout -q -f --detach "$ref"
+v=$(python3 -c 'import re,time; m=re.search(r"^version = \"(\d+)\.(\d+)\.(\d+)\"$", open("Cargo.toml").read(), re.M); print(f"{m[1]}.{m[2]}.{int(m[3])+1}-dev.{int(time.time())}")')
+prev=$(cat "$d/current")
+trap 'git checkout -q -- Cargo.toml Cargo.lock' EXIT
+sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
+cargo build -q --release
+target/release/taskq selftest
+(cd "$(head -1 "$d/projects")" && "$w/target/release/taskq" service install)
+while read -r p; do touch "$p/.taskq/update"; done < "$d/projects"
+echo "installed $v from $(git rev-parse --short HEAD); was $prev"
+echo "rollback: echo $prev > $d/current, then run '$d/taskq service restart' in each project of $d/projects"

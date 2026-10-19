@@ -1,9 +1,9 @@
-# § 8 Release: a main push that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing.
+# § 8 Release: a live push (a fast-forward to a tested main commit) that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing.
 name: release
 on:
   push:
     tags: ['v*']
-    branches: [main]
+    branches: [live]
 permissions:
   contents: read
 jobs:
@@ -38,6 +38,7 @@ jobs:
       - name: Require selected tests on the exact source
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_BRANCH: main
         run: python3 .github/release-check.py
   build:
     needs: [tag, checks]

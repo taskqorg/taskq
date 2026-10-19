@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## Unreleased
+
+Releases come from the `live` branch: a fast-forward of `live` to a `main` commit whose merge-queue CI passed tags and publishes; `main` pushes no longer release. The Mac development host installs local `<next patch>-dev.<epoch>` builds with `scripts/dev-install.sh`. Release builds use thin LTO and CI caches Rust dependencies. No board change.
+
 ## v4.6.22
 
 Telemetry keeps 30 days within a 1 GiB budget with half held in reserve; pruning and derived limits keep the service running instead of rejecting telemetry with `budget-exhausted` (#1278). Mac Drain and Full stop keep a durable hold (#1214), and after a reviewed Stop the owner can resume only selected local tasks (#1285). Mac activation follows [the repair handoff](docs/repair-1276.md); release publication does not prove activation.
