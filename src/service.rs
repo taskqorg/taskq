@@ -256,6 +256,8 @@ pub struct Service<'a> {
     pub board: &'a dyn Board,
     pub cfg: Config,
     pub version: String,
+    started: u64,
+    diagnostics: std::cell::RefCell<Option<(std::time::Instant,Value)>>,
     pub kids: Vec<Kid>,
     /// `service <id>` in the heartbeat (§ 4): a hash of `<install>/installation-id`; empty writes no line.
     pub instance: String,
@@ -558,7 +560,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -950,10 +952,24 @@ impl<'a> Service<'a> {
         }).collect()
     }
 
+    pub fn service_diagnostics(&self)->Value {
+        if let Some((at,value))=self.diagnostics.borrow().as_ref().filter(|(at,_)|at.elapsed().as_secs()<60) {let _=at;return value.clone();}
+        let selected=crate::platform::tool(&self.cfg.install).current();
+        let pending=selected.as_deref().is_some_and(|v|v!=self.version)
+            || self.cfg.install.join("restart").exists() || crate::dot(&self.cfg.root).join("restart").exists();
+        let waiting=if let Some(host)=&self.host {
+            host.lock().map(|h|h.restart&&h.handoff_wait().is_some()).unwrap_or(false)
+        } else {pending&&!crate::lifecycle_waits(self,&self.cfg.root,false).is_empty()};
+        let value=crate::service_versions::collect(&self.cfg.install,&self.version,&self.instance,self.started,waiting);
+        *self.diagnostics.borrow_mut()=Some((std::time::Instant::now(),value.clone()));
+        value
+    }
+
     fn heartbeat_body(&self) -> String {
         let mut lines = vec![format!("version {}", self.version)];
         if !self.instance.is_empty() {
             lines.push(format!("service {}", self.instance));
+            lines.push(format!("diagnostics {}", self.service_diagnostics()));
         }
         if !self.machine.is_empty() {
             lines.push(format!("machine {}", self.machine));
@@ -2826,24 +2842,44 @@ mod tests {
         assert!(w.pass().is_ok());
     }
 
+    // D18: every installed service reports metadata without changing legacy heartbeat lines.
+    #[test]
+    fn heartbeat_reports_service_diagnostics() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let mut s = service(&b, &c, Default::default());
+        s.instance = "abcdef012345".into();
+        let body=s.heartbeat_body();
+        assert!(body.lines().any(|l| l.starts_with("diagnostics ")));
+        let diagnostics:Value=serde_json::from_str(body.lines().find_map(|l|l.strip_prefix("diagnostics ")).unwrap()).unwrap();
+        let at=diagnostics["observed"].as_i64().unwrap();
+        let issue=crate::board::Issue {number:1,title:"taskq host mac".into(),body,labels:vec![],assignees:vec![],updated:at,open:true,trusted:true,reason:None};
+        let snapshot=crate::snapshot::from_views("board",&b,&c,at,&[],&[issue]);
+        assert_eq!(snapshot.json()["hosts"][0]["diagnostics"]["running"]["value"],"4.0.0");
+        let stale=crate::snapshot::from_views("board",&b,&c,at+c.ttl as i64+1,&[],&[crate::board::Issue {
+            number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,open:true,trusted:true,reason:None}]);
+        assert_eq!(stale.json()["hosts"][0]["diagnostics"]["running"]["state"],"stale");
+    }
+
     // Chain: § 4 heartbeat body, DashQ host join (dashq docs/design/hosts.md H2). Risk: a changed or missing line
     // splits one machine into several Hosts rows or breaks the one-service-per-host check.
     #[test]
     fn heartbeat_body_lists_version_service_machine_focus() {
+        let legacy=|s:&Service|s.heartbeat_body().lines().filter(|l|!l.starts_with("diagnostics ")).collect::<Vec<_>>().join("\n");
         let b = Fake::default();
         let c = cfg("win");
         let mut s = service(&b, &c, Default::default());
         s.instance = "abc123".into();
         s.machine = "DESKTOP wsl".into();
         s.focus = vec![];
-        assert_eq!(s.heartbeat_body(), "version 4.0.0\nservice abc123\nmachine DESKTOP wsl\nfocus off");
+        assert_eq!(legacy(&s), "version 4.0.0\nservice abc123\nmachine DESKTOP wsl\nfocus off");
         s.machine = String::new();
         s.focus = vec!["all".into()];
-        assert_eq!(s.heartbeat_body(), "version 4.0.0\nservice abc123");
+        assert_eq!(legacy(&s), "version 4.0.0\nservice abc123");
         // #1204: a live Claude child publishes its account-scoped URL; every host's snapshot reads it back by host and attempt
         s.pending.insert((7, 42));
         s.kids.push(Kid { unknown:None, stopping:false, session_url:Some("https://claude.ai/code/session_014abc".into()), task:7,attempt:42,execution:42,rt:"claude".into(),proc:Box::new(FakeProc(Default::default())) });
-        assert_eq!(s.heartbeat_body(), "version 4.0.0\nservice abc123\n#7 42\nsession #7 42 https://claude.ai/code/session_014abc");
+        assert_eq!(legacy(&s), "version 4.0.0\nservice abc123\n#7 42\nsession #7 42 https://claude.ai/code/session_014abc");
         let host = |body: String| crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 0, open: true, trusted: true, reason: None };
         let urls = crate::snapshot::session_urls(&[host(s.heartbeat_body()), host("session #8 43 https://evil.example/x".into())]);
         assert_eq!(urls.into_iter().collect::<Vec<_>>(), vec![(("win".to_string(), 42), "https://claude.ai/code/session_014abc".to_string())]);
@@ -2949,6 +2985,7 @@ mod tests {
         let b = Fake::default();
         let c = cfg("mac");
         let mut s = service(&b, &c, Default::default());
+        s.instance="abcdef012345".into();
         let beat = |b: &Fake| b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").map(|i| i.updated).unwrap();
         s.pass().unwrap();
         let (mut writes, mut last) = (0, beat(&b));

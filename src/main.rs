@@ -20,6 +20,7 @@ mod operator;
 mod recipe;
 mod requests;
 mod platform;
+mod service_versions;
 mod policy;
 mod resources;
 mod lifecycle;
@@ -951,6 +952,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             status["handoff"]=json!({"state":if handoff_error.is_some()||legacy_error.is_some() {"unknown"}else if s.legacy_prepared {"prepared"}else{"draining"},"owner":owner,
                 "reason":handoff_error.as_ref().or(legacy_error.as_ref()),"waits":lifecycle_waits(&s,&cfg.root,true)});
         }
+        status["diagnostics"] = s.service_diagnostics();
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
         drop(wakeup);
         if host.is_none() && legacy.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
