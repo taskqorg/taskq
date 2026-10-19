@@ -193,6 +193,19 @@ fn newest(install: &Path) -> Value {
     request
 }
 
+/// Mac Home dispatch shares the workspace queue and revision checks.
+fn workspace_home(install: &Path, a: &str, m: &Value) -> crate::Res<()> {
+    let root=m["root"].as_str().map(String::from).or_else(||self::target(install)).unwrap_or_default();
+    if a=="ai-send" {
+        let after=m["after"].as_str().unwrap_or("");
+        let text=m["text"].as_str().unwrap_or("");
+        crate::conversations::draft(install,&root,after,text)?;
+        crate::conversations::submit(install,&root,after,text).map(|_|())
+    } else {
+        crate::conversations::select(install,&root,m["id"].as_str().unwrap_or(""))
+    }
+}
+
 fn ai(install: &Path, a: &str, m: &Value) {
     let path = install.join("tray-requests.json");
     let mut f = requests_file(install);
@@ -1254,11 +1267,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         let mut m = m.clone();
                         m["onboard"] = Value::Null;
                         if matches!(a,"ai-send"|"ai-open"|"ai-confirm") && cfg!(target_os="macos") {
-                            let root=m["root"].as_str().map(String::from).or_else(||self::target(&install)).unwrap_or_default();
-                            let after=m["after"].as_str().unwrap_or("");
-                            let result=if a=="ai-send"&&after.is_empty(){crate::conversations::submit(&install,&root,"",m["text"].as_str().unwrap_or("")).map(|_|())}
-                                else if a=="ai-send" {crate::conversations::draft(&install,&root,after,m["text"].as_str().unwrap_or("")).and_then(|_|crate::conversations::select(&install,&root,after))}
-                                else {crate::conversations::select(&install,&root,m["id"].as_str().unwrap_or(""))};
+                            let result=workspace_home(&install,a,&m);
                             match result {Ok(())=>{push(&mut web,&ui,&json!({"aiSubmitted":true}));let _=proxy.send_event(Ev::WorkspaceOpen);},Err(reason)=>push(&mut web,&ui,&json!({"aiError":reason}))}
                         }else{ai(&install,a,&m);}
                         push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
@@ -1955,6 +1964,37 @@ fn capture(wv: &WebView, path: PathBuf, done: impl Fn() + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A1/M7: Home Reply/Next must queue once in the bound project, not merely save a draft.
+    #[test]
+    fn home_workspace_followup_dispatch() {
+        let base=std::env::temp_dir().join(format!("taskq-home-dispatch-{}",std::process::id()));
+        let _=fs::remove_dir_all(&base);
+        let install=base.join("install");let root=base.join("project");let other=base.join("other");
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("projects"),format!("{}\n{}",other.display(),root.display())).unwrap();
+        let r=root.to_str().unwrap();
+        let first=crate::conversations::submit(&install,r,"","question").unwrap();
+        fs::write(crate::operator::answer_path(&root,&first),json!({"state":"clarify","rev":1,"text":"Choose"}).to_string()).unwrap();
+        let message=json!({"root":r,"after":first,"text":"1"});
+        workspace_home(&install,"ai-send",&message).unwrap();
+        let ids=crate::operator::ids(&root);
+        assert_eq!(ids.len(),2,"Home acknowledged a reply without queuing it");
+        let next=ids.iter().find(|id|*id!=&first).unwrap();
+        let request=crate::operator::read(&crate::operator::dir(&root).join(format!("{next}.json")));
+        assert_eq!(request["after"],first);assert_eq!(request["text"],"1");
+        assert!(crate::operator::ids(&other).is_empty());
+        assert!(workspace_home(&install,"ai-send",&message).is_err());
+        assert_eq!(crate::operator::ids(&root),ids,"stale click duplicated work");
+        let state=crate::conversations::snapshot(&install);
+        assert_eq!(state["conversations"][0]["draft"],"1","refused reply lost its draft");
+        for action in ["ai-open","ai-confirm","ai-open"] {
+            workspace_home(&install,action,&json!({"root":r,"id":next})).unwrap();
+        }
+        assert_eq!(crate::operator::ids(&root),ids,"opening resubmitted work");
+        assert!(!crate::operator::dir(&root).join(format!("{next}.confirm")).exists(),"Home review applied without workspace confirmation");
+        let _=fs::remove_dir_all(base);
+    }
 
     // Chain: native delivery -> exact JS outcome or unknown -> bounded safe shared observations.
     #[test]
