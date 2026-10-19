@@ -394,12 +394,7 @@ fn resource_group(cap: &Value, saved: &Value, saved_revision:&Value, project_lim
             "sampled_at": host["sample_at"], "age_seconds": host["sample_age_seconds"], "cadence_seconds": 30, "window_seconds": 60,
             "cpu_busy_percent": host["cpu_percent"], "memory_available_percent": host["memory_available_percent"], "memory_available_gib": null, "pressure": null});
     }
-    const CODES: [&str; 18] = ["cpu", "memory", "pressure", "sample", "config", "cooldown", "spacing", "max", "version", "host", "runtime_disabled", "pause", "focus", "dependency", "routing", "access", "provider", "unknown"];
-    h["blockers"] = json!(host["reasons"].as_array().into_iter().flatten().map(|r| {
-        let code = match r["code"].as_str().unwrap_or("") { "hold" => "host", c if CODES.contains(&c) => c, _ => "unknown" };
-        let host_scope = ["host", "max", "spacing", "version", "cpu", "memory", "pressure", "sample", "config"].contains(&code);
-        json!({"code": code, "scope": target(!host_scope, None), "knowledge": if code == "sample" || code == "unknown" || (code == "host" && host["gate"] == "unknown") { "unknown" } else { "known" }})
-    }).collect::<Vec<_>>());
+    h["blockers"] = crate::resources::blockers(&host, |host_scope| target(!host_scope, None));
     let mut targets = vec![h, entry(target(true, None), json!({"limits": project_limits}), json!({"limits": cap["project_limits"]}))];
     for rt in &rts {
         let lim = |c: &Value| json!({"runtime_limit": c["limits"][rt]});

@@ -55,3 +55,10 @@ for (const f of ['src/resource-controls.js', 'src/resource-controls.css', 'tests
   assert(doc.includes('`' + f + '` SHA-256: `' + h + '`'), f + ' checksum ' + h + ' is not recorded in docs/design/shared-resource-controls.md');
 }
 console.log('PASS asset checksums');
+// #1282 the overlay projection's observed_at is its status readback time: 61 s later applied is unknown, never applied
+{
+  const p = JSON.parse(fs.readFileSync('tests/fixtures/resource-policy-v1.json', 'utf8')).overlay_projection;
+  assert.equal(rc.applied(p, p.observed_at), 'applied');
+  assert.equal(rc.applied(p, p.observed_at + 61), 'unknown');
+  console.log('PASS overlay projection readback ages from its status time');
+}

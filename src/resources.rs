@@ -782,31 +782,52 @@ pub fn report(install: &Path, now: u64) -> Res<Vec<String>> {
 /// `service resources --json`: the allowlisted `taskq.project-limits/1` projection of every registered project on a
 /// host-policy install (shared-resource-controls.md#project-overlay). Current is the saved overlay (null: no
 /// override) at the project revision; effective is what a fresh status of this host ran, else unknown (null).
+/// `observed_at` is the oldest status time read, so a consumer ages the readback, never the print.
+/// `ponytail:` one observation time for all projects; per-project groups if one idle project hides the rest.
 pub fn projection(install: &Path, now: u64) -> Res<Value> {
     let host = crate::host::Policy::read(install)?;
     let conn = enrollment::active(install).ok().flatten();
     let (inst, generation) = conn.as_ref().map_or((Value::Null, Value::Null), |a| (a["installation"].clone(), a["generation"].clone()));
     let mut targets = vec![];
+    let mut observed: Option<Option<u64>> = None;
     with(install, |s| {
         prepare(s, install, now)?;
-        for (pid, p) in s.projects.iter().filter(|(_, p)| !p.policy.is_null()) {
+        for (pid, p) in &s.projects {
             let root = PathBuf::from(&p.root);
             let st: Value = fs::read_to_string(crate::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-            let fresh = st["at"].as_u64().is_some_and(|t| t <= now && now - t <= FRESH) && st["host"] == host.me.as_str();
+            let at = st["at"].as_u64().filter(|_| st["host"] == host.me.as_str());
+            observed = Some(match (observed, at) { (Some(None), _) | (_, None) => None, (Some(Some(o)), Some(a)) => Some(o.min(a)), (None, Some(a)) => Some(a) });
+            let fresh = at.is_some_and(|t| t <= now && now - t <= FRESH);
             let ran = |k: &str| if fresh { st["capacity"][k].clone() } else { Value::Null };
             let overlay = host.overlay(&root).map(|(_, e)| e["limits"].clone()).unwrap_or_default();
             for rt in crate::service::RUNTIMES {
-                targets.push(json!({"target": {"installation_id": inst, "generation": generation, "project_id": pid, "runtime_id": rt},
+                let t = json!({"installation_id": inst, "generation": generation, "project_id": pid, "runtime_id": rt});
+                // an unreadable taskq.json is a known config blocker with nothing effective; status reasons keep their knowledge
+                let mut bs = if p.policy.is_null() { vec![json!({"code": "config", "scope": t, "knowledge": "known"})] } else { vec![] };
+                if fresh { bs.extend(blockers(&st["capacity"], |_| t.clone()).as_array().into_iter().flatten().cloned()); }
+                let completeness = if !fresh || p.policy.is_null() { "unknown" } else if bs.iter().any(|b| b["knowledge"] == "unknown") { "partial" } else { "complete" };
+                let known = fresh && !p.policy.is_null();
+                targets.push(json!({"target": t,
                     "service_version": crate::platform::VERSION,
                     "supported": [{"policy_schema": OVERLAY, "modes": [], "fields": ["runtime_limit"], "scopes": ["runtime"]}],
-                    "current_revision": p.revision, "effective_revision": ran("project_revision"),
-                    "current_policy": {"runtime_limit": overlay[rt]}, "effective_policy": {"runtime_limit": ran("project_limits")[rt]},
-                    "runtime_usage": [], "sample": null, "blockers": [], "completeness": if fresh { "complete" } else { "unknown" }}));
+                    "current_revision": p.revision, "effective_revision": if known { ran("project_revision") } else { Value::Null },
+                    "current_policy": {"runtime_limit": overlay[rt]}, "effective_policy": {"runtime_limit": if known { ran("project_limits")[rt].clone() } else { Value::Null }},
+                    "runtime_usage": [], "sample": null, "blockers": bs, "completeness": completeness}));
             }
         }
         Ok(())
     })?;
-    Ok(json!({"schema": SCHEMA, "observed_at": now, "targets": targets}))
+    Ok(json!({"schema": SCHEMA, "observed_at": observed.flatten(), "targets": targets}))
+}
+
+/// `taskq.resources/1` blockers from a status `capacity`'s reasons; `scope(host_scope)` names the target each one holds.
+pub fn blockers(capacity: &Value, scope: impl Fn(bool) -> Value) -> Value {
+    const CODES: [&str; 18] = ["cpu", "memory", "pressure", "sample", "config", "cooldown", "spacing", "max", "version", "host", "runtime_disabled", "pause", "focus", "dependency", "routing", "access", "provider", "unknown"];
+    json!(capacity["reasons"].as_array().into_iter().flatten().map(|r| {
+        let code = match r["code"].as_str().unwrap_or("") { "hold" => "host", c if CODES.contains(&c) => c, _ => "unknown" };
+        let host_scope = ["host", "max", "spacing", "version", "cpu", "memory", "pressure", "sample", "config"].contains(&code);
+        json!({"code": code, "scope": scope(host_scope), "knowledge": if code == "sample" || code == "unknown" || (code == "host" && capacity["gate"] == "unknown") { "unknown" } else { "known" }})
+    }).collect::<Vec<_>>())
 }
 
 #[cfg(test)]
@@ -1133,6 +1154,21 @@ mod tests {
         assert_eq!((&codex["current_revision"], &codex["effective_revision"], &codex["current_policy"], &codex["effective_policy"]),
             (&json!(r1), &json!(r1), &json!({"runtime_limit": 1}), &json!({"runtime_limit": 1})));
         assert_eq!(projection(&t.install, 200).unwrap()["targets"][0]["effective_revision"], Value::Null, "a stale status is unknown");
+        // the readback keeps its own age: observed_at is the status time, so 61 s later a consumer reads it stale
+        assert_eq!((&pj["observed_at"], &projection(&t.install, 200).unwrap()["observed_at"]), (&json!(110), &json!(110)));
+        // status reasons survive as blockers; an unknown one makes the target partial, never complete
+        fs::write(crate::dot(&t.root).join("status.json"), json!({"at": 110, "host": policy.me, "capacity": {"project_revision": r1, "project_limits": {"codex": 1},
+            "gate": "held", "reasons": [{"code": "cpu", "text": "busy"}, {"code": "future-reason", "text": "?"}]}}).to_string()).unwrap();
+        let codex = projection(&t.install, 111).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        assert_eq!((codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(), &codex["completeness"]),
+            (vec![("cpu", "known"), ("unknown", "unknown")], &json!("partial")));
+        // an unreadable taskq.json keeps the project listed with a config blocker and nothing effective
+        fs::write(t.root.join("taskq.json"), "{").unwrap();
+        let codex = projection(&t.install, 111).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        assert_eq!((&codex["blockers"][0]["code"], &codex["completeness"], &codex["effective_revision"], &codex["effective_policy"]["runtime_limit"]),
+            (&json!("config"), &json!("unknown"), &Value::Null, &Value::Null));
+        fs::write(t.root.join("taskq.json"), &project).unwrap();
+        status(110, &r1, json!({"codex": 1}));
         // restore: null removes the entry; a stale operation naming the first revision cannot apply after the revert
         go(&t, &[op("restore", Value::Null, &r1)], &[], 120);
         assert_eq!(receipt_of(&t, "restore")["state"], "saved");
