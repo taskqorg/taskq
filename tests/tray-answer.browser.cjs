@@ -40,8 +40,13 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       await page.locator('[data-a=answer-retry]').click();
       await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===3);
       assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='answer').map(m=>m.op)),[op,op,op]);
+      const rowTop=()=>page.locator('.tqp-task').first().evaluate(e=>e.getBoundingClientRect().top);
+      const before=await rowTop();
       await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:op.id,state:'accepted'});
       await page.waitForFunction(()=>[...document.querySelectorAll('[role=status]')].some(e=>e.textContent.includes('accepted')));
+      // #1148 M3: the accepted toast overlays; task rows keep their position.
+      assert.equal(await page.locator('.toast').evaluate(e=>getComputedStyle(e).position),'fixed');
+      assert.equal(await rowTop(),before,'a receipt must not move task rows');
       assert.equal(await page.locator('.qac').count(),0);
       assert.equal(await page.locator('.qac textarea').count(),0);
       assert.equal(await page.locator('.tqp-task a[data-url]').first().getAttribute('href'),board+'/'+rows[1].n);
