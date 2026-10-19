@@ -73,6 +73,8 @@ The full matrix runs only for release qualification and README shots; a task's c
 | U-A9 | Existing 4.1.9 additions retained or explicitly superseded; proposed improvements resolved |
 | U-A10 | Frozen artifact evidence complete; changed reference requires owner acceptance, not screenshot regeneration alone |
 
+Native click and window-raise behavior (a tray click, Send or Reopen raising a window) is owner-observed: the owner uses the tray daily and reports defects as tasks. It is not a required acceptance gate, and no task waits on a real-user click or raise proof. Source, model and browser checks of the same behavior stay required.
+
 Blocking: wrong data/action target, duplicate side effects, lost series/features, clipped essential controls, unjustified scrolling, unreadable icon or unapproved semantics. Minor platform font antialias differences may be documented; geometry and behavior still pass.
 
 Custom icon: CI-A1–CI-A7 in [custom-icon.md](custom-icon.md), including identical Summary/Custom rendering, approval persistence and native size/state matrix.
