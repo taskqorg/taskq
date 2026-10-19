@@ -3302,9 +3302,25 @@ mod tests {
     // Risk: #1252 stays blocked, or another project/host receives fabricated terminal evidence.
     #[test]
     fn historical_no_host_terminal_repair_requires_local_ownership() {
+        let root = std::env::temp_dir().join(format!("taskq-no-host-{}", crate::runtime::uuid()));
+        std::fs::create_dir(&root).unwrap();
+        let child = coreq::process::output("test.no-host-repair", std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "service::tests::historical_no_host_repair_child", "--ignored", "--nocapture"])
+            .env("TASKQ_NO_HOST_REPAIR_ROOT", &root).env_remove("COREQ_TRACE_CONTEXT"),
+            std::time::Duration::from_secs(60)).unwrap();
+        assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
+        // Native process exit releases every fixture handle before Windows removes the stores.
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(!root.exists(), "fixture cleanup must complete");
+    }
+
+    #[test]
+    #[ignore = "subprocess helper exercised by historical_no_host_terminal_repair_requires_local_ownership"]
+    fn historical_no_host_repair_child() {
+        let root = PathBuf::from(std::env::var_os("TASKQ_NO_HOST_REPAIR_ROOT").unwrap());
         for closed in [true, false] {
             for evidence in ["local", "foreign-project", "foreign-host", "missing-log", "empty-log", "unreadable-log", "ignored-spawn", "untrusted-spawn", "runtime-mismatch", "unreadable-board", "unreadable-comments"] {
-                let dir = std::env::temp_dir().join(format!("taskq-no-host-{}-{closed}-{evidence}", std::process::id()));
+                let dir = root.join(format!("{closed}-{evidence}"));
                 std::fs::create_dir_all(dir.join(".taskq")).unwrap();
                 let b = Fake::default();
                 let n = b.create("T", "", &["taskq".into()]).unwrap();
@@ -3366,7 +3382,7 @@ mod tests {
                 }
                 if attempt_log.is_file() { assert_eq!(std::fs::read_to_string(attempt_log).unwrap(), if evidence == "empty-log" { "" } else { "original reviewer output\n" }); }
                 assert!(!b.comments(n).unwrap().iter().any(|c| c.body.starts_with("taskq: gone")));
-                drop(_guard);drop(_capture);std::fs::remove_dir_all(dir).unwrap();
+                drop(s);drop(_guard);drop(_capture);
             }
         }
     }
