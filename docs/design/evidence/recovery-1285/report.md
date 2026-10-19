@@ -17,6 +17,17 @@ Owner answer [6262705708](https://github.com/taskqorg/taskq/issues/1285#issuecom
 - Browser inspection found the evidence field too narrow. A block label and full-width input now retain the entered evidence visibly at 16/20px. The same browser instrument passes selection, required evidence, disabled unknown rows, identical retry payload, Mixed receipt and horizontal-overflow checks.
 - First WKWebView snapshots showed an unconfirmed read: replacing the native IPC method did not intercept it. The snapshot-only native handler now supplies the invented review directly. The production bridge remains unchanged; fixture reads never contact the board.
 
+## Candidate checks
+
+Source commit: `54516f4018f22dd7e5bb4ce2b3ac51f3388de360` (rebased on `1676ec00614ba788b3f143263c79da91c853f271`). The later evidence commit changes reports/snapshot artifacts and extends the browser instrument to enter Recovery through the Stop page.
+
+- `python3 scripts/check.py --base 1676ec00614ba788b3f143263c79da91c853f271`: **sandbox-blocked**, 159.626s / 900s. The full Rust run passed 400 main tests (31 ignored helpers), plus 16 integration tests. The sole failure was `telemetry_process::resume_records_its_result_without_releasing_the_host_hold`: `sandbox-exec: sandbox_apply: Operation not permitted`. This is not a passing canonical gate; merge-result CI remains required. The seven recovery tests and the unchanged GUI-hold/telemetry assertions passed.
+- Remaining canonical stages were then run once individually. `cargo +stable run --locked -- selftest` passed 85 golden traces, text formats and local capture in an isolated offline installation; board read was explicitly unknown/offline. All Node component checks and the screenshot/release-script checks passed after the text repair below.
+- `node tests/tray-action.test.cjs` initially failed its existing `ordinary Play cannot clear` assertion because the new sentence used `Ordinary`. Restoring the existing phrase with a semicolon passed all six groups without changing the assertion. This text-only repair followed the full Rust run; the Rust logic was unchanged.
+- `node tests/tray-recovery.browser.cjs`: passed both themes, Stop-to-Recovery navigation, selection/evidence/unknown/duplicate-reconciliation and overflow checks. `git diff --check` passed. The final release build completed in 5m24s; its binary/source/image hashes are in [manifest.json](manifest.json). README images are refreshed with the mandatory `docs/shots/update.sh` source/blob manifest.
+
+The isolated test subprocesses removed inherited worker/tracing variables and used temporary install stores. Production worker identity and permissions were retained for task operations. The unavailable sandbox test was not bypassed or reported as passed.
+
 ## UI evidence and limits
 
 `native/` contains WKWebView snapshots from `taskq tray --snapshot DIR --route recovery,stop`, using isolated `docs/shots/fixture.sh` state plus the explicitly invented recovery fixture. Both themes at 16/20px were inspected. The recovery rows, disabled unknown checkbox, execution/revision, work status and evidence inputs render clearly. At 20px the bounded native viewport requires scrolling; full-page browser captures show the remaining confirmation controls. Native physical scrolling/keyboard acceptance is not claimed.
@@ -26,3 +37,5 @@ Owner answer [6262705708](https://github.com/taskqorg/taskq/issues/1285#issuecom
 The three existing physical UI exceptions remain unchanged, as in [#1214 evidence](../stop-1214/report.md). No new exception is introduced. Owner visual acceptance, installed-client recovery and real native host reinstallation remain unverified. No production recovery, grant, model, profile, capacity or other-host change was performed. Rollback cannot undo board events or external writes; retain the Stop interlock and reconcile receipts rather than deleting it or downgrading through its floor.
 
 Environment: macOS 27.0.1 arm64, rustc 1.98.1, Node v22.18.0; warm local build cache. CI timing and other platforms are not inferred from this run.
+
+Final rebase adds only upstream `docs/evidence/1244` at `302d6c09`. Compiled inputs (`src`, Cargo/build/package files, scripts and fixtures) are identical to captured source `54516f4018f22dd7e5bb4ce2b3ac51f3388de360`; the published equivalent source commit is `bc221f93d2ec9be655063d2e3db9968ed15056f4`. Both manifests retain the actual build source and name this equivalence. No executable evidence was invalidated by that documentation-only rebase.

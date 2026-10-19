@@ -1,0 +1,70 @@
+{
+  "sourceCommit": "54516f4018f22dd7e5bb4ce2b3ac51f3388de360",
+  "binarySha256": "cea81a46d2baa7a4d3228be410761e9f3bfef41fd7be3259088c8b0b0faaac71",
+  "environment": {
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot; Chromium bundled-UI instrument"
+  },
+  "scope": "Invented isolated fixtures; no installed native recovery qualification",
+  "sources": {
+    "src/tray.rs": "3b954b2e2c5c90ccdae1297ddcd1393aa9e6ef85",
+    "src/tray-app.js": "d371e2f0286e6f404c62c9adb9d564c35a658f57",
+    "src/tray.html": "33d98f9b82b1cafdab4fc26a4a50ba6f2620aaef",
+    "src/recovery.rs": "295b070184d8bb033e8e29adb37c89de624dda77",
+    "tests/fixtures/recovery-review.json": "434921fae65d3a45c19d1c33ce3ab67eb86718d1"
+  },
+  "images": [
+    {
+      "file": "dark-mixed.png",
+      "sha256": "7921a7ce6cd14b8c810bb3515255dc8ca2418a668f67669d6cd0450897f8964b"
+    },
+    {
+      "file": "dark-review.png",
+      "sha256": "d17593a12939600f1a47bae363a3757ed49c250c0968fa5cb6925378c4132daf"
+    },
+    {
+      "file": "light-mixed.png",
+      "sha256": "374290e5e222674636044ce44c2a352d56aa0d9ad00b48978660c2ccf5c26cb4"
+    },
+    {
+      "file": "light-review.png",
+      "sha256": "6817ce042529b67b26d44d3a3361414866f93db30b79379ebbab417bf5330e62"
+    },
+    {
+      "file": "native/popover-dark-recovery-16.png",
+      "sha256": "e56eea786ffb7c646a55487621d16c00fbbf7fabd7f046cb97e030c5e35fb689"
+    },
+    {
+      "file": "native/popover-dark-recovery-20.png",
+      "sha256": "83ef291c606ce8d49430751292c7c045344c24b0a82581073ee6957cd2185825"
+    },
+    {
+      "file": "native/popover-dark-stop-16.png",
+      "sha256": "59a2e786d3b84160563d34d10eb04135a79d0efa13d96a67116a4f732f915df5"
+    },
+    {
+      "file": "native/popover-dark-stop-20.png",
+      "sha256": "df1cecb46279b09619b97b96ea0ee6f0104f7fe32150a412a7039faccdcceb7b"
+    },
+    {
+      "file": "native/popover-light-recovery-16.png",
+      "sha256": "5505fa07925f50d9866b51fa3ab4eb2d920f9614544dfa682df310dec1db82ff"
+    },
+    {
+      "file": "native/popover-light-recovery-20.png",
+      "sha256": "a7d7977e9bed18458e6ae25d448e55b8792493ebf481f515cc30c06b17311ec3"
+    },
+    {
+      "file": "native/popover-light-stop-16.png",
+      "sha256": "45f8b481b0cbf2f5571e975931f897eec435d02897935e2d26e9aa85fda06d09"
+    },
+    {
+      "file": "native/popover-light-stop-20.png",
+      "sha256": "5c228930732f1ccf0021ee0c964b6b9fb41efd0c1beac1016847fc89a1b52a89"
+    }
+  ],
+  "browserInstrumentSha256": "dd94299a8953b60d48aa41ec81a5178cd52025f75b0f21041069a0299faecc42",
+  "equivalentSourceCommit": "bc221f93d2ec9be655063d2e3db9968ed15056f4",
+  "sourceEquivalence": "A later rebase adds only docs/evidence/1244; compiled inputs and UI blobs are unchanged."
+}

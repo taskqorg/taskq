@@ -10,7 +10,8 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
    const root='/fixture/project';
    const state={page:'recovery',theme,font,now:1000,stop_modes:true,projects:[{root,name:'Fixture project',host:'mac',age:0,tasks:[],focus:['all'],labels:[]}],ai:{draft:''},notify:{projects:{}}};
-   await page.evaluate(s=>taskq.receive(s),state);
+   await page.evaluate(s=>taskq.receive({...s,page:'stop',stop_hold:{state:'held',mode:'full'}}),state);
+   await page.getByRole('button',{name:'Review recovery',exact:true}).click();
    await page.getByRole('button',{name:'Read current recovery'}).click();
    const read=await page.evaluate(()=>messages.find(m=>m.a==='recovery-read'));assert(read);
    const review={state:'review',root,id:read.id,stop:'invented-stop',board:'https://example.invalid/issues/0',focus:['all'],mode:'Mixed: unselected work stays held',limits:{limits:{codex:2,claude:1}},access:[{runtime:'codex',effective:'Workspace'},{runtime:'claude',effective:'Full'}],rows:[
