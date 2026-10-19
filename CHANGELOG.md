@@ -9,6 +9,8 @@ Releases come from the `live` branch: a fast-forward of `live` to a `main` commi
 
 A new process can bridge a running v4.6.19 telemetry writer with its exact legacy budget in the same database (#1295). Update candidate selftest and install receipts retain the shared export path; no handover side store is created. Unknown budgets, unsafe endpoints and unsupported wire formats remain refused. Compatibility lasts for that process; a fresh process after the old owner exits requests the 1 GiB budget.
 
+Steady service, host and tray polling no longer writes one telemetry row per poll (#1297). Successful repeated work folds into 15-minute aggregates (coreq#63), while failures, changed results and command-linked passes stay detailed. The host name is read once per process, so a renamed host needs a service restart. A busy installation budget lock now delays a telemetry batch instead of losing it. No board change.
+
 Recovery for v4.6.19–v4.6.22 hosts whose update fails with `telemetry IPC installation budget mismatch` (#1294): retry `taskq update` after this release is published, or run the new binary's `service install`. A full/unavailable old store can still prevent selftest or installation receipts; compatibility does not fabricate successful writes. The new Stop lifecycle can retain its durable intent and report telemetry receipts unknown while still requiring exact ownership, drain and native exit. Stop protocol 2 identifies that support; a new CLI refuses a degraded request to protocol 1 before writing intent. Older CLIs read protocol 2 as unknown; use the new CLI. Complete the service upgrade before using degraded Stop; exhausted legacy Stop remains safely refused. Released old CLIs are unchanged. No board change.
 
 ## v4.6.22

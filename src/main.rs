@@ -171,7 +171,12 @@ fn root_for(env: Option<PathBuf>, cwd: PathBuf) -> Res<PathBuf> {
 }
 
 fn hostname() -> String {
-    coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    // ponytail: first nonempty name per process (#1297: was one `hostname` child per call); a renamed host needs a service restart.
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(name) = NAME.get() { return name.clone(); }
+    let name = coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    if !name.is_empty() { let _ = NAME.set(name.clone()); }
+    name
 }
 
 fn load(root: &Path) -> Res<(Config, Value)> {
@@ -831,6 +836,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut observed_poke = None;
     let mut observed_command = None;
     loop {
+        // #1297: steady successful work folds into 15-minute aggregates; failures, changes and command-linked passes stay rows.
+        let _repeating = tracing::info_span!("service.loop", coreq_repeating = true, project = cfg.repo.as_str()).entered();
         if let Some(host)=&host {
             let proceed=host.lock().map_err(|_|"host handover unknown")?.begin_pass(&cfg.root);
             if !proceed {std::thread::sleep(Duration::from_secs(1));continue;}

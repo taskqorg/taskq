@@ -748,6 +748,8 @@ pub fn run(install: &Path) -> Res<()> {
     let mut registry = Registry::default();
     let mut restart=crate::lifecycle::Monitor::default();
     loop {
+        // #1297: steady host passes fold like project passes (main.rs `service.loop`).
+        let _repeating = tracing::info_span!("service.host.loop", coreq_repeating = true).entered();
         if let Err(e) = crate::profile::prune(install) { eprintln!("taskq: telemetry unknown: {e}"); }
         let publication=publish_service(install,&native,&instance).err();
         if let Some(error)=&publication {
@@ -1464,6 +1466,52 @@ mod tests {
             }
         }
         assert!(h.handoff_ready());
+    }
+
+    // #1297 A1/A2: the defect was one detailed row per identity and status poll (63 MB/h live against 0.56 MB/h).
+    // Retained protection: six projects' hour of those polls through the bounded store stays under 384 MiB/720
+    // inside repeating roots, the unmarked control fails the same gate, and no event is lost.
+    // ponytail: real clock, so the hour spans one or two of its four 15-minute windows; root names copy main/tray.
+    #[test]
+    fn six_project_poll_hour_fits_store_budget() {
+        use tracing_subscriber::prelude::*;
+        let me=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        for folded in [false,true] {
+            let install=temp(&format!("poll-hour-{folded}"));let _=fs::remove_dir_all(&install);fs::create_dir_all(install.join("telemetry.log")).unwrap();
+            publish_service(&install,&me,"fixture").unwrap();
+            let path=install.join("telemetry.log/universal.sqlite3");let budget=crate::telemetry::budget(&install,"telemetry.sqlite3").unwrap();
+            let store=std::sync::Arc::new(coreq::telemetry::Store::open_bounded(&path,budget.clone()).unwrap());
+            store.reclaim().unwrap();let empty=store.storage().unwrap()["total_bytes"].as_u64().unwrap();
+            let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","test").unwrap();
+            let dispatch=tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
+            tracing::dispatcher::with_default(&dispatch,|| for tick in 0..1800 {
+                if tick%30==0 {
+                    for project in 0..6 {
+                        let project=format!("owner/project{project}");
+                        let _repeating=tracing::info_span!("service.loop",coreq_repeating=folded,project=project.as_str()).entered();
+                        assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+                    }
+                }
+                let _repeating=tracing::info_span!("tray.refresh",coreq_repeating=folded).entered();
+                assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+            });
+            capture.flush().unwrap();
+            let health=capture.health();
+            assert_eq!((&health["lost"],&health["failed_batches"]),(&json!(0),&json!(0)),"{health}");
+            drop(dispatch);drop(capture);drop(store);
+            let store=coreq::telemetry::Store::open_bounded(&path,budget).unwrap();store.reclaim().unwrap();
+            let bytes=store.storage().unwrap()["total_bytes"].as_u64().unwrap()-empty;
+            let limit=384*1024*1024/720;
+            eprintln!("poll hour folded={folded}: {bytes} bytes; limit={limit}");
+            assert_eq!(bytes<=limit,folded,"hourly growth gate must reject unfolded polling");
+            if folded {
+                let page=store.export(0,0,1024).unwrap();let rows=page["events"].as_array().unwrap();
+                assert!(rows.iter().all(|r|r["observation"]["kind"]=="method.aggregate"),"{page}");
+                let calls=|op:&str|rows.iter().filter(|r|r["observation"]["operation"]==op).map(|r|r["observation"]["calls"].as_u64().unwrap()).sum::<u64>();
+                assert_eq!((calls("taskq.tray.refresh"),calls("taskq.service.loop")),(1800,360),"aggregates keep every poll");
+            }
+            drop(store);fs::remove_dir_all(&install).unwrap();
+        }
     }
 
     fn temp(name: &str) -> PathBuf {
