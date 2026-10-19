@@ -196,6 +196,7 @@ pub struct Execution {
     pub runtime: String,
     pub accepted: bool,
     pub release: Option<Release>,
+    pub usage_hold: Option<(i64, bool)>,
 }
 
 /// All derived facts for one immutable board read; dependency blocking only adjusts the current task.
@@ -419,7 +420,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                     worker_runtime = t.session.as_deref().and_then(|s| s.split_once(':')).map(|s| s.0.to_string());
                 }
                 executions.push(Execution { id:e.id, attempt:e.id, through:e.id, host:l.args[2].into(),
-                    runtime:l.args[1].split(':').next().unwrap_or("").into(), accepted:false, release:None });
+                    runtime:l.args[1].split(':').next().unwrap_or("").into(), accepted:false, release:None,usage_hold:None });
             } else if l.kind == "executing" && l.args.len() == 1 && l.attempt.is_some() && l.attempt == t.attempt
                 && matches!(t.state,State::Doing|State::Review) && executions.iter().all(|x|x.release.is_some()) {
                 if let Ok(through) = l.args[0].parse::<u64>() {
@@ -427,7 +428,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                     if t.inbox.last() == Some(&through) && executions.iter().filter(|x|x.attempt==attempt)
                         .all(|x| (x.accepted && x.through < through) || (x.release == Some(Release::NoStart) && x.through <= through)) {
                         if let Some(previous)=executions.iter().find(|x|x.attempt==attempt) {
-                            executions.push(Execution {id:e.id,attempt,through,host:previous.host.clone(),runtime:previous.runtime.clone(),accepted:false,release:None});
+                            executions.push(Execution {id:e.id,attempt,through,host:previous.host.clone(),runtime:previous.runtime.clone(),accepted:false,release:None,usage_hold:None});
                         }
                     }
                 }
@@ -441,7 +442,13 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 if let Ok(id)=l.args[0].parse::<u64>() {
                     let proof = if l.args[1] == "exit" { Release::Exit } else { Release::NoStart };
                     if let Some(x)=executions.iter_mut().find(|x|x.id==id && Some(x.attempt)==l.attempt && x.release.is_none()) {
-                        if proof != Release::NoStart || !x.accepted { x.release = Some(proof); }
+                        if proof != Release::NoStart || !x.accepted {
+                            x.release = Some(proof);
+                            let words: Vec<_> = l.text.lines().next().unwrap_or_default().split_whitespace().collect();
+                            if proof == Release::Exit && words.len() == 3 && words[0] == "usage-limit" && matches!(words[1], "until" | "probe") {
+                                x.usage_hold = words[2].parse().ok().map(|at| (at, words[1] == "until"));
+                            }
+                        }
                     }
                 }
             }
@@ -545,6 +552,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
                 ready(t)
             }
         }
+        (Doing | Review, "usage-limit", true) if l.args.is_empty() => if t.state == Review { end(t) } else { ready(t) },
         (Doing | Review, "gone", true) => {
             if !limit(t, resume, GONE_MAX) {
                 if t.state == Review { end(t) } else { ready(t) }
@@ -731,6 +739,24 @@ mod tests {
             assert!(executions.iter().all(|x|x.attempt==8 && x.host=="mac" && x.runtime=="claude"));
         }
         assert_eq!(executions(7,&log).iter().map(|x|x.through).collect::<Vec<_>>(),[8,13,18]);
+    }
+
+    // §8/§9: old readers ignore the new kind, so this is a cutover, never a mixed-reader rollout.
+    #[test]
+    fn usage_limit_requires_cutover() {
+        let entries = |kind: &str| vec![
+            super::Entry {id:1,body:"taskq: spawn worker claude:s mac".into(),edited:false},
+            super::Entry {id:2,body:"taskq: gone attempt 1".into(),edited:false},
+            super::Entry {id:3,body:"taskq: spawn worker claude:s mac".into(),edited:false},
+            super::Entry {id:4,body:format!("taskq: {kind} attempt 3"),edited:false},
+        ];
+        let current = super::fold(1,&entries("usage-limit"),false);
+        // Unknown kinds model the N-1 parser; legacy gone still retains its retry protection.
+        let old = super::fold(1,&entries("unknown-to-reader"),false);
+        let gone = super::fold(1,&entries("gone usage-limit"),false);
+        assert_eq!((current.state,current.retries,current.attempt),(super::State::Ready,1,None));
+        assert_eq!((old.state,old.retries,old.attempt),(super::State::Doing,1,Some(3)));
+        assert_eq!((gone.state,gone.retries),(super::State::Ask,2));
     }
 
     // Chain: § 2 fold over tests/golden. Risk: fold drifts from the traces; a wrong expectation still passes.

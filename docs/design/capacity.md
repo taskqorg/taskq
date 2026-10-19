@@ -163,3 +163,16 @@ Host admission, occupancy, gate thresholds and unknown handling follow [taskq.md
 `taskq service capacity` uses the root command syntax, with explicit local `--host` for writes. No Fixed-mode or remote-host edit is offered by the host-policy target. Preserve untouched fields, grants, revision/concurrent-write checks and the distinction between saved and observed/applied. An invalid host policy holds admission and preserves running work. The old CLI/schema may be interpreted only under an explicitly qualified legacy profile; it cannot become fallback host authority. The [host transition cases](host-service.md#command-surface-acceptance) gate replacement and retirement.
 
 Local CLI writes print the original observed-receipt ID and distinguish saved settings from the host's exact acknowledgment. Policy and command descriptor share one atomic host.json replacement; a same-value or stale status cannot confirm a different command. The [host command binding](host-service.md#command-surface-acceptance) defines recovery and receipt failure. Tray/remote adoption and installed acceptance remain separate gates.
+
+## Usage limit
+
+A worker or reviewer whose runtime reports a usage or quota limit before any work starts ends with `usage-limit attempt <id>` (taskq.md § 2) instead of a plain `gone`:
+
+- Detection reads the attempt log from the start. Claude: an `assistant` line with `apiError` `usage_limit_reached` or rejected `quotaLimits`, before any assistant output without an error; the reset is `resetsAt` (epoch seconds) when present. Codex: an `error` or `turn.failed` message naming a usage limit before any `item.*` event; Codex reports no reset that taskq reads.
+- The entry keeps the retry count and adds no limit card. In `doing` the task goes to `ready`; in `review` only the reviewer ends and the result stays. N-1 ignores the event and keeps the attempt live: stop old services and children and upgrade every board host before resuming (§ 9).
+- The service then holds that runtime on this host: it has no free slot for claims, reviewers or resumes, so a task that allows another runtime starts there (taskq.md § 4 Filter). The hold ends when board time passes the reset, else the next probe 30 minutes after the limit; the next admission pass then starts the held work without an owner action.
+- The hold is cached per project and rebuilt from release evidence on open tasks after restart; no local task store is added (R1).
+- The heartbeat lists `limit <rt> until <time>` (reported reset) or `limit <rt> probe <time>` (next probe); `taskq status` Hosts shows ` <rt> limit until|probe <time>`, and capacity `reasons` include `usage-limit`.
+- A limit reported after work started keeps the plain `gone` or `failed` path and counts as a retry.
+
+Release evidence records `usage-limit until <epoch>` or `usage-limit probe <epoch>` before outcome publication. Recovery reuses that deadline; the owning host also classifies its local log if an older release lacks it. Another host preserves the outcome without holding its own runtime.

@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## Unreleased
+
+**Board — cutover required (§ 9, #1279):** `usage-limit` ends a pre-work quota-limited attempt without spending retries. Old readers ignore it and retain the attempt. Stop old services and children, preserve open results and retries, upgrade every board host, then resume (Mac, then Windows). Do not run mixed readers or roll back to a reader without this event after it is written; reconcile open issues under § 9 first. Closed issues stay untouched.
+
 ## v4.6.20
 
 Refresh native legacy inventory before it expires, retain fresh proof during refresh, and keep pre-launch admission waits out of task retries. Mixed telemetry snapshots acquire the budget lock before SQLite; independent command fixtures isolate inherited trace context. No board change, policy change or new grant. Mac activation and rollback follow [the repair handoff](docs/repair-1276.md); source checks do not prove native activation.
