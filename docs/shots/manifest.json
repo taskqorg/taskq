@@ -1,16 +1,17 @@
 {
-  "version": "4.4.0",
-  "sourceCommit": "f0350227a22d7e22f0e70c6c24a26a0362003033",
-  "binarySha256": "2d2dc3a1f4e0d6fbf71eccc3a847f0e5f15b9a5ea18aecc761f6fd3d38434c05",
+  "version": "4.5.0",
+  "sourceCommit": "b5920d4308129a363c24dd495f6fa136c5d83dfe",
+  "binarySha256": "ff8b458fdb9c80170dd6277fd20f204275345797c7b33417bd5e4580fc885742",
   "environment": {
-    "os": "macOS 26.6.2",
+    "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "5cf983502c5001e8486f54dd2928d42b4074e4d9",
-    "src/tray.html": "397ed73f3df2be13214c1c78147062ec96ec5a5c",
-    "src/icon.rs": "27c0a5f64a7af334e2eb8c81e3e6626e356cc555",
+    "src/tray.rs": "c3c4259fe28557627547bbbfd34c76f2a5dee07a",
+    "src/tray.html": "91dcd4a7fd336a9b9077037d85e99bb061318192",
+    "src/tray-web.js": "7a4e919ed1cfd9773743d9d8a0e2ecf322d3c53d",
+    "src/icon.rs": "411fc089802b6e2f2ebe908b8ad0d1da2facdd55",
     "docs/design/icon-summary.config.json": "9365699c943d0ac4506eab8fc5f7a84d8cbe8582"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
@@ -21,15 +22,15 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "6f9eade0976da49be76c56b5437c27ddf45f53a247297f96018dd4d9fbf02fd2"
+      "sha256": "a8df6bc37f76768049583acc20c582e7c566da7fffe8b51673437c8febe83e29"
     },
     {
       "file": "popover-dark-attention-16.png",
-      "sha256": "1ebb5de273b86218b6463820394de4a9055090dbc0b1de07d28f747259e10f58"
+      "sha256": "48a56b0a9af457f8284283ed4693a71cb8bf5988ed28e877b6008c732ea29c93"
     },
     {
       "file": "popover-dark-projects-16.png",
-      "sha256": "c24361eba5cf9c0439f892bd6abb5b67e737f7e2f38bacabc06892cf04129940"
+      "sha256": "110adfaca17fe4bcb6a8440933136de35bcbb7ea8ed4d5243b032afbe29bdb3f"
     }
   ]
 }
