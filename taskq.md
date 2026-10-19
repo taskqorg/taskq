@@ -181,7 +181,7 @@ Coreq always records actions; owned methods have bounded opt-in detail. Includes
 ## 5. Commands
 | Command | Does |
 |---|---|
-| `taskq labels` (catalog setup/readback) / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--prefer codex\|claude] [--priority 0\|1\|2] [--host H] [--later\|--hold] [--retro K]` / `taskq start N` | labels: setup/readback; add: new issue, prints `#<N> <state>`; start: § 1 held |
+| `taskq labels` (catalog setup/readback) / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--later\|--hold] [--retro K]` / `taskq start N` | labels: setup/readback; add: new issue, prints `#<N> <state>`; start: § 1 held |
 | `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | Section 1 create and optional-start receipts; add routing/scope/dependency flags apply |
 | `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` | owner's answer or option pick, all checked first |

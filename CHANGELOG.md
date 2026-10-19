@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+Unlabeled tasks and every review run on Claude (#1314). Work waits for a free slot of its runtime instead of moving to the other one: an unlabeled task no longer starts on Codex, and a review no longer falls back to Codex or Codex app. `taskq add --prefer` is refused with a hint to `--runtime`.
+
+**Board:** existing `prefer-codex` labels read as `run-codex`, `prefer-claude` as no label; nothing to edit. Hosts on older versions still route by the previous rule until updated.
+
 ## v4.6.23
 
 A native revision-bound workspace shows full AI exchanges (#1275); tray task rows keep their order and show the age of the current state (#1302). A new host recovers telemetry from a retiring older tray writer instead of reporting the command receipt collector unavailable (#1311). An older host treats an exited newer host's service record as stale instead of waiting on it forever (#1312). The spec now routes unlabeled work and every review to claude and keeps codex for design, UI, visual and image work (#1313); dispatch still follows the previous rule until #1314 ships. No board change.

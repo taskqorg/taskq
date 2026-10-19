@@ -66,6 +66,14 @@ fn label(i: &Issue, prefix: &str) -> Option<String> {
     i.labels.iter().find_map(|l| l.strip_prefix(prefix).map(String::from))
 }
 
+/// § 4 Filter: reviewers `claude`; workers `run-*`, else a lone legacy `prefer-codex` as `run-codex`, else `claude`.
+/// The task waits for a slot of this runtime; it never moves to another.
+fn route(i: &Issue, reviewer: bool) -> String {
+    if reviewer { return "claude".into(); }
+    let prefer: Vec<&str> = i.labels.iter().filter_map(|l| l.strip_prefix("prefer-")).collect();
+    label(i, "run-").unwrap_or_else(|| if prefer == ["codex"] { "codex" } else { "claude" }.into())
+}
+
 pub fn priority(i: &Issue) -> u8 {
     if crate::labels::matches(&i.labels, "p0") { 0 } else if crate::labels::matches(&i.labels, "p1") { 1 } else { 2 }
 }
@@ -1119,8 +1127,8 @@ impl<'a> Service<'a> {
                 || label(&v.issue, "host-").is_some_and(|h| h != me)
                 || t.attempt.is_some() && host_of(t) != Some(me.as_str())
                 || self.kids.iter().any(|k| k.task == v.issue.number) { continue; }
-            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).or_else(|| label(&v.issue, "run-"));
-            if let Some(reason) = self.gui_reason(&v.issue, rt.as_deref()) {
+            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).unwrap_or_else(|| route(&v.issue, t.state == State::Review));
+            if let Some(reason) = self.gui_reason(&v.issue, Some(&rt)) {
                 self.waits.insert(v.issue.number, reason);
             }
         }
@@ -1477,7 +1485,7 @@ impl<'a> Service<'a> {
             .filter(|v| !v.issue.labels.iter().any(|l| l == "assignee-only") || assigned(self.board, &v.issue, &user).unwrap_or(false))
             .collect();
         queue.sort_by_key(|v| (priority(&v.issue), v.issue.number));
-        let ready = queue.iter().any(|v| self.free(label(&v.issue, "run-").as_deref(), needs_gui(&v.issue)).is_some());
+        let ready = queue.iter().any(|v| self.free(&route(&v.issue, v.projection.task.state == State::Review), needs_gui(&v.issue)).is_some());
         if let Some(host) = &self.host {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
@@ -1606,50 +1614,31 @@ impl<'a> Service<'a> {
     }
 
     fn reviewer_free(&self, v: &View) -> Option<String> {
-        let worker = v.projection.worker_runtime.as_ref()?;
-        let other = match worker.as_str() {
-            "claude" => "codex",
-            "codex" | "codex-app" => "claude",
-            _ => return None,
-        };
-        let gui = needs_gui(&v.issue);
-        self.free(Some(other), gui).or_else(|| self.free(Some(&worker), gui)
-            .filter(|rt| rt != "codex-app" || label(&v.issue, "run-").as_deref() == Some("codex-app")))
+        self.free(&route(&v.issue, true), needs_gui(&v.issue))
     }
 
-    /// `run-*` is hard; else a `prefer-*` runtime with a free slot; else the most free slots (§ 4 Filter).
     fn worker_free(&mut self, v: &View) -> Option<String> {
-        if let Some(rt) = label(&v.issue, "run-") {
-            return self.free(Some(&rt), needs_gui(&v.issue));
-        }
-        let prefer: Vec<&str> = v.issue.labels.iter().filter_map(|l| l.strip_prefix("prefer-")).collect();
-        if prefer.len() > 1 {
+        if label(&v.issue, "run-").is_none() && v.issue.labels.iter().filter(|l| l.starts_with("prefer-")).count() > 1 {
             self.log.push(format!("#{}: conflicting prefer-* labels; preference ignored", v.issue.number));
         }
-        prefer.first().filter(|_| prefer.len() == 1).and_then(|p| self.free(Some(p), needs_gui(&v.issue))).or_else(|| self.free(None, needs_gui(&v.issue)))
+        self.free(&route(&v.issue, false), needs_gui(&v.issue))
     }
 
-    /// A runtime with free capacity: `limits.<rt>` minus live children of it (§ 3).
-    /// `codex-app` only for `run-codex-app` tasks on a host whose `has` lists it (§ 9 opt-in).
+    /// `rt` when it has free capacity: `limits.<rt>` minus live children of it (§ 3).
+    /// `codex-app` only on a host whose `has` lists it (§ 9 opt-in).
     /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
-    fn free(&self, want: Option<&str>, gui: bool) -> Option<String> {
-        let app = |rt: &str| rt != "codex-app" || (cfg!(any(target_os = "macos", windows)) && want == Some(rt) && self.cfg.has.iter().any(|h| h == rt));
+    fn free(&self, rt: &str, gui: bool) -> Option<String> {
+        if rt == "codex-app" && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) { return None; }
+        if self.refused_access.contains_key(rt) || self.limited.contains_key(rt) || (gui && !self.full.contains(rt)) { return None; }
         let c = self.cap.as_ref().ok()?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
-        let limits: Vec<(String, u32)> = if c.auto { RUNTIMES.iter().map(|r| (r.to_string(), c.limits.get(*r).copied().unwrap_or(u32::MAX))).collect() } else { c.limits.clone().into_iter().collect() };
-        // the most free slots wins, so any-runtime tasks alternate; a tie keeps the listed order (§ 4 Filter)
-        let mut best: Option<(String, usize)> = None;
-        for (rt, n) in limits.into_iter().filter(|(rt, _)| want.is_none_or(|w| w == rt.as_str()) && app(rt) && !self.refused_access.contains_key(rt) && !self.limited.contains_key(rt) && (!gui || self.full.contains(rt))) {
-            let mut left = (n as usize).saturating_sub(self.entry().held.iter().filter(|r| r.2 == rt).count());
-            if let Some(host) = &self.host {
-                let h = host.lock().ok()?;
-                left = left.min(h.remaining(&self.cfg.root, &rt, c));
-            }
-            if left > 0 && best.as_ref().is_none_or(|b| left > b.1) {
-                best = Some((rt, left));
-            }
+        let n = if c.auto { RUNTIMES.contains(&rt).then(|| c.limits.get(rt).copied().unwrap_or(u32::MAX))? } else { *c.limits.get(rt)? };
+        let mut left = (n as usize).saturating_sub(self.entry().held.iter().filter(|r| r.2 == rt).count());
+        if let Some(host) = &self.host {
+            let h = host.lock().ok()?;
+            left = left.min(h.remaining(&self.cfg.root, rt, c));
         }
-        best.map(|(rt, _)| rt)
+        (left > 0).then(|| rt.to_string())
     }
 
     /// Post `spawn`, re-read, start the child only if `fold` accepted this spawn (§ 3 claim).
@@ -2765,7 +2754,7 @@ mod tests {
         std::fs::create_dir_all(&install).unwrap();
         std::fs::write(install.join("native"),"blocked directory").unwrap();
         let b=Fake::default();
-        let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
+        let n=b.create("T","",&[TASK_LABEL.into(),"run-codex".into()]).unwrap();
         let c=Config {root:root.clone(),install:install.clone(),limits:BTreeMap::from([("codex".into(),1)]),..cfg("mac")};
         let count=Rc::new(RefCell::new(0)); let launched=count.clone();
         let mut s=Service::new(&b,&c,"fixture",Box::new(|l| {
@@ -3541,7 +3530,7 @@ mod tests {
         assert_eq!(core::options(&card).len(), 2);
     }
 
-    // Chain: § 4 Filter, any-runtime and prefer-* admission over tests/golden/admit.json. Risk: the first listed runtime takes every slot while the other idles; a preference blocks a task or beats run-*.
+    // Chain: § 4 Filter, worker runtime admission over tests/golden/admit.json. Risk: unlabeled work moves to codex while claude is full; a legacy preference beats run-*.
     #[test]
     fn any_runtime_admission_follows_golden_traces() {
         let traces: Vec<serde_json::Value> = serde_json::from_str(include_str!("../tests/golden/admit.json")).unwrap();
@@ -3581,21 +3570,21 @@ mod tests {
         assert!(first_free_fails, "the traces must reject the first-free rule");
     }
 
-    // Chain: § 4 worker result to reviewer claim. Risk: run-* pins reviewers or capacity fallback stalls review.
+    // Chain: § 4 worker result to reviewer claim. Risk: a review runs on codex, or moves to codex while claude is full.
     #[test]
-    fn reviewer_prefers_other_runtime_and_falls_back_when_unavailable() {
-        for (worker, other, capacity, expected) in [
-            ("codex", "claude", 1, "claude"),
-            ("codex", "claude", 0, "codex"),
-            ("claude", "codex", 1, "codex"),
-            ("claude", "codex", 0, "claude"),
-            ("codex-app", "claude", 1, "claude"),
-            ("codex-app", "claude", 0, "codex-app"),
+    fn reviewer_runs_on_claude_and_waits_for_it() {
+        for (worker, claude, expected) in [
+            ("codex", 1, Some("claude")),
+            ("codex", 0, None),
+            ("claude", 1, Some("claude")),
+            ("codex-app", 1, Some("claude")),
+            ("codex-app", 0, None),
         ] {
             let b = Fake::default();
             let n = b.create("T", "", &["taskq".into(), format!("run-{worker}")]).unwrap();
             let mut c = cfg("mac");
-            c.limits = BTreeMap::from([(worker.into(), 1), (other.into(), capacity)]);
+            // codex and the worker's runtime keep free slots: a review must not fall back to them
+            c.limits = BTreeMap::from([(worker.into(), 1), ("codex".into(), 1), ("claude".into(), claude.max(u32::from(worker == "claude")))]);
             c.has = vec!["codex-app".into()];
             let e: Exits = Default::default();
             let mut s = service(&b, &c, e.clone());
@@ -3608,15 +3597,15 @@ mod tests {
             }
             assert_eq!(rt_of(&t).unwrap().0, worker);
             // A losing spawn must not change which runtime actually did the work.
-            b.comment(n, &core::entry("spawn", &["worker", &format!("{other}:ignored"), "mac"], None, "")).unwrap();
+            b.comment(n, &core::entry("spawn", &["worker", if worker == "claude" { "codex:ignored" } else { "claude:ignored" }, "mac"], None, "")).unwrap();
             b.comment(n, &core::entry("result", &["0123456789abcdef0123456789abcdef01234567"], t.attempt, "ok")).unwrap();
             *e.borrow()[0].1.borrow_mut() = Some(0);
             for retry in 0..2 {
                 s.pass().unwrap();
                 let t = task(&b, n);
-                assert_eq!(t.role.as_deref(), Some("reviewer"));
-                assert_eq!(rt_of(&t).unwrap().0, expected, "{worker}, capacity {capacity}, retry {retry}");
-                if retry == 0 {
+                assert_eq!(t.state, State::Review);
+                assert_eq!((t.role.as_deref() == Some("reviewer")).then(|| rt_of(&t).unwrap().0), expected, "{worker}, claude {claude}, retry {retry}");
+                if retry == 0 && expected.is_some() {
                     *e.borrow().last().unwrap().1.borrow_mut() = Some(1);
                     s.pass().unwrap(); // gone ends the reviewer; the next pass claims its replacement
                     assert_eq!(task(&b, n).attempt, None);
@@ -3730,7 +3719,7 @@ mod tests {
         s.focus = vec!["all".into()];
         let any = b.create("A", "", &["taskq".into()]).unwrap();
         s.pass().unwrap();
-        assert!(task(&b, any).session.unwrap().starts_with("claude:"), "a tie takes the first listed runtime");
+        assert!(task(&b, any).session.unwrap().starts_with("claude:"), "unlabeled work runs on claude");
         let only = b.create("B", "", &["taskq".into(), "run-claude".into()]).unwrap();
         *next.borrow_mut() = "work";
         *e.borrow()[0].1.borrow_mut() = Some(1);
@@ -3740,7 +3729,10 @@ mod tests {
         assert_eq!((task(&b, any).state, task(&b, any).retries), (State::Ready, 0), "A2: the gone budget stays");
         assert_eq!(core::executions(any,&entries(&b,any).unwrap()).last().unwrap().usage_hold,Some((reset,true)),"release persists the deadline before outcome publication");
         s.pass().unwrap();
-        assert!(task(&b, any).session.unwrap().starts_with("codex:"), "A4: another eligible runtime starts");
+        assert_eq!((task(&b, any).state, e.borrow().len()), (State::Ready, 1), "§ 4 Filter: unlabeled work waits for claude, never moves");
+        b.labels(any, &["run-codex".into()], &[]).unwrap();
+        s.pass().unwrap();
+        assert!(task(&b, any).session.unwrap().starts_with("codex:"), "A4: work for another runtime starts");
         assert_eq!((task(&b, only).state, e.borrow().len()), (State::Ready, 2), "a claude-only task waits for the reset");
         let cap = s.capacity_json();
         assert!(cap["reasons"].as_array().unwrap().iter().any(|r| r["code"] == "usage-limit" && r["text"] == "claude: until 1970-01-01T00:16:40Z"), "{cap}");
@@ -4117,7 +4109,7 @@ mod tests {
         s.pass().unwrap();
         assert_eq!(task(&b, t).state, State::Ready, "hard runtime must not fall back to a Full runtime");
         assert!(s.waits[&t].contains("codex has no effective Full grant"));
-        b.labels(t, &["prefer-codex".into()], &["run-codex".into(), "prefer-claude".into()]).unwrap();
+        b.labels(t, &[], &["run-codex".into(), "prefer-claude".into()]).unwrap();
         s.pass().unwrap();
         assert_eq!(task(&b, t).state, State::Doing);
         assert!(task(&b, t).session.unwrap().starts_with("claude:"), "only the Full access runtime");

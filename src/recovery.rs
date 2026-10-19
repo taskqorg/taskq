@@ -275,7 +275,7 @@ mod tests {
             fn id(&self)->u32{0}
             fn checkpoint(&mut self,_:&Config,_:&crate::runtime::Launch,_:u64)->Res<()>{Ok(())}
         }
-        let mut f=fixture();f.c.limits=std::collections::BTreeMap::from([("codex".into(),2)]);
+        let mut f=fixture();f.c.limits=std::collections::BTreeMap::from([("claude".into(),2)]);
         let other=f.b.create("Unselected","",&["taskq".into()]).unwrap();let request=request(&f);
         assert_eq!(apply(&f.b,&f.c,&request).unwrap()["receipts"][0]["outcome"],"accepted");
         let stopped=Rc::new(Cell::new(false));let flag=stopped.clone();
