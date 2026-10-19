@@ -802,9 +802,11 @@ pub fn projection(install: &Path, now: u64) -> Res<Value> {
             let overlay = host.overlay(&root).map(|(_, e)| e["limits"].clone()).unwrap_or_default();
             for rt in crate::service::RUNTIMES {
                 let t = json!({"installation_id": inst, "generation": generation, "project_id": pid, "runtime_id": rt});
-                // an unreadable taskq.json is a known config blocker with nothing effective; status reasons keep their knowledge
+                // an unreadable taskq.json is a known config blocker with nothing effective; status reasons keep their knowledge,
+                // and a stale or missing status keeps this host's last-known ones and adds an unknown sample
                 let mut bs = if p.policy.is_null() { vec![json!({"code": "config", "scope": t, "knowledge": "known"})] } else { vec![] };
-                if fresh { bs.extend(blockers(&st["capacity"], |_| t.clone()).as_array().into_iter().flatten().cloned()); }
+                if at.is_some() { bs.extend(blockers(&st["capacity"], |_| t.clone()).as_array().into_iter().flatten().cloned()); }
+                if !fresh { bs.push(json!({"code": "sample", "scope": t, "knowledge": "unknown"})); }
                 let completeness = if !fresh || p.policy.is_null() { "unknown" } else if bs.iter().any(|b| b["knowledge"] == "unknown") { "partial" } else { "complete" };
                 let known = fresh && !p.policy.is_null();
                 targets.push(json!({"target": t,
@@ -1162,11 +1164,18 @@ mod tests {
         let codex = projection(&t.install, 111).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!((codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(), &codex["completeness"]),
             (vec![("cpu", "known"), ("unknown", "unknown")], &json!("partial")));
-        // an unreadable taskq.json keeps the project listed with a config blocker and nothing effective
+        // 61 s later the same-host status is stale: last-known blockers stay, an unknown sample is added
+        let codex = projection(&t.install, 171).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        assert_eq!((codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(), &codex["completeness"], &codex["effective_revision"], &codex["effective_policy"]["runtime_limit"]),
+            (vec![("cpu", "known"), ("unknown", "unknown"), ("sample", "unknown")], &json!("unknown"), &Value::Null, &Value::Null));
+        // an unreadable taskq.json keeps the project listed with a config blocker and nothing effective, fresh or stale
         fs::write(t.root.join("taskq.json"), "{").unwrap();
         let codex = projection(&t.install, 111).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         assert_eq!((&codex["blockers"][0]["code"], &codex["completeness"], &codex["effective_revision"], &codex["effective_policy"]["runtime_limit"]),
             (&json!("config"), &json!("unknown"), &Value::Null, &Value::Null));
+        let codex = projection(&t.install, 171).unwrap()["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
+        assert_eq!(codex["blockers"].as_array().unwrap().iter().map(|b| (b["code"].as_str().unwrap(), b["knowledge"].as_str().unwrap())).collect::<Vec<_>>(),
+            vec![("config", "known"), ("cpu", "known"), ("unknown", "unknown"), ("sample", "unknown")]);
         fs::write(t.root.join("taskq.json"), &project).unwrap();
         status(110, &r1, json!({"codex": 1}));
         // restore: null removes the entry; a stale operation naming the first revision cannot apply after the revert
