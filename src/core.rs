@@ -207,7 +207,6 @@ pub struct Projection {
     accepted: Vec<u64>,
     pub executions: Vec<Execution>,
     pub changes: Vec<(u64, Task, Task)>,
-    pub worker_runtime: Option<String>,
 }
 
 impl Projection {
@@ -404,7 +403,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut resume = None; // the state an `ask` entry left; None when a retry limit asked
     let (mut free, mut accepted) = (vec![], vec![]);
     let mut executions: Vec<Execution> = vec![];
-    let (mut changes, mut worker_runtime) = (vec![], None);
+    let mut changes = vec![];
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
         if let Some(l) = parse(n, &e.body) {
@@ -416,9 +415,6 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             let before = t.clone();
             step(&mut t, &mut resume, e.id, &l, last == 0);
             if l.kind == "spawn" && t.attempt == Some(e.id) && before.attempt != t.attempt {
-                if t.role.as_deref() == Some("worker") {
-                    worker_runtime = t.session.as_deref().and_then(|s| s.split_once(':')).map(|s| s.0.to_string());
-                }
                 executions.push(Execution { id:e.id, attempt:e.id, through:e.id, host:l.args[2].into(),
                     runtime:l.args[1].split(':').next().unwrap_or("").into(), accepted:false, release:None,usage_hold:None });
             } else if l.kind == "executing" && l.args.len() == 1 && l.attempt.is_some() && l.attempt == t.attempt
@@ -472,7 +468,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, owner_comments:free, revision:rev, accepted, executions, changes, worker_runtime }
+    Projection { task:t, owner_comments:free, revision:rev, accepted, executions, changes }
 }
 
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {

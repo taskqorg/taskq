@@ -19,7 +19,7 @@ Your repository board is the task list; your usual AI apps do the work.
 ### What you get
 
 - Tasks are issues on GitHub or GitLab.
-- The service runs Claude or Codex workers within each computer's configured limits.
+- The service runs Claude or Codex workers within each computer's configured limits: tasks labelled `run-codex` (design, UI, visual and image work) on Codex, everything else and every review on Claude.
 - A worker's question waits for your answer.
 - A reviewer checks the result; accepted work publishes through the configured branch or PR route.
 - The tray menu shows questions, admission controls and a day's history.
