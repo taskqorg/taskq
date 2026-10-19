@@ -545,6 +545,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
                 ready(t)
             }
         }
+        (Doing | Review, "gone", true) if l.args == ["usage-limit"] => if t.state == Review { end(t) } else { ready(t) },
         (Doing | Review, "gone", true) => {
             if !limit(t, resume, GONE_MAX) {
                 if t.state == Review { end(t) } else { ready(t) }

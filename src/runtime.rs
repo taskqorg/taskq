@@ -235,6 +235,26 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     else { Usage::Unknown("no-usage") }
 }
 
+/// A usage or quota limit the runtime reported before any work started ([usage limit](docs/design/capacity.md#usage-limit)):
+/// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
+pub fn usage_limit(log: &Path) -> Option<Option<i64>> {
+    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
+    for v in text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
+        let kind = v["type"].as_str().unwrap_or_default();
+        if kind == "assistant" {
+            if v["apiError"] == "usage_limit_reached" || v["quotaLimits"]["status"] == "rejected" {
+                return Some(v["quotaLimits"]["resetsAt"].as_i64().or(v["apiErrorParams"]["rate_limit_info"]["resetsAt"].as_i64()));
+            }
+            return None;
+        }
+        if kind.starts_with("item.") { return None; }
+        // ponytail: Codex limit text matched by words; its format is unverified (R12), and it reports no reset
+        let message = v["message"].as_str().or(v["error"]["message"].as_str()).unwrap_or_default().to_lowercase();
+        if matches!(kind, "error" | "turn.failed") && message.contains("usage limit") { return Some(None); }
+    }
+    None
+}
+
 /// The final text of a turn: Claude's last `result`, else Codex's last `agent_message`.
 pub fn final_text(events: &[serde_json::Value]) -> Option<String> {
     events.iter().rev().find_map(|v| {
@@ -1930,6 +1950,29 @@ pub fn agent_text(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,
+    // or a limit before work counts against the gone limit (#1276).
+    #[test]
+    fn usage_limit_only_before_work() {
+        let log = std::env::temp_dir().join(format!("taskq-usage-limit-{}.log", uuid()));
+        let limit = r#"{"type":"assistant","apiError":"usage_limit_reached","quotaLimits":{"status":"rejected","resetsAt":1792386000},"message":{"content":[{"type":"text","text":"You've hit your weekly limit"}]}}"#;
+        let work = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}"#;
+        let cases = [
+            (format!("{{\"type\":\"system\",\"subtype\":\"init\"}}\n{limit}\n{{\"type\":\"result\",\"is_error\":true}}\n"), Some(Some(1792386000))),
+            (format!("{work}\n{limit}\n"), None),
+            (r#"{"type":"assistant","apiError":"usage_limit_reached","apiErrorParams":{"rate_limit_info":{"resetsAt":7}}}"#.to_string(), Some(Some(7))),
+            ("{\"type\":\"thread.started\"}\n{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"You've hit your usage limit. Try again later.\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"You've hit your usage limit.\"}}\n".to_string(), Some(None)),
+            ("{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\"}}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"usage limit\"}}\n".to_string(), None),
+            ("{\"type\":\"turn.failed\",\"error\":{\"message\":\"stream disconnected\"}}\n".to_string(), None),
+        ];
+        for (text, want) in cases {
+            std::fs::write(&log, &text).unwrap();
+            assert_eq!(usage_limit(&log), want, "{text}");
+        }
+        let _ = std::fs::remove_file(&log);
+        assert_eq!(usage_limit(&log), None, "an unreadable log is no limit");
+    }
 
     // Chain: installed npm entrypoint -> exact native executable -> owned process identity.
     // Risk: tracking a launcher lets its child survive cancellation and falsely releases capacity.

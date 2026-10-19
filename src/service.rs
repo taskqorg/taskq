@@ -324,6 +324,10 @@ pub struct Service<'a> {
     pub hold: Option<String>,
     /// Runtimes whose access policy refuses a launch, with the reason (§ 8 Access): no claim, resume or reviewer.
     pub refused_access: BTreeMap<String, String>,
+    /// Runtimes held after a usage limit, with board time the hold ends and whether the runtime reported it
+    /// ([usage limit](docs/design/capacity.md#usage-limit)): no claim, resume or reviewer until then.
+    /// ponytail: in memory per project thread; a restart forgets it and the next limited attempt holds again
+    pub limited: BTreeMap<String, (i64, bool)>,
     pub gui_checked: Option<std::time::Instant>,
     pub gui_probe: Result<(), String>,
     pub full: BTreeSet<String>,
@@ -340,6 +344,8 @@ pub struct Service<'a> {
 }
 
 const MONTH: i64 = 30 * 86400;
+/// Seconds a usage-limited runtime stays held when it reported no reset.
+const USAGE_PROBE: i64 = 1800;
 
 /// Host readback stays separate from a project's effective narrowing limits.
 pub fn host_capacity(capacity:&Value)->Option<Value> {
@@ -568,7 +574,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -852,6 +858,7 @@ impl<'a> Service<'a> {
             reasons.push(("focus", self.focus_error.clone().unwrap_or_else(|| FOCUS_OFF.into())));
         }
         reasons.extend(self.refused_access.iter().map(|(rt, r)| ("access", format!("{rt}: {r}"))));
+        reasons.extend(self.limited.keys().map(|rt| ("usage-limit", format!("{rt}: {}", self.limit_line(rt)))));
         let res = |r: &Res, state: &str| json!({"task": r.0, "attempt": r.1, "rt": r.2, "state": state});
         let reservations: Vec<Value> = self.kids.iter().map(|k| res(&(k.task, k.attempt, k.rt.clone()), "held"))
             .chain(self.reserved.iter().map(|r| res(r, "held"))).chain(self.requested.iter().map(|r| res(r, "requested"))).collect();
@@ -923,9 +930,11 @@ impl<'a> Service<'a> {
         line.filter(|m| !m.is_empty()).map_or_else(String::new, |m| format!("\n{LABEL}{m}"))
     }
 
-    /// `gone attempt a` on `t`; at the retry limit it carries the § 2 limit card (#1123).
-    fn gone(&mut self, n: u64, t: &Task, a: u64, text: &str) -> Result<u64, String> {
-        let id = self.post(n, core::entry("gone", &[], Some(a), &core::limit_text(n, t, "gone", text)))?;
+    /// `gone attempt a` on `t`; at the retry limit it carries the § 2 limit card (#1123). `gone usage-limit` keeps
+    /// retries, so it never carries the card.
+    fn gone(&mut self, n: u64, t: &Task, a: u64, args: &[&str], text: &str) -> Result<u64, String> {
+        let text = if args.is_empty() { core::limit_text(n, t, "gone", text) } else { text.to_string() };
+        let id = self.post(n, core::entry("gone", args, Some(a), &text))?;
         if let Ok(log) = crate::board::entries(self.board, n) {
             let through: Vec<_> = log.into_iter().filter(|e| e.id <= id).collect();
             let before: Vec<_> = through.iter().filter(|e| e.id < id).cloned().collect();
@@ -973,6 +982,11 @@ impl<'a> Service<'a> {
         value
     }
 
+    /// `until <time>` for a reported reset, else `probe <time>`, of a held runtime.
+    fn limit_line(&self, rt: &str) -> String {
+        self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::board::stamp(*at))).unwrap_or_default()
+    }
+
     fn heartbeat_body(&self) -> String {
         let mut lines = vec![format!("version {}", self.version)];
         if !self.instance.is_empty() {
@@ -988,6 +1002,7 @@ impl<'a> Service<'a> {
         if self.gui().is_ok() {
             lines.push("has gui".into());
         }
+        lines.extend(self.limited.keys().map(|rt| format!("limit {rt} {}", self.limit_line(rt))));
         let kids: BTreeSet<_> = self.kids.iter().map(|k| (k.task, k.attempt)).chain(self.pending.iter().copied()).collect();
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
@@ -1040,6 +1055,7 @@ impl<'a> Service<'a> {
         let ttl = self.cfg.ttl;
         let (views, hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
         let now = self.board.now()?;
+        self.limited.retain(|_, (at, _)| now < *at);
         self.observe_ownership(&views)?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
         self.tasks_read = Some(std::time::Instant::now());
@@ -1149,8 +1165,16 @@ impl<'a> Service<'a> {
                 && matches!(v.projection.task.state, State::Doing | State::Review)
                 && !core::handed_in(n, &v.log, a, a.max(self.delivered(a)))
             {
-                let text = format!("exit {code}{}", self.last_message(n, a, &v.projection.task));
-                self.gone(n, &v.projection.task, a, &text)?;
+                let t = &v.projection.task;
+                let log = crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a);
+                if let (Some(reset), Some((rt, _))) = (crate::runtime::usage_limit(&log), rt_of(t)) {
+                    self.limited.insert(rt.to_string(), reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)));
+                    let text = format!("Usage limit: {rt} {}{}", self.limit_line(rt), self.last_message(n, a, t));
+                    self.gone(n, t, a, &["usage-limit"], &text)?;
+                } else {
+                    let text = format!("exit {code}{}", self.last_message(n, a, t));
+                    self.gone(n, t, a, &[], &text)?;
+                }
                 touched.insert(n);
             }
         }
@@ -1230,7 +1254,7 @@ impl<'a> Service<'a> {
                     let executions = &v.projection.executions;
                     if let Some(x) = executions.iter().rev().find(|x| x.attempt == a).filter(|_| executions.iter().all(|x| x.release.is_some())) {
                         if !core::handed_in(n,&v.log,a,x.through) {
-                            self.gone(n,t,a,&format!("execution {} confirmed {:?} without task outcome",x.id,x.release.unwrap()))?;
+                            self.gone(n,t,a,&[],&format!("execution {} confirmed {:?} without task outcome",x.id,x.release.unwrap()))?;
                             touched.insert(n);
                         }
                     }
@@ -1342,7 +1366,7 @@ impl<'a> Service<'a> {
                 let last = v.projection.executions.iter().rev().find(|x| x.attempt == a);
                 if let Some(x) = last.filter(|x| x.release.is_some()) {
                     let text = format!("execution {} confirmed {:?} without task outcome{}", x.id, x.release.unwrap(), self.last_message(n, a, t));
-                    self.gone(n, t, a, &text)?;
+                    self.gone(n, t, a, &[], &text)?;
                     touched.insert(n);
                 } else {
                     self.execution_waits.insert(n,"native execution evidence missing; reconcile the owning runtime".into());
@@ -1363,7 +1387,7 @@ impl<'a> Service<'a> {
                 pending.insert((n,a));
                 continue;
             }
-            if self.refused_access.contains_key(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
+            if self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
                 pending.insert((n, a)); // the inbox stays undelivered
                 continue;
             }
@@ -1564,7 +1588,7 @@ impl<'a> Service<'a> {
         let limits: Vec<(String, u32)> = if c.auto { RUNTIMES.iter().map(|r| (r.to_string(), c.limits.get(*r).copied().unwrap_or(u32::MAX))).collect() } else { c.limits.clone().into_iter().collect() };
         // the most free slots wins, so any-runtime tasks alternate; a tie keeps the listed order (§ 4 Filter)
         let mut best: Option<(String, usize)> = None;
-        for (rt, n) in limits.into_iter().filter(|(rt, _)| want.is_none_or(|w| w == rt.as_str()) && app(rt) && !self.refused_access.contains_key(rt) && (!gui || self.full.contains(rt))) {
+        for (rt, n) in limits.into_iter().filter(|(rt, _)| want.is_none_or(|w| w == rt.as_str()) && app(rt) && !self.refused_access.contains_key(rt) && !self.limited.contains_key(rt) && (!gui || self.full.contains(rt))) {
             let mut left = (n as usize).saturating_sub(self.entry().held.iter().filter(|r| r.2 == rt).count());
             if let Some(host) = &self.host {
                 let h = host.lock().ok()?;
@@ -1764,7 +1788,7 @@ impl<'a> Service<'a> {
                     }
                     return Err(format!("#{} {text}; input retained for retry", l.task));
                 }
-                self.gone(l.task, &core::fold(l.task, &log, false), l.attempt, &text).map(|_| ())
+                self.gone(l.task, &core::fold(l.task, &log, false), l.attempt, &[], &text).map(|_| ())
             }
         }
     }
@@ -3593,6 +3617,65 @@ mod tests {
         s.refused_access.clear();
         s.pass().unwrap();
         assert_eq!((task(&b, n2).state, e.borrow().len()), (State::Doing, 3), "granted: resume and claim");
+    }
+
+    // Chain: usage limit before work -> `gone usage-limit` -> held runtime -> reset -> admission (#1279). Risk: a
+    // limit spends the gone budget (#1276), another eligible runtime waits, the hold outlives its reset or hides
+    // from status, or a limit after work started skips its retry.
+    #[test]
+    fn usage_limit_holds_the_runtime_until_reset_and_keeps_retries() {
+        let root = std::env::temp_dir().join(format!("taskq-usage-limit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let b = Fake::default();
+        let mut c = Config { root: root.clone(), ..cfg("mac") };
+        c.limits = BTreeMap::from([("claude".to_string(), 1), ("codex".to_string(), 1)]);
+        let reset = 1000;
+        // the next launch's log: before-work limit, after-work limit, or plain work
+        let next: Rc<RefCell<&str>> = Rc::new(RefCell::new("limit"));
+        let e: Exits = Default::default();
+        let (seen, r, kind) = (e.clone(), root.clone(), next.clone());
+        let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |l: &Launch| {
+            let flag = Rc::new(RefCell::new(None));
+            seen.borrow_mut().push((l.task, flag.clone()));
+            let limit = format!("{{\"type\":\"assistant\",\"apiError\":\"usage_limit_reached\",\"quotaLimits\":{{\"status\":\"rejected\",\"resetsAt\":{reset}}}}}\n");
+            let work = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\"}]}}\n";
+            let log = crate::runtime::log_path(&r, l);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(&log, match *kind.borrow() { "limit" => limit, "late" => format!("{work}{limit}"), _ => work.into() }).unwrap();
+            Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
+        }));
+        s.focus = vec!["all".into()];
+        let any = b.create("A", "", &["taskq".into()]).unwrap();
+        s.pass().unwrap();
+        assert!(task(&b, any).session.unwrap().starts_with("claude:"), "a tie takes the first listed runtime");
+        let only = b.create("B", "", &["taskq".into(), "run-claude".into()]).unwrap();
+        *next.borrow_mut() = "work";
+        *e.borrow()[0].1.borrow_mut() = Some(1);
+        s.pass().unwrap();
+        let gone = b.comments(any).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: gone")).unwrap().body;
+        assert!(gone.starts_with("taskq: gone usage-limit attempt ") && gone.contains("\nUsage limit: claude until 1970-01-01T00:16:40Z"), "{gone}");
+        assert_eq!((task(&b, any).state, task(&b, any).retries), (State::Ready, 0), "A2: the gone budget stays");
+        s.pass().unwrap();
+        assert!(task(&b, any).session.unwrap().starts_with("codex:"), "A4: another eligible runtime starts");
+        assert_eq!((task(&b, only).state, e.borrow().len()), (State::Ready, 2), "a claude-only task waits for the reset");
+        let cap = s.capacity_json();
+        assert!(cap["reasons"].as_array().unwrap().iter().any(|r| r["code"] == "usage-limit" && r["text"] == "claude: until 1970-01-01T00:16:40Z"), "{cap}");
+        assert!(s.heartbeat_body().contains("\nlimit claude until 1970-01-01T00:16:40Z"));
+        let text = s.snapshot.as_ref().unwrap().text(&c, &Value::Null).unwrap();
+        assert!(text.contains(" claude limit until 1970-01-01T00:16:40Z"), "A3: {text}");
+
+        b.state.borrow_mut().clock = reset;
+        *next.borrow_mut() = "late";
+        s.pass().unwrap();
+        assert_eq!((task(&b, only).state, e.borrow().len()), (State::Doing, 3), "A5: the reset admits the held work");
+        assert!(s.limited.is_empty());
+        *e.borrow()[2].1.borrow_mut() = Some(1);
+        s.pass().unwrap();
+        let gone = b.comments(only).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: gone")).unwrap().body;
+        assert!(gone.starts_with("taskq: gone attempt ") && gone.contains("\nexit 1"), "A6: {gone}");
+        assert_eq!(task(&b, only).retries, 1, "A6: a limit after work started counts");
+        assert!(s.limited.is_empty(), "a limit after work started holds nothing");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // Chain: § 3 emergency hold, § 4 reconciliation and recovery. Risk: a held host launches, an unknown read is

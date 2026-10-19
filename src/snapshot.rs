@@ -77,6 +77,8 @@ pub struct Host {
     pub updated: i64,
     /// `off` or `unknown` when the host admits nothing by focus (§ 4).
     pub focus: Option<String>,
+    /// `<rt> until|probe <time>` per runtime held after a usage limit (§ 4 step 1).
+    pub limits: Vec<String>,
 }
 
 pub struct Snapshot {
@@ -125,6 +127,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
         updated: h.updated,
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),
+        limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ")).map(str::to_string).collect(),
     }).collect();
     Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
 }
@@ -311,7 +314,8 @@ impl Snapshot {
             out.push("Failed:\n| Task | Reason |\n|---|---|".into());
             out.extend(failed);
         }
-        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version, age(self.observed - h.updated), h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default())).collect();
+        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version, age(self.observed - h.updated), h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
+            + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>())).collect();
         if !hs.is_empty() {
             out.push(String::new());
             out.push(format!("Hosts: {}", hs.join(", ")));
