@@ -806,7 +806,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     log!("taskq {} service on {} for {}", platform::VERSION, cfg.me, cfg.repo);
     let mut sampled: Option<Instant> = None;
     let mut agents: Option<(Instant, Value)> = None;
-    let mut gui_at: Option<Instant> = None;
     let mut focus_error: Option<String> = None;
     let mut pruned: Option<Instant> = None;
     // § 4 board budget: the pause logged last, and the cumulative counts at the last full hour
@@ -867,9 +866,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         let access = policy::report(&cfg.install, &cfg.root, &s.cfg.permission_mode, &s.cfg.codex);
         s.refused_access = access.iter().filter_map(|e| Some((e.runtime.clone(), e.refused.clone()?))).collect();
         s.full = access.iter().filter(|e| e.mode == "full" && e.refused.is_none()).map(|e| e.runtime.clone()).collect();
-        if gui_at.is_none_or(|t: Instant| t.elapsed().as_secs() >= 300) {
+        if s.gui_checked.is_none_or(|t: Instant| t.elapsed().as_secs() >= 300) {
+            s.gui_checked = Some(Instant::now());
             s.gui_probe = platform::gui_probe();
-            gui_at = Some(Instant::now());
         }
         if !reduced { if let Some(m) = policy::pin_rollback(&cfg.install, platform::VERSION) { log!("{m}"); } }
         s.mono = host.as_ref().and_then(|h| h.lock().ok().map(|h| h.elapsed())).unwrap_or_else(|| began.elapsed().as_secs());
@@ -947,7 +946,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }
         for (k, v) in [("focus", if focus_error.is_some() { Value::Null } else { json!(s.focus) }), ("focus_error", json!(focus_error)), ("focus_command",command), ("kids", json!(kids)), ("issues", json!(issues)), ("log", json!(log)),
             ("tasks_age_seconds", json!(s.tasks_read.map(|t| t.elapsed().as_secs()))), ("request", json!(request)), ("events_since", json!(s.events_since)),
-            ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err()})), ("waits", json!(s.waits)),
+            ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err()})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, &cfg.root, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),

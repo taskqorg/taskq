@@ -324,9 +324,10 @@ pub struct Service<'a> {
     pub hold: Option<String>,
     /// Runtimes whose access policy refuses a launch, with the reason (§ 8 Access): no claim, resume or reviewer.
     pub refused_access: BTreeMap<String, String>,
+    pub gui_checked: Option<std::time::Instant>,
     pub gui_probe: Result<(), String>,
     pub full: BTreeSet<String>,
-    pub waits: Vec<u64>,
+    pub waits: BTreeMap<u64, String>,
     pub execution_waits: BTreeMap<u64, String>,
     pending_releases: BTreeSet<(u64, u64, u64)>,
     /// Children by attempt: role, runtime, and start with attempt log offset; `None` when adopted across a re-exec
@@ -567,7 +568,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: vec![], execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1021,7 +1022,7 @@ impl<'a> Service<'a> {
                             x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable")));
                 }
                 if !self.kids.iter().any(|k| k.task == row.n && row.task.attempt == Some(k.attempt)) {
-                    if let Some(reason)=self.execution_waits.get(&row.n) {row.execution_wait=Some(reason.clone());}
+                    if let Some(reason)=self.execution_waits.get(&row.n).or_else(|| self.waits.get(&row.n)) {row.execution_wait=Some(reason.clone());}
                 }
             }
         }
@@ -1042,9 +1043,19 @@ impl<'a> Service<'a> {
         self.observe_ownership(&views)?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
         self.tasks_read = Some(std::time::Instant::now());
-        // § 4 Filter: a ready `needs-gui` task waits while neither this host nor a fresh heartbeat lists `has gui`
-        let gui_host = self.gui().is_ok() || hosts.iter().any(|h| now - h.updated < self.cfg.ttl && h.body.lines().any(|l| l == "has gui"));
-        self.waits = views.iter().filter(|v| !gui_host && v.projection.task.state == State::Ready && needs_gui(&v.issue)).map(|v| v.issue.number).collect();
+        // Local eligibility only: another host's heartbeat cannot qualify this runtime or hide its refusal.
+        self.waits.clear();
+        for v in &views {
+            let t = &v.projection.task;
+            if !matches!(t.state, State::Ready | State::Doing | State::Review)
+                || label(&v.issue, "host-").is_some_and(|h| h != me)
+                || t.attempt.is_some() && host_of(t) != Some(me.as_str())
+                || self.kids.iter().any(|k| k.task == v.issue.number) { continue; }
+            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).or_else(|| label(&v.issue, "run-"));
+            if let Some(reason) = self.gui_reason(&v.issue, rt.as_deref()) {
+                self.waits.insert(v.issue.number, reason);
+            }
+        }
         // § 4 one service per host name: another install's fresh heartbeat under this name holds every write (#933)
         let title = format!("taskq host {me}");
         let other = hosts.iter().filter(|h| h.title == title && now - h.updated < ttl).flat_map(|h| h.body.lines()).find_map(|l| l.strip_prefix("service ")).filter(|id| *id != self.instance);
@@ -1391,7 +1402,7 @@ impl<'a> Service<'a> {
             .filter(|v| !v.issue.labels.iter().any(|l| l == "assignee-only") || assigned(self.board, &v.issue, &user).unwrap_or(false))
             .collect();
         queue.sort_by_key(|v| (priority(&v.issue), v.issue.number));
-        let ready = queue.iter().any(|v| self.free(label(&v.issue, "run-").as_deref()).is_some());
+        let ready = queue.iter().any(|v| self.free(label(&v.issue, "run-").as_deref(), needs_gui(&v.issue)).is_some());
         if let Some(host) = &self.host {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
@@ -1604,7 +1615,7 @@ impl<'a> Service<'a> {
         for r in self.reserved.iter_mut().filter(|r| r.0 == n && r.1 == 0) { r.1 = id; }
         if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.claimed(&self.cfg.root, n, id); } }
         let l = Launch { execution: None, task: n, title: v.issue.title.clone(), attempt: id, role: role.into(), rt: rt.into(), session, url: self.board.url(n), resume: None };
-        if !self.may_launch() {
+        if !self.may_launch() || self.gui_refused(&v.issue, rt) {
             self.pending.insert((n, id));
             self.held.push(l);
             self.beat()?;
@@ -1616,13 +1627,26 @@ impl<'a> Service<'a> {
     /// This host lists `gui` (§ 4 Filter): the probe holds and a runtime runs with Full access.
     pub fn gui(&self) -> Result<(), String> {
         self.gui_probe.clone()?;
+        if self.gui_checked.is_none_or(|at| at.elapsed().as_secs() >= 300) {
+            return Err("GUI capture evidence missing or stale (300 s)".into());
+        }
         if self.full.is_empty() { Err("no runtime with Full access".into()) } else { Ok(()) }
     }
 
     /// A `needs-gui` attempt may not run on `rt` now (§ 4 Filter): the probe fails or `rt` lost Full access.
     /// Its resume or held launch waits with the inbox and lease kept.
     fn gui_refused(&self, i: &Issue, rt: &str) -> bool {
-        needs_gui(i) && (self.gui_probe.is_err() || !self.full.contains(rt))
+        self.gui_reason(i, Some(rt)).is_some()
+    }
+
+    fn gui_reason(&self, i: &Issue, rt: Option<&str>) -> Option<String> {
+        if !needs_gui(i) { return None; }
+        if let Err(reason) = self.gui() { return Some(format!("GUI unavailable on {}: {reason}", self.cfg.me)); }
+        if let Some(rt) = rt {
+            if let Some(reason) = self.refused_access.get(rt) { return Some(format!("GUI runtime {rt} refused: {reason}")); }
+            if !self.full.contains(rt) { return Some(format!("GUI runtime {rt} has no effective Full grant")); }
+        }
+        None
     }
 
     /// Write the heartbeat now: the lease of a new child or held launch is listed before the next pass judges it.
@@ -3810,12 +3834,22 @@ mod tests {
         let mut s = service(&b, &c, e.clone());
         let hb = |b: &Fake| b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").unwrap().body;
         s.pass().unwrap();
-        assert_eq!((task(&b, t).state, s.waits.clone()), (State::Ready, vec![t]), "no probe: no gui host");
+        assert_eq!((task(&b, t).state, s.waits.contains_key(&t)), (State::Ready, true), "no probe: no gui host");
+        s.gui_checked = Some(std::time::Instant::now());
         s.gui_probe = Ok(());
         s.pass().unwrap();
-        assert_eq!((task(&b, t).state, s.waits.clone()), (State::Ready, vec![t]), "every runtime sandboxed: no gui host");
+        assert_eq!((task(&b, t).state, s.waits.contains_key(&t)), (State::Ready, true), "every runtime sandboxed: no gui host");
         assert!(!hb(&b).lines().any(|l| l == "has gui"));
         s.full = BTreeSet::from(["claude".to_string()]);
+        s.gui_checked = Some(std::time::Instant::now() - std::time::Duration::from_secs(300));
+        s.pass().unwrap();
+        assert_eq!(task(&b, t).state, State::Ready, "stale capture cannot admit GUI work");
+        s.gui_checked = Some(std::time::Instant::now());
+        b.labels(t, &["run-codex".into(), "prefer-claude".into()], &[]).unwrap();
+        s.pass().unwrap();
+        assert_eq!(task(&b, t).state, State::Ready, "hard runtime must not fall back to a Full runtime");
+        assert!(s.waits[&t].contains("codex has no effective Full grant"));
+        b.labels(t, &["prefer-codex".into()], &["run-codex".into(), "prefer-claude".into()]).unwrap();
         s.pass().unwrap();
         assert_eq!(task(&b, t).state, State::Doing);
         assert!(task(&b, t).session.unwrap().starts_with("claude:"), "only the Full access runtime");
@@ -3830,16 +3864,64 @@ mod tests {
             (s.gui_probe, s.full) = (probe, full.into_iter().collect());
             s.pass().unwrap();
             assert_eq!((e.borrow().len(), task(&b, t).attempt), (1, Some(a)), "no sandboxed resume");
+            assert!(s.waits.contains_key(&t), "resume refusal must name a reason");
             assert!(hb(&b).lines().any(|l| l == format!("#{t} {a}")), "the waiting resume keeps its lease");
         }
         s.gui_probe = Ok(());
+        s.gui_checked = Some(std::time::Instant::now() - std::time::Duration::from_secs(300));
+        s.pass().unwrap();
+        assert_eq!(e.borrow().len(), 1, "stale evidence must not resume");
+        assert!(s.waits[&t].contains("stale"));
+        s.gui_checked = Some(std::time::Instant::now());
         s.pass().unwrap();
         assert_eq!(e.borrow().len(), 2, "resumed on the Full runtime");
         let other = b.create("H", "", &["taskq".into(), "needs-gui".into()]).unwrap();
         let w = cfg("win");
         let mut s = service(&b, &w, Default::default());
+        s.gui_probe = Err("no gui probe on this OS".into());
         s.pass().unwrap();
-        assert_eq!((task(&b, other).state, s.waits.clone()), (State::Ready, vec![]), "a fresh heartbeat lists gui: not admitted here, no wait");
+        assert!(s.waits[&other].contains("no gui probe on this OS"));
+        assert_eq!((task(&b, other).state, s.waits.contains_key(&other)), (State::Ready, true), "a remote heartbeat cannot hide local missing evidence");
+    }
+
+    // § 4 GUI eligibility: won claims retain their lease/slot while evidence expires or access is revoked.
+    #[test]
+    fn needs_gui_held_launch_rechecks_evidence_and_grant() {
+        for case in ["missing", "unsupported", "stale", "revoked"] {
+            let b = Fake::default();
+            let n = b.create("GUI", "", &[TASK_LABEL.into(), "needs-gui".into()]).unwrap();
+            let c = cfg("mac");
+            let exits: Exits = Default::default();
+            let mut s = service(&b, &c, exits.clone());
+            s.gui_probe = Ok(());
+            s.gui_checked = Some(std::time::Instant::now());
+            s.full.insert("claude".into());
+            s.hold = Some("fixture load hold".into());
+            let v = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.remove(0);
+            s.claim(&v, "worker", "claude").unwrap();
+            let a = task(&b, n).attempt.unwrap();
+            assert_eq!(s.held.len(), 1);
+            s.hold = None;
+            match case {
+                "missing" => s.gui_checked = None,
+                "unsupported" => s.gui_probe = Err("no gui probe on this OS".into()),
+                "stale" => s.gui_checked = Some(std::time::Instant::now() - std::time::Duration::from_secs(300)),
+                _ => s.full.clear(),
+            }
+            s.pass().unwrap();
+            assert!(exits.borrow().is_empty(), "{case}: no held launch");
+            assert_eq!(s.held.len(), 1);
+            assert_eq!(task(&b, n).attempt, Some(a));
+            assert!(s.waits.contains_key(&n), "{case}: visible reason");
+            assert!(s.heartbeat_body().lines().any(|l| l == format!("#{n} {a}")));
+            s.gui_probe = Ok(());
+            s.gui_checked = Some(std::time::Instant::now());
+            s.full.insert("claude".into());
+            s.pass().unwrap();
+            assert_eq!(exits.borrow().len(), 1, "{case}: resume the same held claim once");
+            assert_eq!(task(&b, n).attempt, Some(a));
+            assert!(s.held.is_empty());
+        }
     }
 
     // Chain: § 4 empty focus (#974). Risk: a host with free slots admits nothing and says nowhere why.

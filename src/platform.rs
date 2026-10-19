@@ -400,15 +400,19 @@ pub fn gui_probe() -> Result<(), String> {
     if !unsafe { CGPreflightScreenCaptureAccess() } {
         return Err("Screen Recording not allowed (TCC)".into());
     }
-    let png = std::env::temp_dir().join(format!("taskq-gui-{}.png", std::process::id()));
-    let ran = std::process::Command::new("/usr/sbin/screencapture").args(["-x", "-t", "png"]).arg(&png)
-        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+    use std::os::unix::fs::DirBuilderExt;
+    let dir = std::env::temp_dir().join(format!("taskq-gui-{}", crate::runtime::uuid()));
+    fs::DirBuilder::new().mode(0o700).create(&dir).map_err(|e| format!("GUI capture directory: {e}"))?;
+    let png = dir.join("capture.png");
+    let ran = output("gui.capture", std::process::Command::new("/usr/sbin/screencapture")
+        .args(["-x", "-t", "png"]).arg(&png), std::time::Duration::from_secs(5));
     let ok = fs::read(&png).is_ok_and(|b| b.starts_with(b"\x89PNG\r\n\x1a\n"));
-    let _ = fs::remove_file(&png);
+    let cleaned = fs::remove_dir_all(&dir);
+    cleaned.map_err(|e| format!("GUI capture cleanup: {e}"))?;
     match ran {
-        Ok(s) if s.success() && ok => Ok(()),
+        Ok(s) if s.status.success() && ok => Ok(()),
         Ok(_) => Err("screencapture wrote no PNG".into()),
-        Err(e) => Err(format!("screencapture: {e}")),
+        Err(e) => Err(e),
     }
 }
 
