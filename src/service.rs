@@ -3515,6 +3515,36 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    // A5: reopening host admission advances both pending start and review without a focus rewrite.
+    #[test]
+    fn native_inventory_reopen_advances_pending_start_and_review() {
+        for review in [false,true] {
+            let root=std::env::temp_dir().join(format!("taskq-inventory-progress-{}-{review}",std::process::id()));
+            std::fs::create_dir_all(crate::dot(&root)).unwrap();
+            std::fs::write(crate::dot(&root).join("focus"),"all").unwrap();
+            let b=Fake::default();let n=b.create("Pending","",&[TASK_LABEL.into()]).unwrap();
+            if review {
+                let a=b.comment(n,"taskq: spawn worker codex:fixture invented").unwrap();
+                b.comment(n,&core::entry("result",&["0123456789abcdef0123456789abcdef01234567"],Some(a),"candidate")).unwrap();
+                release_execution(&b,n,a,a,"exit").unwrap();
+            }
+            let p=crate::host::Policy::parse(json!({"limits":{"claude":2},"load_gate":{"enabled":false}}),"invented").unwrap();
+            let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("native inventory stale".into()))));
+            let mut c=cfg("invented");c.root=root.clone();c.install=root.clone();
+            let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());
+            s.host=Some(host.clone());s.reload(Ok(p.cap.clone()));s.pass().unwrap();
+            assert!(exits.borrow().is_empty(),"stale inventory cannot claim pending work");
+            let paths=[crate::dot(&root).join("poke"),root.join("host-poke")];let baseline=crate::poke_times(&paths);
+            host.lock().unwrap().reload_admission(Ok(p),None,&[root.clone()]);
+            crate::sleep_until_poke(&paths,baseline,std::time::Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("project was not awakened"));
+            s.pass().unwrap();
+            assert_eq!(exits.borrow().len(),1,"fresh inventory must advance pending start/review");
+            assert_eq!(task(&b,n).role.as_deref(),Some(if review {"reviewer"}else{"worker"}));
+            assert_eq!(std::fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"all");
+            drop(s);std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     // H-A5: legacy Fixed/Auto drain forbids new workers/reviewers, but preserves and resumes its existing attempt.
     #[test]
     fn legacy_handoff_preserves_owned_answers_and_blocks_new_claims() {
