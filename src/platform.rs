@@ -86,11 +86,20 @@ pub fn update(install: &Path, check: bool) -> Result<Option<String>, String> {
     crate::profile::measure("update", || update_inner(install, check))
 }
 
-fn update_lock(install: &Path) -> Result<fs::File, String> {
+struct UpdateLock(fs::File);
+
+impl Drop for UpdateLock {
+    fn drop(&mut self) {
+        // A pre-exec child can inherit the descriptor; closing alone leaves its lock held.
+        let _ = self.0.unlock();
+    }
+}
+
+fn update_lock(install: &Path) -> Result<UpdateLock, String> {
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
     let f = fs::OpenOptions::new().create(true).truncate(false).write(true).open(install.join("update.lock")).map_err(|e| e.to_string())?;
     f.try_lock().map_err(|e| format!("update busy or lock unavailable: {e}"))?;
-    Ok(f)
+    Ok(UpdateLock(f))
 }
 
 fn update_inner(install: &Path, check: bool) -> Result<Option<String>, String> {
@@ -569,8 +578,35 @@ mod tests {
         sweep(&install, &install.join("absent-shim"));
         let other = fs::OpenOptions::new().write(true).open(install.join("update.lock")).unwrap();
         assert!(other.try_lock().is_err(), "cleanup must not unlink the live update lock");
+        #[cfg(unix)]
+        let child = {
+            let mut pipe = [0; 2];
+            assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+            let pid = unsafe { libc::fork() };
+            assert!(pid >= 0);
+            if pid == 0 {
+                // Keep the inherited descriptor alive using only async-signal-safe calls.
+                unsafe {
+                    libc::close(pipe[1]);
+                    let mut byte = 0u8;
+                    libc::read(pipe[0], (&mut byte as *mut u8).cast(), 1);
+                    libc::_exit(0);
+                }
+            }
+            unsafe { libc::close(pipe[0]); }
+            (pid, pipe[1])
+        };
         drop(lock);
-        other.try_lock().unwrap();
+        let released = other.try_lock();
+        #[cfg(unix)]
+        unsafe {
+            libc::write(child.1, b"x".as_ptr().cast(), 1);
+            libc::close(child.1);
+            let mut status = 0;
+            assert_eq!(libc::waitpid(child.0, &mut status, 0), child.0);
+            assert_eq!(status, 0);
+        }
+        released.unwrap();
         drop(other);
         fs::remove_dir_all(install).unwrap();
     }
