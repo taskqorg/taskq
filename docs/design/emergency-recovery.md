@@ -37,7 +37,7 @@ Recovery is not rollback. Successful remote writes remain successful; uncertain 
 
 ## E4 Contract and compatibility work
 
-- Amend R1 (host interlock), R11 (explicit emergency termination), §2 (retirement/held transitions and late-output fencing), §4 (service admission/recovery) in the implementation deliverable.
+- R11 defines explicit emergency termination; R1 retains its existing host-hold exception. Stop does not invent a task state or change §2 folding. Selective recovery remains gated by E3 and #1285.
 - Check worker, reviewer and operator paths, including codex-app handoffs. Termination support differs by runtime; unsupported control must remain visible.
 - Stop submission requires the owner context and exact fresh host generation/roots; Full stop requires full_stop_protocol 1. Persist the hold atomically and pin the existing launcher rollback floor to this capability-bearing version before cancellation. Ordinary hold/release refuses to overwrite or clear a reviewed Stop. Older/manual binaries are unsupported; never downgrade while the hold remains.
 - Choose board event/projection representation without adding an invented task state in the prototype. Emergency held is an execution condition; task counts retain their defined lifecycle semantics.

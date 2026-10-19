@@ -1,0 +1,12 @@
+{
+  "source": "eed78f6e",
+  "native_binary_sha256": "6741988e2ebaa5eba0d814b02c988c683c269b155de58a1ae050d9d254b3a35e",
+  "images": {
+    "browser-review.png": "69131ebfc50e23f8ab1c5f9c34a11f004233c7acd88bc3a03bec5d287a2d4008",
+    "browser-unknown.png": "da360d66fcdcb507c1bbed48ae21a4f38f7af1013dacb2918b4cf5798842e670",
+    "native-dark-16.png": "59a2e786d3b84160563d34d10eb04135a79d0efa13d96a67116a4f732f915df5",
+    "native-light-20.png": "5c228930732f1ccf0021ee0c964b6b9fb41efd0c1beac1016847fc89a1b52a89"
+  },
+  "native_scope": "WKWebView Stop route; fixture has no host service; effects not executed",
+  "browser_scope": "bundled UI, invented review/unknown fixture; effects not executed"
+}
