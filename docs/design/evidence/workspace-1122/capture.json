@@ -1,0 +1,28 @@
+{
+  "beforeSource": "bf41d2f673951a6d19e81c39a8d72ad9cf9daf77",
+  "beforeBinarySha256": "f52e02f964e040bf8c3b34466f4d5000452b8605f3b5ce6a95eb96eb2061b4f9",
+  "afterSource": "bee2b29b4c35086f103c797951386089ff0de300",
+  "afterBinarySha256": "4147c286c4a4c97b20184f4d2d09c1e5b054bb80924b609c6178fcfa265d5305",
+  "os": "27.0.1",
+  "arch": "arm64",
+  "renderer": "native WKWebView snapshot",
+  "font": "system -apple-system, 16/20 CSS px",
+  "scale": 2,
+  "workspaceLogicalSize": [
+    860,
+    680
+  ],
+  "narrowLogicalSize": [
+    360,
+    580
+  ],
+  "monitorWorkArea": "not measured; off-screen capture",
+  "images": {
+    "before-home-dark-16.png": "8dc01363dbaf3a525f1e83fd5cb67efbf351ff0f24c023cb3bf62465c945e002",
+    "after-home-dark-16.png": "f999953ec492e7f60f56f607766ceaae45f31edd0cfc5dc2a39989ca0aea0c8f",
+    "after-workspace-dark-20.png": "7a7ff035ef39ee7b5317db7a60ffb2a03dc5b5c03587f757169928a1f4699b75",
+    "after-workspace-light-16.png": "6eb233a8fcdf7742c5ccc6e374de4b5361f84e758991209a1a2ff3631cda22a2",
+    "after-workspace-narrow-dark-20.png": "1a573d2dbb29f82c15e1c7d435391452db773d3ff6c5a93737a461328268163a"
+  },
+  "reuse": "Final source adds only corrupt-preference/parent validation after this capture source. Valid fixture, renderer sources, dependencies and native environment are unchanged; updated data guards have separate Rust regression proof."
+}
