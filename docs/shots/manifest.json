@@ -1,16 +1,16 @@
 {
-  "version": "4.5.0",
-  "sourceCommit": "b5920d4308129a363c24dd495f6fa136c5d83dfe",
-  "binarySha256": "ff8b458fdb9c80170dd6277fd20f204275345797c7b33417bd5e4580fc885742",
+  "version": "4.6.18",
+  "sourceCommit": "18ff5e2c4c892b6235a6a6508ce51531fcff6e46",
+  "binarySha256": "15755f360302b0b808c079f5b34d8e536dff50100d1cca9583ae66fe496ccc12",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "c3c4259fe28557627547bbbfd34c76f2a5dee07a",
-    "src/tray.html": "91dcd4a7fd336a9b9077037d85e99bb061318192",
-    "src/tray-web.js": "7a4e919ed1cfd9773743d9d8a0e2ecf322d3c53d",
+    "src/tray.rs": "556dc83b4b13910c7dfb494978fc807a208eac01",
+    "src/tray.html": "ef3473cbfbbeda68f5ccd89006c0ed6aff2eb5b8",
+    "src/tray-web.js": "38b95afd2ba9e332b090d2b5c2c151a0ca88af84",
     "src/icon.rs": "411fc089802b6e2f2ebe908b8ad0d1da2facdd55",
     "docs/design/icon-summary.config.json": "9365699c943d0ac4506eab8fc5f7a84d8cbe8582"
   },
@@ -22,7 +22,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "a8df6bc37f76768049583acc20c582e7c566da7fffe8b51673437c8febe83e29"
+      "sha256": "124cd49b807a12b5e4e7f042aa4c1c4ce2387deb32941885cdb4d1894402e310"
     },
     {
       "file": "popover-dark-attention-16.png",
