@@ -2669,7 +2669,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         for rt in ["claude","codex-app"] {
             let l=Launch {execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:rt.into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
-            let x=crate::core::Execution {id:44,attempt:42,through:43,host:"mac".into(),runtime:rt.into(),accepted:false,release:None};
+            let x=crate::core::Execution {id:44,attempt:42,through:43,host:"mac".into(),runtime:rt.into(),accepted:false,release:None,usage_hold:None};
             let log=log_path(&root,&l);
             let (path,lock)=turn_input(&root,"original task",Some(&l)).unwrap();
             assert_eq!(path,root.canonicalize().unwrap().join(".taskq/inputs/execution-7-42-44.txt"));
@@ -2931,7 +2931,7 @@ mod tests {
         assert_eq!(saved[0].process,original);assert_eq!(saved[0].runtime,"claude");assert_eq!(saved[0].offset,0);
         let mut conflicting=row.clone();conflicting["pid"]=std::process::id().into();
         assert!(t.capture_identity(&conflicting).is_err());assert_eq!(t.native_identity(),Ok(original.clone()));
-        let x=crate::core::Execution {id:42,attempt:42,through:42,host:"mac".into(),runtime:"claude".into(),accepted:true,release:None};
+        let x=crate::core::Execution {id:42,attempt:42,through:42,host:"mac".into(),runtime:"claude".into(),accepted:true,release:None,usage_hold:None};
         drop(t);
         let restored=recover(&root,&install,7,&x).unwrap();
         assert_eq!(restored.native_identity(),Ok(original.clone()));
