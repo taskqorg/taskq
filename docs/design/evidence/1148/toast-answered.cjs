@@ -18,7 +18,7 @@ const ops=await p.evaluate(()=>messages.filter(m=>m.a==='answer').map(m=>m.op));
 state.projects[0].tasks=state.projects[0].tasks.map(x=>x.state==='ask'&&x.n<1110?{...x,state:'later',since:now-5}:x);
 await p.evaluate(s=>taskq.receive(s),state);
 for(const [i,op] of ops.entries())await p.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:op.id,state:i===0?'unknown':'accepted',reason:i===0?'No bridge receipt received':'',next:i===0?'Check delivery with the same operation':''});
-await p.evaluate(()=>document.querySelectorAll('details').forEach(d=>d.open=true));
+if(await p.locator('details.answered').evaluate(d=>d.open))throw new Error('Answered must start collapsed');
 await p.screenshot({path:out.replace('.png','-'+theme+'.png')});
 }
 await b.close();})();

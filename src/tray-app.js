@@ -175,7 +175,7 @@ answerNotices:function(board){
   const {line}=execution.module("tray.create.answerNotices.helpers",{line:([key,r],role)=>'<div class="body'+(r.state==='accepted'?'':' alert')+'"'+role+'>#'+r.op.task+' · '+esc(r.state)+(r.reason?': '+esc(r.reason):'')+(r.next?' · '+esc(r.next):'')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a>'+(r.state==='unknown'?'<button data-a="answer-retry" data-key="'+esc(key)+'">Check delivery</button>':'')+(answerRequests.has(key)?'':'<button data-a="answer-dismiss" data-key="'+esc(key)+'" aria-label="Dismiss #'+r.op.task+' receipt" title="Dismiss">×</button>')+'</div>'});
   const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
-  return shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,' role="status"')).join('')+(answered.length?'<details class="group"><summary>Answered'+counter(answered.length,'muted','Answered')+'</summary>'+answered.map(x=>line(x,'')).join('')+'</details>':'');
+  return shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,' role="status"')).join('')+(answered.length?'<details class="group answered"><summary>Answered'+counter(answered.length,'muted','Answered')+'</summary>'+answered.map(x=>line(x,'')).join('')+'</details>':'');
 },
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);
@@ -441,7 +441,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   menu.innerHTML=head()+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'<div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div><nav class="options footer" aria-label="Menu"><button data-route="home">Home</button><button data-route="settings">Settings</button></nav>'+answerToast();
   mountAnswers();mountResources();
-  menu.querySelectorAll('details').forEach((d,i)=>d.open=open[i]??(['cadence','agents','services','attention'].includes(view.page)));
+  menu.querySelectorAll('details').forEach((d,i)=>d.open=open[i]??(!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page)));
   if(view.S.page!==undefined)menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=true);
   const restored=answerFocus&&menu.querySelector('[data-answer="'+CSS.escape(answerFocus.dataset.answer)+'"] '+answerSelector);
   if(restored&&!navigating){restored.focus({preventScroll:true});if(caret)restored.setSelectionRange(...caret);}

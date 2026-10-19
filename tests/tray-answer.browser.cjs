@@ -51,6 +51,17 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await page.locator('.qac textarea').count(),0);
       assert.equal(await page.locator('.tqp-task a[data-url]').first().getAttribute('href'),board+'/'+rows[1].n);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+      // #1148 M3: Answered starts collapsed on Attention, whose other groups open; an explicit toggle survives refresh and Back.
+      const answeredOpen=()=>page.locator('details.answered').evaluate(d=>d.open);
+      await page.evaluate(s=>taskq.receive({...s,page:'attention'}),state);
+      assert.equal(await answeredOpen(),false,'Attention must not expand Answered');
+      await page.locator('details.answered > summary').click();
+      await page.evaluate(s=>taskq.receive({...s,page:undefined}),state);
+      assert.equal(await answeredOpen(),true,'refresh keeps an explicit toggle');
+      await page.locator('[data-route=settings]').click();await page.locator('[data-a=back]').click();
+      assert.equal(await answeredOpen(),true,'Back keeps an explicit toggle');
+      await page.locator('details.answered > summary').click();
+      await page.evaluate(s=>taskq.receive(s),state);
       const ask={...rows[1],n:42,state:'ask',card:'Reviewer cannot continue.',question:{parsed:false,text:'Reviewer cannot continue.',choices:[]}};
       state.projects[0].tasks=[ask,...['doing','review','ready','later','waiting'].map((state,i)=>({...rows[1],n:50+i,state}))];
       await page.evaluate(s=>taskq.receive(s),state);
