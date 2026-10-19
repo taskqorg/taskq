@@ -3880,7 +3880,7 @@
         "project_id": "taskq",
         "runtime_id": null
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [],
        "current_revision": "11111111111111111111111111111111",
        "effective_revision": "11111111111111111111111111111111",
@@ -3905,7 +3905,7 @@
         "project_id": "taskq",
         "runtime_id": "codex"
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [
         {
          "policy_schema": "taskq.project-limits/1",
@@ -3948,7 +3948,7 @@
         "project_id": "taskq",
         "runtime_id": null
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [],
        "current_revision": "22222222222222222222222222222222",
        "effective_revision": "11111111111111111111111111111111",
@@ -3973,7 +3973,7 @@
         "project_id": "taskq",
         "runtime_id": "codex"
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [
         {
          "policy_schema": "taskq.project-limits/1",
@@ -4016,7 +4016,7 @@
         "project_id": "taskq",
         "runtime_id": null
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [],
        "current_revision": "33333333333333333333333333333333",
        "effective_revision": "33333333333333333333333333333333",
@@ -4041,7 +4041,7 @@
         "project_id": "taskq",
         "runtime_id": "codex"
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [
         {
          "policy_schema": "taskq.project-limits/1",
@@ -4084,7 +4084,7 @@
         "project_id": "taskq",
         "runtime_id": null
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [],
        "current_revision": "22222222222222222222222222222222",
        "effective_revision": "22222222222222222222222222222222",
@@ -4109,7 +4109,7 @@
         "project_id": "taskq",
         "runtime_id": "codex"
        },
-       "service_version": "4.6.21",
+       "service_version": "4.6.22",
        "supported": [
         {
          "policy_schema": "taskq.project-limits/1",
