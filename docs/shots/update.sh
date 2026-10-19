@@ -10,12 +10,17 @@ cargo build --release --locked
 bin=target/release/taskq
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 tmp=$(mktemp -d)
+tmp=$(cd "$tmp" && pwd -P)
 trap 'rm -rf "$tmp"' EXIT
 TASKQ_VERSION=$version docs/shots/fixture.sh "$tmp"
+# The compact billing queue fits with all lower controls visible.
+printf '%s\n' "$tmp/billing-api" "$tmp/storefront" > "$tmp/install/projects"
 # only the routes the README shows (taskq.md R12)
-TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/shots" --route attention,projects,icon
+TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/shots" --route project,icon
 rm -f docs/shots/*.png
-cp "$tmp/shots/popover-dark-attention-16.png" "$tmp/shots/popover-dark-projects-16.png" docs/shots/
+python3 docs/design/evidence/workspace-1122/fixture.py "$tmp"
+TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/workspace" --route workspace
+cp "$tmp/shots/popover-dark-project-16.png" "$tmp/workspace/popover-dark-workspace-16.png" docs/shots/
 # Menu-bar size and scale differ between the owner's Mac and CI; keep the README link stable.
 cp "$tmp"/shots/icon-summary-run-dark-*.png docs/shots/icon-summary-run-dark.png
 sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
