@@ -71,6 +71,7 @@ pub struct Row {
 }
 
 pub struct Host {
+    pub diagnostics: Value,
     pub name: String,
     pub version: String,
     pub updated: i64,
@@ -119,6 +120,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
     let hosts = hosts.iter().map(|h| Host {
+        diagnostics: crate::service_versions::read(&h.body,h.updated,observed,cfg.ttl as i64,false),
         name: h.title.trim_start_matches("taskq host ").to_string(),
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
         updated: h.updated,
@@ -235,7 +237,7 @@ impl Snapshot {
         let caps: &[&str] = if self.source == "host" { &HOST_CAPS } else { &BOARD_CAPS };
         json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason,
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
-            "hosts": self.hosts.iter().map(|h| json!({"name": h.name, "version": h.version, "updated": h.updated})).collect::<Vec<_>>(),
+            "hosts": self.hosts.iter().map(|h| json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics})).collect::<Vec<_>>(),
             "capabilities": caps})
     }
 

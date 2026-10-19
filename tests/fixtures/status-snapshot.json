@@ -144,7 +144,11 @@
     {
       "name": "mac",
       "version": "4.0.0",
-      "updated": 9
+      "updated": 9,
+      "diagnostics": {
+        "state": "unknown",
+        "reason": "service diagnostics missing or invalid"
+      }
     }
   ],
   "capabilities": [
