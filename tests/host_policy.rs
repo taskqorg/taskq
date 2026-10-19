@@ -183,13 +183,16 @@ fn project_run_waits_for_the_host_owner() {
             .env("COREQ_TELEMETRY_STORE_TRACE","1").env("TASKQ_NATIVE_READ_TRACE",&native_trace)
             .current_dir(cwd).stdout(std::process::Stdio::null()).stderr(fs::File::create(&log).unwrap()).spawn().unwrap();
         let began=std::time::Instant::now();
-        let until=std::time::Instant::now()+Duration::from_secs(10);
+        // Windows native ownership discovery shares this bounded fixture budget.
+        let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
+        let until=began+budget;
         let observed=loop {
             let text=fs::read_to_string(&log).unwrap();
             if text.lines().any(|line|line.contains("host service")&&line.contains("waiting")) {break true;}
             if child.try_wait().unwrap().is_some()||std::time::Instant::now()>=until {break false;}
             std::thread::sleep(Duration::from_millis(10));
         };
+        eprintln!("host owner wait: cwd={}, observed={observed}, elapsed={:?}, budget={budget:?}",cwd.display(),began.elapsed());
         let exit=child.try_wait().unwrap();
         if exit.is_none() {child.kill().unwrap();child.wait().unwrap();}
         let text=fs::read_to_string(&log).unwrap();
