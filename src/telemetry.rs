@@ -42,6 +42,39 @@ pub(crate) fn install_capture(install:&Path)->Result<coreq::telemetry::capture::
     Ok(runtime)
 }
 
+/// Called only after the host has acquired its installation owner lock.
+pub(crate) fn host_capture(install:&Path)->Result<Option<coreq::telemetry::capture::Runtime>,String> {
+    if tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().is_some()) {return Ok(None);}
+    let mut error=match install_capture(install) {Ok(runtime)=>return Ok(Some(runtime)),Err(error)=>error};
+    let recoverable=|error:&str|matches!(error,
+        "telemetry IPC unsupported wire version; quiesce the old writer" |
+        "telemetry IPC installation budget mismatch; quiesce incompatible writer" |
+        "telemetry IPC writer election unavailable");
+    if !recoverable(&error) {return Err(error);}
+    let heartbeat=install.join("tray");
+    let previous=std::fs::read_to_string(&heartbeat).map_err(|_|format!("{error}; tray owner unknown"))?;
+    let pid=previous.trim().parse::<u32>().map_err(|_|format!("{error}; tray owner unknown"))?;
+    if pid==std::process::id() || !crate::file_age(&heartbeat).is_some_and(|age|age<10) {
+        return Err(format!("{error}; tray owner not fresh"));
+    }
+    let identity=coreq::process::identity(pid).map_err(|_|format!("{error}; tray identity unknown"))?
+        .ok_or_else(||format!("{error}; tray already exited"))?;
+    if std::fs::read_to_string(&heartbeat).ok().as_ref()!=Some(&previous)
+        || coreq::process::identity(pid).ok().flatten().as_ref()!=Some(&identity) {
+        return Err(format!("{error}; tray owner changed"));
+    }
+    // Older trays already leave when a different PID owns their fresh heartbeat (tray::alone).
+    crate::platform::write_atomic(&heartbeat,&std::process::id().to_string())?;
+    let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
+    loop {
+        match install_capture(install) {
+            Ok(runtime)=>return Ok(Some(runtime)),
+            Err(next)=>{error=next;if !recoverable(&error) || std::time::Instant::now()>=until {return Err(error);}}
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Why this process uses the legacy same-store budget, if it does.
 pub(crate) fn handover()->Option<&'static str> {HANDOVER.get().map(String::as_str)}
 
@@ -359,6 +392,81 @@ mod tests {
         let d = std::env::temp_dir().join(format!("taskq-sqlite-{}-{}", std::process::id(), crate::runtime::uuid()));
         std::fs::create_dir(&d).unwrap(); d
     }
+    // A2/#1309: an older tray owns an incompatible IPC writer when the new host starts.
+    // The heartbeat is the existing tray exit protocol; history and a new durable receipt must survive.
+    #[test]
+    fn older_tray_writer_hands_over_to_new_host() {
+        use std::process::{Command,Stdio};
+        for fault in ["wire", "unresponsive", "stale"] {
+            let d=dir();
+            struct Child(std::process::Child);
+            impl Drop for Child {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+            let spawn=|mode|Child(Command::new(std::env::current_exe().unwrap())
+                .args(["--exact","telemetry::tests::tray_handover_process","--ignored","--nocapture"])
+                .env("TASKQ_HANDOVER_FIXTURE",&d).env("TASKQ_HANDOVER_MODE",mode).env("TASKQ_HANDOVER_FAULT",fault).stdin(Stdio::null()).spawn().unwrap());
+            let mut tray=spawn("tray");
+            let until=std::time::Instant::now()+std::time::Duration::from_secs(15);
+            while !d.join("ready").exists() {
+                assert!(tray.0.try_wait().unwrap().is_none(),"old tray failed before readiness");
+                assert!(std::time::Instant::now()<until,"old tray did not start");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if fault=="stale" {
+                std::fs::File::options().write(true).open(d.join("tray")).unwrap()
+                    .set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(20)).unwrap();
+            }
+            let mut host=spawn("host");
+            loop {
+                if let Some(status)=host.0.try_wait().unwrap() {assert!(status.success(),"new host could not record its receipt");break;}
+                assert!(std::time::Instant::now()<until,"handover did not finish");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if fault=="stale" {
+                assert_eq!(std::fs::read_to_string(d.join("tray")).unwrap(),tray.0.id().to_string(),"unknown owner was displaced");
+                assert!(tray.0.try_wait().unwrap().is_none(),"unknown owner was stopped");
+                std::fs::write(d.join("tray"),"fixture finished").unwrap();
+            }
+            assert!(tray.0.wait().unwrap().success());
+            let reader=coreq::telemetry::Reader::open(&d.join("telemetry.log/universal.sqlite3")).unwrap();
+            let rows=reader.export(0,0,1024).unwrap().to_string();
+            assert!(rows.contains("old.tray"),"handover lost earlier history");
+            assert_eq!(rows.contains("new.host.receipt"),fault!="stale","host receipt durability or refusal changed");
+            drop(reader);std::fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore="owned older-tray/new-host process fixture"]
+    fn tray_handover_process() {
+        let d=std::path::PathBuf::from(std::env::var_os("TASKQ_HANDOVER_FIXTURE").unwrap());
+        if std::env::var("TASKQ_HANDOVER_MODE").unwrap()=="tray" {
+            let _runtime=install_capture(&d).unwrap();
+            let span=tracing::info_span!("old.tray");{let _entered=span.enter();}
+            drop(span);coreq::telemetry::capture::qualify().unwrap();
+            let endpoint=d.join("telemetry.log/telemetry-ipc/endpoint");
+            let mut value:serde_json::Value=serde_json::from_slice(&std::fs::read(&endpoint).unwrap()).unwrap();
+            if std::env::var("TASKQ_HANDOVER_FAULT").unwrap()!="unresponsive" {value["wire"]=serde_json::json!(1);}
+            else {value["key"]=serde_json::json!(vec![0u8;32]);} // Keep the writer alive but refuse the handshake.
+            std::fs::write(endpoint,serde_json::to_vec(&value).unwrap()).unwrap();
+            let pid=std::process::id().to_string();
+            std::fs::write(d.join("tray"),&pid).unwrap();std::fs::write(d.join("ready"),"").unwrap();
+            let until=std::time::Instant::now()+std::time::Duration::from_secs(15);
+            while std::fs::read_to_string(d.join("tray")).unwrap()==pid {
+                assert!(std::time::Instant::now()<until,"old tray never received the handover");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        } else {
+            if std::env::var("TASKQ_HANDOVER_FAULT").unwrap()=="stale" {
+                let Err(error)=host_capture(&d) else {panic!("stale tray recovery succeeded")};
+                assert!(error.contains("tray owner not fresh"),"{error}");return;
+            }
+            let _runtime=host_capture(&d).expect("new host collector unavailable");
+            let span=tracing::info_span!("new.host.receipt");let _entered=span.enter();
+            coreq::telemetry::capture::CommandReceipt::current().unwrap().checkpoint("observed").unwrap();
+            coreq::telemetry::capture::qualify().unwrap();
+        }
+    }
+
     // R12: a mixed snapshot must obtain the budget lock before pinning SQLite pages.
     // Otherwise an owner checkpoint can wait for this reader while this reader waits for its lock.
     #[test]

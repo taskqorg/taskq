@@ -726,6 +726,9 @@ pub fn run(install: &Path) -> Res<()> {
         if message!=reported {crate::platform::log(&message);reported=message;}
         std::thread::sleep(std::time::Duration::from_secs(1));
     };
+    let _telemetry=crate::telemetry::host_capture(install).unwrap_or_else(|error| {
+        crate::platform::log(&format!("Telemetry: unknown ({error})"));None
+    });
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
     let mut hostname=crate::hostname();
     let shared = Arc::new(Mutex::new(Host::new(Policy::read_for_hostname(install,||hostname.clone()))));
