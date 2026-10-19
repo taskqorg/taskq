@@ -642,11 +642,14 @@ pub fn other(install: &Path) -> Res<Option<u32>> {
 /// A record this version cannot read (a newer release's protocol or field) is stale once its recorded process
 /// has exited (#1310): its pid and start time alone prove that. A live or unidentifiable owner stays unknown.
 fn unreadable_exited(install:&Path)->Res<bool> {
-    let Ok(text)=fs::read_to_string(install.join("service")) else {return Ok(false)};
-    let Ok(record)=serde_json::from_str::<Value>(&text) else {return Ok(false)};
+    use std::io::Read;
+    let Ok(file)=fs::File::open(install.join("service")) else {return Ok(false)};
+    let mut bytes=Vec::new();
+    if file.take(1025).read_to_end(&mut bytes).is_err()||bytes.len()>1024 {return Ok(false);}
+    let Ok(record)=serde_json::from_slice::<Value>(&bytes) else {return Ok(false)};
     let pid=record["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).filter(|p|*p!=0&&*p<=i32::MAX as u32);
-    let (Some(pid),Some(started))=(pid,record["started"].as_str().filter(|s|!s.is_empty())) else {return Ok(false)};
-    if text.len()>1024||pid==std::process::id() {return Ok(false);}
+    let (Some(pid),Some(started))=(pid,record["started"].as_str().filter(|s|!s.is_empty()&&s.len()<=128&&s.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-'))) else {return Ok(false)};
+    if pid==std::process::id() {return Ok(false);}
     let live=coreq::process::identity(pid).map_err(|e|format!("host service owner unknown: {e}"))?;
     Ok(live.is_none_or(|p|p.started!=started))
 }
@@ -1709,6 +1712,14 @@ mod tests {
         for text in [newer.to_string(),extra.to_string()] {
             fs::write(install.join("service"),&text).unwrap();
             assert_eq!(service_status(&install)["state"],"unknown");assert_eq!(other(&install).unwrap(),None,"exited unreadable record kept the host waiting");
+            assert_eq!(fs::read_to_string(install.join("service")).unwrap(),text);
+        }
+        // R12: corrupt identities cannot prove exit, even when their PID has exited.
+        for started in ["invalid start time!".to_owned(), "x".repeat(129), String::new()] {
+            newer["started"]=json!(started);
+            let text=newer.to_string();
+            fs::write(install.join("service"),&text).unwrap();
+            assert!(other(&install).is_err(),"corrupt identity released ownership: {started:?}");
             assert_eq!(fs::read_to_string(install.join("service")).unwrap(),text);
         }
         fs::remove_dir_all(install).unwrap();
