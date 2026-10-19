@@ -1,0 +1,378 @@
+{
+  "observed": "2026-10-19T03:31:15.726989+00:00",
+  "failed_operation": "PUT repos/taskqorg/agentq/rulesets/25117820",
+  "error": "HTTP 403 Resource not accessible by personal access token",
+  "applied": false,
+  "readbacks": [
+    {
+      "repo": "agentq",
+      "ruleset_id": 25117820,
+      "unchanged": true,
+      "ruleset": {
+        "id": 25117820,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/agentq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "rust (ubuntu-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (macos-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (windows-latest)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UPJETzgF_RHw",
+        "created_at": "2026-10-15T04:04:35.176+07:00",
+        "updated_at": "2026-10-15T04:04:35.283+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/agentq/rulesets/25117820"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/agentq/rules/25117820"
+          }
+        }
+      }
+    },
+    {
+      "repo": "coreq",
+      "ruleset_id": 25118262,
+      "unchanged": true,
+      "ruleset": {
+        "id": 25118262,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/coreq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "rust (ubuntu-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (macos-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (windows-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "tests",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UbvfwzgF_RjY",
+        "created_at": "2026-10-15T04:12:23.395+07:00",
+        "updated_at": "2026-10-15T04:12:23.492+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/coreq/rulesets/25118262"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/coreq/rules/25118262"
+          }
+        }
+      }
+    },
+    {
+      "repo": "dashq",
+      "ruleset_id": 25118356,
+      "unchanged": true,
+      "ruleset": {
+        "id": 25118356,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/dashq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "tests",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "build (ubuntu-latest, x86_64-unknown-linux-musl, linux-x86_64)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "build (ubuntu-24.04-arm, aarch64-unknown-linux-musl, linux-aarch64)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UbvgxzgF_RpQ",
+        "created_at": "2026-10-15T04:14:38.545+07:00",
+        "updated_at": "2026-10-15T04:14:38.628+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/dashq/rulesets/25118356"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/dashq/rules/25118356"
+          }
+        }
+      }
+    },
+    {
+      "repo": "serverq",
+      "ruleset_id": 25118437,
+      "unchanged": true,
+      "ruleset": {
+        "id": 25118437,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/serverq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "rust (ubuntu-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (windows-latest)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "non_fast_forward"
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5URPdEzgF_RuU",
+        "created_at": "2026-10-15T04:16:39.860+07:00",
+        "updated_at": "2026-10-15T04:16:39.970+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/serverq/rulesets/25118437"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/serverq/rules/25118437"
+          }
+        }
+      }
+    },
+    {
+      "repo": "specq",
+      "ruleset_id": 25118568,
+      "unchanged": true,
+      "ruleset": {
+        "id": 25118568,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/specq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "check",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UbZZCzgF_R2g",
+        "created_at": "2026-10-15T04:18:22.579+07:00",
+        "updated_at": "2026-10-15T04:18:22.650+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/specq/rulesets/25118568"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/specq/rules/25118568"
+          }
+        }
+      }
+    },
+    {
+      "repo": "taskq",
+      "ruleset_id": 25117578,
+      "unchanged": true,
+      "ruleset": {
+        "id": 25117578,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/taskq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "rust (ubuntu-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (macos-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (windows-latest)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5T3rQlzgF_Q4o",
+        "created_at": "2026-10-15T04:01:36.487+07:00",
+        "updated_at": "2026-10-15T04:01:36.565+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/taskq/rulesets/25117578"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/taskq/rules/25117578"
+          }
+        }
+      }
+    }
+  ]
+}

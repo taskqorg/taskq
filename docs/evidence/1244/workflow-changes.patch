@@ -1,0 +1,68 @@
+--- agentq-test.yml.before
++++ agentq-test.yml.after
+@@ -1,5 +1,5 @@
+ name: Test
+-on: [push, pull_request, workflow_dispatch]
++on: [push, pull_request, workflow_dispatch, merge_group]
+ permissions:
+   contents: read
+ jobs:
+--- coreq-tests.yml.before
++++ coreq-tests.yml.after
+@@ -4,6 +4,8 @@
+   push:
+     branches: [main, 'taskq-*']
+   pull_request:
++  merge_group:
++    types: [checks_requested]
+ permissions:
+   contents: read
+ jobs:
+--- dashq-release.yml.before
++++ dashq-release.yml.after
+@@ -5,6 +5,8 @@
+   push:
+     tags: ['v*']
+   pull_request:
++  merge_group:
++    types: [checks_requested]
+ permissions:
+   contents: read
+ jobs:
+--- dashq-tests.yml.before
++++ dashq-tests.yml.after
+@@ -1,6 +1,8 @@
+ name: tests
+ on:
+   pull_request:
++  merge_group:
++    types: [checks_requested]
+   push:
+     branches: [main]
+ permissions:
+--- serverq-check.yml.before
++++ serverq-check.yml.after
+@@ -1,5 +1,5 @@
+ name: Check
+-on: [push, pull_request]
++on: [push, pull_request, merge_group]
+ permissions:
+   contents: read
+ jobs:
+--- specq-check.yml.before
++++ specq-check.yml.after
+@@ -1,6 +1,8 @@
+ name: check
+ on:
+   pull_request:
++  merge_group:
++    types: [checks_requested]
+   push:
+     branches: [main]
+ permissions:
+@@ -13,4 +15,4 @@
+         with:
+           fetch-depth: 0
+       - run: python3 caveman/scripts/check.py
+-      - run: git diff --check ${{ github.event.pull_request.base.sha || github.event.before }} ${{ github.sha }}
++      - run: git diff --check ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }} ${{ github.sha }}

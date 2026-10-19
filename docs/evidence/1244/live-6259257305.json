@@ -1,0 +1,259 @@
+{
+  "pr1274": {
+    "number": 1274,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": "fcbbc544ba73d57d5075740301e3c0e0f50cc41f",
+    "html_url": "https://github.com/taskqorg/taskq/pull/1274",
+    "head": {
+      "sha": "ba2bf49939e914f6532f0f40e1c04b0c02fae337",
+      "ref": "taskq-1215"
+    },
+    "base": {
+      "sha": "bf41d2f673951a6d19e81c39a8d72ad9cf9daf77",
+      "ref": "main"
+    }
+  },
+  "pr1272": {
+    "number": 1272,
+    "state": "open",
+    "merged": false,
+    "merged_at": null,
+    "merge_commit_sha": "4e442f7d5be6483647a46666a80ffa13908c6829",
+    "html_url": "https://github.com/taskqorg/taskq/pull/1272",
+    "head": {
+      "sha": "6870d8040dfb78287ff36b54171b99f74b44c514",
+      "ref": "taskq-1149"
+    },
+    "base": {
+      "sha": "bf41d2f673951a6d19e81c39a8d72ad9cf9daf77",
+      "ref": "main"
+    }
+  },
+  "task1215": [
+    {
+      "id": 6183765959,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6183765959",
+      "body": "taskq: later",
+      "created_at": "2026-10-15T03:31:48Z"
+    },
+    {
+      "id": 6257452254,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6257452254",
+      "body": "taskq: requeue\nReason: Owner approved the current-spec PM replan; this needed task has updated acceptance and explicit blocking dependencies.\nNext: Resume automatically when those dependencies close. Reuse prepared work and recorded approvals; preserve profiles, native ownership, model and grants.\nop-id: pm-replan-deps-taskq-1215-20261019\nrevision: 6183765959",
+      "created_at": "2026-10-19T01:04:00Z"
+    },
+    {
+      "id": 6258455507,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258455507",
+      "body": "taskq: spawn worker codex:- mac",
+      "created_at": "2026-10-19T02:37:00Z"
+    },
+    {
+      "id": 6258463146,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258463146",
+      "body": "taskq: ask attempt 6258455507\nDone: Read the task, current contract, enrollment producer and immutable CoreQ pin; no code changed.\nProblem: Accepted DashQ D18 and docs/design/service-versions.md are absent from this project; metadata semantics cannot be verified.\n1. Provide the accepted D18 contract in this project; implement against its sources and schema. \u2605\n2. Approve defining a new producer contract here first; review its semantics before implementation.\nTo answer: `taskq answer 1215.K` or comment `K` or the option text.",
+      "created_at": "2026-10-19T02:37:44Z"
+    },
+    {
+      "id": 6258464681,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258464681",
+      "body": "taskq: accepted 6258455507 attempt 6258455507\nop-id: accept-6258455507",
+      "created_at": "2026-10-19T02:37:52Z"
+    },
+    {
+      "id": 6258475121,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258475121",
+      "body": "taskq: released 6258455507 exit attempt 6258455507\nop-id: release-6258455507",
+      "created_at": "2026-10-19T02:38:52Z"
+    },
+    {
+      "id": 6258654325,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258654325",
+      "body": "taskq: answer\nUse existing accepted D18, not a new contract. Pinned DashQ d9bb6a4546027ec903f375aebd1ef70680bb8178 references are staged in this project at .taskq/pm-context/1215/ with source-manifest.json and content hashes.\nRead dashq-contract.md (D18) and service-versions.md (V1-V4) there. Implement existing selected/running/available, health receipt, lifecycle and reported CoreQ metadata; retain producer clocks and explicit unknowns.\nMac is now running 4.6.19; outside-service health observation continues. No remote controls, update/restart authority, grant/model/effort changes or other-host work is added.\nop-id: pm-1215-accepted-d18-reference-20261019\nrevision: 6258463146",
+      "created_at": "2026-10-19T02:55:55Z"
+    },
+    {
+      "id": 6258656168,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258656168",
+      "body": "taskq: executing 6258654325 attempt 6258455507\nop-id: execute-6258455507-6258654325-6258455507",
+      "created_at": "2026-10-19T02:56:05Z"
+    },
+    {
+      "id": 6258657143,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258657143",
+      "body": "taskq: accepted 6258656168 attempt 6258455507\nop-id: accept-6258656168",
+      "created_at": "2026-10-19T02:56:11Z"
+    },
+    {
+      "id": 6258775385,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258775385",
+      "body": "taskq: result ba2bf49939e914f6532f0f40e1c04b0c02fae337 attempt 6258455507\nChanged: Publish D18 diagnostics (R12/R13, section 4); repair missing heartbeat metadata and extend fixtures while retaining legacy assertions. [PR](https://github.com/taskqorg/taskq/pull/1274)\nChecks: cargo +stable test --locked heartbeat_reports_service_diagnostics -- FAIL before; PASS after missing metadata repair\nChecks: cargo +stable test --locked --bin taskq service_versions::tests -- PASS: sources, clocks, unavailable/malformed/stale data\nChecks: cargo +stable test --locked --bin taskq heartbeat_ -- 5 PASS; legacy lines and board-write budget retained\nChecks: cargo +stable test --locked --bin taskq status_json_matches_the_golden_fixture -- FAIL before additive fixture update; PASS after\nChecks: cargo +stable test --locked --bin taskq golden -- 5 PASS; prior task/fencing assertions retained\nChecks: python3 scripts/check.py --base origin/main -- FAIL: 363 passed, 16 failed; host cases sandbox-blocked by worker guards; resume trace linkage failed\nChecks: TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest -- temporary install: 82 golden traces and formats PASS; board unknown\nChecks: taskq service status --json -- Mac 4.6.19 running/fresh; candidate not activated; A4 operator handoff recorded\nOpen: Mac activation handoff recorded; release-check/checksum/rollback evidence unknown; merge-result CI required.",
+      "created_at": "2026-10-19T03:07:29Z"
+    },
+    {
+      "id": 6258786174,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258786174",
+      "body": "taskq: released 6258656168 exit attempt 6258455507\nop-id: release-6258656168",
+      "created_at": "2026-10-19T03:08:27Z"
+    },
+    {
+      "id": 6258786863,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258786863",
+      "body": "taskq: spawn reviewer codex:- mac",
+      "created_at": "2026-10-19T03:08:31Z"
+    },
+    {
+      "id": 6258789830,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258789830",
+      "body": "taskq: accepted 6258786863 attempt 6258786863\nop-id: accept-6258786863",
+      "created_at": "2026-10-19T03:08:47Z"
+    },
+    {
+      "id": 6258816208,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258816208",
+      "body": "taskq: publish attempt 6258786863\nChanged: Publish selected version, health receipt, lifecycle and CoreQ diagnostics for DashQ (R12, R13; section 4).\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok via operator handoff; merge-result CI pending on pending.\nChecks: Candidate ba2bf49939e914f6532f0f40e1c04b0c02fae337: 7 focused tests PASS; immutable CoreQ pin unchanged.\nChecks: Implementation quality: no binding gaps found; source clocks, unknown/stale states and legacy heartbeat assertions retained.\nOpen: Merge-result CI and Mac activation/readback pending; no other-host rollout.",
+      "created_at": "2026-10-19T03:11:06Z"
+    },
+    {
+      "id": 6258821133,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258821133",
+      "body": "taskq: released 6258786863 exit attempt 6258786863\nop-id: release-6258786863",
+      "created_at": "2026-10-19T03:11:32Z"
+    },
+    {
+      "id": 6258848527,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6258848527",
+      "body": "taskq: gone attempt 6258786863\nhost mac lease expired",
+      "created_at": "2026-10-19T03:13:57Z"
+    },
+    {
+      "id": 6259280762,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6259280762",
+      "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABJPhoLs4ABMFKzgNWziY",
+      "created_at": "2026-10-19T03:53:53Z"
+    }
+  ],
+  "task1149": [
+    {
+      "id": 6179302220,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6179302220",
+      "body": "taskq: later\nReason: owner request 2026-10-15: stable workers are critical; an agent must not change global worker behavior without the matrix; rerun it after runtime updates and adapt the product to the new facts. Parked for phase 3.\nNext: PM requeues after phase 2.",
+      "created_at": "2026-10-14T21:52:26Z"
+    },
+    {
+      "id": 6257444029,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6257444029",
+      "body": "taskq: requeue\nReason: Owner approved the current-spec PM replan; this needed task has updated acceptance and explicit blocking dependencies.\nNext: Resume automatically when those dependencies close. Reuse prepared work and recorded approvals; preserve profiles, native ownership, model and grants.\nop-id: pm-replan-deps-taskq-1149-20261019\nrevision: 6179302220",
+      "created_at": "2026-10-19T01:03:11Z"
+    },
+    {
+      "id": 6258441955,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258441955",
+      "body": "taskq: spawn worker codex:- mac",
+      "created_at": "2026-10-19T02:35:47Z"
+    },
+    {
+      "id": 6258443934,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258443934",
+      "body": "taskq: accepted 6258441955 attempt 6258441955\nop-id: accept-6258441955",
+      "created_at": "2026-10-19T02:35:58Z"
+    },
+    {
+      "id": 6258454435,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258454435",
+      "body": "taskq: released 6258441955 exit attempt 6258441955\nop-id: release-6258441955",
+      "created_at": "2026-10-19T02:36:55Z"
+    },
+    {
+      "id": 6258454824,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258454824",
+      "body": "taskq: gone attempt 6258441955\nexit 1\nLast message: \u041f\u0440\u043e\u0447\u0438\u0442\u0430\u044e \u043a\u043e\u043d\u0442\u0440\u0430\u043a\u0442, \u0437\u0430\u0434\u0430\u0447\u0443 \u0438 Testing; \u0437\u0430\u0442\u0435\u043c \u0432\u043d\u0435\u0441\u0443 \u043c\u0438\u043d\u0438\u043c\u0430\u043b\u044c\u043d\u043e\u0435 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u0435 \u0432 worktree #1149 \u043f\u043e R13 \u0438 \u00a7 7.",
+      "created_at": "2026-10-19T02:36:57Z"
+    },
+    {
+      "id": 6258465645,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258465645",
+      "body": "taskq: spawn worker codex:- mac",
+      "created_at": "2026-10-19T02:37:58Z"
+    },
+    {
+      "id": 6258475527,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258475527",
+      "body": "taskq: accepted 6258465645 attempt 6258465645\nop-id: accept-6258465645",
+      "created_at": "2026-10-19T02:38:54Z"
+    },
+    {
+      "id": 6258494726,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258494726",
+      "body": "taskq: result 6870d8040dfb78287ff36b54171b99f74b44c514 attempt 6258465645\nChanged: PR #1272 aligns runtime qualification with existing R12/R13 selection and indexes immutable Mac evidence; retained checks and paid-probe approval unchanged. Rules amended: none.\nChecks: python3 scripts/check.py --base bf41d2f673951a6d19e81c39a8d72ad9cf9daf77 -- PASS docs selection, whitespace and selector checks; Mac 0.091s\nChecks: Local file/anchor inspection -- PASS; former required-platform-runs anchor retained; rebase and PR head readback match candidate\nChecks: Before: unconditional platform requirement contradicted R12 selection; after: explicit affected-cell triggers; no executable tests changed or native before/after pass claimed\nChecks: Board/evidence index -- Mac lease observed; accepted/released receipts linked; native exit and closed-heartbeat proof remain unknown; PR #1267 gaps retained\nOpen: Native exit/closed-heartbeat and historical coverage remain unknown. No paid probes or deployment; exact-SHA CI and review pending.",
+      "created_at": "2026-10-19T02:40:42Z"
+    },
+    {
+      "id": 6258506935,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258506935",
+      "body": "taskq: released 6258465645 exit attempt 6258465645\nop-id: release-6258465645",
+      "created_at": "2026-10-19T02:41:51Z"
+    },
+    {
+      "id": 6258507656,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258507656",
+      "body": "taskq: spawn reviewer codex:- mac",
+      "created_at": "2026-10-19T02:41:55Z"
+    },
+    {
+      "id": 6258517381,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258517381",
+      "body": "taskq: accepted 6258507656 attempt 6258507656\nop-id: accept-6258507656",
+      "created_at": "2026-10-19T02:42:51Z"
+    },
+    {
+      "id": 6258518470,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258518470",
+      "body": "taskq: requeue attempt 6258507656\npublication failed: PUT https://api.github.com/repos/taskqorg/taskq/pulls/1272/merge: HTTP 405 { \"message\": \"Repository rule violations found\\n\\n3 of 3 required status checks are expected.\\n\\n\", \"documentation_url\": \"https://docs.github.com/rest/pulls/pulls#merge-a-pull-request\", \"status\": \"405\" }",
+      "created_at": "2026-10-19T02:42:58Z"
+    },
+    {
+      "id": 6258530935,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258530935",
+      "body": "taskq: released 6258507656 exit attempt 6258507656\nop-id: release-6258507656",
+      "created_at": "2026-10-19T02:44:08Z"
+    },
+    {
+      "id": 6258531644,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258531644",
+      "body": "taskq: spawn worker codex:- mac",
+      "created_at": "2026-10-19T02:44:12Z"
+    },
+    {
+      "id": 6258538696,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258538696",
+      "body": "taskq: later attempt 6258531644\nReason: PR #1272 publication still fails: the ruleset expects three rust platform checks; current CI publishes tests. Documentation gate passed on 6870d8040dfb78287ff36b54171b99f74b44c514.\nNext: Resume when required status checks match the accepted CI workflow and read back successfully.",
+      "created_at": "2026-10-19T02:44:52Z"
+    },
+    {
+      "id": 6258540494,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258540494",
+      "body": "taskq: accepted 6258531644 attempt 6258531644\nop-id: accept-6258531644",
+      "created_at": "2026-10-19T02:45:02Z"
+    },
+    {
+      "id": 6258551447,
+      "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258551447",
+      "body": "taskq: released 6258531644 exit attempt 6258531644\nop-id: release-6258531644",
+      "created_at": "2026-10-19T02:46:02Z"
+    }
+  ],
+  "merge_group_runs": [
+    {
+      "id": 39196854408,
+      "html_url": "https://github.com/taskqorg/taskq/actions/runs/39196854408",
+      "head_sha": "f3be1b899a1ce4976bd404e5482f5d847d65d1f1",
+      "event": "merge_group",
+      "status": "in_progress",
+      "conclusion": null,
+      "created_at": "2026-10-19T03:54:07Z"
+    }
+  ]
+}
