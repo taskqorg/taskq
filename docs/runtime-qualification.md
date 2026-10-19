@@ -18,6 +18,49 @@ One bounded live scenario covers each applicable runtime, role and continuation.
 
 Deterministic checks follow [specq test classes](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#test-classes). TaskQ chains: state transitions, duplicate/stale writes, admission, publication and preservation of active work. A constructor/argument-string check is not live permission or behavior proof.
 
+## Evidence reuse and invalidation (R12)
+
+Keep model (pure transitions), adapter (integration with substitutes), process (real executable/IPC) and native-platform (actual client/OS/service) proof distinct. A fake board or native manager cannot qualify the installed manager; a release hash, heartbeat, result or stop acknowledgment cannot prove native execution exit.
+
+For each affected cell record candidate SHA/artifact hash, client and OS version, effective grant/enforcement, fixture/input identity, command, result and native receipt. Reuse only unchanged tested sources/artifacts, checks, dependencies and environment. Mutable heartbeat/status observations need a fresh dated read; the historical index is not current health.
+
+| Change / risk | Invalidate and select | Retained instrument / boundary |
+|---|---|---|
+| Prose, links, evidence index only | Documentation checks; no paid replay | `python3 scripts/check.py --base <base-sha>`; R12 already owns the merge gate |
+| Fold, claim, fencing or exact-input rules | Affected model/adapter cases; shared unknown impact broadens source checks | Existing golden traces and service execution chains; native delivery only if its path changes |
+| Spawn/resume, input transport, rule loader, runtime/client version or dependency | Affected runtime, role and continuation cells; include failure/uncertain response | Q1–Q4/Q6/Q14/Q15 and bounded scenario; `live_operator_matrix` for operator transport |
+| Permission/grant/enforcement, sandbox helper or native OS prerequisites | Positive/negative boundary cells for that configuration, including child/symlink writes and revocation | Existing boundary fixture and controller canaries; prior Full evidence cannot qualify Workspace |
+| Cancellation, crash/recovery, exit observation, update/drain or ownership handover | Affected native lifecycle/recovery rows and relevant A–F cases; preserve active owned work | Existing execution/service chains and installer process instrument; substituted manager remains process proof |
+| Heartbeat/lease scheduling, outage or rate-limit handling | Affected freshness/unknown/ownership cells and case E | Existing heartbeat/execution chains plus bounded installed observation; never infer exit from expiry |
+| Capture/storage/build/dependency/release artifact | Affected capture/process/artifact checks and G; unknown impact broadens | Existing selected gate, staged selftest and release verification; native acceptance only for changed paths/environment |
+
+Run the affected check during development; freeze and run the selected merge gate once. New and previously failing checks remain selected. Validate the selector at the full-run triggers in [testing.md](testing.md); do not add another selector or harness. Release/deployment adds affected native/client/lifecycle/outage checks before exposure, not a fresh full matrix for unchanged cells. The A–G cases below are the reusable scenario recipe: choose the affected steps rather than replaying every role on every platform.
+
+Paid/model probes require explicit owner approval under §7 and the existing fixture/grant boundary (R9). A rerun trigger does not grant that approval. Missing approval or prerequisites leaves the native claim unknown; no automatic Full fallback, login, model/effort change or production mutation. This documentation task performs no paid probe or other-host operation.
+
+## Mac evidence index
+
+This index reconciles existing evidence; it does not requalify old clients against the current release. Follow immutable source links before reusing a cell. Missing exact artifact or environment identity narrows the claim rather than filling it by inference.
+
+| Immutable source / record | Qualified boundary | Limits / invalidation |
+|---|---|---|
+| [Native background acceptance](#native-background-acceptance-2026-10-14), Claude 2.1.299; tasks #995/#1001 | Mac worker/reviewer ask and same-session continuation, operator read/write/check, registered Remote Control, deferred restart and stop-marker observation | Historical client/configuration only; newer 2.1.301 recovery schema and cold restart need their own receipts |
+| [Recorded candidate evidence](#recorded-candidate-evidence-2026-10-14), Codex CLI 0.159.3; app daemon 0.162.1 with CLI handshake 0.159.3 | Operator same-session continuation; app deferred restart preserves start/end writes | Session IDs retained below; not an immutable artifact hash or complete current permission/lifecycle qualification |
+| [PR #1265](https://github.com/taskqorg/taskq/pull/1265), TaskQ `506a1ae14fc02f1d2b722d6a973fbd504b2ee3aa` / 4.6.18; signed artifact SHA-256 `85c408341710fc47eb57a939887065572c5b4f1f996c8ce1eae2c3618b40ec57` | Six-project Workspace own-project/Git writes; denied foreign-project, descendant, install and runtime-config writes; six-root Stop 7.338s, one unit/generation and 600s healthy marker | Recorded operator proof, not a new native-client flow or all recovery cells; runtime model/effort unchanged. Exact client identities not supplied by that PR: unknown |
+| [#1231 integration](qualification-1231.md), prepared source above; integrated `7006084c9ed68db8734e8587ee936b9c5d2e82d0`, CoreQ `5fb10926bbca0fdb042342dc5dc6ac3cc4e5a56f` | Preserved host/telemetry/permission implementation and source/process checks | Changed publication path has separate acceptance; no activation claim |
+| [#1232 repair](qualification-1232.md), host blob `56908c5bcc63aef944452bfae0b5827663532d1d`, service blob `cd8e1da85e8a733d78ac5225b7f32a5484ccc438` | Inventory wake regression before FAIL / after PASS; pending worker/reviewer progress with fake board/children; unchanged handoff process chain | Native bootstrap failed before submission; native retirement and installed queue progression unknown |
+| [#1233 handoff](release-1233.md), candidate `902c2b8ce7e39006fa259a56d5ddfc3972358b58`, release merge `bf41d2f673951a6d19e81c39a8d72ad9cf9daf77` / 4.6.19 | Exact-source CI and bounded outside-service activation/rollback procedure; outside-service isolated resume fixture passed | Preparation/publication is not activation. Running artifact, native retirement and installed progression require operator receipts |
+
+Disabled/unqualified cells remain unknown even when the adapter exists: current Mac codex-app full cold recovery/descendant cancellation, Claude cold continuation and any role/permission/client combination without matching native evidence. Non-Mac records remain historical references; this Mac-only task neither refreshes nor enables them. Unsupported clients remain unsupported, not PASS.
+
+### Heartbeat, lease and execution receipts
+
+Board read on 2026-10-19: [Mac heartbeat #722](https://github.com/taskqorg/taskq/issues/722) was **OPEN**, reported 4.6.18, service `18535c594451`, board body `at 1792377530`, lease `#1149 6258465645` and the same execution/input ID in `running` with `native execution observed; termination pending`. This proves the observed lease projection, not a closed-heartbeat pass, current service artifact identity or eventual termination. No heartbeat state was changed to manufacture proof.
+
+The prior execution has [accepted input](https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258443934) for `6258441955` and [released exit](https://github.com/taskqorg/taskq/issues/1149#issuecomment-6258454435) before the replacement spawn `6258465645`. These are durable board receipts; independent native PID/creation-token/log evidence was not retained in this report, so native exit remains unqualified here. The current execution is still running at observation, not an exit success. Existing `execution_heartbeat_is_fenced_visible_and_never_reopens_terminal`, `acceptance_readback_retries_evidence_and_keeps_the_native_handle` and `terminal_reviewer_records_native_error_and_releases_lease` protect adapter semantics; they do not replace native proof.
+
+Preserve [PR #1267 at `3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6`](https://github.com/taskqorg/taskq/blob/3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6/docs/qualification-1146.md): its historical incident coverage, closed-heartbeat state, native termination and expired-lease-to-gone proof remain unknown. [#1131's original result](https://github.com/taskqorg/taskq/issues/1131#issuecomment-6177471608) left live A3 open; [#1146 cancellation](https://github.com/taskqorg/taskq/issues/1146#issuecomment-6257467376) explicitly claimed no historical success or gate waiver. Current execution ownership requires native termination/release, not the former expiry-to-gone inference (§3). These historical gaps cannot be repaired by a source test, issue closure or a new synthetic attempt.
+
 ## Supported clients
 
 | Client | Worker and reviewer | Operator | Platform and boundary |
@@ -27,9 +70,13 @@ Deterministic checks follow [specq test classes](https://github.com/taskqorg/spe
 | Codex CLI | Supported | Full tools; configured sandbox; real edit/check and continuation passed on macOS | macOS, Linux, Windows; effective sandbox and network are independent |
 | codex-app | Opt-in worker/reviewer | No separate app operator | macOS, Windows (#989: handshake, shell-opened thread, 21 KB queue, one `task_complete` live); app policy and login differ from handshake environment |
 
-## Required platform runs
+<a id="required-platform-runs"></a>
 
-Run the same bounded scenario on macOS, Windows and Linux for Codex CLI. Claude CLI requires macOS and Windows now; Linux remains a required qualification row before enabling Claude there. A missing binary/login is blocked, never a pass. Claude Desktop has no adapter; Remote Control is a separate native CLI capability and does not qualify a Desktop runtime.
+## Platform coverage and selected runs
+
+The rows below describe capability coverage, not an always-run platform gate. Select only cells invalidated by the change under [R12](../taskq.md#r12-unverified-means-unknown), [TaskQ test selection](testing.md) and [SpecQ Testing](https://github.com/taskqorg/specq/blob/main/engineering/testing.md#run-policy-by-stage). A documentation edit does not rerun native clients. Shared changes with unknown impact broaden to the full relevant source suite and affected native cells before exposing the risk. Linux Claude requires native qualification before enabling it there. A missing binary/login is blocked, never a pass. Claude Desktop has no adapter; Remote Control does not qualify a Desktop runtime.
+
+Historical platform records below qualify only their recorded configuration. They do not authorize another-machine operation, permission expansion or adoption on the current release.
 
 | Platform | Codex CLI | Claude CLI | codex-app |
 |---|---|---|---|
