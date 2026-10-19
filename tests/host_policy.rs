@@ -196,10 +196,8 @@ fn project_run_waits_for_the_host_owner() {
         let exit=child.try_wait().unwrap();
         if exit.is_none() {child.kill().unwrap();child.wait().unwrap();}
         let text=fs::read_to_string(&log).unwrap();
-        let native_trace=fs::read_to_string(&native_trace).unwrap_or_else(|e|format!("native trace unavailable: {e}"));
-        // #1280: retain successful phase timings before the fixture directory is removed.
-        eprintln!("{text}\n{native_trace}");
         if !observed {
+            let native_trace=fs::read_to_string(&native_trace).unwrap_or_else(|e|format!("native trace unavailable: {e}"));
             let telemetry=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))
                 .and_then(|reader|reader.export(0,0,256)).map(|page|page["events"].as_array().unwrap().iter().map(|row| {
                     let event=&row["observation"];json!([event["operation"],event["kind"],event["outcome"],event["error"]])
