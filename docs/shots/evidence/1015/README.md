@@ -28,3 +28,9 @@ The final native task list shows all three tasks and Home/Settings without the p
 - [Before desktop](before-960-queue.png) and [before narrow](before-390-queue.png).
 
 `docs/shots/update.sh`, `docs/shots/check.sh`, manifest image/source hash verification, `sh -n docs/shots/update.sh` and all 18 `tests/*.test.cjs` scripts passed. No tests or assertions changed. The clipping failure and its replacement native capture above are the before/after proof for the snapshot-only repair (§ 7.4).
+
+## Canonical checks
+
+- `cargo test --locked` (worker identity variables removed only from test subprocesses): 409 unit tests passed, 34 ignored. Host policy, restart, resource and service-log integrations passed. Telemetry integration had 7 passed, 1 ignored and 1 **sandbox-blocked**: `resume_records_its_result_without_releasing_the_host_hold` reports `sandbox-exec: sandbox_apply: Operation not permitted`. The suite is not a full PASS; no permission change or retry bypass was attempted.
+- `cargo run --locked -- selftest`: passed 85 golden traces, format checks, fresh board read, no overdue nonlive terminal defects and committed local telemetry.
+- Green merge-result (`merge_group`) CI remains the publication gate under § 7. CI was not awaited. No merge or deployment occurred.
