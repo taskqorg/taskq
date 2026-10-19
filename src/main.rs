@@ -169,6 +169,10 @@ fn hostname() -> String {
 }
 
 fn load(root: &Path) -> Res<(Config, Value)> {
+    load_from(root, platform::default_install())
+}
+
+fn load_from(root: &Path, install: PathBuf) -> Res<(Config, Value)> {
     let p = root.join("taskq.json");
     let v: Value = serde_json::from_str(&fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display()))?;
     let str_or = |k: &str, d: &str| v[k].as_str().unwrap_or(d).to_string();
@@ -185,7 +189,7 @@ fn load(root: &Path) -> Res<(Config, Value)> {
     let (publish, delivery, delivery_revision) = delivery(&v)?;
     let mut cfg = Config {
         root: root.to_path_buf(),
-        install: platform::default_install(),
+        install,
         board,
         web_host: str_or("host", board.default_host),
         repo: str_or("repo", ""),
@@ -2365,15 +2369,15 @@ mod tests {
         fs::remove_dir_all(&t).unwrap();
     }
 
-    // Chain: § 4 step 7 self-update cadence (#1200). Risk: a release waits 15 min per host again.
+    // Chain: §§4,9 update cadence. Risk: a real host policy contaminates project-default checks.
     #[test]
     fn update_every_defaults_to_60_and_keeps_override() {
-        let t = std::env::temp_dir().join(format!("taskq-update-every-{}", std::process::id()));
+        let t = std::env::temp_dir().join(format!("taskq-update-every-{}", crate::runtime::uuid()));
         fs::create_dir_all(&t).unwrap();
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r"}"#).unwrap();
-        assert_eq!(load(&t).unwrap().0.update_every, 60);
+        assert_eq!(load_from(&t, t.clone()).unwrap().0.update_every, 60);
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "update_every": 900}"#).unwrap();
-        assert_eq!(load(&t).unwrap().0.update_every, 900);
+        assert_eq!(load_from(&t, t.clone()).unwrap().0.update_every, 900);
         fs::remove_dir_all(&t).unwrap();
     }
 
