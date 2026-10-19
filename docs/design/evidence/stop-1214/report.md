@@ -39,3 +39,13 @@ The baseline had no dedicated Stop review route. Existing lifecycle receipt and 
 Final hold review found and reproduced a second defect: a new Stop could overwrite a malformed structured hold. The added assertion failed before the fix (`corrupt Stop identity cannot be overwritten`). Reusing the strict hold reader before persistence fixes it; `cargo test --locked --bin taskq lifecycle::tests -- --nocapture` then passed seven cases (one pre-existing ignored fixture). Identity, replay, original receipts and native-exit assertions remain intact. This later change affects hold validation only; the captured UI source is unchanged.
 
 `sh docs/shots/update.sh` completed on source `2117dfd07d431119e1e811ad9cd1773ba53f85b3`; release build and native README captures succeeded. `sh docs/shots/check.sh` passed. The refreshed Attention and Projects captures were inspected; the Stop entry is visible with the existing content and footer retained. Manifest source/binary hashes identify that rendering candidate, not installed-client cancellation acceptance.
+
+## Merge-conflict repair
+
+Rebased onto `287e185a581333c7717fc8ca676a9795b53ab6a2` after the merge queue reported `merge_conflict`. The constructor now retains both Stop progress and the upstream runtime usage-limit map. Both regression groups and the upstream usage-limit retry rule are retained; no assertion was removed or weakened.
+
+The combined contract failed R8 at 61,563 bytes. Wording-only reductions keep the existing R11/E2 and sections 2/3/5 decisions at 61,436 bytes; the unchanged size/golden-trace test then passed. The first gate also inherited worker context and correctly refused owner-only fixture operations. Test-only subprocesses subsequently cleared `TASKQ_ATTEMPT`, `TASKQ_TASK` and `COREQ_TRACE_CONTEXT`; production commands retain them.
+
+The final `python3 scripts/check.py --base origin/main` passed 390 unit tests (30 ignored) and 10 integration tests, then reached the same nested `telemetry_process` sandbox refusal: six cases passed; `resume_records_its_result_without_releasing_the_host_hold` reported `sandbox_apply: Operation not permitted`. Outcome: sandbox-blocked, not a passing full gate; 43.335s on the warm Mac build. No native cancellation, deployment or Windows operation was performed. Merge-result CI remains required.
+
+After that blocked gate, isolated offline `taskq selftest` passed 85 golden traces and formats (board unknown/offline); every `tests/*.test.cjs`, screenshot-manifest fixtures, release tag/check fixtures and `node tests/tray-stop.browser.cjs` passed. `sh docs/shots/check.sh` also passed. Existing visual evidence remains applicable to unchanged UI sources; owner acceptance and installed-client qualification remain open.
