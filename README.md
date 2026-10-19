@@ -180,7 +180,7 @@ Checks: taskq tray --snapshot macOS light+dark -- 40 images per fixture, footer 
 taskq: close attempt 6160353477
 ```
 
-Thirteen minutes from the switch to a result, four more to close. The same move sends a task to another host (`host-<name>`), to a soft runtime preference (`prefer-codex`, `prefer-claude`) or back to the queue with new instructions (`taskq requeue N --text T`, `taskq later N`).
+Thirteen minutes from the switch to a result, four more to close. The same move sends a task to another host (`host-<name>`), to codex for design and image work (`run-codex`; everything else runs on claude) or back to the queue with new instructions (`taskq requeue N --text T`, `taskq later N`).
 
 Agents: install, setup, commands and development are in **[taskq.md](taskq.md)**.
 
