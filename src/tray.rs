@@ -935,7 +935,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if workspace.is_none() {
                     let p=proxy.clone();
                     let built=WindowBuilder::new().with_title("TaskQ · AI conversations").with_inner_size(LogicalSize::new(860.0,680.0)).with_min_inner_size(LogicalSize::new(360.0,400.0)).build(target).map_err(|e|e.to_string()).and_then(|window|{
-                        WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(|_|false).with_ipc_handler(move |r|{let _=p.send_event(Ev::WorkspaceIpc(r.into_body()));}).build(&window).map(|view|Workspace{window,view,calls:WebCalls::new(),shown:String::new()}).map_err(|e|e.to_string())
+                        WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::WorkspaceIpc(r.into_body()));}).build(&window).map(|view|Workspace{window,view,calls:WebCalls::new(),shown:String::new()}).map_err(|e|e.to_string())
                     });
                     match built {Ok(ws)=>workspace=Some(ws),Err(reason)=>{push(&mut web,&ui,&json!({"aiError":reason}));return;}}
                 }
@@ -977,7 +977,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let p = proxy.clone();
                 let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
                     // only our page: a link goes to the browser through the bridge
-                    WebViewBuilder::new().with_accept_first_mouse(true).with_html(if workspace_snapshot {WORKSPACE_HTML}else{HTML}).with_navigation_handler(|u| !u.starts_with("http"))
+                    WebViewBuilder::new().with_accept_first_mouse(true).with_html(if workspace_snapshot {WORKSPACE_HTML}else{HTML}).with_navigation_handler(own_page)
                         .with_ipc_handler(move |r| {
                             let _ = p.send_event(Ev::Ipc(r.into_body()));
                         })
@@ -1961,9 +1961,21 @@ fn capture(wv: &WebView, path: PathBuf, done: impl Fn() + 'static) {
     }
 }
 
+/// Navigation filter of every tray webview: the inline page loads (wry navigates to it), web links do not.
+fn own_page(u: String) -> bool { !u.starts_with("http") }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A1/C1: `|_|false` blocked the inline workspace page itself and left the window blank.
+    #[test]
+    fn own_page_loads_inline_html_only() {
+        assert!(own_page("about:blank".into()));
+        assert!(own_page("data:text/html,x".into()));
+        assert!(!own_page("https://example.com".into()));
+        assert!(!own_page("http://example.com".into()));
+    }
 
     // A1/M7: Home Reply/Next must queue once in the bound project, not merely save a draft.
     #[test]
