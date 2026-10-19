@@ -2,6 +2,20 @@
 
 The Mac workspace uses retained request/answer records and one editable native window. Home opens the selected exchange; opening and closing do not submit work. Follow-ups carry the selected project and leaf request. Confirmation carries the shown request/revision; partial and unknown outcomes remain explicit. R1, R9, R12, R13 and § 4 apply. No runtime, model, grants, working profile or other host was changed.
 
+## Current acceptance
+
+The [native check](https://github.com/taskqorg/taskq/pull/1275#issuecomment-6265950037) found that the workspace navigation handler blocked its own inline page. Reusing Home's navigation filter restored the transcript and revision controls. The same native window reopened with its position retained; request and answer hashes remained unchanged. A second tray process was refused. Snapshot rendering alone did not exercise the faulty builder.
+
+The existing `own_page_loads_inline_html_only` regression failed with the old deny-all handler and passed with the shared filter (§ 7.4). It protects inline-page loading while retaining HTTP/HTTPS navigation refusal; no assertion was weakened. Native ownership and no-resend evidence above remains separate from this component check (R12).
+
+The owner [accepted the appearance](https://github.com/taskqorg/taskq/issues/1122#issuecomment-6263678256) and later [waived the separate raise measurement](https://github.com/taskqorg/taskq/issues/1122#issuecomment-6266905779), reporting that the tray window opens and clicks work. Raise is owner-accepted, not measured. These decisions supersede the earlier pending acceptance statements below; green `merge_group` CI remains required before publication. No deployment is claimed.
+
+Rebased onto `72fae8e1` with unchanged UI source blobs (the screenshot manifest still matches). Fresh candidate checks:
+
+- `python3 scripts/check.py --base origin/main` (worker identity variables removed from test subprocesses): 405 unit tests passed; integration checks passed except the unchanged host-hold test, **sandbox-blocked** by `sandbox_apply: Operation not permitted`. Gate stopped after 68.535 seconds; it is not a full PASS.
+- Remaining gate steps run separately: all `tests/*.test.cjs`, `node tests/workspace.browser.cjs`, screenshot-manifest and release-script checks passed. Offline selftest passed its local checks; board remained intentionally unknown.
+- `cargo +stable run --locked -- selftest` passed against the live board, including no overdue nonlive terminal-record defects in the retained window. This supersedes the earlier live-selftest failure below; no host-profile repair was performed.
+
 ## Reply dispatch repair
 
 Candidate source `aca86abae328f87d54e193f3b1a8b9f9b90e364e` fixes the review finding: Home Reply/Next previously saved a draft and acknowledged success without queuing the follow-up. The native Home handler now persists the draft, submits to the explicit project/current leaf, and only acknowledges accepted submission. Open/Review still selects without submitting or confirming. No contract decision changed (M7, A1, R12, § 7.4).
