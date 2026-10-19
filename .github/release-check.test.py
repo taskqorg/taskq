@@ -13,4 +13,11 @@ assert select([base, failed], 'a'*40, 'main', now) == failed, 'newest failure ca
 pending = {**base, 'id':3, 'status':'in_progress', 'conclusion':None}
 assert select([base, failed, pending], 'a'*40, 'main', now) == pending
 assert select([{**base, 'head_branch':'v9'}], 'a'*40, 'main', now) is None
-print('PASS exact-source release check, freshness and latest failure/pending isolation')
+queue = {**base, 'id':4, 'event':'merge_group', 'head_branch':'gh-readonly-queue/main/pr-1-'+'c'*40}
+assert select([queue], 'a'*40, 'main', now) == queue
+assert select([{**queue, 'head_branch':'gh-readonly-queue/other/pr-1'}], 'a'*40, 'main', now) is None
+push_pending = {**pending, 'id':5}
+assert select([queue, push_pending], 'a'*40, 'main', now) == queue, 'queue success need not wait for the duplicate push run'
+assert select([{**queue, 'conclusion':'failure'}, push_pending], 'a'*40, 'main', now) == push_pending
+assert select([queue, {**failed, 'id':5}], 'a'*40, 'main', now)['conclusion'] == 'failure', 'newer push failure still refuses'
+print('PASS exact-source release check, freshness, latest failure/pending isolation and merge-queue exact source')

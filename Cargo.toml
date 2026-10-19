@@ -44,7 +44,7 @@ windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gd
 
 [profile.release]
 strip = true
-lto = true
+lto = "thin"
 
 [build-dependencies]
 coreq-instrument = { git = "https://github.com/taskqorg/coreq", rev = "f6e2f897bbf53a7981afbf444eac2840ae227726" }

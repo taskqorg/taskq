@@ -38,6 +38,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Dependency build cache; only main pushes save, so PR and queue runs never churn it.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: python3 scripts/check.py
   windows-gnu:
     needs: plan
@@ -47,6 +51,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: rustup toolchain install stable-x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: gnu
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: cargo +stable-x86_64-pc-windows-gnu test --locked --bin taskq platform::tests::installed_windows_release_starts_without_build_paths -- --exact --show-output
   shots:
