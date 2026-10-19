@@ -1,0 +1,22 @@
+   Compiling taskq v4.6.19 (<worktree>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.79s
+     Running unittests entry.rs (target/debug/deps/taskq-efc8692af53c5595)
+
+running 1 test
+test host::tests::stale_native_inventory_holds_new_work_without_releasing_owned_slots ... FAILED
+
+failures:
+
+---- host::tests::stale_native_inventory_holds_new_work_without_releasing_owned_slots stdout ----
+
+thread 'host::tests::stale_native_inventory_holds_new_work_without_releasing_owned_slots' (91831722) panicked at target/debug/build/taskq-ce61c8991dff6b55/out/instrumented/host.rs:1293:9:
+refresh must start before the 60 s freshness deadline
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    host::tests::stale_native_inventory_holds_new_work_without_releasing_owned_slots
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 410 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--bin taskq`

@@ -634,7 +634,7 @@ fn native_inventory_ready(inventory:&Res<Vec<String>>,checked:Option<Instant>)->
 }
 
 fn native_inventory_due(inventory:&Res<Vec<String>>,checked:Option<Instant>,transitioning:bool)->bool {
-    checked.is_none_or(|at|at.elapsed().as_secs()>=if transitioning||inventory.is_err() {5}else{60})
+    checked.is_none_or(|at|at.elapsed().as_secs()>=if transitioning||inventory.is_err() {5}else{30})
 }
 
 // A legacy admission barrier does not replace valid host maintenance intervals.
@@ -668,6 +668,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut checked: Option<Instant> = None;
     let mut installation_checked:Option<Instant>=None;
     let mut native_checked:Option<Instant>=None;
+    let mut native_requested:Option<Instant>=None;
     let mut native_legacy:Res<Vec<String>>=Err("native legacy inventory pending; host admission held".into());
     let mut maintenance_result=String::new();
     let began = Instant::now();
@@ -805,8 +806,9 @@ pub fn run(install: &Path) -> Res<()> {
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
         let transitioning=h.restart||restart.current.as_ref().map_or(true,Option::is_some)||!transition_ready;
-        if h.updating.is_none()&&native_inventory_due(&native_legacy,native_checked,transitioning) {
-            native_checked=Some(Instant::now());native_legacy=Err("native legacy inventory pending; host admission held".into());
+        if h.updating.is_none()&&native_inventory_due(&native_legacy,native_requested.or(native_checked),transitioning) {
+            // Keep the last observation and its age while refreshing; stale/unknown still holds.
+            native_requested=Some(Instant::now());
             let install=install.to_path_buf();
             let lifecycle_controller=restart.current.as_ref().ok().and_then(Option::as_ref).filter(|p|p.stops()&&p.prepared()).map(|p|p.id().to_string());
             let job=coreq::telemetry::capture::operation("host.legacy.inventory.dispatch",||std::thread::Builder::new().name("taskq-native-inventory".into()).spawn(coreq::telemetry::capture::bind(move || {
@@ -1289,6 +1291,9 @@ mod tests {
         let (send,receive)=std::sync::mpsc::channel();
         h.updating=Some(std::thread::spawn(move || {receive.recv().map_err(|e|e.to_string())?;Ok(Maintenance::Update(None))}));
         let inventory=Ok(vec![]);
+        let refreshing=Some(Instant::now()-std::time::Duration::from_secs(30));
+        assert!(native_inventory_due(&inventory,refreshing,false),"refresh must start before the 60 s freshness deadline");
+        assert!(native_inventory_ready(&inventory,refreshing).is_ok(),"a refresh does not invalidate fresh native proof");
         let checked=Instant::now()-std::time::Duration::from_secs(61);
         h.policy=native_inventory_ready(&inventory,Some(checked)).map(|_|p.clone());
         assert!(h.reserve(root,2,8,"codex",&p.cap,true,0).unwrap_err().contains("stale"));

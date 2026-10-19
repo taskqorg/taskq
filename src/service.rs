@@ -1238,7 +1238,7 @@ impl<'a> Service<'a> {
             }
             let unresolved: Vec<_> = v.projection.executions.iter()
                 .filter(|x| x.release.is_none() && !released.contains(&x.id)).collect();
-            if let Some(x) = unresolved.first().filter(|x| !self.held.iter().any(|l| l.attempt == x.id)) {
+            if let Some(x) = unresolved.first().filter(|x| !self.held.iter().any(|l| l.execution.unwrap_or(l.attempt) == x.id)) {
                 self.execution_waits.entry(v.issue.number).or_insert_with(|| format!("execution {} on {}: termination unconfirmed", x.id, x.host));
             } else if let Some(x) = v.projection.executions.iter()
                 .find(|x| Some(x.attempt) == v.projection.task.attempt && !v.projection.task.inbox.is_empty() && x.release == Some(core::Release::Exit) && !x.accepted) {
@@ -1666,7 +1666,11 @@ impl<'a> Service<'a> {
             if l.resume.is_none() { release_execution(self.board, l.task, l.attempt, l.attempt, "no-start")?; }
             return Ok(());
         }
-        let execution = if l.resume.is_some() {
+        // Only an in-memory admission deferral proves the external start was never called.
+        let deferred=l.execution.map(|id|executions.iter().find(|x|x.id==id&&x.attempt==l.attempt&&x.release.is_none())
+            .ok_or("deferred execution ownership missing")).transpose()?;
+        let through=deferred.map_or(through,|x|x.through);
+        let execution = if let Some(x)=deferred {x.id} else if l.resume.is_some() {
             if executions.iter().any(|x| x.release.is_none()) { return Err(format!("#{} prior execution termination unconfirmed", l.task)); }
             let previous = executions.last().ok_or("execution ownership missing")?.id;
             let op = format!("execute-{}-{through}-{previous}", l.attempt);
@@ -1697,6 +1701,12 @@ impl<'a> Service<'a> {
                 if let Err(e)=self.kids.last_mut().unwrap().proc.checkpoint(&self.cfg,&l,execution) { self.kids.last_mut().unwrap().unknown=Some(e); }
             }
         });
+        if started.as_ref().is_err_and(|e|e.class()=="admission") {
+            self.pending.insert((l.task,l.attempt));
+            self.held.push(l);
+            self.sync_host();
+            return self.beat();
+        }
         let err = started.as_ref().err().map_or("none", crate::runtime::StartError::class);
         crate::profile::stage("start", l.task, l.attempt, &l.rt, Some(began.elapsed()), if started.is_ok() { "ok" } else { "failed" }, err, crate::profile::Usage::NoModel);
         match started {
@@ -2302,6 +2312,44 @@ mod tests {
         core::fold(n, &entries(b, n).unwrap(), false)
     }
 
+    // R12 / §3: a last-moment admission hold is not a failed native submission.
+    #[test]
+    fn admission_wait_preserves_worker_reviewer_and_resume_execution() {
+        for role in ["worker", "reviewer", "resume"] {
+            let b=Fake::default();let c=cfg("mac");
+            let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
+            let w=b.comment(n,"taskq: spawn worker codex:session mac").unwrap();
+            let a=if role=="reviewer" {
+                accept_execution(&b,n,w,w).unwrap();release_execution(&b,n,w,w,"exit").unwrap();
+                b.comment(n,&format!("taskq: result {} attempt {w}","a".repeat(40))).unwrap();
+                b.comment(n,"taskq: spawn reviewer codex:session mac").unwrap()
+            } else {w};
+            let through=if role=="resume" {
+                accept_execution(&b,n,a,a).unwrap();release_execution(&b,n,a,a,"exit").unwrap();
+                b.comment(n,"taskq: steer\ncontinue").unwrap()
+            } else {a};
+            let calls=Rc::new(RefCell::new(0));let called=calls.clone();
+            let mut s=Service::new(&b,&c,"test",Box::new(move |_| {
+                *called.borrow_mut()+=1;
+                if *called.borrow()==1 {Err(crate::runtime::StartError::admission("native inventory pending"))}
+                else {Ok(Box::new(FakeProc(Rc::new(RefCell::new(None)))) as Box<dyn Proc>)}
+            }));
+            let l=Launch {execution:None,task:n,title:"T".into(),attempt:a,role:if role=="reviewer" {"reviewer"} else {"worker"}.into(),rt:"codex".into(),session:"session".into(),url:b.url(n),resume:(role=="resume").then(||"continue".into())};
+            s.launch(l,through).unwrap();
+            assert_eq!(task(&b,n).attempt,Some(a),"{role}: admission consumed the attempt");
+            assert_eq!(task(&b,n).retries,0);
+            assert_eq!(s.held.len(),1,"{role}: pending launch lost");
+            assert!(s.kids.is_empty());assert_eq!(s.delivered(a),0);
+            let before=core::executions(n,&entries(&b,n).unwrap());
+            assert_eq!(before.last().unwrap().release,None);
+            let held=s.held.remove(0);s.launch(held,a).unwrap();
+            let after=core::executions(n,&entries(&b,n).unwrap());
+            assert_eq!(after.len(),before.len(),"admission retry duplicated execution intent");
+            assert_eq!(s.kids.len(),1);assert_eq!(s.delivered(a),through);
+            assert_eq!(*calls.borrow(),2);assert_eq!(task(&b,n).retries,0);
+        }
+    }
+
     // Chain: Resume process -> project wakeup -> separate scheduler process -> durable admission evidence.
     // Board and process adapters are fakes; real command functions, scheduler and shared collector run unchanged.
     #[test]
@@ -2317,6 +2365,7 @@ mod tests {
                 let child = std::process::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "service::tests::resume_handoff_child", "--ignored"])
                     .env("TASKQ_HANDOFF_ROOT", &dir).env("TASKQ_HANDOFF_MODE", mode)
+                    .env_remove("COREQ_TRACE_CONTEXT")
                     .env("TASKQ_INSTALL", dir.join("i")).env("TASKQ_ROOT", &dir).env("TASKQ_INCIDENT_REPORTS", "off")
                     .output().unwrap();
                 assert!(child.status.success(), "{mode}: {}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
@@ -3165,7 +3214,7 @@ mod tests {
             let mut s = service(&b, &c, Default::default());
             s.focus.clear();
             s.pass().unwrap();
-            assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).is_ok());
+            crate::profile::selftest(&dir, &c.repo, &vec![], 300).expect("ended attempt must have committed terminal evidence");
             let repaired = crate::profile::read_log(&dir).unwrap();
             s.pass().unwrap();
             assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired);

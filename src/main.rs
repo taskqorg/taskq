@@ -761,8 +761,10 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let env = runtime::Env { board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, publish: &cfg.delivery };
     let start = |l: &runtime::Launch| {
         if let Some(host) = &host {
-            let p = host.lock().map_err(|_| runtime::StartError::io(std::io::Error::other("host admission poisoned"), None))?
-                .policy.clone().map_err(|e| runtime::StartError::io(std::io::Error::other(e), None))?;
+            let h = host.lock().map_err(|_| runtime::StartError::admission("host admission poisoned"))?;
+            if let Some(reason)=&h.held {return Err(runtime::StartError::admission(reason.clone()));}
+            let p = h.policy.clone().map_err(runtime::StartError::admission)?;
+            drop(h);
             let env = runtime::Env { permission_mode: &p.permission_mode, codex: &p.codex, ..env };
             runtime::spawn(&env, l)
         } else { runtime::spawn(&env, l) }

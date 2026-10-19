@@ -173,9 +173,12 @@ pub(crate) fn visit_samples(install:&Path,kinds:&[&str],accept:impl FnMut(usize,
     tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().cloned()).map(|capture|capture.flush()).transpose()?;
     tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(),|| {
         let path=install.join("telemetry.log/universal.sqlite3");
+        let legacy_lock=legacy_snapshot_lock(install)?;
         let reader=path.try_exists().map_err(|e|e.to_string())?.then(||coreq::telemetry::Reader::open(&path)).transpose()?;
         let cursor=reader.as_ref().map(|r|r.import_cursor("taskq.legacy")).transpose()?.flatten();
-        let archive=legacy_rows(install,cursor.as_deref())?.into_iter().map(|(_,_,line)|line+"\n").collect::<String>();
+        let rows=legacy_rows(install,cursor.as_deref(),legacy_lock.as_ref())?;
+        drop(legacy_lock);
+        let archive=rows.into_iter().map(|(_,_,line)|line+"\n").collect::<String>();
         semantic::visit_samples(reader.as_ref(),kinds,&archive,accept)
     })
 }
@@ -213,8 +216,14 @@ pub fn read(install: &Path, now: u64) -> Result<String, String> {
     Ok(text)
 }
 
-/// Transitional archive view; the service alone imports text and performs retention.
-fn legacy_rows(install: &Path,cursor:Option<&str>) -> Result<Vec<(i64,i64,String)>,String> {
+// Match the writer's order: budget lock before SQLite snapshot, never the reverse.
+fn legacy_snapshot_lock(install:&Path)->Result<Option<crate::profile::LogLock>,String> {
+    if !install.join("telemetry.log/telemetry.sqlite3").try_exists().map_err(|e|e.to_string())? {return Ok(None);}
+    crate::profile::read_log_lock(install).map(Some).map_err(|e|format!("legacy snapshot lock: {e}"))
+}
+
+/// Transitional archive view; caller holds the shared budget before opening the target snapshot.
+fn legacy_rows(install: &Path,cursor:Option<&str>,lock:Option<&crate::profile::LogLock>) -> Result<Vec<(i64,i64,String)>,String> {
     let path=install.join("telemetry.log/telemetry.sqlite3");
     match std::fs::metadata(&path) {
         Err(e) if e.kind()==std::io::ErrorKind::NotFound => {
@@ -224,7 +233,7 @@ fn legacy_rows(install: &Path,cursor:Option<&str>) -> Result<Vec<(i64,i64,String
         }
         Err(e)=>return Err(e.to_string()),Ok(_)=>{}
     }
-    let _lock=crate::profile::read_log_lock(install).map_err(|e|format!("legacy snapshot lock: {e}"))?;
+    if lock.is_none() {return Err("legacy archive appeared during snapshot; coverage unknown".into());}
     let db=Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e|e.to_string())?;
     db.busy_timeout(std::time::Duration::from_secs(1)).map_err(|e|e.to_string())?;
     db.execute_batch("PRAGMA query_only=ON; BEGIN;").map_err(|e|e.to_string())?;
@@ -239,17 +248,16 @@ fn legacy_rows(install: &Path,cursor:Option<&str>) -> Result<Vec<(i64,i64,String
     let after=after.unwrap_or((-1,0));
     let rows=statement.query_map(params![after.0,after.1],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,String>(2)?))).map_err(|e|e.to_string())?
         .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
-    drop(statement);drop(db);drop(_lock);
+    drop(statement);drop(db);
     if rows.iter().any(|(seq,received,line)|*seq<=0||*received<0||line.len()>LINE_MAX) {
         return Err("legacy snapshot: invalid retained record".into());
     }
     Ok(rows)
 }
 
-fn legacy_export(install:&Path,since:Option<u64>,cursor:Option<&str>)->Result<(serde_json::Value,String),String> {
+fn legacy_export(since:Option<u64>,rows:Vec<(i64,i64,String)>,present:bool)->Result<(serde_json::Value,String),String> {
     use serde_json::json;
-    let rows=legacy_rows(install,cursor)?;
-    if !install.join("telemetry.log/telemetry.sqlite3").try_exists().map_err(|e|e.to_string())? {
+    if !present {
         return Ok((json!({"state":"absent","samples":0}),String::new()));
     }
     let bounds=rows.first().zip(rows.last()).map(|(first,last)|[first.0,last.0]);
@@ -276,7 +284,13 @@ pub fn export(install:&Path,since:Option<u64>) -> Result<String,String> {
 
 fn export_snapshot(install:&Path,since:Option<u64>) -> Result<String,String> {
     use serde_json::json;
+    let legacy_lock=legacy_snapshot_lock(install)?;
     let reader=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))?;
+    let cursor=reader.import_cursor("taskq.legacy")?;
+    let present=legacy_lock.is_some();
+    let rows=legacy_rows(install,cursor.as_deref(),legacy_lock.as_ref())?;
+    drop(legacy_lock);
+    let (legacy,old)=legacy_export(since,rows,present)?;
     let since_i64=since.unwrap_or(0).min(i64::MAX as u64) as i64;
     let mut page=reader.export(since_i64,0,1024)?;
     let mut universal=page.clone();
@@ -291,8 +305,6 @@ fn export_snapshot(install:&Path,since:Option<u64>) -> Result<String,String> {
         page=reader.export(since_i64,page["next"].as_i64().ok_or("invalid telemetry export cursor")?,1024)?;
     }
     universal["samples"]=json!(samples);
-    let cursor=reader.import_cursor("taskq.legacy")?;
-    let (legacy,old)=legacy_export(install,since,cursor.as_deref())?;
     drop(reader); // Source filtering and target rows share one import-cursor snapshot.
     let header=json!({"schema":2,"coverage":"committed-import-cursor-snapshot","since_ms":since,"sources":{"universal":universal,"legacy":legacy}});
     Ok(header.to_string()+"\n"+&out+&old)
@@ -323,6 +335,27 @@ mod tests {
     fn dir() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("taskq-sqlite-{}-{}", std::process::id(), crate::runtime::uuid()));
         std::fs::create_dir(&d).unwrap(); d
+    }
+    // R12: a mixed snapshot must obtain the budget lock before pinning SQLite pages.
+    // Otherwise an owner checkpoint can wait for this reader while this reader waits for its lock.
+    #[test]
+    fn mixed_snapshot_waits_for_budget_before_opening_sqlite() {
+        let d=dir();
+        drop(crate::profile::log_lock(&d.join("taskq.log")).unwrap());
+        drop(open(&d).unwrap());
+        assert!(legacy_rows(&d,None,None).unwrap_err().contains("appeared during snapshot"));
+        let path=d.join("telemetry.log/universal.sqlite3");
+        std::fs::write(&path,b"unavailable until the owner finishes").unwrap();
+        let held=crate::profile::log_lock(&d.join("taskq.log")).unwrap();
+        let result=export(&d,None).unwrap_err();
+        drop(held);
+        assert!(result.contains("legacy snapshot lock"),"read entered SQLite before acquiring the shared budget: {result}");
+        assert_eq!(std::fs::read(&path).unwrap(),b"unavailable until the owner finishes");
+        std::fs::remove_file(&path).unwrap();
+        drop(coreq::telemetry::Store::open_bounded(&path,budget(&d,"telemetry.sqlite3").unwrap()).unwrap());
+        assert!(export(&d,None).unwrap().contains("committed-import-cursor-snapshot"));
+        drop(crate::profile::log_lock(&d.join("taskq.log")).unwrap());
+        std::fs::remove_dir_all(d).unwrap();
     }
     // Chain: product migration retry -> mixed reports -> original clocks, archive and rollback reader.
     #[test]

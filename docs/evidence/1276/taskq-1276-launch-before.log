@@ -1,0 +1,24 @@
+   Compiling taskq v4.6.19 (<worktree>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.09s
+     Running unittests entry.rs (target/debug/deps/taskq-efc8692af53c5595)
+
+running 1 test
+test service::tests::admission_wait_preserves_worker_reviewer_and_resume_execution ... FAILED
+
+failures:
+
+---- service::tests::admission_wait_preserves_worker_reviewer_and_resume_execution stdout ----
+
+thread 'service::tests::admission_wait_preserves_worker_reviewer_and_resume_execution' (91836891) panicked at target/debug/build/taskq-ce61c8991dff6b55/out/instrumented/service.rs:2328:13:
+assertion `left == right` failed: worker: admission consumed the attempt
+  left: None
+ right: Some(2)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    service::tests::admission_wait_preserves_worker_reviewer_and_resume_execution
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 411 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--bin taskq`

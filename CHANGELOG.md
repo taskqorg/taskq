@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.20
+
+Refresh native legacy inventory before it expires, retain fresh proof during refresh, and keep pre-launch admission waits out of task retries. Mixed telemetry snapshots acquire the budget lock before SQLite; independent command fixtures isolate inherited trace context. No board change, policy change or new grant. Mac activation and rollback follow [the repair handoff](docs/repair-1276.md); source checks do not prove native activation.
+
 ## v4.6.19
 
 Integrates the reviewed host service, SQLite telemetry and CoreQ 0.14.4 (`5fb10926`), retaining the inventory-refresh wake repair. Mac activation uses the bounded [operator handoff](docs/release-1233.md); release publication does not prove activation. Merge-queue policy enablement remains gated by #1244 and actual operator evidence.
