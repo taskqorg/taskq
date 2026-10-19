@@ -35,3 +35,7 @@ Native `tray --snapshot --route stop` used an isolated `docs/shots/fixture.sh` i
 - [Browser unknown cancellation](browser-unknown.png)
 
 The baseline had no dedicated Stop review route. Existing lifecycle receipt and native exit assertions were retained. No new physical UI exception is introduced; owner visual acceptance and installed-client qualification remain open. README snapshots are refreshed separately by the repository's existing `docs/shots/update.sh` and manifest protocol; refreshing images is not owner acceptance.
+
+Final hold review found and reproduced a second defect: a new Stop could overwrite a malformed structured hold. The added assertion failed before the fix (`corrupt Stop identity cannot be overwritten`). Reusing the strict hold reader before persistence fixes it; `cargo test --locked --bin taskq lifecycle::tests -- --nocapture` then passed seven cases (one pre-existing ignored fixture). Identity, replay, original receipts and native-exit assertions remain intact. This later change affects hold validation only; the captured UI source is unchanged.
+
+`sh docs/shots/update.sh` completed on source `2117dfd07d431119e1e811ad9cd1773ba53f85b3`; release build and native README captures succeeded. `sh docs/shots/check.sh` passed. The refreshed Attention and Projects captures were inspected; the Stop entry is visible with the existing content and footer retained. Manifest source/binary hashes identify that rendering candidate, not installed-client cancellation acceptance.

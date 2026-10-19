@@ -223,13 +223,9 @@ fn save_stop_hold(install:&Path,request:&Request)->Res<()> {
     let _hold=coreq::file_lock::try_lock(&install.join("admission.lock")).map_err(|e|format!("hold busy: {e}"))?;
     let path=install.join("hold");
     let previous=match fs::read_to_string(&path) {Ok(text)=>Some(text),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,Err(e)=>return Err(format!("hold unreadable: {e}"))};
-    if let Some(text)=&previous {
-        if let Ok(value)=serde_json::from_str::<Value>(text) {
-            if let Some(prior)=value.get("taskq_stop") {
-                if typed(prior)?==*request {return Ok(());}
-                return Err("another reviewed Stop hold remains; reconcile it before another Stop".into());
-            }
-        }
+    if let Some(prior)=stop_hold(install)? {
+        if prior==*request {return Ok(());}
+        return Err("another reviewed Stop hold remains; reconcile it before another Stop".into());
     }
     // Old binaries must not bypass operator cancellation after an automatic rollback.
     coreq::launcher::set_rollback_floor(&crate::platform::tool(install),crate::platform::VERSION)?;
@@ -506,7 +502,7 @@ mod tests {
         let mut changed=request.clone();changed.mode=StopMode::Drain;
         assert!(save_stop_hold(&install,&changed).is_err());assert_eq!(fs::read(install.join("hold")).unwrap(),saved);
         assert!(receipt(&install,"full-stop").unwrap().is_none(),"local intent cannot fabricate a lifecycle exit receipt");
-        fs::write(install.join("hold"),"{broken").unwrap();assert!(full_stop(&install,&root).is_err());assert!(release_guard(&install).is_err());
+        fs::write(install.join("hold"),"{broken").unwrap();assert!(full_stop(&install,&root).is_err());assert!(release_guard(&install).is_err());assert!(save_stop_hold(&install,&request).is_err(),"corrupt Stop identity cannot be overwritten");
         fs::remove_dir_all(dir).unwrap();
     }
 
