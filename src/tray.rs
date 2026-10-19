@@ -31,6 +31,9 @@ fn alone(install: &Path) -> bool {
 
 enum Ev {
     Tick,
+    WorkspaceOpen,
+    WorkspaceIpc(String),
+    WorkspaceEvaluated(u64, &'static str),
     Ipc(String),
     Evaluated(u64, &'static str),
     Click(Rect),
@@ -151,8 +154,11 @@ pub fn use_icon(install: &Path, draft: &Value) -> Result<(), Vec<String>> {
 
 /// Draft and history of AI requests (§ 4): `<install>/tray-requests.json`, apart from the view settings.
 fn requests_file(install: &Path) -> Value {
-    let v = crate::operator::read(&install.join("tray-requests.json"));
-    json!({"draft": v["draft"].as_str().unwrap_or(""), "history": v["history"].as_array().cloned().unwrap_or_default()})
+    let mut v = crate::operator::read(&install.join("tray-requests.json"));
+    if !v.is_object(){v=json!({});}
+    if !v["draft"].is_string(){v["draft"]=json!("");}
+    if !v["history"].is_array(){v["history"]=json!([]);}
+    v
 }
 
 /// The last 20 distinct sent texts, newest first; the same text moves to the top (menu.md M7).
@@ -190,6 +196,7 @@ fn newest(install: &Path) -> Value {
 fn ai(install: &Path, a: &str, m: &Value) {
     let path = install.join("tray-requests.json");
     let mut f = requests_file(install);
+    if f["state"]=="unknown" {return;}
     match a {
         "ai-draft" => f["draft"] = json!(m["text"].as_str().unwrap_or("")),
         "ai-clear" => f["history"] = json!([]),
@@ -207,7 +214,8 @@ fn ai(install: &Path, a: &str, m: &Value) {
             if onboard.is_some() {
                 return;
             }
-            f = json!({"draft": "", "history": remember(f["history"].as_array().map_or(&[][..], |v| v), text)});
+            f["history"] = json!(remember(f["history"].as_array().map_or(&[][..], |v| v), text));
+            f["draft"]=json!("");
         }
         // only a registered project and a request id: the page never names a path of its own
         "ai-confirm" => {
@@ -774,6 +782,15 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     }
 }
 
+const WORKSPACE_HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/workspace.html"));
+struct Workspace { window: Window, view: WebView, calls: WebCalls, shown: String }
+fn workspace_push(workspace: &mut Workspace, value: &Value, proxy: &tao::event_loop::EventLoopProxy<Ev>) {
+    if workspace.calls.failed || workspace.calls.pending.contains_key(&0) {return;}
+    let Some(id)=workspace.calls.begin("tray.workspace.receive",Instant::now()) else {return};
+    let proxy=proxy.clone();
+    if workspace.view.evaluate_script_with_callback(&web_script(&format!("taskq.receive({value})")),move |result|{let _=proxy.send_event(Ev::WorkspaceEvaluated(id,web_result(&result)));}).is_err(){workspace.calls.finish(id,"submit-error");}
+}
+
 pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> Result<(), String> {
     if snapshot.is_none() && !alone(&install) {
         return Err("taskq tray already runs on this host".into());
@@ -781,6 +798,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     if let Some(r) = routes.iter().find(|r| r.as_str() != "icon" && !ROUTES.contains(&r.as_str())) {
         return Err(format!("unknown route {r}; known: icon, {}", ROUTES.join(", ")));
     }
+    if routes.iter().any(|r|r=="workspace")&&routes.len()!=1 {return Err("Capture workspace separately from menu routes".into());}
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
     #[cfg(target_os = "macos")]
@@ -847,6 +865,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut settings = Settings::load(&install);
     let mut ui: Option<(Window, WebView)> = None;
     let mut tray: Option<TrayIcon> = None;
+    let mut workspace: Option<Workspace> = None;
+    let workspace_snapshot = routes == ["workspace"];
     let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
     let mut hidden_at = Instant::now() - Duration::from_secs(1);
     let mut shown_at = hidden_at;
@@ -890,7 +910,45 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if !web.failed {web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,web);}
             }
         };
+        if let Some(ws)=&mut workspace {ws.calls.expire(Instant::now());}
         match event {
+            Event::WindowEvent {window_id,event,..} if workspace.as_ref().is_some_and(|ws|ws.window.id()==window_id) => {
+                if let WindowEvent::CloseRequested=event {workspace.as_ref().unwrap().window.set_visible(false);}
+            }
+            Event::UserEvent(Ev::WorkspaceOpen) => {
+                if workspace.is_none() {
+                    let p=proxy.clone();
+                    let built=WindowBuilder::new().with_title("TaskQ · AI conversations").with_inner_size(LogicalSize::new(860.0,680.0)).with_min_inner_size(LogicalSize::new(360.0,400.0)).build(target).map_err(|e|e.to_string()).and_then(|window|{
+                        WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(|_|false).with_ipc_handler(move |r|{let _=p.send_event(Ev::WorkspaceIpc(r.into_body()));}).build(&window).map(|view|Workspace{window,view,calls:WebCalls::new(),shown:String::new()}).map_err(|e|e.to_string())
+                    });
+                    match built {Ok(ws)=>workspace=Some(ws),Err(reason)=>{push(&mut web,&ui,&json!({"aiError":reason}));return;}}
+                }
+                let ws=workspace.as_mut().unwrap();ws.window.set_visible(true);ws.window.set_focus();
+                workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":true,"font":settings.font}),&proxy);
+            }
+            Event::UserEvent(Ev::WorkspaceEvaluated(id,result)) => {if let Some(ws)=&mut workspace {ws.calls.finish(id,result);}}
+            Event::UserEvent(Ev::WorkspaceIpc(message)) => {
+                let Some(ws)=&mut workspace else {return};
+                let Ok(m)=serde_json::from_str::<Value>(&message) else {ws.calls.fault("invalid-ipc");return};
+                let a=m["a"].as_str().unwrap_or("");
+                if a=="web-error" {ws.calls.errors(&m);return;}
+                if a=="web-observation" {ws.calls.metadata(&m["row"]);return;}
+                if ws.calls.failed {return;}
+                let root=m["root"].as_str().unwrap_or("");let id=m["id"].as_str().unwrap_or("");
+                let result=match a {
+                    "ready"=>{ws.calls.finish(0,"ok");Ok(())},
+                    "refresh"=>Ok(()),
+                    "select"=>crate::conversations::select(&install,root,id),
+                    "draft"=>crate::conversations::draft(&install,root,id,m["text"].as_str().unwrap_or("")),
+                    "send"=>crate::conversations::submit(&install,root,id,m["text"].as_str().unwrap_or("")).map(|_|()),
+                    "confirm"=>crate::conversations::confirm(&install,root,id,m["rev"].as_u64().unwrap_or(0)),
+                    _=>Err("Unsupported workspace action".into()),
+                };
+                if a=="draft"&&result.is_ok(){return;}
+                let sent=a=="send"&&result.is_ok();
+                workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":a=="select"||a=="ready","receipt":true,"sent":sent,"error":result.err().unwrap_or_default(),"font":settings.font}),&proxy);
+                push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
+            }
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_title("taskq").with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
@@ -901,7 +959,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let p = proxy.clone();
                 let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
                     // only our page: a link goes to the browser through the bridge
-                    WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_navigation_handler(|u| !u.starts_with("http"))
+                    WebViewBuilder::new().with_accept_first_mouse(true).with_html(if workspace_snapshot {WORKSPACE_HTML}else{HTML}).with_navigation_handler(|u| !u.starts_with("http"))
                         .with_ipc_handler(move |r| {
                             let _ = p.send_event(Ev::Ipc(r.into_body()));
                         })
@@ -909,6 +967,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 });
                 match built {
                     Ok(x) => {
+                        if workspace_snapshot {let (width,height)=settings.pin.size.unwrap_or((860.0,680.0));x.0.set_inner_size(LogicalSize::new(width,height));}
                         dark = is_dark(&x.0);
                         ui = Some(x);
                     }
@@ -984,6 +1043,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 // a drag sends many moves: save the last one per tick
                 if std::mem::take(&mut moved) {
                     settings.save(&install);
+                }
+                if let Some(ws)=&mut workspace {
+                    let data=crate::conversations::snapshot(&install);let signature=data.to_string();
+                    if signature!=ws.shown&&!ws.calls.pending.contains_key(&0){ws.shown=signature;workspace_push(ws,&json!({"data":data,"font":settings.font}),&proxy);}
                 }
                 let st = state(&install, &settings, dark, None, &adding);
                 if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig);}
@@ -1132,7 +1195,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     "set" => {
                         settings.set(&m);
                         settings.save(&install);
-                        let st = state(&install, &settings, dark, None, &adding);
+                        if let Some(ws)=&mut workspace {
+                    let data=crate::conversations::snapshot(&install);let signature=data.to_string();
+                    if signature!=ws.shown&&!ws.calls.pending.contains_key(&0){ws.shown=signature;workspace_push(ws,&json!({"data":data,"font":settings.font}),&proxy);}
+                }
+                let st = state(&install, &settings, dark, None, &adding);
                         refresh_icon(&tray, &st, &settings, dark, &mut icon_sig);
                         push(&mut web,&ui, &st);
                     }
@@ -1181,7 +1248,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     a if a.starts_with("ai-") => {
                         let mut m = m.clone();
                         m["onboard"] = Value::Null;
-                        ai(&install, a, &m);
+                        if matches!(a,"ai-send"|"ai-open"|"ai-confirm") && cfg!(target_os="macos") {
+                            let root=m["root"].as_str().map(String::from).or_else(||self::target(&install)).unwrap_or_default();
+                            let after=m["after"].as_str().unwrap_or("");
+                            let result=if a=="ai-send"&&after.is_empty(){crate::conversations::submit(&install,&root,"",m["text"].as_str().unwrap_or("")).map(|_|())}
+                                else if a=="ai-send" {crate::conversations::draft(&install,&root,after,m["text"].as_str().unwrap_or("")).and_then(|_|crate::conversations::select(&install,&root,after))}
+                                else {crate::conversations::select(&install,&root,m["id"].as_str().unwrap_or(""))};
+                            match result {Ok(())=>{push(&mut web,&ui,&json!({"aiSubmitted":true}));let _=proxy.send_event(Ev::WorkspaceOpen);},Err(reason)=>push(&mut web,&ui,&json!({"aiError":reason}))}
+                        }else{ai(&install,a,&m);}
                         push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
                     }
                     a => {
@@ -1311,7 +1385,7 @@ const SCROLLS: [(&str, &str); 3] = [
 /// `tray --snapshot --route` names: `actions` is Home with the [`ACTIONS`] script, `scroll` Home with the [`SCROLLS`]
 /// (only when named), `project` the first project's page.
 const RECOVERY: &str = include_str!("../tests/fixtures/recovery-review.js");
-const ROUTES: [&str; 15] = ["home", "actions", "scroll", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery"];
+const ROUTES: [&str; 16] = ["home", "actions", "scroll", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "workspace"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1324,7 +1398,7 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
-    }).filter(|(_, p, _, js)| if routes.is_empty() { route_of(p, js) != "scroll" } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
+    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"workspace") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
@@ -1340,6 +1414,7 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
 }
 
 fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value) -> Value {
+    if let Some((theme,"workspace"))=snap {return json!({"data":crate::conversations::snapshot(install),"select":true,"theme":theme,"font":s.font});}
     let ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
     let (start, end) = s.range(now());
     let sum = summary(&ps, (start, end));

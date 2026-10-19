@@ -5,7 +5,7 @@ const counts=[0,0,0,0],classes=['script','rejection','resource','evaluation'];
 let dirty=false,timer=0,shown=false,saturated=false;
 function notice(){
   if(shown||!document.body)return;shown=true;
-  const style=document.createElement('style');style.textContent='.menu{display:none!important}';document.head.append(style);
+  const style=document.createElement('style');style.textContent='.menu,.workspace{display:none!important}';document.head.append(style);
   const box=document.createElement('div');box.setAttribute('role','alert');
   box.style.cssText='box-sizing:border-box;padding:12px;max-width:100%;overflow-wrap:anywhere';
   box.textContent='Interface error; command outcomes unknown. Close and reopen TaskQ. Check service status before retrying a command.';

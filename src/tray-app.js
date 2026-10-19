@@ -251,6 +251,7 @@ nextActions:function(t){
 ai:function(){
   const A=view.S.ai,r=A.request,an=r&&r.answer||{},st=r?(an.state||'queued'):null,bad=['failed','refuse','apply failed'].includes(st);
   let h='<div class="group"><div class="row meta">✦ Ask AI · '+(A.target?'projects: '+esc(view.S.projects.map(p=>p.name).join(', ')):'no running service: cannot send')+'</div>';
+  if(view.aiError)h+='<p role="alert">'+esc(view.aiError)+'</p>';
   const chain=r?(r.chain||[r]):[];
   if(r)h+='<div class="aichain" tabindex="0" aria-label="AI exchange" data-bound="'+esc('chain/'+r.id+'/'+chain.length+'/'+st+'/'+view.S.font)+'">';
   for(const q of chain){
@@ -258,6 +259,7 @@ ai:function(){
     h+='<div class="body"><div class="meta">'+(q.url?'<a href="'+esc(q.url)+'" data-url="'+esc(q.url)+'">Comment on #'+esc(q.task)+' ↗</a>: ':'You: ')+esc(q.text||'')+'</div><div class="'+(bad?'alert':state==='applied'||state==='result'?'work':'ask')+'" role="status">'+esc(aiStates[state]||state)+(a.reason?': '+esc(a.reason):'')+'</div>'+(a.text?'<div>'+esc(a.text).replace(/\n/g,'<br>')+'</div>':'')+'</div>';
   }
   if(r)h+='</div>';
+  if(r&&view.S.platform!=='windows')h+='<button data-a="ai-open" data-root="'+esc(r.root)+'" data-id="'+esc(r.id)+'">Open full exchange</button>';
   // a Next button replies with its number, the same token as typing it; the chain then shows `You: <number>`
   const nx=r&&['result','clarify','refuse'].includes(st)&&nextActions(an.text);
   if(nx)h+='<div class="options" role="group" aria-label="Next">'+nx.map(x=>'<button data-a="ai-next" data-v="'+x.n+'"'+(x.rec?' class="rec"':'')+'>'+esc(x.text)+'</button>').join('')+'</div>';
@@ -269,7 +271,7 @@ ai:function(){
   // a setup lists its effects, computed by the service, instead of the op (§ 6)
   const lines=[...an.effects||(an.ops||[]).map(opText),...an.readback||[]];
   if(lines.length)h+='<div class="body meta aiops" tabindex="0" aria-label="Proposed changes" data-bound="'+esc('ops/'+r.id+'/'+an.rev+'/'+st+'/'+view.S.font)+'">'+lines.map(esc).join('<br>')+'</div>';
-  if(st==='proposal')h+='<button class="project" data-a="ai-confirm" data-root="'+esc(r.root)+'" data-id="'+esc(r.id)+'" data-rev="'+Number(an.rev)+'"'+(view.aiConfirm===r.id+'/'+Number(an.rev)?' disabled':'')+'>Confirm: apply '+(an.effects||an.ops).length+' change'+((an.effects||an.ops).length===1?'':'s')+'</button>';
+  if(st==='proposal')h+='<button class="project" data-a="ai-confirm" data-root="'+esc(r.root)+'" data-id="'+esc(r.id)+'" data-rev="'+Number(an.rev)+'"'+(view.aiConfirm===r.id+'/'+Number(an.rev)?' disabled':'')+'>'+(view.S.platform==='windows'?'Confirm: apply ':'Review changes: ')+(an.effects||an.ops).length+' change'+((an.effects||an.ops).length===1?'':'s')+'</button>';
   if(bad)h+='<button class="project" data-a="ai-pick" data-v="'+esc(r.text||'')+'">Edit and send again</button>';
   return h+'</div>';},
 addProject:function(){
@@ -456,6 +458,8 @@ receive:function(s){
     if(d.id!==view.diagnosticId&&remaining>0){execution.diagnose(d.selector,Math.min(60000,remaining),d.limit);view.diagnosticId=d.id;}
     return;
   }
+  if(s.aiSubmitted){view.aiText='';view.aiSending=false;view.aiError='';present();return;}
+  if(s.aiError){view.aiSending=false;view.aiError=s.aiError;present();return;}
   if(s.action_error){actionReceipt(s.action_error);return;}
   if(s.focus_receipt){focusReceipt(s.focus_receipt);return;}
   if(s.answerReceipt){answerReceipt(s.answerReceipt);return;}
@@ -513,9 +517,10 @@ const z=t(view.draft.end);
   if(d.a==='ai-menu'){view.aiMenu=!view.aiMenu;present();return;}
   // picking fills the input, never sends (M-A13)
   if(d.a==='ai-pick'){view.aiText=d.v;view.aiMenu=false;send({a:'ai-draft',text:view.aiText});present();const t=document.getElementById('ai');t.focus();t.setSelectionRange(t.value.length,t.value.length);return;}
-  if(d.a==='ai-next'){send({a:'ai-send',text:d.v,after:view.S.ai.request.id});present();return;}
-  if(d.a==='ai-send'){const r=view.S.ai.request,an=r&&r.answer||{};if(!view.aiText.trim())return;send({a:'ai-send',text:view.aiText,after:an.state==='clarify'?r.id:''});view.aiText='';present();return;}
-  if(d.a==='ai-confirm'){view.aiConfirm=d.id+'/'+d.rev;send({a:'ai-confirm',root:d.root,id:d.id,rev:Number(d.rev)});present();return;}
+  if(d.a==='ai-next'){send({a:'ai-send',text:d.v,root:view.S.ai.request.root,after:view.S.ai.request.id});present();return;}
+  if(d.a==='ai-send'){const r=view.S.ai.request,an=r&&r.answer||{};if(!view.aiText.trim()||view.aiSending)return;view.aiSending=true;send({a:'ai-send',text:view.aiText,root:an.state==='clarify'?r.root:view.S.ai.target,after:an.state==='clarify'?r.id:''});if(view.S.platform==='windows'){view.aiText='';view.aiSending=false;}present();return;}
+  if(d.a==='ai-open'){send({a:'ai-open',root:d.root,id:d.id});return;}
+  if(d.a==='ai-confirm'){if(view.S.platform==='windows')view.aiConfirm=d.id+'/'+d.rev;send({a:view.S.platform==='windows'?'ai-confirm':'ai-open',root:d.root,id:d.id,rev:Number(d.rev)});return;}
   if(d.a==='ai-clear'){send({a:'ai-clear'});return;}
   if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return;}
   if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;

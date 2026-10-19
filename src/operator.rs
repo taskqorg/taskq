@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Requests kept per project (§ 4).
+/// Recent legacy requests and distinct command texts kept (§ 4); workspace exchanges are retained.
 pub const KEEP: usize = 20;
 const KINDS: [&str; 4] = ["result", "clarify", "proposal", "refuse"];
 
@@ -164,17 +164,18 @@ pub fn wait(root:&Path)->Option<String> {
     None
 }
 
-/// One service pass: start an operator for each new request, apply a confirmed proposal, drop all but the newest 20.
+/// One service pass: process requests and confirmations; prune only resolved, unretained legacy requests.
 pub fn step(root: &Path, install: &Path, exe: &Path, rt: Option<&str>) {
     if crate::admission::hold(install).is_some() {return;}
     let ids = ids(root);
     for id in ids.iter().rev().skip(KEEP) {
-        if unresolved(&read(&answer_path(root, id))) { continue; }
+        if dir(root).join(format!("{id}.keep")).exists() || unresolved(&read(&answer_path(root, id))) { continue; }
         for f in [format!("{id}.json"), format!("{id}.answer.json"), format!("{id}.confirm"), format!("{id}.out"), format!("{id}.err")] {
             let _ = fs::remove_file(dir(root).join(f));
         }
     }
-    for id in ids.iter().rev().take(KEEP) {
+    for id in ids.iter().rev() {
+        if !dir(root).join(format!("{id}.json")).exists() {continue;}
         let a = read(&answer_path(root, id));
         if a.is_null() {
             if running(root) { continue; }

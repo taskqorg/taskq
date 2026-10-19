@@ -17,6 +17,7 @@ mod enrollment;
 mod incident;
 mod labels;
 mod operator;
+mod conversations;
 mod recipe;
 mod requests;
 mod platform;
