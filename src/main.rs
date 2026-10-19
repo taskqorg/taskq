@@ -73,6 +73,7 @@ const USAGE: &str = "taskq agents
  taskq cleanup [--force] | taskq update [--check]
  taskq enroll <https-url> [--headless] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
+ taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
@@ -951,6 +952,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             ("tasks_age_seconds", json!(s.tasks_read.map(|t| t.elapsed().as_secs()))), ("request", json!(request)), ("events_since", json!(s.events_since)),
             ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err()})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
+            ("stop_progress",json!(s.stop_progress)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, &cfg.root, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("connection", json!(dashq.outcome)), ("telemetry",telemetry::diagnostic::health())]
@@ -1017,7 +1019,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 log!("{l}");
             }
         }
-        if legacy.is_none() && !reduced && host.as_ref().is_none_or(|h| h.lock().is_ok_and(|h| !h.restart && !h.draining.contains(&cfg.root))) {
+        if legacy.is_none() && !reduced && admission::hold(&cfg.install).is_none() && host.as_ref().is_none_or(|h| h.lock().is_ok_and(|h| !h.restart && !h.draining.contains(&cfg.root))) {
             operator::owner_comments(&cfg.root, &project, &issues, &s.owner_comments);
             operator::step(&cfg.root, &cfg.install, &exe, op_rt);
         }
@@ -1795,23 +1797,27 @@ fn service(args: &Args) -> Res<()> {
     }
     if matches!(sub,"restart"|"stop"|"uninstall") {
         if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot restart the host service or request Stop".into());}
-        if args.pos.len()!=2||args.all("request").len()>1||args.flags.keys().any(|key|!["request","json","host","diagnose","diagnose-ms","diagnose-limit"].contains(&key.as_str()))||sub!="uninstall"&&args.flags.contains_key("host") {
-            return Err("usage: taskq service restart|stop|uninstall [--host] [--request ID] [--json]".into());
+        if args.pos.len()!=2||args.all("request").len()>1||args.flags.keys().any(|key|!["request","json","host","mode","diagnose","diagnose-ms","diagnose-limit"].contains(&key.as_str()))||sub!="uninstall"&&args.flags.contains_key("host") {
+            return Err("usage: taskq service restart|stop|uninstall [--host] [--mode drain|full] [--request ID] [--json]".into());
         }
+        if args.flags.contains_key("mode") && !cfg!(target_os="macos") {return Err("Stop modes are available only on macOS".into());}
+        if args.all("mode").len()>1 || args.one("mode").is_some_and(|m|sub!="stop" || !matches!(m,"drain"|"full")) {return Err("Stop mode must be drain or full".into());}
         let install=platform::default_install();
         let id=args.one("request").map(str::to_owned).unwrap_or_else(runtime::uuid);
         let mut result=if let Some(receipt)=lifecycle::receipt(&install,&id)? {receipt} else {
             let reviewed=match sub {
-                "stop"=>lifecycle::stop_review(&install,&id)?,
+                "stop"=>if args.one("mode")==Some("full") {lifecycle::full_stop_review(&install,&id)?}else{lifecycle::stop_review(&install,&id)?},
                 "uninstall"=>{let root=if args.flags.contains_key("host") {None}else{Some(find_root()?)};lifecycle::uninstall_review(&install,&id,root.as_deref())?},
                 _=>lifecycle::review(&install,&id)?,
             };
             if !args.flags.contains_key("json") {
                 println!("Scope: host service; all registered projects");
+                if sub=="stop" && cfg!(target_os="macos") {println!("Stop mode: {}; durable hold retained; automatic rollback to older releases disabled",args.one("mode").unwrap_or("drain"));}
                 for root in reviewed["roots"].as_array().into_iter().flatten() {println!("Project: {}",root.as_str().unwrap_or("unknown"));}
             }
             lifecycle::submit(&install,&reviewed)?
         };
+        if args.one("mode").is_some_and(|mode|result["mode"]!=mode) {return Err("request ID belongs to another Stop mode".into());}
         if result["action"].as_str().unwrap_or("restart")!=sub {return Err("request ID belongs to another lifecycle action".into());}
         if args.flags.contains_key("host")&&result["scope"]!="host" {return Err("request ID belongs to a project Uninstall; payload unchanged".into());}
         if matches!(sub,"stop"|"uninstall")&&result["state"]=="applied"&&let Some(p)=lifecycle::pending(&install)?.filter(|p|p.stops()) {
@@ -1898,6 +1904,8 @@ fn service(args: &Args) -> Res<()> {
 fn hold_cmd(on: bool, reason: Option<&str>) -> Res<()> {
     let install = platform::default_install();
     let path = install.join("hold");
+    let _hold=coreq::file_lock::try_lock(&install.join("admission.lock")).map_err(|e|format!("hold busy: {e}"))?;
+    lifecycle::release_guard(&install)?;
     if on {
         let reason = reason.unwrap_or("emergency hold");
         one_line("--text", &[reason.to_string()])?;

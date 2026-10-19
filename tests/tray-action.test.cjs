@@ -120,3 +120,19 @@ context.lifecycleReceipt(lastResult);assert.equal(context.hostCommand.state,'unk
 context.lifecycleReceipt({...lastResult,native_exit:true,native_pid:731,native_started:'12345',unit_revision:'a'.repeat(64),unit_removed:true});
 assert.equal(context.hostCommand.state,'observed');assert.match(context.actionNotices(),/Host unit removal and exact exit observed/);
 console.log('PASS exact project Uninstall, foreign/partial refusal, last-unit exit proof and result after row removal');
+// R11/E2: both choices remain visible; Full stop transmits the reviewed mode and never trusts stale progress.
+context.hostCommand=null;
+context.S.service={state:'running',pid:123,instance:'original'};
+context.S.projects=[{root:'/canonical/one',name:'<project>',host:'mac',age:0,service_pid:123,host_instance:'original',stop_progress:[{task:7,rt:'codex',state:'unknown',reason:'exit unavailable'}]}];
+context.S.full_stop_review={...context.S.stop_review,mode:'full'};
+context.S.lifecycle=null;
+assert.match(context.stopPanel(),/Confirm Drain/);
+assert.match(context.stopPanel(),/Confirm Full stop/);
+assert.match(context.stopPanel(),/exit unavailable/);
+context.lifecycleStart('/canonical/one','stop','full');assert.equal(sent.at(-1).mode,'full');
+context.S.projects[0].age=61;
+assert.match(context.stopPanel(),/Process state unknown/);
+assert.doesNotMatch(context.stopPanel(),/exit unavailable/);
+context.S.stop_hold={id:'held',mode:'full',state:'held'};
+assert.match(context.stopPanel(),/ordinary Play cannot clear/);
+console.log('PASS Drain/Full stop review, exact mode, stale native progress and retained hold');

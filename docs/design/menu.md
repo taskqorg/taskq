@@ -58,7 +58,7 @@ Counter scope, all states and quiet Closed totals: [K-A1–K-A6](task-counters.m
 - Show pending, applied, partial failure and unknown separately; confirm application by readback.
 - Restart, pause and stop have distinct effects. Stop retains autostart; show its native restart condition and active-work consequences before use.
 - Uninstall uses a nested confirmation naming the project, removes its service unit and preserves project files and other registrations. Remove shared install resources only when no consumer remains. R11 applies.
-- Emergency termination is required, separate from Pause; [E1–E5](emergency-recovery.md) define the reviewed-recovery candidate.
+- Drain holds admission while current work finishes; Full stop cancels owned local execution, including offline. Both retain the host hold and remain separate from Pause; [E1–E5](emergency-recovery.md) define the reviewed-recovery candidate.
 
 ## M6 Cadence
 

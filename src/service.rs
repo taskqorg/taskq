@@ -328,6 +328,7 @@ pub struct Service<'a> {
     pub project_revision: Option<String>,
     /// The emergency hold read at the start of each pass (§ 3): refuses every launch.
     pub hold: Option<String>,
+    pub stop_progress: Vec<Value>,
     /// Runtimes whose access policy refuses a launch, with the reason (§ 8 Access): no claim, resume or reviewer.
     pub refused_access: BTreeMap<String, String>,
     /// Runtimes held after a usage limit, with board time the hold ends and whether the runtime reported it
@@ -580,7 +581,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -596,6 +597,7 @@ impl<'a> Service<'a> {
     /// Quarantine/backoff: only verified reaping, leases and status; no claims, resumes or recovery writes.
     pub fn reduced(&mut self) -> Result<(), String> {
         self.unready();
+        self.full_stop_owned();
         let before = self.kids.len();
         self.reap_owned();
         self.reconcile_ownership()?;
@@ -616,6 +618,27 @@ impl<'a> Service<'a> {
 
     pub fn unready(&self) {
         if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, false); } }
+    }
+
+    /// R11/E2: cancellation precedes board access, including reduced/offline passes. No release is fabricated.
+    pub fn full_stop_owned(&mut self) {
+        let full=match crate::lifecycle::full_stop(&self.cfg.install,&self.cfg.root) {
+            Ok(value)=>value,Err(reason)=>{self.log.push(reason);return;}
+        };
+        if !full {return;}
+        self.stop_progress.clear();
+        for k in &mut self.kids {
+            k.stopping=true;
+            let observed=match k.proc.exited() {
+                Ok(Some(code))=>Ok(code),
+                _=>crate::runtime::stop(k.proc.as_mut()),
+            };
+            let (state,reason)=match observed {
+                Ok(_)=>("stopped",Some("native exit observed; board release checked separately".to_owned())),
+                Err(reason)=>{k.unknown=Some(reason.clone());("unknown",Some(reason))},
+            };
+            self.stop_progress.push(json!({"task":k.task,"attempt":k.attempt,"execution":k.execution,"rt":k.rt,"state":state,"reason":reason}));
+        }
     }
 
     /// Liveness monitoring never frees ownership before the exact execution release is read back.
@@ -1035,6 +1058,7 @@ impl<'a> Service<'a> {
     /// One pass of § 4. Tasks written to in a step are left alone by later steps until the next pass re-reads them.
     #[tracing::instrument(name="service.Service.pass",skip_all)]
     pub fn pass(&mut self) -> Result<(), String> {
+        self.full_stop_owned();
         self.ownership_known = false;
         if self.host.is_none() {
             if let Err(e) = crate::profile::prune(&self.cfg.install) { eprintln!("taskq: telemetry unknown: {e}"); }
@@ -3732,6 +3756,28 @@ mod tests {
                 assert_eq!(b.comments(n).unwrap().iter().filter(|c|c.body.starts_with("taskq: usage-limit attempt")).count(),1);
             }
         }
+    }
+
+    // R11/E2: offline Full stop uses owned handles; Drain never cancels and exit must be observed.
+    #[test]
+    fn full_stop_cancels_owned_work_before_board_access() {
+        let b=Fake::default();let dir=std::env::temp_dir().join(format!("taskq-full-stop-{}",std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut c=cfg("mac");c.install=dir.clone();c.root=dir.clone();
+        let n=b.create("owned","",&["taskq".into()]).unwrap();
+        let e:Exits=Default::default();let mut s=service(&b,&c,e.clone());s.pass().unwrap();
+        let attempt=task(&b,n).attempt.unwrap();
+        let mut hold=json!({"taskq_stop":{"id":"stop1","instance":"owner1","roots":[dir],"issued_at":1,"expires_at":301,"action":"stop"}});
+        std::fs::write(dir.join("hold"),hold.to_string()).unwrap();
+        s.reduced().unwrap();assert_eq!(*e.borrow()[0].1.borrow(),None,"Drain preserves current work");
+        hold["taskq_stop"]["mode"]=json!("full");std::fs::write(dir.join("hold"),hold.to_string()).unwrap();
+        b.state.borrow_mut().fail_comments=100;
+        let _=s.reduced();
+        assert_eq!(*e.borrow()[0].1.borrow(),Some(-9),"Full stop must cancel before a failing board write");
+        assert_eq!(s.kids.len(),1,"offline release retains native ownership");
+        assert_eq!(task(&b,n).attempt,Some(attempt),"no fabricated board retirement");
+        assert!(dir.join("hold").is_file());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: § 3 emergency hold, § 4 reconciliation and recovery. Risk: a held host launches, an unknown read is

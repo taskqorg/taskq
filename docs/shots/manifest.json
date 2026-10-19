@@ -1,14 +1,14 @@
 {
   "version": "4.6.21",
-  "sourceCommit": "86948f189f03eb47c686500f207ae7aee5394851",
-  "binarySha256": "62b7e079d0fc6e19dba1e6cdcfdf4cf7f361bf4e90c726cf047ef440510723dc",
+  "sourceCommit": "fc893e10bbc23d91655f9d581a0cc9b3e12e9f02",
+  "binarySha256": "e97d7cc417825a8f8a378692d5cbb8dbfa50e426e8bef6d36639ad8dee588cb8",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "b0e92102de654cf576ab39b60386f9cb0144f582",
+    "src/tray.rs": "ea9304fac6eb2ed52bc3c7ee82fd041659aec0ec",
     "src/tray.html": "ef3473cbfbbeda68f5ccd89006c0ed6aff2eb5b8",
     "src/tray-web.js": "38b95afd2ba9e332b090d2b5c2c151a0ca88af84",
     "src/icon.rs": "411fc089802b6e2f2ebe908b8ad0d1da2facdd55",
@@ -22,15 +22,15 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "a9b29c91ec08c090fd56cefb817387d7cc147734c498145448fa2b1fc1299551"
+      "sha256": "124cd49b807a12b5e4e7f042aa4c1c4ce2387deb32941885cdb4d1894402e310"
     },
     {
       "file": "popover-dark-attention-16.png",
-      "sha256": "48a56b0a9af457f8284283ed4693a71cb8bf5988ed28e877b6008c732ea29c93"
+      "sha256": "0c94095e4918cb2af8a4834b963cb1e1be49e62716a8bda4ea1f9d9641cf169f"
     },
     {
       "file": "popover-dark-projects-16.png",
-      "sha256": "110adfaca17fe4bcb6a8440933136de35bcbb7ea8ed4d5243b032afbe29bdb3f"
+      "sha256": "e88fcee319456a1bbcbfaace85b40b8d0872f4a8bb6684b1c80b951546fc1df9"
     }
   ]
 }

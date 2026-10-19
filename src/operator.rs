@@ -166,6 +166,7 @@ pub fn wait(root:&Path)->Option<String> {
 
 /// One service pass: start an operator for each new request, apply a confirmed proposal, drop all but the newest 20.
 pub fn step(root: &Path, install: &Path, exe: &Path, rt: Option<&str>) {
+    if crate::admission::hold(install).is_some() {return;}
     let ids = ids(root);
     for id in ids.iter().rev().skip(KEEP) {
         if unresolved(&read(&answer_path(root, id))) { continue; }
@@ -251,12 +252,18 @@ fn session(rt: &str, log: &Path) -> Option<String> {
         .find_map(|v| v["session_id"].as_str().map(String::from))
 }
 
-fn wait_native(turn:&mut dyn crate::runtime::Proc,root:&Path,logs:&Path,name:&str,rt:&str,cadence:std::time::Duration)->i32 {
+fn wait_native(turn:&mut dyn crate::runtime::Proc,install:&Path,root:&Path,logs:&Path,name:&str,rt:&str,cadence:std::time::Duration)->i32 {
     let mut unknown=None;
+    let mut stop_requested=false;
+    let mut cancellation_error=None;
     loop {
+        if !stop_requested && crate::lifecycle::full_stop(install,root).unwrap_or(false) {
+            stop_requested=true;
+            if let Err(reason)=turn.kill() {cancellation_error=Some(format!("operator cancellation unknown: {reason}"));}
+        }
         let reason=match turn.exited() {
             Ok(Some(code))=>return code,
-            Ok(None)=>None,
+            Ok(None)=>cancellation_error.clone().or_else(||stop_requested.then(||"operator stopping; native exit unconfirmed".into())),
             Err(reason)=>Some(reason),
         };
         if reason!=unknown {
@@ -304,17 +311,19 @@ pub fn exec(rt: &str, brief: &str, root: &Path, logs: &Path, name: &str, resume:
         .map_err(|e| e.to_string())?;
     fs::create_dir_all(logs).map_err(|e| e.to_string())?;
     let out = logs.join(format!("{name}.out"));
+    if crate::admission::hold(&cfg.install).is_some() {return Err("host held; operator not started".into());}
     if rt == "claude" && (resume.is_none() || crate::runtime::claude_background(root, &l.session)?) {
         let mut turn = crate::runtime::ClaudeTurn::start(&env, &l, &out, &text, &access).map_err(|e| e.to_string())?;
-        let code=wait_native(&mut turn,root,logs,name,rt,std::time::Duration::from_millis(500));
+        let code=wait_native(&mut turn,&cfg.install,root,logs,name,rt,std::time::Duration::from_millis(500));
         if code!=0 {return Err(format!("Claude operator failed (exit {code}): {}; partial effects unknown",crate::runtime::Proc::exit_reason(&turn).unwrap_or("inspect native request log")));}
         return fs::read_to_string(&out).map_err(|e| e.to_string())?.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .find_map(|v| (v["type"] == "result").then(|| v["result"].as_str().map(String::from)).flatten()).ok_or("Claude final response missing".into());
     }
     let f = fs::File::create(&out).map_err(|e| e.to_string())?;
     let err = fs::File::create(logs.join(format!("{name}.err"))).map_err(|e| e.to_string())?;
+    if crate::admission::hold(&cfg.install).is_some() {return Err("host held; operator not started".into());}
     let mut child = crate::runtime::start_command(c.current_dir(root).stdout(f).stderr(err), root, &text).map_err(|e| format!("{rt}: {e}"))?;
-    let status=wait_native(child.as_mut(),root,logs,name,rt,std::time::Duration::from_millis(50));
+    let status=wait_native(child.as_mut(),&cfg.install,root,logs,name,rt,std::time::Duration::from_millis(50));
     let events: Vec<Value> = fs::read_to_string(&out).map_err(|e| e.to_string())?.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
     if status!=0 || events.iter().any(|v| v["is_error"] == true || v["type"] == "turn.failed") {
         return Err(format!("{rt} operator failed (exit {}); partial effects unknown; inspect request log before retry", status));
@@ -583,15 +592,18 @@ fn apply_setup(install: &Path, exe: &Path, root: &Path, ops: &[Value], shown: &V
             return Err("the effects changed since the proposal; send the request again".into());
         }
         if !s.git() {
+            hold_before_effect(install)?;
             cmd("git", &["init", "-q"], root, &[])?;
             lines.push("git init: ok".to_string());
         }
         if s.create {
+            hold_before_effect(install)?;
             let k = s.kind();
             cmd(k.cli, &["repo", "create", &s.repo, if s.private { "--private" } else { "--public" }], root, &[(k.host_env, &s.host)])?;
             lines.push(format!("created {}/{}", s.host, s.repo));
         }
         if !s.origin() {
+            hold_before_effect(install)?;
             cmd("git", &["remote", "add", "origin", &format!("https://{}/{}.git", s.host, s.repo)], root, &[])?;
             lines.push("origin: added".into());
         }
@@ -599,10 +611,12 @@ fn apply_setup(install: &Path, exe: &Path, root: &Path, ops: &[Value], shown: &V
         if root.join("taskq.json").exists() {
             return Err("taskq.json appeared meanwhile: nothing overwritten".into());
         }
+        hold_before_effect(install)?;
         crate::platform::write_atomic(&root.join("taskq.json"), &(serde_json::to_string_pretty(&c).unwrap_or_default() + "\n"))?;
         lines.push("taskq.json: written".into());
         let r = root.to_string_lossy();
         for a in [&["labels"][..], &["service", "install"], &["selftest"]] {
+            hold_before_effect(install)?;
             cmd(exe, a, root, &[("TASKQ_ROOT", &r)]).map_err(|e| format!("taskq {}: {e}", a.join(" ")))?;
             lines.push(format!("taskq {}: ok", a.join(" ")));
         }
@@ -676,11 +690,20 @@ pub fn validate(o: &Value, projects: &[(String, PathBuf)]) -> Result<Op, String>
 /// Apply ops in order; each line says what the readback showed. Local ops read their focus file back; board ops run
 /// the `taskq` command, which re-reads the board, and its `#N <state>` line must show the op (R12). A task op runs
 /// with op id `<id>.<rev>.<k>` and `--json`: a repeated apply writes nothing twice; its receipt is kept (§ 5).
+fn hold_before_effect(install: &Path) -> Result<(), String> {
+    if crate::admission::hold(install).is_some() { Err("host held; remaining effects not applied".into()) } else { Ok(()) }
+}
+
 fn apply(install: &Path, exe: &Path, ops: &[Value], id: &str, rev: u64) -> (bool, Vec<String>, Vec<Value>) {
     let ps = projects(install);
     let mut ok = true;
     let (mut lines, mut receipts) = (vec![], vec![]);
     for (k, o) in ops.iter().enumerate() {
+        if let Err(reason) = hold_before_effect(install) {
+            lines.push(reason);
+            ok = false;
+            break;
+        }
         let name = o["project"].as_str().unwrap_or("?");
         let focus = |r: &Path| fs::read_to_string(crate::dot(r).join("focus")).unwrap_or_default().trim().to_string();
         let r: Result<String, String> = validate(o, &ps).and_then(|op| match op {
@@ -747,9 +770,30 @@ mod tests {
         let root=temp("native-observation");fs::create_dir_all(dir(&root)).unwrap();
         answer(&root,"1",json!({"state":"running","rt":"claude"}));
         let mut turn=Turn {root:root.clone(),step:0};
-        assert_eq!(wait_native(&mut turn,&root,&dir(&root),"1","claude",std::time::Duration::ZERO),0);
+        assert_eq!(wait_native(&mut turn,&root,&root,&dir(&root),"1","claude",std::time::Duration::ZERO),0);
         assert_eq!(turn.step,4);assert_eq!(read(&answer_path(&root,"1"))["rev"],3);
         assert_eq!(fs::read_to_string(dir(&root).join("1.err")).unwrap(),"Workspace not trusted");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // R11/E2: the operator's owned native handle is cancelled offline, then observed through uncertainty.
+    #[test]
+    fn full_stop_operator_waits_for_native_exit() {
+        struct Turn {killed:bool,reads:usize}
+        impl crate::runtime::Proc for Turn {
+            fn kill(&mut self)->Result<(),String> {self.killed=true;Ok(())}
+            fn exited(&mut self)->Result<Option<i32>,String> {
+                assert!(self.killed,"Full stop must precede the native wait");self.reads+=1;
+                match self.reads {1=>Err("native exit unknown".into()),2=>Ok(None),_=>Ok(Some(-9))}
+            }
+            fn id(&self)->u32 {0}
+        }
+        let root=temp("full-stop");fs::create_dir_all(dir(&root)).unwrap();
+        fs::write(root.join("hold"),json!({"taskq_stop":{"id":"stop1","instance":"owner1","roots":[root],"issued_at":1,"expires_at":301,"action":"stop","mode":"full"}}).to_string()).unwrap();
+        answer(&root,"1",json!({"state":"running","rt":"codex"}));
+        let mut turn=Turn {killed:false,reads:0};
+        assert_eq!(wait_native(&mut turn,&root,&root,&dir(&root),"1","codex",std::time::Duration::ZERO),-9);
+        assert_eq!(turn.reads,3);assert!(running(&root),"only the caller may record the observed terminal outcome");
         fs::remove_dir_all(root).unwrap();
     }
 

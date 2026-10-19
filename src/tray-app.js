@@ -10,12 +10,12 @@ gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();cons
 fit:function(){const size=view.manualSize||view.S.size,w=size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:size?0:gutter(),w,h:size?size[1]:Math.ceil(menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
 actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
-lifecycleStart:function(root,action='restart'){
+lifecycleStart:function(root,action='restart',mode='drain'){
   if(view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed')return;
-  const review=action==='uninstall'?view.S.projects.find(p=>p.root===root)?.uninstall_review:action==='stop'?view.S.stop_review:view.S.restart_review;
+  const review=action==='uninstall'?view.S.projects.find(p=>p.root===root)?.uninstall_review:action==='stop'?(mode==='full'?view.S.full_stop_review:view.S.stop_review):view.S.restart_review;
   if(!review||typeof review.instance!=='string'||!Array.isArray(review.roots)){actionErrors.set(root,{text:review?.reason||'Lifecycle review unavailable; check host service status.'});present();return;}
   const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
-  const item={id,root,project:review.project,action,stops:action==='uninstall'&&review.roots.length===1,instance:review.instance,state:'sending',unknown:false};view.hostCommand=item;actionErrors.delete(root);
+  const item={id,root,project:review.project,action,mode,stops:action==='uninstall'&&review.roots.length===1,instance:review.instance,state:'sending',unknown:false};view.hostCommand=item;actionErrors.delete(root);
   defer(()=>{if(view.hostCommand!==item||item.state==='observed')return;item.unknown=true;item.state='unknown';item.reason=({stop:'Stop',uninstall:'Uninstall'}[action]||'Restart')+' confirmation unknown; check service status for '+id+'.';present();},30000);
   send({...review,id,a:action,root});present();
 },
@@ -55,9 +55,21 @@ lifecycleControl:function(p,action='restart'){
   const pending=view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S?.lifecycle?.state);
   const projects=Array.isArray(view.S?.projects)?view.S.projects:[];
   const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>projects.find(p=>p.root===root)?.name||root):null;
-  const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.':'Existing work is preserved; active turns can delay restart.';
+  const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Recovery remains unavailable.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
   const scope=action==='uninstall'?esc(p.name):'all registered projects: '+(targets?targets.length?targets.map(esc).join(', '):'none registered':'unknown');
   return '<details class="host-'+action+'"><summary>'+title+' '+(action==='uninstall'?esc(p.name):'host service')+'</summary><div class="body meta">Affects '+scope+'. '+effect+'</div>'+(!review?.instance?'<div class="body alert">'+esc(review?.reason||title+' protocol unavailable')+'</div>':'')+'<button class="project" data-a="'+action+'" data-root="'+esc(p.root)+'"'+(pending||!review?.instance||!targets?' disabled':'')+'>Confirm '+(action==='uninstall'?'uninstall '+esc(p.name):'host '+action)+'</button>'+(pending&&r?api.lifecycleWaits():'')+(r?.id||r?.reason?'<div class="body meta" role="status">'+title+' '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'')+'</details>';
+},
+stopPanel:function(){
+  const projects=view.S.projects||[],root=projects[0]?.root,held=view.S.stop_hold;
+  const pending=!!held||view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
+  const names=projects.map(p=>esc(p.name)).join(', ')||'no registered projects';
+  const host=projects[0]?.host||'unknown host',command=view.hostCommand||view.S.lifecycle;
+  const rows=projects.map(p=>'<div class="body"><strong>'+esc(p.name)+'</strong><div class="meta">'+(view.S.service?.state!=='running'||typeof p.age!=='number'||p.age<0||p.age>60||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?p.stop_progress.map(k=>'#'+esc(k.task)+' '+esc(k.rt)+': '+esc(k.state)+(k.reason?' · '+esc(k.reason):'')).join('<br>'):'No stop acknowledgement; running or unknown work may remain.')+'</div></div>').join('');
+  return '<div class="body">Stop on '+esc(host)+' · '+names+'</div><div class="body meta">Only TaskQ-owned local work is targeted. Remote hosts and unrelated agents are unaffected. Dirty files and session references are retained; unsaved buffers and interrupted external effects may be lost. Automatic rollback to older releases is disabled.</div>'+
+    '<div class="body"><strong>Drain</strong><div class="meta">Hold new admission and let current work finish. Retain autostart and the hold after service exit.</div></div><button class="project" data-a="stop" data-root="'+esc(root||'')+'"'+(pending||!root||!view.S.stop_review?.instance?' disabled':'')+'>Confirm Drain</button>'+
+    '<div class="body"><strong>Full stop</strong><div class="meta">Request cancellation now, including offline. Unknown termination stays fenced. Board reconciliation may keep the service alive.</div></div><button class="project" data-a="stop-full" data-root="'+esc(root||'')+'"'+(pending||!root||!view.S.full_stop_review?.instance?' disabled':'')+'>Confirm Full stop</button>'+
+    (!view.S.full_stop_review?.instance?'<div class="body alert">'+esc(view.S.full_stop_review?.reason||'Full stop capability unknown')+'</div>':'')+
+    (held?'<div class="body alert" role="status">Admission held: '+esc(held.mode||'unknown')+'. Recovery is unavailable in this version; ordinary Play cannot clear this hold.</div>':'')+(command?.action==='stop'?'<div class="body meta" role="status">Stop '+esc(command.id||'')+': '+esc(command.state||'unknown')+(command.reason?' · '+esc(command.reason):'')+'</div>':'')+rows+api.lifecycleWaits();
 },
 focusStart:function(action,root,label){
   if(view.pending[root]&&!view.pending[root].unknown)return;
@@ -290,6 +302,7 @@ routeBody:function(){
     case 'cadence':return history();
     case 'notifications':return notifications();
     case 'agents':return agents();
+    case 'stop':return api.stopPanel();
     case 'services':return '<button class="project" data-a="resources" title="btop in its own terminal window">◔ Resources</button>'+(view.resourceNotice?'<div class="body '+(view.resourceNotice.state==='submitted'?'meta':'alert')+'" role="status">Resources: '+esc(view.resourceNotice.reason)+'</div>':'')+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+' · '+esc(p.host||'host unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>'+problem(p)+incidentNotice(p)+service(p)).join('');
     case 'about':return about();
     default:return home();
@@ -358,7 +371,7 @@ filteredTasks:function(p){
     (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
     (view.taskFilter==='closed'?'<div class="body meta">Closed total and task list unknown: open the Board for authoritative closed tasks.</div>'+ps.map(p=>TaskqProjectBlocks.summary(blockProject(p))).join(''):rows.map(t=>taskRow(t,!p)).join('')||'<div class="body meta">'+(known(ps)?'No tasks':'Tasks unknown')+'</div>');
 },
-head:function(){return '<div class="row head"><span class="meta">taskq</span><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'">'+(view.S.pinned?'Pinned':'Pin')+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows">Top</button></div>';},
+head:function(){return '<div class="row head"><span class="meta">taskq</span>'+(view.S.stop_modes?'<button data-a="stop-review" aria-label="Emergency stop">■ Stop</button>':'')+'<button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'">'+(view.S.pinned?'Pinned':'Pin')+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows">Top</button></div>';},
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
   const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=document.scrollingElement.scrollTop;
@@ -477,6 +490,8 @@ const z=t(view.draft.end);
   if(d.a==='update'){view.updating={v:d.v,at:view.S.now};}
   if(d.a==='pick'){view.ask=d.root;present();return;}
   if(d.a==='pause-all'||d.a==='resume-all'){view.confirming=null;for(const p of view.S.projects.filter(p=>mode(p)===(d.a==='pause-all'?'run':'paused')))focusStart(d.a.slice(0,-4),p.root);present();menu.querySelector('[data-a="confirm"]')?.focus();return;}
+  if(d.a==='stop-review'){view.page='stop';present();return;}
+  if(d.a==='stop-full'){api.lifecycleStart(d.root,'stop','full');return;}
   if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return;}
   if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return;}
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label});}present();});
@@ -543,7 +558,7 @@ const actionErrors=new Map();
 
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
-const routes={home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
+const routes={stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
 const trail=[];
 
 
