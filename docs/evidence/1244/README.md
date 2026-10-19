@@ -1,6 +1,6 @@
 # Six-board merge queue activation
 
-Task #1244 applies R12, R13 and sections 7/9. Queue activation is verified; two-task live qualification remains incomplete.
+Task #1244 applies R12, R13 and sections 7/9. A1–A4 are verified within the bounds below. Six queues are active; two real TaskQ deliveries have merge-result CI and close receipts.
 
 ## Authorization and cutover
 
@@ -20,17 +20,24 @@ TaskQ and CoreQ already use an always-running aggregate `tests` job. It requires
 
 ## Live qualification
 
-Task #1215 / PR #1274 retains reviewed head `ba2bf49939e914f6532f0f40e1c04b0c02fae337`. After activation the service recorded [enqueue receipt](https://github.com/taskqorg/taskq/issues/1215#issuecomment-6259280762). Its first observed merge group is `f3be1b899a1ce4976bd404e5482f5d847d65d1f1`, [CI run](https://github.com/taskqorg/taskq/actions/runs/39196854408). Enqueue is not a merge or close receipt (R12).
+`qualification-6259455299.json` records fresh GitHub GETs: all six active rulesets match the activation readback, effective main rules retain the protections, and all six main CI workflows include merge_group. No settings were written during this final verification.
 
-The other prepared task #1149 / PR #1272 is parked in `later` after the old context mismatch. Its unblock condition now has verified settings readback. The owning operator must resume it through TaskQ; this worker must not bypass attempt fencing, hand-edit task logs, or publish another task outside its lifecycle. Two successive merges and correlated close receipts remain unproved. No CI wait or synthetic qualification task is introduced.
+| Task / PR | Merge time (UTC, 2026-10-19) | Merge SHA | Merge-group CI | Close receipt |
+|---|---|---|---|---|
+| #1215 / #1274 | 04:00:21 | `f3be1b899a1ce4976bd404e5482f5d847d65d1f1` | [39196854408](https://github.com/taskqorg/taskq/actions/runs/39196854408), success | [6259432053](https://github.com/taskqorg/taskq/issues/1215#issuecomment-6259432053) |
+| #1149 / #1272 | 04:03:00 | `b2cd93869b3b56c3fc5447d5bd610b43ec090c9d` | [39197505639](https://github.com/taskqorg/taskq/actions/runs/39197505639), success | [6259389462](https://github.com/taskqorg/taskq/issues/1149#issuecomment-6259389462) |
 
-The release workflow runs on main pushes and version tags, not merge_group. A main push with an unchanged Cargo version should skip artifact publication; a version change must pass exact-source checks and staged selftests before publication. This is workflow inspection, not live post-queue release proof. No new release or deployment is claimed.
+Both CI runs have event `merge_group` and head SHA equal to the observed merge SHA. The task logs contain no requeue between enqueue and close. The reviewed heads remain `ba2bf49939e914f6532f0f40e1c04b0c02fae337` and `6870d8040dfb78287ff36b54171b99f74b44c514`; the older #1149 context-mismatch requeue preceded activation and is preserved in `live-6259257305.json`. Close receipts arrived in reverse order; their delivery lines identify the correct merges. Their saved verdict bodies still say CI pending, but the final delivery receipts and fresh run GETs establish green merge-result CI.
+
+Release runs [39197336843](https://github.com/taskqorg/taskq/actions/runs/39197336843) and [39197549786](https://github.com/taskqorg/taskq/actions/runs/39197549786) were triggered by main pushes on those exact merge SHAs. Both succeeded: tag detection passed; checks, build, attest and publish were skipped. This proves the unchanged-version queue path does not publish another artifact. A version-changing queue delivery, subsequent artifact attestation and deployment are not qualified by these two deliveries. No new release or deployment is claimed. Live successive delivery was qualified on TaskQ; other boards have configuration/workflow readback, not synthetic task deliveries.
 
 ## Rollback
 
 `*.rollback.json` retain each original writable ruleset payload. Before rollback, GET and reconcile current state; PUT the matching rollback payload and independently GET it back. Keep merge_group workflow triggers while queued PRs remain. Restoring the original TaskQ/CoreQ contexts would restore the known docs-only mismatch. Rollback cannot undo an already merged PR or published release.
 
 ## Verification
+
+### Earlier candidate (retained failure evidence)
 
 Existing #1243 regression checks cover queue admission/readback, observed merge-result CI, unknown outcomes, publication restart and main-move retry accounting. No assertions were weakened. A passing model/adapter check does not qualify native queue delivery.
 
@@ -42,4 +49,19 @@ Existing #1243 regression checks cover queue admission/readback, observed merge-
 - `cargo run -- selftest`: 82 golden traces and formats passed; live check failed with `legacy snapshot lock: timed out`. Live selftest is not PASS.
 - `python3 scripts/check.test.py` and `git diff --check`: passed.
 
-The tested implementation, dependencies and assertions are unchanged from main `bf41d2f673951a6d19e81c39a8d72ad9cf9daf77`; this branch changes rollout evidence only. Merge-result CI remains the publication gate. No CI wait was performed.
+These earlier results apply to main `bf41d2f673951a6d19e81c39a8d72ad9cf9daf77`. Final verification rebases the evidence-only branch onto `b2cd93869b3b56c3fc5447d5bd610b43ec090c9d` and reruns affected checks. No assertions or rule decisions changed. Merge-result CI remains the publication gate; the worker does not wait for CI.
+
+### Final candidate
+
+The implementation base is `b2cd93869b3b56c3fc5447d5bd610b43ec090c9d`; this branch adds evidence only. Commands ran after rebase, without removing worker identity or changing grants:
+
+- `cargo test --locked --bin taskq queue`: 7 passed.
+- `cargo test --locked --bin taskq golden`: 5 passed, including main-move retry traces.
+- `cargo test --locked --bin taskq pending_publication_survives_restart_without_a_reviewer`: 1 passed.
+- `cargo test --locked`: 363 passed, 16 failed, 30 ignored. Host-mutation cases remain sandbox-blocked by worker guards; the existing resume trace-link assertion also fails. Full suite is not PASS.
+- `cargo run -- selftest`: 82 golden traces and formats passed; live check failed with `legacy snapshot lock: timed out`. Board selftest is unknown, not PASS.
+- `sh .github/release-tag.test.sh`: 10 cases passed, including unchanged versions and failed prior-version reads.
+- `python3 .github/release-check.test.py`: passed exact-source, freshness and latest failure/pending isolation.
+- `python3 scripts/check.test.py` and `git diff --check`: passed.
+
+A1/A2 have fresh API proof; A3 has affected regression proof; A4 has two real merge/close receipts and observed no-release workflow behavior. These do not replace the merge-result CI gate for PR #1266. No runtime, workflow, test or contract changes are included; no weaker assertion or protection was introduced.

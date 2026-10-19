@@ -1,0 +1,992 @@
+{
+  "observed_at": "2026-10-19T04:11:46.277564+00:00",
+  "boards": [
+    {
+      "repo": "agentq",
+      "ruleset": {
+        "id": 25117820,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/agentq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "rust (ubuntu-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (macos-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (windows-latest)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "merge_queue",
+            "parameters": {
+              "merge_method": "SQUASH",
+              "max_entries_to_build": 2,
+              "min_entries_to_merge": 1,
+              "max_entries_to_merge": 1,
+              "min_entries_to_merge_wait_minutes": 0,
+              "grouping_strategy": "ALLGREEN",
+              "check_response_timeout_minutes": 60
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UPJETzgF_RHw",
+        "created_at": "2026-10-15T04:04:35.176+07:00",
+        "updated_at": "2026-10-19T10:53:27.772+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/agentq/rulesets/25117820"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/agentq/rules/25117820"
+          }
+        }
+      },
+      "effective": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/agentq",
+          "ruleset_id": 25117820
+        },
+        {
+          "type": "non_fast_forward",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/agentq",
+          "ruleset_id": 25117820
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "rust (ubuntu-latest)",
+                "integration_id": 15368
+              },
+              {
+                "context": "rust (macos-latest)",
+                "integration_id": 15368
+              },
+              {
+                "context": "rust (windows-latest)",
+                "integration_id": 15368
+              }
+            ]
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/agentq",
+          "ruleset_id": 25117820
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 2,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 1,
+            "min_entries_to_merge_wait_minutes": 0,
+            "grouping_strategy": "ALLGREEN",
+            "check_response_timeout_minutes": 60
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/agentq",
+          "ruleset_id": 25117820
+        }
+      ],
+      "workflow": {
+        "sha": "299a7d921534dcebe785fe77f3d912f7905c50d3",
+        "content": "name: Test\non: [push, pull_request, workflow_dispatch, merge_group]\npermissions:\n  contents: read\njobs:\n  rust:\n    strategy:\n      fail-fast: false\n      matrix:\n        os: [ubuntu-latest, windows-latest, macos-latest]\n    runs-on: ${{ matrix.os }}\n    timeout-minutes: 15\n    env:\n      AGENTQ_SELFTEST_OFFLINE: '1'\n    steps:\n      - uses: actions/checkout@v6\n      - run: rustup default stable\n      - run: python tests/client_compression_check.py\n      - run: python tests/provider_adapter.py\n      - run: python tests/hermes_adapter.py\n      - run: python tests/telemetry_qualification.py\n      - run: cargo test --locked\n      - run: cargo run --locked -- selftest\n"
+      }
+    },
+    {
+      "repo": "coreq",
+      "ruleset": {
+        "id": 25118262,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/coreq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "tests",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "merge_queue",
+            "parameters": {
+              "merge_method": "SQUASH",
+              "max_entries_to_build": 2,
+              "min_entries_to_merge": 1,
+              "max_entries_to_merge": 1,
+              "min_entries_to_merge_wait_minutes": 0,
+              "grouping_strategy": "ALLGREEN",
+              "check_response_timeout_minutes": 60
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UbvfwzgF_RjY",
+        "created_at": "2026-10-15T04:12:23.395+07:00",
+        "updated_at": "2026-10-19T10:53:30.918+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/coreq/rulesets/25118262"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/coreq/rules/25118262"
+          }
+        }
+      },
+      "effective": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/coreq",
+          "ruleset_id": 25118262
+        },
+        {
+          "type": "non_fast_forward",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/coreq",
+          "ruleset_id": 25118262
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "tests",
+                "integration_id": 15368
+              }
+            ]
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/coreq",
+          "ruleset_id": 25118262
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 2,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 1,
+            "min_entries_to_merge_wait_minutes": 0,
+            "grouping_strategy": "ALLGREEN",
+            "check_response_timeout_minutes": 60
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/coreq",
+          "ruleset_id": 25118262
+        }
+      ],
+      "workflow": {
+        "sha": "08656cee2768c36b149fa166e7138335756d9648",
+        "content": "name: tests\non:\n  push:\n    branches: [main, 'taskq-*']\n  pull_request:\n  merge_group:\n    types: [checks_requested]\n  workflow_dispatch:\npermissions:\n  contents: read\nenv:\n  CHECK_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || 'HEAD^' }}\n  CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' }}\njobs:\n  plan:\n    runs-on: ubuntu-latest\n    outputs:\n      scope: ${{ steps.plan.outputs.scope }}\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - id: plan\n        run: python3 scripts/check.py --plan >> \"$GITHUB_OUTPUT\"\n      - run: git diff --check\n      - run: python3 scripts/check.test.py\n  rust:\n    needs: plan\n    if: needs.plan.outputs.scope != 'docs'\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest, windows-latest]\n    runs-on: ${{ matrix.os }}\n    timeout-minutes: 16\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - run: python3 scripts/check.py\n  tests:\n    needs: [plan, rust]\n    if: always()\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          PLAN: ${{ needs.plan.result }}\n          SCOPE: ${{ needs.plan.outputs.scope }}\n          RUST: ${{ needs.rust.result }}\n        run: |\n          test \"$PLAN\" = success\n          case \"$SCOPE\" in\n            docs) test \"$RUST\" = skipped ;;\n            full) test \"$RUST\" = success ;;\n            *) exit 1 ;;\n          esac\n"
+      }
+    },
+    {
+      "repo": "dashq",
+      "ruleset": {
+        "id": 25118356,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/dashq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "tests",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "build (ubuntu-latest, x86_64-unknown-linux-musl, linux-x86_64)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "build (ubuntu-24.04-arm, aarch64-unknown-linux-musl, linux-aarch64)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "merge_queue",
+            "parameters": {
+              "merge_method": "SQUASH",
+              "max_entries_to_build": 2,
+              "min_entries_to_merge": 1,
+              "max_entries_to_merge": 1,
+              "min_entries_to_merge_wait_minutes": 0,
+              "grouping_strategy": "ALLGREEN",
+              "check_response_timeout_minutes": 60
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UbvgxzgF_RpQ",
+        "created_at": "2026-10-15T04:14:38.545+07:00",
+        "updated_at": "2026-10-19T10:53:33.662+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/dashq/rulesets/25118356"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/dashq/rules/25118356"
+          }
+        }
+      },
+      "effective": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/dashq",
+          "ruleset_id": 25118356
+        },
+        {
+          "type": "non_fast_forward",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/dashq",
+          "ruleset_id": 25118356
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "tests",
+                "integration_id": 15368
+              },
+              {
+                "context": "build (ubuntu-latest, x86_64-unknown-linux-musl, linux-x86_64)",
+                "integration_id": 15368
+              },
+              {
+                "context": "build (ubuntu-24.04-arm, aarch64-unknown-linux-musl, linux-aarch64)",
+                "integration_id": 15368
+              }
+            ]
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/dashq",
+          "ruleset_id": 25118356
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 2,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 1,
+            "min_entries_to_merge_wait_minutes": 0,
+            "grouping_strategy": "ALLGREEN",
+            "check_response_timeout_minutes": 60
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/dashq",
+          "ruleset_id": 25118356
+        }
+      ],
+      "workflow": {
+        "sha": "a5daec3751188f3b77eb33b3df67cc10578c0c3e",
+        "content": "# dashq.md D2 Release: static Linux binary per arch, SHA256SUMS, latest.json. A failing selftest publishes nothing.\n# Pull requests run the same build and selftest (required checks on main); only a tag publishes.\nname: release\non:\n  push:\n    tags: ['v*']\n  pull_request:\n  merge_group:\n    types: [checks_requested]\npermissions:\n  contents: read\njobs:\n  build:\n    strategy:\n      matrix:\n        include:\n          - os: ubuntu-latest\n            target: x86_64-unknown-linux-musl\n            name: linux-x86_64\n          - os: ubuntu-24.04-arm\n            target: aarch64-unknown-linux-musl\n            name: linux-aarch64\n    runs-on: ${{ matrix.os }}\n    env:\n      DASHQ_SELFTEST_OFFLINE: '1'\n      TARGET: ${{ matrix.target }}\n    steps:\n      - uses: actions/checkout@v4\n      - run: sudo apt-get update && sudo apt-get install -y musl-tools\n      - run: rustup update stable --no-self-update && rustup default stable && rustup target add \"$TARGET\"\n      - name: Tag equals Cargo.toml version\n        run: |\n          ver=\"$(sed -n 's/^version = \"\\(.*\\)\"$/\\1/p' Cargo.toml | head -n 1)\"\n          test -n \"$ver\"\n          if [ \"$GITHUB_REF_TYPE\" = tag ]; then test \"${GITHUB_REF_NAME#v}\" = \"$ver\"; fi\n          echo \"VER=$ver\" >> \"$GITHUB_ENV\"\n      # Tests need headless Chrome (snapshot PNG): ubuntu-latest ships it, the arm runner does not.\n      # The arm artifact is still gated by its own selftest below. On a pull request tests.yml runs them.\n      - if: matrix.name == 'linux-x86_64' && github.ref_type == 'tag'\n        run: cargo test --locked\n      - run: cargo build --locked --release --target \"$TARGET\"\n      - name: Selftest and stage\n        run: |\n          bin=\"target/$TARGET/release/dashq\"\n          file \"$bin\" | grep -Eq 'static(ally|-pie) linked'\n          \"$bin\" selftest\n          mkdir dist\n          cp \"$bin\" \"dist/dashq-$VER-${{ matrix.name }}\"\n      - if: github.ref_type == 'tag'\n        uses: actions/upload-artifact@v4\n        with:\n          name: ${{ matrix.name }}\n          path: dist/*\n  publish:\n    if: github.ref_type == 'tag'\n    needs: build\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    steps:\n      - uses: actions/download-artifact@v4\n        with:\n          path: dist\n          merge-multiple: true\n      - name: Describe\n        run: |\n          ver=\"${GITHUB_REF_NAME#v}\"\n          cd dist\n          sha256sum dashq-* > SHA256SUMS\n          python3 - \"$ver\" <<'PY'\n          import json, os, sys\n          ver = sys.argv[1]\n          files = {n[len(f'dashq-{ver}-'):]: n for n in sorted(os.listdir('.')) if n.startswith(f'dashq-{ver}-')}\n          assert set(files) == {'linux-x86_64', 'linux-aarch64'}, files\n          json.dump({'version': ver, 'files': files}, open('latest.json', 'w'), indent=1)\n          PY\n      - name: Publish\n        env:\n          GH_TOKEN: ${{ github.token }}\n        run: gh release create \"$GITHUB_REF_NAME\" dist/* --repo \"$GITHUB_REPOSITORY\" --title \"DashQ $GITHUB_REF_NAME\" --notes \"dashq $GITHUB_REF_NAME\"\n"
+      }
+    },
+    {
+      "repo": "serverq",
+      "ruleset": {
+        "id": 25118437,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/serverq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "rust (ubuntu-latest)",
+                  "integration_id": 15368
+                },
+                {
+                  "context": "rust (windows-latest)",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "merge_queue",
+            "parameters": {
+              "merge_method": "SQUASH",
+              "max_entries_to_build": 2,
+              "min_entries_to_merge": 1,
+              "max_entries_to_merge": 1,
+              "min_entries_to_merge_wait_minutes": 0,
+              "grouping_strategy": "ALLGREEN",
+              "check_response_timeout_minutes": 60
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5URPdEzgF_RuU",
+        "created_at": "2026-10-15T04:16:39.860+07:00",
+        "updated_at": "2026-10-19T10:53:36.796+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/serverq/rulesets/25118437"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/serverq/rules/25118437"
+          }
+        }
+      },
+      "effective": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/serverq",
+          "ruleset_id": 25118437
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "rust (ubuntu-latest)",
+                "integration_id": 15368
+              },
+              {
+                "context": "rust (windows-latest)",
+                "integration_id": 15368
+              }
+            ]
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/serverq",
+          "ruleset_id": 25118437
+        },
+        {
+          "type": "non_fast_forward",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/serverq",
+          "ruleset_id": 25118437
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 2,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 1,
+            "min_entries_to_merge_wait_minutes": 0,
+            "grouping_strategy": "ALLGREEN",
+            "check_response_timeout_minutes": 60
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/serverq",
+          "ruleset_id": 25118437
+        }
+      ],
+      "workflow": {
+        "sha": "2e368cb33e85e69aa0f8df406c99f3e37eef939a",
+        "content": "name: Check\non: [push, pull_request, merge_group]\npermissions:\n  contents: read\njobs:\n  rust:\n    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n    runs-on: ${{ matrix.os }}\n    steps:\n      - uses: actions/checkout@v4\n      - shell: bash\n        run: rustup update stable --no-self-update && cargo test --locked\n"
+      }
+    },
+    {
+      "repo": "specq",
+      "ruleset": {
+        "id": 25118568,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/specq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "check",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "merge_queue",
+            "parameters": {
+              "merge_method": "SQUASH",
+              "max_entries_to_build": 2,
+              "min_entries_to_merge": 1,
+              "max_entries_to_merge": 1,
+              "min_entries_to_merge_wait_minutes": 0,
+              "grouping_strategy": "ALLGREEN",
+              "check_response_timeout_minutes": 60
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5UbZZCzgF_R2g",
+        "created_at": "2026-10-15T04:18:22.579+07:00",
+        "updated_at": "2026-10-19T10:53:39.595+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/specq/rulesets/25118568"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/specq/rules/25118568"
+          }
+        }
+      },
+      "effective": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/specq",
+          "ruleset_id": 25118568
+        },
+        {
+          "type": "non_fast_forward",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/specq",
+          "ruleset_id": 25118568
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "check",
+                "integration_id": 15368
+              }
+            ]
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/specq",
+          "ruleset_id": 25118568
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 2,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 1,
+            "min_entries_to_merge_wait_minutes": 0,
+            "grouping_strategy": "ALLGREEN",
+            "check_response_timeout_minutes": 60
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/specq",
+          "ruleset_id": 25118568
+        }
+      ],
+      "workflow": {
+        "sha": "8257edbda101a8d08d56de6e6dd87437d794494d",
+        "content": "name: check\non:\n  pull_request:\n  merge_group:\n    types: [checks_requested]\n  push:\n    branches: [main]\npermissions:\n  contents: read\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - run: python3 caveman/scripts/check.py\n      - run: git diff --check ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }} ${{ github.sha }}\n"
+      }
+    },
+    {
+      "repo": "taskq",
+      "ruleset": {
+        "id": 25117578,
+        "name": "main up to date",
+        "target": "branch",
+        "source_type": "Repository",
+        "source": "taskqorg/taskq",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "~DEFAULT_BRANCH"
+            ]
+          }
+        },
+        "rules": [
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {
+                  "context": "tests",
+                  "integration_id": 15368
+                }
+              ]
+            }
+          },
+          {
+            "type": "merge_queue",
+            "parameters": {
+              "merge_method": "SQUASH",
+              "max_entries_to_build": 2,
+              "min_entries_to_merge": 1,
+              "max_entries_to_merge": 1,
+              "min_entries_to_merge_wait_minutes": 0,
+              "grouping_strategy": "ALLGREEN",
+              "check_response_timeout_minutes": 60
+            }
+          }
+        ],
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5T3rQlzgF_Q4o",
+        "created_at": "2026-10-15T04:01:36.487+07:00",
+        "updated_at": "2026-10-19T10:53:42.535+07:00",
+        "bypass_actors": [],
+        "current_user_can_bypass": "never",
+        "_links": {
+          "self": {
+            "href": "https://api.github.com/repos/taskqorg/taskq/rulesets/25117578"
+          },
+          "html": {
+            "href": "https://github.com/taskqorg/taskq/rules/25117578"
+          }
+        }
+      },
+      "effective": [
+        {
+          "type": "deletion",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/taskq",
+          "ruleset_id": 25117578
+        },
+        {
+          "type": "non_fast_forward",
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/taskq",
+          "ruleset_id": 25117578
+        },
+        {
+          "type": "required_status_checks",
+          "parameters": {
+            "strict_required_status_checks_policy": false,
+            "do_not_enforce_on_create": false,
+            "required_status_checks": [
+              {
+                "context": "tests",
+                "integration_id": 15368
+              }
+            ]
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/taskq",
+          "ruleset_id": 25117578
+        },
+        {
+          "type": "merge_queue",
+          "parameters": {
+            "merge_method": "SQUASH",
+            "max_entries_to_build": 2,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 1,
+            "min_entries_to_merge_wait_minutes": 0,
+            "grouping_strategy": "ALLGREEN",
+            "check_response_timeout_minutes": 60
+          },
+          "ruleset_source_type": "Repository",
+          "ruleset_source": "taskqorg/taskq",
+          "ruleset_id": 25117578
+        }
+      ],
+      "workflow": {
+        "sha": "bd303210fc227a06af21fb1ed8cb9ca95f282f85",
+        "content": "# \u00a7 7: PR checks and merge_group CI; publication requires green CI on the merge result.\nname: tests\non:\n  workflow_dispatch:\n  push:\n    branches: [main]\n    tags: ['v*']\n  pull_request:\n  merge_group:\n    types: [checks_requested]\npermissions:\n  contents: read\nenv:\n  CHECK_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}\n  CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}\njobs:\n  plan:\n    runs-on: ubuntu-latest\n    outputs:\n      scope: ${{ steps.plan.outputs.scope }}\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - id: plan\n        run: python3 scripts/check.py --plan >> \"$GITHUB_OUTPUT\"\n      - run: git diff --check\n      - run: python3 scripts/check.test.py\n  rust:\n    needs: plan\n    if: needs.plan.outputs.scope != 'docs'\n    strategy:\n      matrix:\n        os: [ubuntu-latest, macos-latest, windows-latest]\n    runs-on: ${{ matrix.os }}\n    timeout-minutes: 16\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - run: python3 scripts/check.py\n  windows-gnu:\n    needs: plan\n    if: needs.plan.outputs.scope == 'full'\n    runs-on: windows-latest\n    timeout-minutes: 16\n    steps:\n      - uses: actions/checkout@v4\n      - run: rustup toolchain install stable-x86_64-pc-windows-gnu\n      - run: npm ci --ignore-scripts --no-audit --no-fund\n      - run: cargo +stable-x86_64-pc-windows-gnu test --locked --bin taskq platform::tests::installed_windows_release_starts_without_build_paths -- --exact --show-output\n  shots:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n      - run: |\n          rc=0; docs/shots/check.sh || rc=$?\n          [ $rc = 2 ] && { echo '::warning::README shots are stale; run the README shots workflow'; exit 0; }\n          exit $rc\n  tests:\n    needs: [plan, rust, windows-gnu, shots]\n    if: always()\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          PLAN: ${{ needs.plan.result }}\n          SCOPE: ${{ needs.plan.outputs.scope }}\n          RUST: ${{ needs.rust.result }}\n          GNU: ${{ needs.windows-gnu.result }}\n          SHOTS: ${{ needs.shots.result }}\n        run: |\n          test \"$PLAN\" = success && test \"$SHOTS\" = success\n          case \"$SCOPE\" in\n            docs) test \"$RUST\" = skipped && test \"$GNU\" = skipped ;;\n            web) test \"$RUST\" = success && test \"$GNU\" = skipped ;;\n            full) test \"$RUST\" = success && test \"$GNU\" = success ;;\n            *) exit 1 ;;\n          esac\n"
+      }
+    }
+  ],
+  "deliveries": [
+    {
+      "task": 1215,
+      "pr": {
+        "number": 1274,
+        "html_url": "https://github.com/taskqorg/taskq/pull/1274",
+        "merged": true,
+        "merged_at": "2026-10-19T04:00:21Z",
+        "merge_commit_sha": "f3be1b899a1ce4976bd404e5482f5d847d65d1f1",
+        "head": {
+          "sha": "ba2bf49939e914f6532f0f40e1c04b0c02fae337",
+          "ref": "taskq-1215"
+        },
+        "base": {
+          "sha": "bf41d2f673951a6d19e81c39a8d72ad9cf9daf77",
+          "ref": "main"
+        }
+      },
+      "ci": {
+        "id": 39196854408,
+        "html_url": "https://github.com/taskqorg/taskq/actions/runs/39196854408",
+        "head_sha": "f3be1b899a1ce4976bd404e5482f5d847d65d1f1",
+        "event": "merge_group",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      "release_runs": [
+        {
+          "run": {
+            "id": 39197336843,
+            "html_url": "https://github.com/taskqorg/taskq/actions/runs/39197336843",
+            "event": "push",
+            "head_sha": "f3be1b899a1ce4976bd404e5482f5d847d65d1f1",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          "jobs": [
+            {
+              "name": "tag",
+              "status": "completed",
+              "conclusion": "success",
+              "steps": [
+                {
+                  "name": "Set up job",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 1,
+                  "started_at": "2026-10-19T04:00:26Z",
+                  "completed_at": "2026-10-19T04:00:27Z"
+                },
+                {
+                  "name": "Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 2,
+                  "started_at": "2026-10-19T04:00:27Z",
+                  "completed_at": "2026-10-19T04:00:28Z"
+                },
+                {
+                  "name": "Run .github/release-tag.sh >> \"$GITHUB_OUTPUT\"",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 3,
+                  "started_at": "2026-10-19T04:00:28Z",
+                  "completed_at": "2026-10-19T04:00:28Z"
+                },
+                {
+                  "name": "Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 6,
+                  "started_at": "2026-10-19T04:00:28Z",
+                  "completed_at": "2026-10-19T04:00:29Z"
+                },
+                {
+                  "name": "Complete job",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 7,
+                  "started_at": "2026-10-19T04:00:29Z",
+                  "completed_at": "2026-10-19T04:00:29Z"
+                }
+              ]
+            },
+            {
+              "name": "checks",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            },
+            {
+              "name": "build",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            },
+            {
+              "name": "attest",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            },
+            {
+              "name": "publish",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            }
+          ]
+        }
+      ],
+      "qualification_log": [
+        {
+          "id": 6259280762,
+          "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6259280762",
+          "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABJPhoLs4ABMFKzgNWziY",
+          "created_at": "2026-10-19T03:53:53Z",
+          "updated_at": "2026-10-19T03:53:53Z"
+        },
+        {
+          "id": 6259432053,
+          "html_url": "https://github.com/taskqorg/taskq/issues/1215#issuecomment-6259432053",
+          "body": "taskq: close\nChanged: Publish selected version, health receipt, lifecycle and CoreQ diagnostics for DashQ (R12, R13; section 4).\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok via operator handoff; merge-result CI pending on pending.\nChecks: Candidate ba2bf49939e914f6532f0f40e1c04b0c02fae337: 7 focused tests PASS; immutable CoreQ pin unchanged.\nChecks: Implementation quality: no binding gaps found; source clocks, unknown/stale states and legacy heartbeat assertions retained.\nOpen: Merge-result CI and Mac activation/readback pending; no other-host rollout.\n\ndelivery auto-merge r0: merged #1274 as f3be1b899a1ce4976bd404e5482f5d847d65d1f1; merge-result CI green",
+          "created_at": "2026-10-19T04:08:08Z",
+          "updated_at": "2026-10-19T04:08:08Z"
+        }
+      ]
+    },
+    {
+      "task": 1149,
+      "pr": {
+        "number": 1272,
+        "html_url": "https://github.com/taskqorg/taskq/pull/1272",
+        "merged": true,
+        "merged_at": "2026-10-19T04:03:00Z",
+        "merge_commit_sha": "b2cd93869b3b56c3fc5447d5bd610b43ec090c9d",
+        "head": {
+          "sha": "6870d8040dfb78287ff36b54171b99f74b44c514",
+          "ref": "taskq-1149"
+        },
+        "base": {
+          "sha": "bf41d2f673951a6d19e81c39a8d72ad9cf9daf77",
+          "ref": "main"
+        }
+      },
+      "ci": {
+        "id": 39197505639,
+        "html_url": "https://github.com/taskqorg/taskq/actions/runs/39197505639",
+        "head_sha": "b2cd93869b3b56c3fc5447d5bd610b43ec090c9d",
+        "event": "merge_group",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      "release_runs": [
+        {
+          "run": {
+            "id": 39197549786,
+            "html_url": "https://github.com/taskqorg/taskq/actions/runs/39197549786",
+            "event": "push",
+            "head_sha": "b2cd93869b3b56c3fc5447d5bd610b43ec090c9d",
+            "status": "completed",
+            "conclusion": "success"
+          },
+          "jobs": [
+            {
+              "name": "tag",
+              "status": "completed",
+              "conclusion": "success",
+              "steps": [
+                {
+                  "name": "Set up job",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 1,
+                  "started_at": "2026-10-19T04:03:05Z",
+                  "completed_at": "2026-10-19T04:03:05Z"
+                },
+                {
+                  "name": "Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 2,
+                  "started_at": "2026-10-19T04:03:05Z",
+                  "completed_at": "2026-10-19T04:03:07Z"
+                },
+                {
+                  "name": "Run .github/release-tag.sh >> \"$GITHUB_OUTPUT\"",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 3,
+                  "started_at": "2026-10-19T04:03:07Z",
+                  "completed_at": "2026-10-19T04:03:09Z"
+                },
+                {
+                  "name": "Post Run actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 6,
+                  "started_at": "2026-10-19T04:03:09Z",
+                  "completed_at": "2026-10-19T04:03:10Z"
+                },
+                {
+                  "name": "Complete job",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "number": 7,
+                  "started_at": "2026-10-19T04:03:10Z",
+                  "completed_at": "2026-10-19T04:03:10Z"
+                }
+              ]
+            },
+            {
+              "name": "checks",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            },
+            {
+              "name": "build",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            },
+            {
+              "name": "attest",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            },
+            {
+              "name": "publish",
+              "status": "completed",
+              "conclusion": "skipped",
+              "steps": []
+            }
+          ]
+        }
+      ],
+      "qualification_log": [
+        {
+          "id": 6259368217,
+          "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6259368217",
+          "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABJPWq3c4ABMFKzgNW0uE",
+          "created_at": "2026-10-19T04:02:13Z",
+          "updated_at": "2026-10-19T04:02:13Z"
+        },
+        {
+          "id": 6259371148,
+          "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6259371148",
+          "body": "taskq: released 6259355671 exit attempt 6259355671\nop-id: release-6259355671",
+          "created_at": "2026-10-19T04:02:29Z",
+          "updated_at": "2026-10-19T04:02:29Z"
+        },
+        {
+          "id": 6259389462,
+          "html_url": "https://github.com/taskqorg/taskq/issues/1149#issuecomment-6259389462",
+          "body": "taskq: close\nChanged: Qualification selects affected risks under R12/R13 and indexes immutable Mac evidence without new runtime grants or paid probes.\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok, A5 ok; merge-result CI pending on pending\nChecks: Exact candidate 6870d8040dfb78287ff36b54171b99f74b44c514; PR tests SUCCESS; public merge queue requires merge_group proof.\nChecks: python3 scripts/check.py --base bf41d2f673951a6d19e81c39a8d72ad9cf9daf77 -- PASS docs/whitespace/selector, Mac 0.071s.\nChecks: Before: unconditional platform runs conflicted with R12. After: affected-cell selection; retained regression and permission protections unchanged.\nChecks: Implementation quality: no binding gaps; no executable tests or rules changed.\nOpen: Native exit, closed-heartbeat and PR #1267 historical coverage remain unknown; no paid probe or deployment.\n\ndelivery auto-merge r0: merged #1272 as b2cd93869b3b56c3fc5447d5bd610b43ec090c9d; merge-result CI green",
+          "created_at": "2026-10-19T04:04:09Z",
+          "updated_at": "2026-10-19T04:04:09Z"
+        }
+      ]
+    }
+  ]
+}
