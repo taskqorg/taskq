@@ -1,0 +1,34 @@
+# Temporary investigation for #1315; does not replace or weaken publication gates.
+name: Windows telemetry 20-run probe
+on:
+  pull_request:
+    paths: ['scripts/diagnostics/windows-1315.py', '.github/workflows/windows-1315.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: instrument
+      - uses: actions/checkout@v4
+        with:
+          ref: 8ed985189a61c2c0fb91e64f50f1562056017d2b
+          path: candidate
+      - uses: actions/checkout@v4
+        with:
+          repository: taskqorg/coreq
+          ref: 6039b01449471dbe87258d87371ec135a05b54cf
+          path: coreq
+      - run: python instrument/scripts/diagnostics/windows-1315.py prepare candidate coreq
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: candidate
+      # Path overrides change source identity only; resolve the lock before --locked probes.
+      - run: cargo update -p coreq -p coreq-instrument
+        working-directory: candidate
+      - run: cargo test --locked --test telemetry_process --no-run
+        working-directory: candidate
+      - run: python instrument/scripts/diagnostics/windows-1315.py run candidate
