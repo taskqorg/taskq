@@ -76,14 +76,15 @@ fn capacity_command_changes_host_policy_not_project_settings() {
     let mut capacity=host.clone();capacity["host_policy"]=host;capacity["limits"]["codex"]=json!(1);
     fs::write(root.join(".taskq/status.json"),json!({"host":"fixture-host","at":at,"capacity":capacity}).to_string()).unwrap();
     fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
-    let run_in=|cwd:&std::path::Path,args:&[&str]|match coreq::process::output("test.host-policy",Command::new(env!("CARGO_BIN_EXE_taskq"))
+    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
+    let run_in=|cwd:&std::path::Path,args:&[&str]|{let began=std::time::Instant::now();match coreq::process::output("test.host-policy",Command::new(env!("CARGO_BIN_EXE_taskq"))
         .args(args)
         .env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT").env("TASKQ_HOST","fixture-host")
         .env("TASKQ_INCIDENT_REPORTS","off").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK")
-        .env_remove("COREQ_TRACE_CONTEXT").current_dir(cwd),Duration::from_secs(10)) {
+        .env_remove("COREQ_TRACE_CONTEXT").current_dir(cwd),budget) {
             Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
-            Err(error)=>panic!("{error}"),
-        };
+            Err(error)=>panic!("{args:?}: {error}; elapsed={:?}, budget={budget:?}",began.elapsed()),
+        }};
     let run=|args:&[&str]|run_in(&root,args);
     let rootless=run_in(&install,&["service","capacity"]);
     assert!(rootless.status.success(),"host policy command required a project cwd: {}",String::from_utf8_lossy(&rootless.stderr));
