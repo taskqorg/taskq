@@ -49,3 +49,13 @@ The combined contract failed R8 at 61,563 bytes. Wording-only reductions keep th
 The final `python3 scripts/check.py --base origin/main` passed 390 unit tests (30 ignored) and 10 integration tests, then reached the same nested `telemetry_process` sandbox refusal: six cases passed; `resume_records_its_result_without_releasing_the_host_hold` reported `sandbox_apply: Operation not permitted`. Outcome: sandbox-blocked, not a passing full gate; 43.335s on the warm Mac build. No native cancellation, deployment or Windows operation was performed. Merge-result CI remains required.
 
 After that blocked gate, isolated offline `taskq selftest` passed 85 golden traces and formats (board unknown/offline); every `tests/*.test.cjs`, screenshot-manifest fixtures, release tag/check fixtures and `node tests/tray-stop.browser.cjs` passed. `sh docs/shots/check.sh` also passed. Existing visual evidence remains applicable to unchanged UI sources; owner acceptance and installed-client qualification remain open.
+
+## Current-main conflict repair
+
+Rebased onto `f32be16c` after the merge queue again reported `merge_conflict`. The conflict in `Service::new` now retains both upstream `project_revision` and Stop `stop_progress`. The upstream shared resource blocker projection is retained. No assertion, authority boundary or Stop behavior was removed or weakened; R11/E2 and R8 sections 2/3/5 remain unchanged. The contract is 61,429 bytes.
+
+`python3 scripts/check.py --base origin/main` initially failed 16 owner-only fixtures under inherited worker context (110.453s). Isolated test subprocesses cleared only `TASKQ_TASK`, `TASKQ_ATTEMPT` and `COREQ_TRACE_CONTEXT`; production commands retain them. `cargo +stable test --locked` then passed 392 unit tests (30 ignored), 10 integration tests and six telemetry process cases. The nested sandbox case remains **sandbox-blocked** with `sandbox_apply: Operation not permitted`; the full gate is not PASS.
+
+Isolated offline `target/debug/taskq selftest` passed 85 golden traces, formats and local telemetry capture; board state remains unknown/offline. Every `tests/*.test.cjs`, screenshot-manifest and release fixtures, and `node tests/tray-stop.browser.cjs` passed. Merge-result CI, owner visual acceptance and installed-client cancellation qualification remain open; no deployment or production Stop was performed.
+
+`sh docs/shots/update.sh` refreshed the native README manifest on `fc893e10`; `sh docs/shots/check.sh` and `git diff --check` passed. Attention and Projects captures were visually inspected: the Stop entry, content and footer remain visible without clipping. This is rendering evidence only.
