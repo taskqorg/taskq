@@ -980,16 +980,16 @@ pub(crate) mod tests {
         assert_eq!(read_log(&dir).unwrap().lines().count(),200);
         assert!(!dir.join("telemetry.log/telemetry.sqlite3").exists());
         assert!(append_line(&path,"not metadata").is_err());
-        // Admission is not commit: an occupied rotation lock must expose loss without erasing earlier history.
+        // #1297 A3: admission is not commit, and an occupied budget lock delays the batch instead of losing it
+        // (was: lost 1, failed_batches 1). Retained protection: flush stays unacknowledged while held, then commits.
         let held=log_lock(&path).unwrap();
         append_line(&path,r#"taskq-profile {"op":"spawn","us":1,"error":"none","at_ms":1}"#).unwrap();
-        assert_eq!(capture.flush().unwrap_err(),"telemetry installation budget lock unavailable");
+        assert!(capture.flush().unwrap_err().starts_with("telemetry flush unacknowledged ("));
         drop(held);
-        assert_eq!(capture.health()["lost"],1);assert_eq!(capture.health()["failed_batches"],1);
-        assert_eq!(read_log(&dir).unwrap_err(),"telemetry installation budget lock unavailable");
-        assert!(report(&dir).starts_with("Profile: unknown (telemetry installation budget lock unavailable)"));
+        capture.flush().unwrap();
+        assert_eq!(capture.health()["lost"],0);assert_eq!(capture.health()["failed_batches"],0);
         let reader=coreq::telemetry::Reader::open(&dir.join("telemetry.log/universal.sqlite3")).unwrap();
-        assert_eq!(reader.export_kinds(&["operation"],0,0,1024).unwrap()["events"].as_array().unwrap().len(),200);
+        assert_eq!(reader.export_kinds(&["operation"],0,0,1024).unwrap()["events"].as_array().unwrap().len(),201);
         drop(reader);
         drop(dispatch);drop(_guard);drop(capture);fs::remove_dir_all(dir).unwrap();
     }

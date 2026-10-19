@@ -319,7 +319,7 @@ The transition owner is the host service. Project loops and status are consumers
 
 Contract detail for taskq.md section8.
 
-**Shared core.** Release, update, launcher and rollback, service units, the `status.json` common keys and the GitLab board token follow [coreq.md](https://github.com/taskqorg/coreq/blob/f6e2f897bbf53a7981afbf444eac2840ae227726/coreq.md) (crate `coreq`, immutable revision in Cargo.toml/Cargo.lock; JS packaging uses the same revision) as `Tool::new("taskq", "TaskQ", "taskqorg/taskq", VERSION)`: install `~/.local/share/taskq` (Windows `%LOCALAPPDATA%\taskq`), files `taskq-<ver>-<os>-<arch>`, host units `com.taskq.service`, `TaskQ`, `taskq.service`; per-project units are legacy migration inputs only.
+**Shared core.** Release, update, launcher and rollback, service units, the `status.json` common keys and the GitLab board token follow [coreq.md](https://github.com/taskqorg/coreq/blob/07624c840bdaeae57caa6409c6035f7479a20138/coreq.md) (crate `coreq`, immutable revision in Cargo.toml/Cargo.lock; JS packaging uses the same revision) as `Tool::new("taskq", "TaskQ", "taskqorg/taskq", VERSION)`: install `~/.local/share/taskq` (Windows `%LOCALAPPDATA%\taskq`), files `taskq-<ver>-<os>-<arch>`, host units `com.taskq.service`, `TaskQ`, `taskq.service`; per-project units are legacy migration inputs only.
 
 ### Receipt-degraded Stop (R8)
 
