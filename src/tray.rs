@@ -910,7 +910,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if !web.failed {web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,web);}
             }
         };
-        if let Some(ws)=&mut workspace {ws.calls.expire(Instant::now());}
+        if let Some(ws)=&mut workspace {
+            ws.calls.expire(Instant::now());
+            if ws.calls.failed&&!ws.calls.notified {ws.calls.notified=true;let _=ws.view.evaluate_script("window.taskqWebFault('native')");}
+        }
         match event {
             Event::WindowEvent {window_id,event,..} if workspace.as_ref().is_some_and(|ws|ws.window.id()==window_id) => {
                 if let WindowEvent::CloseRequested=event {workspace.as_ref().unwrap().window.set_visible(false);}
@@ -934,6 +937,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if a=="web-error" {ws.calls.errors(&m);return;}
                 if a=="web-observation" {ws.calls.metadata(&m["row"]);return;}
                 if ws.calls.failed {return;}
+                let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{ws.calls.fault("invalid-web-context");return;}},None=>None};
+                let _continuation=context.as_ref().map(|context|context.span().entered());
                 let root=m["root"].as_str().unwrap_or("");let id=m["id"].as_str().unwrap_or("");
                 let result=match a {
                     "ready"=>{ws.calls.finish(0,"ok");Ok(())},
@@ -946,7 +951,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 };
                 if a=="draft"&&result.is_ok(){return;}
                 let sent=a=="send"&&result.is_ok();
-                workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":a=="select"||a=="ready","receipt":true,"sent":sent,"error":result.err().unwrap_or_default(),"font":settings.font}),&proxy);
+                workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":a=="select"||a=="ready"||a=="refresh","receipt":true,"sent":sent,"error":result.err().unwrap_or_default(),"font":settings.font}),&proxy);
                 push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
             }
             Event::NewEvents(StartCause::Init) => {

@@ -520,7 +520,7 @@ const z=t(view.draft.end);
   if(d.a==='ai-next'){send({a:'ai-send',text:d.v,root:view.S.ai.request.root,after:view.S.ai.request.id});present();return;}
   if(d.a==='ai-send'){const r=view.S.ai.request,an=r&&r.answer||{};if(!view.aiText.trim()||view.aiSending)return;view.aiSending=true;send({a:'ai-send',text:view.aiText,root:an.state==='clarify'?r.root:view.S.ai.target,after:an.state==='clarify'?r.id:''});if(view.S.platform==='windows'){view.aiText='';view.aiSending=false;}present();return;}
   if(d.a==='ai-open'){send({a:'ai-open',root:d.root,id:d.id});return;}
-  if(d.a==='ai-confirm'){if(view.S.platform==='windows')view.aiConfirm=d.id+'/'+d.rev;send({a:view.S.platform==='windows'?'ai-confirm':'ai-open',root:d.root,id:d.id,rev:Number(d.rev)});return;}
+  if(d.a==='ai-confirm'){if(view.S.platform==='windows')view.aiConfirm=d.id+'/'+d.rev;send({a:view.S.platform==='windows'?'ai-confirm':'ai-open',root:d.root,id:d.id,rev:Number(d.rev)});present();return;}
   if(d.a==='ai-clear'){send({a:'ai-clear'});return;}
   if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return;}
   if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;
