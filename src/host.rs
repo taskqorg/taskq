@@ -385,6 +385,17 @@ impl Host {
         self.policy = policy;
     }
 
+    pub(crate) fn reload_admission(&mut self, policy: Res<Policy>, held: Option<String>, roots: &[PathBuf]) {
+        let was_blocked=self.policy.is_err()||self.held.is_some();
+        self.reload(policy);
+        self.held=held;
+        if was_blocked&&self.policy.is_ok()&&self.held.is_none() {
+            for root in roots {
+                if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
+            }
+        }
+    }
+
     /// A newly attached project may carry old occupancy, even if its root was drained earlier.
     fn attach(&mut self,root:&Path) {
         self.busy.insert(root.into(),true);
@@ -681,9 +692,9 @@ pub fn run(install: &Path) -> Res<()> {
         drained_roots.retain(|root|removal.as_ref()==Some(root));
         {
             let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
-            h.reload(policy);
-            h.held = installation::admission_reason(install).or_else(||registry.error.clone()).or_else(|| old.as_ref().err().cloned()).or_else(||restart.current.as_ref().err().cloned())
+            let held = installation::admission_reason(install).or_else(||registry.error.clone()).or_else(|| old.as_ref().err().cloned()).or_else(||restart.current.as_ref().err().cloned())
                 .or_else(||publication.as_ref().map(|e|format!("host publication unavailable: {e}")));
+            h.reload_admission(policy,held,&roots);
             if let Some(p)=restart.current.as_ref().ok().and_then(Option::as_ref) {
                 if p.stops() {
                     if !h.stopping {h.prepared.clear();}
@@ -787,7 +798,7 @@ pub fn run(install: &Path) -> Res<()> {
         }
         if h.updating.as_ref().is_some_and(|job|job.is_finished()) {
             let updated=h.updating.take().unwrap().join().unwrap_or_else(|_|Err("host maintenance panicked; partial effects unknown".into()));
-            if let Ok(Maintenance::Inventory(result))=&updated {native_legacy=result.clone();}
+            if let Ok(Maintenance::Inventory(result))=&updated {native_legacy=result.clone();native_checked=Some(Instant::now());}
             let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Ok(Maintenance::Inventory(Ok(names)))=>format!("native legacy inventory: {} unit(s)",names.len()),Ok(Maintenance::Inventory(Err(e)))=>format!("native legacy inventory unknown: {e}"),Err(e)=>format!("maintenance: {e}")};
             if maintenance_result!=text {crate::platform::log(&text);for root in &roots {append_project(install,root,&text);}maintenance_result=text;}
             if crate::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
@@ -1240,6 +1251,33 @@ mod tests {
         assert!(migrate_for_hostname(&root,&[],"owner-identity").is_err());fs::remove_file(root.join("host.json.pending")).unwrap();
         fs::write(root.join("host.json"),"{").unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
         fs::remove_file(root.join("host.json")).unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // A5: refresh must wake a project sleeping on its previous blocked pass, without editing focus.
+    #[test]
+    fn fresh_native_inventory_wakes_pending_work() {
+        let root=temp("inventory-wake");let roots=vec![root.clone()];
+        fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::write(crate::dot(&root).join("focus"),"approved-label").unwrap();
+        let paths=[crate::dot(&root).join("poke"),root.join("host-poke")];
+        let baseline=crate::poke_times(&paths);
+        let p=policy();let mut h=Host::new(Err("inventory pending".into()));
+        for (inventory,checked) in [
+            (Ok(vec![]),Some(Instant::now()-std::time::Duration::from_secs(60))),
+            (Err("native read denied".into()),Some(Instant::now())),
+            (Ok(vec!["retained-unit".into()]),Some(Instant::now())),
+        ] {
+            let barrier=native_inventory_ready(&inventory,checked);
+            h.reload_admission(barrier.clone().map(|_|p.clone()),barrier.err(),&roots);
+            assert!(h.reserve(&root,1,1,"codex",&p.cap,true,0).is_err());
+            assert_eq!(crate::poke_times(&paths),baseline,"blocked refresh cannot wake admission");
+        }
+        h.reload_admission(Ok(p.clone()),None,&roots);
+        assert_ne!(crate::poke_times(&paths),baseline,"fresh zero-unit inventory must wake pending review/start");
+        crate::sleep_until_poke(&paths,baseline,Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("wake was lost"));
+        assert!(h.reserve(&root,1,1,"codex",&p.cap,true,0).is_ok());
+        assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"approved-label");
         fs::remove_dir_all(root).unwrap();
     }
 
