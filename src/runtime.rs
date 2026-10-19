@@ -1094,7 +1094,7 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
     let text = turn_text(env, l, rule_file)?;
     let phase = if l.resume.is_some() { "resume" } else { "start" };
     log!("rules loaded for {} #{} attempt {} ({phase}, {} bytes)", l.role, l.task, l.attempt, text.len());
-    if crate::admission::hold(env.install).is_some() {return Err(StartError::admission("host held before native launch"));}
+    if crate::admission::task_hold(env.install,env.root,l.task).is_some() {return Err(StartError::admission("host held before native launch"));}
     let log = log_path(env.root, l);
     rules_line(&log, phase, &text).map_err(|e| StartError::io(e, None))?;
     if l.rt == "codex-app" {

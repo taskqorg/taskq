@@ -1,0 +1,57 @@
+{
+  "state": "review",
+  "stop": "invented-stop",
+  "board": "https://example.invalid/issues/0",
+  "focus": [
+    "all"
+  ],
+  "mode": "Mixed: unselected work stays held",
+  "limits": {
+    "limits": {
+      "codex": 2,
+      "claude": 1
+    }
+  },
+  "access": [
+    {
+      "runtime": "codex",
+      "effective": "Workspace"
+    },
+    {
+      "runtime": "claude",
+      "effective": "Full"
+    }
+  ],
+  "rows": [
+    {
+      "task": 7,
+      "title": "Resume selected work from preserved files",
+      "url": "https://example.invalid/issues/7",
+      "runtime": "codex",
+      "host": "mac",
+      "execution": 41,
+      "revision": 42,
+      "native_exit": "released exit",
+      "eligible": true,
+      "workspace": {
+        "state": "dirty/untracked work retained",
+        "fingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "task": 8,
+      "title": "Unknown termination remains held",
+      "url": "https://example.invalid/issues/8",
+      "runtime": "claude",
+      "host": "mac",
+      "execution": 51,
+      "revision": 52,
+      "native_exit": "unknown",
+      "eligible": false,
+      "blocker": "native release unknown; reconcile exact execution",
+      "workspace": {
+        "state": "clean; preserved"
+      }
+    }
+  ]
+}

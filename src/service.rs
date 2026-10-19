@@ -628,6 +628,7 @@ impl<'a> Service<'a> {
         if !full {return;}
         self.stop_progress.clear();
         for k in &mut self.kids {
+            if crate::recovery::selected(&self.cfg.install,&self.cfg.root,k.task) {continue;}
             k.stopping=true;
             let observed=match k.proc.exited() {
                 Ok(Some(code))=>Ok(code),
@@ -709,8 +710,8 @@ impl<'a> Service<'a> {
     }
 
     #[tracing::instrument(name="service.Service.may_launch",skip_all)]
-    fn may_launch(&self) -> bool {
-        let refusal = if self.hold.is_some() { Some("hold") }
+    fn may_launch(&self,task:u64) -> bool {
+        let refusal = if (self.hold.is_some() && !crate::recovery::allowed(&self.cfg.install,&self.cfg.root,task)) || crate::admission::task_hold(&self.cfg.install,&self.cfg.root,task).is_some() { Some("hold") }
             else if self.cap.is_err() { Some("config") }
             else if !self.gate.may_launch(self.mono) {
                 Some(self.gate.state(self.mono).1.first().map_or("launch-interval", |r| r.0))
@@ -799,7 +800,7 @@ impl<'a> Service<'a> {
             self.refused=Some(("handoff","legacy service draining; no new attempt claims".into()));
             return false;
         }
-        if !self.may_launch() {
+        if !self.may_launch(task) {
             return false;
         }
         if let Some(host) = self.host.clone() {
@@ -1461,6 +1462,7 @@ impl<'a> Service<'a> {
         let mut queue: Vec<&View> = views
             .iter()
             .filter(|v| !touched.contains(&v.issue.number) && !self.execution_waits.contains_key(&v.issue.number))
+            .filter(|v| self.may_launch(v.issue.number))
             .filter(|v| !self.kids.iter().any(|k| k.task == v.issue.number))
             .filter(|v| v.projection.task.state == State::Ready || (v.projection.task.state == State::Review && v.projection.task.attempt.is_none() && v.projection.task.publication.is_none()))
             .filter(|v| {
@@ -1480,8 +1482,8 @@ impl<'a> Service<'a> {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
         for v in queue {
-            if !self.may_launch() {
-                break;
+            if !self.may_launch(v.issue.number) {
+                continue;
             }
             let role = if v.projection.task.state == State::Review { "reviewer" } else { "worker" };
             let rt = if role == "reviewer" { self.reviewer_free(v) } else { self.worker_free(v) };
@@ -1688,7 +1690,7 @@ impl<'a> Service<'a> {
         for r in self.reserved.iter_mut().filter(|r| r.0 == n && r.1 == 0) { r.1 = id; }
         if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.claimed(&self.cfg.root, n, id); } }
         let l = Launch { execution: None, task: n, title: v.issue.title.clone(), attempt: id, role: role.into(), rt: rt.into(), session, url: self.board.url(n), resume: None };
-        if !self.may_launch() || self.gui_refused(&v.issue, rt) {
+        if !self.may_launch(n) || self.gui_refused(&v.issue, rt) {
             self.pending.insert((n, id));
             self.held.push(l);
             self.beat()?;
@@ -3300,9 +3302,25 @@ mod tests {
     // Risk: #1252 stays blocked, or another project/host receives fabricated terminal evidence.
     #[test]
     fn historical_no_host_terminal_repair_requires_local_ownership() {
+        let root = std::env::temp_dir().join(format!("taskq-no-host-{}", crate::runtime::uuid()));
+        std::fs::create_dir(&root).unwrap();
+        let child = coreq::process::output("test.no-host-repair", std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "service::tests::historical_no_host_repair_child", "--ignored", "--nocapture"])
+            .env("TASKQ_NO_HOST_REPAIR_ROOT", &root).env_remove("COREQ_TRACE_CONTEXT"),
+            std::time::Duration::from_secs(60)).unwrap();
+        assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
+        // Native process exit releases every fixture handle before Windows removes the stores.
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(!root.exists(), "fixture cleanup must complete");
+    }
+
+    #[test]
+    #[ignore = "subprocess helper exercised by historical_no_host_terminal_repair_requires_local_ownership"]
+    fn historical_no_host_repair_child() {
+        let root = PathBuf::from(std::env::var_os("TASKQ_NO_HOST_REPAIR_ROOT").unwrap());
         for closed in [true, false] {
             for evidence in ["local", "foreign-project", "foreign-host", "missing-log", "empty-log", "unreadable-log", "ignored-spawn", "untrusted-spawn", "runtime-mismatch", "unreadable-board", "unreadable-comments"] {
-                let dir = std::env::temp_dir().join(format!("taskq-no-host-{}-{closed}-{evidence}", std::process::id()));
+                let dir = root.join(format!("{closed}-{evidence}"));
                 std::fs::create_dir_all(dir.join(".taskq")).unwrap();
                 let b = Fake::default();
                 let n = b.create("T", "", &["taskq".into()]).unwrap();
@@ -3364,7 +3382,7 @@ mod tests {
                 }
                 if attempt_log.is_file() { assert_eq!(std::fs::read_to_string(attempt_log).unwrap(), if evidence == "empty-log" { "" } else { "original reviewer output\n" }); }
                 assert!(!b.comments(n).unwrap().iter().any(|c| c.body.starts_with("taskq: gone")));
-                drop(_guard);drop(_capture);std::fs::remove_dir_all(dir).unwrap();
+                drop(s);drop(_guard);drop(_capture);
             }
         }
     }
