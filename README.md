@@ -27,15 +27,15 @@ Your repository board is the task list; your usual AI apps do the work.
 
 ### See the queue
 
-Synthetic storefront data captured with the macOS v4.6.23 renderer. These examples show the interface, not a live project's progress or a completed agent run. Open an image for its original size.
+Synthetic project data captured with the macOS v4.6.23 renderer. These examples show the interface, not a live project's progress or a completed agent run. Open an image for its original size.
 
 **Tasks and their current states.**
 
-[![Billing task list with work, review and ready states](docs/shots/popover-dark-project-16.png)](docs/shots/popover-dark-project-16.png)
+<a href="docs/shots/popover-dark-project-16.png"><img src="docs/shots/popover-dark-project-16.png" alt="Billing task list with work, review and ready states" width="320"></a>
 
 **Review the full exchange before confirming a change.** The proposed task pause has not been applied.
 
-[![Owner request, agent reply and proposed task pause awaiting confirmation](docs/shots/popover-dark-workspace-16.png)](docs/shots/popover-dark-workspace-16.png)
+<a href="docs/shots/popover-dark-workspace-16.png"><img src="docs/shots/popover-dark-workspace-16.png" alt="Owner request, agent reply and proposed task pause awaiting confirmation" width="860"></a>
 
 ### From any agent chat
 
