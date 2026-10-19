@@ -793,6 +793,11 @@ mod tests {
     #[test]
     fn legacy_handoff_preserves_active_work_before_native_retirement() {process_case("legacy-handoff");}
 
+    // A2: real install and second-root attach beside a resident legacy-budget writer.
+    #[cfg(target_os="macos")]
+    #[test]
+    fn install_receipts_bridge_a_resident_legacy_writer() {process_case("compatibility");}
+
     // H-A5 process instrument: real installer/cursor/receipt, isolated native-manager substitute.
     #[cfg(target_os="macos")]
     #[test]
@@ -805,6 +810,17 @@ mod tests {
         assert_eq!(std::env::split_paths(&std::env::var_os("PATH").unwrap()).next(),Some(base.join("bin")));
         assert!(fs::symlink_metadata(base.join("bin/launchctl")).unwrap().file_type().is_file());
         let role=std::env::var("TASKQ_INSTALL_PROCESS_ROLE").unwrap();
+        if role=="telemetry" {
+            let budget=coreq::telemetry::Budget {total:64<<20,reserved:(6<<20)+(64<<10),..crate::telemetry::budget(&install,"telemetry.sqlite3").unwrap()};
+            let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&install.join("telemetry.log/universal.sqlite3"),"taskq","4.6.19",budget).unwrap();
+            fs::write(install.join("telemetry-ready"),"").unwrap();
+            let until=Instant::now()+std::time::Duration::from_secs(120);
+            while !install.join("exit-host").exists() {assert!(Instant::now()<until);std::thread::sleep(std::time::Duration::from_millis(20));}
+            return;
+        }
+        let compatibility=std::env::var_os("TASKQ_INSTALL_COMPATIBILITY").is_some();
+        let _runtime=compatibility.then(||crate::telemetry::install_capture(&install).unwrap());
+
         if role=="owned-work" {
             let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
             coreq::write_durable(&install.join("owned-work.json"),serde_json::to_vec(&json!({"pid":native.pid,"started":native.started})).unwrap()).unwrap();
@@ -926,13 +942,14 @@ mod tests {
             return;
         }
         let root=PathBuf::from(std::env::var_os("TASKQ_INSTALL_PROCESS_ROOT").expect("fixture root"));
-        let (capture,guard)=crate::profile::tests::collecting(&install);
+        let collecting=(!compatibility).then(||crate::profile::tests::collecting(&install));
         let span=tracing::info_span!("host.install");let entered=span.enter();
         let request=pending(&install).ok().map(|p|p.id);
         let result=if std::env::var("TASKQ_INSTALL_PROCESS_ROLE").as_deref()==Ok("recover") {recover(&install)}else{install_project(&install,&root)};
         let operation_count=crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap();
         fs::write(install.join("installer-result.json"),serde_json::to_vec(&json!({"ok":result.is_ok(),"result":result.as_ref().ok(),"error":result.as_ref().err(),"status":installation_status(&install,request.as_deref()),"operation_count":operation_count})).unwrap()).unwrap();
-        capture.flush().unwrap();drop(entered);drop(span);drop(guard);drop(capture);
+        drop(entered);drop(span);
+        if let Some((capture,guard))=collecting {capture.flush().unwrap();drop(guard);drop(capture);}
     }
 
     fn fixture()->(PathBuf,PathBuf,Vec<PathBuf>) {
@@ -1044,11 +1061,42 @@ mod tests {
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
     }
 
+    // A2: Mac/Windows receipt pipeline uses actual IPC bootstrap, not a direct in-process Store.
+    #[test]
+    fn installation_receipts_use_the_legacy_writer_process() {
+        let out=std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","host::installation::tests::installation_receipt_survives_cursor_removal_and_rejects_missing_phase_proof","--nocapture"])
+            .env("TASKQ_RECEIPT_BRIDGE","1").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").output().unwrap();
+        assert!(out.status.success(),"{}\n{}",String::from_utf8_lossy(&out.stdout),String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[test]
+    #[ignore="owned old-budget IPC writer for the install receipt process test"]
+    fn receipt_writer_probe() {
+        use std::io::Write;
+        let install=PathBuf::from(std::env::var_os("TASKQ_RECEIPT_WRITER").unwrap());
+        let budget=coreq::telemetry::Budget {total:64<<20,reserved:(6<<20)+(64<<10),..crate::telemetry::budget(&install,"telemetry.sqlite3").unwrap()};
+        let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&install.join("telemetry.log/universal.sqlite3"),"taskq","4.6.19",budget).unwrap();
+        println!("READY");std::io::stdout().flush().unwrap();
+        let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();
+    }
+
     // H-A5: the original observed receipt remains queryable after the installer/cursor disappears.
     #[test]
     fn installation_receipt_survives_cursor_removal_and_rejects_missing_phase_proof() {
         let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths.clone()).unwrap();
-        let (capture,guard)=crate::profile::tests::collecting(&install);
+        use std::io::BufRead;
+        struct Writer(std::process::Child);
+        impl Drop for Writer {fn drop(&mut self) {drop(self.0.stdin.take());let _=self.0.kill();let _=self.0.wait();}}
+        let mut writer=std::env::var_os("TASKQ_RECEIPT_BRIDGE").map(|_|Writer(std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","host::installation::tests::receipt_writer_probe","--ignored","--nocapture"])
+            .env("TASKQ_RECEIPT_WRITER",&install).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap()));
+        if let Some(writer)=writer.as_mut() {
+            let mut output=std::io::BufReader::new(writer.0.stdout.take().unwrap());
+            loop {let mut line=String::new();assert_ne!(output.read_line(&mut line).unwrap(),0);if line.trim()=="READY" {break;}}
+        }
+        let runtime=writer.as_ref().map(|_|crate::telemetry::install_capture(&install).unwrap());
+        let collecting=writer.is_none().then(||crate::profile::tests::collecting(&install));
         let span=tracing::info_span!("host.install");let entered=span.enter();
         let command=CommandReceipt::current().unwrap().encode();
         let mut p=Pending {schema:1,id:"invented-install-receipt".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
@@ -1082,7 +1130,9 @@ mod tests {
         drop(second_enter);drop(second_span);p.id=first_id;p.command=first_command;
         crate::resources::with(&install,|state| {state.ops.get_mut(&p.id).unwrap().receipt.as_object_mut().unwrap().remove("observed_receipt");Ok(())}).unwrap();
         assert_eq!(installation_status(&install,Some(&p.id))["state"],"unknown");
-        capture.flush().unwrap();drop(entered);drop(span);drop(guard);drop(capture);
+        drop(entered);drop(span);
+        if let Some((capture,guard))=collecting {capture.flush().unwrap();drop(guard);drop(capture);}
+        drop(runtime);drop(writer);
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
     }
 
