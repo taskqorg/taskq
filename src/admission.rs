@@ -106,6 +106,11 @@ pub fn hold(install: &Path) -> Option<String> {
     }
 }
 
+/// E3 admission is scoped to explicitly recovered tasks; ordinary holds still block everything.
+pub fn task_hold(install:&Path,root:&Path,task:u64)->Option<String> {
+    hold(install).filter(|_|!crate::recovery::allowed(install,root,task))
+}
+
 /// [`decide`] under the host lock, read and written back. An unreadable host file refuses the request (`host`) and is
 /// rebuilt from this entry; the other services re-add theirs on their next write. Returns the host's held count.
 pub fn sync(install: &Path, root: &str, mine: Entry, want: Option<Want>, now: i64) -> (Result<(), (&'static str, String)>, Option<u32>) {

@@ -222,10 +222,14 @@ fn submit_inner(install:&Path,value:&Value)->Res<Value> {
 fn save_stop_hold(install:&Path,request:&Request)->Res<()> {
     let _hold=coreq::file_lock::try_lock(&install.join("admission.lock")).map_err(|e|format!("hold busy: {e}"))?;
     let path=install.join("hold");
-    let previous=match fs::read_to_string(&path) {Ok(text)=>Some(text),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,Err(e)=>return Err(format!("hold unreadable: {e}"))};
+    let mut previous=match fs::read_to_string(&path) {Ok(text)=>Some(text),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,Err(e)=>return Err(format!("hold unreadable: {e}"))};
     if let Some(prior)=stop_hold(install)? {
         if prior==*request {return Ok(());}
-        return Err("another reviewed Stop hold remains; reconcile it before another Stop".into());
+        let value:Value=serde_json::from_str(previous.as_deref().unwrap_or_default()).map_err(|_|"Stop hold corrupt")?;
+        if prior.id==request.id || !value["recovery"].as_object().is_some_and(|ops|ops.values().any(|o|o["state"]=="accepted")) {
+            return Err("another reviewed Stop hold remains; reconcile it before another Stop".into());
+        }
+        previous=value["previous_hold"].as_str().map(String::from);
     }
     // Old binaries must not bypass operator cancellation after an automatic rollback.
     coreq::launcher::set_rollback_floor(&crate::platform::tool(install),crate::platform::VERSION)?;
@@ -246,7 +250,10 @@ pub fn full_stop(install:&Path,root:&Path)->Res<bool> {
 }
 pub fn stop_hold_status(install:&Path)->Value {
     match stop_hold(install) {
-        Ok(Some(r))=>json!({"id":r.id,"mode":r.mode,"roots":r.roots,"state":"held"}),
+        Ok(Some(r))=>{
+            let selected=fs::read_to_string(install.join("hold")).ok().and_then(|s|serde_json::from_str::<Value>(&s).ok()).and_then(|v|v["recovery"].as_object().map(|ops|ops.values().filter(|o|o["state"]=="accepted").count())).unwrap_or(0);
+            json!({"id":r.id,"mode":r.mode,"roots":r.roots,"state":"held","selected_count":selected})
+        },
         Ok(None)=>Value::Null,Err(reason)=>json!({"state":"unknown","reason":reason}),
     }
 }
@@ -502,6 +509,16 @@ mod tests {
         let mut changed=request.clone();changed.mode=StopMode::Drain;
         assert!(save_stop_hold(&install,&changed).is_err());assert_eq!(fs::read(install.join("hold")).unwrap(),saved);
         assert!(receipt(&install,"full-stop").unwrap().is_none(),"local intent cannot fabricate a lifecycle exit receipt");
+        let mut recovered:Value=serde_json::from_slice(&saved).unwrap();
+        recovered["recovery"]=json!({"invented":{"state":"accepted"}});
+        recovered["recovery_start"]=json!({"state":"requested"});
+        recovered["previous_hold"]=json!("prior operator hold");
+        fs::write(install.join("hold"),recovered.to_string()).unwrap();
+        let mut next=request.clone();next.id="next-reviewed-stop".into();
+        save_stop_hold(&install,&next).unwrap();
+        let next_hold:Value=serde_json::from_str(&fs::read_to_string(install.join("hold")).unwrap()).unwrap();
+        assert!(next_hold.get("recovery").is_none());assert!(next_hold.get("recovery_start").is_none());
+        assert_eq!(next_hold["previous_hold"],"prior operator hold","new Stop revokes recovery, never an older operator hold");
         fs::write(install.join("hold"),"{broken").unwrap();assert!(full_stop(&install,&root).is_err());assert!(release_guard(&install).is_err());assert!(save_stop_hold(&install,&request).is_err(),"corrupt Stop identity cannot be overwritten");
         fs::remove_dir_all(dir).unwrap();
     }

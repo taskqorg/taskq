@@ -628,6 +628,7 @@ impl<'a> Service<'a> {
         if !full {return;}
         self.stop_progress.clear();
         for k in &mut self.kids {
+            if crate::recovery::selected(&self.cfg.install,&self.cfg.root,k.task) {continue;}
             k.stopping=true;
             let observed=match k.proc.exited() {
                 Ok(Some(code))=>Ok(code),
@@ -709,8 +710,8 @@ impl<'a> Service<'a> {
     }
 
     #[tracing::instrument(name="service.Service.may_launch",skip_all)]
-    fn may_launch(&self) -> bool {
-        let refusal = if self.hold.is_some() { Some("hold") }
+    fn may_launch(&self,task:u64) -> bool {
+        let refusal = if (self.hold.is_some() && !crate::recovery::allowed(&self.cfg.install,&self.cfg.root,task)) || crate::admission::task_hold(&self.cfg.install,&self.cfg.root,task).is_some() { Some("hold") }
             else if self.cap.is_err() { Some("config") }
             else if !self.gate.may_launch(self.mono) {
                 Some(self.gate.state(self.mono).1.first().map_or("launch-interval", |r| r.0))
@@ -799,7 +800,7 @@ impl<'a> Service<'a> {
             self.refused=Some(("handoff","legacy service draining; no new attempt claims".into()));
             return false;
         }
-        if !self.may_launch() {
+        if !self.may_launch(task) {
             return false;
         }
         if let Some(host) = self.host.clone() {
@@ -1461,6 +1462,7 @@ impl<'a> Service<'a> {
         let mut queue: Vec<&View> = views
             .iter()
             .filter(|v| !touched.contains(&v.issue.number) && !self.execution_waits.contains_key(&v.issue.number))
+            .filter(|v| self.may_launch(v.issue.number))
             .filter(|v| !self.kids.iter().any(|k| k.task == v.issue.number))
             .filter(|v| v.projection.task.state == State::Ready || (v.projection.task.state == State::Review && v.projection.task.attempt.is_none() && v.projection.task.publication.is_none()))
             .filter(|v| {
@@ -1480,8 +1482,8 @@ impl<'a> Service<'a> {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
         for v in queue {
-            if !self.may_launch() {
-                break;
+            if !self.may_launch(v.issue.number) {
+                continue;
             }
             let role = if v.projection.task.state == State::Review { "reviewer" } else { "worker" };
             let rt = if role == "reviewer" { self.reviewer_free(v) } else { self.worker_free(v) };
@@ -1688,7 +1690,7 @@ impl<'a> Service<'a> {
         for r in self.reserved.iter_mut().filter(|r| r.0 == n && r.1 == 0) { r.1 = id; }
         if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.claimed(&self.cfg.root, n, id); } }
         let l = Launch { execution: None, task: n, title: v.issue.title.clone(), attempt: id, role: role.into(), rt: rt.into(), session, url: self.board.url(n), resume: None };
-        if !self.may_launch() || self.gui_refused(&v.issue, rt) {
+        if !self.may_launch(n) || self.gui_refused(&v.issue, rt) {
             self.pending.insert((n, id));
             self.held.push(l);
             self.beat()?;

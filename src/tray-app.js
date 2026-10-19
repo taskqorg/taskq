@@ -3,11 +3,11 @@ const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiConfirm:null,addConfirm:false,resourceNotice:null,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,confirming:null,updating:null,draft:null,disclosures:[],pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiConfirm:null,addConfirm:false,resourceNotice:null,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:[],pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
-fit:function(){const size=view.manualSize||view.S.size,w=size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:size?0:gutter(),w,h:size?size[1]:Math.ceil(menu.getBoundingClientRect().height)});menu.style.width='100%';},
+fit:function(){const size=view.manualSize||view.S.size,w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:size?0:gutter(),w,h:size?size[1]:Math.ceil(menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
 actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
 lifecycleStart:function(root,action='restart',mode='drain'){
@@ -55,13 +55,13 @@ lifecycleControl:function(p,action='restart'){
   const pending=view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S?.lifecycle?.state);
   const projects=Array.isArray(view.S?.projects)?view.S.projects:[];
   const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>projects.find(p=>p.root===root)?.name||root):null;
-  const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Recovery remains unavailable.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
+  const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Use reviewed recovery to resume selected tasks.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
   const scope=action==='uninstall'?esc(p.name):'all registered projects: '+(targets?targets.length?targets.map(esc).join(', '):'none registered':'unknown');
   return '<details class="host-'+action+'"><summary>'+title+' '+(action==='uninstall'?esc(p.name):'host service')+'</summary><div class="body meta">Affects '+scope+'. '+effect+'</div>'+(!review?.instance?'<div class="body alert">'+esc(review?.reason||title+' protocol unavailable')+'</div>':'')+'<button class="project" data-a="'+action+'" data-root="'+esc(p.root)+'"'+(pending||!review?.instance||!targets?' disabled':'')+'>Confirm '+(action==='uninstall'?'uninstall '+esc(p.name):'host '+action)+'</button>'+(pending&&r?api.lifecycleWaits():'')+(r?.id||r?.reason?'<div class="body meta" role="status">'+title+' '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'')+'</details>';
 },
 stopPanel:function(){
   const projects=view.S.projects||[],root=projects[0]?.root,held=view.S.stop_hold;
-  const pending=!!held||view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
+  const pending=!!held&&!held.selected_count||view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
   const names=projects.map(p=>esc(p.name)).join(', ')||'no registered projects';
   const host=projects[0]?.host||'unknown host',command=view.hostCommand||view.S.lifecycle;
   const rows=projects.map(p=>'<div class="body"><strong>'+esc(p.name)+'</strong><div class="meta">'+(view.S.service?.state!=='running'||typeof p.age!=='number'||p.age<0||p.age>60||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?p.stop_progress.map(k=>'#'+esc(k.task)+' '+esc(k.rt)+': '+esc(k.state)+(k.reason?' · '+esc(k.reason):'')).join('<br>'):'No stop acknowledgement; running or unknown work may remain.')+'</div></div>').join('');
@@ -69,7 +69,40 @@ stopPanel:function(){
     '<div class="body"><strong>Drain</strong><div class="meta">Hold new admission and let current work finish. Retain autostart and the hold after service exit.</div></div><button class="project" data-a="stop" data-root="'+esc(root||'')+'"'+(pending||!root||!view.S.stop_review?.instance?' disabled':'')+'>Confirm Drain</button>'+
     '<div class="body"><strong>Full stop</strong><div class="meta">Request cancellation now, including offline. Unknown termination stays fenced. Board reconciliation may keep the service alive.</div></div><button class="project" data-a="stop-full" data-root="'+esc(root||'')+'"'+(pending||!root||!view.S.full_stop_review?.instance?' disabled':'')+'>Confirm Full stop</button>'+
     (!view.S.full_stop_review?.instance?'<div class="body alert">'+esc(view.S.full_stop_review?.reason||'Full stop capability unknown')+'</div>':'')+
-    (held?'<div class="body alert" role="status">Admission held: '+esc(held.mode||'unknown')+'. Recovery is unavailable in this version; ordinary Play cannot clear this hold.</div>':'')+(command?.action==='stop'?'<div class="body meta" role="status">Stop '+esc(command.id||'')+': '+esc(command.state||'unknown')+(command.reason?' · '+esc(command.reason):'')+'</div>':'')+rows+api.lifecycleWaits();
+    (held?'<div class="body alert" role="status">Admission held: '+esc(held.mode||'unknown')+'; ordinary Play cannot clear this hold.</div>':'')+(held?'<button class="project" data-route="recovery">Review recovery</button>':'')+(command?.action==='stop'?'<div class="body meta" role="status">Stop '+esc(command.id||'')+': '+esc(command.state||'unknown')+(command.reason?' · '+esc(command.reason):'')+'</div>':'')+rows+api.lifecycleWaits();
+},
+recoveryPanel:function(){
+  return '<div class="body">Only selected local tasks resume. Keep held is the default. Paused projects, other tasks and operators stay held.</div><div class="body meta">Inspect native release, work and external effects before confirming. Unknown effects must remain held. Restart discards the old result and starts from preserved files.</div>'+view.S.projects.map(p=>{
+    const item=view.recovery[p.root],review=item?.review;
+    return '<section class="group" data-recovery-project="'+esc(p.root)+'"><div class="body"><strong>'+esc(p.name)+'</strong></div><button data-a="recovery-read" data-root="'+esc(p.root)+'"'+(item?.pending?' disabled':'')+'>Read current recovery</button>'+(item?.notice?'<div class="body alert" role="status">'+esc(item.notice)+'</div>':'')+(review?'<div class="body meta">'+esc(review.mode)+' · focus '+esc((review.focus||[]).join(', ')||'off')+'</div>'+'<div class="body meta">Limits: '+esc(review.limits?.unknown||Object.entries(review.limits?.limits||{}).map(([k,v])=>k+' '+v).join(', ')||'unknown')+'<br>Access: '+esc((review.access||[]).map(a=>a.runtime+': '+(a.refused||a.effective||'unknown')).join('; ')||'unknown')+'</div>'+review.rows.map(r=>{
+      const draft=item.drafts?.[r.task]||{},blocked=!r.eligible||r.selected||item.pending||(review.pending||[]).some(q=>q.rows.some(s=>s.task===r.task));
+      return '<div class="body"><label><input type="checkbox" data-recovery-task="'+r.task+'" data-root="'+esc(p.root)+'"'+(draft.selected?' checked':'')+(blocked?' disabled':'')+'> #'+r.task+' '+esc(r.title||'Task')+'</label><div class="meta">'+esc(r.runtime||'unknown runtime')+' · '+esc(r.host||'unknown host')+' · '+esc(r.native_exit||'unknown')+'<br>Execution '+esc(r.execution??'unknown')+' · revision '+esc(r.revision??'unknown')+'<br>'+esc(r.workspace?.state||'work unknown')+(r.blocker?'<br>'+esc(r.blocker):'')+(r.selected?'<br>Selected admission confirmed; running state is separate.':'')+'</div><a href="'+esc(r.url||'#')+'" data-url="'+esc(r.url||'')+'">Inspect task and receipts ↗</a><label class="meta recovery-evidence">Reconciled effect outcomes<input type="text" maxlength="160" data-recovery-evidence="'+r.task+'" data-root="'+esc(p.root)+'" aria-label="Effect evidence for task '+r.task+'" value="'+esc(draft.evidence||'')+'"'+(blocked?' disabled':'')+'></label></div>';
+    }).join('')+(review.pending||[]).map((q,i)=>'<button data-a="recovery-pending" data-root="'+esc(p.root)+'" data-index="'+i+'"'+(item.pending?' disabled':'')+'>Reconcile saved selection #'+esc(q.rows[0].task)+'</button>').join('')+'<div class="body meta">Confirm only when the evidence establishes the effects; native release remains mandatory. Current grants, limits and focus still apply. If the original host exit is verified, confirmation starts host supervision once.</div><button data-a="recovery-apply" data-root="'+esc(p.root)+'"'+(item.pending?' disabled':'')+'>Confirm selected recovery</button>':'')+(item?.request&&!item.pending?'<button data-a="recovery-reconcile" data-root="'+esc(p.root)+'">Reconcile same selection</button>':'')+'</section>';
+  }).join('');
+},
+recoveryStart:function(root,action){
+  const item=view.recovery[root]||(view.recovery[root]={drafts:{}});if(item.pending)return;
+  let request;
+  if(action==='recovery-reconcile'){request=item.request;if(!request)return;action='recovery-apply';}
+  else if(action==='recovery-apply'){
+    const review=item.review;if(!review)return;
+    const rows=review.rows.filter(r=>r.eligible&&!r.selected&&item.drafts[r.task]?.selected).map(r=>({task:r.task,execution:r.execution,revision:r.revision,workspace:r.workspace.fingerprint,evidence:item.drafts[r.task].evidence||'',effects_known:true}));
+    if(!rows.length||rows.length>8||rows.some(r=>!r.evidence.trim())){item.notice='Select 1–8 eligible tasks and record verified effect outcomes for each.';present();return;}
+    request={stop:review.stop,board:review.board,rows};item.request=JSON.parse(JSON.stringify(request));
+  }
+  item.id=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');item.pending=true;item.notice=action==='recovery-read'?'Reading current evidence…':'Applying selected recovery…';
+  const id=item.id;send({a:action,root,id,...(request?{request}:{})});
+  defer(()=>{if(item.id!==id||!item.pending)return;item.pending=false;item.notice='Outcome unknown. Reconcile the same selection; do not submit changed evidence.';present();},65000);present();
+},
+recoveryReceipt:function(r){
+  const item=view.recovery[r.root];if(!item||r.id!==item.id)return false;
+  item.pending=false;
+  if(r.state==='review'&&Array.isArray(r.rows)){item.review=r;item.drafts={};item.notice='Review current evidence; nothing is selected.';}
+  else if(r.state==='mixed'&&Array.isArray(r.receipts)){
+    item.notice=r.receipts.map(x=>'#'+x.task+': '+x.outcome+(x.reason?' · '+x.reason:'')).join('; ')+' · Mixed; unselected work stays held.'+(r.service?' Service: '+r.service.state+(r.service.reason?' · '+r.service.reason:''):'');
+    for(const receipt of r.receipts)if(receipt.outcome==='accepted'){const row=item.review?.rows.find(r=>r.task===receipt.task);if(row)row.selected=true;}
+  }else item.notice=r.reason||'Recovery outcome unknown; reconcile the same selection.';
+  present();return true;
 },
 focusStart:function(action,root,label){
   if(view.pending[root]&&!view.pending[root].unknown)return;
@@ -303,6 +336,7 @@ routeBody:function(){
     case 'notifications':return notifications();
     case 'agents':return agents();
     case 'stop':return api.stopPanel();
+    case 'recovery':return api.recoveryPanel();
     case 'services':return '<button class="project" data-a="resources" title="btop in its own terminal window">◔ Resources</button>'+(view.resourceNotice?'<div class="body '+(view.resourceNotice.state==='submitted'?'meta':'alert')+'" role="status">Resources: '+esc(view.resourceNotice.reason)+'</div>':'')+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+' · '+esc(p.host||'host unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>'+problem(p)+incidentNotice(p)+service(p)).join('');
     case 'about':return about();
     default:return home();
@@ -426,14 +460,14 @@ receive:function(s){
   if(s.focus_receipt){focusReceipt(s.focus_receipt);return;}
   if(s.answerReceipt){answerReceipt(s.answerReceipt);return;}
   if(s.resources_receipt){view.resourceNotice=s.resources_receipt;present();return;}
-  if(s.capmsg){if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
+  if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   view.S=s;focusReadback();answerReadback();api.lifecycleReadback();
   if(view.aiText===null)view.aiText=s.ai.draft||'';
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;trail.length=0;view.disclosures=[];present(true);return;}
   // a tick does not take the caret out of the range fields
-  if(document.activeElement&&(document.activeElement.dataset.draft||document.activeElement.dataset.rscField||document.activeElement.id==='ai'))return;
+  if(document.activeElement&&(document.activeElement.dataset.draft||document.activeElement.dataset.rscField||document.activeElement.dataset.recoveryEvidence||document.activeElement.id==='ai'))return;
   refresh(performance.now());
 },
 measure:function(name){
@@ -490,13 +524,15 @@ const z=t(view.draft.end);
   if(d.a==='update'){view.updating={v:d.v,at:view.S.now};}
   if(d.a==='pick'){view.ask=d.root;present();return;}
   if(d.a==='pause-all'||d.a==='resume-all'){view.confirming=null;for(const p of view.S.projects.filter(p=>mode(p)===(d.a==='pause-all'?'run':'paused')))focusStart(d.a.slice(0,-4),p.root);present();menu.querySelector('[data-a="confirm"]')?.focus();return;}
+  if(d.a==='recovery-pending'){const item=view.recovery[d.root],request=item?.review?.pending?.[Number(d.index)];if(request){item.request=request;api.recoveryStart(d.root,'recovery-reconcile');}return;}
+  if(['recovery-read','recovery-apply','recovery-reconcile'].includes(d.a)){api.recoveryStart(d.root,d.a);return;}
   if(d.a==='stop-review'){view.page='stop';present();return;}
   if(d.a==='stop-full'){api.lifecycleStart(d.root,'stop','full');return;}
   if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return;}
   if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return;}
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label});}present();});
-ui.listen(menu,'input',e=>{if(e.target.id==='ai'){view.aiText=e.target.value;send({a:'ai-draft',text:view.aiText});return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
-ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
+ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}if(e.target.id==='ai'){view.aiText=e.target.value;send({a:'ai-draft',text:view.aiText});return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'mousedown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button'))send({a:'drag'});});
 ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))return;view.resizing={x:e.screenX,y:e.screenY,w:window.innerWidth,h:window.innerHeight};e.target.setPointerCapture(e.pointerId);e.preventDefault();});
 ui.listen(menu,'pointermove',e=>{if(!view.resizing)return;view.manualSize=[Math.max(240,view.resizing.w+e.screenX-view.resizing.x),Math.max(120,view.resizing.h+e.screenY-view.resizing.y)];menu.style.width='100%';send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});});
@@ -558,7 +594,7 @@ const actionErrors=new Map();
 
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
-const routes={stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
+const routes={recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
 const trail=[];
 
 

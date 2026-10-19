@@ -590,7 +590,7 @@ impl ActionQueue {
         let operation=if allowed.contains(&"capacity") {"tray.capacity.execute"}else{"tray.focus.execute"};
         let worker=std::thread::Builder::new().name(operation.into()).spawn(move || {
             while let Ok(job)=receiver.recv() {
-                let operation=match job.message["a"].as_str() {Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
+                let operation=match job.message["a"].as_str() {Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
                 tracing::dispatcher::with_default(&job.dispatch,|| {
                     let _context=job.context.as_ref().map(|c|c.span().entered());
                     let result=coreq::telemetry::capture::operation(operation,||std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -608,7 +608,7 @@ impl ActionQueue {
     }
     fn submit(&self,message:&Value) -> crate::Res<()> {
         let action=message["a"].as_str().unwrap_or("");let id=message["id"].as_str().unwrap_or("");
-        let name=match action {"answer"=>"tray.answer.dispatch","resources"=>"tray.resources.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
+        let name=match action {"answer"=>"tray.answer.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
         coreq::telemetry::capture::operation(name,|| {
             if !self.allowed.contains(&action) {return Err(("invalid-command","Unsupported queued command"));}
             if id.is_empty() || id.len()>64 || !id.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'.')) {
@@ -829,7 +829,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
         let _=coreq::telemetry::capture::operation("tray.focus.report",||replies.send_event(Ev::Answer(json!({"focus_receipt":reply}))),|_|"ui-closed");
     })?;
     let replies=proxy.clone();
-    let capacity_actions=ActionQueue::start(install.clone(),&["capacity","restart","stop","uninstall"],true,capacity,move |root,id,result| {
+    let capacity_actions=ActionQueue::start(install.clone(),&["capacity","restart","stop","uninstall","recovery-read","recovery-apply"],true,capacity,move |root,id,result| {
         let mut reply=result.unwrap_or_else(|error|json!({"state":"unknown","reason":error}));reply["root"]=json!(root);reply["id"]=json!(id);
         let _=coreq::telemetry::capture::operation("tray.capacity.report",||replies.send_event(Ev::Answer(json!({"capmsg":reply}))),|_|"ui-closed");
     })?;
@@ -1137,9 +1137,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         push(&mut web,&ui, &st);
                     }
                     // `Edit limits` after the page's confirm: the same write as `service capacity` (§ 5), this host only
-                    "capacity" | "restart" | "stop" | "uninstall" => {
+                    "capacity" | "restart" | "stop" | "uninstall" | "recovery-read" | "recovery-apply" => {
                         let root = m["root"].as_str().unwrap_or("");
-                        if let Err(error)=capacity_actions.submit(&m) {
+                        if snapshot.is_some() && m["a"]=="recovery-read" {
+                            let mut reply:Value=serde_json::from_str(include_str!("../tests/fixtures/recovery-review.json")).expect("invented recovery fixture");
+                            reply["root"]=m["root"].clone();reply["id"]=m["id"].clone();
+                            push(&mut web,&ui,&json!({"capmsg":reply}));
+                        } else if let Err(error)=capacity_actions.submit(&m) {
                             push(&mut web,&ui, &json!({"capmsg": {"root": root, "id": m["id"], "state":"rejected","reason":error}}));
                         }
                     }
@@ -1306,7 +1310,8 @@ const SCROLLS: [(&str, &str); 3] = [
 
 /// `tray --snapshot --route` names: `actions` is Home with the [`ACTIONS`] script, `scroll` Home with the [`SCROLLS`]
 /// (only when named), `project` the first project's page.
-const ROUTES: [&str; 14] = ["home", "actions", "scroll", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop"];
+const RECOVERY: &str = include_str!("../tests/fixtures/recovery-review.js");
+const ROUTES: [&str; 15] = ["home", "actions", "scroll", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1316,19 +1321,19 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
         for font in [16, 20] { v.extend(SCROLLS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
         for route in &ROUTES[4..] {
-            for font in [16, 20] { v.push((*t, route.to_string(), font, "")); }
+            for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
     }).filter(|(_, p, _, js)| if routes.is_empty() { route_of(p, js) != "scroll" } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
-    if script == ACTIONS { "actions" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
+    if script == RECOVERY { "recovery" } else if script == ACTIONS { "actions" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
 }
 
 fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
     shots(install, routes).get(step).map_or(step.to_string(), |(t, p, f, js)| {
-        let suffix = if js.is_empty() { String::new() } else { format!("-{}", SCROLLS.iter().find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
+        let suffix = if js.is_empty() || *js==RECOVERY { String::new() } else { format!("-{}", SCROLLS.iter().find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
         let scroll = if route_of(p, js) == "scroll" { "-scroll" } else { "" };
         format!("{t}-{}{scroll}{suffix}-{f}", if Path::new(p).is_absolute() { "project" } else { p })
     })
@@ -1682,6 +1687,18 @@ fn apply_added(adding:&mut Value,current:u64,generation:u64,value:Value)->bool {
 
 /// Write the page's capacity edit for this host; the outcome line for the page.
 fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
+    if matches!(m["a"].as_str(),Some("recovery-read"|"recovery-apply")) {
+        if !cfg!(target_os="macos") {return Err("Recovery is Mac only".into());}
+        let mut command=owner_command(root)?;command.args(["service","recover","--json"]);
+        if m["a"]=="recovery-apply" {
+            let request:crate::recovery::Request=serde_json::from_value(m["request"].clone()).map_err(|_|"invalid recovery request")?;
+            command.arg("--request").arg(serde_json::to_string(&request).map_err(|e|e.to_string())?);
+        }
+        let out=crate::platform::output("tray.recovery",&mut command,Duration::from_secs(60))?;
+        if !out.status.success() {return Err("Recovery read or write unconfirmed; inspect the board and reconcile the same selection".into());}
+        return serde_json::from_slice(&out.stdout).map_err(|_|"Recovery receipt unreadable; reconcile the same selection".into());
+    }
+
     if matches!(m["a"].as_str(),Some("restart"|"stop"|"uninstall")) {
         let mut request=m.clone();let object=request.as_object_mut().ok_or("invalid restart message")?;
         for key in ["context","a","root"] {object.remove(key);}

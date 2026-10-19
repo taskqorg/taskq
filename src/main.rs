@@ -24,6 +24,7 @@ mod service_versions;
 mod policy;
 mod resources;
 mod lifecycle;
+mod recovery;
 #[cfg(target_os = "linux")]
 mod linux_sandbox;
 #[cfg(windows)]
@@ -1889,7 +1890,18 @@ fn service(args: &Args) -> Res<()> {
         "permissions" => permissions_cmd(&root, args),
         "resources" => resources_cmd(&root, args),
         "hold" | "release" => hold_cmd(sub == "hold", args.one("text")),
-        "recover" => recover_cmd(&root, args.flags.contains_key("apply"), args.flags.contains_key("json")),
+        "recover" => {
+            if args.flags.contains_key("apply") && lifecycle::stop_hold_status(&platform::default_install()).is_object() {return Err("reviewed Stop requires a selected recovery request; bulk apply refused".into());}
+            if let Some(text)=args.one("request") {
+                let c=ctx()?;
+                let request:recovery::Request=serde_json::from_str(text).map_err(|_|"invalid recovery request")?;
+                let mut result=recovery::apply(&*c.board,&c.cfg,&request)?;
+                if result["receipts"].as_array().is_some_and(|rows|rows.iter().any(|r|r["outcome"]=="accepted")) {result["service"]=recovery::resume_service(&c.cfg,&request.stop);}
+                println!("{result}");Ok(())
+            }else if args.flags.contains_key("json") && lifecycle::stop_hold_status(&platform::default_install()).is_object() {
+                let c=ctx()?;println!("{}",recovery::review(&*c.board,&c.cfg)?);Ok(())
+            }else{recover_cmd(&root,args.flags.contains_key("apply"),args.flags.contains_key("json"))}
+        },
         "install" => {
             let (cfg, _) = load(&root)?;
             println!("{}",host::install_project(&cfg.install,&root)?);
