@@ -84,3 +84,5 @@ Checks cover import retry, equal events, recognized rotation, unknown rewrites, 
 ### Incompatible writer compatibility
 
 For the R8 exception in taskq.md § 4, bootstrap first requests the current budget. Only the exact installation-budget mismatch permits a second attempt with the v4.6.19 descriptor (64 MiB total, 6 MiB plus 64 KiB reserved, the same lock and peer paths). CoreQ still validates the protected endpoint, database identity and exact budget. Unknown budgets and wire formats remain refused. The process reports compatibility mode and keeps the single shared export path; no side store or source deletion is permitted. A process started after the incompatible owner exits requests the current budget again. A surviving compatibility client retains its smaller bound until restart.
+
+The second R8 exception is [receipt-degraded Stop](host-service.md#receipt-degraded-stop-r8). The new service advertises Stop protocol 2; healthy receipt-backed requests also accept protocol 1. A failed received receipt with protocol 1 refuses before writing intent, so an old service is never wedged by an unsupported degraded record.

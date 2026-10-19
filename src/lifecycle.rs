@@ -143,7 +143,7 @@ pub fn uninstall_review(install:&Path,id:&str,project:Option<&Path>)->Res<Value>
 fn review_action(install:&Path,id:&str,action:Action)->Res<Value> {
     let service=host::service_status(install);
     if service["state"]!="running"||service["fresh"]!=true||service["restart_protocol"]!=1 {return Err("host restart protocol unavailable or observation stale; check service status".into());}
-    if action==Action::Stop {if service["stop_protocol"]!=1 {return Err("host Stop protocol unavailable; check service status".into());}crate::host_control::revision(install)?;}
+    if action==Action::Stop {if !matches!(service["stop_protocol"].as_u64(),Some(1|2)) {return Err("host Stop protocol unavailable; check service status".into());}crate::host_control::revision(install)?;}
     if action==Action::Uninstall&&service["uninstall_protocol"]!=1 {return Err("host Uninstall protocol unavailable; check service status".into());}
     let at=now()?;
     serde_json::to_value(Request {id:id.into(),instance:service["instance"].as_str().ok_or("host generation unknown")?.into(),roots:scope(install)?,issued_at:at,expires_at:at+300,action,project:None,mode:StopMode::Drain}).map_err(|e|e.to_string())
@@ -222,7 +222,7 @@ fn submit_inner(install:&Path,value:&Value)->Res<Value> {
         if request.issued_at>at.saturating_add(30)||at>=request.expires_at {return Err("lifecycle review expired or clock unknown".into());}
         let service=host::service_status(install);
         if service["state"]!="running"||service["fresh"]!=true||service["restart_protocol"]!=1||service["instance"]!=request.instance
-            ||(request.action==Action::Stop&&service["stop_protocol"]!=1)||(request.action==Action::Uninstall&&service["uninstall_protocol"]!=1)||scope(install)?!=request.roots {return Err("host or project scope changed; review lifecycle action again".into());}
+            ||(request.action==Action::Stop&&!matches!(service["stop_protocol"].as_u64(),Some(1|2)))||(request.action==Action::Uninstall&&service["uninstall_protocol"]!=1)||scope(install)?!=request.roots {return Err("host or project scope changed; review lifecycle action again".into());}
         if request.mode==StopMode::Full && (!cfg!(target_os="macos") || service["full_stop_protocol"]!=1) {return Err("Full stop capability changed; review again".into());}
         if request.stops() {crate::host_control::revision(install)?;}
         let command=match CommandReceipt::current() {
@@ -239,6 +239,9 @@ fn submit_inner(install:&Path,value:&Value)->Res<Value> {
             receipt:json!({"id":request.id,"state":"queued","received_receipt":command.event_id("received")?}),
             expires_at:request.expires_at,saved_at:Some(at),writing:false,sent:true};
         required(&mut op,&command,"received")?;
+        if op.receipt.get("telemetry_unknown").is_some() && service["stop_protocol"]!=2 {
+            return Err("Stop telemetry unavailable; upgrade the service before receipt-degraded Stop; no intent written".into());
+        }
         if cfg!(target_os="macos") && request.action==Action::Stop {save_stop_hold(install,&request)?;}
         let result=public(&op);state.ops.insert(request.id.clone(),op);Ok(result)
     })?;
@@ -521,7 +524,7 @@ mod tests {
     }
     fn publish(install:&Path,instance:&str) {
         let process=coreq::process::identity(std::process::id()).unwrap().unwrap();
-        fs::write(install.join("service"),json!({"schema":1,"pid":process.pid,"started":process.started,"instance":instance,"at":now().unwrap(),"version":"fixture","restart_protocol":1,"stop_protocol":1,"uninstall_protocol":1}).to_string()).unwrap();
+        fs::write(install.join("service"),json!({"schema":1,"pid":process.pid,"started":process.started,"instance":instance,"at":now().unwrap(),"version":"fixture","restart_protocol":1,"stop_protocol":2,"uninstall_protocol":1}).to_string()).unwrap();
     }
 
     // R11/E2: a durable scoped intent never becomes an exit receipt or a broad release.
@@ -682,6 +685,14 @@ mod tests {
         fs::create_dir_all(unit.parent().unwrap()).unwrap();fs::write(&unit,"owned fixture unit").unwrap();
         let mode=std::env::var("TASKQ_STOP_MODE").unwrap_or_else(|_|"stop".into());
         let collecting=(mode!="degraded").then(||crate::profile::tests::collecting(&install));
+        if mode=="degraded" {
+            let mut old:Value=serde_json::from_slice(&fs::read(install.join("service")).unwrap()).unwrap();
+            old["stop_protocol"]=json!(1);fs::write(install.join("service"),old.to_string()).unwrap();
+            let request=stop_review(&install,"old-service").unwrap();
+            assert!(submit(&install,&request).unwrap_err().contains("upgrade the service"));
+            assert!(pending(&install).unwrap().is_none(),"unsupported peer must not receive a degraded record");
+            publish(&install,"original");
+        }
         let request=if mode=="stop"||mode=="degraded" {stop_review(&install,"exact-stop")}else{let root=scope(&install).unwrap().remove(0);uninstall_review(&install,"exact-stop",if mode=="project" {Some(&root)}else{None})}.unwrap();let queued=submit(&install,&request).unwrap();assert_eq!(queued["state"],"queued");
         assert_eq!(submit(&install,&request).unwrap(),queued);
         if mode=="host" {assert_queued_uninstall_wait_tracks_ownership(&install,scope(&install).unwrap().remove(0));}
