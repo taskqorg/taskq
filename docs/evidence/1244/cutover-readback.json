@@ -1,0 +1,462 @@
+[
+  {
+    "repo": "agentq",
+    "main_rules": [
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/agentq",
+        "ruleset_id": 25117820
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/agentq",
+        "ruleset_id": 25117820
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "rust (ubuntu-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (macos-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (windows-latest)",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/agentq",
+        "ruleset_id": 25117820
+      }
+    ],
+    "hosts": [
+      {
+        "number": 156,
+        "url": "https://github.com/taskqorg/agentq/issues/156",
+        "updated_at": "2026-10-19T00:41:27Z",
+        "body": "version 4.6.18\nservice 18535c594451\nmachine macbook-m2.local\nat 1792370486"
+      },
+      {
+        "number": 125,
+        "url": "https://github.com/taskqorg/agentq/issues/125",
+        "updated_at": "2026-10-19T00:41:05Z",
+        "body": "version 4.5.0\nservice 8d8c701e0317\nmachine hermes-fra1\nfocus off\nat 1792370465"
+      },
+      {
+        "number": 100,
+        "url": "https://github.com/taskqorg/agentq/issues/100",
+        "updated_at": "2026-10-14T15:21:35Z",
+        "body": "version 4.1.11\nat 1791946365"
+      },
+      {
+        "number": 96,
+        "url": "https://github.com/taskqorg/agentq/issues/96",
+        "updated_at": "2026-10-18T23:53:22Z",
+        "body": "version 4.5.0\nservice 202953da20cf\nmachine DESKTOP\nfocus off\nat 1792367601"
+      },
+      {
+        "number": 45,
+        "url": "https://github.com/taskqorg/agentq/issues/45",
+        "updated_at": "2026-10-18T23:00:04Z",
+        "body": "version 4.6.17\nservice 18535c594451\nmachine macbook-m2.local\nfocus off\nat 1792364403"
+      }
+    ]
+  },
+  {
+    "repo": "coreq",
+    "main_rules": [
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/coreq",
+        "ruleset_id": 25118262
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/coreq",
+        "ruleset_id": 25118262
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "rust (ubuntu-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (macos-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (windows-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "tests",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/coreq",
+        "ruleset_id": 25118262
+      }
+    ],
+    "hosts": [
+      {
+        "number": 53,
+        "url": "https://github.com/taskqorg/coreq/issues/53",
+        "updated_at": "2026-10-19T00:41:28Z",
+        "body": "version 4.6.18\nservice 18535c594451\nmachine macbook-m2.local\nat 1792370487"
+      },
+      {
+        "number": 44,
+        "url": "https://github.com/taskqorg/coreq/issues/44",
+        "updated_at": "2026-10-18T23:53:03Z",
+        "body": "version 4.5.0\nservice 202953da20cf\nmachine DESKTOP\nfocus off\nat 1792367583"
+      },
+      {
+        "number": 30,
+        "url": "https://github.com/taskqorg/coreq/issues/30",
+        "updated_at": "2026-10-14T15:21:39Z",
+        "body": "version 4.1.11\nat 1791946410"
+      },
+      {
+        "number": 1,
+        "url": "https://github.com/taskqorg/coreq/issues/1",
+        "updated_at": "2026-10-18T23:00:04Z",
+        "body": "version 4.6.17\nservice 18535c594451\nmachine macbook-m2.local\nfocus off\nat 1792364404"
+      }
+    ]
+  },
+  {
+    "repo": "dashq",
+    "main_rules": [
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/dashq",
+        "ruleset_id": 25118356
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/dashq",
+        "ruleset_id": 25118356
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "tests",
+              "integration_id": 15368
+            },
+            {
+              "context": "build (ubuntu-latest, x86_64-unknown-linux-musl, linux-x86_64)",
+              "integration_id": 15368
+            },
+            {
+              "context": "build (ubuntu-24.04-arm, aarch64-unknown-linux-musl, linux-aarch64)",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/dashq",
+        "ruleset_id": 25118356
+      }
+    ],
+    "hosts": [
+      {
+        "number": 152,
+        "url": "https://github.com/taskqorg/dashq/issues/152",
+        "updated_at": "2026-10-19T00:41:27Z",
+        "body": "version 4.6.18\nservice 18535c594451\nmachine macbook-m2.local\nat 1792370486"
+      },
+      {
+        "number": 91,
+        "url": "https://github.com/taskqorg/dashq/issues/91",
+        "updated_at": "2026-10-19T00:42:03Z",
+        "body": "version 4.5.0\nservice 8d8c701e0317\nmachine hermes-fra1\nfocus off\nat 1792370523"
+      },
+      {
+        "number": 88,
+        "url": "https://github.com/taskqorg/dashq/issues/88",
+        "updated_at": "2026-10-18T23:53:26Z",
+        "body": "version 4.5.0\nservice 202953da20cf\nmachine DESKTOP\nfocus off\nat 1792367605"
+      },
+      {
+        "number": 1,
+        "url": "https://github.com/taskqorg/dashq/issues/1",
+        "updated_at": "2026-10-18T23:00:03Z",
+        "body": "version 4.6.17\nservice 18535c594451\nmachine macbook-m2.local\nfocus off\nat 1792364402"
+      }
+    ]
+  },
+  {
+    "repo": "serverq",
+    "main_rules": [
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/serverq",
+        "ruleset_id": 25118437
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "rust (ubuntu-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (windows-latest)",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/serverq",
+        "ruleset_id": 25118437
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/serverq",
+        "ruleset_id": 25118437
+      }
+    ],
+    "hosts": [
+      {
+        "number": 40,
+        "url": "https://github.com/taskqorg/serverq/issues/40",
+        "updated_at": "2026-10-19T00:40:27Z",
+        "body": "version 4.6.18\nservice 18535c594451\nmachine macbook-m2.local\nat 1792370426"
+      },
+      {
+        "number": 38,
+        "url": "https://github.com/taskqorg/serverq/issues/38",
+        "updated_at": "2026-10-19T00:41:03Z",
+        "body": "version 4.5.0\nservice 8d8c701e0317\nmachine hermes-fra1\nfocus off\nat 1792370462"
+      },
+      {
+        "number": 35,
+        "url": "https://github.com/taskqorg/serverq/issues/35",
+        "updated_at": "2026-10-14T15:21:43Z",
+        "body": "version 4.1.11\nat 1791946393"
+      },
+      {
+        "number": 30,
+        "url": "https://github.com/taskqorg/serverq/issues/30",
+        "updated_at": "2026-10-18T23:51:59Z",
+        "body": "version 4.5.0\nservice 202953da20cf\nmachine DESKTOP\nfocus off\nat 1792367518"
+      },
+      {
+        "number": 4,
+        "url": "https://github.com/taskqorg/serverq/issues/4",
+        "updated_at": "2026-10-18T23:00:03Z",
+        "body": "version 4.6.17\nservice 18535c594451\nmachine macbook-m2.local\nfocus off\nat 1792364402"
+      }
+    ]
+  },
+  {
+    "repo": "specq",
+    "main_rules": [
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/specq",
+        "ruleset_id": 25118568
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/specq",
+        "ruleset_id": 25118568
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "check",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/specq",
+        "ruleset_id": 25118568
+      }
+    ],
+    "hosts": [
+      {
+        "number": 68,
+        "url": "https://github.com/taskqorg/specq/issues/68",
+        "updated_at": "2026-10-19T00:41:27Z",
+        "body": "version 4.6.18\nservice 18535c594451\nmachine macbook-m2.local\nat 1792370486"
+      },
+      {
+        "number": 23,
+        "url": "https://github.com/taskqorg/specq/issues/23",
+        "updated_at": "2026-10-18T23:53:25Z",
+        "body": "version 4.5.0\nservice 202953da20cf\nmachine DESKTOP\nfocus off\nat 1792367604"
+      },
+      {
+        "number": 17,
+        "url": "https://github.com/taskqorg/specq/issues/17",
+        "updated_at": "2026-10-14T15:21:46Z",
+        "body": "version 4.1.11\nat 1791946376"
+      },
+      {
+        "number": 1,
+        "url": "https://github.com/taskqorg/specq/issues/1",
+        "updated_at": "2026-10-18T23:00:03Z",
+        "body": "version 4.6.17\nservice 18535c594451\nmachine macbook-m2.local\nfocus off\nat 1792364402"
+      }
+    ]
+  },
+  {
+    "repo": "taskq",
+    "main_rules": [
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/taskq",
+        "ruleset_id": 25117578
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/taskq",
+        "ruleset_id": 25117578
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": true,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "rust (ubuntu-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (macos-latest)",
+              "integration_id": 15368
+            },
+            {
+              "context": "rust (windows-latest)",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "taskqorg/taskq",
+        "ruleset_id": 25117578
+      }
+    ],
+    "hosts": [
+      {
+        "number": 1119,
+        "url": "https://github.com/taskqorg/taskq/issues/1119",
+        "updated_at": "2026-10-14T19:07:12Z",
+        "body": "version 4.2.0-dev.1792004021\nservice 3b409aee8771\nat 1792004812"
+      },
+      {
+        "number": 1111,
+        "url": "https://github.com/taskqorg/taskq/issues/1111",
+        "updated_at": "2026-10-14T18:52:08Z",
+        "body": "version 4.2.0-dev.1792002378\nservice d1d735e91896\nat 1792003862"
+      },
+      {
+        "number": 1081,
+        "url": "https://github.com/taskqorg/taskq/issues/1081",
+        "updated_at": "2026-10-14T23:12:19Z",
+        "body": "version 4.2.0-dev.1792018150\nservice d3937f48bfb5\nmachine DESKTOP\nat 1792019468"
+      },
+      {
+        "number": 1070,
+        "url": "https://github.com/taskqorg/taskq/issues/1070",
+        "updated_at": "2026-10-14T16:35:13Z",
+        "body": "version 4.2.0-dev.1791993764\nservice 989ab9e0a9a4\nat 1791995668"
+      },
+      {
+        "number": 1065,
+        "url": "https://github.com/taskqorg/taskq/issues/1065",
+        "updated_at": "2026-10-15T01:31:14Z",
+        "body": "version 4.2.0-dev.1791998010\nservice 383a0516e138\nat 1791998506"
+      },
+      {
+        "number": 1063,
+        "url": "https://github.com/taskqorg/taskq/issues/1063",
+        "updated_at": "2026-10-14T16:18:11Z",
+        "body": "version 4.2.0-dev.1791993959\nservice d3937f48bfb5\nat 1791994588"
+      },
+      {
+        "number": 1056,
+        "url": "https://github.com/taskqorg/taskq/issues/1056",
+        "updated_at": "2026-10-14T16:09:34Z",
+        "body": "version 4.2.0-dev.1791993764\nservice d7163c6a5f95\nfocus off\nat 1791994078"
+      },
+      {
+        "number": 1010,
+        "url": "https://github.com/taskqorg/taskq/issues/1010",
+        "updated_at": "2026-10-19T00:40:35Z",
+        "body": "version 4.5.0\nservice 8d8c701e0317\nmachine hermes-fra1\nfocus off\nat 1792370434"
+      },
+      {
+        "number": 1000,
+        "url": "https://github.com/taskqorg/taskq/issues/1000",
+        "updated_at": "2026-10-14T15:21:23Z",
+        "body": "version 4.0.0-dev\nat 1791950398"
+      },
+      {
+        "number": 999,
+        "url": "https://github.com/taskqorg/taskq/issues/999",
+        "updated_at": "2026-10-14T15:21:28Z",
+        "body": "version 4.0.0-dev\nat 1791950605"
+      },
+      {
+        "number": 998,
+        "url": "https://github.com/taskqorg/taskq/issues/998",
+        "updated_at": "2026-10-14T15:21:32Z",
+        "body": "version 4.0.0-dev\nat 1791950762"
+      },
+      {
+        "number": 745,
+        "url": "https://github.com/taskqorg/taskq/issues/745",
+        "updated_at": "2026-10-18T23:52:09Z",
+        "body": "version 4.5.0\nservice 202953da20cf\nmachine DESKTOP\nfocus off\nat 1792367528"
+      },
+      {
+        "number": 722,
+        "url": "https://github.com/taskqorg/taskq/issues/722",
+        "updated_at": "2026-10-19T00:41:32Z",
+        "body": "version 4.6.18\nservice 18535c594451\nmachine macbook-m2.local\n#1244 6257215432\nexecution {\"task\":1244,\"attempt\":6257215432,\"id\":6257215432,\"through\":6257215432,\"state\":\"running\",\"reason\":\"native execution observed; termination pending\"}\nat 1792370489"
+      }
+    ]
+  }
+]

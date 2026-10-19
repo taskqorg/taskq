@@ -1,0 +1,82 @@
+[
+  {
+    "repo": "agentq",
+    "pr": 157,
+    "head": "54c7fb47519b1c7988a11754fcda306776c50926",
+    "merged": true,
+    "merge_sha": "f39b546f457b681a8e6a6bf8719e8b421081739e",
+    "main": "f39b546f457b681a8e6a6bf8719e8b421081739e",
+    "workflows": [
+      {
+        "path": ".github/workflows/test.yml",
+        "blob": "299a7d921534dcebe785fe77f3d912f7905c50d3",
+        "merge_group": true
+      }
+    ]
+  },
+  {
+    "repo": "coreq",
+    "pr": 54,
+    "head": "2d3ce6ac398349f3587a97897785dba4195cf2f7",
+    "merged": true,
+    "merge_sha": "8993837f4637c04597ecd7b1f8b0609b8c224872",
+    "main": "8993837f4637c04597ecd7b1f8b0609b8c224872",
+    "workflows": [
+      {
+        "path": ".github/workflows/tests.yml",
+        "blob": "9d14698b1ea08dd8885b936b668f523268fea2be",
+        "merge_group": true
+      }
+    ]
+  },
+  {
+    "repo": "dashq",
+    "pr": 153,
+    "head": "e5d82d5e9b7c1cee6a4f9f745da8c94dedfbb5a6",
+    "merged": true,
+    "merge_sha": "17b7ea226a3044e5b8dda99268d0d03fe637cb52",
+    "main": "17b7ea226a3044e5b8dda99268d0d03fe637cb52",
+    "workflows": [
+      {
+        "path": ".github/workflows/release.yml",
+        "blob": "a5daec3751188f3b77eb33b3df67cc10578c0c3e",
+        "merge_group": true
+      },
+      {
+        "path": ".github/workflows/tests.yml",
+        "blob": "d6732890f2e1b5c1b4ce0d99540cb4562f2bb968",
+        "merge_group": true
+      }
+    ]
+  },
+  {
+    "repo": "serverq",
+    "pr": 41,
+    "head": "b503e615da42762bda376c74d49c9b74d89ba013",
+    "merged": true,
+    "merge_sha": "6b333b435e6cfcdd81c0c793cf0071da8abbfb5f",
+    "main": "6b333b435e6cfcdd81c0c793cf0071da8abbfb5f",
+    "workflows": [
+      {
+        "path": ".github/workflows/check.yml",
+        "blob": "2e368cb33e85e69aa0f8df406c99f3e37eef939a",
+        "merge_group": true
+      }
+    ]
+  },
+  {
+    "repo": "specq",
+    "pr": 69,
+    "head": "227c94afa52c1ad2cd6f0ae5b8187ef47c178015",
+    "merged": true,
+    "merge_sha": "db068873181e448b62c8b69fab0280daed6c27a3",
+    "main": "db068873181e448b62c8b69fab0280daed6c27a3",
+    "workflows": [
+      {
+        "path": ".github/workflows/check.yml",
+        "blob": "8257edbda101a8d08d56de6e6dd87437d794494d",
+        "merge_group": true
+      }
+    ]
+  }
+]
