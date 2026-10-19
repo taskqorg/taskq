@@ -1,0 +1,22 @@
+   Compiling taskq v4.6.19 (<worktree>)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 13.07s
+     Running unittests entry.rs (target/debug/deps/taskq-efc8692af53c5595)
+
+running 1 test
+test telemetry::tests::mixed_snapshot_waits_for_budget_before_opening_sqlite ... FAILED
+
+failures:
+
+---- telemetry::tests::mixed_snapshot_waits_for_budget_before_opening_sqlite stdout ----
+
+thread 'telemetry::tests::mixed_snapshot_waits_for_budget_before_opening_sqlite' (91855078) panicked at target/debug/build/taskq-ce61c8991dff6b55/out/instrumented/telemetry.rs:339:9:
+read entered SQLite before acquiring the shared budget: telemetry: file is not a database
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    telemetry::tests::mixed_snapshot_waits_for_budget_before_opening_sqlite
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 412 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `--bin taskq`

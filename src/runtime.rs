@@ -1017,6 +1017,9 @@ pub struct StartError {
 }
 
 impl StartError {
+    pub fn admission(message: impl Into<String>) -> Self {
+        Self {message:message.into(),class:"admission",reportable:false,no_start:true}
+    }
     pub fn class(&self)->&'static str {self.class}
     pub fn io(error: std::io::Error, runtime: Option<&str>) -> Self {
         use std::io::ErrorKind;

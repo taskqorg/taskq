@@ -541,10 +541,21 @@ pub(super) fn read(tool: &coreq::Tool, expected: &Identity) -> Res<Option<Owner>
     {
         let code = format!(
             r#"$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
-$self=Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}';$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$clock=[Diagnostics.Stopwatch]::StartNew()
+function Trace-OwnerRead($phase) {{if($env:COREQ_TELEMETRY_STORE_TRACE -eq '1' -and $env:TASKQ_NATIVE_READ_TRACE){{try{{[IO.File]::AppendAllText($env:TASKQ_NATIVE_READ_TRACE,('Legacy owner read: '+$phase+' elapsed_ms='+$clock.ElapsedMilliseconds+[Environment]::NewLine))}}catch{{}}}}}}
+Trace-OwnerRead 'self-cim.begin'
+$self=Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}'
+Trace-OwnerRead 'self-cim.end'
+$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 if(!$self -or (Get-Process -Id {pid}).StartTime.ToFileTimeUtc().ToString() -ne {started}){{throw 'legacy native incarnation differs'}}
+Trace-OwnerRead 'scheduler-connect.begin'
 $s=New-Object -ComObject 'Schedule.Service';$s.Connect();$hits=@()
-foreach($t in $s.GetFolder('\').GetTasks(1)){{if(!$t.Name.StartsWith({prefix})){{continue}};foreach($i in @(Get-TaskQInstances $s $t)){{if($i.EnginePID -eq $self.ParentProcessId){{$hits+=,@($t,$i)}}}}}}
+Trace-OwnerRead 'scheduler-connect.end'
+Trace-OwnerRead 'tasks.begin'
+$tasks=$s.GetFolder('\').GetTasks(1)
+Trace-OwnerRead 'tasks.end'
+foreach($t in $tasks){{if(!$t.Name.StartsWith({prefix})){{continue}};Trace-OwnerRead 'instances.begin';foreach($i in @(Get-TaskQInstances $s $t)){{if($i.EnginePID -eq $self.ParentProcessId){{$hits+=,@($t,$i)}}}};Trace-OwnerRead 'instances.end'}}
+Trace-OwnerRead 'bindings.end'
 if($hits.Count -eq 0){{'null';exit 0}};if($hits.Count -ne 1){{throw 'multiple native legacy task bindings'}}
 $t=$hits[0][0];$i=$hits[0][1];$d=$t.Definition;$a=$d.Actions.Item(1)
 $parent=Get-CimInstance Win32_Process -Filter ('ProcessId = '+$i.EnginePID);$created=(Get-Process -Id $i.EnginePID).StartTime.ToFileTimeUtc().ToString()

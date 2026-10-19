@@ -107,6 +107,8 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
     fs::write(root.join(".taskq/focus"),"off").unwrap();
     let invoke=||Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service","resume"])
         .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
+        // Independent owner commands do not inherit the test runner's continuation.
+        .env_remove("COREQ_TRACE_CONTEXT").env("COREQ_TELEMETRY_STORE_TRACE","1")
         .env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
     let refused=invoke();
     assert!(!refused.status.success());
@@ -114,7 +116,8 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
     assert_eq!(fs::read_to_string(root.join(".taskq/focus")).unwrap(),"off");
     fs::write(root.join(".taskq/focus.paused"),"telemetry-fixture").unwrap();
     let resumed=invoke();
-    assert!(resumed.status.success(),"{}",String::from_utf8_lossy(&resumed.stderr));
+    assert!(resumed.status.success(),"{}\n{}",String::from_utf8_lossy(&resumed.stderr),
+        fs::read_to_string(root.join(".taskq/cli-errors.log")).unwrap_or_default());
     assert_eq!(fs::read_to_string(root.join(".taskq/focus")).unwrap(),"telemetry-fixture");
     assert_eq!(fs::read_to_string(install.join("hold")).unwrap(),"owner-held fixture");
     fs::write(root.join(".taskq/focus"),"off").unwrap();
