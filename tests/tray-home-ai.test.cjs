@@ -5,7 +5,7 @@ const long=Array.from({length:40},(_,i)=>'Answer line '+(i+1)).join('\n');
 const cases={
   result:[{state:'result',text:long+'\nNext: 1 Open #41 ★ · 2 Start #44'},['data-a="ai-next" data-v="1"','data-a="ai-send"','<textarea id="ai"']],
   clarify:[{state:'clarify',text:'Which project?'},['>Reply</button>','placeholder="Answer…"']],
-  proposal:[{state:'proposal',rev:3,text:'Plan ready.',ops:[{project:'p',op:'add',title:'T'}]},['data-a="ai-confirm"','>Confirm: apply 1 change</button>']],
+  proposal:[{state:'proposal',rev:3,text:'Plan ready.',ops:[{project:'p',op:'add',title:'T'}]},['data-a="ai-confirm"','>Review changes: 1 change</button>']],
   failed:[{state:'failed',reason:'timeout',text:long},['>Edit and send again</button>','data-a="ai-send"']],
 };
 for(const [name,[answer,controls]] of Object.entries(cases)){
