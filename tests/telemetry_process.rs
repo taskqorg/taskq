@@ -190,7 +190,7 @@ fn resident_analysis_owner() {
     let dir=path.parent().unwrap();let install=dir.parent().unwrap();
     let budget=coreq::telemetry::Budget {lock:install.join("taskq-profile.lock"),
         peers:vec![dir.join("telemetry.sqlite3"),dir.join("telemetry.sqlite3-wal"),dir.join("telemetry.sqlite3-shm"),install.join("taskq.log")],
-        total:64<<20,reserved:(4<<20)+(64<<10)+(2<<20)};
+        total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES};
     let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&path,"fixtureq","1",budget).unwrap();
     println!("ANALYSIS_READY");std::io::stdout().flush().unwrap();
     let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();

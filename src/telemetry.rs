@@ -13,13 +13,16 @@ const LINE_MAX: usize = 64 << 10;
 const WINDOW_MS: u64 = 30 * 86400 * 1000;
 const LEGACY_MAX: u64 = crate::data::LOG_MAX + LINE_MAX as u64;
 
-/// Reserve bounded text growth, peer SHM creation and fixed IPC/lock metadata; count existing files too.
+/// Legacy import store cap: with its WAL, SHM and taskq.log it fits the 64 MiB peer share.
+const LEGACY_DB_MAX: i64 = 28 << 20;
+
+/// 1 GiB installation budget, half held in reserve; the peer share holds legacy text and the legacy import store.
 pub(crate) fn budget(install:&Path,peer:&str)->Result<coreq::telemetry::Budget,String> {
     let install=std::path::absolute(install).map_err(|e|e.to_string())?;
     let dir=install.join("telemetry.log");
     Ok(coreq::telemetry::Budget {lock:install.join("taskq-profile.lock"),
         peers:vec![dir.join(peer),dir.join(format!("{peer}-wal")),dir.join(format!("{peer}-shm")),install.join("taskq.log")],
-        total:64<<20,reserved:LEGACY_MAX+(2<<20)})
+        total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES})
 }
 
 fn open(install: &Path) -> Result<Connection, String> {
@@ -27,7 +30,7 @@ fn open(install: &Path) -> Result<Connection, String> {
     let dir = install.join("telemetry.log");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("telemetry.sqlite3");
-    let ceiling=budget(install,"universal.sqlite3")?.check_files(&path)?;
+    let ceiling=budget(install,"universal.sqlite3")?.check_files(&path)?.min(LEGACY_DB_MAX);
     let exists = path.exists();
     let db = Connection::open(&path).map_err(|e| format!("telemetry SQLite: {e}"))?;
     db.busy_timeout(std::time::Duration::from_secs(1)).map_err(|e| e.to_string())?;
@@ -417,8 +420,9 @@ mod tests {
         }
         let event=coreq::telemetry::Event::new(semantic::observation(r#"taskq-profile {"op":"spawn","us":2,"error":"none","at_ms":2}"#).unwrap()).unwrap();
         live.append(&[event]).unwrap();let storage=live.storage().unwrap();
-        assert!(storage["database_limit"].as_i64().unwrap()<before);
-        assert!(storage["installation_accounted_bytes"].as_u64().unwrap()<=64<<20);
+        // A6: peer growth never shrinks the 384 MiB store cap; accounting stays inside the 512 MiB working share.
+        assert_eq!((before,storage["database_limit"].as_i64().unwrap()),(384<<20,384<<20));
+        assert!(storage["installation_accounted_bytes"].as_u64().unwrap()<=coreq::telemetry::INSTALLATION_BYTES/2);
         let _lock=crate::profile::log_lock(&d.join("taskq.log")).unwrap();let old=open(&d).unwrap();
         assert_eq!(old.query_row("SELECT count(*) FROM records",[],|r|r.get::<_,i64>(0)).unwrap(),archive_count);
         drop(old);drop(_lock);drop(live);std::fs::remove_dir_all(d).unwrap();

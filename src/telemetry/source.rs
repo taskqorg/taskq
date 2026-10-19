@@ -26,7 +26,7 @@ fn install_identity(db: &mut Connection) -> Res<()> {
     if check!="ok" {return Err("legacy source: corrupt archive; preserved".into());}
     let page:i64=db.pragma_query_value(None,"page_size",|r|r.get(0)).map_err(error)?;
     let pages:i64=db.pragma_query_value(None,"page_count",|r|r.get(0)).map_err(error)?;
-    if page<1024||pages>28*1024*1024/page {return Err("legacy source: oversized archive; preserved".into());}
+    if page<1024||pages>super::LEGACY_DB_MAX/page {return Err("legacy source: oversized archive; preserved".into());}
     if installed(db)? {return Ok(());}
     db.execute_batch("PRAGMA synchronous=FULL; PRAGMA temp_store=MEMORY; PRAGMA cache_spill=OFF; PRAGMA wal_autocheckpoint=0;").map_err(error)?;
     super::checkpoint(db)?;
