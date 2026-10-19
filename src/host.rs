@@ -64,6 +64,17 @@ impl Policy {
         if off { c["load_gate"]["enabled"] = json!(true); }
         let mut cap = service::capacity(&c, &me)?;
         if off { cap.gate.enabled = false; }
+        // The project overlay only lowers: a count above the host ceiling is invalid policy, never clamped.
+        if !matches!(v["projects"], Value::Null | Value::Object(_)) { return Err("host.json: projects must be an object".into()); }
+        for (root, p) in v["projects"].as_object().into_iter().flatten() {
+            let bad = || format!("host.json: projects.{root}: expected {{\"limits\": {{runtime: count}}, \"op\": id}}");
+            let o = p.as_object().filter(|o| o.keys().all(|k| k == "limits" || k == "op") && o.contains_key("limits")).ok_or_else(bad)?;
+            if o.get("op").is_some_and(|x| !x.as_str().is_some_and(crate::resources::id)) { return Err(bad()); }
+            for (rt, n) in p["limits"].as_object().ok_or_else(bad)? {
+                let n = n.as_u64().and_then(|n| u32::try_from(n).ok()).filter(|_| service::RUNTIMES.contains(&rt.as_str())).ok_or_else(bad)?;
+                if cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("host.json: projects.{root}.limits.{rt} raises host ceiling")); }
+            }
+        }
         let policy=Self { raw: v, cap, me, has, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
@@ -97,6 +108,21 @@ impl Policy {
         Ok(ring::digest::digest(&ring::digest::SHA256,&serde_json::to_vec(&json!([self.me,self.cap.json()])).map_err(|e|e.to_string())?).as_ref().iter().map(|v|format!("{v:02x}")).collect())
     }
 
+    /// The revision a project's remote overlay operation names: the host revision, that root's overlay entry (whose
+    /// `op` makes edit-and-revert a new revision) and the effective project limits, so a taskq.json `limits` edit
+    /// is a new revision too. `v` is the root's taskq.json.
+    pub fn project_revision(&self, root: &Path, v: &Value) -> Res<String> {
+        let parts = json!([self.revision()?, self.overlay(root).map(|(_, e)| e), self.project_limits(root, v)?]);
+        Ok(ring::digest::digest(&ring::digest::SHA256,&serde_json::to_vec(&parts).map_err(|e|e.to_string())?).as_ref().iter().map(|v|format!("{v:02x}")).collect())
+    }
+
+    /// The `projects` entry of a registered root: its exact spelling, else the same canonical path.
+    pub(crate) fn overlay(&self, root: &Path) -> Option<(&String, &Value)> {
+        let m = self.raw["projects"].as_object()?;
+        m.iter().find(|(k, _)| Path::new(k.as_str()) == root)
+            .or_else(|| { let c = fs::canonicalize(root).ok()?; m.iter().find(|(k, _)| fs::canonicalize(k.as_str()).is_ok_and(|x| x == c)) })
+    }
+
     pub fn read(install: &Path) -> Res<Self> { Self::read_for_hostname(install,crate::hostname) }
 
     fn read_for_hostname(install:&Path,hostname:impl FnOnce()->String)->Res<Self> {
@@ -109,14 +135,25 @@ impl Policy {
         Self::parse(serde_json::from_slice(&v).map_err(|e| format!("host.json unknown: {e}"))?, &hostname())
     }
 
-    pub fn project(&self, v: &Value) -> Res<Capacity> {
-        let mut c = self.cap.clone();
+    /// The project's own limits: taskq.json `limits` and this root's host overlay, the lower of both (§ 3, § 9).
+    pub fn project_limits(&self, root: &Path, v: &Value) -> Res<BTreeMap<String, u32>> {
         if !matches!(v["limits"], Value::Null | Value::Object(_)) { return Err("project limits: expected an object".into()); }
+        let mut out = BTreeMap::new();
         for (rt, n) in v["limits"].as_object().into_iter().flatten() {
             let n = n.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or(format!("project limits.{rt}: invalid count"))?;
             if self.cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("project limits.{rt} raises host ceiling")); }
-            c.limits.insert(rt.clone(), n);
+            out.insert(rt.clone(), n);
         }
+        for (rt, n) in self.overlay(root).and_then(|(_, e)| e["limits"].as_object()).into_iter().flatten() {
+            let n = n.as_u64().unwrap_or_default() as u32;
+            out.entry(rt.clone()).and_modify(|x| *x = (*x).min(n)).or_insert(n);
+        }
+        Ok(out)
+    }
+
+    pub fn project(&self, root: &Path, v: &Value) -> Res<Capacity> {
+        let mut c = self.cap.clone();
+        c.limits.extend(self.project_limits(root, v)?);
         Ok(c)
     }
 }
@@ -129,11 +166,7 @@ pub fn write_capacity(install:&Path, host:&str, edit:&crate::CapEdit, expect:Opt
 #[tracing::instrument(name="host.policy.write",skip_all)]
 fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:Option<&Value>,mut local:Option<(&mut crate::resources::State,&Value)>)->Res<(Capacity,Capacity,CommandReceipt)> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot change host policy".into());}
-        let migration=install.join("host-policy-migration");
-        if migration.join("plan.json").try_exists().map_err(|e|e.to_string())?
-            && !migration.join("complete").try_exists().map_err(|e|e.to_string())? {
-            return Err("host policy migration incomplete; edits held until verified readback".into());
-        }
+        migration_done(install)?;
         let path=install.join("host.json");
         let original=fs::read_to_string(&path).map_err(|e|format!("host.json unknown: {e}"))?;
         let hostname=crate::hostname();
@@ -215,6 +248,43 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
         command.checkpoint("applied").map_err(|e|format!("host policy saved; command receipt unknown: {e}"))?;
         crate::platform::write_atomic(&install.join("poke"),"").map_err(|e|format!("host policy saved; host notification unknown: {e}"))?;
         Ok((old.cap,saved.cap,command))
+}
+
+fn migration_done(install:&Path)->Res<()> {
+    let migration=install.join("host-policy-migration");
+    if migration.join("plan.json").try_exists().map_err(|e|e.to_string())?
+        && !migration.join("complete").try_exists().map_err(|e|e.to_string())? {
+        return Err("host policy migration incomplete; edits held until verified readback".into());
+    }
+    Ok(())
+}
+
+/// The remote project overlay writer (#1282, shared-resource-controls.md#project-overlay); the caller holds the
+/// resource lock. Only `projects.<root>` changes. `Ok(Err(reason))`: refused before any write; `Err`: write uncertain.
+pub(crate) fn write_project_limit(install:&Path, root:&Path, rt:&str, limit:Option<u32>, op:&str, expect:&str)->Res<Result<Policy,&'static str>> {
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() || migration_done(install).is_err() || !service::RUNTIMES.contains(&rt) {return Ok(Err("unsupported"));}
+    let path=install.join("host.json");
+    let Ok(original)=fs::read_to_string(&path) else {return Ok(Err("conflict"))};
+    let hostname=crate::hostname();
+    let Ok(old)=serde_json::from_str(&original).map_err(|e|e.to_string()).and_then(|v|Policy::parse(v,&hostname)) else {return Ok(Err("conflict"))};
+    let Ok((_,project))=crate::load(root) else {return Ok(Err("conflict"))};
+    if old.project_revision(root,&project)?!=expect {return Ok(Err("conflict"));}
+    let key=old.overlay(root).map_or_else(||root.display().to_string(),|(k,_)|k.clone());
+    let mut next=old.raw.clone();
+    if next["projects"].is_null() {next["projects"]=json!({});}
+    let entry=&mut next["projects"][&key];
+    if entry.is_null() {*entry=json!({"limits":{}});}
+    match limit {
+        Some(n)=>entry["limits"][rt]=json!(n),
+        None=>{entry["limits"].as_object_mut().map(|l|l.remove(rt));}
+    }
+    // kept when the limits empty: the restore is a new revision too
+    entry["op"]=json!(op);
+    let Ok(candidate)=Policy::parse(next,&hostname) else {return Ok(Err("invalid"))};
+    replace_owned(&path,&original,&(serde_json::to_string_pretty(&candidate.raw).map_err(|e|e.to_string())?+"\n"))?;
+    let saved=Policy::read(install)?;
+    if saved.raw!=candidate.raw {return Err("host policy write uncertain: readback differs".into());}
+    Ok(Ok(saved))
 }
 
 fn wall()->Res<u64> {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d|d.as_secs()).map_err(|_|"capacity clock unknown".into())}
@@ -1782,7 +1852,7 @@ mod tests {
     // Risk: double-counting retained grants, or cross-project equal numbers colliding and exceeding host ceilings.
     #[test]
     fn host_slots_survive_pending_running_and_project_identity() {
-        let p = policy(); let cap = p.project(&json!({"limits": {"codex": 2}})).unwrap();
+        let p = policy(); let cap = p.project(Path::new("/p"), &json!({"limits": {"codex": 2}})).unwrap();
         let mut h = Host::new(Ok(p));
         let (a, b) = (Path::new("a"), Path::new("b"));
         assert_eq!(h.reserve(a, 1, 0, "codex", &cap, false, 0), Ok(1));
@@ -1794,7 +1864,7 @@ mod tests {
         assert_eq!(h.sync(a, vec![]), 1); // only a verified exit releases the attempt
         assert_eq!(h.reserve(a, 2, 78, "codex", &cap, false, 60), Ok(2));
         h.sync(a, vec![]); h.sync(b, vec![]);
-        let lower = h.policy.as_ref().unwrap().project(&json!({"limits": {"codex": 1}})).unwrap();
+        let lower = h.policy.as_ref().unwrap().project(Path::new("/p"), &json!({"limits": {"codex": 1}})).unwrap();
         assert!(h.reserve(a, 1, 80, "codex", &lower, false, 90).is_ok());
         assert!(h.reserve(a, 2, 81, "codex", &lower, false, 120).is_err());
         assert!(h.reserve(b, 2, 81, "codex", &cap, false, 120).is_ok());
@@ -1909,8 +1979,39 @@ mod tests {
         for v in [json!({"admission": "bad"}), json!({"codex": [false]}), json!({"load_gate": {"enabled": "yes"}}), json!({"update_every": 0})] {
             assert!(Policy::parse(v, "invented").is_err());
         }
-        assert!(policy().project(&json!({"limits": {"codex": 3}})).is_err());
+        assert!(policy().project(Path::new("/p"), &json!({"limits": {"codex": 3}})).is_err());
         fs::remove_dir_all(install).unwrap();
+    }
+
+    // Chain: host.json projects overlay -> project capacity and revision (#1282). Risk: an overlay raising the host
+    // ceiling, reaching another root, or an edit-and-revert reusing a revision a stale operation names.
+    #[test]
+    fn project_overlay_only_lowers_its_own_root() {
+        let host = json!({"limits": {"codex": 5, "claude": 5}});
+        let base = Policy::parse(host.clone(), "invented").unwrap();
+        let mut v = host.clone(); v["projects"] = json!({"/a": {"limits": {"codex": 4}, "op": "op-1"}});
+        let p = Policy::parse(v.clone(), "invented").unwrap();
+        assert_eq!(p.project(Path::new("/a"), &json!({})).unwrap().limits["codex"], 4);
+        assert_eq!(p.project(Path::new("/a"), &json!({"limits": {"codex": 3}})).unwrap().limits["codex"], 3, "the lower of both");
+        assert_eq!(p.project(Path::new("/b"), &json!({})).unwrap().limits["codex"], 5, "another root untouched");
+        assert_eq!(p.project(Path::new("/a"), &json!({})).unwrap().limits["claude"], 5, "another runtime untouched");
+        assert_eq!(p.project_limits(Path::new("/a"), &json!({})).unwrap(), BTreeMap::from([("codex".to_string(), 4)]));
+        let e = json!({});
+        assert_eq!(base.project_revision(Path::new("/a"), &e).unwrap(), base.project_revision(Path::new("/b"), &e).unwrap());
+        assert_eq!(p.project_revision(Path::new("/b"), &e).unwrap(), base.project_revision(Path::new("/b"), &e).unwrap());
+        let changed = p.project_revision(Path::new("/a"), &e).unwrap();
+        assert_ne!(changed, base.project_revision(Path::new("/a"), &e).unwrap());
+        assert_ne!(p.project_revision(Path::new("/a"), &json!({"limits": {"codex": 1}})).unwrap(), changed, "a taskq.json limits edit is a new revision");
+        v["projects"]["/a"] = json!({"limits": {}, "op": "op-2"});
+        let restored = Policy::parse(v.clone(), "invented").unwrap();
+        assert_eq!(restored.project(Path::new("/a"), &json!({})).unwrap().limits["codex"], 5);
+        let reverted = restored.project_revision(Path::new("/a"), &e).unwrap();
+        assert!(reverted != changed && reverted != base.project_revision(Path::new("/a"), &e).unwrap(), "edit-and-revert is a new revision");
+        for bad in [json!({"/a": {"limits": {"codex": 6}}}), json!({"/a": {"limits": {"other": 1}}}), json!({"/a": {"limits": {"codex": -1}}}),
+            json!({"/a": {"limits": {}, "admission": {}}}), json!({"/a": {"op": "x"}}), json!({"/a": {"limits": {}, "op": "bad id"}}), json!(["/a"])] {
+            let mut v = host.clone(); v["projects"] = bad.clone();
+            assert!(Policy::parse(v, "invented").is_err(), "{bad} must hold launches");
+        }
     }
 
     // Chain A5: host pid ownership and registry poke -> exact-root reload. Risk: duplicate host or discovery.

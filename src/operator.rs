@@ -287,7 +287,7 @@ pub fn exec(rt: &str, brief: &str, root: &Path, logs: &Path, name: &str, resume:
     let (mut cfg, config) = crate::load(root)?;
     let policy = crate::host::Policy::read(&cfg.install)?;
     policy.apply(&mut cfg);
-    let cap = policy.project(&config)?;
+    let cap = policy.project(root, &config)?;
     if cap.limits.get(rt).copied().unwrap_or(if cap.auto { u32::MAX } else { 0 }) == 0 {
         return Err(format!("operator runtime {rt} disabled on this host; no fallback"));
     }

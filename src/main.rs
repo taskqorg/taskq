@@ -76,7 +76,7 @@ const USAGE: &str = "taskq agents
  taskq service focus [all|off|<label..>] [--request TEXT]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
- taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] | --revoke ID]
+ taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq tray [--snapshot DIR [--route R,..]] [--icon FILE] | taskq selftest
 Writes to a task take [--op-id ID] [--revision R] [--json] (taskq.md section 5).
 Text templates and limits: taskq.md sections 1, 2, 5, 7.";
@@ -96,7 +96,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "host-policy") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "host-policy" | "project-limits") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -852,8 +852,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                     let h = h.lock().map_err(|_| "host admission poisoned; launches held")?;
                     let p = h.policy.as_ref().map_err(Clone::clone)?;
                     p.apply(&mut s.cfg);
-                    let cap=p.project(&v)?;
-                    s.cfg.limits=v["limits"].as_object().into_iter().flatten().map(|(rt,n)|(rt.clone(),n.as_u64().unwrap() as u32)).collect();
+                    let cap=p.project(&cfg.root,&v)?;
+                    s.cfg.limits=p.project_limits(&cfg.root,&v)?;
+                    s.project_revision=p.project_revision(&cfg.root,&v).ok();
                     Ok(cap)
                 }
                 None => service::capacity(&v, &cfg.me),
@@ -1405,6 +1406,10 @@ fn permissions_cmd(root: &Path, a: &Args) -> Res<()> {
 fn resources_cmd(root: &Path, a: &Args) -> Res<()> {
     let (cfg, _) = load(root)?;
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if a.flags.contains_key("json") {
+        println!("{}", resources::projection(&cfg.install, now)?);
+        return Ok(());
+    }
     let change = a.one("grant").or(a.one("revoke"));
     if change.is_some() && std::env::var_os("TASKQ_ATTEMPT").is_some() {
         return Err("a worker cannot change resource grants".into());
@@ -1414,7 +1419,7 @@ fn resources_cmd(root: &Path, a: &Args) -> Res<()> {
         println!("Revoked {id}; operations not yet written cannot write");
     } else if let Some(id) = a.one("grant") {
         let hours = a.need("hours")?.parse().map_err(|_| "--hours: a number of hours".to_string())?;
-        let scope = resources::Scope { host_policy: a.flags.contains_key("host-policy"), projects: a.all("project"), runtimes: a.all("runtime"), hours };
+        let scope = resources::Scope { host_policy: a.flags.contains_key("host-policy"), project_limits: a.flags.contains_key("project-limits"), projects: a.all("project"), runtimes: a.all("runtime"), hours };
         let by = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "unknown".into());
         let g = resources::grant(&cfg.install, id, a.need("actor")?, &scope, &by, now)?;
         println!("Granted {id} to {} until {}", g.actor_id, board::stamp(g.expires_at as i64));
@@ -2228,7 +2233,7 @@ fn run(argv: &[String]) -> Res<()> {
         // § 5: the operator over the request log; no board
         "retro" => {
             let (cfg, raw) = load(&find_root()?)?;
-            let cap = host::Policy::read(&cfg.install)?.project(&raw)?;
+            let cap = host::Policy::read(&cfg.install)?.project(&cfg.root, &raw)?;
             let rt = ["claude", "codex"].into_iter().find(|rt| cap.limits.get(*rt).copied().unwrap_or(if cap.auto { u32::MAX } else { 0 }) > 0);
             print!("{}", retro::run(&cfg.root, rt)?);
             Ok(())

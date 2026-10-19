@@ -112,6 +112,7 @@ jobs:
             cp build/web/resource-controls.js "dist/taskq-$VER-resource-controls.js"
             cp src/resource-controls.css "dist/taskq-$VER-resource-controls.css"
             cp tests/fixtures/resource-controls.json "dist/taskq-$VER-resource-controls-fixtures.json"
+            cp tests/fixtures/resource-policy-v1.json "dist/taskq-$VER-resource-policy-fixtures.json"
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: needs.tag.outputs.tag
