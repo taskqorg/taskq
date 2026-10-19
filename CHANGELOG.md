@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.23
+
+A native revision-bound workspace shows full AI exchanges (#1275); tray task rows keep their order and show the age of the current state (#1302). A new host recovers telemetry from a retiring older tray writer instead of reporting the command receipt collector unavailable (#1311). An older host treats an exited newer host's service record as stale instead of waiting on it forever (#1312). The spec now routes unlabeled work and every review to claude and keeps codex for design, UI, visual and image work (#1313); dispatch still follows the previous rule until #1314 ships. No board change.
+
 Releases come from the `live` branch: a fast-forward of `live` to a `main` commit whose merge-queue CI passed tags and publishes; `main` pushes no longer release. The Mac development host installs local `<next patch>-dev.<epoch>` builds with `scripts/dev-install.sh`. Release builds use thin LTO and CI caches Rust dependencies. No board change.
 
 A new process can bridge a running v4.6.19 telemetry writer with its exact legacy budget in the same database (#1295). Update candidate selftest and install receipts retain the shared export path; no handover side store is created. Unknown budgets, unsafe endpoints and unsupported wire formats remain refused. Compatibility lasts for that process; a fresh process after the old owner exits requests the 1 GiB budget.
