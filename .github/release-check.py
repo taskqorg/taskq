@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Publication requires recent successful tests.yml for the exact source commit."""
+"""Publication requires recent successful tests.yml for the exact source commit.
+
+The merge queue tests the commit that main fast-forwards to, so its merge_group run on the same SHA counts
+while the duplicate push run is still pending; a newer completed failure still refuses."""
 import datetime
 import json
 import os
@@ -10,9 +13,12 @@ import time
 def selected(runs, sha, branch, now):
     accepted = []
     for run in runs:
-        if run.get('head_sha') != sha or run.get('head_branch') != branch or run.get('path') != '.github/workflows/tests.yml':
+        if run.get('head_sha') != sha or run.get('path') != '.github/workflows/tests.yml':
             continue
-        if run.get('event') not in {'push', 'workflow_dispatch'}:
+        if run.get('event') in {'push', 'workflow_dispatch'}:
+            if run.get('head_branch') != branch:
+                continue
+        elif run.get('event') != 'merge_group' or not str(run.get('head_branch')).startswith(f'gh-readonly-queue/{branch}/'):
             continue
         try:
             created = datetime.datetime.fromisoformat(run['created_at'].replace('Z', '+00:00')).timestamp()
@@ -20,7 +26,12 @@ def selected(runs, sha, branch, now):
             continue
         if 0 <= now - created <= 86400:
             accepted.append(run)
-    return max(accepted, key=lambda r: r['id'], default=None)
+    newest = max(accepted, key=lambda r: r['id'], default=None)
+    if newest and newest.get('status') != 'completed':
+        queued = [r for r in accepted if r.get('event') == 'merge_group' and r.get('status') == 'completed']
+        if queued and max(queued, key=lambda r: r['id']).get('conclusion') == 'success':
+            return max(queued, key=lambda r: r['id'])
+    return newest
 
 
 def main():
