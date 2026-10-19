@@ -159,6 +159,11 @@ def run_case(phase):
         raise TimeoutError('fixture completion signal expired')
 
     try:
+        if phase == 'compatibility':
+            environment['TASKQ_INSTALL_COMPATIBILITY'] = '1'
+            writer = start('telemetry')
+            until(lambda: (install / 'telemetry-ready').exists(), actor=writer)
+            phase = 'applied'
         if phase == 'legacy-handoff':
             definition = home / ('Library/LaunchAgents/com.taskq.' + root.name + '.plist')
             definition.write_bytes(plistlib.dumps({'Label': 'com.taskq.' + root.name, 'WorkingDirectory': str(root), 'ProgramArguments': [str(install / 'taskq'), 'service', 'run']}))

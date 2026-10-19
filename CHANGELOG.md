@@ -7,6 +7,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 Releases come from the `live` branch: a fast-forward of `live` to a `main` commit whose merge-queue CI passed tags and publishes; `main` pushes no longer release. The Mac development host installs local `<next patch>-dev.<epoch>` builds with `scripts/dev-install.sh`. Release builds use thin LTO and CI caches Rust dependencies. No board change.
 
+A new process can bridge a running v4.6.19 telemetry writer with its exact legacy budget in the same database (#1295). Update candidate selftest and install receipts retain the shared export path; no handover side store is created. Unknown budgets, unsafe endpoints and unsupported wire formats remain refused. Compatibility lasts for that process; a fresh process after the old owner exits requests the 1 GiB budget.
+
+Recovery for v4.6.19–v4.6.22 hosts whose update fails with `telemetry IPC installation budget mismatch` (#1294): retry `taskq update` after this release is published, or run the new binary's `service install`. A full/unavailable old store can still prevent selftest or installation receipts; compatibility does not fabricate successful writes. The new Stop lifecycle can retain its durable intent and report telemetry receipts unknown while still requiring exact ownership, drain and native exit. Stop protocol 2 identifies that support; a new CLI refuses a degraded request to protocol 1 before writing intent. Older CLIs read protocol 2 as unknown; use the new CLI. Complete the service upgrade before using degraded Stop; exhausted legacy Stop remains safely refused. Released old CLIs are unchanged. No board change.
+
 ## v4.6.22
 
 Telemetry keeps 30 days within a 1 GiB budget with half held in reserve; pruning and derived limits keep the service running instead of rejecting telemetry with `budget-exhausted` (#1278). Mac Drain and Full stop keep a durable hold (#1214), and after a reviewed Stop the owner can resume only selected local tasks (#1285). Mac activation follows [the repair handoff](docs/repair-1276.md); release publication does not prove activation.

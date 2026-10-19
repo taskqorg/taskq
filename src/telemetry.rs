@@ -25,6 +25,26 @@ pub(crate) fn budget(install:&Path,peer:&str)->Result<coreq::telemetry::Budget,S
         total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES})
 }
 
+static HANDOVER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// R8: bridge only the known legacy budget, using the same protected writer and export store.
+pub(crate) fn install_capture(install:&Path)->Result<coreq::telemetry::capture::Runtime,String> {
+    use coreq::telemetry::capture::Runtime;
+    let path=install.join("telemetry.log/universal.sqlite3");
+    let shared=Runtime::install_bounded(&path,"taskq",crate::platform::VERSION,budget(install,"telemetry.sqlite3")?);
+    let incompatible=match shared {
+        Err(e) if e=="telemetry IPC installation budget mismatch; quiesce incompatible writer"=>e,
+        other=>return other,
+    };
+    let legacy=coreq::telemetry::Budget {total:64<<20,reserved:LEGACY_MAX+(2<<20),..budget(install,"telemetry.sqlite3")?};
+    let runtime=Runtime::install_bounded(&path,"taskq",crate::platform::VERSION,legacy)?;
+    let _=HANDOVER.set(incompatible);
+    Ok(runtime)
+}
+
+/// Why this process uses the legacy same-store budget, if it does.
+pub(crate) fn handover()->Option<&'static str> {HANDOVER.get().map(String::as_str)}
+
 fn open(install: &Path) -> Result<Connection, String> {
     // Older release sweep keeps *.log entries, including directories; rollback must preserve DB and sidecars together.
     let dir = install.join("telemetry.log");

@@ -1758,6 +1758,7 @@ fn service_report(a:&Args)->Res<()> {
         println!("{}",json!({"schema":"taskq.service/1","service":service,"projects":projects,"registry_error":registry.as_ref().err(),"restart":if lifecycle["action"].as_str().is_some_and(|action|action!="restart") {Value::Null}else{lifecycle.clone()},"lifecycle":lifecycle,"installation":installation}));
     } else {
         println!("{}",host::service_line(&service));
+        if lifecycle["telemetry"]=="unknown" {println!("Telemetry receipts: unknown; lifecycle state is recorded separately");}
         let restart=lifecycle;let title=match restart["action"].as_str() {Some("stop")=>"Stop",Some("uninstall")=>"Uninstall",Some("install")=>"Install",_=>"Restart"};
         if let Some(id)=restart["id"].as_str() {println!("{title}: {id} {}",restart["state"].as_str().unwrap_or("unknown"));}
         if let Some(reason)=restart["reason"].as_str() {println!("{title}: unknown ({reason})");}
@@ -1826,6 +1827,7 @@ fn service(args: &Args) -> Res<()> {
             host_control::dispatch(&install,&p)?.wait()?;
             result=lifecycle::receipt(&install,&id)?.ok_or("Stop result no longer retained; outcome unknown")?;
         }
+        if !args.flags.contains_key("json") && result["telemetry"]=="unknown" {println!("Telemetry receipts: unknown; lifecycle state is recorded separately");}
         if args.flags.contains_key("json") {println!("{result}");}else {println!("{}: {id} {}",match sub {"stop"=>lifecycle::Action::Stop,"uninstall"=>lifecycle::Action::Uninstall,_=>lifecycle::Action::Restart}.title(),result["state"].as_str().unwrap_or("unknown"));if let Some(condition)=result["restart_condition"].as_str() {println!("Restart condition: {condition}");}}
         return Ok(());
     }
@@ -2222,7 +2224,10 @@ fn run(argv: &[String]) -> Res<()> {
                 println!("board: unknown (no project config found; no board read)");
             }
             let capture=coreq::telemetry::capture::qualify().map_err(|e|format!("telemetry: FAIL {e}"))?;
-            println!("telemetry: local capture committed {} observations",capture["committed"]);
+            match telemetry::handover() {
+                Some(reason)=>println!("telemetry: compatibility capture committed {} observations (running writer incompatible: {reason})",capture["committed"]),
+                None=>println!("telemetry: local capture committed {} observations",capture["committed"]),
+            }
             Ok(())
         }
         "update" => {
