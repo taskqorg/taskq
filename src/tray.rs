@@ -2141,7 +2141,9 @@ mod tests {
         assert_eq!(names(&["scroll"]).len(), 12, "start, middle and end at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 4)), "no filter keeps the full matrix without scroll");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 5)), "no filter keeps the menu matrix without scroll or the separate workspace");
+        assert_eq!(names(&["workspace"]), ["dark-workspace-16", "dark-workspace-20", "light-workspace-16", "light-workspace-20"]);
+        assert!(all.iter().all(|name|!name.contains("workspace")), "workspace uses its own native renderer");
         for route in ROUTES {
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
         }
