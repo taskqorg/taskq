@@ -39,6 +39,10 @@ jobs:
         with:
           fetch-depth: 0
       - run: python3 scripts/check.py
+      # Temporary #1280 diagnostic: libtest hides phase timings for successful tests.
+      - name: Windows legacy owner phase timings
+        if: runner.os == 'Windows' && !cancelled()
+        run: cargo +stable test --locked --test host_policy project_run_waits_for_the_host_owner -- --exact --nocapture
   windows-gnu:
     needs: plan
     if: needs.plan.outputs.scope == 'full'
