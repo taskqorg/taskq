@@ -369,7 +369,9 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
         assert_eq!(&args[1..5], &["-fsSL", "--max-time", "300", "-o"]);
         let name=args[6].rsplit('/').next().unwrap();
         assert!(!name.contains('\\') && name!=".." && !name.is_empty());
-        std::fs::copy(std::path::PathBuf::from(std::env::var_os("TASKQ_FIXTURE_ASSETS").unwrap()).join(name),&args[5]).unwrap();
+        let assets=std::path::PathBuf::from(std::env::var_os("TASKQ_FIXTURE_ASSETS").unwrap());
+        std::fs::copy(assets.join(name),&args[5]).unwrap();
+        std::fs::write(assets.join(format!("{name}.served")),b"fixture").unwrap();
     }"#).unwrap();
     let compiled=Command::new("rustc").arg(&helper).arg("-o").arg(bin.join(format!("curl{}",std::env::consts::EXE_SUFFIX))).output().unwrap();
     assert!(compiled.status.success(),"{}",String::from_utf8_lossy(&compiled.stderr));
@@ -378,18 +380,30 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
     let bytes=fs::read(env!("CARGO_BIN_EXE_taskq")).unwrap();fs::write(assets.join(&name),&bytes).unwrap();
     fs::write(assets.join("latest.json"),serde_json::json!({"version":version,"files":{target:name}}).to_string()).unwrap();
     fs::write(install.join("current"),"4.6.19").unwrap();
+    // Windows searches the application directory before inherited PATH and can otherwise run system curl.
+    // Keep the actual updater beside the owned transport, without changing product download resolution.
+    let updater=bin.join(format!("taskq{}",std::env::consts::EXE_SUFFIX));
+    fs::copy(env!("CARGO_BIN_EXE_taskq"),&updater).unwrap();
     let path=std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))).unwrap();
-    let update=||Command::new(env!("CARGO_BIN_EXE_taskq")).arg("update").current_dir(&root)
+    let update=||Command::new(&updater).arg("update").current_dir(&root)
         .env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install).env("TASKQ_FIXTURE_ASSETS",&assets).env("PATH",&path)
         .env("TASKQ_INCIDENT_REPORTS","off").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").output().unwrap();
     fs::write(assets.join("SHA256SUMS"),format!("{}  {name}\n","0".repeat(64))).unwrap();
-    assert!(!update().status.success(),"invalid checksum must not activate");
+    let rejected=update();
+    assert!(assets.join("SHA256SUMS.served").is_file()&&assets.join(format!("{name}.served")).is_file(),
+        "update bypassed the fixture transport: {}",String::from_utf8_lossy(&rejected.stderr));
+    assert!(!rejected.status.success(),"invalid checksum must not activate");
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not in SHA256SUMS"),"wrong rejection: {}",String::from_utf8_lossy(&rejected.stderr));
     assert_eq!(fs::read_to_string(install.join("current")).unwrap(),"4.6.19");
     fs::write(assets.join("SHA256SUMS"),format!("{}  {name}\n",ring::digest::digest(&ring::digest::SHA256,&bytes).as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>())).unwrap();
     let updated=update();assert!(updated.status.success(),"update failed: {}",String::from_utf8_lossy(&updated.stderr));
     assert_eq!(fs::read_to_string(install.join("current")).unwrap().trim(),version);
     assert_eq!(fs::read_to_string(install.join("previous")).unwrap().trim(),"4.6.19");
-    assert!(install.join("releases").join(version).join(format!("taskq{}",std::env::consts::EXE_SUFFIX)).is_file());
+    let activated=install.join("releases").join(version).join(format!("taskq{}",std::env::consts::EXE_SUFFIX));
+    assert!(activated.is_file());
+    // macOS may re-sign the verified candidate with the owner's local signing identity (§ 8).
+    #[cfg(not(target_os="macos"))]
+    assert!(fs::read(&activated).unwrap()==bytes,"activated a different artifact");
     assert!(!install.join("telemetry.log/handover").exists());
     drop(owner.0.stdin.take());assert!(owner.0.wait().unwrap().success());
     // Shared export must retain the actual command receipts; no side store may bypass its bound.
