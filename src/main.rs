@@ -2222,7 +2222,10 @@ fn run(argv: &[String]) -> Res<()> {
                 println!("board: unknown (no project config found; no board read)");
             }
             let capture=coreq::telemetry::capture::qualify().map_err(|e|format!("telemetry: FAIL {e}"))?;
-            println!("telemetry: local capture committed {} observations",capture["committed"]);
+            match telemetry::handover() {
+                Some(reason)=>println!("telemetry: handover capture committed {} observations (running writer incompatible: {reason})",capture["committed"]),
+                None=>println!("telemetry: local capture committed {} observations",capture["committed"]),
+            }
             Ok(())
         }
         "update" => {

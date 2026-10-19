@@ -25,6 +25,28 @@ pub(crate) fn budget(install:&Path,peer:&str)->Result<coreq::telemetry::Budget,S
         total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES})
 }
 
+static HANDOVER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Process bootstrap. A running writer with another IPC budget (an older release's service) never blocks
+/// the new release: capture moves to a bounded handover store, so selftest, update and receipts complete (#1294).
+pub(crate) fn install_capture(install:&Path)->Result<coreq::telemetry::capture::Runtime,String> {
+    use coreq::telemetry::capture::Runtime;
+    let shared=budget(install,"telemetry.sqlite3").and_then(|budget|Runtime::install_bounded(
+        &install.join("telemetry.log/universal.sqlite3"),"taskq",crate::platform::VERSION,budget));
+    let incompatible=match shared {Err(e) if e.contains("quiesce")=>e,other=>return other};
+    // ponytail: the side store sits outside the 1 GiB installation budget (64 MiB, inside its reserve) and a process
+    // keeps it until restart; profile export reads only the shared store. Merge it on reattach if handovers get long.
+    let dir=std::path::absolute(install).map_err(|e|e.to_string())?.join("telemetry.log/handover");
+    std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
+    let runtime=Runtime::install_bounded(&dir.join("universal.sqlite3"),"taskq",crate::platform::VERSION,
+        coreq::telemetry::Budget {lock:dir.join("budget.lock"),peers:vec![],total:64<<20,reserved:0})?;
+    let _=HANDOVER.set(incompatible);
+    Ok(runtime)
+}
+
+/// Why this process captures into the handover store, if it does.
+pub(crate) fn handover()->Option<&'static str> {HANDOVER.get().map(String::as_str)}
+
 fn open(install: &Path) -> Result<Connection, String> {
     // Older release sweep keeps *.log entries, including directories; rollback must preserve DB and sidecars together.
     let dir = install.join("telemetry.log");

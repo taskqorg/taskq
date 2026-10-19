@@ -7,6 +7,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 Releases come from the `live` branch: a fast-forward of `live` to a `main` commit whose merge-queue CI passed tags and publishes; `main` pushes no longer release. The Mac development host installs local `<next patch>-dev.<epoch>` builds with `scripts/dev-install.sh`. Release builds use thin LTO and CI caches Rust dependencies. No board change.
 
+A running service with an older telemetry IPC budget no longer blocks the new release: its processes capture into a bounded handover store (`telemetry.log/handover`), so `taskq update` passes the candidate selftest and `service install`, Resume and Stop record their command receipts (#1295). Selftest and collector health name the handover; profile export reads only the shared store, and a process keeps the handover store until it restarts.
+
+Recovery for a host still on v4.6.19–v4.6.22 whose `taskq update` fails `update.smoke` with `telemetry IPC installation budget mismatch` (#1294): run `taskq update` again once this release is published; the candidate now hands over and activates. The released old CLI cannot change: until this release is published, stopping the old service by hand (`launchctl bootout` on Mac, ending its Scheduled Task on Windows) before `taskq update` remains the workaround. After activation the new CLI's Stop works even beside an incompatible writer. No board change.
+
 ## v4.6.22
 
 Telemetry keeps 30 days within a 1 GiB budget with half held in reserve; pruning and derived limits keep the service running instead of rejecting telemetry with `budget-exhausted` (#1278). Mac Drain and Full stop keep a durable hold (#1214), and after a reviewed Stop the owner can resume only selected local tasks (#1285). Mac activation follows [the repair handoff](docs/repair-1276.md); release publication does not prove activation.

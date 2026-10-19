@@ -191,6 +191,8 @@ fn resident_analysis_owner() {
     let budget=coreq::telemetry::Budget {lock:install.join("taskq-profile.lock"),
         peers:vec![dir.join("telemetry.sqlite3"),dir.join("telemetry.sqlite3-wal"),dir.join("telemetry.sqlite3-shm"),install.join("taskq.log")],
         total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES};
+    // 4.6.19 published this budget; a different identity makes newer clients mismatch (#1294).
+    let budget=if std::env::var_os("TASKQ_ANALYSIS_LEGACY_BUDGET").is_some() {coreq::telemetry::Budget {total:64<<20,reserved:(4<<20)+(64<<10)+(2<<20),..budget}} else {budget};
     let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&path,"fixtureq","1",budget).unwrap();
     println!("ANALYSIS_READY");std::io::stdout().flush().unwrap();
     let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();
@@ -329,4 +331,39 @@ fn migration_cli_uses_quiesced_owner_and_preserves_legacy_text() {
     let reader=coreq::telemetry::Reader::open(&path).unwrap();assert!(reader.import_cursor("taskq.legacy").unwrap().is_some());
     let page=reader.export_kinds(&["operation"],0,0,1024).unwrap();assert_eq!(page["events"].as_array().unwrap().len(),1);
     drop(reader);fs::remove_dir_all(root).unwrap();
+}
+
+// Chain (#1294): a running 4.6.19 writer with another IPC budget -> new release selftest and
+// receipt-bearing focus command still complete, so update and service install can hand over.
+#[test]
+fn incompatible_running_writer_hands_over_selftest_and_receipts() {
+    use std::io::BufRead;
+    let root=std::env::temp_dir().join(format!("qw-{}",std::process::id()));
+    if root.exists() {fs::remove_dir_all(&root).unwrap();}
+    let install=root.join("i");fs::create_dir_all(&install).unwrap();fs::create_dir_all(root.join(".taskq")).unwrap();
+    fs::write(root.join(".taskq/focus"),"off").unwrap();fs::write(root.join(".taskq/focus.paused"),"all").unwrap();
+    fs::write(install.join("hold"),"owner hold").unwrap();
+    struct Owner(std::process::Child);
+    impl Drop for Owner {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+    let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
+        .args(["--exact","resident_analysis_owner","--ignored","--nocapture"])
+        .env("TASKQ_ANALYSIS_OWNER",install.join("telemetry.log/universal.sqlite3")).env("TASKQ_ANALYSIS_LEGACY_BUDGET","1")
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
+    let mut ready=std::io::BufReader::new(owner.0.stdout.take().unwrap());
+    loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
+    let invoke=|command:&[&str]|Command::new(env!("CARGO_BIN_EXE_taskq")).args(command)
+        .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
+        .env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+    let selftest=invoke(&["selftest"]);
+    assert!(selftest.status.success(),"candidate selftest failed behind an incompatible writer: {}",String::from_utf8_lossy(&selftest.stderr));
+    assert!(String::from_utf8_lossy(&selftest.stdout).contains("telemetry: handover capture committed"));
+    let resumed=invoke(&["service","resume"]);
+    assert!(resumed.status.success(),"receipt unavailable behind an incompatible writer: {}",String::from_utf8_lossy(&resumed.stderr));
+    assert_eq!(fs::read_to_string(root.join(".taskq/focus")).unwrap(),"all");
+    assert_eq!(fs::read_to_string(install.join("hold")).unwrap(),"owner hold");
+    drop(owner.0.stdin.take());assert!(owner.0.wait().unwrap().success());
+    // The released store keeps the incompatible writer's budget; nothing was written into it by the handover.
+    assert!(coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3")).unwrap()
+        .export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().all(|r|r["observation"]["source"]!="command"));
+    fs::remove_dir_all(root).unwrap();
 }
