@@ -1,6 +1,6 @@
 # Test selection
 
-TaskQ applies [SpecQ testing](https://github.com/taskqorg/specq/blob/main/engineering/testing.md). Run `python3 scripts/check.py` from a checkout. `--base SHA` selects the entire change since that immutable base; CI sets CHECK_BASE to the PR base or push-before SHA. Unknown/unavailable impact broadens to the full relevant Rust suite. No changed-file list means full, never an empty passing gate.
+TaskQ applies [SpecQ testing](https://github.com/taskqorg/specq/blob/main/engineering/testing.md). Run `python3 scripts/check.py` from a checkout. `--base SHA` selects the entire change since that immutable base; CI sets CHECK_BASE to the merge-group base, PR base or push-before SHA. Unknown/unavailable impact broadens to the full relevant Rust suite. No changed-file list means full, never an empty passing gate.
 
 - Prose-only changes use documentation/whitespace checks. Root contracts and agent entrypoints count as shared behavior. Asset-checksum pages run their component checks.
 - Web-only changes retain the Rust state model and all cheap Node component/IPC checks. Rust, fixtures, dependencies, build, configuration or unknown files run `cargo test --locked` and offline selftest in a temporary installation, never the running host store. New and previously failing checks belong to the affected selection; unresolved failures block acceptance.

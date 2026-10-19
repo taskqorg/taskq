@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## Unreleased
+
+**Board — cutover required (§ 9):** GitHub PR publication saves `publish`, `enqueued` and private-fallback `rebased` entries; `publication-failed` counts failed CI and `requeue main-moved` preserves retries. Old readers fold these differently. Stop all old services and children, preserve each open result, configure public boards' main merge queue and required `merge_group` CI, then upgrade all hosts before resuming. Closed issues stay untouched. Private boards without a queue need Git and the clean, owned task worktree only for the fallback; public boards remain Git-free. Publication closes on the observed merge event with green merge-result CI, not queue admission.
+
 ## v4.6.18
 
 Stop retains each idle project's verified preparation while other projects drain. Repeated wakeups cannot reopen the barrier; active operators, native executions and unknown ownership still prevent stopping. No board change.

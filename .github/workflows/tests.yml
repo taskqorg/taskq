@@ -1,4 +1,4 @@
-# Selected checks share one command; tag/main releases require this exact-source result.
+# § 7: PR checks and merge_group CI; publication requires green CI on the merge result.
 name: tests
 on:
   workflow_dispatch:
@@ -6,10 +6,12 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  merge_group:
+    types: [checks_requested]
 permissions:
   contents: read
 env:
-  CHECK_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
+  CHECK_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
   CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}
 jobs:
   plan:

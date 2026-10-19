@@ -744,16 +744,33 @@ mod tests {
         let other = fs::OpenOptions::new().write(true).open(install.join("update.lock")).unwrap();
         assert!(other.try_lock().is_err(), "cleanup must not unlink the live update lock");
         #[cfg(unix)]
-        let inherited = unsafe { libc::fork() };
-        #[cfg(unix)]
-        {
-            assert!(inherited >= 0);
-            if inherited == 0 { unsafe { libc::poll(std::ptr::null_mut(), 0, 250); libc::_exit(0); } }
-        }
+        let child = {
+            let mut pipe = [0; 2];
+            assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+            let pid = unsafe { libc::fork() };
+            assert!(pid >= 0);
+            if pid == 0 {
+                // Keep the inherited descriptor alive using only async-signal-safe calls.
+                unsafe {
+                    libc::close(pipe[1]);
+                    let mut byte = 0u8;
+                    libc::read(pipe[0], (&mut byte as *mut u8).cast(), 1);
+                    libc::_exit(0);
+                }
+            }
+            unsafe { libc::close(pipe[0]); }
+            (pid, pipe[1])
+        };
         drop(lock);
         let released = other.try_lock();
         #[cfg(unix)]
-        unsafe { libc::waitpid(inherited, std::ptr::null_mut(), 0); }
+        unsafe {
+            libc::write(child.1, b"x".as_ptr().cast(), 1);
+            libc::close(child.1);
+            let mut status = 0;
+            assert_eq!(libc::waitpid(child.0, &mut status, 0), child.0);
+            assert_eq!(status, 0);
+        }
         released.unwrap();
         drop(other);
         fs::remove_dir_all(install).unwrap();

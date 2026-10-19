@@ -5,7 +5,7 @@ edition = "2024"
 publish = false
 
 [dependencies]
-coreq = { git = "https://github.com/taskqorg/coreq", rev = "8e6a9644976906271638569896b60949ed075ba3" }
+coreq = { git = "https://github.com/taskqorg/coreq", rev = "5fb10926bbca0fdb042342dc5dc6ac3cc4e5a56f" }
 tracing = "0.1"
 ring = "0.17"
 rusqlite = { version = "0.40.2", default-features = false, features = ["bundled", "cache"] }
@@ -47,7 +47,7 @@ strip = true
 lto = true
 
 [build-dependencies]
-coreq-instrument = { git = "https://github.com/taskqorg/coreq", rev = "8e6a9644976906271638569896b60949ed075ba3" }
+coreq-instrument = { git = "https://github.com/taskqorg/coreq", rev = "5fb10926bbca0fdb042342dc5dc6ac3cc4e5a56f" }
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry", "std"] }
