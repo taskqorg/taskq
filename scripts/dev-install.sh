@@ -2,7 +2,8 @@
 # taskq.md § 8 item 1: install a local development build of origin/main (or the ref given) on this Mac.
 # Version <next patch>-dev.<unix seconds> sorts above the release on main and below the next one, so `current`
 # moves forward (coreq `newer`) and the next `live` release replaces it. Builds in a detached worktree beside the
-# primary checkout, so local edits there are never touched. Install hands running children over (#894).
+# primary checkout, so local edits there are never touched. Under a running host service, install makes the build
+# current and waits until the service re-execs into it, handing running children over (#894, #1306).
 set -eu
 d=$HOME/.local/share/taskq
 repo=$(cd "$(dirname "$0")/.." && cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
@@ -16,9 +17,11 @@ v=$(python3 -c 'import re,time; m=re.search(r"^version = \"(\d+)\.(\d+)\.(\d+)\"
 prev=$(cat "$d/current")
 trap 'git checkout -q -- Cargo.toml Cargo.lock' EXIT
 sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
+npm ci --silent
 cargo build -q --release
 target/release/taskq selftest
 (cd "$(head -1 "$d/projects")" && "$w/target/release/taskq" service install)
-while read -r p; do touch "$p/.taskq/update"; done < "$d/projects"
+now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/service" 2>/dev/null || echo unknown)
+[ "$now" = "$v" ] || { echo "Error: host service runs $now, not $v; not installed" >&2; exit 1; }
 echo "installed $v from $(git rev-parse --short HEAD); was $prev"
 echo "rollback: echo $prev > $d/current, then run '$d/taskq service restart' in each project of $d/projects"

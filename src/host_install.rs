@@ -570,7 +570,40 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
 
 #[tracing::instrument(name="host.install",skip_all)]
 pub fn install_project(install:&Path,root:&Path)->Res<String> {
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
+    upgrade_running(install,std::time::Duration::from_secs(300))?;
     install_bound(install,root,None,None)
+}
+
+/// § 8 step 3 under a running host: a newer candidate becomes `current` (previous and rollback floor kept at the
+/// running release), then the host's update step re-execs into it and hands live children over. The attach that
+/// follows binds the root to the candidate; an older or equal candidate changes nothing here.
+fn upgrade_running(install:&Path,budget:std::time::Duration)->Res<()> {
+    let tool=crate::platform::tool(install);
+    let running={
+        let _update=crate::platform::update_lock(install)?;
+        crate::platform::transition_ready(install)?;
+        if native_owner(install,None)?.is_none() {return Ok(());}
+        let service=service_status(install);
+        let running=service["version"].as_str().ok_or("running host version unknown")?.to_string();
+        if !coreq::update::newer(tool.version,&running) {return Ok(());}
+        if service["fresh"]!=true||service["install_protocol"]!=1 {return Err("running host has no compatible installation protocol; update/reconcile it before installing a newer build".into());}
+        if tool.current().as_deref()!=Some(tool.version) {
+            crate::platform::prepare_install(&tool)?;
+            crate::platform::activate_install(&tool)?;
+        }
+        let floor=match fs::read_to_string(install.join("rollback-floor")) {Ok(v)=>v.trim().to_string(),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>running.clone(),Err(e)=>return Err(e.to_string())};
+        coreq::launcher::set_rollback_floor(&tool,&floor)?;
+        coreq::write_durable(&install.join("update"),"")?;
+        running
+    };
+    let until=Instant::now()+budget;
+    loop {
+        let service=service_status(install);
+        if service["fresh"]==true&&service["version"]==tool.version {return Ok(());}
+        if Instant::now()>=until {return Err(format!("current is {}; host still runs {running} (an active turn defers the handover); repeat service install",tool.version));}
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
 }
 
 fn receive_initial(install:&Path,p:&mut Pending)->Res<()> {
@@ -1015,6 +1048,33 @@ mod tests {
         assert!(restore_files(&install,&directory(&install),&baseline).unwrap_err().contains("checksum"));
         assert_eq!(fs::read(&paths[0]).unwrap(),b"current-launcher");
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
+    }
+    // #1306: a running older host gets the candidate as current and is asked to update; an equal one stays attach-only.
+    #[test]
+    fn running_older_host_moves_current_while_attach_only_changes_nothing() {
+        let base=std::env::temp_dir().join(format!("taskq-upgrade-running-{}",crate::runtime::uuid()));let install=base.join("install");
+        fs::create_dir_all(install.join("releases/0.0.1")).unwrap();
+        let tool=crate::platform::tool(&install);
+        fs::write(tool.release_exe("0.0.1"),"invented-release").unwrap();fs::write(install.join("current"),"0.0.1").unwrap();
+        let mut child=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::stop_child","--ignored"])
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().unwrap();
+        let native=coreq::process::identity(child.id()).unwrap().unwrap();
+        let record=|version:&str| fs::write(install.join("service"),json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"invented-host",
+            "at":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),"version":version,"install_protocol":1}).to_string()).unwrap();
+        record(crate::platform::VERSION);
+        upgrade_running(&install,std::time::Duration::from_secs(1)).unwrap();
+        assert_eq!(tool.current().as_deref(),Some("0.0.1"),"attach-only: same version leaves current");
+        assert!(!install.join("update").exists()&&!install.join("rollback-floor").exists());
+        record("0.0.1");
+        assert!(upgrade_running(&install,std::time::Duration::from_secs(1)).unwrap_err().contains("host still runs 0.0.1"),"no handover is no success");
+        assert_eq!(tool.current().as_deref(),Some(crate::platform::VERSION));
+        assert_eq!(fs::read_to_string(install.join("previous")).unwrap(),"0.0.1");
+        assert_eq!(fs::read_to_string(install.join("rollback-floor")).unwrap(),"0.0.1");
+        assert!(fs::remove_file(install.join("update")).is_ok(),"the host update step is asked");
+        record(crate::platform::VERSION);
+        upgrade_running(&install,std::time::Duration::from_secs(1)).unwrap();
+        child.kill().unwrap();child.wait().unwrap();
+        fs::remove_dir_all(base).unwrap();
     }
     // H-A5: an interrupted pre-effect snapshot resumes, while an unknown file is preserved and refused.
     #[test]
