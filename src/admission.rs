@@ -98,6 +98,10 @@ pub fn hold(install: &Path) -> Option<String> {
     match fs::read_to_string(install.join("hold")) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => Some(format!("hold file unreadable ({e})")),
+        Ok(t) if t.trim_start().starts_with('{') => {
+            let value=crate::lifecycle::stop_hold_status(install);
+            Some(if value["state"]=="held" {format!("{} stop {}; reviewed recovery required",value["mode"].as_str().unwrap_or("unknown"),value["id"].as_str().unwrap_or("unknown"))}else{"Stop hold unknown; recovery required".into()})
+        },
         Ok(t) => Some(t.lines().next().filter(|l| !l.trim().is_empty()).unwrap_or("emergency hold").to_string()),
     }
 }

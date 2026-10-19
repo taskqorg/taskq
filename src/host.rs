@@ -590,6 +590,7 @@ struct ServiceRecord {
     schema:u8,pid:u32,started:String,instance:String,at:u64,version:String,
     #[serde(default)] restart_protocol:Option<u8>,
     #[serde(default)] stop_protocol:Option<u8>,
+    #[serde(default,skip_serializing_if="Option::is_none")] full_stop_protocol:Option<u8>,
     #[serde(default)] uninstall_protocol:Option<u8>,
     #[serde(default)] install_protocol:Option<u8>,
 }
@@ -611,14 +612,14 @@ fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
     }
     let r:ServiceRecord=serde_json::from_str(&text).map_err(|_|"host service owner unknown: malformed record")?;
     if r.schema!=1||r.pid==0||r.pid>i32::MAX as u32||r.started.is_empty()||r.started.len()>128
-        ||!r.started.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')||!crate::resources::id(&r.instance)||r.version.is_empty()||r.version.len()>80||r.restart_protocol.is_some_and(|v|v!=1)||r.stop_protocol.is_some_and(|v|v!=1)||r.uninstall_protocol.is_some_and(|v|v!=1)||r.install_protocol.is_some_and(|v|v!=1) {
+        ||!r.started.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-')||!crate::resources::id(&r.instance)||r.version.is_empty()||r.version.len()>80||r.restart_protocol.is_some_and(|v|v!=1)||r.stop_protocol.is_some_and(|v|v!=1)||r.full_stop_protocol.is_some_and(|v|v!=1)||r.uninstall_protocol.is_some_and(|v|v!=1)||r.install_protocol.is_some_and(|v|v!=1) {
         return Err("host service owner unknown: unsupported record; kept".into());
     }
     Ok(Some(OwnerRecord::Current(r)))
 }
 
 fn publish_service(install:&Path,native:&coreq::process::Identity,instance:&str)->Res<()> {
-    let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),restart_protocol:Some(1),stop_protocol:Some(1),uninstall_protocol:Some(1),install_protocol:Some(1)};
+    let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),restart_protocol:Some(1),stop_protocol:Some(1),full_stop_protocol:cfg!(target_os="macos").then_some(1),uninstall_protocol:Some(1),install_protocol:Some(1)};
     crate::platform::write_atomic(&install.join("service"),&(serde_json::to_string(&record).map_err(|e|e.to_string())?+"\n"))
 }
 
@@ -644,7 +645,7 @@ pub fn service_status(install:&Path)->Value {
         let age=wall()?.checked_sub(r.at);
         let fresh=live&&age.is_some_and(|age|age<=60);
         Ok(json!({"state":if live {"running"}else{"exited"},"pid":r.pid,"started":r.started,"instance":r.instance,"version":r.version,
-            "at":r.at,"age_seconds":age,"fresh":fresh,"restart_protocol":r.restart_protocol,"stop_protocol":r.stop_protocol,"uninstall_protocol":r.uninstall_protocol,"install_protocol":r.install_protocol,"reason":if !live {Some("recorded host process exited; worker outcomes remain separate")}else if !fresh {Some("host observation stale or clock unknown")}else{None}}))
+            "at":r.at,"age_seconds":age,"fresh":fresh,"restart_protocol":r.restart_protocol,"stop_protocol":r.stop_protocol,"full_stop_protocol":r.full_stop_protocol,"uninstall_protocol":r.uninstall_protocol,"install_protocol":r.install_protocol,"reason":if !live {Some("recorded host process exited; worker outcomes remain separate")}else if !fresh {Some("host observation stale or clock unknown")}else{None}}))
     },|_|"owner-unknown");
     result.unwrap_or_else(|reason|json!({"state":"unknown","fresh":false,"reason":reason}))
 }

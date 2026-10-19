@@ -13,10 +13,15 @@ impl Action {
     fn key(self)->&'static str {match self {Self::Restart=>"local_restart",Self::Stop=>"local_stop",Self::Uninstall=>"local_uninstall"}}
     pub fn title(self)->&'static str {match self {Self::Restart=>"Restart",Self::Stop=>"Stop",Self::Uninstall=>"Uninstall"}}
 }
+#[derive(Clone,Copy,Debug,Default,Deserialize,Serialize,PartialEq)]
+#[serde(rename_all="lowercase")]
+pub enum StopMode {#[default] Drain,Full}
+impl StopMode {fn drain(&self)->bool {*self==Self::Drain}}
+
 #[derive(Clone,Debug,Deserialize,Serialize,PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Request {id:String,instance:String,roots:Vec<PathBuf>,issued_at:u64,expires_at:u64,#[serde(default,skip_serializing_if="Action::restart")] action:Action,
-    #[serde(default,skip_serializing_if="Option::is_none")] project:Option<PathBuf>}
+    #[serde(default,skip_serializing_if="Option::is_none")] project:Option<PathBuf>,#[serde(default,skip_serializing_if="StopMode::drain")] mode:StopMode}
 impl Request {
     fn stops(&self)->bool {self.action==Action::Stop||self.action==Action::Uninstall&&(self.project.is_none()||self.roots.len()==1)}
     fn after(&self)->Vec<PathBuf> {self.roots.iter().filter(|root|Some(*root)!=self.project.as_ref()).cloned().collect()}
@@ -39,7 +44,7 @@ fn scope(install:&Path)->Res<Vec<PathBuf>> {host::projects(install)}
 fn typed(value:&Value)->Res<Request> {
     if serde_json::to_vec(value).map_err(|e|e.to_string())?.len()>16<<10 {return Err("lifecycle request too large".into());}
     let request:Request=serde_json::from_value(value.clone()).map_err(|_|"invalid lifecycle request")?;
-    if !resources::id(&request.id)||!resources::id(&request.instance)||request.expires_at<=request.issued_at
+    if request.action!=Action::Stop && request.mode!=StopMode::Drain || !resources::id(&request.id)||!resources::id(&request.instance)||request.expires_at<=request.issued_at
         ||request.expires_at-request.issued_at>300||request.roots.iter().any(|p|!p.is_absolute())
         ||request.project.as_ref().is_some_and(|root|request.action!=Action::Uninstall||!request.roots.contains(root))
         ||request.roots.iter().cloned().collect::<BTreeSet<_>>().into_iter().collect::<Vec<_>>()!=request.roots {
@@ -118,6 +123,11 @@ pub fn uninstall_guard(install:&Path,id:&str,root:&Path)->Res<()> {
 /// Construct a review, not a command. Old PID-only/protocol-less services cannot take this operation.
 pub fn review(install:&Path,id:&str)->Res<Value> {review_action(install,id,Action::Restart)}
 pub fn stop_review(install:&Path,id:&str)->Res<Value> {review_action(install,id,Action::Stop)}
+pub fn full_stop_review(install:&Path,id:&str)->Res<Value> {
+    let mut value=stop_review(install,id)?;
+    if !cfg!(target_os="macos") || host::service_status(install)["full_stop_protocol"]!=1 {return Err("Full stop unavailable on this host".into());}
+    value["mode"]=json!("full");Ok(value)
+}
 pub fn uninstall_review(install:&Path,id:&str,project:Option<&Path>)->Res<Value> {
     let mut value=review_action(install,id,Action::Uninstall)?;
     if let Some(project)=project {value["project"]=json!(project.canonicalize().map_err(|e|e.to_string())?);}
@@ -129,11 +139,11 @@ fn review_action(install:&Path,id:&str,action:Action)->Res<Value> {
     if action==Action::Stop {if service["stop_protocol"]!=1 {return Err("host Stop protocol unavailable; check service status".into());}crate::host_control::revision(install)?;}
     if action==Action::Uninstall&&service["uninstall_protocol"]!=1 {return Err("host Uninstall protocol unavailable; check service status".into());}
     let at=now()?;
-    serde_json::to_value(Request {id:id.into(),instance:service["instance"].as_str().ok_or("host generation unknown")?.into(),roots:scope(install)?,issued_at:at,expires_at:at+300,action,project:None}).map_err(|e|e.to_string())
+    serde_json::to_value(Request {id:id.into(),instance:service["instance"].as_str().ok_or("host generation unknown")?.into(),roots:scope(install)?,issued_at:at,expires_at:at+300,action,project:None,mode:StopMode::Drain}).map_err(|e|e.to_string())
 }
 fn public(op:&resources::Op)->Value {
     let mut value=op.receipt.clone();value["scope"]=json!("host");if let Some(bound)=binding(op) {value["projects"]=bound["request"]["roots"].clone();value["origin_instance"]=bound["request"]["instance"].clone();value["action"]=bound["request"].get("action").cloned().unwrap_or(json!("restart"));if let Some(root)=bound["request"].get("project") {value["scope"]=json!("project");value["project"]=root.clone();}}
-    if value["action"]=="stop" {value["restart_condition"]=json!(if cfg!(target_os="linux") {"explicit service install or user-manager startup"}else{"next logon or explicit service install"});}value
+    if value["action"]=="stop" {value["mode"]=binding(op).unwrap()["request"].get("mode").cloned().unwrap_or(json!("drain"));value["restart_condition"]=json!(if cfg!(target_os="linux") {"explicit service install or user-manager startup"}else{"next logon or explicit service install"});}value
 }
 fn required(op:&mut resources::Op,command:&CommandReceipt,phase:&str)->Res<()> {
     if let Err(error)=command.checkpoint(phase) {
@@ -193,17 +203,59 @@ fn submit_inner(install:&Path,value:&Value)->Res<Value> {
         let service=host::service_status(install);
         if service["state"]!="running"||service["fresh"]!=true||service["restart_protocol"]!=1||service["instance"]!=request.instance
             ||(request.action==Action::Stop&&service["stop_protocol"]!=1)||(request.action==Action::Uninstall&&service["uninstall_protocol"]!=1)||scope(install)?!=request.roots {return Err("host or project scope changed; review lifecycle action again".into());}
+        if request.mode==StopMode::Full && (!cfg!(target_os="macos") || service["full_stop_protocol"]!=1) {return Err("Full stop capability changed; review again".into());}
         if request.stops() {crate::host_control::revision(install)?;}
         let command=CommandReceipt::current()?;command.checkpoint("received")?;
         let op=resources::Op {bound:json!({(request.action.key()):{"request":request,"command":command.encode()}}),
             receipt:json!({"id":request.id,"state":"queued","received_receipt":command.event_id("received")?}),
             expires_at:request.expires_at,saved_at:Some(at),writing:false,sent:true};
+        if cfg!(target_os="macos") && request.action==Action::Stop {save_stop_hold(install,&request)?;}
         let result=public(&op);state.ops.insert(request.id.clone(),op);Ok(result)
     })?;
     if let Err(error)=crate::platform::write_atomic(&install.join("poke"),"") {
         let mut result=result;result["reason"]=json!(format!("restart saved; host notification unknown: {error}"));return Ok(result);
     }
     Ok(result)
+}
+
+/// R11: the existing hold is a safety interlock, not task state or exit evidence.
+fn save_stop_hold(install:&Path,request:&Request)->Res<()> {
+    let _hold=coreq::file_lock::try_lock(&install.join("admission.lock")).map_err(|e|format!("hold busy: {e}"))?;
+    let path=install.join("hold");
+    let previous=match fs::read_to_string(&path) {Ok(text)=>Some(text),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>None,Err(e)=>return Err(format!("hold unreadable: {e}"))};
+    if let Some(text)=&previous {
+        if let Ok(value)=serde_json::from_str::<Value>(text) {
+            if let Some(prior)=value.get("taskq_stop") {
+                if typed(prior)?==*request {return Ok(());}
+                return Err("another reviewed Stop hold remains; reconcile it before another Stop".into());
+            }
+        }
+    }
+    // Old binaries must not bypass operator cancellation after an automatic rollback.
+    coreq::launcher::set_rollback_floor(&crate::platform::tool(install),crate::platform::VERSION)?;
+    crate::platform::write_atomic(&path,&json!({"taskq_stop":request,"previous_hold":previous}).to_string())?;
+    if stop_hold(install)?.as_ref()!=Some(request) {return Err("Stop hold readback differs; cancellation unknown".into());}
+    Ok(())
+}
+fn stop_hold(install:&Path)->Res<Option<Request>> {
+    let text=match fs::read_to_string(install.join("hold")) {Ok(t)=>t,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),Err(e)=>return Err(format!("hold unreadable: {e}"))};
+    if !text.trim_start().starts_with('{') {return Ok(None);}
+    let value:Value=serde_json::from_str(&text).map_err(|_|"Stop hold corrupt; ownership unknown")?;
+    let request=typed(value.get("taskq_stop").ok_or("Stop hold unsupported; ownership unknown")?)?;
+    if request.action!=Action::Stop {return Err("Stop hold action invalid".into());}
+    Ok(Some(request))
+}
+pub fn full_stop(install:&Path,root:&Path)->Res<bool> {
+    Ok(stop_hold(install)?.is_some_and(|r|r.mode==StopMode::Full && r.roots.iter().any(|p|p==root)))
+}
+pub fn stop_hold_status(install:&Path)->Value {
+    match stop_hold(install) {
+        Ok(Some(r))=>json!({"id":r.id,"mode":r.mode,"roots":r.roots,"state":"held"}),
+        Ok(None)=>Value::Null,Err(reason)=>json!({"state":"unknown","reason":reason}),
+    }
+}
+pub fn release_guard(install:&Path)->Res<()> {
+    if stop_hold(install)?.is_some() {return Err("reviewed Stop hold requires selective recovery (#1285); ordinary release cannot clear it".into());}Ok(())
 }
 
 /// The coordinator already latched all project preparation before this required receipt.
@@ -423,6 +475,7 @@ mod tests {
         let install=dir.join("install");let root=dir.join("project");
         fs::create_dir_all(&install).unwrap();fs::create_dir_all(&root).unwrap();
         fs::write(install.join("projects"),format!("{}\n",root.canonicalize().unwrap().display())).unwrap();
+        fs::write(install.join("current"),crate::platform::VERSION).unwrap();
         fs::write(install.join("host.json"),"{}").unwrap();fs::write(root.join("taskq.json"),r#"{"repo":"fixture/project"}"#).unwrap();
         publish(&install,"original");(dir,install,root)
     }
@@ -436,6 +489,25 @@ mod tests {
     fn publish(install:&Path,instance:&str) {
         let process=coreq::process::identity(std::process::id()).unwrap().unwrap();
         fs::write(install.join("service"),json!({"schema":1,"pid":process.pid,"started":process.started,"instance":instance,"at":now().unwrap(),"version":"fixture","restart_protocol":1,"stop_protocol":1,"uninstall_protocol":1}).to_string()).unwrap();
+    }
+
+    // R11/E2: a durable scoped intent never becomes an exit receipt or a broad release.
+    #[test]
+    fn full_stop_hold_retains_scope_and_refuses_payload_replacement() {
+        let (dir,install,root,other)=fixture_with_other();
+        let at=now().unwrap();
+        let value=json!({"id":"full-stop","instance":"original","roots":[root],"issued_at":at,"expires_at":at+300,"action":"stop","mode":"full"});
+        let request=typed(&value).unwrap();
+        save_stop_hold(&install,&request).unwrap();
+        assert!(full_stop(&install,&root).unwrap());assert!(!full_stop(&install,&other).unwrap());
+        assert!(release_guard(&install).is_err());
+        let saved=fs::read(install.join("hold")).unwrap();save_stop_hold(&install,&request).unwrap();
+        assert_eq!(fs::read(install.join("hold")).unwrap(),saved,"same request remains idempotent");
+        let mut changed=request.clone();changed.mode=StopMode::Drain;
+        assert!(save_stop_hold(&install,&changed).is_err());assert_eq!(fs::read(install.join("hold")).unwrap(),saved);
+        assert!(receipt(&install,"full-stop").unwrap().is_none(),"local intent cannot fabricate a lifecycle exit receipt");
+        fs::write(install.join("hold"),"{broken").unwrap();assert!(full_stop(&install,&root).is_err());assert!(release_guard(&install).is_err());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     // H-A5: a non-last root remains registered until one drained thread has an applied receipt; a crash after

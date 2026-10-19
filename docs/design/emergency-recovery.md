@@ -1,6 +1,6 @@
 # Emergency stop and recovery
 
-Required capability approved. E1–E5 describe the mechanism; [taskq.md](../../taskq.md) § 3 and § 4 implement the host hold, liveness reconciliation and fenced recovery (`taskq service hold|release|recover`). The tray control, graceful/force stop, per-project held entries and selective resume remain proposals. Product entry: MP6. Pause only blocks new admission; service restart is not recovery.
+Required capability approved. E1–E5 describe the mechanism; [taskq.md](../../taskq.md) § 3 and § 4 implement the host hold, liveness reconciliation and fenced recovery (`taskq service hold|release|recover`). Drain and Full stop are approved Mac modes. Per-project held entries and selective resume are delivered separately by #1285. Product entry: MP6. Pause only blocks new admission; service restart is not recovery.
 
 ## E1 Scope and review
 
@@ -11,12 +11,15 @@ Required capability approved. E1–E5 describe the mechanism; [taskq.md](../../t
 
 ## E2 Durable stop
 
-- Persist a host-owned emergency admission interlock with explicit per-project held entries before terminating work. It survives service restart, logout and app reopening; ordinary Play cannot clear it.
-- Proposed R1 exception: local interlock stores host admission safety state and operation identity, not a second task queue. Board remains task-state authority.
-- Request graceful cancellation where supported; expose unresolved attempts and a separate Force stop action. Force requires verified ownership and warns that unsaved editor buffers may be lost. Grace timeout is adapter-specific, measured and shown; no hidden universal timeout.
+- Drain holds new admission and lets current work finish. Full stop immediately requests cancellation of all owned worker, reviewer and operator executions in the reviewed local scope, including while the board is offline. Both retain a durable host hold; Pause remains separate.
+- The existing host lifecycle request binds the named host generation, registered roots and command identity. Full stop requires its advertised capability. Cancellation is attempted through retained native handles, never inferred from status age. The daemon remains available while termination or board reconciliation is unresolved.
+
+- Persist the Stop request identity and reviewed roots in the existing host hold before terminating work. Per-project recovery entries follow #1285. It survives service restart, logout and app reopening; ordinary Play cannot clear it.
+- R1 host-hold exception: the interlock stores admission safety scope and operation identity, not a second task queue. Board remains task-state authority.
+- Full stop uses each existing native cancellation adapter. Unsupported or failed cancellation stays unknown; no generic executable-name kill or extra timeout is added. The review warns that unsaved editor buffers may be lost.
 - State per attempt: requested → stopping → stopped / failed / unknown. Only observed process/session termination proves stopped. Unreachable runtime stays unknown and blocks relaunch.
 - Preserve worktrees, diffs, untracked files, logs and session references. No cleanup, reset or stash as an implicit side effect. Disk writes survive; memory-only edits and interrupted external effects are not guaranteed recoverable.
-- Offline board: stop local execution and keep the interlock. Reconcile task events when reachable; do not report board retirement or resume early.
+- Offline board: Full stop may cancel owned execution before task retirement (R11); keep the interlock. Reconcile task events when reachable; do not report board retirement or resume early.
 - Multi-host safety requires every service to honor unresolved executions; lease expiry never permits another host to claim. Incompatible old services must be drained/stopped before cutover. If board communication is unavailable, local stop cannot promise a global stop. Show that limit explicitly.
 
 ## E3 Recovery
@@ -34,7 +37,7 @@ Recovery is not rollback. Successful remote writes remain successful; uncertain 
 
 - Amend R1 (host interlock), R11 (explicit emergency termination), §2 (retirement/held transitions and late-output fencing), §4 (service admission/recovery) in the implementation deliverable.
 - Check worker, reviewer and operator paths, including codex-app handoffs. Termination support differs by runtime; unsupported control must remain visible.
-- Define interlock authorization, atomic persistence, startup ordering and minimum compatible service version. Older services must not ignore a held host after rollback/update.
+- Stop submission requires the owner context and exact fresh host generation/roots; Full stop requires full_stop_protocol 1. Persist the hold atomically and pin the existing launcher rollback floor to this capability-bearing version before cancellation. Ordinary hold/release refuses to overwrite or clear a reviewed Stop. Older/manual binaries are unsupported; never downgrade while the hold remains.
 - Choose board event/projection representation without adding an invented task state in the prototype. Emergency held is an execution condition; task counts retain their defined lifecycle semantics.
 
 ## E5 Acceptance
@@ -53,4 +56,4 @@ Recovery is not rollback. Successful remote writes remain successful; uncertain 
 
 Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bound. `taskq.md` keeps the decision and links here; this text keeps the same authority (R8, R13).
 
-- Pause: `service pause` (and the tray's) saves the focus to `focus.paused` and writes `off`; resume restores it. Without a saved focus resume fails and names the labels of open tasks: never `all` by default. Emergency ([E1–E5](emergency-recovery.md)): under the § 3 hold the loop still reaps, stops replaced children and beats. A failed liveness read in step 1 keeps the child: `status.json` `kids` `live` `unknown` with its `reason` (else `running`), never `gone`; `hold` names the reason. `service recover` (only under a hold) lists each `doing`/`review` attempt of this host with its liveness from a `status.json` at most 60 s old (else all unknown); a child read running or absent gets the op `gone attempt <id>` with `--revision` (the task's) and `--op-id recover.<N>.<id>`; unknown gets none and blocks relaunch. `--apply` writes the ops through the § 5 dispatcher, one receipt each; step 2 stops fenced children; `gone` never confirms termination. Removing the admission hold still waits for every prior execution release before admitting by focus. Targets: tray control, graceful/force stop, per-project entries, selective resume (E1–E3).
+- Pause: `service pause` (and the tray's) saves the focus to `focus.paused` and writes `off`; resume restores it. Without a saved focus resume fails and names the labels of open tasks: never `all` by default. Emergency ([E1–E5](emergency-recovery.md)): under the § 3 hold the loop still reaps, stops replaced children and beats. A failed liveness read in step 1 keeps the child: `status.json` `kids` `live` `unknown` with its `reason` (else `running`), never `gone`; `hold` names the reason. `service recover` (only under a hold) lists each `doing`/`review` attempt of this host with its liveness from a `status.json` at most 60 s old (else all unknown); a child read running or absent gets the op `gone attempt <id>` with `--revision` (the task's) and `--op-id recover.<N>.<id>`; unknown gets none and blocks relaunch. `--apply` writes the ops through the § 5 dispatcher, one receipt each; step 2 stops fenced children; `gone` never confirms termination. Removing the admission hold still waits for every prior execution release before admitting by focus. Drain/Full stop retain this hold; per-project entries and selective resume follow #1285.
