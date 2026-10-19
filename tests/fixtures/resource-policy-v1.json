@@ -38,6 +38,17 @@
       ], "completeness": "partial"
     }]
   },
+  "overlay_projection": {
+    "schema": "taskq.resources/1", "observed_at": 111,
+    "targets": [{
+      "target": {"installation_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "generation": 1, "project_id": "project-1", "runtime_id": "codex"},
+      "service_version": "4.6.21",
+      "supported": [{"policy_schema": "taskq.project-limits/1", "modes": [], "fields": ["runtime_limit"], "scopes": ["runtime"]}],
+      "current_revision": "1111111111111111111111111111111111111111111111111111111111111111", "effective_revision": "1111111111111111111111111111111111111111111111111111111111111111",
+      "current_policy": {"runtime_limit": 1}, "effective_policy": {"runtime_limit": 1},
+      "runtime_usage": [], "sample": null, "blockers": [], "completeness": "complete"
+    }]
+  },
   "traces": [
     {"name": "review-confirm and saved versus effective", "steps": [
       {"action": "confirm", "expect": "draft"}, {"action": "review", "expect": "reviewed"},

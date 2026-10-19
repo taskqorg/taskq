@@ -108,16 +108,16 @@ impl Policy {
         Ok(ring::digest::digest(&ring::digest::SHA256,&serde_json::to_vec(&json!([self.me,self.cap.json()])).map_err(|e|e.to_string())?).as_ref().iter().map(|v|format!("{v:02x}")).collect())
     }
 
-    /// The revision a project's remote overlay operation names: the host revision plus that root's overlay entry,
-    /// whose `op` makes edit-and-revert a new revision. Without an entry it is the host revision.
-    pub fn project_revision(&self, root: &Path) -> Res<String> {
-        let host = self.revision()?;
-        let Some((_, entry)) = self.overlay(root) else { return Ok(host) };
-        Ok(ring::digest::digest(&ring::digest::SHA256,&serde_json::to_vec(&json!([host, entry])).map_err(|e|e.to_string())?).as_ref().iter().map(|v|format!("{v:02x}")).collect())
+    /// The revision a project's remote overlay operation names: the host revision, that root's overlay entry (whose
+    /// `op` makes edit-and-revert a new revision) and the effective project limits, so a taskq.json `limits` edit
+    /// is a new revision too. `v` is the root's taskq.json.
+    pub fn project_revision(&self, root: &Path, v: &Value) -> Res<String> {
+        let parts = json!([self.revision()?, self.overlay(root).map(|(_, e)| e), self.project_limits(root, v)?]);
+        Ok(ring::digest::digest(&ring::digest::SHA256,&serde_json::to_vec(&parts).map_err(|e|e.to_string())?).as_ref().iter().map(|v|format!("{v:02x}")).collect())
     }
 
     /// The `projects` entry of a registered root: its exact spelling, else the same canonical path.
-    fn overlay(&self, root: &Path) -> Option<(&String, &Value)> {
+    pub(crate) fn overlay(&self, root: &Path) -> Option<(&String, &Value)> {
         let m = self.raw["projects"].as_object()?;
         m.iter().find(|(k, _)| Path::new(k.as_str()) == root)
             .or_else(|| { let c = fs::canonicalize(root).ok()?; m.iter().find(|(k, _)| fs::canonicalize(k.as_str()).is_ok_and(|x| x == c)) })
@@ -267,7 +267,8 @@ pub(crate) fn write_project_limit(install:&Path, root:&Path, rt:&str, limit:Opti
     let Ok(original)=fs::read_to_string(&path) else {return Ok(Err("conflict"))};
     let hostname=crate::hostname();
     let Ok(old)=serde_json::from_str(&original).map_err(|e|e.to_string()).and_then(|v|Policy::parse(v,&hostname)) else {return Ok(Err("conflict"))};
-    if old.project_revision(root)?!=expect {return Ok(Err("conflict"));}
+    let Ok((_,project))=crate::load(root) else {return Ok(Err("conflict"))};
+    if old.project_revision(root,&project)?!=expect {return Ok(Err("conflict"));}
     let key=old.overlay(root).map_or_else(||root.display().to_string(),|(k,_)|k.clone());
     let mut next=old.raw.clone();
     if next["projects"].is_null() {next["projects"]=json!({});}
@@ -1995,15 +1996,17 @@ mod tests {
         assert_eq!(p.project(Path::new("/b"), &json!({})).unwrap().limits["codex"], 5, "another root untouched");
         assert_eq!(p.project(Path::new("/a"), &json!({})).unwrap().limits["claude"], 5, "another runtime untouched");
         assert_eq!(p.project_limits(Path::new("/a"), &json!({})).unwrap(), BTreeMap::from([("codex".to_string(), 4)]));
-        assert_eq!(base.project_revision(Path::new("/a")).unwrap(), base.revision().unwrap());
-        assert_eq!(p.project_revision(Path::new("/b")).unwrap(), base.revision().unwrap());
-        let changed = p.project_revision(Path::new("/a")).unwrap();
-        assert_ne!(changed, base.revision().unwrap());
+        let e = json!({});
+        assert_eq!(base.project_revision(Path::new("/a"), &e).unwrap(), base.project_revision(Path::new("/b"), &e).unwrap());
+        assert_eq!(p.project_revision(Path::new("/b"), &e).unwrap(), base.project_revision(Path::new("/b"), &e).unwrap());
+        let changed = p.project_revision(Path::new("/a"), &e).unwrap();
+        assert_ne!(changed, base.project_revision(Path::new("/a"), &e).unwrap());
+        assert_ne!(p.project_revision(Path::new("/a"), &json!({"limits": {"codex": 1}})).unwrap(), changed, "a taskq.json limits edit is a new revision");
         v["projects"]["/a"] = json!({"limits": {}, "op": "op-2"});
         let restored = Policy::parse(v.clone(), "invented").unwrap();
         assert_eq!(restored.project(Path::new("/a"), &json!({})).unwrap().limits["codex"], 5);
-        let reverted = restored.project_revision(Path::new("/a")).unwrap();
-        assert!(reverted != changed && reverted != base.revision().unwrap(), "edit-and-revert is a new revision");
+        let reverted = restored.project_revision(Path::new("/a"), &e).unwrap();
+        assert!(reverted != changed && reverted != base.project_revision(Path::new("/a"), &e).unwrap(), "edit-and-revert is a new revision");
         for bad in [json!({"/a": {"limits": {"codex": 6}}}), json!({"/a": {"limits": {"other": 1}}}), json!({"/a": {"limits": {"codex": -1}}}),
             json!({"/a": {"limits": {}, "admission": {}}}), json!({"/a": {"op": "x"}}), json!({"/a": {"limits": {}, "op": "bad id"}}), json!(["/a"])] {
             let mut v = host.clone(); v["projects"] = bad.clone();

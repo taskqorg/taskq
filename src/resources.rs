@@ -210,9 +210,10 @@ const OVERLAY: &str = "taskq.project-limits/1";
 fn policy(install:&Path, root: &Path) -> Res<(Value, Option<String>)> {
     if host_authority(install) {
         let host=crate::host::Policy::read(install)?;
+        let project=crate::load(root)?.1;
         let mut v=host.cap.json();
-        v["project_limits"]=json!(host.project_limits(root,&crate::load(root)?.1)?);
-        return Ok((v,Some(host.project_revision(root)?)));
+        v["project_limits"]=json!(host.project_limits(root,&project)?);
+        return Ok((v,Some(host.project_revision(root,&project)?)));
     }
     let (cfg, v) = crate::load(root)?;
     Ok((crate::service::capacity(&v, &cfg.me)?.json(),None))
@@ -449,7 +450,7 @@ fn decide(install: &Path, s: &mut State, v: &Value, conn: Conn, clock: bool, now
             Err(x) => return Ok(Some(format!("resources: {op} unknown: {x}"))),
         };
         let wake = crate::platform::write_atomic(&install.join("poke"), "");
-        let (Ok((saved, Some(rev))), Ok(want)) = (policy(install, &root), written.project_revision(&root)) else {
+        let (Ok((saved, Some(rev))), Ok(want)) = (policy(install, &root), crate::load(&root).and_then(|(_,v)|written.project_revision(&root,&v))) else {
             return Ok(Some(format!("resources: {op} unknown: readback failed")));
         };
         if rev != want {
@@ -778,6 +779,36 @@ pub fn report(install: &Path, now: u64) -> Res<Vec<String>> {
     })
 }
 
+/// `service resources --json`: the allowlisted `taskq.project-limits/1` projection of every registered project on a
+/// host-policy install (shared-resource-controls.md#project-overlay). Current is the saved overlay (null: no
+/// override) at the project revision; effective is what a fresh status of this host ran, else unknown (null).
+pub fn projection(install: &Path, now: u64) -> Res<Value> {
+    let host = crate::host::Policy::read(install)?;
+    let conn = enrollment::active(install).ok().flatten();
+    let (inst, generation) = conn.as_ref().map_or((Value::Null, Value::Null), |a| (a["installation"].clone(), a["generation"].clone()));
+    let mut targets = vec![];
+    with(install, |s| {
+        prepare(s, install, now)?;
+        for (pid, p) in s.projects.iter().filter(|(_, p)| !p.policy.is_null()) {
+            let root = PathBuf::from(&p.root);
+            let st: Value = fs::read_to_string(crate::dot(&root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+            let fresh = st["at"].as_u64().is_some_and(|t| t <= now && now - t <= FRESH) && st["host"] == host.me.as_str();
+            let ran = |k: &str| if fresh { st["capacity"][k].clone() } else { Value::Null };
+            let overlay = host.overlay(&root).map(|(_, e)| e["limits"].clone()).unwrap_or_default();
+            for rt in crate::service::RUNTIMES {
+                targets.push(json!({"target": {"installation_id": inst, "generation": generation, "project_id": pid, "runtime_id": rt},
+                    "service_version": crate::platform::VERSION,
+                    "supported": [{"policy_schema": OVERLAY, "modes": [], "fields": ["runtime_limit"], "scopes": ["runtime"]}],
+                    "current_revision": p.revision, "effective_revision": ran("project_revision"),
+                    "current_policy": {"runtime_limit": overlay[rt]}, "effective_policy": {"runtime_limit": ran("project_limits")[rt]},
+                    "runtime_usage": [], "sample": null, "blockers": [], "completeness": if fresh { "complete" } else { "unknown" }}));
+            }
+        }
+        Ok(())
+    })?;
+    Ok(json!({"schema": SCHEMA, "observed_at": now, "targets": targets}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -853,7 +884,7 @@ mod tests {
         let authority=crate::host::Policy::read(&t.install).unwrap();
         let mut want=authority.cap.json();want["project_limits"]=json!({"codex":2});
         assert_eq!(observed.policy,want);
-        assert_eq!(observed.revision,authority.project_revision(&t.root).unwrap());
+        assert_eq!(observed.revision,authority.project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
         assert_ne!(observed.policy,crate::service::capacity(&serde_json::from_str(&before).unwrap(),&t.me).unwrap().json());
         assert!(report(&t.install,101).unwrap().iter().any(|s|s.contains("remote writes: taskq.project-limits/1 under a --project-limits grant")));
         let mut remote=submit("host-schema",json!({"runtime_limit":0}));
@@ -865,7 +896,7 @@ mod tests {
         with(&t.install,|s|prepare(s,&t.install,102)).unwrap();
         let changed=read(&t.install).unwrap().projects["project-1"].clone();
         assert_ne!(changed.revision,observed.revision);
-        assert_eq!(changed.revision,crate::host::Policy::read(&t.install).unwrap().revision().unwrap());
+        assert_eq!(changed.revision,crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root,&crate::load(&t.root).unwrap().1).unwrap());
         for (file,body) in [("host.json","broken"),("host.json.pending","retained")] {
             fs::write(t.install.join(file),body).unwrap();
             with(&t.install,|s|prepare(s,&t.install,103)).unwrap();
@@ -1033,7 +1064,7 @@ mod tests {
         };
         go(&t, &[], &[], 100);
         let r0 = rev(&t);
-        assert_eq!(r0, crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root).unwrap());
+        assert_eq!(r0, crate::host::Policy::read(&t.install).unwrap().project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
         go(&t, &[op("no-flag", json!(1), &r0)], &[], 100);
         assert_eq!(receipt_of(&t, "no-flag")["reason"], "scope", "a grant without --project-limits never writes the overlay");
         assert_eq!(fs::read_to_string(t.install.join("host.json")).unwrap(), host.to_string());
@@ -1064,7 +1095,7 @@ mod tests {
         assert!(t.install.join("poke").exists(), "the host reloads");
         let r1 = rev(&t);
         let policy = crate::host::Policy::read(&t.install).unwrap();
-        assert_eq!(r1, policy.project_revision(&t.root).unwrap());
+        assert_eq!(r1, policy.project_revision(&t.root, &crate::load(&t.root).unwrap().1).unwrap());
         assert_eq!(policy.project(&t.root, &serde_json::from_str(&project).unwrap()).unwrap().limits["codex"], 1);
         let r = receipt_of(&t, "lower");
         assert_eq!((&r["state"], &r["saved_revision"]), (&json!("saved"), &json!(r1)));
@@ -1082,10 +1113,26 @@ mod tests {
             go(&t, &[], &[], now);
             assert_eq!(receipt_of(&t, "lower")["state"], "saved", "old revision, old limits, stale or late readback at {now}");
         }
+        // a taskq.json limits edit after the save is a new effective policy: the old receipt never applies on it
+        fs::write(t.root.join("taskq.json"), project.replace("\"codex\": 2", "\"codex\": 0")).unwrap();
+        status(110, &r1, json!({"codex": 0}));
+        go(&t, &[], &[], 111);
+        assert_ne!(rev(&t), r1);
+        assert_eq!(receipt_of(&t, "lower")["state"], "saved", "a project policy edit supersedes the saved revision");
+        fs::write(t.root.join("taskq.json"), &project).unwrap();
         status(110, &r1, json!({"codex": 1}));
         go(&t, &[], &[], 111);
         let r = receipt_of(&t, "lower");
         assert_eq!((&r["state"], &r["effective_revision"], &r["observed_at"]), (&json!("applied"), &json!(r1), &json!(110)));
+        // the projection: allowlisted keys, this root's saved overlay at r1, effective only from the fresh status
+        let pj = projection(&t.install, 111).unwrap();
+        let codex = pj["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap();
+        let keys: Vec<&String> = codex.as_object().unwrap().keys().collect();
+        assert_eq!(keys, fix()["overlay_projection"]["targets"][0].as_object().unwrap().keys().collect::<Vec<_>>());
+        assert_eq!((&codex["target"]["project_id"], &codex["supported"][0]["policy_schema"]), (&json!("project-1"), &json!(OVERLAY)));
+        assert_eq!((&codex["current_revision"], &codex["effective_revision"], &codex["current_policy"], &codex["effective_policy"]),
+            (&json!(r1), &json!(r1), &json!({"runtime_limit": 1}), &json!({"runtime_limit": 1})));
+        assert_eq!(projection(&t.install, 200).unwrap()["targets"][0]["effective_revision"], Value::Null, "a stale status is unknown");
         // restore: null removes the entry; a stale operation naming the first revision cannot apply after the revert
         go(&t, &[op("restore", Value::Null, &r1)], &[], 120);
         assert_eq!(receipt_of(&t, "restore")["state"], "saved");

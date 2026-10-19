@@ -57,7 +57,7 @@ fields:function(group) {
     if (editable(s.host, 'mode')) out.push({key: 'host.mode', target: s.host, field: 'mode', label: 'Mode', value: hc.mode, choice: ['auto', 'fixed']});
     if (editable(s.host, 'maximum')) out.push({key: 'host.maximum', target: s.host, field: 'maximum', label: 'Host maximum', nullable: true, value: hc.maximum, none: 'no maximum'});
     for (const r of s.runtimes) if (editable(r, 'runtime_limit')) out.push({key: 'rt:' + r.target.runtime_id, target: r, field: 'runtime_limit', label: rtName(r.target.runtime_id),
-      nullable: ['taskq.admission/1','taskq.host-capacity/1'].includes(schemaFor(r, 'runtime_limit')),none:schemaFor(r,'runtime_limit')==='taskq.host-capacity/1'?'no cap':null, value: r.current_policy && r.current_policy.runtime_limit});
+      nullable: ['taskq.admission/1','taskq.host-capacity/1','taskq.project-limits/1'].includes(schemaFor(r, 'runtime_limit')),none:{'taskq.host-capacity/1':'no cap','taskq.project-limits/1':'no override'}[schemaFor(r,'runtime_limit')]||null, value: r.current_policy && r.current_policy.runtime_limit});
     const target=editable(s.host,'load_gate')?s.host:s.project;
     if (editable(target, 'load_gate')) {
       const g = target.current_policy && target.current_policy.load_gate || {};
@@ -108,7 +108,8 @@ review:function(group, d) {
   },
 fresh:function() { return {draft: null, op: null, receipt: null}; },
 status:function(group, local, cap, now) {
-    if(local.receipt?.state==='saved'&&schemaOf(scopes(group).host,'taskq.host-capacity/1')){
+    // host limits and the project overlay apply only on the exact saved revision; a newer one supersedes it
+    if(local.receipt?.state==='saved'&&(schemaOf(scopes(group).host,'taskq.host-capacity/1')||(local.op?.ops||[]).some(o=>o.policy_schema==='taskq.project-limits/1'))){
       const revision=local.receipt.saved_revision;
       if(typeof revision!=='string')return 'unknown';
       const targets=(local.op?.ops||[]).map(op=>({op,target:(group.targets||[]).find(t=>tkey(t)===tkey({target:op.target}))}));

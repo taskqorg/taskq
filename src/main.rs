@@ -854,7 +854,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                     p.apply(&mut s.cfg);
                     let cap=p.project(&cfg.root,&v)?;
                     s.cfg.limits=p.project_limits(&cfg.root,&v)?;
-                    s.project_revision=p.project_revision(&cfg.root).ok();
+                    s.project_revision=p.project_revision(&cfg.root,&v).ok();
                     Ok(cap)
                 }
                 None => service::capacity(&v, &cfg.me),
@@ -1406,6 +1406,10 @@ fn permissions_cmd(root: &Path, a: &Args) -> Res<()> {
 fn resources_cmd(root: &Path, a: &Args) -> Res<()> {
     let (cfg, _) = load(root)?;
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    if a.flags.contains_key("json") {
+        println!("{}", resources::projection(&cfg.install, now)?);
+        return Ok(());
+    }
     let change = a.one("grant").or(a.one("revoke"));
     if change.is_some() && std::env::var_os("TASKQ_ATTEMPT").is_some() {
         return Err("a worker cannot change resource grants".into());
