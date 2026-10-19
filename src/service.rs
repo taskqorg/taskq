@@ -324,6 +324,8 @@ pub struct Service<'a> {
     refused: Option<(&'static str, String)>,
     /// Held reservations of the whole host at the last host write; unknown when it failed.
     host_used: Option<u32>,
+    /// The host policy revision for this root that set this pass's capacity (#1282 applied readback).
+    pub project_revision: Option<String>,
     /// The emergency hold read at the start of each pass (§ 3): refuses every launch.
     pub hold: Option<String>,
     /// Runtimes whose access policy refuses a launch, with the reason (§ 8 Access): no claim, resume or reviewer.
@@ -578,7 +580,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -872,12 +874,12 @@ impl<'a> Service<'a> {
             *used.entry(rt).or_default() += 1;
         }
         let last = self.gate.last.filter(|_| self.gate.enabled());
-        let (host_policy,host_used,host_command)=self.host.as_ref().and_then(|h|h.lock().ok().map(|h| {
+        let (host_policy,host_used,host_command,project_revision)=self.host.as_ref().and_then(|h|h.lock().ok().map(|h| {
             if h.rebuilding {gate="unknown";reasons.push(("host","host occupancy recovery pending".into()));}
             if let Some(reason)=&h.held {gate="unknown";reasons.push(("host",reason.clone()));}
-            (h.policy.as_ref().map(|p|p.cap.json()).unwrap_or(Value::Null),if h.rebuilding {Value::Null}else{json!(h.used())},json!(h.capacity_command))
-        })).unwrap_or((Value::Null,Value::Null,Value::Null));
-        json!({"host_policy":host_policy,"host_runtime_used":host_used,"host_command":host_command,"project_limits":self.cap.as_ref().ok().map(|_| &self.cfg.limits),"limits": limits, "used": used, "load_gate": self.cap.as_ref().map(|c| c.json()["load_gate"].clone()).unwrap_or(Value::Null),
+            (h.policy.as_ref().map(|p|p.cap.json()).unwrap_or(Value::Null),if h.rebuilding {Value::Null}else{json!(h.used())},json!(h.capacity_command),json!(self.project_revision.as_ref().filter(|_|self.cap.is_ok())))
+        })).unwrap_or((Value::Null,Value::Null,Value::Null,Value::Null));
+        json!({"host_policy":host_policy,"host_runtime_used":host_used,"host_command":host_command,"project_revision":project_revision,"project_limits":self.cap.as_ref().ok().map(|_| &self.cfg.limits),"limits": limits, "used": used, "load_gate": self.cap.as_ref().map(|c| c.json()["load_gate"].clone()).unwrap_or(Value::Null),
             "admission": self.cap.as_ref().map(|c| c.json()["admission"].clone()).unwrap_or(Value::Null), "host_used": self.host_used,
             "min_service_version": crate::admission::MIN_SERVICE, "reservations": reservations,
             "gate": gate, "reasons": reasons.iter().map(|(c, t)| json!({"code": c, "text": t})).collect::<Vec<_>>(),

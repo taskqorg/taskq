@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const SCHEMA: &str = "taskq.resources/1";
+const OVERLAY: &str = "taskq.project-limits/1";
 const CORPUS: &str = include_str!("fixtures/resource-policy-v1.json");
 
 // Parse every object before Value canonicalization can erase duplicate keys.
@@ -72,6 +73,8 @@ struct Grant {
     project_ids: Vec<String>,
     runtime_ids: Vec<String>,
     host_policy: bool,
+    #[serde(default)]
+    project_limits: bool,
     expires_at: u64,
     revoked: bool,
 }
@@ -97,6 +100,11 @@ fn typed(v: &Value) -> Result<Submit, &'static str> {
         || (r.target.runtime_id.is_some() && r.target.project_id.is_none())
         || r.expires_at <= r.issued_at || r.expires_at - r.issued_at > 300 || r.changes.is_empty()
     { return Err("invalid"); }
+    if r.policy_schema == OVERLAY {
+        let ok = r.target.project_id.is_some() && r.target.runtime_id.is_some() && r.changes.len() == 1
+            && r.changes.get("runtime_limit").is_some_and(|v| v.is_null() || count(v));
+        return if ok { Ok(r) } else { Err("invalid") };
+    }
     let auto = match r.policy_schema.as_str() {
         "taskq.capacity/1" => false,
         "taskq.admission/1" => true,
@@ -150,6 +158,7 @@ impl Authority {
             || r.target.project_id.as_ref().is_some_and(|p| !self.grant.project_ids.contains(p))
             || r.target.runtime_id.as_ref().is_some_and(|rt| !self.grant.runtime_ids.contains(rt)) { return Err("scope"); }
         if r.target.project_id.is_none() && !self.grant.host_policy { return Err("scope"); }
+        if r.policy_schema == OVERLAY && !self.grant.project_limits { return Err("scope"); }
         if !self.supported { return Err("unsupported"); }
         Ok(())
     }
@@ -432,6 +441,16 @@ fn reviewer_regression_fixtures() {
             assert_eq!(host.writes, 0);
             assert!(host.operations.is_empty());
         }
+    }
+    for case in c["regressions"]["project_limits"].as_array().unwrap() {
+        let mut wire = c["submit"].clone();
+        wire["policy_schema"] = json!(OVERLAY);
+        wire["target"]["runtime_id"] = case["runtime_id"].clone();
+        wire["changes"] = case["changes"].clone();
+        let mut host = Authority::new();
+        host.grant.project_limits = case["grant"].as_bool().unwrap();
+        assert_eq!(host.submit(&wire), case["expect"].as_str().unwrap(), "{case}");
+        assert_eq!(host.writes, 0);
     }
     for raw in c["regressions"]["duplicate_json"].as_array().unwrap() {
         let mut host = Authority::new();
