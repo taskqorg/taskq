@@ -14,5 +14,5 @@ for(const o of ['p: add &quot;T&quot;','p: answer #1058 PM: a long owner answer'
 // two exchanges with rev equal to the exchange count: each block keeps its own scroll key
 const keys=[...h.matchAll(/data-bound="([^"]*)"/g)].map(m=>m[1]);
 assert.equal(new Set(keys).size,2,'bound keys differ even when chain.length == answer.rev: '+keys);
-assert(h.indexOf('>Confirm: apply 2 changes</button>')>end,'Confirm stays below the changes');
+assert(h.indexOf('>Review changes: 2 changes</button>')>end,'Confirm stays below the changes');
 console.log('PASS bounded Home proposal preview; Confirm stays outside it');

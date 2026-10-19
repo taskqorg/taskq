@@ -11,7 +11,7 @@ assert(h.includes('Next: 1 Answer #41 ★ · 2 Start #44'));
 const sent=[];context.send=m=>{if(m.a!=='ready')sent.push(m);};context.render=()=>{};
 const handlers={};context.menu.addEventListener=(type,f)=>(handlers[type]??=[]).push(f);context.addEventListener=()=>{};context.mount();
 for(const fn of handlers.click)fn({target:{closest:selector=>selector==='button'?{dataset:{a:'ai-next',v:'2'}}:null}});
-assert.equal(JSON.stringify(sent),JSON.stringify([{a:'ai-send',text:'2',after:'7'}]));
+assert.equal(JSON.stringify(sent),JSON.stringify([{a:'ai-send',text:'2',root:'p',after:'7'}]));
 for(const t of ['No next step.','Next: 2 Start ★ · 1 Answer','Next: 1 A ★ · 2 B ★','Next: Answer #41','Next: 1 A ★ · 2 B\nmore text']){
   context.S.ai.request=req(t);h=(context.ai());
   assert(!h.includes('data-a="ai-next"'),t);assert(h.includes(t.split('\n')[0].replaceAll('<','&lt;')),t);
