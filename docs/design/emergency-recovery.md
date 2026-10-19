@@ -11,6 +11,8 @@ Required capability approved. E1–E5 describe the mechanism; [taskq.md](../../t
 
 ## E2 Durable stop
 
+- R11 identity is the recorded native session ID, never a name match. A completed Claude background turn is stopped after native completion readback, and a CLI child after its log shows the turn ended (§4 step 1); retain each conversation for the next turn. Uncommitted work is never lost: only `cleanup --force` removes it, after saving it to `<root>/.taskq/trash/taskq-<N>.patch`.
+
 - Drain holds new admission and lets current work finish. Full stop immediately requests cancellation of all owned worker, reviewer and operator executions in the reviewed local scope, including while the board is offline. Both retain a durable host hold; Pause remains separate.
 - The existing host lifecycle request binds the named host generation, registered roots and command identity. Full stop requires its advertised capability. Cancellation is attempted through retained native handles, never inferred from status age. The daemon remains available while termination or board reconciliation is unresolved.
 
