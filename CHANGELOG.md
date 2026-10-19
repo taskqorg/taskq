@@ -3,7 +3,9 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
-## Unreleased
+## v4.6.19
+
+Integrates the reviewed host service, SQLite telemetry and CoreQ 0.14.4 (`5fb10926`), retaining the inventory-refresh wake repair. Mac activation uses the bounded [operator handoff](docs/release-1233.md); release publication does not prove activation. Merge-queue policy enablement remains gated by #1244 and actual operator evidence.
 
 **Board — cutover required (§ 9):** GitHub PR publication saves `publish`, `enqueued` and private-fallback `rebased` entries; `publication-failed` counts failed CI and `requeue main-moved` preserves retries. Old readers fold these differently. Stop all old services and children, preserve each open result, configure public boards' main merge queue and required `merge_group` CI, then upgrade all hosts before resuming. Closed issues stay untouched. Private boards without a queue need Git and the clean, owned task worktree only for the fallback; public boards remain Git-free. Publication closes on the observed merge event with green merge-result CI, not queue admission.
 
