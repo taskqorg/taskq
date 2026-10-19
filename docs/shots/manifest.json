@@ -1,16 +1,17 @@
 {
-  "version": "4.3.0",
-  "sourceCommit": "db1c6fc131224231c76b6635834072e54e3588e3",
-  "binarySha256": "bece0c24553a82cd196e83d84d4609e384dc12771f28c57c822d4e201a05e67c",
+  "version": "4.6.18",
+  "sourceCommit": "18ff5e2c4c892b6235a6a6508ce51531fcff6e46",
+  "binarySha256": "15755f360302b0b808c079f5b34d8e536dff50100d1cca9583ae66fe496ccc12",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "5efede72e3966e93cf2858a060e2e7157eb7c362",
-    "src/tray.html": "ad34696966c6132bc4bd431241d09eff00b0b33c",
-    "src/icon.rs": "27c0a5f64a7af334e2eb8c81e3e6626e356cc555",
+    "src/tray.rs": "556dc83b4b13910c7dfb494978fc807a208eac01",
+    "src/tray.html": "ef3473cbfbbeda68f5ccd89006c0ed6aff2eb5b8",
+    "src/tray-web.js": "38b95afd2ba9e332b090d2b5c2c151a0ca88af84",
+    "src/icon.rs": "411fc089802b6e2f2ebe908b8ad0d1da2facdd55",
     "docs/design/icon-summary.config.json": "9365699c943d0ac4506eab8fc5f7a84d8cbe8582"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
@@ -21,7 +22,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "27e3fcb6e4d851382a1be2707bc67a6bf35fd272f1aff0992c41b0c4dca1af84"
+      "sha256": "124cd49b807a12b5e4e7f042aa4c1c4ce2387deb32941885cdb4d1894402e310"
     },
     {
       "file": "popover-dark-attention-16.png",
