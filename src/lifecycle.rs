@@ -143,7 +143,7 @@ fn review_action(install:&Path,id:&str,action:Action)->Res<Value> {
 }
 fn public(op:&resources::Op)->Value {
     let mut value=op.receipt.clone();value["scope"]=json!("host");if let Some(bound)=binding(op) {value["projects"]=bound["request"]["roots"].clone();value["origin_instance"]=bound["request"]["instance"].clone();value["action"]=bound["request"].get("action").cloned().unwrap_or(json!("restart"));if let Some(root)=bound["request"].get("project") {value["scope"]=json!("project");value["project"]=root.clone();}}
-    if value["action"]=="stop" {value["mode"]=binding(op).unwrap()["request"].get("mode").cloned().unwrap_or(json!("drain"));value["restart_condition"]=json!(if cfg!(target_os="linux") {"explicit service install or user-manager startup"}else{"next logon or explicit service install"});}value
+    if value["action"]=="stop" {value["mode"]=binding(op).unwrap()["request"].get("mode").cloned().unwrap_or(json!("drain"));value["restart_condition"]=json!(if cfg!(target_os="macos") {"next logon or explicit service install; admission remains held until reviewed recovery (#1285)"}else if cfg!(target_os="linux") {"explicit service install or user-manager startup"}else{"next logon or explicit service install"});}value
 }
 fn required(op:&mut resources::Op,command:&CommandReceipt,phase:&str)->Res<()> {
     if let Err(error)=command.checkpoint(phase) {
@@ -568,6 +568,7 @@ mod tests {
         if mode=="stop" {
             assert!(original["restart_condition"].as_str().unwrap().contains("service install"));
             assert_eq!(original["restart_condition"].as_str().unwrap().contains("logon"),!cfg!(target_os="linux"));
+            if cfg!(target_os="macos") {assert!(original["restart_condition"].as_str().unwrap().contains("admission remains held until reviewed recovery (#1285)"));}
         }
         let native=coreq::process::identity(child.0.id()).unwrap().unwrap();
         assert!(saved_launcher(&install,"exact-stop",&native).unwrap().is_none());
