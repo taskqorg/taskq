@@ -4596,33 +4596,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    // Chain: idle six-project polling -> real bounded capture -> one simulated day of rows (A5).
-    // Risk: unchanged polls write per-pass rows and push 30 days past the 384 MiB universal store cap.
+    // Chain: six-project service passes and CoreQ identity/status polls -> installed bounded runtime -> drained 15-minute intervals -> physical store bytes (A5).
+    // Risk: unchanged polls write per-poll rows and push 30 days past the 384 MiB universal store cap.
     #[test]
-    fn idle_six_project_day_fits_a_thirtieth_of_the_store_cap() {
-        use tracing_subscriber::prelude::*;
+    fn simulated_six_project_day_fits_a_thirtieth_of_the_store_cap() {
         let dir = std::env::temp_dir().join(format!("taskq-poll-day-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
+        let size = |name: &str| { let s = coreq::telemetry::Store::open_bounded(&dir.join(name).join("telemetry.log/universal.sqlite3"),
+            crate::telemetry::budget(&dir.join(name), "telemetry.sqlite3").unwrap()).unwrap();
+            s.reclaim().unwrap(); s.storage().unwrap()["total_bytes"].as_u64().unwrap() };
+        std::fs::create_dir_all(dir.join("empty/telemetry.log")).unwrap();
+        let empty = size("empty");
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "service::tests::simulated_poll_day_child", "--ignored", "--nocapture"])
+            .env("TASKQ_POLL_DAY_ROOT", &dir).env_remove("COREQ_TRACE_CONTEXT").env("TASKQ_INCIDENT_REPORTS", "off")
+            .output().unwrap();
+        assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
+        // ponytail: CoreQ Reader::open validates the whole store, so a pass costs O(store); 6 of 96 intervals keep this near 20 s.
+        let day = (size("i") - empty) * 96 / INTERVALS;
+        eprintln!("six-project day: {day} stored bytes from {INTERVALS} intervals, limit {}", (384u64 << 20) / 30);
+        assert!(day <= (384u64 << 20) / 30, "simulated six-project day stores {day} bytes");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    const INTERVALS: u64 = 6;
+
+    #[test]
+    #[ignore = "subprocess helper exercised by simulated_six_project_day_fits_a_thirtieth_of_the_store_cap"]
+    fn simulated_poll_day_child() {
+        let dir = PathBuf::from(std::env::var_os("TASKQ_POLL_DAY_ROOT").unwrap());
         std::fs::create_dir_all(dir.join("i/telemetry.log")).unwrap();
-        let store = std::sync::Arc::new(coreq::telemetry::Store::open_bounded(&dir.join("i/telemetry.log/universal.sqlite3"),
-            crate::telemetry::budget(&dir.join("i"), "telemetry.sqlite3").unwrap()).unwrap());
-        let capture = coreq::telemetry::capture::Capture::new(store.clone(), "taskq", "fixture").unwrap();
+        let _runtime = coreq::telemetry::capture::Runtime::install_bounded(&dir.join("i/telemetry.log/universal.sqlite3"), "taskq", "fixture",
+            crate::telemetry::budget(&dir.join("i"), "telemetry.sqlite3").unwrap()).unwrap();
         let boards: Vec<Fake> = (0..6).map(|_| Fake::default()).collect();
         let configs: Vec<Config> = (0..6).map(|p| { let mut c = cfg("mac"); c.repo = format!("o/p{p}");
             (c.root, c.install) = (dir.join(format!("p{p}")), dir.join("i")); std::fs::create_dir_all(c.root.join(".taskq")).unwrap(); c }).collect();
         for b in &boards { b.create("Idle", "", &["taskq".into()]).unwrap(); }
-        const PASSES: usize = 30;
-        tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()), || {
-            let mut services: Vec<Service> = boards.iter().zip(&configs).map(|(b, c)| { let mut s = service(b, c, Default::default()); s.focus = vec![]; s }).collect();
-            for _ in 0..PASSES { for s in &mut services { s.pass().unwrap(); } }
-        });
-        capture.flush().unwrap(); drop(capture);
-        let rows = store.export(0, 0, 1024).unwrap();
-        assert_eq!(rows["more"], false, "one export page holds the fixture");
-        let bytes: usize = rows["events"].as_array().unwrap().iter().map(|e| serde_json::to_string(&e["observation"]).unwrap().len()).sum();
-        // cfg polls every 60 s: a day is 1440 passes per project.
-        let day = bytes as u64 * 1440 / PASSES as u64;
-        assert!(day <= (384u64 << 20) / 30, "simulated six-project day writes {day} bytes");
-        drop(store); std::fs::remove_dir_all(dir).unwrap();
+        let mut services: Vec<Service> = boards.iter().zip(&configs).map(|(b, c)| { let mut s = service(b, c, Default::default()); s.focus = vec![]; s }).collect();
+        let tool = crate::platform::tool(&dir.join("i"));
+        // cfg polls every 60 s: a day is 96 intervals of 15 passes; each interval end drains CoreQ's poll windows as its timer does.
+        for _ in 0..INTERVALS {
+            for _ in 0..15 {
+                for (s, c) in services.iter_mut().zip(&configs) {
+                    s.pass().unwrap();
+                    coreq::process::identity(std::process::id()).unwrap();
+                    coreq::status::write(&tool, &c.root, &serde_json::json!({"project": c.repo, "state": "idle"})).unwrap();
+                }
+            }
+            coreq::telemetry::capture::before_exec();
+        }
     }
 }
