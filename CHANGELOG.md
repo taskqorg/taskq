@@ -5,7 +5,7 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## v4.6.22
 
-Telemetry keeps 30 days within a 1 GiB budget with half held in reserve; pruning and derived limits keep the service running instead of rejecting telemetry with `budget-exhausted` (#1278). Mac Drain and Full stop keep a durable hold (#1214). Mac activation follows [the repair handoff](docs/repair-1276.md); release publication does not prove activation.
+Telemetry keeps 30 days within a 1 GiB budget with half held in reserve; pruning and derived limits keep the service running instead of rejecting telemetry with `budget-exhausted` (#1278). Mac Drain and Full stop keep a durable hold (#1214), and after a reviewed Stop the owner can resume only selected local tasks (#1285). Mac activation follows [the repair handoff](docs/repair-1276.md); release publication does not prove activation.
 
 **Board — cutover required (§ 9, #1279):** `usage-limit` ends a pre-work quota-limited attempt without spending retries. Old readers ignore it and retain the attempt. Stop old services and children, preserve open results and retries, upgrade every board host, then resume (Mac, then Windows). Do not run mixed readers or roll back to a reader without this event after it is written; reconcile open issues under § 9 first. Closed issues stay untouched.
 
