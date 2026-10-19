@@ -348,13 +348,16 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
     let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
         .args(["--exact","resident_analysis_owner","--ignored","--nocapture"])
         .env("TASKQ_ANALYSIS_OWNER",install.join("telemetry.log/universal.sqlite3")).env("TASKQ_ANALYSIS_LEGACY_BUDGET","1")
+        .env("COREQ_TELEMETRY_STORE_TRACE","1")
         .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
     let mut ready=std::io::BufReader::new(owner.0.stdout.take().unwrap());
     loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
     let invoke=|command:&[&str]|Command::new(env!("CARGO_BIN_EXE_taskq")).args(command)
         .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
-        .env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+        .env("COREQ_TELEMETRY_STORE_TRACE","1").env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
     let selftest=invoke(&["selftest"]);
+    use std::io::Write;
+    writeln!(std::io::stderr(),"handover selftest diagnostics: {}",String::from_utf8_lossy(&selftest.stderr)).unwrap();
     assert!(selftest.status.success(),"candidate selftest failed behind an incompatible writer: {}",String::from_utf8_lossy(&selftest.stderr));
     let resumed=invoke(&["service","resume"]);
     assert!(resumed.status.success(),"receipt unavailable behind an incompatible writer: {}",String::from_utf8_lossy(&resumed.stderr));
