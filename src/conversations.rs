@@ -9,7 +9,11 @@ fn registered(install: &Path, root: &str) -> Result<PathBuf, String> {
 fn valid(id: &str) -> bool { !id.is_empty() && id.bytes().all(|c|c.is_ascii_digit()) }
 fn preferences(install: &Path) -> Result<Value, String> {
     let value=read(&install.join("tray-requests.json"));
-    if value["state"]=="unknown" {return Err("Conversation preferences unreadable; original kept".into());}
+    if value["state"]=="unknown" || !value.is_null() && (!value.is_object()
+        || value.get("history").is_some_and(|h|h.as_array().is_none_or(|rows|rows.iter().any(|r|!r.is_string())))
+        || value.get("drafts").is_some_and(|d|!d.is_object())) {
+        return Err("Conversation preferences unreadable; original kept".into());
+    }
     Ok(if value.is_null(){json!({"draft":"","history":[],"drafts":{}})}else{value})
 }
 fn save(install: &Path, value: &Value) -> Result<(),String> {
@@ -22,6 +26,7 @@ pub fn chain(root: &Path, id: &str) -> Result<Vec<Value>,String> {
         let request=read(&dir(root).join(format!("{current}.json")));
         if !request["text"].is_string(){return Err("Conversation request unavailable; delivery unknown".into());}
         rows.push(json!({"id":current,"text":request["text"],"answer":read(&answer_path(root,&current))}));
+        if !request["after"].is_null()&&!request["after"].is_string(){return Err("Conversation parent invalid; delivery unknown".into());}
         match request["after"].as_str().filter(|s|!s.is_empty()) {Some(after)=>current=after.into(),None=>break}
     }
     rows.reverse();Ok(rows)
@@ -128,6 +133,10 @@ mod tests {
         crate::operator::step(&root,&install,Path::new("unused"),None);
         assert_eq!(chain(&root,&next).unwrap().len(),2,"retained exchange survives command history limit");
         assert_eq!(preferences(&install).unwrap()["history"].as_array().unwrap().len(),20);
+        let before=ids(&root);
+        fs::write(install.join("tray-requests.json"),"[]").unwrap();
+        assert!(submit(&install,r,"","must not send").is_err());assert_eq!(ids(&root),before);
+        assert!(super::snapshot(&install)["error"].is_string());
         let _=fs::remove_dir_all(base);
     }
 }
