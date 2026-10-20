@@ -188,7 +188,11 @@ impl GitHub {
             let v = self.graphql("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }", json!({"id": id}))?;
             if v["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] != false { return Err("PR is still a draft".into()); }
         }
-        self.graphql("mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { id } } }", json!({"id": id, "sha": sha}))?;
+        // #1372: GitHub refuses to enqueue a conflicting head; only the worker can fix it, so retrying each pass never helps.
+        match self.graphql("mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { id } } }", json!({"id": id, "sha": sha})) {
+            Err(e) if e.contains("UNPROCESSABLE") && e.contains("Pull request has merge conflicts") => return Ok(Publish::MainMoved(format!("merge queue refused PR: {e}"))),
+            r => { r?; }
+        }
         // Read back admission: a mutation response alone is not proof (R12); a retry recovers it after a lost response.
         let v = self.graphql("query($id: ID!) { node(id: $id) { ... on PullRequest { mergeQueueEntry { id } } } }", json!({"id": id}))?;
         let id = v["node"]["mergeQueueEntry"]["id"].as_str().ok_or("queue admission not yet read back")?;

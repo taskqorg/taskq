@@ -929,7 +929,7 @@ mod tests {
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     #[test]
     fn github_queue_qualifies_the_merge_result_and_preserves_unknowns() {
-        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-check-failed"] {
+        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-check-failed", "enqueue-conflict"] {
             let admitted = std::rc::Rc::new(RefCell::new(false));
             let queued = admitted.clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
@@ -950,6 +950,7 @@ mod tests {
                         if scenario == "graphql" { json!({"errors": [{"message": "unavailable"}]}) }
                         else if query.contains("enqueuePullRequest") {
                             assert_eq!(body["variables"]["sha"], head);
+                            if scenario == "enqueue-conflict" { return Ok(Reply { status: 200, headers: vec![], body: json!({"data": {"enqueuePullRequest": null}, "errors": [{"type": "UNPROCESSABLE", "message": "Pull request has merge conflicts"}]}).to_string(), operation: operation(method) }); }
                             *queued.borrow_mut() = true;
                             json!({"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQ_7"}}}})
                         } else if query.contains("markPullRequestReadyForReview") {
@@ -974,12 +975,12 @@ mod tests {
                     else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
-            let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql");
+            let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict");
             let got = h.resume_publication(1, &"a".repeat(40), "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
             match scenario {
                 "new" | "draft" | "waiting" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
                 "merged" | "merge-push-pending" => assert!(matches!(got, Publish::Done(_)), "{scenario}: {got:?}"),
-                "conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{got:?}"),
+                "conflict" | "enqueue-conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{scenario}: {got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),
             }
@@ -989,7 +990,7 @@ mod tests {
                 assert_eq!(*rules.borrow(), 1, "main rules reread");
             }
             assert!(!writes.borrow().iter().any(|b| b.get("merge_method").is_some()), "queue never calls REST merge");
-            assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback")));
+            assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback" | "enqueue-conflict")), "{scenario}: one enqueue call");
         }
     }
 
