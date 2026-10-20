@@ -1,0 +1,16 @@
+{
+  "renderer": "156.0.8078.4",
+  "scope": "Browser fixture, no native or live-board qualification",
+  "screens": [
+    {
+      "theme": "dark",
+      "text": "Running agents\nidle · idle\nmac\n· claude 1 · codex 1\nclaude: 1 worker · 0 reviewers\ncodex: 0 workers · 1 reviewer\nold · unknown · 3 min old\nwin\n· codex 1\ncodex: 1 worker · 0 reviewers\nReconcile counts\nRegistered project boards · Tasks: Doing 3 · Review 2\nmac · Occupied: claude 2 · codex 1 · 1 s old\nReservations: claude 1\nReservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.",
+      "width": 344
+    },
+    {
+      "theme": "light",
+      "text": "Running agents\nidle · idle\nmac\n· claude 1 · codex 1\nclaude: 1 worker · 0 reviewers\ncodex: 0 workers · 1 reviewer\nold · unknown · 3 min old\nwin\n· codex 1\ncodex: 1 worker · 0 reviewers\nReconcile counts\nRegistered project boards · Tasks: Doing 3 · Review 2\nmac · Occupied: claude 2 · codex 1 · 1 s old\nReservations: claude 1\nReservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.",
+      "width": 344
+    }
+  ]
+}

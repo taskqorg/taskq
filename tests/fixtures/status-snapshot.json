@@ -91,7 +91,9 @@
           "state": "unknown",
           "reason": "termination unconfirmed; status missing or stale; restore owning service",
           "host": "mac",
-          "observed": null
+          "observed": null,
+          "runtime": "claude",
+          "role": "worker"
         }
       ],
       "execution_wait": "execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",

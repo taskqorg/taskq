@@ -3,7 +3,7 @@ taskq queues agents on GitHub/GitLab. Contract includes linked `Contract detail`
 **v4**: Rust in `src/`.
 ## Principles (R1–R13)
 ### Change rule
-A task that changes a rule names its R-number, edits this file in the same deliverable as the code and lists the amended R-numbers in its result. A changed rule keeps its number. A new rule gets the next one. A rule elsewhere that disagrees with this file is a defect. No history here: no dates, no decision logs; line bound: R8.
+A task that changes a rule names its R-number, edits this file with the code and lists amended R-numbers in its result. A changed rule keeps its number. A new rule gets the next one. A rule elsewhere that disagrees with this file is a defect. No history here: no dates, no decision logs; line bound: R8.
 ### R1. The board's own objects are the only state
 Trusted comments are truth; labels project them. People see labels, issue text, `taskq:` comments (§ 2), and heartbeats (§ 4); no issue machine block. Restart rebuilds caches; no local task DB or queue. Exceptions without task truth: minimal native recovery identity (§3); [DashQ connection state](docs/design/enrollment.md); AI request files/history/log; incidents/profiles; host policy/migration backup; emergency hold; operator [resource grants/receipts](docs/design/shared-resource-controls.md#host-adapter). Fresh `status.json` checks the per-root pid; `<install>/service` checks native host identity/generation (§ 4).
 ### R2. One task, one attempt
@@ -26,14 +26,14 @@ Each command that changes a task appends one `taskq:` comment, sets the projecte
 Result SHA, checks, questions and blockers go to the issue as `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][sq-verify].
 
 ### R6. Human report
-`taskq status` renders the [read-model](docs/design/refactoring-backlog.md) snapshot of one board read (§ 5 `--json`; service status, `status.json` and tray count the same rows), in this order (empty parts omitted). Tray/browser project summaries and task rows (metadata/links first, full wrapped title second under M3) reuse [shared project blocks](docs/design/project-blocks.md), including separate Doing/Review, nonzero K counters and unknown Closed until authoritative totals exist:
+`taskq status`, service status, `status.json` and tray share one board [snapshot](docs/design/refactoring-backlog.md) (§ 5 `--json`); order below, empty parts omitted. Tray/browser project summaries and task rows (metadata/links first, full wrapped title second under M3) reuse [shared project blocks](docs/design/project-blocks.md), with separate Doing/Review, nonzero K counters and unknown Closed until authoritative totals exist:
 1. `<project> · [board](<url>)`, preceded while a local `status.json` under 60 s old reports a board rate-limit pause (§ 4) by `Rate limit: board requests paused until <time> (<host>)`, else a low board budget by its § 4 line, also when this read fails.
 2. `In work N · Waiting for answer N · Ready N`. In work: `doing` + `review`. Waiting: `ask`. Ready: `ready`.
 3. `| Task | State | Runtime | Session |`, one row per open task except `ask`, `later`, `failed`, by priority then number; task and session cells are links; `waiting` rows say `blocked ([#M](url) open)`: each blocking dependency (§ 1) linked, then `open` or `unknown: <reason>`; `status --json` rows add `blocked` (`ref`, `url`, `reason`).
 4. `Questions (answer N.M):` and `| Question | Brief reason | Options |` with `N.1 <option> · N.2 <option> ★` (★ =
    recommended), one row per `ask` and per `review` with options; an owner action (§ 2) reads `waiting for owner: <action>`.
 5. `Later: [#N title](url), ...` on one line; then `Failed:` with a reason table.
-6. `Hosts: <host> v<version> <age>[ focus off|unknown][ <rt> limit until|probe <time>], ...` from heartbeats (§ 4).
+6. Tray running agents follow [M3](docs/design/menu.md#running-agents). `Hosts: <host> v<version> <age>[ focus off|unknown][ <rt> limit until|probe <time>], ...` from heartbeats (§ 4).
 7. `Next: 1 <action> ★ · 2 <action>` from the PM ([shared Next contract](https://github.com/taskqorg/specq/blob/main/design/workflow.md#ai-assisted-controls)).
 
 Display titles at most 60 characters, reasons at most 160 and option text at most 120; show ellipsis with an issue link for the full text. Keep every row and option, counts and answer tokens; no total report cap. Cells pass one formatter: newline becomes space; `|`, `[`, `]`, `\` are escaped. Claude links use only the Remote Control URL registered by that native session; the local UUID is not a remote ID. Codex links: `codex://threads/<id>` when `TASKQ_CLIENT=codex`, else `<pages>/open.html#codex://threads/<id>`.

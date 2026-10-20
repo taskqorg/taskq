@@ -334,10 +334,69 @@ controls:function(){
   const run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
   return workEntry()+(held.length&&run.length?'<div class="row meta">Paused '+held.length+' of '+(held.length+run.length)+': '+esc(held.map(p=>p.name).join(', '))+'</div>':'')+bulk(run,held);
 },
+runningAgents:function(){
+  const boards=new Map(),hosts=new Map();
+  for(const p of view.S.projects){
+    const key=p.issues||p.root,old=boards.get(key);
+    if(!old||p.observed>old.observed)boards.set(key,p);
+  }
+  let partial=false,doing=0,review=0;
+  for(const p of boards.values()){
+    const fresh=p.complete===true&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&Number.isFinite(p.observed);
+    partial ||= !fresh||!Array.isArray(p.hosts);
+    for(const h of p.hosts||[]){
+      const age=Number.isFinite(h.updated)&&Number.isFinite(p.observed)&&Number.isFinite(p.age)?p.observed-h.updated+p.age:null;
+      const old=hosts.get(h.name);
+      if(!old)hosts.set(h.name,{name:h.name,age,unknown:!fresh||age===null||age<0||age>60,counts:new Map()});
+      else {old.unknown ||= !fresh||age===null||age<0||age>60;old.age=old.age===null||age===null?null:Math.max(old.age,age);}
+    }
+    for(const t of p.tasks||[]){
+      doing+=t.state==='doing'?1:0;review+=t.state==='review'?1:0;
+      for(const x of t.executions||[]){
+        const name=x.host||'Unknown host';
+        if(!hosts.has(name))hosts.set(name,{name,age:null,unknown:true,counts:new Map()});
+        const h=hosts.get(name),age=Number.isFinite(x.observed)&&Number.isFinite(p.observed)&&Number.isFinite(p.age)?p.observed-x.observed+p.age:null;
+        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||!x.runtime){h.unknown=true;continue;}
+        const counts=h.counts.get(x.runtime)||{worker:0,reviewer:0};counts[x.role]++;h.counts.set(x.runtime,counts);
+      }
+    }
+  }
+  let h='<section class="group running-agents" aria-label="Running agents"><div class="row">Running agents</div>';
+  for(const host of [...hosts.values()].sort((a,b)=>a.name.localeCompare(b.name))){
+    const unknown=partial||host.unknown;
+    const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
+    if(!unknown&&runtimes.length){
+      h+='<details><summary><strong>'+esc(host.name)+'</strong> · '+runtimes.map(([rt,c])=>esc(rt)+' '+(c.worker+c.reviewer)).join(' · ')+'</summary><div class="body">';
+      for(const [rt,c] of runtimes)h+='<div>'+esc(rt)+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')+'</div>';
+      h+='</div></details>';
+    }else h+='<div class="body"><strong>'+esc(host.name)+'</strong>'+(unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':''):' · idle')+'</div>';
+  }
+  if(!hosts.size)h+='<div class="body meta">Hosts unknown: no observation</div>';
+  const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
+  const cap=latest?.capacity?.host_runtime_used,capFresh=latest&&Number.isFinite(latest.age)&&latest.age>=0&&latest.age<=60;
+  const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
+  h+='<details><summary>Reconcile counts</summary><div class="body meta">Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review)+'</div>';
+  if(capFresh&&occupied){
+    h+='<div class="body meta">'+esc(view.S.host)+' · Occupied: '+(Object.entries(cap).map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old</div>';
+    const reserved=new Map();let known=local.length>0;
+    for(const p of local){
+      if(!Number.isFinite(p.age)||p.age<0||p.age>60||p.complete!==true||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
+      for(const r of p.capacity.reservations){
+        if(!r.rt||!['held','requested'].includes(r.state)){known=false;continue;}
+        const running=(p.tasks||[]).some(t=>t.n===r.task&&(t.executions||[]).some(x=>x.attempt===r.attempt&&x.host===view.S.host&&x.runtime===r.rt&&x.state==='running'&&Number.isFinite(x.observed)&&p.observed-x.observed+p.age>=0&&p.observed-x.observed+p.age<=60));
+        if(!running)reserved.set(p.issues+'/'+r.task+'/'+r.attempt,r.rt);
+      }
+    }
+    const counts=new Map();for(const rt of reserved.values())counts.set(rt,(counts.get(rt)||0)+1);
+    h+='<div class="body meta">Reservations: '+(known?([...counts].map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'none'):'unknown')+'</div>';
+  }else h+='<div class="body meta">'+esc(view.S.host)+' · Capacity unknown</div>';
+  return h+'<div class="body meta">Reservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.</div></details></section>';
+},
 home:function(){
   let h='<div class="body meta">'+esc(view.S.host)+'</div>'+views()+controls();
   h+='<details><summary>↳ Scope <span class="meta">'+view.S.projects.length+' projects</span></summary><div class="body">'+view.S.projects.map(p=>'<div><strong>'+esc(p.name)+'</strong> <span class="meta">'+esc(modeText(p))+'</span></div><div class="meta">You asked: '+esc(p.request||'not recorded')+'</div>').join('')+'</div></details>';
   h+='<div class="row">Attention'+routeButton('attention','All')+'</div>'+attention();
+  h+=api.runningAgents();
   h+=ai();
   h+='<div class="group"><div class="row">Projects'+routeButton('projects','All '+view.S.projects.length)+'</div>'+projects()+'</div>';
   return h+routeButton('cadence');

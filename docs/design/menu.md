@@ -45,6 +45,12 @@ Approved navigation/header and view-only multi-select targets: [UI01–UI04 and 
 - Shipped popover (§ 4 Tray): Home, Projects, Attention and Settings, with Back restoring the previous route and scroll. Home shows scope, questions and failed of all projects (one task per board and issue), project rows that open in place with issue links and the board, errors and stale `status.json` apart from failed, and `Paused N of M` with the paused projects.
 - Project page `Capacity` (this host only, other hosts unknown): per runtime `used/limit`, `Load gate: Off|Ready|Waiting: CPU|Waiting: memory|Waiting: recovery|Unknown: <reason>`; after the § 4 `Edit limits` confirm it shows `Saved; waiting for service` until § 4 `Applied`.
 
+### Running agents
+
+Home shows observed running workers and reviewers by host and runtime across registered project boards, deduplicated by board/task/execution. Use the same fenced `executions` as `status --json`, including their recorded role and runtime; task state alone never proves a running process. Each compact host row shows runtime totals; expansion shows worker and reviewer counts separately. Idle hosts occupy one line. Missing, future or over-60-second observations show unknown with age; partial project reads cannot prove idle.
+
+Local capacity remains a separate observation: show occupied slots and held/requested reservations not matched to a running attempt, with its own age. Those reservations include unconfirmed executions, not just pending starts. Remote capacity is unknown without a local observation. Display Doing/Review task counts for reconciliation; neither task-state totals nor host-wide occupied slots must equal running counts. Host capacity can include other projects. Read-only rendering changes no admission policy. Acceptance: two hosts, a stale host, pending reservations, duplicate boards and incomplete data; both themes require owner approval before merge (#1349).
+
 ## M4 Request, interpretation and applied state
 
 - You asked: original text from `service focus --request`; missing text says not recorded.
