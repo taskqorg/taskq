@@ -130,7 +130,7 @@ focusReadback:function(){
 },
 remember:function(){return {page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard,scroll:(menu.querySelector('.content')||document.scrollingElement).scrollTop,open:[...menu.querySelectorAll('details')].map(d=>d.open)};},
 navigate:function(next,filter=null,work=null){
-  trail.push(remember());view.page=next;view.taskFilter=filter;view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures=[];
+  trail.push(remember());view.page=next;view.taskFilter=filter===null?null:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures=[];
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
   menu.querySelector('h1')?.focus();
 },
@@ -479,10 +479,13 @@ project:function(p){
   (['ask','failed','doing','review','ready','waiting','later'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?'<div class="group"><div class="row meta"><span>'+names[st]+'</span>'+counter(r.length,color(st),names[st])+'</div>'+r.map(t=>taskRow(t)).join('')+'</div>':'';}).join('')||'<div class="body muted">No open tasks</div>')+answerNotices(p.issues)+
   '<div class="group">'+(p.issues?'<a class="project" href="'+esc(p.issues)+'" data-url="'+esc(p.issues)+'"><span>Board ↗</span><span></span><span></span></a>':'')+admission(p)+'</div>'+capacity(p)+notifyGroup(p)+workEntry(p.root)+service(p);},
 filteredTasks:function(p){
-  const ps=p?[p]:view.S.projects,rows=unique(ps.flatMap(tasks)).filter(t=>t.state===view.taskFilter),name=TaskqProjectBlocks.states.find(s=>s[0]===view.taskFilter)[1];
-  return '<div class="body">'+esc((p?p.name:'All projects')+' · '+name)+'</div>'+(p?TaskqProjectBlocks.summary(blockProject(p)):TaskqProjectBlocks.aggregate(ps.map(blockProject)))+
+  const ps=p?[p]:view.S.projects,selected=view.taskFilter,states=TaskqProjectBlocks.states;
+  const rows=unique(ps.flatMap(tasks)).filter(t=>!selected.length||selected.includes(t.state));
+  return '<header class="filter-header">'+(p?TaskqProjectBlocks.summary(blockProject(p)):TaskqProjectBlocks.aggregate(ps.map(blockProject)))+
+    '<details class="state-filter"><summary><span>Filter: '+esc(selected.length&&selected.length<states.length?selected.map(s=>states.find(v=>v[0]===s)[1]).join(', '):'All')+'</span><span class="meta" role="status">'+rows.length+' loaded'+(known(ps)?'':' · Partial')+'</span></summary><fieldset><legend>States</legend><div class="filter-options"><label><input type="checkbox" data-filter-all'+(selected.length===states.length?' checked':'')+'>Select all</label><button data-a="filter-clear">Clear all</button></div><div class="filter-options">'+states.map(([state,name])=>'<label><input type="checkbox" data-filter-state="'+state+'"'+(selected.includes(state)?' checked':'')+'>'+esc(name)+'</label>').join('')+'</div></fieldset></details></header>'+
     (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
-    (view.taskFilter==='closed'?'<div class="body meta">Closed total and task list unknown: open the Board for authoritative closed tasks.</div>'+ps.map(p=>TaskqProjectBlocks.summary(blockProject(p))).join(''):rows.map(t=>taskRow(t,!p)).join('')||'<div class="body meta">'+(known(ps)?'No tasks':'Tasks unknown')+'</div>');
+    (!selected.length||selected.includes('closed')?'<div class="body meta">Closed total and task list unknown: open the Board for authoritative closed tasks.</div>':'')+
+    (rows.map(t=>taskRow(t,!p)).join('')||'<div class="body meta">'+(known(ps)?'No matching loaded tasks':'Tasks unknown')+' <button data-a="filter-reset">Reset</button></div>');
 },
 head:function(){const mode=view.S.size_anchor||(view.S.size?'fixed':'top'),label={fixed:'Fixed size',bottom:'Keep bottom edge',top:'Keep top edge'}[mode];return '<div class="row head"><nav aria-label="Menu"><button data-route="home" title="Home" aria-label="Home">⌂</button><button data-route="settings" title="Settings" aria-label="Settings">⚙</button></nav><span class="window-controls">'+(view.S.stop_modes?'<button data-a="stop-review" aria-label="Emergency stop" title="Emergency stop">■</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+({fixed:'▣',bottom:'⊥',top:'⊤'}[mode])+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">⧉</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'"><span class="pin-glyph" style="transform:rotate('+(view.S.pinned?'0':'45')+'deg)">📌&#xfe0e;</span></button><button data-a="hide" title="Close window" aria-label="Close window">×</button></span></div>';},
 draw:function(navigating=false){
@@ -504,6 +507,10 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   menu.innerHTML=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
   mountAnswers();mountResources();
+  if(view.taskFilter){
+    for(const button of menu.querySelectorAll('.tqp-counts [data-state]'))button.setAttribute('aria-pressed',String(view.taskFilter.includes(button.dataset.state)));
+    const all=menu.querySelector('[data-filter-all]');if(all)all.indeterminate=view.taskFilter.length>0&&view.taskFilter.length<TaskqProjectBlocks.states.length;
+  }
   menu.querySelectorAll('details').forEach((d,i)=>d.open=open[i]??(!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page)));
   if(view.S.page!==undefined)menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
   const restored=answerFocus&&menu.querySelector('[data-answer="'+CSS.escape(answerFocus.dataset.answer)+'"] '+answerSelector);
@@ -572,12 +579,20 @@ for(const event of ['pointerup','pointercancel'])ui.listen(window,event,release,
 ui.listen(window,'blur',release);
 // Press end.
 
+ui.listen(menu,'change',e=>{
+  if(!view.taskFilter)return;
+  if(e.target.matches('[data-filter-all]'))view.taskFilter=e.target.checked?TaskqProjectBlocks.states.map(s=>s[0]):[];
+  else if(e.target.matches('[data-filter-state]')){const state=e.target.dataset.filterState;view.taskFilter=e.target.checked?[...view.taskFilter,state]:view.taskFilter.filter(s=>s!==state);}
+  else return;
+  present();
+});
 ui.listen(menu,'click',e=>{
   const cardLink=e.target.closest('.qac a');if(cardLink){e.preventDefault();send({a:'open',url:cardLink.getAttribute('href')});return;}
   if(e.target.closest('.qac,.rsc'))return;
-  if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>navigate(id||'home',state)}))return;
+  if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{if(view.taskFilter&&view.page===(id||'home')){view.taskFilter=[state];present();}else navigate(id||'home',state);}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  if(d.a==='filter-clear'||d.a==='filter-reset'){view.taskFilter=d.a==='filter-clear'?[]:TaskqProjectBlocks.states.map(s=>s[0]);present();return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){answerFeedback.delete(d.key);if(view.toast===d.key)view.toast=null;present();return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
