@@ -29,7 +29,7 @@ pub fn definition(name: &str) -> Option<(&'static str, String)> {
         "code" | "docs" | "research" | "asset" => ("D5D9DE", "Result type; no admission restriction", "edit issue labels"),
         "assignee-only" => ("BAC7D3", "Board account must be an assignee", "edit assignees/labels"),
         "run-codex" | "run-claude" | "run-codex-app" => ("BAC7D3", "Requires this enabled runtime", "edit issue labels"),
-        "prefer-codex" | "prefer-claude" => ("BAC7D3", "Prefers this runtime while it has a free slot", "edit issue labels"),
+        "prefer-codex" | "prefer-claude" => ("BAC7D3", "Legacy: prefer-codex reads as run-codex; prefer-claude as none", "edit issue labels"),
         n if n.starts_with("host-") && n.len() > 5 => ("BAC7D3", "Requires this host", "edit issue labels"),
         n if n.starts_with("needs-") && n.len() > 6 => ("BAC7D3", "Requires this capability; all needs must match", "edit issue labels/host has"),
         n if n.starts_with("area-") && n.len() > 5 => ("D5D9DE", "Subsystem; used by focus/status filters", "edit issue labels"),

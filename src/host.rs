@@ -625,7 +625,11 @@ fn publish_service(install:&Path,native:&coreq::process::Identity,instance:&str)
 
 /// A prior recorded owner must have exited; age never proves that. The native lock still owns admission.
 pub fn other(install: &Path) -> Res<Option<u32>> {
-    match service_record(install)? {
+    let record=match service_record(install) {
+        Err(e)=>return if unreadable_exited(install)? {Ok(None)} else {Err(e)},
+        Ok(record)=>record,
+    };
+    match record {
         None=>Ok(None),
         Some(OwnerRecord::Legacy(pid))=>Ok((pid!=std::process::id()&&crate::runtime::liveness(pid)?&&!installation::legacy_projection(install,pid,None)?).then_some(pid)),
         Some(OwnerRecord::Current(r))=> {
@@ -633,6 +637,21 @@ pub fn other(install: &Path) -> Res<Option<u32>> {
             Ok((r.pid!=std::process::id()&&live.as_ref().is_some_and(|p|p.started==r.started)&&!installation::legacy_projection(install,r.pid,Some(&r.started))?).then_some(r.pid))
         }
     }
+}
+
+/// A record this version cannot read (a newer release's protocol or field) is stale once its recorded process
+/// has exited (#1310): its pid and start time alone prove that. A live or unidentifiable owner stays unknown.
+fn unreadable_exited(install:&Path)->Res<bool> {
+    use std::io::Read;
+    let Ok(file)=fs::File::open(install.join("service")) else {return Ok(false)};
+    let mut bytes=Vec::new();
+    if file.take(1025).read_to_end(&mut bytes).is_err()||bytes.len()>1024 {return Ok(false);}
+    let Ok(record)=serde_json::from_slice::<Value>(&bytes) else {return Ok(false)};
+    let pid=record["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).filter(|p|*p!=0&&*p<=i32::MAX as u32);
+    let (Some(pid),Some(started))=(pid,record["started"].as_str().filter(|s|!s.is_empty()&&s.len()<=128&&s.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-'))) else {return Ok(false)};
+    if pid==std::process::id() {return Ok(false);}
+    let live=coreq::process::identity(pid).map_err(|e|format!("host service owner unknown: {e}"))?;
+    Ok(live.is_none_or(|p|p.started!=started))
 }
 
 /// Native process state and projection freshness are separate; neither releases any owned execution.
@@ -726,6 +745,9 @@ pub fn run(install: &Path) -> Res<()> {
         if message!=reported {crate::platform::log(&message);reported=message;}
         std::thread::sleep(std::time::Duration::from_secs(1));
     };
+    let _telemetry=crate::telemetry::host_capture(install).unwrap_or_else(|error| {
+        crate::platform::log(&format!("Telemetry: unknown ({error})"));None
+    });
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
     let mut hostname=crate::hostname();
     let shared = Arc::new(Mutex::new(Host::new(Policy::read_for_hostname(install,||hostname.clone()))));
@@ -748,6 +770,8 @@ pub fn run(install: &Path) -> Res<()> {
     let mut registry = Registry::default();
     let mut restart=crate::lifecycle::Monitor::default();
     loop {
+        // #1297: steady host passes fold like project passes (main.rs `service.loop`).
+        let _repeating = tracing::info_span!("service.host.loop", coreq_repeating = true).entered();
         if let Err(e) = crate::profile::prune(install) { eprintln!("taskq: telemetry unknown: {e}"); }
         let publication=publish_service(install,&native,&instance).err();
         if let Some(error)=&publication {
@@ -1466,6 +1490,63 @@ mod tests {
         assert!(h.handoff_ready());
     }
 
+    // #1297 A1/A2: the defect was one detailed row per identity and status poll (63 MB/h live against 0.56 MB/h).
+    // Retained protection: six projects' hour of those polls through the bounded store stays under 384 MiB/720
+    // inside repeating roots, the unmarked control fails the same gate, and no event is lost.
+    // Span rows use the real clock, so the hour spans one or two of its four 15-minute windows: the gate scales the
+    // measured growth to four windows. Health rows take the simulated clock (#1297 review: they materialized service.loop).
+    // ponytail: root names copy main/tray.
+    #[test]
+    fn six_project_poll_hour_fits_store_budget() {
+        use tracing_subscriber::prelude::*;
+        let me=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        for folded in [false,true] {
+            let install=temp(&format!("poll-hour-{folded}"));let _=fs::remove_dir_all(&install);fs::create_dir_all(install.join("telemetry.log")).unwrap();
+            publish_service(&install,&me,"fixture").unwrap();
+            let path=install.join("telemetry.log/universal.sqlite3");let budget=crate::telemetry::budget(&install,"telemetry.sqlite3").unwrap();
+            let store=std::sync::Arc::new(coreq::telemetry::Store::open_bounded(&path,budget.clone()).unwrap());
+            store.reclaim().unwrap();let empty=store.storage().unwrap()["total_bytes"].as_u64().unwrap();
+            let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","test").unwrap();
+            let dispatch=tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
+            let window=crate::telemetry::diagnostic::HEALTH_WINDOW_MS;
+            let (first,simulated)=(crate::profile::now_ms().unwrap(),crate::profile::now_ms().unwrap()/window*window);
+            tracing::dispatcher::with_default(&dispatch,|| for tick in 0..1800 {
+                if tick%30==0 {
+                    for project in 0..6 {
+                        let project=format!("owner/project{project}");
+                        let _repeating=tracing::info_span!("service.loop",coreq_repeating=folded,project=project.as_str()).entered();
+                        assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+                        assert_eq!(crate::telemetry::diagnostic::health_at(Some(simulated+tick*2000))["lost"],0);
+                    }
+                }
+                let _repeating=tracing::info_span!("tray.refresh",coreq_repeating=folded).entered();
+                assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+            });
+            capture.flush().unwrap();
+            let health=capture.health();
+            assert_eq!((&health["lost"],&health["failed_batches"]),(&json!(0),&json!(0)),"{health}");
+            drop(dispatch);drop(capture);drop(store);
+            let store=coreq::telemetry::Store::open_bounded(&path,budget).unwrap();store.reclaim().unwrap();
+            let windows=crate::profile::now_ms().unwrap()/window-first/window+1;
+            let bytes=(store.storage().unwrap()["total_bytes"].as_u64().unwrap()-empty)*4/windows;
+            let limit=384*1024*1024/720;
+            eprintln!("poll hour folded={folded}: {bytes} bytes over four windows; limit={limit}");
+            assert_eq!(bytes<=limit,folded,"hourly growth gate must reject unfolded polling");
+            if folded {
+                let page=store.export(0,0,1024).unwrap();let rows=page["events"].as_array().unwrap();
+                let rows:Vec<_>=rows.iter().map(|r|&r["observation"]).collect();
+                // Per window: one health row and the one service.loop pass it materializes (start and end).
+                let health=rows.iter().filter(|r|r["operation"]=="collector.health").count();
+                let passes=rows.iter().filter(|r|r["operation"]=="taskq.service.loop"&&r["kind"]=="method").count() as u64;
+                assert!((1..=4).contains(&health)&&passes==health as u64,"{page}");
+                assert_eq!(rows.iter().filter(|r|r["kind"]!="method.aggregate").count(),health*3,"{page}");
+                let calls=|op:&str|rows.iter().filter(|r|r["operation"]==op).filter_map(|r|r["calls"].as_u64()).sum::<u64>();
+                assert_eq!((calls("taskq.tray.refresh"),calls("taskq.service.loop")+passes),(1800,360),"aggregates keep every poll");
+            }
+            drop(store);fs::remove_dir_all(&install).unwrap();
+        }
+    }
+
     fn temp(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("taskq-host-{name}-{}", std::process::id()));
         fs::create_dir_all(&p).unwrap(); p
@@ -1611,6 +1692,9 @@ mod tests {
         assert_eq!(other(&install).unwrap(),None);assert!(coreq::process::identity(child.id()).unwrap().is_some());
         assert!(owner(&install).unwrap().is_none(),"record mismatch bypassed the native ownership lock");
         record["schema"]=json!(2);
+        fs::write(install.join("service"),record.to_string()).unwrap();
+        assert_eq!(service_status(&install)["state"],"unknown");assert_eq!(other(&install).unwrap(),None,"another incarnation's unreadable record kept the host waiting");
+        record["started"]=json!(native.started);
         for text in [record.to_string(),"{".into(),"x".repeat(1025)] {
             fs::write(install.join("service"),&text).unwrap();
             assert_eq!(service_status(&install)["state"],"unknown");assert!(other(&install).is_err());
@@ -1622,6 +1706,22 @@ mod tests {
         publish_service(&install,&native,"second").unwrap();
         child.kill().unwrap();child.wait().unwrap();
         assert_eq!(service_status(&install)["state"],"exited");assert_eq!(other(&install).unwrap(),None);
+        // #1310: a newer release's record whose process exited no longer holds an older host forever.
+        let mut newer:Value=serde_json::from_str(&fs::read_to_string(install.join("service")).unwrap()).unwrap();
+        newer["stop_protocol"]=json!(3);let mut extra=newer.clone();extra["future_protocol"]=json!(1);
+        for text in [newer.to_string(),extra.to_string()] {
+            fs::write(install.join("service"),&text).unwrap();
+            assert_eq!(service_status(&install)["state"],"unknown");assert_eq!(other(&install).unwrap(),None,"exited unreadable record kept the host waiting");
+            assert_eq!(fs::read_to_string(install.join("service")).unwrap(),text);
+        }
+        // R12: corrupt identities cannot prove exit, even when their PID has exited.
+        for started in ["invalid start time!".to_owned(), "x".repeat(129), String::new()] {
+            newer["started"]=json!(started);
+            let text=newer.to_string();
+            fs::write(install.join("service"),&text).unwrap();
+            assert!(other(&install).is_err(),"corrupt identity released ownership: {started:?}");
+            assert_eq!(fs::read_to_string(install.join("service")).unwrap(),text);
+        }
         fs::remove_dir_all(install).unwrap();
     }
 

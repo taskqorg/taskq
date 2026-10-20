@@ -83,18 +83,30 @@ pub fn poll(install:&Path) {
 }
 
 /// A scoped snapshot, never a claim about another process or the retained history.
-pub fn health()->Value {
+pub fn health()->Value {health_at(crate::profile::now_ms())}
+
+pub(crate) const HEALTH_WINDOW_MS:u64=15*60*1000;
+thread_local! {static LAST_HEALTH:std::cell::RefCell<Option<(u64,Value)>>=const {std::cell::RefCell::new(None)};}
+
+pub(crate) fn health_at(now:Option<u64>)->Value {
     let result=(|| {
         let capture=capture()?;
         let mut health=capture.health();
-        let started=crate::profile::now_ms().ok_or("telemetry clock unavailable")?;
+        let started=now.ok_or("telemetry clock unavailable")?;
         let counts=["accepted","committed","lost","failed_batches","inflight","queued_bytes","queued_events"].into_iter()
             .map(|key|(key.into(),health[key].clone())).collect::<serde_json::Map<_,_>>();
-        coreq::telemetry::capture::observe(json!({"product":"taskq","version":crate::platform::VERSION,"operation":"collector.health",
-            "kind":"collection","started_ms":started,"process_id":std::process::id(),
-            "trace":null,"span":null,"unknown":{"trace":"not-recorded","span":"not-recorded"},
-            "source":"process","outcome":if health["state"]=="collecting" {"ok"} else {"unknown"},
-            "error":if health["state"]=="collecting" {"none"} else {"collection-incomplete"},"counts":counts}))?;
+        // #1297: CoreQ folds only fixed JS counters, so each row here also materialized the pass root. Counters are
+        // cumulative: one row per thread (project loop) per 15-minute window, or when state/lost/failed_batches change, keeps them.
+        // ponytail: gauges (inflight, queued_*) are sampled once per window; status.json keeps their live value.
+        let key=(started/HEALTH_WINDOW_MS,json!([health["state"],health["lost"],health["failed_batches"]]));
+        if LAST_HEALTH.with(|last|last.borrow().as_ref()!=Some(&key)) {
+            coreq::telemetry::capture::observe(json!({"product":"taskq","version":crate::platform::VERSION,"operation":"collector.health",
+                "kind":"collection","started_ms":started,"process_id":std::process::id(),
+                "trace":null,"span":null,"unknown":{"trace":"not-recorded","span":"not-recorded"},
+                "source":"process","outcome":if health["state"]=="collecting" {"ok"} else {"unknown"},
+                "error":if health["state"]=="collecting" {"none"} else {"collection-incomplete"},"counts":counts}))?;
+            LAST_HEALTH.with(|last|*last.borrow_mut()=Some(key));
+        }
         health["scope"]=json!("this-process");health["process_id"]=json!(std::process::id());
         health["historical_completeness"]=json!("unknown");
         if let Some(reason)=super::handover() {health["store"]=json!({"kind":"same-store-compatibility","reason":reason});}
@@ -203,5 +215,30 @@ mod tests {
             assert!(values.iter().any(|v|v["operation"]=="collector.health"));drop(open);
         });
         capture.flush().unwrap();drop(capture);drop(store);std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #1297 A2: defect was one `collection` row per status write plus a materialized `service.loop` row each pass
+    // (its counters bypass CoreQ folding). Retained protection: a simulated hour of 2 s passes over four 15-minute
+    // windows keeps one health row per window, each with cumulative counters, and a lost-count change stays a row.
+    #[test]
+    fn steady_health_writes_one_row_per_window() {
+        use std::sync::Arc;
+        use tracing_subscriber::prelude::*;
+        let dir=std::env::temp_dir().join(format!("taskq-health-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(dir.join("telemetry.log")).unwrap();
+        let store=Arc::new(coreq::telemetry::Store::open(&dir.join("telemetry.log/universal.sqlite3")).unwrap());
+        let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","fixture").unwrap();
+        let start=crate::profile::now_ms().unwrap()/HEALTH_WINDOW_MS*HEALTH_WINDOW_MS;
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()),|| for tick in 0..1800 {
+            let _repeating=tracing::info_span!("service.loop",coreq_repeating=true,project="owner/repo").entered();
+            assert_eq!(health_at(Some(start+tick*2000))["state"],"collecting");
+        });
+        capture.flush().unwrap();
+        let rows=store.export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().map(|r|r["observation"].clone()).collect::<Vec<_>>();
+        let health:Vec<_>=rows.iter().filter(|r|r["operation"]=="collector.health").collect();
+        assert_eq!(health.len(),4,"one health row per window: {}",health.len());
+        assert!(health.iter().all(|r|r["counts"]["lost"]==0&&r["counts"]["accepted"].is_u64()));
+        assert!(rows.iter().filter(|r|r["operation"]=="taskq.service.loop").count()<=8,"health materialized the pass root");
+        drop(capture);drop(store);std::fs::remove_dir_all(dir).unwrap();
     }
 }

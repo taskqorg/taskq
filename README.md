@@ -19,7 +19,7 @@ Your repository board is the task list; your usual AI apps do the work.
 ### What you get
 
 - Tasks are issues on GitHub or GitLab.
-- The service runs Claude or Codex workers within each computer's configured limits.
+- The service runs Claude or Codex workers within each computer's configured limits: tasks labelled `run-codex` (design, UI, visual and image work) on Codex, everything else and every review on Claude.
 - A worker's question waits for your answer.
 - A reviewer checks the result; accepted work publishes through the configured branch or PR route.
 - The tray menu shows questions, admission controls and a day's history.
@@ -27,15 +27,15 @@ Your repository board is the task list; your usual AI apps do the work.
 
 ### See the queue
 
-Synthetic storefront data, captured from the dark tray menu. These are examples, not a live project's progress. Open an image for its original size.
+Synthetic project data captured with the macOS v4.6.23 renderer. These examples show the interface, not a live project's progress or a completed agent run. Open an image for its original size.
 
-**A question with its choices.**
+**Tasks and their current states.**
 
-[![Cart quantity question and numbered answers](docs/shots/popover-dark-attention-16.png)](docs/shots/popover-dark-attention-16.png)
+<a href="docs/shots/popover-dark-project-16.png"><img src="docs/shots/popover-dark-project-16.png" alt="Billing task list with work, review and ready states" width="320"></a>
 
-**Project queues at a glance.** Closed totals remain unknown in this fixture.
+**Review the full exchange before confirming a change.** The proposed task pause has not been applied.
 
-[![Storefront and billing project queue summaries](docs/shots/popover-dark-projects-16.png)](docs/shots/popover-dark-projects-16.png)
+<a href="docs/shots/popover-dark-workspace-16.png"><img src="docs/shots/popover-dark-workspace-16.png" alt="Owner request, agent reply and proposed task pause awaiting confirmation" width="860"></a>
 
 ### From any agent chat
 
@@ -180,7 +180,7 @@ Checks: taskq tray --snapshot macOS light+dark -- 40 images per fixture, footer 
 taskq: close attempt 6160353477
 ```
 
-Thirteen minutes from the switch to a result, four more to close. The same move sends a task to another host (`host-<name>`), to a soft runtime preference (`prefer-codex`, `prefer-claude`) or back to the queue with new instructions (`taskq requeue N --text T`, `taskq later N`).
+Thirteen minutes from the switch to a result, four more to close. The same move sends a task to another host (`host-<name>`), to codex for design and image work (`run-codex`; everything else runs on claude) or back to the queue with new instructions (`taskq requeue N --text T`, `taskq later N`).
 
 Agents: install, setup, commands and development are in **[taskq.md](taskq.md)**.
 

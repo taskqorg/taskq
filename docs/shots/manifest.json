@@ -1,16 +1,16 @@
 {
-  "version": "4.6.22",
-  "sourceCommit": "e66860068a02fe8b0439e828ff61cfa3573be432",
-  "binarySha256": "7656ef164bf41d8dcf12fc7d7d458c50cf1f9d1b49376fa2de1172e2ca677287",
+  "version": "4.6.23",
+  "sourceCommit": "55545f23df4cac9f57e5784100d816c1b6dc5697",
+  "binarySha256": "71959c3f1349a00ae162f2c33964ea7b5047b6bf239d0a42d09d12c1655bdbe9",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "89930e30919072f7b523fc2d19c272b0b86d2e27",
+    "src/tray.rs": "b4d517e407ac9734a3ace7a9ea1e235d1f387d54",
     "src/tray.html": "ab57942fb5e57f00d35e36c4dac6a553707ef8b4",
-    "src/tray-app.js": "3724b26a78398182a7171162f7cc8f030eef1527",
+    "src/tray-app.js": "a0c6f774b865836a9de119c9fa7ebaeb0a72409d",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
     "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
@@ -27,15 +27,15 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "46e138e19c7314861c24aa158f073e579011139ec3a5a276f112488bbe37e92c"
+      "sha256": "183296b4669a5ca4b72ed2dfaa53432a51b81419ba66cfaf6d090e35f40d6881"
     },
     {
-      "file": "popover-dark-attention-16.png",
-      "sha256": "0c94095e4918cb2af8a4834b963cb1e1be49e62716a8bda4ea1f9d9641cf169f"
+      "file": "popover-dark-project-16.png",
+      "sha256": "1fd2742c7f168aad93d03110c1f2e546cfc0ee6106781389b1a61db4e5475db4"
     },
     {
-      "file": "popover-dark-projects-16.png",
-      "sha256": "e88fcee319456a1bbcbfaace85b40b8d0872f4a8bb6684b1c80b951546fc1df9"
+      "file": "popover-dark-workspace-16.png",
+      "sha256": "6a226cf921da6448069d8d0630bb024de1ebe650ae737e4e3cb6ab5e3c4b9aa3"
     }
   ]
 }

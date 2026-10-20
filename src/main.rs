@@ -59,7 +59,7 @@ pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
  taskq labels
- taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--prefer codex|claude] [--priority 0|1|2] [--host H] [--later|--hold] [--text T]
+ taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--later|--hold] [--text T]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
@@ -171,7 +171,12 @@ fn root_for(env: Option<PathBuf>, cwd: PathBuf) -> Res<PathBuf> {
 }
 
 fn hostname() -> String {
-    coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    // ponytail: first nonempty name per process (#1297: was one `hostname` child per call); a renamed host needs a service restart.
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(name) = NAME.get() { return name.clone(); }
+    let name = coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    if !name.is_empty() { let _ = NAME.set(name.clone()); }
+    name
 }
 
 fn load(root: &Path) -> Res<(Config, Value)> {
@@ -831,6 +836,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut observed_poke = None;
     let mut observed_command = None;
     loop {
+        // #1297: steady successful work folds into 15-minute aggregates; failures, changes and command-linked passes stay rows.
+        let _repeating = tracing::info_span!("service.loop", coreq_repeating = true, project = cfg.repo.as_str()).entered();
         if let Some(host)=&host {
             let proceed=host.lock().map_err(|_|"host handover unknown")?.begin_pass(&cfg.root);
             if !proceed {std::thread::sleep(Duration::from_secs(1));continue;}
@@ -2433,8 +2440,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             }
             let title = match &picked { Some((t, _, _)) => t, None => a.pos.get(1).filter(|t| !t.trim().is_empty()).ok_or("title missing")? };
             let deps: Vec<u64> = a.all("deps").iter().flat_map(|d| d.split([',', ' '])).filter(|d| !d.is_empty()).map(|d| d.trim_start_matches('#').parse().map_err(|_| format!("bad --deps {d}"))).collect::<Res<_>>()?;
-            for (flag, allowed) in [("type", "code|docs|research|asset"), ("runtime", "codex|claude|codex-app"), ("prefer", "codex|claude"), ("priority", "0|1|2")] {
-                if a.all(flag).len() > 1 || (flag == "prefer" && a.one(flag).is_some_and(|v| !["codex", "claude"].contains(&v))) {
+            // § 9: work waits for its runtime; a soft preference is retired
+            if a.flags.contains_key("prefer") {
+                return Err("--prefer is retired; use --runtime codex for design, UI, visual and image work (none: claude)".into());
+            }
+            for (flag, allowed) in [("type", "code|docs|research|asset"), ("runtime", "codex|claude|codex-app"), ("priority", "0|1|2")] {
+                if a.all(flag).len() > 1 {
                     return Err(format!("--{flag} requires one of {allowed}"));
                 }
             }
@@ -2453,13 +2464,13 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 host: a.one("host").map(String::from),
                 hold: finding || a.flags.contains_key("hold"),
                 later: a.flags.contains_key("later").then(|| text.to_string()),
-                labels: a.one("prefer").map(|p| format!("prefer-{p}")).into_iter().collect(),
+                labels: vec![],
             };
             if finding {
                 let (mut body, labels, _) = task_body(b, &new, &Op::default())?;
                 let finding_request;
                 for (flag, values) in &a.flags {
-                    if !["board", "source", "goal", "acceptance", "scope", "deps", "type", "runtime", "prefer", "priority", "host", "evidence", "start", "json"].contains(&flag.as_str()) {
+                    if !["board", "source", "goal", "acceptance", "scope", "deps", "type", "runtime", "priority", "host", "evidence", "start", "json"].contains(&flag.as_str()) {
                         return Err(format!("finding does not accept --{flag}"));
                     }
                     if !["acceptance", "scope", "deps", "evidence"].contains(&flag.as_str()) && values.len() != 1 {
@@ -2884,12 +2895,11 @@ mod tests {
         assert!(c.board.issues(None).unwrap().pop().unwrap().labels.contains(&"run-codex-app".into()));
         command(&c, "add", &args(&["--priority", "0"])).unwrap();
         assert_eq!(c.board.issues(None).unwrap().pop().unwrap().labels, vec!["taskq", "q-ready", "p0"]);
-        command(&c, "add", &args(&["--prefer", "codex"])).unwrap();
-        assert_eq!(c.board.issues(None).unwrap().pop().unwrap().labels, vec!["taskq", "q-ready", "prefer-codex"]);
+        assert!(command(&c, "add", &args(&["--prefer", "codex"])).is_err_and(|e| e.contains("--runtime codex")), "§ 9: --prefer refused with the --runtime hint");
         for extra in [&["--priority", "3"][..], &["--runtime", "any"], &["--type", "code", "--type", "docs"], &["--host", "win,mac"], &["--prefer", "codex-app"], &["--prefer", "codex", "--prefer", "claude"]] {
             assert!(command(&c, "add", &args(extra)).is_err());
         }
-        assert_eq!(c.board.issues(None).unwrap().len(), 5);
+        assert_eq!(c.board.issues(None).unwrap().len(), 4);
         assert!(task_body(&*c.board, &NewTask { title: "T".into(), goal: "G".into(), acceptance: vec!["observable".into()], labels: vec!["prefer-codex".into(), "prefer-claude".into()], ..Default::default() }, &Op::default()).is_err_and(|e| e.contains("prefer")));
     }
 

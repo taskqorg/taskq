@@ -5,9 +5,23 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.24
+
+Unlabeled tasks and every review run on Claude (#1314). Work waits for a free slot of its runtime instead of moving to the other one: an unlabeled task no longer starts on Codex, and a review no longer falls back to Codex or Codex app. `taskq add --prefer` is refused with a hint to `--runtime`.
+
+**Board:** existing `prefer-codex` labels read as `run-codex`, `prefer-claude` as no label; nothing to edit. Hosts on older versions still route by the previous rule until updated.
+
+UI acceptance no longer requires native click and raise proofs; the owner observes them (#1298). The Windows handover selftest waits longer than one bounded telemetry append (#1305). No board change.
+
+## v4.6.23
+
+A native revision-bound workspace shows full AI exchanges (#1275); tray task rows keep their order and show the age of the current state (#1302). A new host recovers telemetry from a retiring older tray writer instead of reporting the command receipt collector unavailable (#1311). An older host treats an exited newer host's service record as stale instead of waiting on it forever (#1312). The spec now routes unlabeled work and every review to claude and keeps codex for design, UI, visual and image work (#1313); dispatch still follows the previous rule until #1314 ships. No board change.
+
 Releases come from the `live` branch: a fast-forward of `live` to a `main` commit whose merge-queue CI passed tags and publishes; `main` pushes no longer release. The Mac development host installs local `<next patch>-dev.<epoch>` builds with `scripts/dev-install.sh`. Release builds use thin LTO and CI caches Rust dependencies. No board change.
 
 A new process can bridge a running v4.6.19 telemetry writer with its exact legacy budget in the same database (#1295). Update candidate selftest and install receipts retain the shared export path; no handover side store is created. Unknown budgets, unsafe endpoints and unsupported wire formats remain refused. Compatibility lasts for that process; a fresh process after the old owner exits requests the 1 GiB budget.
+
+Steady service, host and tray polling no longer writes one telemetry row per poll (#1297). Successful repeated work folds into 15-minute aggregates (coreq#63), while failures, changed results and command-linked passes stay detailed. Collector health writes one row per project loop per 15-minute window, or when its state, lost or failed-batch count changes; status.json keeps live values. The host name is read once per process, so a renamed host needs a service restart. A busy installation budget lock now delays a telemetry batch instead of losing it. No board change.
 
 Recovery for v4.6.19–v4.6.22 hosts whose update fails with `telemetry IPC installation budget mismatch` (#1294): retry `taskq update` after this release is published, or run the new binary's `service install`. A full/unavailable old store can still prevent selftest or installation receipts; compatibility does not fabricate successful writes. The new Stop lifecycle can retain its durable intent and report telemetry receipts unknown while still requiring exact ownership, drain and native exit. Stop protocol 2 identifies that support; a new CLI refuses a degraded request to protocol 1 before writing intent. Older CLIs read protocol 2 as unknown; use the new CLI. Complete the service upgrade before using degraded Stop; exhausted legacy Stop remains safely refused. Released old CLIs are unchanged. No board change.
 
