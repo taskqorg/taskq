@@ -31,6 +31,7 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 
 | Material | Purpose |
 |---|---|
+| [Menu UI rules](ui-rules.md) | Approved 28-check menu target and source-pinned baseline review |
 | [Remote manager](remote-manager.md) | Universal remote PM flow, project routing, observation, answers/media and RM-A1–A9 |
 | [FRA/Hermes audit](remote-manager-audit.md) | Inspected integration baseline and unqualified capabilities |
 | [Integrated workspace](workspace-prototype.html) | Current Workspace review: menu, agent settings and AI conversations |

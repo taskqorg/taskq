@@ -8,7 +8,7 @@ Final candidate for the approved dense menu. Shared principles: [specq D1–D14]
 - Menu base 16 px; user options 14/16/18/20. Secondary text at least max(12 px, 0.85×base).
 - Native width and content-fit height follow [R-UI2](rendering-contract.md#r-ui2-native-menu-sizing); preview width is 360 px. Fixed demo heights are not production rules. Never scale the entire window down.
 - Outer inset 8 px; row horizontal inset 4 px; related gap 4–6 px; section separation 6 px with one 1 px divider.
-- Fine-pointer row target at least 32 px; coarse-pointer target at least 44 px. Icons normally 16 px; compact top-strip icons keep usable targets.
+- Approved control hit targets follow [UI05–UI06](ui-rules.md#checklist-28-rules): at least 32×32 CSS px for fine pointers and 44×44 CSS px for coarse pointers; native units require scaling verification. Icons normally 16 px; compact top-strip icons keep usable targets.
 - Menu radius 12 px; controls 5–7 px; counter capsules; counter symbols may use 14 px within 32 px targets. No nested decorative cards; bordered surfaces only for composers and consequential change review.
 - Header/control strip stays accessible. Native height is bounded by the monitor work area; scroll content, never clip it. AI window uses a fixed composer within the window and a scrolling transcript.
 - At short/narrow sizes, reflow header controls or use the conversation list as a separate page. Maintain Back, Send, context and attachments.
