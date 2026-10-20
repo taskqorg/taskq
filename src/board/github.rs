@@ -139,6 +139,20 @@ impl GitHub {
         Ok(v)
     }
 
+    /// Remove PR `id` from the merge queue with readback; a merged or unreadable PR is an error (§ 7).
+    fn dequeue(&self, id: &str) -> Result<()> {
+        let query = "query($id: ID!) { node(id: $id) { ... on PullRequest { merged mergeQueueEntry { id } } } }";
+        let read = || self.graphql(query, json!({"id": id}));
+        let v = read()?;
+        if v["node"]["merged"] != false { return Err("PR already merged or unknown; verify close before cancelling".into()); }
+        if v["node"]["mergeQueueEntry"].is_object() {
+            self.graphql("mutation($id: ID!) { dequeuePullRequest(input: {pullRequestId: $id}) { clientMutationId } }", json!({"id": id}))?;
+            let back = read()?;
+            if back["node"]["merged"] != false || back["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation not read back; task unchanged".into()); }
+        } else if v["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation state unknown".into()); }
+        Ok(())
+    }
+
     fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
         let v = self.api.call("POST", &format!("{}/graphql", self.api.root), Some(json!({"query": query, "variables": variables})))?.json()?;
         if v["errors"].as_array().is_some_and(|e| !e.is_empty()) { return Err(format!("publication GraphQL: {}", v["errors"])); }
@@ -433,19 +447,27 @@ impl Board for GitHub {
         let prs = prs.as_array().ok_or("cancellation PR list unknown")?;
         if prs.len() != 1 { return Err("publication PR absent or ambiguous; verify merge before cancelling".into()); }
         if prs[0]["head"]["sha"].as_str().ok_or("cancellation head unknown")? != sha { return Ok(()); }
-        let id = prs[0]["node_id"].as_str().ok_or("cancellation PR id unknown")?;
-        let query = "query($id: ID!) { node(id: $id) { ... on PullRequest { merged mergeQueueEntry { id } } } }";
-        let read = || self.graphql(query, json!({"id": id}));
-        let v = read()?;
-        if v["node"]["merged"] != false { return Err("publication already merged or unknown; verify close before cancelling".into()); }
-        if v["node"]["mergeQueueEntry"].is_object() {
-            self.graphql("mutation($id: ID!) { dequeuePullRequest(input: {pullRequestId: $id}) { clientMutationId } }", json!({"id": id}))?;
-            let back = read()?;
-            if back["node"]["merged"] != false || back["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation not read back; task unchanged".into()); }
-        } else if v["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation state unknown".into()); }
-        Ok(())
+        self.dequeue(prs[0]["node_id"].as_str().ok_or("cancellation PR id unknown")?)
     }
 
+    fn close_task_prs(&self, n: u64, reason: &str) -> Result<Vec<u64>> {
+        let owner = self.api.base.rsplit_once("/repos/").and_then(|r| r.1.split('/').next()).ok_or("repository owner unknown")?;
+        let prs = self.api.call("GET", &format!("/pulls?head={owner}:taskq-{n}&state=open"), None)?.json()?;
+        let marker = format!("Task #{n} closed without merging this PR");
+        let mut closed = vec![];
+        for pr in prs.as_array().ok_or("task PR list unknown")? {
+            let p = pr["number"].as_u64().ok_or("task PR number unknown")?;
+            self.dequeue(pr["node_id"].as_str().ok_or("task PR id unknown")?)?;
+            // ponytail: two hosts racing between this read and the post both comment; a guard comment is the upgrade path
+            if !self.comments(p)?.iter().any(|c| c.body.starts_with(&marker)) {
+                self.comment(p, &format!("{marker}: {reason}\nBranch `taskq-{n}` kept. Task: {}", self.url(n)))?;
+            }
+            let back = self.api.call("PATCH", &format!("/pulls/{p}"), Some(json!({ "state": "closed" })))?.json()?;
+            if back["state"] != "closed" || back["merged"] == true { return Err(format!("PR #{p} close not read back")); }
+            closed.push(p);
+        }
+        Ok(closed)
+    }
 
     fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         outcome(self.try_publish(n, sha, "pr", title, task_line, Some(root), enqueued))

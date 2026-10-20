@@ -5,6 +5,8 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+A task that closes without merging its PR (cancelled, superseded, delivered elsewhere) no longer leaves the PR open: each GitHub service that sees the close dequeues it, comments once with the task link and close reason, and closes it unmerged; the `taskq-<N>` branch stays (#1374). `requeue`, `later` and `failed` keep the PR open. No board change.
+
 ## v4.6.25
 
 DashQ receives the `taskq.resources/1` project-limits projection as record `taskq-resources/1` beside the board snapshot (#1299; [enrollment record](docs/design/shared-resource-controls.md#project-overlay)). Existing connections keep sending the board alone until `taskq enroll` is rerun and approved in the browser; host resource grants name the connection generation and may need to be made again. No board change.

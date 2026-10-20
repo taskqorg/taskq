@@ -1597,6 +1597,18 @@ impl<'a> Service<'a> {
                 }
             }
         }
+        // § 7: a task closed without merging its PR leaves none open; `requeue`, `later` and `failed` keep it.
+        // ponytail: a close while no service ran is not seen; a sweep of open `taskq-*` PRs is the upgrade path
+        for &(n, kind, _) in &moves {
+            if kind != "close" { continue; }
+            let Some(comments) = views.iter().find(|v| v.issue.number == n).map(|v| &v.comments).or_else(|| closed.iter().find(|x| x.0 == n).map(|x| &x.2)) else { continue };
+            let reason = comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: close"))
+                .and_then(|c| c.body.lines().skip(1).find(|l| !l.trim().is_empty())).map_or("issue closed on the board".into(), |l| l.chars().take(160).collect::<String>());
+            match self.board.close_task_prs(n, &reason) {
+                Ok(prs) => self.log.extend(prs.iter().map(|p| format!("#{n} closed unmerged PR #{p}"))),
+                Err(e) => self.log.push(format!("#{n} task PR left open, state unknown: {e}")),
+            }
+        }
         self.gone_after = self.gone_after.max(newest);
         self.moved_after = Some(self.gone_after.unwrap_or(0));
         moves.sort();
@@ -4593,6 +4605,31 @@ mod tests {
         assert_eq!(record(&p, late, &[]).unwrap(), 1500);
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "since 1500\n2000 #2 failed 7\n2000 #3 close 8\n", "older than 30 days dropped");
         let _ = std::fs::remove_file(&p);
+    }
+
+    // Chain: section 7 close without merge -> task PR closed with the close reason; requeue, later and failed keep it
+    // open; an unknown PR state is logged and left open.
+    #[test]
+    fn only_a_closed_task_closes_its_open_pr() {
+        for fail in [false, true] {
+            let (b, c) = (Fake::default(), cfg("win"));
+            let ns: Vec<u64> = ["close", "requeue", "later", "failed"].iter().map(|t| {
+                let n = b.create(t, "", &["taskq".into()]).unwrap();
+                b.comment(n, "taskq: spawn worker codex:w mac").unwrap();
+                b.comment(n, "taskq: later\nparked").unwrap();
+                n
+            }).collect();
+            b.state.borrow_mut().fail_task_prs = fail;
+            let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process")));
+            s.pass().unwrap();
+            b.comment(ns[0], "taskq: close\nsuperseded by #9").unwrap();
+            for (n, kind) in ns[1..].iter().zip(["requeue", "later", "failed"]) { b.comment(*n, &format!("taskq: {kind}\nwork may resume")).unwrap(); }
+            s.pass().unwrap();
+            s.pass().unwrap();
+            assert!(!b.issue(ns[0]).unwrap().open);
+            assert_eq!(b.state.borrow().closed_task_prs, [(ns[0], "superseded by #9".to_string())], "once, closed task only");
+            assert_eq!(s.log.iter().any(|l| l == &format!("#{} task PR left open, state unknown: PR state unknown", ns[0])), fail, "{:?}", s.log);
+        }
     }
 
     // Chain: #1173 logged state change -> pass replay -> `taskq-transition` record -> report. Risk: a transition

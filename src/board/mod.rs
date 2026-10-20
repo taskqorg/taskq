@@ -58,6 +58,8 @@ pub trait Board {
     /// § 7: durable intent ends the reviewer; only the service performs asynchronous publication.
     fn defer_publication(&self, _mode: &str) -> bool { false }
     fn cancel_publication(&self, _n: u64, _sha: &str) -> Result<()> { Ok(()) }
+    /// § 7: a task that closed without merging closes its open `taskq-<n>` PRs unmerged, branch kept; returns them.
+    fn close_task_prs(&self, _n: u64, _reason: &str) -> Result<Vec<u64>> { Ok(vec![]) }
     fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, _root: &std::path::Path, _enqueued: bool) -> Publish {
         self.publish(n, sha, "pr", title, task_line)
     }
@@ -140,6 +142,7 @@ impl Board for Profiled {
     }
     fn defer_publication(&self, mode: &str) -> bool { self.0.defer_publication(mode) }
     fn cancel_publication(&self, n: u64, sha: &str) -> Result<()> { self.op("publish", |b| b.cancel_publication(n, sha)) }
+    fn close_task_prs(&self, n: u64, reason: &str) -> Result<Vec<u64>> { self.op("publish", |b| b.close_task_prs(n, reason)) }
     fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         let began = std::time::Instant::now();
         let p = self.0.resume_publication(n, sha, title, task_line, root, enqueued);
@@ -557,6 +560,9 @@ pub struct FakeState {
     pub hide_latest_comment: bool,
     pub cancelled_publications: Vec<(u64, String)>,
     pub fail_publication_cancel: bool,
+    /// `close_task_prs` calls `(task, reason)`; `fail_task_prs` makes them unknown.
+    pub closed_task_prs: Vec<(u64, String)>,
+    pub fail_task_prs: bool,
     pub fail_issue_read: Option<(u64, usize)>,
     pub fail_labels: bool,
     /// The next this many `comment` calls fail like a board rate-limit pause.
@@ -722,6 +728,11 @@ impl Board for Fake {
         let mut state = self.state.borrow_mut();
         state.cancelled_publications.push((n, sha.into()));
         if state.fail_publication_cancel { Err("queue cancellation unknown".into()) } else { Ok(()) }
+    }
+    fn close_task_prs(&self, n: u64, reason: &str) -> Result<Vec<u64>> {
+        let mut state = self.state.borrow_mut();
+        state.closed_task_prs.push((n, reason.into()));
+        if state.fail_task_prs { Err("PR state unknown".into()) } else { Ok(vec![]) }
     }
 
     fn publish(&self, _n: u64, sha: &str, _mode: &str, _title: &str, _task_line: &str) -> Publish {
@@ -1098,6 +1109,47 @@ exit 0
             let result = h.cancel_publication(1, &"a".repeat(40));
             assert_eq!(result.is_ok(), matches!(scenario, "cancel" | "absent"), "{scenario}: {result:?}");
             assert_eq!(*removed.borrow(), matches!(scenario, "cancel" | "lost-readback"));
+        }
+    }
+
+    // Chain: section 7 close without merge -> dequeue, one comment, unmerged close; merged/unknown PRs stay untouched.
+    #[test]
+    fn github_task_close_closes_its_open_pr_once_and_keeps_the_branch() {
+        // scenario -> (result ok, PRs closed, comments posted, dequeued)
+        for (scenario, ok, closed, posted, dequeued) in [("open", true, 1, 1, false), ("queued", true, 1, 1, true), ("commented", true, 1, 0, false),
+            ("closed", true, 0, 0, false), ("merged", false, 0, 0, false), ("unknown", false, 0, 0, false)] {
+            let calls = std::rc::Rc::new(RefCell::new(vec![]));
+            let seen = calls.clone();
+            let queued = std::rc::Rc::new(RefCell::new(scenario == "queued"));
+            let h = http(&github::KIND, None, Box::new(move |method, url, body| {
+                seen.borrow_mut().push(format!("{method} {}", url.rsplit_once("/o/r").map_or(url, |x| x.1)));
+                let value = if url.contains("/pulls?") {
+                    assert!(url.contains("head=o:taskq-1&state=open") && !url.contains("base="), "{url}");
+                    if scenario == "closed" { json!([]) } else { json!([{"number": 7, "node_id": "PR_7"}]) }
+                } else if url.ends_with("/graphql") {
+                    if body.as_ref().unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest") {
+                        *queued.borrow_mut() = false;
+                        json!({"data": {"dequeuePullRequest": {"clientMutationId": null}}})
+                    } else if scenario == "unknown" { json!({"data": {"node": null}}) }
+                    else { json!({"data": {"node": {"merged": scenario == "merged", "mergeQueueEntry": if *queued.borrow() { json!({"id": "MQ_7"}) } else { Value::Null }}}}) }
+                } else if url.contains("/issues/7/comments") && method == "GET" {
+                    if scenario == "commented" { json!([{"id": 1, "body": "Task #1 closed without merging this PR: earlier"}]) } else { json!([]) }
+                } else if url.contains("/issues/7/comments") {
+                    assert!(body.as_ref().unwrap()["body"].as_str().unwrap().starts_with("Task #1 closed without merging this PR: superseded\nBranch `taskq-1` kept. Task: https://github.com/o/r/issues/1"));
+                    json!({"id": 2})
+                } else if url.ends_with("/pulls/7") && method == "PATCH" {
+                    assert_eq!(body.as_ref().unwrap(), &json!({"state": "closed"}));
+                    json!({"state": "closed", "merged": false})
+                } else { panic!("unexpected {method} {url}") };
+                Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+            }));
+            let result = h.close_task_prs(1, "superseded");
+            let calls = calls.borrow();
+            let count = |p: &str| calls.iter().filter(|c| c.starts_with(p)).count();
+            assert_eq!(result.is_ok(), ok, "{scenario}: {result:?}");
+            let graphql = count("POST") - count("POST /issues");
+            assert_eq!((count("PATCH /pulls/7"), count("POST /issues/7/comments"), graphql), (closed, posted, match (scenario, dequeued) { ("closed", _) => 0, (_, true) => 3, _ => 1 }), "{scenario}: {calls:?}");
+            assert!(!calls.iter().any(|c| c.starts_with("DELETE")), "{scenario}: branch never deleted");
         }
     }
 
