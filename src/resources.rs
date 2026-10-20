@@ -172,6 +172,24 @@ pub(crate) fn with<T>(install: &Path, f: impl FnOnce(&mut State) -> Res<T>) -> R
     r
 }
 
+/// `with`, but waits at most `wait` for the host lock; `Ok(None)`: another writer held it, nothing read or written.
+pub(crate) fn with_within<T>(install:&Path,wait:std::time::Duration,f:impl FnOnce(&mut State)->Res<T>)->Res<Option<T>> {
+    fs::create_dir_all(dir(install)).map_err(|e|format!("resources: {e}"))?;
+    let until=std::time::Instant::now()+wait;
+    // ponytail: 50 ms polling of a non-blocking lock; a blocking lock with OS timeout if contention ever matters
+    let _lock=loop {
+        match coreq::file_lock::try_lock(&dir(install).join("lock")) {
+            Ok(lock)=>break lock,
+            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now()<until=>std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(fs::TryLockError::WouldBlock)=>return Ok(None),
+            Err(fs::TryLockError::Error(e))=>return Err(format!("resources lock: {e}")),
+        }
+    };
+    let mut s=read(install)?;let before=s.clone();let r=f(&mut s);
+    if s!=before {save(install,&s)?;}
+    r.map(Some)
+}
+
 /// Host/UI observers retry on a later tick; they must not wait behind a policy writer.
 pub(crate) fn try_with<T>(install:&Path,f:impl FnOnce(&mut State)->Res<T>)->Res<T> {
     try_locked(install,|| {

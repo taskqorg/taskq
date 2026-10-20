@@ -938,13 +938,16 @@ fn render_board(text:&str)->Result<String,&'static str> {let (h,rows)=read_expor
 pub(crate) mod tests {
     use super::*;
 
-    pub(crate) fn collecting(dir:&Path)->(coreq::telemetry::capture::Capture,tracing::subscriber::DefaultGuard) {
+    /// Settles this process's queued command receipts (#1351) before the fixture collector is released.
+    pub(crate) struct Collecting(#[allow(dead_code)] tracing::subscriber::DefaultGuard);
+    impl Drop for Collecting {fn drop(&mut self) {crate::telemetry::settle(std::time::Duration::from_secs(30));}}
+    pub(crate) fn collecting(dir:&Path)->(coreq::telemetry::capture::Capture,Collecting) {
         use tracing_subscriber::prelude::*;
         fs::create_dir_all(dir.join("telemetry.log")).unwrap();
         let store=std::sync::Arc::new(coreq::telemetry::Store::open_bounded(&dir.join("telemetry.log/universal.sqlite3"),crate::telemetry::budget(dir,"telemetry.sqlite3").unwrap()).unwrap());
         let capture=coreq::telemetry::capture::Capture::new(store,"taskq","test").unwrap();
         let guard=tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
-        (capture,guard)
+        (capture,Collecting(guard))
     }
     #[test]
     fn guide_needs_no_store() {

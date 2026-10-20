@@ -215,7 +215,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
         }
         let candidate=Policy::parse(next,&hostname)?;
         let command=CommandReceipt::current()?;
-        command.checkpoint("received")?;
+        crate::telemetry::receipt(&command,"received")?;
         let mut next=candidate.raw;
         next[CAPACITY_COMMAND]=json!({"schema":1,"host":candidate.me,"policy":candidate.cap.json(),"receipt":command.encode()});
         if let Some((state,request))=local.as_mut() {
@@ -246,7 +246,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
             crate::platform::write_atomic(&install.join("ack"),"policy-saved")?;
             loop {std::thread::park();}
         }
-        command.checkpoint("applied").map_err(|e|format!("host policy saved; command receipt unknown: {e}"))?;
+        crate::telemetry::receipt(&command,"applied")?;
         crate::platform::write_atomic(&install.join("poke"),"").map_err(|e|format!("host policy saved; host notification unknown: {e}"))?;
         Ok((old.cap,saved.cap,command))
 }
@@ -324,9 +324,13 @@ pub fn capacity_request(request:&Value)->Res<crate::CapEdit> {
     Ok(edit)
 }
 
+// #1351: the tray's limits save fails fast while another host writer (grant, migration, DashQ) holds the lock.
+#[cfg(not(test))] const LOCAL_LOCK_WAIT:std::time::Duration=std::time::Duration::from_secs(10);
+#[cfg(test)] const LOCAL_LOCK_WAIT:std::time::Duration=std::time::Duration::from_secs(1);
+
 pub fn local_capacity(install:&Path,host:&str,request:&Value)->Res<Value> {
     let edit=capacity_request(request)?;
-    crate::resources::with(install,|state| {
+    let receipt=crate::resources::with_within(install,LOCAL_LOCK_WAIT,|state| {
         crate::resources::prepare(state,install,wall()?)?;
         let installation=match fs::read_to_string(install.join("installation-id")) {
             Ok(id) if id.len()==64 && id.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))=>json!(id),
@@ -339,7 +343,8 @@ pub fn local_capacity(install:&Path,host:&str,request:&Value)->Res<Value> {
         if let Err(error)=result {receipt["reason"]=json!(error);}
         receipt.as_object_mut().ok_or("local capacity receipt corrupt")?.remove("command");
         Ok(receipt)
-    })
+    })?;
+    Ok(receipt.unwrap_or_else(||json!({"state":"rejected","reason":"another host settings change is in progress; old limits kept. Try again in a minute"})))
 }
 
 /// The host already loaded this snapshot; a later writer cannot borrow its observation.
@@ -351,8 +356,8 @@ pub fn observe_capacity(install:&Path,loaded:&Policy)->Res<Option<String>> {
         if current.raw!=loaded.raw || binding["host"]!=loaded.me || binding["policy"]!=loaded.cap.json() {
             return Err("capacity command changed or no longer matches the loaded policy; observation unknown".into());
         }
-        command.checkpoint("applied")?;
-        command.checkpoint("observed").map(Some)
+        crate::telemetry::receipt(&command,"applied")?;
+        crate::telemetry::receipt(&command,"observed").map(Some)
     }),|_|"command-observation")
 }
 
@@ -1818,7 +1823,7 @@ mod tests {
         let (capture,guard)=crate::profile::tests::collecting(&root);
         assert!(!capacity_observed(&root,&receipt).unwrap());
         assert_eq!(observe_capacity(&root,&read).unwrap(),Some(receipt.event_id("observed").unwrap()));
-        assert!(capacity_observed(&root,&receipt).unwrap());
+        assert!(observed_soon(&root,&receipt));
         assert_eq!(fs::read(root.join("host.json")).unwrap(),before,"recovery replayed a settings mutation");
         capture.flush().unwrap();drop(guard);drop(capture);fs::remove_dir_all(root).unwrap();
         }
@@ -1848,6 +1853,53 @@ mod tests {
             "target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":"codex"},
             "policy_schema":"taskq.host-capacity/1","expected_revision":p.revision().unwrap(),"changes":{"runtime_limit":3}}]});
         (base,install,p.me,request)
+    }
+
+    // Receipt commits run beside the operation (#1351): a reader polls within coreq's append deadline.
+    fn observed_soon(root:&Path,receipt:&CommandReceipt)->bool {
+        crate::telemetry::settle(std::time::Duration::from_secs(30));
+        let until=Instant::now()+std::time::Duration::from_secs(15);
+        while Instant::now()<until {if capacity_observed(root,receipt).unwrap() {return true;} std::thread::sleep(std::time::Duration::from_millis(20));}
+        false
+    }
+
+    // #1351: a stalled telemetry writer (budget lock held) cannot delay or fail a limits save; a refused save keeps the old limits.
+    #[test]
+    fn local_capacity_saves_while_telemetry_is_stalled() {
+        let (base,install,owner,request)=local_fixture("local-stalled");
+        let (capture,guard)=crate::profile::tests::collecting(&install);
+        let budget=coreq::file_lock::lock(&install.join("taskq-profile.lock")).unwrap();
+        let started=Instant::now();
+        let saved=local_capacity(&install,&owner,&request).unwrap();
+        assert_eq!(saved["state"],"saved","{saved}");
+        assert!(started.elapsed()<std::time::Duration::from_secs(3),"save waited {:?} on telemetry",started.elapsed());
+        assert_eq!(Policy::read(&install).unwrap().cap.limits["codex"],3);
+        let bytes=fs::read(install.join("host.json")).unwrap();
+        let mut stale=request.clone();stale["id"]=json!("stale");stale["ops"][0]["changes"]["runtime_limit"]=json!(5);
+        let started=Instant::now();
+        assert_eq!(local_capacity(&install,&owner,&stale).unwrap()["state"],"rejected");
+        assert!(started.elapsed()<std::time::Duration::from_secs(3));
+        assert_eq!(fs::read(install.join("host.json")).unwrap(),bytes,"refused save changed policy");
+        drop(budget);capture.flush().unwrap();drop(guard);drop(capture);fs::remove_dir_all(base).unwrap();
+    }
+
+    // #1351 A3: a held host lock turns the save into a bounded "Not saved" with the old limits kept; the same request saves after release.
+    #[test]
+    fn local_capacity_refuses_within_bound_while_host_lock_is_held() {
+        let (base,install,owner,request)=local_fixture("local-locked");
+        let (capture,guard)=crate::profile::tests::collecting(&install);
+        let bytes=fs::read(install.join("host.json")).unwrap();
+        fs::create_dir_all(crate::resources::dir(&install)).unwrap();
+        let held=coreq::file_lock::lock(&crate::resources::dir(&install).join("lock")).unwrap();
+        let started=Instant::now();
+        let refused=local_capacity(&install,&owner,&request).unwrap();
+        assert_eq!(refused["state"],"rejected","{refused}");
+        assert!(refused["reason"].as_str().unwrap().contains("old limits kept"),"{refused}");
+        assert!(started.elapsed()<LOCAL_LOCK_WAIT+std::time::Duration::from_secs(2),"save waited {:?} on the host lock",started.elapsed());
+        assert_eq!(fs::read(install.join("host.json")).unwrap(),bytes,"refused save changed policy");
+        drop(held);
+        assert_eq!(local_capacity(&install,&owner,&request).unwrap()["state"],"saved");
+        capture.flush().unwrap();drop(guard);drop(capture);fs::remove_dir_all(base).unwrap();
     }
 
     // H-A2: immutable same-ID replay, current revision and typed local scope hold before policy effects.
@@ -1947,7 +1999,7 @@ mod tests {
         assert!(observe_capacity(&root,&loaded).is_err(),"late old loader confirmed a different command");
         assert!(!capacity_observed(&root,&second).unwrap());
         assert_eq!(observe_capacity(&root,&current).unwrap(),Some(second.event_id("observed").unwrap()));
-        assert!(capacity_observed(&root,&second).unwrap());
+        assert!(observed_soon(&root,&second));
         assert!(capacity_observed(&root,&first).is_err());
         let mut edited=current.raw.clone();edited["limits"]["codex"]=json!(4);
         fs::write(root.join("host.json"),edited.to_string()).unwrap();

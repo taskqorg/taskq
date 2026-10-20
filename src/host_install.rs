@@ -103,7 +103,7 @@ fn record(install:&Path,p:&Pending,phase:&str)->Res<()> {
                 json!({"id":p.id,"action":"install","root":p.root,"version":p.version,"state":"queued"})
             },
         };
-        let event=command.checkpoint(phase)?;
+        let event=crate::telemetry::receipt(&command,phase)?;
         receipt.as_object_mut().ok_or("installation receipt invalid")?.remove("reason");
         receipt[format!("{phase}_receipt")]=json!(event);
         receipt["state"]=json!(match phase {"received"=>"queued","applied"=>"applied","observed"=>"observed",_=>"failed"});

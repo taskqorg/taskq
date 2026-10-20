@@ -158,7 +158,7 @@ fn public(op:&resources::Op)->Value {
     if value["action"]=="stop" {value["mode"]=binding(op).unwrap()["request"].get("mode").cloned().unwrap_or(json!("drain"));value["restart_condition"]=json!(if cfg!(target_os="macos") {"next logon or explicit service install; admission remains held until reviewed recovery (#1285)"}else if cfg!(target_os="linux") {"explicit service install or user-manager startup"}else{"next logon or explicit service install"});}value
 }
 fn required(op:&mut resources::Op,command:&CommandReceipt,phase:&str)->Res<()> {
-    if let Err(error)=command.checkpoint(phase) {
+    if let Err(error)=crate::telemetry::receipt(command,phase) {
         if op.bound.get("local_stop").is_none() {
             op.receipt["reason"]=json!(format!("required lifecycle receipt unavailable: {}; see host log",error.chars().take(48).collect::<String>()));
             return Err(error);
@@ -573,17 +573,12 @@ mod tests {
         assert!(finish_project_uninstall(&install,"drain-project","original",false).unwrap_err().contains("project drain not observed"));
 
         let db=rusqlite::Connection::open(install.join("telemetry.log/universal.sqlite3")).unwrap();
-        db.execute_batch("CREATE TRIGGER refuse_uninstall_applied BEFORE INSERT ON events WHEN NEW.kind='command.applied' BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
-        assert!(finish_project_uninstall(&install,"drain-project","original",true).is_err());
-        assert_eq!(receipt(&install,"drain-project").unwrap().unwrap()["state"],"queued");
-        assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),format!("{}\n{}\n",root.display(),other.display()),"receipt failure before drain acknowledgement keeps registration");
-        db.execute_batch("DROP TRIGGER refuse_uninstall_applied").unwrap();
-        db.execute_batch("CREATE TRIGGER refuse_uninstall_observed BEFORE INSERT ON events WHEN NEW.kind='command.observed' BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
-        assert!(finish_project_uninstall(&install,"drain-project","original",true).is_err());
-        assert_eq!(receipt(&install,"drain-project").unwrap().unwrap()["state"],"applied");
+        // #1351: refused receipt commits stay unknown; the drained uninstall proceeds.
+        db.execute_batch("CREATE TRIGGER refuse_uninstall_receipts BEFORE INSERT ON events WHEN NEW.kind IN ('command.applied','command.observed') BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
+        finish_project_uninstall(&install,"drain-project","original",true).unwrap();
         assert_eq!(fs::read_to_string(install.join("projects")).unwrap(),format!("{}\n",other.display()),"applied registry removal preserves unrelated roots");
-        db.execute_batch("DROP TRIGGER refuse_uninstall_observed").unwrap();drop(db);
-        finish_project_uninstall(&install,"drain-project","original",false).unwrap();
+        assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)));
+        db.execute_batch("DROP TRIGGER refuse_uninstall_receipts").unwrap();drop(db);
         let observed=receipt(&install,"drain-project").unwrap().unwrap();
         assert_eq!(observed["state"],"observed");assert_eq!(observed["received_receipt"],received["received_receipt"]);
         assert_eq!(submit(&install,&request).unwrap(),observed,"same ID returns the original terminal receipt");
@@ -795,8 +790,10 @@ mod tests {
             assert!(submit(&install,&input).is_err(),"{case}");assert!(pending(&install).unwrap().is_none());publish(&install,"original");
         }
         let db=rusqlite::Connection::open(install.join("telemetry.log/universal.sqlite3")).unwrap();
+        // #1351: an unrecordable received receipt stays unknown; the reviewed request is still accepted.
         db.execute_batch("CREATE TRIGGER refuse_restart_receipt BEFORE INSERT ON events BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
-        assert!(submit(&install,&request).is_err());assert!(pending(&install).unwrap().is_none());
+        assert_eq!(submit(&install,&request).unwrap()["state"],"queued");assert!(pending(&install).unwrap().is_some());
+        assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)));
         db.execute_batch("DROP TRIGGER refuse_restart_receipt").unwrap();drop(db);
         assert!(capture.flush().unwrap_err().contains("injected"));drop(guard);drop(capture);fs::remove_dir_all(dir).unwrap();
     }
@@ -815,10 +812,11 @@ mod tests {
         assert!(pending(&install).unwrap().is_some());prepare(&install,"original").unwrap();publish(&install,"new-owner");
         let db=rusqlite::Connection::open(install.join("telemetry.log/universal.sqlite3")).unwrap();
         db.execute_batch("CREATE TRIGGER refuse_restart_observation BEFORE INSERT ON events WHEN NEW.kind='command.observed' BEGIN SELECT RAISE(ABORT,'injected'); END;").unwrap();
-        assert!(observe(&install,"new-owner",true).is_err());assert_eq!(status(&install,None)["state"],"applied");
-        assert!(status(&install,None)["reason"].as_str().unwrap().contains("required lifecycle receipt unavailable"));
-        db.execute_batch("DROP TRIGGER refuse_restart_observation").unwrap();drop(db);
+        // #1351: a refused observed commit stays unknown in the host log; observation proceeds.
         observe(&install,"new-owner",true).unwrap();assert_eq!(status(&install,None)["state"],"observed");
+        assert!(status(&install,None)["reason"].is_null());
+        assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)));
+        db.execute_batch("DROP TRIGGER refuse_restart_observation").unwrap();drop(db);
         let path=resources::dir(&install).join("state.json");let bytes=fs::read(&path).unwrap();
         fs::write(&path,"{").unwrap();assert_eq!(status(&install,None)["state"],"unknown");assert!(pending(&install).is_err());assert_eq!(fs::read(&path).unwrap(),b"{");
         fs::write(&path,bytes).unwrap();fs::write(resources::dir(&install).join("state.json.pending"),"interrupted").unwrap();

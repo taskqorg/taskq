@@ -25,6 +25,46 @@ pub(crate) fn budget(install:&Path,peer:&str)->Result<coreq::telemetry::Budget,S
         total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES})
 }
 
+/// #1351: receipts are mandatory but never block; the id is deterministic, so callers keep it without waiting for the ack.
+/// A slow or failed commit leaves that phase unknown in the host log; the operation proceeds.
+pub(crate) fn receipt(command:&coreq::telemetry::capture::CommandReceipt,phase:&str)->Result<String,String> {
+    let id=command.event_id(phase)?;
+    // A missing collector is known at once, so its existing refusal policy stays synchronous.
+    if !tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().is_some()) {return Err("command receipt collector unavailable".into());}
+    let job:Receipt=(command.clone(),phase.to_owned(),tracing::dispatcher::get_default(Clone::clone));
+    let (pending,_)=&RECEIPTS;
+    *pending.lock().unwrap()+=1;
+    if RECEIPT_QUEUE.lock().unwrap().get_or_insert_with(receipt_worker).send(job).is_err() {
+        settled(1);crate::platform::log(&format!("command receipt {phase} unknown: receipt worker unavailable"));
+    }
+    Ok(id)
+}
+
+type Receipt=(coreq::telemetry::capture::CommandReceipt,String,tracing::Dispatch);
+static RECEIPTS:(std::sync::Mutex<usize>,std::sync::Condvar)=(std::sync::Mutex::new(0),std::sync::Condvar::new());
+static RECEIPT_QUEUE:std::sync::Mutex<Option<std::sync::mpsc::Sender<Receipt>>>=std::sync::Mutex::new(None);
+
+// ponytail: one FIFO worker keeps phase order; a stalled store delays later receipts by coreq's append deadline each, never callers.
+// A receipt still queued at process exit stays unknown.
+fn receipt_worker()->std::sync::mpsc::Sender<Receipt> {
+    let (send,jobs)=std::sync::mpsc::channel::<Receipt>();
+    std::thread::Builder::new().name("taskq-receipts".into()).spawn(move||for (command,phase,dispatch) in jobs {
+        tracing::dispatcher::with_default(&dispatch,||if let Err(error)=command.checkpoint(&phase) {
+            crate::platform::log(&format!("command receipt {phase} unknown: {error}"));
+        });
+        settled(1);
+    }).expect("receipt worker");
+    send
+}
+
+fn settled(n:usize) {let (pending,done)=&RECEIPTS;*pending.lock().unwrap()-=n;done.notify_all();}
+
+/// Waits until submitted receipts have committed or failed; readers of this process's receipts call it first.
+pub(crate) fn settle(limit:std::time::Duration)->bool {
+    let (pending,done)=&RECEIPTS;
+    !done.wait_timeout_while(pending.lock().unwrap(),limit,|n|*n>0).unwrap().1.timed_out()
+}
+
 static HANDOVER: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// R8: bridge only the known legacy budget, using the same protected writer and export store.

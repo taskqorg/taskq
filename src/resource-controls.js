@@ -494,7 +494,7 @@ const root=globalThis;
 
 
   const RECEIPT = {sending: 'Saving…', saved: 'Saved; waiting for service', applied: 'Applied: read back from the service',superseded:'Saved; replaced by a newer command',
-    rejected: 'Not saved', unknown: 'Delivery unknown: check again', conflict: 'Settings changed since you opened the editor'};
+    rejected: 'Not saved', unknown: 'Not confirmed; the new limits may not be saved. Check again', conflict: 'Settings changed since you opened the editor'};
 
 
 

@@ -1006,6 +1006,7 @@ mod tests {
             assert_eq!(ids(&root).len(), KEEP+1,"unresolved native ownership stays beside the newest requests");
             assert_eq!(ids(&root).first().map(String::as_str),Some("6"));
             assert_eq!(ids(&root).get(1).map(String::as_str),Some("20"),"the newest 20 still stay");
+            assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)));
             let page=store.export(0,0,1024).unwrap();
             let receipts:Vec<_>=page["events"].as_array().unwrap().iter().map(|r|&r["observation"])
                 .filter(|r|r["source"]=="command").collect();

@@ -593,7 +593,7 @@ function resourceSend(g,op){
   if(resourcePayloads.get(g.key)?.id!==op.id)resourcePayloads.set(g.key,JSON.parse(JSON.stringify({a:'capacity',root:g.key,id:op.id,ops:op.ops,issued_at:view.S.now,expires_at:view.S.now+300})));
   return new Promise(resolve=>{
     const prior=resourceRequests.get(key);if(prior)cancel(prior.timer);
-    resourceRequests.set(key,{resolve,timer:defer(()=>{resourceRequests.delete(key);resolve({state:'unknown',reason:'no receipt'});},30000)});
+    resourceRequests.set(key,{resolve,timer:defer(()=>{resourceRequests.delete(key);resolve({state:'unknown',reason:'no answer from the tray within 20 s; check the limits shown, then retry'});},20000)});
     send(resourcePayloads.get(g.key));});}
 const window=ports.window||globalThis,document=ports.document||window.document,menu=ports.menu||document?.querySelector('.menu');
 const {defer,cancel}=ports.timers||ui;
