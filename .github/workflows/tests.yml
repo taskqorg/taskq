@@ -1,18 +1,15 @@
-# § 7: PR checks and merge_group CI; publication requires green CI on the merge result.
+# § 7, docs/testing.md: PRs run Linux checks; merge_group runs the affected-OS matrix and gates publication; main pushes run none (cache.yml warms caches).
 name: tests
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    tags: ['v*']
   pull_request:
   merge_group:
     types: [checks_requested]
 permissions:
   contents: read
 env:
-  CHECK_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.event.before || 'HEAD^' }}
-  CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' }}
+  CHECK_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || 'HEAD^' }}
+  CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' }}
 jobs:
   plan:
     runs-on: ubuntu-latest
@@ -31,21 +28,22 @@ jobs:
     if: needs.plan.outputs.scope != 'docs'
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 16
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # Dependency build cache; only main pushes save, so PR and queue runs never churn it.
+      # Restore only; cache.yml saves it on main pushes, so PR and queue runs never churn it.
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: rust
+          save-if: false
       - run: python3 scripts/check.py
   windows-gnu:
     needs: plan
-    if: needs.plan.outputs.scope == 'full'
+    if: needs.plan.outputs.scope == 'full' && github.event_name != 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 16
     steps:
@@ -53,8 +51,8 @@ jobs:
       - run: rustup toolchain install stable-x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: gnu
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: gnu
+          save-if: false
       - run: npm ci --ignore-scripts --no-audit --no-fund
       - run: cargo +stable-x86_64-pc-windows-gnu test --locked --bin taskq platform::tests::installed_windows_release_starts_without_build_paths -- --exact --show-output
   shots:
@@ -78,11 +76,12 @@ jobs:
           RUST: ${{ needs.rust.result }}
           GNU: ${{ needs.windows-gnu.result }}
           SHOTS: ${{ needs.shots.result }}
+          FULL_GNU: ${{ github.event_name == 'pull_request' && 'skipped' || 'success' }}
         run: |
           test "$PLAN" = success && test "$SHOTS" = success
           case "$SCOPE" in
             docs) test "$RUST" = skipped && test "$GNU" = skipped ;;
             web) test "$RUST" = success && test "$GNU" = skipped ;;
-            full) test "$RUST" = success && test "$GNU" = success ;;
+            full) test "$RUST" = success && test "$GNU" = "$FULL_GNU" ;;
             *) exit 1 ;;
           esac

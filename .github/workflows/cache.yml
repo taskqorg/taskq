@@ -1,0 +1,36 @@
+# docs/testing.md: main pushes run no tests; this saves the per-OS Rust cache that tests.yml PR and merge_group runs restore.
+name: cache
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: cache
+  cancel-in-progress: true
+jobs:
+  rust:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: rust
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run build
+      - run: cargo +stable test --locked --no-run
+  windows-gnu:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable-x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: gnu
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: cargo +stable-x86_64-pc-windows-gnu test --locked --bin taskq --no-run
