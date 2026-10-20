@@ -67,7 +67,7 @@ Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/en
 ## Product
 Looks/sound decisions: one line each; changes require R13.
 - Design targets: [index](docs/design/README.md), [menu checks](docs/design/ui-rules.md) and view-only multi-select approved. Runtime rules, defaults, lifecycle and policy stay unchanged until implemented and verified (R8/R12/R13).
-- Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days; sent only under a revocable `taskq-telemetry/1` grant, async from a cursor, pruned rows a gap. `taskq profile export` feeds analysis, `guide` guides agents. Migration keeps legacy history; board is task truth (R1).
+- Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days; sent async only under revocable `taskq-telemetry/1`. `profile export` feeds analysis, `guide` guides agents. Migration keeps legacy rows; board is task truth (R1).
 - README is the whole page: header, setup phrase, one sentence, what you get, screenshots, use cases, one link to taskq.md, release checksum and provenance verification, license, donate.
 - Header: `docs/header.webp` with the caption `Agents working.` stays at the top, verbatim.
 - Setup phrase: one `text` block, verbatim `Install taskq from https://github.com/taskqorg/taskq and set it up for this project.`; new-project variant beside it.
