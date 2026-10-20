@@ -86,3 +86,25 @@ Checks cover import retry, equal events, recognized rotation, unknown rewrites, 
 For the R8 exception in taskq.md § 4, bootstrap first requests the current budget. Only the exact installation-budget mismatch permits a second attempt with the v4.6.19 descriptor (64 MiB total, 6 MiB plus 64 KiB reserved, the same lock and peer paths). CoreQ still validates the protected endpoint, database identity and exact budget. Unknown budgets and wire formats remain refused. The process reports compatibility mode and keeps the single shared export path; no side store or source deletion is permitted. A process started after the incompatible owner exits requests the current budget again. A surviving compatibility client retains its smaller bound until restart.
 
 The second R8 exception is [receipt-degraded Stop](host-service.md#receipt-degraded-stop-r8). The new service advertises Stop protocol 2; healthy receipt-backed requests also accept protocol 1. A failed received receipt with protocol 1 refuses before writing intent, so an old service is never wedged by an unsupported degraded record.
+
+## Remote sync proposal (#1353)
+
+Proposal for owner acceptance; not a runtime rule until accepted and implemented (R8, R12, R13). Facts it builds on: the only live store is the coreq universal store `telemetry.log/universal.sqlite3`; `coreq::telemetry::Reader` reads one committed snapshot without the writer lock; observations carry stable ids; the coreq [connection client](https://github.com/taskqorg/coreq/blob/main/docs/design/enrollment.md) delivers `/ingest` records (at most 100 records and 1 MiB per call) with per-record receipts, backoff and revoke. ServerQ has no ingest route: it is itself a DashQ connection client. The only existing collector is DashQ.
+
+### Decisions to accept
+
+| ID | Decision | Options | Recommendation |
+|---|---|---|---|
+| S1 | Destination | A. DashQ `/ingest` over the existing TaskQ connection. B. A new ServerQ collector service: new server, new deploy, changes ServerQ from read-only checker to collector. | A. No new server or transport; the serverq-named item becomes a DashQ task (A6). |
+| S2 | Grant | A. A separate opt-in schema `taskq-telemetry/1` in the connection request, shown on the approval page; adding it needs a new browser approval (new generation); `taskq disconnect` revokes it with the rest. B. Send under the existing grant. | A. Without the schema in the active grant no telemetry code path runs (A3). |
+| S3 | Batch and compression | A. One record per block of export rows: payload `{schema, first, last, rows, bytes, gzip}` with `gzip` the base64 gzip of the `taskq profile export` JSON lines (flate2 is already a coreq dependency); `event_id` = `t-` + 32 hex of SHA-256 of installation, first and last row id; at most 512 KiB compressed per record. B. HTTP `Content-Encoding: gzip`: needs a coreq wire minor and DashQ change. | A. No wire change; replays return the stored receipt, so retries never duplicate. |
+| S4 | Cursor and pruning | A. Durable cursor `<install>/connection/telemetry.json` (last accepted row position, written atomically after `accepted` receipts). Retention and capacity pruning stay unchanged; rows pruned before upload are reported as a counted `gap`, never resent or invented. B. Pruning skips unconfirmed rows: the 1 GiB budget can be exceeded while offline. | A. The store bound holds; sync itself never deletes rows (A4). |
+| S5 | Runner | A. One background thread in the host service, started per pass when the grant lists the schema; it opens the Reader, sends at most one batch in flight, follows coreq backoff and `Retry-After`, and never holds the profile or writer lock across network I/O. B. A separate process or scheduler. | A. Capture, CLI and service passes never wait on it; failures are one log line and status fields. |
+
+### Status (A5)
+
+`taskq connection status` and `status.json` `connection.telemetry`: `state` (`off`, `syncing`, `idle`, `retrying`, `stopped`, `unknown`), `last_synced` (board-independent local receipt time of the last accepted batch), `backlog_rows`, `backlog_bytes` (from the Reader after the cursor), `gap_rows`, `last_error` (a code, never a credential). An unreadable store or cursor reads unknown with its reason.
+
+### Checks after acceptance
+
+Chain checks against the coreq reference server: restart resumes from the cursor with no duplicate or missing `event_id`; lost reply retries the same record; `429`/`5xx` back off; a revoke stops sending immediately; no grant, no `/ingest` call; pruned rows count as `gap`; a slow server never delays a capture flush or a service pass. No deploy to FRA or another host without owner approval (A6).
