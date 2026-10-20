@@ -1020,7 +1020,8 @@ mod tests {
                 for thread in threads.values() {assert!(!thread.is_finished(),"project loop exited before fixture drain");}
                 if install.join("exit-host").exists() {
                     shared.lock().unwrap().draining.extend(threads.keys().cloned());
-                    for root in threads.keys() {crate::poke(root).unwrap();}
+                    // A pass reading the wake signal refuses the poke; the next poll still sees `draining`.
+                    for root in threads.keys() {let _=crate::poke(root);}
                     break;
                 }
                 assert!(Instant::now()<until,"fixture host expired");

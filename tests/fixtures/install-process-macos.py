@@ -1,6 +1,7 @@
 """Installer and real project-loop crash/replay proof; manager and boards are isolated substitutes."""
 import hashlib
 import argparse
+import fcntl
 import json
 import os
 import pathlib
@@ -215,6 +216,12 @@ def run_case(phase):
             item['new_host_status'] = json.loads((root / '.taskq/status.json').read_text())
             item.update(original_command=original_id, outcome=outcome, native_submission_count=len((install / 'native-submissions').read_text().splitlines()), passed=True)
             assert item['native_submission_count'] == 1
+            # A service pass reading the wake signal holds its shared lock; host drain must not depend on that wake.
+            with (root / '.taskq/poke').open('rb') as signal:
+                fcntl.flock(signal, fcntl.LOCK_SH)
+                (install / 'exit-host').touch()
+                until(lambda: host.poll() is not None)
+            assert host.returncode == 0, 'host drain failed while the wake signal was busy'
             return item
         if rollback_case:
             selection('3.0.0', '2.0.0', 'first')
