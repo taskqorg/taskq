@@ -481,9 +481,8 @@ project:function(p){
 filteredTasks:function(p){
   const ps=p?[p]:view.S.projects,selected=view.taskFilter,states=TaskqProjectBlocks.states;
   const rows=unique(ps.flatMap(tasks)).filter(t=>!selected.length||selected.includes(t.state));
-  return '<div class="body">'+esc(p?p.name:'All projects')+'</div>'+(p?TaskqProjectBlocks.summary(blockProject(p)):TaskqProjectBlocks.aggregate(ps.map(blockProject)))+
-    '<fieldset class="state-filter"><legend>Filter states</legend><div class="filter-options"><label><input type="checkbox" data-filter-all'+(selected.length===states.length?' checked':'')+'>Select all</label><button data-a="filter-clear">Clear all</button></div><div class="filter-options">'+states.map(([state,name])=>'<label><input type="checkbox" data-filter-state="'+state+'"'+(selected.includes(state)?' checked':'')+'>'+esc(name)+'</label>').join('')+'</div><div class="meta">Counters select one state. Checkboxes add or remove.</div></fieldset>'+
-    '<div class="body meta" role="status">'+(selected.length?selected.map(s=>states.find(v=>v[0]===s)[1]).join(', '):'All states (no restriction)')+' · '+rows.length+' matching loaded tasks'+(known(ps)?'':' · Partial')+'</div>'+
+  return '<header class="filter-header">'+(p?TaskqProjectBlocks.summary(blockProject(p)):TaskqProjectBlocks.aggregate(ps.map(blockProject)))+
+    '<details class="state-filter"><summary><span>Filter: '+esc(selected.length&&selected.length<states.length?selected.map(s=>states.find(v=>v[0]===s)[1]).join(', '):'All')+'</span><span class="meta" role="status">'+rows.length+' loaded'+(known(ps)?'':' · Partial')+'</span></summary><fieldset><legend>States</legend><div class="filter-options"><label><input type="checkbox" data-filter-all'+(selected.length===states.length?' checked':'')+'>Select all</label><button data-a="filter-clear">Clear all</button></div><div class="filter-options">'+states.map(([state,name])=>'<label><input type="checkbox" data-filter-state="'+state+'"'+(selected.includes(state)?' checked':'')+'>'+esc(name)+'</label>').join('')+'</div></fieldset></details></header>'+
     (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
     (!selected.length||selected.includes('closed')?'<div class="body meta">Closed total and task list unknown: open the Board for authoritative closed tasks.</div>':'')+
     (rows.map(t=>taskRow(t,!p)).join('')||'<div class="body meta">'+(known(ps)?'No matching loaded tasks':'Tasks unknown')+' <button data-a="filter-reset">Reset</button></div>');
@@ -590,7 +589,7 @@ ui.listen(menu,'change',e=>{
 ui.listen(menu,'click',e=>{
   const cardLink=e.target.closest('.qac a');if(cardLink){e.preventDefault();send({a:'open',url:cardLink.getAttribute('href')});return;}
   if(e.target.closest('.qac,.rsc'))return;
-  if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>navigate(id||'home',state)}))return;
+  if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{if(view.taskFilter&&view.page===(id||'home')){view.taskFilter=[state];present();}else navigate(id||'home',state);}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
   if(d.a==='filter-clear'||d.a==='filter-reset'){view.taskFilter=d.a==='filter-clear'?[]:TaskqProjectBlocks.states.map(s=>s[0]);present();return;}

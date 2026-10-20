@@ -23,7 +23,7 @@ details[open]>summary:after{transform:rotate(90deg)}
 .group{border-top:1px solid var(--edge);margin-top:5px;padding-top:5px}
 .body{padding:5px 4px;line-height:1.45;overflow-wrap:anywhere}
 .project:hover,.project:focus-visible{background:light-dark(#e9edf1,#37424c)}
-.project{width:100%;border:0;display:grid;grid-template-columns:minmax(0,1fr) auto 8px;gap:6px;align-items:center;text-align:left;min-height:33px;padding:5px 4px}
+.project{width:100%;border:0;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center;text-align:left;min-height:33px;padding:5px 4px}
 .project>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .counter{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:999px;font-size:max(12px,.8em);font-variant-numeric:tabular-nums;font-weight:500;line-height:1}
 .counter.filled{background:color-mix(in srgb,currentColor 23%,var(--surface))}
@@ -55,7 +55,7 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 .range input,.range select{font:inherit;font-size:.9em;min-width:0;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:3px}
 .recovery-evidence{display:block;margin-top:.4em}.recovery-evidence input{display:block;box-sizing:border-box;width:100%;font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:5px;margin-top:3px}.recovery-evidence input:disabled{opacity:.6}
 @media(pointer:coarse){button,summary{min-height:44px}}
-.state-filter{margin:6px 0;padding:4px;border:1px solid var(--edge);min-width:0}
+.state-filter{margin:0;min-width:0}.state-filter>summary{cursor:pointer;grid-template-columns:minmax(0,1fr) auto auto}.state-filter[open]>summary:after{transform:none;content:"⌄"}.state-filter>summary>span:first-of-type{min-width:0;overflow-wrap:anywhere}.state-filter>summary .meta{margin-left:auto;white-space:nowrap}.state-filter fieldset{margin:0;padding:4px;border:1px solid var(--edge);min-width:0}
 .filter-options{display:flex;flex-wrap:wrap;gap:4px 6px}
 .filter-options label{display:flex;align-items:center;gap:4px;min-height:32px;cursor:pointer}
 .filter-options button{min-height:32px;min-width:32px}

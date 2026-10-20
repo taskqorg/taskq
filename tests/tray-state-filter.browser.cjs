@@ -16,6 +16,10 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   const rows=()=>page.locator('[data-card]').count();
   const shot=async name=>{if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/'+name+'.png'});}};
   await counter('doing').click();
+  assert.equal(await page.locator('details.state-filter').count(),1,'missing on-demand Filter disclosure');
+  assert.equal(await page.locator('details.state-filter').getAttribute('open'),null);
+  assert.equal(await checkbox('doing').isVisible(),false);
+  await page.locator('.state-filter > summary').click();
   if(!await checkbox('doing').count())await shot('missing-checkboxes');
   assert.equal(await checkbox('doing').count(),1,'UI25: missing explicit state checkboxes');
   assert.equal(await rows(),1);assert.equal(await counter('doing').getAttribute('aria-pressed'),'true');
@@ -24,13 +28,19 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   assert.equal(await counter('review').getAttribute('aria-pressed'),'true');
   assert.equal(await page.locator('[data-filter-all]').evaluate(e=>e.indeterminate),true);
   await shot('multi');
+  await page.locator('.state-filter > summary').focus();await page.keyboard.press('Space');
+  assert.equal(await checkbox('doing').isVisible(),false);
+  assert.match(await page.locator('.state-filter > summary').innerText(),/Doing, Review/);
+  await shot('folded');
+  await page.keyboard.press('Enter');assert.equal(await checkbox('doing').isVisible(),true);
   await page.evaluate(s=>taskq.receive(s),snapshot); // native hide/show retains this WebView; the next snapshot must retain selection
   assert.equal(await checkbox('review').isChecked(),true);assert.equal(await rows(),2);
   await checkbox('review').focus();await page.keyboard.press('Space');assert.equal(await rows(),1);
   assert.equal(await checkbox('review').evaluate(e=>e===document.activeElement),true);
   await counter('ready').click();assert.equal(await rows(),1);assert.equal(await checkbox('doing').isChecked(),false);
   await page.getByRole('button',{name:'Clear all',exact:true}).click();assert.equal(await rows(),3);
-  assert.equal(await page.locator('input[data-filter-state]:checked').count(),0);await shot('empty');
+  assert.equal(await page.locator('input[data-filter-state]:checked').count(),0);
+  assert.match(await page.locator('.state-filter > summary').innerText(),/Filter: All/);await shot('empty');
   await page.locator('[data-filter-all]').click();assert.equal(await page.locator('input[data-filter-state]:checked').count(),8);
   await page.getByRole('button',{name:'Clear all',exact:true}).click();await checkbox('failed').click();assert.equal(await rows(),0);
   await page.getByRole('button',{name:'Reset',exact:true}).click();assert.equal(await rows(),3);
@@ -38,10 +48,11 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   await counter('doing').click();await checkbox('review').click();
   await page.locator('[data-tqp=project]').click();await page.locator('[data-a=back]').click();assert.equal(await rows(),2);
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['size','ready','web-observation'].includes(m.a))),[],'view filters must not write queue/focus');
+  await page.locator('.state-filter > summary').evaluate(e=>e.parentElement.open=true);
   for(const width of [320,360])for(const font of [14,16,18,20])for(const theme of ['light','dark']){
     await page.setViewportSize({width,height:760});await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
     assert.equal(await rows(),2);
-    assert.equal(await page.locator('.state-filter').evaluate(e=>e.scrollWidth<=e.clientWidth),true,'filter fits width');
+    assert.equal(await page.locator('.state-filter').evaluate(e=>e.scrollWidth<=e.clientWidth),true,'filter fits width '+width+'/'+font+'/'+theme+' '+JSON.stringify(await page.locator('.state-filter').evaluate(e=>[e,...e.children].map(n=>({tag:n.tagName,w:n.clientWidth,scroll:n.scrollWidth,html:n.outerHTML.slice(0,100)})))));
     assert.equal(await page.locator('.filter-options label').evaluateAll(es=>es.every(e=>e.getBoundingClientRect().height>=32)),true,'fine-pointer targets');
   }
   console.log('PASS #1350 single/multi/empty, project scope, counters, keyboard, refresh, Back and no writes');
