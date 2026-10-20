@@ -5,9 +5,13 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.24
+
 Unlabeled tasks and every review run on Claude (#1314). Work waits for a free slot of its runtime instead of moving to the other one: an unlabeled task no longer starts on Codex, and a review no longer falls back to Codex or Codex app. `taskq add --prefer` is refused with a hint to `--runtime`.
 
 **Board:** existing `prefer-codex` labels read as `run-codex`, `prefer-claude` as no label; nothing to edit. Hosts on older versions still route by the previous rule until updated.
+
+UI acceptance no longer requires native click and raise proofs; the owner observes them (#1298). The Windows handover selftest waits longer than one bounded telemetry append (#1305). No board change.
 
 ## v4.6.23
 
