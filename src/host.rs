@@ -759,6 +759,11 @@ pub fn run(install: &Path) -> Res<()> {
         if message!=reported {crate::platform::log(&message);reported=message;}
         std::thread::sleep(std::time::Duration::from_secs(1));
     };
+    match crate::resources::retire_superseded(install) {
+        Ok(Some(line))=>crate::platform::log(&line),
+        Ok(None)=>{},
+        Err(e)=>crate::platform::log(&e),
+    }
     let mut telemetry=crate::telemetry::HostCapture::default();
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
     let mut hostname=crate::hostname();
