@@ -18,8 +18,8 @@ prev=$(cat "$d/current")
 trap 'git checkout -q -- Cargo.toml Cargo.lock' EXIT
 sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
 npm ci --silent
-cargo build -q --release
-target/release/taskq selftest
+# § 8 step 5: cargo run goes through the macOS signing runner, so the build is signed before its first start
+cargo run -q --release -- selftest
 (cd "$(head -1 "$d/projects")" && "$w/target/release/taskq" service install)
 now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/service" 2>/dev/null || echo unknown)
 [ "$now" = "$v" ] || { echo "Error: host service runs $now, not $v; not installed" >&2; exit 1; }

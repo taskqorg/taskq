@@ -239,17 +239,40 @@ fn identity_hash(identity: &str, ids: &std::process::Output) -> Result<Option<St
 #[cfg(target_os = "macos")]
 fn sign_copies(t: &Tool, v: &str) {
     for exe in [t.release_exe(v), t.install.join(t.exe_name())] {
-        let tmp = exe.with_extension("signing");
-        let r = fs::copy(&exe, &tmp).map_err(|e| format!("{}: {e}", exe.display()))
-            .and_then(|_| codesign(SIGNING_IDENTITY, &tmp, "org.taskq.taskq"))
-            .and_then(|s| if s { fs::rename(&tmp, &exe).map(|_| true).map_err(|e| format!("{}: {e}", exe.display())) } else { Ok(false) });
-        let _ = fs::remove_file(&tmp);
-        match r {
+        match sign_copy(&exe) {
             Ok(true) => {}
             Ok(false) => return log(&format!("signing: no `{SIGNING_IDENTITY}` identity; {v} stays ad-hoc, macOS grants will not survive the next release")),
             Err(e) => log(&format!("signing failed, copy stays ad-hoc: {e}")),
         }
     }
+}
+
+/// Signs a copy of `exe` as `org.taskq.taskq` and renames it into place, so a running `exe` is never rewritten.
+#[cfg(target_os = "macos")]
+fn sign_copy(exe: &Path) -> Result<bool, String> {
+    let tmp = exe.with_extension("signing");
+    let r = fs::copy(exe, &tmp).map_err(|e| format!("{}: {e}", exe.display()))
+        .and_then(|_| codesign(SIGNING_IDENTITY, &tmp, "org.taskq.taskq"))
+        .and_then(|s| if s { fs::rename(&tmp, exe).map(|_| true).map_err(|e| format!("{}: {e}", exe.display())) } else { Ok(false) });
+    let _ = fs::remove_file(&tmp);
+    r
+}
+
+/// § 8 step 5 for local builds (#1329): the cargo runner `scripts/macos-runner.sh` calls `taskq sign-local <exe>..`
+/// before cargo run or a test binary starts. Without the identity it says so once per target directory (marker
+/// beside the signer) and the builds stay ad-hoc; a failed signature fails the run.
+#[cfg(target_os = "macos")]
+pub fn sign_local(paths: &[String]) -> Result<(), String> {
+    for p in paths {
+        if !sign_copy(Path::new(p))? {
+            let marker = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name(".taskq-unsigned");
+            if fs::OpenOptions::new().write(true).create_new(true).open(&marker).is_ok() {
+                eprintln!("signing: no `{SIGNING_IDENTITY}` identity; local builds stay ad-hoc and macOS grants will not match releases");
+            }
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 /// GNU links the DLL; MSVC release artifacts link the loader statically.
