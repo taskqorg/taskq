@@ -2073,7 +2073,7 @@
      "type": "check",
      "status": "unknown",
      "has": [
-      "Delivery unknown: check again: no receipt",
+      "Not confirmed; the new limits may not be saved. Check again: no receipt",
       "Check again"
      ]
     },

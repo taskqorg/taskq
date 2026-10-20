@@ -83,7 +83,7 @@ fn recover(root: &Path) -> Res<()> {
                 return Err("focus command temporary predecessor mismatch; files kept".into());
             }
             // The initial pointer never replaced current, so this writer could not enter its effect closure.
-            next.receipt.checkpoint("failed")?;
+            crate::telemetry::receipt(&next.receipt,"failed")?;
         } else {
             let old=current.as_ref().filter(|_|same).ok_or("focus command temporary identity mismatch; files kept")?;
             if old.phase!="pending" && (old.phase!=next.phase || old.focus!=next.focus) {
@@ -137,13 +137,13 @@ pub fn begin(root: &Path, receipt: &CommandReceipt) -> Res<Pending> {
     let prior=read(root)?;
     if let Some(old)=&prior {
         if old.receipt.event_id("received")?==receipt.event_id("received")? {return Err("focus command already tracked; check status before retry".into());}
-        if let Some(previous)=&old.previous {previous.checkpoint("superseded")?;}
+        if let Some(previous)=&old.previous {crate::telemetry::receipt(previous,"superseded")?;}
     }
     let mut next=Pending{project:project_id(root)?,receipt:receipt.clone(),phase:"pending".into(),focus:None,
         previous:prior.filter(|p|p.phase!="failed").map(|p|p.receipt)};
     save(root,&next)?;
     // Only a persisted invalidation makes the previous command superseded.
-    if let Some(previous)=&next.previous {previous.checkpoint("superseded")?;}
+    if let Some(previous)=&next.previous {crate::telemetry::receipt(previous,"superseded")?;}
     next.previous=None;
     Ok(next)
 }
@@ -162,11 +162,11 @@ fn observe(root: &Path, focus: &[String], seen: &mut Option<String>) -> Res<Valu
         *seen=None;return Ok(json!({"state":"untracked","reason":"legacy or no tracked focus command"}));
     };
     if !dot(root).join("poke").is_file() {return Err("focus command signal missing; observation unknown".into());}
-    if let Some(previous)=&pending.previous {previous.checkpoint("superseded")?;}
+    if let Some(previous)=&pending.previous {crate::telemetry::receipt(previous,"superseded")?;}
     if pending.phase!="applied" {return Err(format!("focus command {}; inspect receipt {} before another command",pending.phase,pending.receipt.event_id("received")?));}
     if pending.focus.as_deref()!=Some(fingerprint(focus).as_str()) {return Err("focus differs from tracked command; observation unknown".into());}
     let id=pending.receipt.event_id("observed")?;
-    if seen.as_ref()!=Some(&id) {pending.receipt.checkpoint("observed")?;*seen=Some(id.clone());}
+    if seen.as_ref()!=Some(&id) {crate::telemetry::receipt(&pending.receipt,"observed")?;*seen=Some(id.clone());}
     Ok(json!({"state":"observed","scope":"tracked-desired-focus","applied_receipt":pending.receipt.event_id("applied")?,"observed_receipt":id}))
     },|_|"command-observe")
 }
@@ -199,6 +199,7 @@ mod tests {
         super::snapshot(root,&mut None,seen).map(|v|v.command)
     }
     fn receipts(store: &coreq::telemetry::Store) -> Vec<Value> {
+        assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)),"receipts did not settle");
         store.export(0,0,1024).unwrap()["events"].as_array().unwrap().iter()
             .filter(|r|r["observation"]["source"]=="command").cloned().collect()
     }
@@ -355,9 +356,9 @@ mod tests {
         });
     }
 
-    // Chain: service snapshot -> blocked observed commit -> next command cannot replace the snapshot.
+    // Chain: service snapshot -> stalled observed commit -> observation and the next writer proceed (#1351); the receipt lands later.
     #[test]
-    fn observation_keeps_the_signal_locked_through_required_commit() {
+    fn observation_never_waits_on_a_stalled_receipt_commit() {
         use std::{sync::Arc,time::{Duration,Instant}};
         use tracing_subscriber::prelude::*;
         let dir=std::env::temp_dir().join(format!("taskq-observation-lock-{}",std::process::id()));
@@ -375,20 +376,14 @@ mod tests {
         capture.flush().unwrap();
         let db=rusqlite::Connection::open(dir.join("db")).unwrap();
         db.execute_batch("BEGIN IMMEDIATE").unwrap();
-        let baseline=capture.health()["accepted"].as_u64().unwrap();
-        std::thread::scope(|scope| {
-            let observer=scope.spawn(||tracing::dispatcher::with_default(&dispatch,||snapshot(&root,&mut None)));
-            let until=Instant::now()+Duration::from_secs(3);
-            while capture.health()["accepted"].as_u64().unwrap()==baseline {
-                assert!(Instant::now()<until,"observer never submitted its receipt");
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            assert!(crate::wake_lock(&root).is_err(),"writer replaced state before observed receipt commit");
-            assert_eq!(data::focus(&root).unwrap(),["all"]);
-            db.execute_batch("ROLLBACK").unwrap();
-            assert_eq!(observer.join().unwrap().unwrap()["state"],"observed");
-        });
-        drop(crate::wake_lock(&root).unwrap());
+        let started=Instant::now();
+        let observed=tracing::dispatcher::with_default(&dispatch,||snapshot(&root,&mut None)).unwrap();
+        assert_eq!(observed["state"],"observed");
+        assert!(started.elapsed()<Duration::from_secs(2),"observation waited {:?} on a stalled store",started.elapsed());
+        drop(crate::wake_lock(&root).expect("writer blocked behind a receipt commit"));
+        db.execute_batch("ROLLBACK").unwrap();
+        assert!(crate::telemetry::settle(Duration::from_secs(30)));capture.flush().unwrap();
+        assert!(store.export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().any(|r|r["id"]==observed["observed_receipt"]),"observed receipt never landed");
         capture.flush().unwrap();drop(db);drop(dispatch);drop(capture);drop(store);fs::remove_dir_all(dir).unwrap();
     }
 

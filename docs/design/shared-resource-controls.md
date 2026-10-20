@@ -163,9 +163,9 @@ Shared fixtures cover legacy and Auto modes, mixed targets, zero/absent limits, 
 - Work mode (#954, [menu M12](menu.md#m12-shared-work-mode)): native host policy uses the same single host editor as Capacity, with an explicit all-registered-projects review and no project-selection controls implying narrower scope. Project ceilings remain read-only. Legacy `workFields`, `workStatus`, `workStep`, `workRender` and `mountWork` retain selected-project fixture behavior for compatible consumers; they refuse host-capacity groups. Their existing fixtures cover Mixed, untouched/unselected fields, partial failure, conflict and same-ID retry. They do not qualify a native project writer or a remote host profile.
 - Release: `taskq-<version>-resource-controls.js`, `.css` and `-fixtures.json` ship in each release, listed in `SHA256SUMS`. Checksums of this source, checked by the node test:
 
-`src/resource-controls.js` SHA-256: `1dffd587ac9f38ab3c394c35acc2dcd87ab2aa82d7af822c7347287568c80666`
+`src/resource-controls.js` SHA-256: `4d42d64cf0220c8e1b4d1e84723c44b81f6dc23f5c30a193b32078478755adb4`
 `src/resource-controls.css` SHA-256: `9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907`
-`tests/fixtures/resource-controls.json` SHA-256: `104fb0e7ec38dbb21258c5f9f2deee62d70fff1daade35da8758301223f6f9b2`
+`tests/fixtures/resource-controls.json` SHA-256: `a1637498fa9fcc346c7280186386b7a3d9d96aa09c38f8c27bd9a81e8d6fcbe9`
 
 B4 parent-to-child map: parent design `75757d5d843159726a2ea44ca1615f9cf7fd18fd` ([menu-next variants](menu-next-variants.html) `resourceEditor`, [menu M12](menu.md)); child tray Capacity places the shared component under its existing summary without restyling it; child Work mode (`◎ Work mode…` on home and project pages) is a page of the same component. The parent's project aggregate cap and load window stay absent until a producer advertises them.
 

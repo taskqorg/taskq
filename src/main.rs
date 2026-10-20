@@ -311,7 +311,7 @@ fn wake_context(path: &Path, seen: &mut Option<String>) -> Res<Option<coreq::tel
 
 fn change_focus<T>(root: &Path, restrictive: bool, initialize: bool, change: impl FnOnce(&Path) -> Res<T>) -> Res<(T,String)> {
     let receipt = coreq::telemetry::capture::CommandReceipt::current();
-    let received = receipt.as_ref().map_err(Clone::clone).and_then(|r| r.checkpoint("received"));
+    let received = receipt.as_ref().map_err(Clone::clone).and_then(|r| telemetry::receipt(r, "received"));
     if !restrictive { if let Err(error) = &received { return Err(format!("command not applied: receipt unavailable ({error}); check service status")); } }
     // Retain the settings lock through terminal commit, including partial failures.
     let mut locked = None;
@@ -340,7 +340,7 @@ fn change_focus<T>(root: &Path, restrictive: bool, initialize: bool, change: imp
             (Err(error), Err(wake)) => Err(format!("{error}; {wake}")),
         }
     })();
-    let terminal = receipt.and_then(|r| r.checkpoint(if result.is_ok() { "applied" } else { "failed" }));
+    let terminal = receipt.and_then(|r| telemetry::receipt(&r, if result.is_ok() { "applied" } else { "failed" }));
     if terminal.is_ok() {if let Some(pending)=tracking {
         if let Err(error)=control::finish(root,pending,result.is_ok()) {tracking_error=Some(error);}
     }}
@@ -2735,6 +2735,8 @@ fn application() {
     }
     profile::init(&install);
     let r = run(&args);
+    // #1351: the command already took effect; hand queued receipts to the writer before the exit flush, which has the same bound.
+    telemetry::settle(Duration::from_secs(10));
     // § 4 budget: this process's board requests by source, for `taskq profile`
     if let Some(source) = requests::source(&args, std::env::var("TASKQ_ROLE").ok().as_deref()) {
         requests::flush(&source);
@@ -2757,7 +2759,7 @@ fn with_test_capture<T>(run: impl FnOnce(&coreq::telemetry::Store, &Path) -> T) 
     let store=Arc::new(coreq::telemetry::Store::open(&dir.join("db")).unwrap());
     let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","fixture").unwrap();
     let result=tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()),||run(&store, &dir));
-    capture.flush().unwrap();
+    telemetry::settle(Duration::from_secs(30));capture.flush().unwrap();
     drop(capture);drop(store);fs::remove_dir_all(dir).unwrap();
     result
 }
@@ -3921,6 +3923,7 @@ mod tests {
             assert!(set_focus(&root,"all",None).unwrap_err().contains("failure receipt"));
             assert!(pause(&root,true).unwrap_err().contains("failure receipt"));
             assert_eq!(fs::read_to_string(dot(&root)).unwrap(),"preserve this obstacle");
+            assert!(crate::telemetry::settle(Duration::from_secs(30)));
             let page=store.export(0,0,1024).unwrap();
             let receipts:Vec<_>=page["events"].as_array().unwrap().iter().map(|r|&r["observation"])
                 .filter(|r|r["source"]=="command").collect();
@@ -3930,9 +3933,9 @@ mod tests {
         });
     }
 
-    // Chain: settings change -> blocked terminal commit -> competing reader/writer refused -> committed readback.
+    // Chain: settings change -> stalled terminal commit -> command returns and frees the signal (#1351) -> receipts land later.
     #[test]
-    fn focus_lock_outlives_terminal_receipt_commit() {
+    fn focus_never_waits_on_a_stalled_terminal_receipt() {
         use std::sync::Arc;
         use tracing_subscriber::prelude::*;
         let dir=std::env::temp_dir().join(format!("taskq-commit-lock-{}",std::process::id()));
@@ -3952,35 +3955,18 @@ mod tests {
                 assert!(fs::read_to_string(&path).is_err(),"raw reads bypassed the Windows byte-range lock");
                 drop(locked);assert_eq!(fs::read_to_string(path).unwrap(),"signal");
             }
-            let (start_tx,start_rx)=std::sync::mpsc::channel::<u64>();
-            let (ready_tx,ready_rx)=std::sync::mpsc::channel();
-            std::thread::scope(|scope| {
-                let root=&root;let capture=&capture;let dir=&dir;
-                let blocker=scope.spawn(move || {
-                    let db=rusqlite::Connection::open(dir.join("db")).unwrap();
-                    db.busy_timeout(Duration::from_secs(3)).unwrap();
-                    let baseline=start_rx.recv_timeout(Duration::from_secs(3)).unwrap();
-                    db.execute_batch("BEGIN IMMEDIATE").unwrap();
-                    ready_tx.send(()).unwrap();
-                    let until=Instant::now()+Duration::from_secs(3);
-                    while capture.health()["accepted"].as_u64().unwrap()==baseline {
-                        assert!(Instant::now()<until,"terminal receipt was never submitted");
-                        std::thread::sleep(Duration::from_millis(5));
-                    }
-                    let file=fs::OpenOptions::new().read(true).write(true).open(dot(root).join("poke")).unwrap();
-                    assert!(coreq::file_lock::try_lock_shared_file(file).is_err(),"service read settings before terminal receipt commit");
-                    assert!(wake_lock(root).is_err(),"next command overtook terminal receipt commit");
-                    db.execute_batch("ROLLBACK").unwrap();
-                });
-                let _action=tracing::info_span!(target:"taskq::receipt_lock_fixture","fixture.focus").entered();
-                change_focus(root,false,false,|d| {
-                    start_tx.send(capture.health()["accepted"].as_u64().unwrap()).unwrap();
-                    ready_rx.recv_timeout(Duration::from_secs(3)).unwrap();
-                    platform::write_atomic(&d.join("focus"),"all")
-                }).unwrap();
-                blocker.join().unwrap();
-            });
-            let _released=wake_lock(&root).unwrap();
+            let db=rusqlite::Connection::open(dir.join("db")).unwrap();
+            db.busy_timeout(Duration::from_secs(3)).unwrap();
+            let _action=tracing::info_span!(target:"taskq::receipt_lock_fixture","fixture.focus").entered();
+            let started=Instant::now();
+            change_focus(&root,false,false,|d| {
+                db.execute_batch("BEGIN IMMEDIATE").unwrap();
+                platform::write_atomic(&d.join("focus"),"all")
+            }).unwrap();
+            assert!(started.elapsed()<Duration::from_secs(2),"focus waited {:?} on a stalled store",started.elapsed());
+            drop(wake_lock(&root).expect("next command blocked behind a terminal receipt commit"));
+            db.execute_batch("ROLLBACK").unwrap();
+            assert!(crate::telemetry::settle(Duration::from_secs(30)));capture.flush().unwrap();
             let page=store.export(0,0,1024).unwrap();
             let receipts:Vec<_>=page["events"].as_array().unwrap().iter().map(|r|&r["observation"])
                 .filter(|r|r["source"]=="command").collect();
