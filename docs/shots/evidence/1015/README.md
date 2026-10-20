@@ -45,3 +45,18 @@ The branch was rebased onto `73f3ac1f`; every accepted image hash and manifest U
 - `docs/shots/check.sh`, accepted image/source hashes and `git diff --check` passed. Previous JS evidence is reused because those source blobs and dependencies are unchanged.
 
 The reviewer must assess the recorded full-run failure and green merge-result CI. No CI wait, merge or deployment is claimed.
+
+
+## Merge-queue conflict repair
+
+The merge queue removed PR #1319 for `merge_conflict`. Rebase onto `33b8da9892c2000af907ae1f39f55ff2e9f14ecd` reproduced a conflict in the manifest capture version, source commit and binary hash. Resolution retains the actual v4.6.23 capture provenance rather than relabeling accepted images as v4.6.24. The accepted README, images, manifest and snapshot sources are byte-identical to `98cfb8f80315480f0547fca188757fb4c4a2f9d3`; all manifest source/image hashes and `docs/shots/check.sh` pass. Rebase now completes and the base is an ancestor. No assertions or rules changed (R12, § 7.4).
+
+Fresh macOS checks after rebase:
+
+- `python3 scripts/check.py --base 33b8da9892c2000af907ae1f39f55ff2e9f14ecd`: failed in 59.947 s; 393 unit tests passed, 16 failed, 34 ignored. Inherited worker identity caused host-operation refusals in fixture tests.
+- The same gate with `TASKQ_TASK`, `TASKQ_ATTEMPT` and `TASKQ_ROLE` removed only from test subprocesses failed in 26.307 s: 408 passed, 1 failed, 34 ignored. The previously recorded profile flush-error-prefix assertion still fails. No retry to green or protection change was made.
+- `cargo +stable test --locked --test '*'` with the same isolated test identity: host policy/restart, resources and service-log integrations passed. Telemetry: 7 passed, 1 ignored, 1 sandbox-blocked (`sandbox_apply: Operation not permitted`).
+- All 18 `tests/*.test.cjs` scripts, screenshot manifest regression checks, release-tag checks and exact-source release checks passed. Build and selector checks passed.
+- Isolated offline selftest passed 85 golden traces, formats and committed telemetry; board is explicitly unknown in offline mode.
+
+The full gate is not PASS. Green merge-result CI and reviewer assessment remain required; no merge or deployment is claimed.
