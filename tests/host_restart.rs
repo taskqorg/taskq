@@ -67,9 +67,13 @@ fn real_host_restart_preserves_request_after_the_caller_exits() {
         let source=base.join("native-inventory-windows.rs");
         fs::write(&source,include_str!("fixtures/native-inventory-windows.rs")).unwrap();
         let shim=bin.join("powershell.exe");
-        let compiled=coreq::process::output("test.compile-native-inventory",Command::new("rustc")
-            .args(["--edition=2021",source.to_str().unwrap(),"-O","-o",shim.to_str().unwrap()]),Duration::from_secs(30));
-        assert!(compiled.is_ok(),"native inventory shim compile failed: {compiled:?}");
+        // #1376: `cargo test` prebuilds the shim as an example; only a lone `--test host_restart` run compiles it here.
+        let built=std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("examples/native-inventory-windows.exe");
+        if built.is_file() {fs::copy(&built,&shim).unwrap();} else {
+            let compiled=coreq::process::output("test.compile-native-inventory",Command::new("rustc")
+                .args(["--edition=2021",source.to_str().unwrap(),"-O","-o",shim.to_str().unwrap()]),Duration::from_secs(30));
+            assert!(compiled.is_ok(),"native inventory shim compile failed: {compiled:?}");
+        }
         let smoke=Command::new(&shim).arg("unknown").status().unwrap();
         assert_eq!(smoke.code(),Some(64),"native inventory shim accepted unknown args");
     }

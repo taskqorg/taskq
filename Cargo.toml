@@ -65,3 +65,8 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 [[bin]]
 name = "taskq"
 path = "entry.rs"
+
+# #1376: tests/host_restart.rs's Windows powershell shim, prebuilt by `cargo test`
+[[example]]
+name = "native-inventory-windows"
+path = "tests/fixtures/native-inventory-windows.rs"
