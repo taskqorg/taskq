@@ -24,7 +24,7 @@ fn now() -> u64 {
 }
 
 /// `YYYY-MM-DD HH:MM` UTC of unix seconds.
-fn utc(t: u64) -> String {
+pub(crate) fn utc(t: u64) -> String {
     let (d, s) = ((t / 86400) as i64, t % 86400);
     // days to civil date (H. Hinnant)
     let z = d + 719468;
