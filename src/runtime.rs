@@ -481,7 +481,7 @@ pub struct Env<'a> {
     pub board_env: &'a [(String, String)],
 }
 
-fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &Env) -> Result<Command, String> {
+pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &Env) -> Result<Command, String> {
     #[cfg(windows)]
     if access.windows { return crate::windows_sandbox::command(env); }
     if access.linux {
@@ -1051,7 +1051,7 @@ fn turn_text(env: &Env, l: &Launch, fetch: impl FnMut(&str) -> Result<String, St
 /// Keep OS failure classes until the service decides whether a start failure is TaskQ's fault.
 #[derive(Debug)]
 pub struct StartError {
-    message: String,
+    pub(crate) message: String,
     class: &'static str,
     pub reportable: bool,
     pub no_start: bool,
@@ -1184,7 +1184,7 @@ pub struct ClaudeTurn {
     launch_error: Option<String>,
 }
 
-fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, String> {
+pub(crate) fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, String> {
     let root = root.to_str().ok_or("Claude project path is not UTF-8")?;
     let (ok, out) = probe("runtime.agents", &which("claude"), &["agents", "--json", "--all", "--cwd", root]).ok_or("Claude agents unavailable or timed out")?;
     if !ok { return Err(format!("claude agents: {out}")); }
@@ -1237,7 +1237,7 @@ fn claude_transcript_in(home:&Path,session:&str)->Result<PathBuf,String> {
     found.ok_or_else(||"Claude transcript unavailable; completion unknown".into())
 }
 
-fn native_job_id(id:&str)->bool {
+pub(crate) fn native_job_id(id:&str)->bool {
     (id.len()==8 && id.bytes().all(|b|b.is_ascii_hexdigit())) ||
         (id.len()==36 && id.bytes().enumerate().all(|(i,b)|if [8,13,18,23].contains(&i) {b==b'-'} else {b.is_ascii_hexdigit()}))
 }
