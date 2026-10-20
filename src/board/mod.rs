@@ -74,6 +74,8 @@ pub trait Board {
     }
     /// Request accounting and rate-limit pause of this process (§ 4); none for boards without HTTP.
     fn requests(&self) -> crate::requests::Budget { Default::default() }
+    /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}")) }
 }
 
 #[derive(Debug, PartialEq)]
@@ -153,6 +155,7 @@ impl Board for Profiled {
     fn foreign(&self, repo: &str, n: u64) -> Result<Issue> { self.op("read", |b| b.foreign(repo, n)) }
     fn foreign_url(&self, repo: &str, n: u64) -> String { self.0.foreign_url(repo, n) }
     fn requests(&self) -> crate::requests::Budget { self.0.requests() }
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
 }
 
 // ---------- time ----------

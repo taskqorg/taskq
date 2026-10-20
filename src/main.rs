@@ -821,6 +821,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     log!("taskq {} service on {} for {}", platform::VERSION, cfg.me, cfg.repo);
     let mut sampled: Option<Instant> = None;
     let mut agents: Option<(Instant, Value)> = None;
+    let mut dev_ci: Option<(String, Instant)> = None;
     let mut focus_error: Option<String> = None;
     let mut pruned: Option<Instant> = None;
     // § 4 board budget: the pause logged last, and the cumulative counts at the last full hour
@@ -961,6 +962,16 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
         if !reduced { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
+        let mut dev = Value::Null;
+        #[cfg(target_os = "macos")]
+        if !reduced && legacy.is_none() && is_installed && cfg.repo == platform::RELEASE_REPO && cfg.root.join("scripts/dev-install.sh").is_file() && platform::channel(&cfg.install) == Ok("dev") {
+            dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
+                if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
+                dev_ci = Some((sha.into(), Instant::now()));
+                c.board.merge_ci_green(sha)
+            });
+        }
         let tool = platform::tool(&cfg.install);
         let error = r.as_ref().err().cloned();
         let mut status = coreq::status::common(&tool, &cfg.me, &project, at, r.err(), update.as_deref());
@@ -976,7 +987,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             ("stop_progress",json!(s.stop_progress)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, &cfg.root, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
-            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health())]
+            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health())]
         {
             status[k] = v;
         }
@@ -1526,6 +1537,15 @@ fn capacity_cmd(a: &Args) -> Res<()> {
 }
 
 /// § 8 item 1: print the host channel, or write it to host.json and wait for the service to read it back.
+/// § 8 item 1 `service status` line of the dev install; SHAs shortened to 7.
+fn dev_line(dev: &Value) -> String {
+    let sha = |k: &str| dev[k].as_str().map(|s| s.chars().take(7).collect::<String>());
+    let mut line = format!("Dev: installed {}", sha("installed").unwrap_or("unknown".into()));
+    if let Some(p) = sha("pending") { line += &format!(" · pending {p}{}", if dev["building"] == true { " (building)" } else { "" }); }
+    if let Some(f) = sha("failed") { line += &format!(" · failed {f}"); }
+    line
+}
+
 fn channel_cmd(a: &Args) -> Res<()> {
     let install=platform::default_install();
     let me=host::Policy::read(&install).map(|p|p.me).unwrap_or_else(|_|std::env::var("TASKQ_HOST").unwrap_or_else(|_|hostname()));
@@ -1838,6 +1858,7 @@ fn service_report(a:&Args)->Res<()> {
             let update=status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["update"].as_str()).unwrap_or("unknown");
             println!("Update: {update}");
             println!("Channel: {}",status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["channel"].as_str()).unwrap_or("unknown"));
+            if let Some(dev)=status.as_ref().ok().and_then(Option::as_ref).map(|s|&s["dev"]).filter(|d|d.is_object()) {println!("{}",dev_line(dev));}
             println!("{}\nProject owner: {owner}",service_project_fields(root,status));
             println!("{}",incident::line(&incident::status(root)));
             if notice||incident::notice(root) {println!("Incident reports: notice");}

@@ -410,6 +410,57 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
     Ok(None)
 }
 
+/// § 8 item 1 dev install: the SHA to start now. None on `live`, while a build runs, or for the installed or an
+/// already started SHA (a started SHA never restarts, so a failed build is not retried); `ci` is read only after that.
+pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,ci:&mut dyn FnMut(&str)->Result<(),String>)->Option<String> {
+    let sha=main.filter(|m|channel=="dev"&&!building&&Some(*m)!=installed&&Some(*m)!=started)?;
+    ci(sha).ok().map(|_|sha.to_string())
+}
+
+/// One project pass of the dev install ([detail](docs/design/host-service.md#dev-install)): fold the script's
+/// report, start the next SHA, return the `status.json` `dev` value. State lives in `<install>/dev/`.
+#[cfg(unix)]
+pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),String>)->serde_json::Value {
+    let dir=install.join("dev");
+    let _=fs::create_dir_all(&dir);
+    let read=|f:&str|fs::read_to_string(dir.join(f)).ok().map(|s|s.trim().to_string()).filter(|s|!s.is_empty());
+    // the script's exit report is read once: one log line, then `installed` or `failed`
+    if let Some(r)=read("result") {
+        let (sha,outcome)=r.split_once(' ').unwrap_or((&r,"failed"));
+        let ok=outcome=="installed";
+        log!("dev install: {sha} {}",if ok {"installed"} else {"failed; see dev/install.log"});
+        let _=coreq::write_durable(&dir.join(if ok {"installed"} else {"failed"}),sha);
+        if ok {let _=fs::remove_file(dir.join("failed"));}
+        let _=fs::remove_file(dir.join("result"));
+    }
+    let building=read("lock/pid").and_then(|p|p.parse().ok()).is_some_and(crate::runtime::alive);
+    let main=coreq::process::output("dev.main",std::process::Command::new("git").arg("-C").arg(root).args(["ls-remote","origin","refs/heads/main"]),std::time::Duration::from_secs(30)).ok()
+        .filter(|o|o.status.success()).and_then(|o|String::from_utf8_lossy(&o.stdout).split_whitespace().next().map(String::from)).filter(|s|s.len()==40&&s.bytes().all(|c|c.is_ascii_hexdigit()));
+    let (installed,started,failed)=(read("installed"),read("started"),read("failed"));
+    if let Some(sha)=dev_next("dev",main.as_deref(),installed.as_deref(),started.as_deref(),building,ci) {
+        match coreq::write_durable(&dir.join("started"),&sha).and_then(|_|dev_spawn(root,&sha,&dir)) {
+            Ok(())=>log!("dev install: start {sha}"),
+            Err(e)=>log!("dev install: {sha} not started: {e}"),
+        }
+    }
+    let pending=main.filter(|m|Some(m)!=installed.as_ref()&&Some(m)!=failed.as_ref());
+    serde_json::json!({"installed":installed,"pending":pending,"failed":failed,"building":building})
+}
+
+/// Runs the `scripts/dev-install.sh` of `sha` itself, so the primary checkout's own edits never matter. The build
+/// outlives this service's re-exec into it: its own process group, reparented by the background `&`.
+#[cfg(unix)]
+fn dev_spawn(root:&Path,sha:&str,dir:&Path)->Result<(),String> {
+    use std::os::unix::process::CommandExt;
+    let st=std::process::Command::new("sh").arg("-c")
+        .arg(r#"(git -C "$1" fetch -q origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/install.log" 2>&1 </dev/null &"#)
+        .arg("sh").arg(root).arg(sha).arg(dir)
+        .env_remove("TASKQ_ROOT").env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE")
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .process_group(0).status().map_err(|e|e.to_string())?;
+    if st.success() {Ok(())} else {Err(format!("sh {st}"))}
+}
+
 fn update_result(result: Result<Option<String>, String>) -> Result<Option<String>, String> {
     if let Err(e) = &result {
         if let Some((release, _)) = e.split_once(" selftest failed:") {
@@ -795,6 +846,41 @@ mod tests {
         assert!(!coreq::update::newer(next, &tool(&install).current().unwrap()));
         assert_eq!(fs::read_to_string(install.join("current")).unwrap().trim(), next);
         fs::remove_dir_all(&install).unwrap();
+    }
+
+    // Chain: § 8 item 1 dev install (#1388). Risk: a dev Mac never installs a green main merge, installs one with red or
+    // pending CI, reinstalls the same or a failed SHA in a loop, starts a second build, or a live host builds at all.
+    #[test]
+    fn dev_install_starts_each_green_main_sha_once() {
+        let (a,b)=("a".repeat(40),"b".repeat(40));
+        let mut reads=vec![];
+        let mut green=|sha:&str|{reads.push(sha.to_string());Ok(())};
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut green),Some(b.clone()),"new green SHA installs");
+        assert_eq!(dev_next("dev",Some(&a),Some(&a),None,false,&mut green),None,"same SHA: no-op");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),Some(&b),false,&mut green),None,"started or failed SHA: not retried");
+        assert_eq!(dev_next("dev",Some(&b),Some(&a),None,true,&mut green),None,"one build at a time");
+        assert_eq!(dev_next("live",Some(&b),Some(&a),None,false,&mut green),None,"channel live: no-op");
+        assert_eq!(dev_next("dev",None,Some(&a),None,false,&mut green),None,"unknown main SHA waits");
+        assert_eq!(reads,vec![b.clone()],"CI is read only for a SHA that could start");
+        for ci in ["merge_group CI not green on merge result","CI tests pending"] {
+            assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut |_|Err(ci.into())),None,"red or pending CI waits");
+        }
+        // the script's report folds once into installed/failed; a started SHA stays started, so it never restarts
+        #[cfg(unix)] {
+        let install=std::env::temp_dir().join(format!("taskq-dev-{}",std::process::id()));
+        let _=fs::remove_dir_all(&install);
+        fs::create_dir_all(install.join("dev")).unwrap();
+        fs::write(install.join("dev/installed"),&a).unwrap();
+        fs::write(install.join("dev/started"),&b).unwrap();
+        fs::write(install.join("dev/result"),format!("{b} failed\n")).unwrap();
+        let v=dev_tick(&install,&install,&mut |_|panic!("no main SHA outside a checkout"));
+        assert_eq!((v["installed"].as_str(),v["failed"].as_str(),v["building"].as_bool()),(Some(a.as_str()),Some(b.as_str()),Some(false)));
+        assert!(!install.join("dev/result").exists(),"report read once");
+        fs::write(install.join("dev/result"),format!("{b} installed")).unwrap();
+        let v=dev_tick(&install,&install,&mut |_|Ok(()));
+        assert_eq!((v["installed"].as_str(),v["failed"].as_str()),(Some(b.as_str()),None),"success clears the failed SHA");
+        fs::remove_dir_all(&install).unwrap();
+        }
     }
 
     // Chain: § 8 item 1 host channel dev -> live. Risk: a dev host installs a release, a live host stays on a -dev
