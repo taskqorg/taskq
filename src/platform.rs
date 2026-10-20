@@ -866,6 +866,7 @@ mod tests {
             assert_eq!(dev_next("dev",Some(&b),Some(&a),None,false,&mut |_|Err(ci.into())),None,"red or pending CI waits");
         }
         // the script's report folds once into installed/failed; a started SHA stays started, so it never restarts
+        #[cfg(unix)] {
         let install=std::env::temp_dir().join(format!("taskq-dev-{}",std::process::id()));
         let _=fs::remove_dir_all(&install);
         fs::create_dir_all(install.join("dev")).unwrap();
@@ -879,6 +880,7 @@ mod tests {
         let v=dev_tick(&install,&install,&mut |_|Ok(()));
         assert_eq!((v["installed"].as_str(),v["failed"].as_str()),(Some(b.as_str()),None),"success clears the failed SHA");
         fs::remove_dir_all(&install).unwrap();
+        }
     }
 
     // Chain: § 8 item 1 host channel dev -> live. Risk: a dev host installs a release, a live host stays on a -dev
