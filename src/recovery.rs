@@ -238,6 +238,8 @@ mod tests {
     fn recovery_model_never_substitutes_owner_evidence_for_native_release() {
         let mut log=vec![core::Entry{id:1,body:"taskq: spawn worker codex:invented mac".into(),edited:false}];
         assert!(blocker(&core::project(1,&log,false),"mac").unwrap().contains("release"));
+        let boot=core::Entry{id:2,body:"taskq: released 1 exit attempt 1\nhost booted 2026-10-19T08:00:00Z after intent 2026-10-13T10:00:00Z\nop-id: release-1".into(),edited:false};
+        assert!(blocker(&core::project(1,&[log.clone(),vec![boot]].concat(),false),"mac").unwrap().contains("acceptance"),"#1386 boot release keeps acceptance unknown");
         log.push(core::Entry{id:2,body:"taskq: released 1 exit attempt 1".into(),edited:false});
         assert!(blocker(&core::project(1,&log,false),"mac").unwrap().contains("acceptance"));
         log.push(core::Entry{id:3,body:"taskq: accepted 1 attempt 1".into(),edited:false});
