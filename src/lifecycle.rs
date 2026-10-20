@@ -233,6 +233,12 @@ fn submit_inner(install:&Path,value:&Value)->Res<Value> {
                     "operation":"taskq.host.stop.request","trace":identity,"span":identity,"parent":null,
                     "started_ms":request.issued_at.saturating_mul(1000)}).to_string())?
             },
+            // #1336: no collector means no receipt; the host still honors the untracked restart file.
+            Err(error) if request.action==Action::Restart=>{
+                crate::platform::write_atomic(&install.join("restart"),"")?;
+                return Ok(json!({"id":request.id,"state":"untracked","action":"restart","scope":"host","telemetry":"unknown",
+                    "reason":format!("{error}; untracked host restart requested")}));
+            },
             Err(error)=>return Err(error),
         };
         let mut op=resources::Op {bound:json!({(request.action.key()):{"request":request,"command":command.encode()}}),
@@ -770,7 +776,10 @@ mod tests {
     fn restart_refuses_unqualified_or_unrecordable_requests() {
         let (dir,install,_)=fixture();let request=review(&install,"no-collector").unwrap();
         let dispatch=tracing::Dispatch::new(tracing::subscriber::NoSubscriber::default());
-        tracing::dispatcher::with_default(&dispatch,||assert!(submit(&install,&request).is_err()));
+        // #1336: without a collector Restart falls back to the untracked restart file, never to receipt intent.
+        let untracked=tracing::dispatcher::with_default(&dispatch,||submit(&install,&request)).unwrap();
+        assert_eq!((&untracked["state"],&untracked["telemetry"]),(&json!("untracked"),&json!("unknown")));
+        assert!(install.join("restart").exists());fs::remove_file(install.join("restart")).unwrap();
         assert!(pending(&install).unwrap().is_none());
         let (capture,guard)=crate::profile::tests::collecting(&install);
         for case in ["old-protocol","stale-instance","expired","foreign-root","extra","oversized","bad-id"] {

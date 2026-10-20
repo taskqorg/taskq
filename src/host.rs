@@ -746,9 +746,7 @@ pub fn run(install: &Path) -> Res<()> {
         if message!=reported {crate::platform::log(&message);reported=message;}
         std::thread::sleep(std::time::Duration::from_secs(1));
     };
-    let _telemetry=crate::telemetry::host_capture(install).unwrap_or_else(|error| {
-        crate::platform::log(&format!("Telemetry: unknown ({error})"));None
-    });
+    let mut telemetry=crate::telemetry::HostCapture::default();
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
     let mut hostname=crate::hostname();
     let shared = Arc::new(Mutex::new(Host::new(Policy::read_for_hostname(install,||hostname.clone()))));
@@ -771,6 +769,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut registry = Registry::default();
     let mut restart=crate::lifecycle::Monitor::default();
     loop {
+        if let Some(line)=telemetry.pass(install) {crate::platform::log(&line);}
         // #1297: steady host passes fold like project passes (main.rs `service.loop`).
         let _repeating = tracing::info_span!("service.host.loop", coreq_repeating = true).entered();
         if let Err(e) = crate::profile::prune(install) { eprintln!("taskq: telemetry unknown: {e}"); }

@@ -75,6 +75,21 @@ pub(crate) fn host_capture(install:&Path)->Result<Option<coreq::telemetry::captu
     }
 }
 
+/// #1336: a host without a collector retries `host_capture` each pass, so a tray that becomes fresh
+/// later still hands over its writer; `pass` returns one log line per state change.
+#[derive(Default)]
+pub(crate) struct HostCapture {runtime:Option<coreq::telemetry::capture::Runtime>,state:String}
+impl HostCapture {
+    pub(crate) fn pass(&mut self,install:&Path)->Option<String> {
+        if self.runtime.is_some() {return None;}
+        let state=match host_capture(install) {
+            Ok(runtime)=>{self.runtime=runtime;"Telemetry: collecting".to_string()},
+            Err(error)=>format!("Telemetry: unknown ({error}); retrying each pass"),
+        };
+        (state!=self.state).then(||{self.state.clone_from(&state);state})
+    }
+}
+
 /// Why this process uses the legacy same-store budget, if it does.
 pub(crate) fn handover()->Option<&'static str> {HANDOVER.get().map(String::as_str)}
 
@@ -397,7 +412,7 @@ mod tests {
     #[test]
     fn older_tray_writer_hands_over_to_new_host() {
         use std::process::{Command,Stdio};
-        for fault in ["wire", "unresponsive", "stale"] {
+        for fault in ["wire", "unresponsive", "stale", "late"] {
             let d=dir();
             struct Child(std::process::Child);
             impl Drop for Child {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
@@ -411,11 +426,12 @@ mod tests {
                 assert!(std::time::Instant::now()<until,"old tray did not start");
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            if fault=="stale" {
-                std::fs::File::options().write(true).open(d.join("tray")).unwrap()
-                    .set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(20)).unwrap();
-            }
+            let age=|age|std::fs::File::options().write(true).open(d.join("tray")).unwrap()
+                .set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(age)).unwrap();
+            if fault=="stale" || fault=="late" {age(20);}
             let mut host=spawn("host");
+            // #1336: the tray heartbeat turns fresh after the host started without a collector.
+            if fault=="late" {std::thread::sleep(std::time::Duration::from_secs(2));age(0);}
             loop {
                 if let Some(status)=host.0.try_wait().unwrap() {assert!(status.success(),"new host could not record its receipt");break;}
                 assert!(std::time::Instant::now()<until,"handover did not finish");
@@ -460,7 +476,17 @@ mod tests {
                 let Err(error)=host_capture(&d) else {panic!("stale tray recovery succeeded")};
                 assert!(error.contains("tray owner not fresh"),"{error}");return;
             }
-            let _runtime=host_capture(&d).expect("new host collector unavailable");
+            let mut capture=HostCapture::default();
+            if std::env::var("TASKQ_HANDOVER_FAULT").unwrap()=="late" {
+                let first=capture.pass(&d).unwrap();
+                assert!(first.contains("tray owner not fresh"),"{first}");
+                let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
+                while capture.runtime.is_none() {
+                    assert!(std::time::Instant::now()<until,"host never retried the fresh tray");
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if let Some(line)=capture.pass(&d) {assert_eq!(line,"Telemetry: collecting","one line per state change");}
+                }
+            } else {assert_eq!(capture.pass(&d).as_deref(),Some("Telemetry: collecting"),"new host collector unavailable");}
             let span=tracing::info_span!("new.host.receipt");let _entered=span.enter();
             coreq::telemetry::capture::CommandReceipt::current().unwrap().checkpoint("observed").unwrap();
             coreq::telemetry::capture::qualify().unwrap();
