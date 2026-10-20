@@ -67,7 +67,7 @@ fn real_host_restart_preserves_request_after_the_caller_exits() {
         let source=base.join("native-inventory-windows.rs");
         fs::write(&source,include_str!("fixtures/native-inventory-windows.rs")).unwrap();
         let shim=bin.join("powershell.exe");
-        // #1376: `cargo test` prebuilds the shim as an example; only a lone `--test host_restart` run compiles it here.
+        // #1376: `cargo test` prebuilds the shim as an example; a run without examples (`--test integration`) compiles it here.
         let built=std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("examples/native-inventory-windows.exe");
         if built.is_file() {fs::copy(&built,&shim).unwrap();} else {
             let compiled=coreq::process::output("test.compile-native-inventory",Command::new("rustc")

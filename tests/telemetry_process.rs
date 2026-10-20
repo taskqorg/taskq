@@ -158,7 +158,7 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
         struct Owner(std::process::Child);
         impl Drop for Owner {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
         let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
-            .args(["--exact","resident_analysis_owner","--ignored","--nocapture"])
+            .args(["--exact","telemetry_process::resident_analysis_owner","--ignored","--nocapture"])
             .env("TASKQ_ANALYSIS_OWNER",install.join("telemetry.log/universal.sqlite3"))
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
         let mut ready=std::io::BufReader::new(owner.0.stdout.take().unwrap());
@@ -315,7 +315,7 @@ fn migration_cli_uses_quiesced_owner_and_preserves_legacy_text() {
     struct Owner(std::process::Child);
     impl Drop for Owner {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
     let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
-        .args(["--exact","resident_analysis_owner","--ignored","--nocapture"])
+        .args(["--exact","telemetry_process::resident_analysis_owner","--ignored","--nocapture"])
         .env("TASKQ_ANALYSIS_OWNER",&path).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
     let mut ready=std::io::BufReader::new(owner.0.stdout.take().unwrap());
     loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
@@ -346,7 +346,7 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
     struct Owner(std::process::Child);
     impl Drop for Owner {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
     let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
-        .args(["--exact","resident_analysis_owner","--ignored","--nocapture"])
+        .args(["--exact","telemetry_process::resident_analysis_owner","--ignored","--nocapture"])
         .env("TASKQ_ANALYSIS_OWNER",install.join("telemetry.log/universal.sqlite3")).env("TASKQ_ANALYSIS_LEGACY_BUDGET","1")
         .env("COREQ_TELEMETRY_STORE_TRACE","1")
         .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
