@@ -51,14 +51,22 @@ pub fn log(text: &str) {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let line = log_line(at, text);
         PROJECT_LOG.with_borrow(|p| {
-            use std::io::Write;
-            if let Some(p) = p { let _ = fs::OpenOptions::new().create(true).append(true).open(p).and_then(|mut f| writeln!(f, "{line}")); }
+            use std::io::IsTerminal;
+            // The host unit sends stderr to <install>/taskq.log on macOS and Windows (coreq `unit(.., "")`); Linux uses the journal.
+            let stderr_file = (cfg!(any(target_os = "macos", windows)) && !std::io::stderr().is_terminal())
+                .then(|| p.as_ref().map(|p| p.with_file_name("taskq.log"))).flatten();
+            emit(&line, p.as_deref(), &mut std::io::stderr(), stderr_file.as_deref());
         });
-        use std::io::Write;
-        let _ = writeln!(std::io::stderr(), "{line}");
     } else {
         eprintln!("{text}");
     }
+}
+
+/// One line to the project log and to stderr, once when both are the same file; stderr keeps a line the project log refused.
+fn emit(line: &str, project: Option<&Path>, stderr: &mut dyn std::io::Write, stderr_file: Option<&Path>) {
+    use std::io::Write;
+    let written = project.is_some_and(|p| fs::OpenOptions::new().create(true).append(true).open(p).and_then(|mut f| writeln!(f, "{line}")).is_ok());
+    if !(written && project == stderr_file) { let _ = writeln!(stderr, "{line}"); }
 }
 
 pub fn die(msg: &str) -> ! {
@@ -650,6 +658,23 @@ pub fn host_memory() -> Option<(f64, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // #1381: project taskq's log is the host unit's stderr file; a line written to both landed twice.
+    #[test]
+    fn service_line_lands_once_when_project_log_is_stderr_target() {
+        let dir = std::env::temp_dir().join(format!("taskq-log-once-{}", crate::runtime::uuid()));
+        fs::create_dir_all(&dir).unwrap();
+        let (own, other) = (dir.join("taskq.log"), dir.join("demo.log"));
+        let mut stderr = fs::OpenOptions::new().create(true).append(true).open(&own).unwrap();
+        emit("a", Some(&own), &mut stderr, Some(&own));
+        emit("b", Some(&own), &mut stderr, Some(&own));
+        assert_eq!(fs::read_to_string(&own).unwrap(), "a\nb\n");
+        emit("c", Some(&other), &mut stderr, Some(&own));
+        assert_eq!((fs::read_to_string(&own).unwrap(), fs::read_to_string(&other).unwrap()), ("a\nb\nc\n".into(), "c\n".into()));
+        emit("d", Some(&dir.join("missing/x.log")), &mut stderr, Some(&dir.join("missing/x.log")));
+        assert!(fs::read_to_string(&own).unwrap().ends_with("c\nd\n"));
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     // Chain: § 4 service log lines. Risk: a line without its UTC time, or one message split over lines.
     // Chain: short adapter -> silent/nonzero dependency -> bounded response and private failure evidence.
