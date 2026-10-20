@@ -5,6 +5,8 @@ Accepted product direction. Icon / Summary / Custom on macOS and Windows. Runtim
 ## CI1 One renderer and format
 
 - Icon keeps the approved compact Q asset. Summary is an immutable, versioned built-in configuration targeting every I1–I6 rule. [icon-summary.config.json](icon-summary.config.json) is the prototype preset source; the builder embeds it without a separate layout implementation. Native conformance remains a release gate. Custom uses exactly the same configuration schema, primitives, layout engine and renderer. No separate hardcoded Summary drawing branch.
+- The Summary preset sets `empty: "compact"`: the shared renderer uses the existing compact Q only when the composed image has no painted pixels. A Custom copy retains this setting; old configurations keep their existing empty behavior.
+- Counter fields `hide_zero` and `color` are optional; absent fields retain visible zeros and neutral ink. `color` accepts work, ask, ready or failed; `ready_blocked` binds the sum without changing the saved `ready` binding.
 - Edit Summary copies its configuration into a Custom draft. The built-in preset remains available. Custom is optional; existing choices survive migration.
 - Persist the configuration, not a screenshot or prompt. Keep a short owner request as edit context, never as executable state. Menu totals and task state stay board-derived; this is local appearance preference.
 - Read validated config + canonical snapshot + native size/theme/font metrics → render. No model call per refresh. Schema version, primitive identity and data bindings determine meaning.

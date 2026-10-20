@@ -1,11 +1,12 @@
 {
   "version": 1,
+  "empty": "compact",
   "font": "System",
   "gap": 1,
   "elements": [
-    {"id": "work", "type": "counter", "bind": "work", "cell": [0, 0, 0.5, 0.5], "align": "left", "vertical": "top"},
-    {"id": "human", "type": "counter", "bind": "ask", "cell": [0.5, 0, 0.5, 0.5], "align": "right", "vertical": "top"},
-    {"id": "ready", "type": "counter", "bind": "ready", "cell": [0, 0.5, 0.5, 0.5], "align": "left", "vertical": "bottom"},
+    {"id": "work", "type": "counter", "bind": "work", "cell": [0, 0, 0.5, 0.5], "align": "left", "vertical": "top", "hide_zero": true, "color": "work"},
+    {"id": "human", "type": "counter", "bind": "ask", "cell": [0.5, 0, 0.5, 0.5], "align": "right", "vertical": "top", "hide_zero": true, "color": "ask"},
+    {"id": "ready", "type": "counter", "bind": "ready_blocked", "cell": [0, 0.5, 0.5, 0.5], "align": "left", "vertical": "bottom", "hide_zero": true, "color": "ready"},
     {"id": "history", "type": "histogram", "cell": [0.5, 0.5, 0.5, 0.5], "period": "24h", "series": ["closed", "failed", "ask", "blocked"]}
   ]
 }

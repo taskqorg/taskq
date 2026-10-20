@@ -5,13 +5,13 @@
 <style>
 :root{color-scheme:light dark}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:light-dark(#243039,#eef2f5);--surface:light-dark(#fafbfc,#252b32);--muted:light-dark(#59636e,#b9c3cd);--edge:light-dark(#dce0e5,#46505b);--work:light-dark(#246f59,#8dd2b8);--ask:light-dark(#955525,#edbc96);--ready:light-dark(#5d6874,#c8d0d9);--failed:light-dark(#a6324b,#ee96a5);background:var(--surface);-webkit-user-select:none;user-select:none;cursor:default}
-html{scrollbar-width:thin;overflow-x:hidden}
+html,body{height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}
 /* a window a fraction of a pixel short of the measured width reflows instead of scrolling horizontally (#1073) */
 body{max-width:100%}
 *{box-sizing:border-box}
 button{font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:5px 7px}
 a{color:inherit;text-decoration:none}
-.menu{font-size:var(--size,16px);padding:6px 8px;overflow-x:clip}
+.menu{font-size:var(--size,16px);height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--surface);border-radius:0 0 9px 9px}.menu[data-edge=bottom]{border-radius:9px 9px 0 0}.menu[data-edge=left]{border-radius:0 9px 9px 0}.menu[data-edge=right]{border-radius:9px 0 0 9px}.menu.pinned{border-radius:9px}.content{min-height:0;overflow-y:auto;overflow-x:clip;scrollbar-width:thin;overscroll-behavior:contain;padding:6px 8px;flex:1}
 .row,summary{display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:32px;padding:5px 4px;line-height:1.35}
 summary{list-style:none;display:grid;grid-template-columns:auto minmax(0,1fr) 8px;gap:6px}
 summary>.meta,summary>.counter{justify-self:end;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
@@ -40,7 +40,7 @@ button:disabled{color:var(--muted);opacity:.75}
 .alert{color:var(--failed)}
 .toast{position:fixed;left:8px;right:8px;bottom:8px;z-index:12;padding:6px 8px;border:1px solid var(--work);border-radius:8px;background:var(--surface);box-shadow:0 4px 14px #0006;overflow-wrap:anywhere}.toast button{margin-left:6px}
 h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px solid var(--edge);margin-top:6px}
-.head{position:sticky;top:0;z-index:10;background:var(--surface);min-height:28px;padding:2px 4px;cursor:grab}.head button{padding:2px 7px}.grip{position:fixed;right:0;bottom:0;width:18px;height:18px;z-index:11;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--muted) 56%,var(--muted) 62%,transparent 63%,transparent 75%,var(--muted) 76%,var(--muted) 82%,transparent 83%)}
+.head{flex-shrink:0;z-index:10;background:light-dark(#edf0f3,#303840);min-height:32px;padding:3px 8px;cursor:grab}.head nav,.window-controls{display:flex;gap:4px}.pin-glyph{display:inline-block}.head button{padding:2px 7px}.grip{position:fixed;right:0;bottom:0;width:18px;height:18px;z-index:11;cursor:nwse-resize;touch-action:none;background:linear-gradient(135deg,transparent 55%,var(--muted) 56%,var(--muted) 62%,transparent 63%,transparent 75%,var(--muted) 76%,var(--muted) 82%,transparent 83%)}
 /* Home keeps a bounded preview of the AI exchange and of the proposed changes (menu.md M7); controls stay below them */
 .aichain{max-height:10em;overflow-y:auto;position:relative}
 .aiops{max-height:6.5em;overflow-y:auto}

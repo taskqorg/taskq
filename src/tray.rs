@@ -69,13 +69,15 @@ struct Pin {
     pinned: bool,
     top: bool,
     size: Option<(f64, f64)>,
+    size_anchor: String,
+    attached_edge: String,
     display: String,
     pos: std::collections::BTreeMap<String, (i32, i32)>,
 }
 
 impl Default for Pin {
     fn default() -> Self {
-        Self { pinned: false, top: true, size: None, display: String::new(), pos: Default::default() }
+        Self { pinned: false, top: true, size: None, size_anchor: "top".into(), attached_edge: "top".into(), display: String::new(), pos: Default::default() }
     }
 }
 
@@ -88,7 +90,8 @@ impl Settings {
         }).unwrap_or_default();
         let pos = v["pos"].as_object().into_iter().flatten().filter_map(|(k, p)| Some((k.clone(), (i32::try_from(p[0].as_i64()?).ok()?, i32::try_from(p[1].as_i64()?).ok()?)))).collect();
         let size = v["size"][0].as_f64().zip(v["size"][1].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 240.0 && *h >= 120.0);
-        let pin = Pin { top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
+        let size_anchor = v["size_anchor"].as_str().filter(|v| ["fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"top"}).to_string();
+        let pin = Pin { size_anchor, attached_edge: "top".into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
         let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin,
             notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
         // an invalid or corrupt saved icon falls back to Summary (CI4)
@@ -128,7 +131,7 @@ impl Settings {
 
     fn save(&self, install: &Path) -> bool {
         let v = json!({"view": self.view, "font": self.font, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz, "icon": self.icon,
-            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify});
+            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify});
         let p = install.join("tray.json");
         if crate::data::json(&p).is_err() && fs::copy(&p, install.join("tray.json.corrupt")).is_err() {
             return false;
@@ -511,6 +514,7 @@ fn claude_url(u: &str) -> bool {
 struct Summary {
     /// work, ask, ready, failed
     counts: [usize; 4],
+    blocked: usize,
     /// Every project's snapshot is complete and fresh; else the counts are unknown, never zero (§ 4).
     known: bool,
     run: bool,
@@ -542,7 +546,7 @@ fn summary(ps: &[Value], (start, end): (i64, i64)) -> Summary {
     let since = ps.iter().filter_map(|p| p["since"].as_i64()).max();
     let t = crate::snapshot::totals(seen.values().map(String::as_str));
     let known = ps.iter().all(|p| p["complete"] == true);
-    Summary { counts: [t["doing"] + t["review"], t["ask"], t["ready"], t["failed"]], known, run: ps.iter().any(|p| p["focus"].as_array().is_some_and(|f| !f.is_empty())), bins, since }
+    Summary { blocked: t["waiting"], counts: [t["doing"] + t["review"], t["ask"], t["ready"], t["failed"]], known, run: ps.iter().any(|p| p["focus"].as_array().is_some_and(|f| !f.is_empty())), bins, since }
 }
 
 struct QueuedAction {
@@ -814,13 +818,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
         return Err(format!("unknown route {r}; known: icon, {}", ROUTES.join(", ")));
     }
     if routes.iter().any(|r|r=="workspace")&&routes.len()!=1 {return Err("Capture workspace separately from menu routes".into());}
+    let mut settings = Settings::load(&install);
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
     #[cfg(target_os = "macos")]
     {
         // Accessory keeps the tray out of the Dock; AppKit menu accelerators enable native text editing.
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
-        event_loop.set_activation_policy(ActivationPolicy::Accessory);
+        event_loop.set_activation_policy(if settings.pin.pinned && snapshot.is_none() { ActivationPolicy::Regular } else { ActivationPolicy::Accessory });
         // a snapshot never takes the owner's focus (taskq.md R12)
         event_loop.set_activate_ignoring_other_apps(snapshot.is_none());
         if snapshot.is_none() {
@@ -877,7 +882,6 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
         let _=coreq::telemetry::capture::operation("tray.resources.report",||replies.send_event(Ev::Answer(receipt)),|_|"ui-closed");
     })?;
     let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
-    let mut settings = Settings::load(&install);
     let mut ui: Option<(Window, WebView)> = None;
     let mut tray: Option<TrayIcon> = None;
     let mut workspace: Option<Workspace> = None;
@@ -970,16 +974,16 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
             }
             Event::NewEvents(StartCause::Init) => {
-                let b = WindowBuilder::new().with_title("taskq").with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
+                let b = WindowBuilder::new().with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // a snapshot renders off the visible screen (taskq.md R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(-20000.0, -20000.0)).with_always_on_top(false).with_focused(false) } else { b };
                 #[cfg(windows)]
-                let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, true);
+                let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, !settings.pin.pinned);
                 let p = proxy.clone();
                 let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
                     // only our page: a link goes to the browser through the bridge
-                    WebViewBuilder::new().with_accept_first_mouse(true).with_html(if workspace_snapshot {WORKSPACE_HTML}else{HTML}).with_navigation_handler(own_page)
+                    WebViewBuilder::new().with_transparent(true).with_accept_first_mouse(true).with_html(if workspace_snapshot {WORKSPACE_HTML}else{HTML}).with_navigation_handler(own_page)
                         .with_ipc_handler(move |r| {
                             let _ = p.send_event(Ev::Ipc(r.into_body()));
                         })
@@ -1018,7 +1022,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         .filter(|(m, p)| on_screen(**p, (m.position().x, m.position().y, m.size().width as i32, m.size().height as i32)));
                     match (saved, tray.as_ref().and_then(TrayIcon::rect)) {
                         (Some((_, p)), _) => w.set_outer_position(PhysicalPosition::new(p.0, p.1)),
-                        (None, Some(r)) => place(w, r),
+                        (None, Some(r)) => { settings.pin.attached_edge = place(w, r).into(); },
                         _ => {}
                     }
                     w.set_visible(true);
@@ -1036,6 +1040,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 settings.pin.pos.insert(settings.pin.display.clone(), c);
                 moved = true;
             }
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => { if let Some((w,_))=&ui { w.set_visible(false); } }
             Event::WindowEvent { event: WindowEvent::Focused(false), .. } if snapshot.is_none() && !settings.pin.pinned => {
                 if let Some((w, _)) = &ui {
                     if blur_refocuses(shown_at.elapsed()) {
@@ -1094,7 +1099,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     w.set_visible(false);
                     return;
                 }
-                place(w, rect);
+                settings.pin.attached_edge = place(w, rect).into();
                 w.set_visible(true);
                 w.set_focus();
                 shown_at = Instant::now();
@@ -1105,7 +1110,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let Ok(id) = serde_json::from_str::<Value>(&id) else { return };
                 let Some((w, _)) = &ui else { return };
                 if !settings.pin.pinned && let Some(r) = anchor.or_else(|| tray.as_ref().and_then(TrayIcon::rect)) {
-                    place(w, r);
+                    settings.pin.attached_edge = place(w, r).into();
                 }
                 w.set_visible(true);
                 w.set_focus();
@@ -1156,15 +1161,29 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         let size = (width.max(240.0).min(max_w), height.max(120.0).min(max_h));
                         let measurement = json!({"w": size.0, "h": if m["a"] == "resize" { size.1 } else { height.max(120.0) }, "d": scale, "g": m["g"]});
                         let (width, height) = popover_size(&measurement, max_h * scale / w.scale_factor(), w.scale_factor());
+                        let old_size = w.outer_size();
+                        let old_position = w.outer_position().ok();
                         w.set_inner_size(PhysicalSize::new(width.min((max_w * scale) as u32), height));
+                        if m["a"] == "size" && settings.pin.size_anchor != "fixed" {
+                            if let (Some(p), Some(monitor)) = (old_position, w.current_monitor()) {
+                                let p = anchored_position((p.x,p.y),old_size.height as i32,(width as i32,height as i32),work_area(&monitor),&settings.pin.size_anchor);
+                                w.set_outer_position(PhysicalPosition::new(p.0,p.1));
+                            }
+                        }
                         if m["a"] == "resize" {
                             settings.pin.size = Some(size);
                             moved = true;
                         }
                         // pinned: the window stays where it was put; a move then keeps it in the work area
-                        if m["a"] == "size" && let (Some(r), false) = (anchor, settings.pin.pinned) {
-                            place(w, r);
+                        if m["a"] == "size" && settings.pin.size_anchor == "fixed" && let (Some(r), false) = (anchor, settings.pin.pinned) {
+                            settings.pin.attached_edge = place(w, r).into();
                         }
+                    }
+                    "size-anchor" => {
+                        settings.pin.size_anchor = match settings.pin.size_anchor.as_str() { "fixed" => "bottom", "bottom" => "top", _ => "fixed" }.into();
+                        if settings.pin.size_anchor == "fixed" { let size=w.inner_size().to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
+                        settings.save(&install);
+                        push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
                     }
                     "resize-end" => { settings.save(&install); }
                     "hide" => w.set_visible(false),
@@ -1176,13 +1195,17 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     }
                     "pin" => {
                         settings.pin.pinned = !settings.pin.pinned;
+                        #[cfg(target_os = "macos")]
+                        app_window(settings.pin.pinned);
+                        #[cfg(windows)]
+                        { use tao::platform::windows::WindowExtWindows; w.set_skip_taskbar(!settings.pin.pinned); }
                         if let (true, Ok(p), Some(m)) = (settings.pin.pinned, w.outer_position(), w.current_monitor()) {
                             settings.pin.display = key(&m);
                             settings.pin.pos.insert(settings.pin.display.clone(), (p.x, p.y));
                         }
                         // unpin: back to the popover at the tray icon
                         if let (false, Some(r)) = (settings.pin.pinned, anchor.or_else(|| tray.as_ref().and_then(TrayIcon::rect))) {
-                            place(w, r);
+                            settings.pin.attached_edge = place(w, r).into();
                         }
                         settings.save(&install);
                         w.set_focus();
@@ -1447,7 +1470,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
-        "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size,
+        "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
         "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "ai": {"target": target(install), "request": newest(install), "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
@@ -1512,7 +1535,7 @@ fn rolling(now: i64, period: i64) -> (i64, i64) {
 
 /// Configuration `c` over `s` at `k` × 22 pt and `dpr` pixels per point through the shared renderer.
 fn draw(c: &Value, s: &Summary, dark: bool, k: f32, dpr: f32) -> Result<Rgba, Vec<String>> {
-    let d = icon::Data { counts: s.counts.map(|n| s.known.then_some(n)), bins: s.bins.clone(), paused: !s.run };
+    let d = icon::Data { blocked: s.known.then_some(s.blocked), counts: s.counts.map(|n| s.known.then_some(n)), bins: s.bins.clone(), paused: !s.run };
     icon::render(c, (22.0 * k * dpr).round() as u32, dpr, &d, dark)
 }
 
@@ -1527,7 +1550,7 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
         _ => None,
     };
     let (k, dpr) = if config.is_some() { (menu_bar_scale(), backing_scale()) } else { (1.0, 2.0) };
-    let new = format!("{config:?} {dark} {k} {dpr} {} {} {:?} {:?}", sum.run, sum.known, sum.counts, if config.is_some() { sum.bins.clone() } else { vec![] });
+    let new = format!("{config:?} {dark} {k} {dpr} {} {} {:?} {:?}", sum.run, sum.known, (sum.counts, sum.blocked), if config.is_some() { sum.bins.clone() } else { vec![] });
     if *sig == new {
         return;
     }
@@ -1541,8 +1564,18 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
         if failed { Err("invalid icon render".to_string()) } else { applied.map_err(|e| e.to_string()) }
     });
     let [w, a, r, _] = sum.counts;
-    let counts = if sum.known { format!("in work {w} · waiting for answer {a} · ready {r}") } else { "counts unknown (service error or stale status)".into() };
+    let counts = if sum.known { format!("in work {w} · waiting for answer {a} · ready + blocked {}",r + sum.blocked) } else { "counts unknown (service error or stale status)".into() };
     let _ = t.set_tooltip(Some(format!("taskq: {counts}{}", if sum.run { "" } else { " · paused" })));
+}
+
+/// M13: only a pinned tray participates in the normal macOS app switcher.
+#[cfg(target_os = "macos")]
+fn app_window(pinned: bool) {
+    use objc2_app_kit::{NSApplication,NSApplicationActivationPolicy};
+    if let Some(mtm)=objc2_foundation::MainThreadMarker::new() {
+        let app=NSApplication::sharedApplication(mtm);
+        app.setActivationPolicy(if pinned {NSApplicationActivationPolicy::Regular} else {NSApplicationActivationPolicy::Accessory});
+    }
 }
 
 /// A blur this soon after the icon opened the popover takes the focus back instead of closing it:
@@ -1552,7 +1585,7 @@ fn blur_refocuses(shown_for: Duration) -> bool {
 }
 
 /// Put the popover under a menu-bar icon or above a taskbar icon, inside the icon's monitor.
-fn place(w: &Window, r: Rect) {
+fn place(w: &Window, r: Rect) -> &'static str {
     let (ix, iy) = (r.position.x, r.position.y);
     let m = w.available_monitors().find(|m| {
         let (p, s) = (m.position(), m.size());
@@ -1561,9 +1594,13 @@ fn place(w: &Window, r: Rect) {
     let (mp, ms) = m.map_or(((0, 0), (1920, 1080)), |m| ((m.position().x, m.position().y), (m.size().width as i32, m.size().height as i32)));
     let sz = w.outer_size();
     let (ww, wh) = (sz.width as i32, sz.height as i32);
-    let x = (ix as i32 + r.size.width as i32 / 2 - ww / 2).clamp(mp.0, (mp.0 + ms.0 - ww).max(mp.0));
-    let y = if (iy as i32) < mp.1 + ms.1 / 2 { iy as i32 + r.size.height as i32 + 4 } else { iy as i32 - wh - 4 };
-    w.set_outer_position(PhysicalPosition::new(x, y.clamp(mp.1, (mp.1 + ms.1 - wh).max(mp.1))));
+    let edge=[("top",iy-mp.1 as f64),("bottom",(mp.1+ms.1) as f64-iy-r.size.height as f64),("left",ix-mp.0 as f64),("right",(mp.0+ms.0) as f64-ix-r.size.width as f64)].into_iter().min_by(|a,b|a.1.total_cmp(&b.1)).unwrap().0;
+    let cx=ix as i32+r.size.width as i32/2-ww/2;
+    let cy=iy as i32+r.size.height as i32/2-wh/2;
+    let (x,y)=match edge {"bottom"=>(cx,iy as i32-wh),"left"=>(ix as i32+r.size.width as i32,cy),"right"=>(ix as i32-ww,cy),_=>(cx,iy as i32+r.size.height as i32)};
+    let p=clamp((x,y),(ww,wh),(mp.0,mp.1,ms.0,ms.1));
+    w.set_outer_position(PhysicalPosition::new(p.0,p.1));
+    edge
 }
 
 /// A display's name in `tray.json`; unnamed: its origin.
@@ -1579,6 +1616,11 @@ fn on_screen(p: (i32, i32), (x, y, w, h): (i32, i32, i32, i32)) -> bool {
 /// Top-left that keeps a window of `size` inside the area `(x, y, w, h)`; a too large window keeps its top-left edge in.
 fn clamp(p: (i32, i32), size: (i32, i32), (x, y, w, h): (i32, i32, i32, i32)) -> (i32, i32) {
     (p.0.clamp(x, (x + w - size.0).max(x)), p.1.clamp(y, (y + h - size.1).max(y)))
+}
+
+/// M13: preserve the named edge unless the monitor's work area requires a clamp.
+fn anchored_position(p:(i32,i32),old_height:i32,size:(i32,i32),area:(i32,i32,i32,i32),anchor:&str)->(i32,i32) {
+    clamp((p.0,if anchor=="bottom" {p.1+old_height-size.1} else {p.1}),size,area)
 }
 
 /// The display without menu bar and Dock, physical pixels.
@@ -2540,6 +2582,10 @@ mod tests {
         let mut ok = ps.clone();
         for p in &mut ok { p["complete"] = json!(true); }
         assert!(summary(&ok, (-200, 100)).known);
+        ok[0]["tasks"][0]["state"]=json!("waiting");ok[1]["tasks"][0]["state"]=json!("waiting");
+        let blocked=summary(&ok,(-200,100));
+        assert_eq!(blocked.blocked,1,"blocked tasks deduplicate by board and issue");
+        assert_eq!(blocked.counts[2],0,"Custom ready does not include blocked");
     }
 
     // Chain: M6/D11 rolling history grid and U-A6 icon. Risk: bars drift on every refresh, or a boundary loses or moves events.
@@ -2593,6 +2639,16 @@ mod tests {
         assert_eq!((s.range(1000), s.tz.as_str()), ((40, 160), "UTC"));
     }
 
+    #[test]
+    fn window_anchor_preserves_edge_and_clamps_to_work_area() {
+        let area=(0,0,1000,800);
+        assert_eq!(anchored_position((30,300),200,(320,400),area,"bottom"),(30,100));
+        assert_eq!(anchored_position((30,300),400,(320,200),area,"bottom"),(30,500));
+        assert_eq!(anchored_position((30,300),200,(320,400),area,"top"),(30,300));
+        assert_eq!(anchored_position((30,700),200,(320,400),area,"top"),(30,400));
+        assert_eq!(anchored_position((30,10),200,(320,400),area,"bottom"),(30,0));
+    }
+
     // Chain: § 4 pinned tray window (menu.md M13). Risk: pin or position lost on restart; window placed off-screen.
     #[test]
     fn pin_and_position_per_display_survive_restart() {
@@ -2604,7 +2660,7 @@ mod tests {
         fs::write(install.join("tray.json"), r#"{"size":[-1,0],"top":false}"#).unwrap();
         let invalid = Settings::load(&install);
         assert!(invalid.pin.size.is_none() && !invalid.pin.top, "invalid size cannot hide the header or resize grip");
-        s.pin = Pin { top: false, size: Some((480.0, 600.0)), pinned: true, display: "B".into(), pos: [("A".into(), (10, 20)), ("B".into(), (-1500, 300))].into() };
+        s.pin = Pin { size_anchor: "bottom".into(), attached_edge: "top".into(), top: false, size: Some((480.0, 600.0)), pinned: true, display: "B".into(), pos: [("A".into(), (10, 20)), ("B".into(), (-1500, 300))].into() };
         assert!(s.save(&install));
         let r = Settings::load(&install);
         assert!(r.pin == s.pin && r.font == 18);

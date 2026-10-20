@@ -1563,6 +1563,7 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
 <key>CFBundleName</key><string>TaskQ</string>
 <key>CFBundleExecutable</key><string>taskq</string>
 <key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleIconFile</key><string>TaskQ.icns</string>
 <key>LSUIElement</key><true/>
 </dict></plist>
 "#;
@@ -1570,6 +1571,16 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     let bin = app.join("Contents/MacOS/taskq");
     fs::create_dir_all(bin.parent()?).ok()?;
     fs::write(app.join("Contents/Info.plist"), PLIST).ok()?;
+    let resources=app.join("Contents/Resources");
+    fs::create_dir_all(&resources).ok()?;
+    // ICNS PNG representations retain the same TaskQ geometry at native app-icon sizes.
+    let mut images=Vec::new();
+    for (kind,size) in [(b"ic07",128u32),(b"ic08",256),(b"ic09",512),(b"ic10",1024)] {
+        let png=icon::compact(true,false,size as f32/22.0).png();
+        images.extend_from_slice(kind); images.extend_from_slice(&((png.len()+8) as u32).to_be_bytes()); images.extend(png);
+    }
+    let mut icns=b"icns".to_vec(); icns.extend_from_slice(&((images.len()+8) as u32).to_be_bytes()); icns.extend(images);
+    fs::write(resources.join("TaskQ.icns"),icns).ok()?;
     let tmp = bin.with_extension("tmp");
     fs::copy(exe, &tmp).and_then(|_| fs::rename(&tmp, &bin)).ok()?;
     let signed = match platform::codesign(platform::SIGNING_IDENTITY, &app, "org.taskq.tray") {
