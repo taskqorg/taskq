@@ -40,6 +40,7 @@ impl GitLab {
             labels: names(&v["labels"], "name"),
             assignees: names(&v["assignees"], "username"),
             updated: iso(&s(v, "updated_at")).unwrap_or(0),
+            created: iso(&s(v, "created_at")).unwrap_or(0),
             open: v["state"] == "opened",
             trusted: self.member(v["author"]["id"].as_u64().unwrap_or(0)),
             // GitLab records no close reason: a closed issue is done (§ 1)

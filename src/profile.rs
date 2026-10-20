@@ -407,7 +407,7 @@ fn render_stages_samples(samples:&[Sample]) -> Result<String, &'static str> {
 pub const BOARD_OPS: [&str; 9] = ["list", "inbox", "read", "claim", "comment", "label", "close", "write", "publish"];
 #[cfg(test)] const BOARD_PREFIX: &str = "taskq-board ";
 #[cfg(test)] const TRANSITION_PREFIX: &str = "taskq-transition ";
-const STATES: [&str; 9] = ["ready", "waiting", "doing", "review", "ask", "later", "failed", "closed", "held"];
+const STATES: [&str; 10] = ["ready", "waiting", "doing", "review", "merge-queue", "ask", "later", "failed", "closed", "held"];
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

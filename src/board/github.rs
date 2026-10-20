@@ -44,6 +44,7 @@ fn parse_issue(v: &Value) -> Issue {
         labels: names(&v["labels"], "name"),
         assignees: names(&v["assignees"], "login"),
         updated: iso(&s(v, "updated_at")).unwrap_or(0),
+        created: iso(&s(v, "created_at")).unwrap_or(0),
         open: v["state"] == "open",
         trusted: trusted(v),
         reason: v["state_reason"].as_str().map(String::from),
@@ -55,7 +56,7 @@ fn parse_issue(v: &Value) -> Issue {
 /// assignees would make it 2 points (#1043), so listed issues carry none and callers read `issue(n)` when they need them.
 const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String) { repository(owner: $owner, name: $name) { \
     issues(states: OPEN, first: 100, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) { pageInfo { hasNextPage endCursor } \
-    nodes { number title body updatedAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
+    nodes { number title body updatedAt createdAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
 
 impl GitHub {
     fn open_issues(&self) -> Result<Vec<Issue>> {
@@ -71,7 +72,7 @@ impl GitHub {
                 return Err(format!("GraphQL open issues: {}", v["errors"]));
             }
             out.extend(page["nodes"].as_array().into_iter().flatten().map(|n| parse_issue(&json!({
-                "number": n["number"], "title": n["title"], "body": n["body"], "updated_at": n["updatedAt"], "state": "open",
+                "number": n["number"], "title": n["title"], "body": n["body"], "updated_at": n["updatedAt"], "created_at": n["createdAt"], "state": "open",
                 "author_association": n["authorAssociation"], "labels": n["labels"]["nodes"],
             }))));
             if page["pageInfo"]["hasNextPage"] != true { return Ok(out); }
