@@ -1418,7 +1418,7 @@ fn resources_cmd(root: &Path, a: &Args) -> Res<()> {
     let (cfg, _) = load(root)?;
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     if a.flags.contains_key("json") {
-        println!("{}", resources::projection(&cfg.install, now)?);
+        println!("{}", resources::projection(&cfg.install, now, true)?);
         return Ok(());
     }
     let change = a.one("grant").or(a.one("revoke"));
