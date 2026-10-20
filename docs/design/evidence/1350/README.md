@@ -35,7 +35,7 @@ Reproduce after `npm run build`, with the existing Playwright setup:
 FILTER_EVIDENCE=docs/design/evidence/1350/after node tests/tray-state-filter.browser.cjs
 ```
 
-## Candidate checks
+## Checks before rebase
 
 - `python3 scripts/check.py --base 981a6525fcf5d8fc8563d492001e2e62342db6cf`:
   FAIL after 475.730 s; Rust reports 402 passed, 16 failed, 34 ignored. Explicit
@@ -51,3 +51,21 @@ FILTER_EVIDENCE=docs/design/evidence/1350/after node tests/tray-state-filter.bro
   `sh docs/shots/check.sh` passes. These captures do not exercise the new filter route.
 
 No release or deployment was performed. Owner approval and CI are still outstanding.
+
+## Checks after rebase
+
+Source candidate `590468f77a70bd7356e53331f31de9a160707cab`, based on `f8cde9fa`:
+
+- `python3 scripts/check.py --base f8cde9fa`: FAIL after 239.589 s; 403 passed,
+  18 failed, 34 ignored. Explicit host/lifecycle worker refusals remain sandbox-blocked;
+  other assertion causes remain unknown. No retry or permission override.
+- All Node component checks and `node tests/tray-state-filter.browser.cjs` pass again.
+  Browser single/multi/empty screenshots are byte-identical after regeneration.
+- Isolated offline selftest passes again: 85 traces, formats and 3 telemetry observations;
+  the board is unknown.
+- Signed native project/icon/workspace capture succeeds again; the manifest and icon
+  are refreshed from this source candidate. `sh docs/shots/check.sh` and
+  `git diff --check` pass. Native filter interaction remains untested.
+
+The final evidence-only commit does not change the tested UI sources. Full local
+acceptance is unresolved; green merge-result CI and owner visual approval remain gates.

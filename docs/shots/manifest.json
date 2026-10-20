@@ -1,16 +1,16 @@
 {
   "version": "4.6.25",
-  "sourceCommit": "261aea8572af249da1600361c43587ec0dc86236",
-  "binarySha256": "cae7238397f30fee93f69bf9de1b1be119110a69703169471f0c668231797dfa",
+  "sourceCommit": "590468f77a70bd7356e53331f31de9a160707cab",
+  "binarySha256": "9fd320005e7a590dacccf946be21aca28800bb7a477292fe4187e384d6f8341f",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "0e3a7220367555ab6c9447f378b9b39ac0e7758a",
-    "src/tray.html": "80a43739cff22c8e256a92ad80bd087ec09446c4",
-    "src/tray-app.js": "59fdb400b4173630a0843b4fc40a60e0f750bda0",
+    "src/tray.rs": "c0526fe87e125234cc6f86f7cde9abbcfc89b3cd",
+    "src/tray.html": "0c20baf6a9aab1a258c60a4c83734db4f76a3688",
+    "src/tray-app.js": "e3b8522cc851cba982f11496d592f4df8cb11424",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
     "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
@@ -19,7 +19,7 @@
     "src/icon.rs": "cc8eca744a75bff551c6dd09f1c18b43c3c17c84",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
-  "capture": "Signed cargo debug build; isolated TASKQ_INSTALL using docs/shots/fixture.sh; project/icon/workspace routes, dark README images.",
+  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
     {
       "file": "../header.webp",
@@ -27,7 +27,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "ecefe976c428df5fc3c9738432cf7d1e7cd2d438fe9adc654e6cbe798d60acac"
+      "sha256": "28bf8c00a6ad0d441871ba3cefbc4ea5f58f9fb04b3beb163769f71c89b99f18"
     },
     {
       "file": "popover-dark-project-16.png",
