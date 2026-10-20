@@ -27,6 +27,8 @@ Counter scope, all states and quiet Closed totals: [K-A1–K-A6](task-counters.m
 
 ## M3 Navigation and tasks
 
+Approved navigation/header and view-only multi-select targets: [UI01–UI04 and UI25–UI28](ui-rules.md#checklist-28-rules). Implement separately from the shipped behavior below; filters never change admission focus.
+
 - Header outside the scrolling content: Home icon then Settings gear at left; size anchor, Top, pin and close × at right. No bottom Home or Settings navigation. Its slightly contrasting strip never moves during scroll bounce.
 - Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.
 - Home: fixed controls, Work mode, Attention, short AI composer with attachments, project shortcuts, Settings and AI workspace access.
