@@ -93,8 +93,8 @@ impl Budget {
 
     /// Reads the budget headers of one reply. A 403 or 429 with `retry-after`, or with no requests remaining, pauses
     /// until the reset: `retry-after`, else the reset header against the reply's board time. Returns the reset when
-    /// this reply started a pause.
-    pub fn observe(&mut self, status: u16, header: impl Fn(&str) -> Option<String>, board_now: i64, now: Instant) -> Option<i64> {
+    /// this reply started a pause. A `limited` reply (the board's own rate-limit error) pauses without those headers too.
+    pub fn observe(&mut self, status: u16, limited: bool, header: impl Fn(&str) -> Option<String>, board_now: i64, now: Instant) -> Option<i64> {
         let num = |names: &[&str]| names.iter().find_map(|n| header(n)?.trim().parse::<i64>().ok());
         let remaining = num(&["x-ratelimit-remaining", "ratelimit-remaining"]);
         let limit = num(&["x-ratelimit-limit", "ratelimit-limit"]);
@@ -110,7 +110,7 @@ impl Budget {
         if !matches!(status, 403 | 429) { return None; }
         let wait = match (num(&["retry-after"]), remaining) {
             (Some(s), _) => s,
-            (None, Some(0)) => num(&["x-ratelimit-reset", "ratelimit-reset"]).map_or(60, |reset| reset - board_now),
+            (None, r) if limited || r == Some(0) => num(&["x-ratelimit-reset", "ratelimit-reset"]).map_or(60, |reset| reset - board_now),
             _ => return None,
         }.clamp(1, MAX_PAUSE);
         let reset = board_now + wait;
@@ -335,17 +335,17 @@ mod tests {
         let t0 = Instant::now();
         let mut b = Budget::default();
         let h = |pairs: &'static [(&'static str, &'static str)]| move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string());
-        assert_eq!(b.observe(200, h(&[("x-ratelimit-remaining", "12"), ("x-ratelimit-limit", "5000")]), 1000, t0), None);
+        assert_eq!(b.observe(200, false, h(&[("x-ratelimit-remaining", "12"), ("x-ratelimit-limit", "5000")]), 1000, t0), None);
         assert_eq!((b.remaining, b.limit, b.paused(t0)), (Some(12), Some(5000), None));
         // a 403 without budget headers is an ordinary refusal
-        assert_eq!(b.observe(403, h(&[]), 1000, t0), None);
+        assert_eq!(b.observe(403, false, h(&[]), 1000, t0), None);
         // primary limit: wait for the reset header against board time, not the local clock
-        assert_eq!(b.observe(403, h(&[("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "1840")]), 1000, t0), Some(1840));
+        assert_eq!(b.observe(403, false, h(&[("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "1840")]), 1000, t0), Some(1840));
         assert_eq!(b.paused(t0 + Duration::from_secs(839)), Some(1840));
         assert_eq!(b.paused(t0 + Duration::from_secs(840)), None, "resumes at the reset without a restart");
         // secondary limit: retry-after wins; a far reset is capped at one hour
-        assert_eq!(b.observe(429, h(&[("retry-after", "30"), ("x-ratelimit-remaining", "0")]), 1000, t0), Some(1030));
-        assert_eq!(b.observe(403, h(&[("ratelimit-remaining", "0"), ("ratelimit-reset", "999999")]), 1000, t0), Some(4600));
+        assert_eq!(b.observe(429, false, h(&[("retry-after", "30"), ("x-ratelimit-remaining", "0")]), 1000, t0), Some(1030));
+        assert_eq!(b.observe(403, false, h(&[("ratelimit-remaining", "0"), ("ratelimit-reset", "999999")]), 1000, t0), Some(4600));
         assert_eq!(op("PATCH", "/issues/77"), "PATCH issues/N");
         assert_eq!(op("GET", "/issues/5/comments?per_page=100"), "GET issues/N/comments");
         assert_eq!(op("GET", "/git/ref/heads/taskq-1009"), "GET git/ref/heads");
@@ -373,9 +373,9 @@ mod tests {
         let h = |r: &'static str| move |n: &str| match n { "x-ratelimit-remaining" => Some(r.to_string()), "x-ratelimit-limit" => Some("5000".into()),
             "x-ratelimit-reset" => Some("1791964800".into()), _ => None };
         let mut b = Budget::default();
-        b.observe(200, h("1001"), 0, Instant::now());
+        b.observe(200, false, h("1001"), 0, Instant::now());
         assert!(!b.low(), "above 20 % is quiet");
-        b.observe(200, h("1000"), 0, Instant::now());
+        b.observe(200, false, h("1000"), 0, Instant::now());
         assert!(b.low());
         let start = BTreeMap::from([("PATCH issues/N".to_string(), 50)]);
         b.ops = BTreeMap::from([("PATCH issues/N".to_string(), 80), ("GET issues".to_string(), 20)]);
@@ -390,11 +390,11 @@ mod tests {
         let h = |res: &'static str, r: &'static str| move |n: &str| match n { "x-ratelimit-resource" => Some(res.to_string()),
             "x-ratelimit-remaining" => Some(r.to_string()), "x-ratelimit-limit" => Some("5000".into()), _ => None };
         let mut b = Budget::default();
-        b.observe(200, h("core", "900"), 0, Instant::now());
-        b.observe(200, h("graphql", "4000"), 0, Instant::now());
+        b.observe(200, false, h("core", "900"), 0, Instant::now());
+        b.observe(200, false, h("graphql", "4000"), 0, Instant::now());
         assert_eq!((b.resource.as_deref(), b.remaining), (Some("core"), Some(900)), "a full bucket never hides a low one");
-        b.observe(200, h("graphql", "500"), 0, Instant::now());
-        b.observe(200, h("core", "4990"), 0, Instant::now());
+        b.observe(200, false, h("graphql", "500"), 0, Instant::now());
+        b.observe(200, false, h("core", "4990"), 0, Instant::now());
         assert_eq!((b.resource.as_deref(), b.remaining, b.low()), (Some("graphql"), Some(500), true));
         let s = json!({"host": "mac", "requests": b.json(0, None, &BTreeMap::new())});
         assert_eq!(warning(&s).unwrap(), "Board budget low: 500/5000 graphql until unknown (mac); top here: none");

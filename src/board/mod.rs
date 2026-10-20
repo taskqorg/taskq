@@ -402,10 +402,11 @@ impl Api {
             if let Some(t) = r.header("date").and_then(http_date) {
                 *self.clock.borrow_mut() = t;
             }
-            // GitHub GraphQL refuses an exhausted budget with HTTP 200 and a RATE_LIMITED error
-            let status = if url.ends_with("/graphql") && r.status == 200 && r.body.contains("\"RATE_LIMITED\"") { 403 } else { r.status };
+            // GitHub GraphQL refuses an exhausted budget with a RATE_LIMIT or RATE_LIMITED error, over HTTP 200 or 403 (#1356)
+            let limited = url.ends_with("/graphql") && ["\"RATE_LIMIT\"", "\"RATE_LIMITED\""].iter().any(|t| r.body.contains(t));
+            let status = if limited { 403 } else { r.status };
             let class=match status {400..=499=>"http4xx",500..=599=>"http5xx",_=>"other"};
-            let paused = self.budget.borrow_mut().observe(status, |n| r.header(n).map(String::from), *self.clock.borrow(), std::time::Instant::now());
+            let paused = self.budget.borrow_mut().observe(status, limited, |n| r.header(n).map(String::from), *self.clock.borrow(), std::time::Instant::now());
             if let Some(reset) = paused {
                 return Err((class,format!("{method} {url}: HTTP {status} {}", crate::requests::paused_text(reset))));
             }
@@ -1250,6 +1251,28 @@ exit 0
         assert!(report.contains("| 2/3 | 60.00 |"), "{report}");
         assert!(report.contains("http4xx:2, http5xx:1"), "{report}");
         assert!(!report.contains("private"));
+    }
+
+    // Chain: § 4 board budget, #1356. Risk: a GraphQL RATE_LIMIT reply without budget headers starts no pause, so every
+    // pass of every project sends again until the reset.
+    #[test]
+    fn graphql_rate_limit_reply_pauses_board_requests() {
+        // the exact reply body of 2026-10-20 08:40Z
+        const BODY: &str = r#"{"errors":[{"type":"RATE_LIMIT","code":"graphql_rate_limit","message":"API rate limit already exceeded for user ID 1640869."}]}"#;
+        for status in [200, 403] {
+            let sent = std::rc::Rc::new(RefCell::new(0));
+            let count = sent.clone();
+            let mut api = (github::KIND.api)("github.com", "o/r", "private token");
+            api.transport = Some(Box::new(move |_, _, _| {
+                *count.borrow_mut() += 1;
+                Ok(Reply { status, body: BODY.into(), operation: "read", headers: vec![] })
+            }));
+            let first = api.call("POST", "https://api.github.com/graphql", None).err().unwrap();
+            assert!(first.contains("HTTP 403 rate limit: board requests paused until"), "{status}: {first}");
+            assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().contains("paused until"));
+            assert!(api.budget.borrow().paused_until().is_some());
+            assert_eq!(*sent.borrow(), 1, "{status}: no GraphQL request is sent while paused");
+        }
     }
 
     // Chain: board list/readback -> malformed successful HTTP page -> explicit failure, never an empty queue/catalog.

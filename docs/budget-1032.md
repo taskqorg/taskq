@@ -109,7 +109,7 @@ Moved from taskq.md § 4 Log and board budget, which keeps the rules.
 
 - **Log line:** `<UTC time> <text>`, time ISO 8601 `YYYY-MM-DDThh:mm:ssZ` from the local clock; the lines of one message, an HTTP error body or a panic included, fold into one line.
 - **Operation:** `<METHOD> <path>`, the path API-relative, at most 3 segments, numbers as `N`, other ids as `*`; later pages count under their first page.
-- **Pause:** a 403 or 429 with `retry-after`, or with zero `x-ratelimit-remaining`/`ratelimit-remaining`, pauses the process's board calls on the monotonic clock until `retry-after`, else the reset header against the reply `Date`, else 60 s; at most 1 h. A GraphQL `RATE_LIMITED` reply pauses like a 403. Log lines: `rate limit: board requests paused until <time>` and `... resumed`.
+- **Pause:** a 403 or 429 with `retry-after`, or with zero `x-ratelimit-remaining`/`ratelimit-remaining`, pauses the process's board calls on the monotonic clock until `retry-after`, else the reset header against the reply `Date`, else 60 s; at most 1 h. A GraphQL `RATE_LIMIT` or `RATE_LIMITED` error, over HTTP 200 or 403, pauses like a 403 even without those headers. Log lines: `rate limit: board requests paused until <time>` and `... resumed`.
 - **Buckets:** GitHub budgets per `x-ratelimit-resource` (`core`, `graphql`); `remaining`, `limit`, `reset` and `resource` are those of the bucket with the lowest remaining share.
 - **`status.json` `requests`:** `since`, cumulative `total` and `ops`, `last_hour` (null until a full hour), last `remaining`/`limit`, `paused_until`; under the alarm also `reset`, `resource` and `top`.
 - **Hourly log:** `requests 1h: <total>; <op> <n>, ..`, top 8 operations, then `other`.
