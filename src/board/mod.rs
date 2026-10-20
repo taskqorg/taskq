@@ -918,7 +918,7 @@ mod tests {
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     #[test]
     fn github_queue_qualifies_the_merge_result_and_preserves_unknowns() {
-        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending"] {
+        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-check-failed"] {
             let admitted = std::rc::Rc::new(RefCell::new(false));
             let queued = admitted.clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
@@ -944,12 +944,19 @@ mod tests {
                         } else {
                             let entry = if scenario == "waiting" || *queued.borrow() && scenario != "readback" { json!({"id": "MQ_7"}) } else { Value::Null };
                             let reason = match scenario { "conflict" => "merge conflict with base branch", "failed" => "required checks failed", "removed" => "removed by owner", _ => "" };
-                            json!({"data": {"node": {"headRefOid": head, "merged": scenario == "merged" || scenario.starts_with("merge-ci-"), "mergeCommit": {"oid": merge}, "mergeQueueEntry": entry,
+                            json!({"data": {"node": {"headRefOid": head, "merged": scenario == "merged" || scenario.starts_with("merge-"), "mergeCommit": {"oid": merge}, "mergeQueueEntry": entry,
                                 "timelineItems": {"nodes": if reason.is_empty() { json!([]) } else { json!([{"reason": reason}]) }}}}})
                         }
                     }
-                    else if url.contains("/actions/runs?") { assert!(url.contains(&merge)); json!({"workflow_runs": if scenario == "merge-ci-missing" { json!([]) } else { json!([{"head_sha": merge, "event": "merge_group", "status": if scenario == "merge-ci-pending" { "in_progress" } else { "completed" }, "conclusion": if scenario == "merge-ci-failed" { "failure" } else { "success" }}]) }}) }
-                    else if url.contains("/check-runs") { assert!(url.contains(&merge)); json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
+                    else if url.contains("/actions/runs?") { assert!(url.contains(&merge)); json!({"workflow_runs": if scenario == "merge-ci-missing" { json!([]) } else { json!([{"head_sha": merge, "event": "merge_group", "check_suite_id": 1, "status": if scenario == "merge-ci-pending" { "in_progress" } else { "completed" }, "conclusion": if scenario == "merge-ci-failed" { "failure" } else { "success" }},
+                        {"head_sha": merge, "event": "push", "check_suite_id": 2, "status": "in_progress", "conclusion": null}]) }}) }
+                    else if url.contains("/check-runs") {
+                        assert!(url.contains(&merge));
+                        // #1343: the main push run retests the merged tree and is still running when the queue merges.
+                        let gate = if scenario == "merge-check-failed" { "failure" } else { "success" };
+                        json!({"check_runs": [{"status": "completed", "conclusion": gate, "app": {"slug": "github-actions"}, "check_suite": {"id": 1}},
+                            {"status": "in_progress", "conclusion": null, "app": {"slug": "github-actions"}, "check_suite": {"id": 2}}]})
+                    }
                     else if url.ends_with("/status") { assert!(url.contains(&merge)); json!({"total_count": 0}) }
                     else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
@@ -958,7 +965,7 @@ mod tests {
             let got = h.resume_publication(1, &"a".repeat(40), "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
             match scenario {
                 "new" | "draft" | "waiting" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
-                "merged" => assert!(matches!(got, Publish::Done(_)), "{got:?}"),
+                "merged" | "merge-push-pending" => assert!(matches!(got, Publish::Done(_)), "{scenario}: {got:?}"),
                 "conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),

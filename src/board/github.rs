@@ -81,8 +81,13 @@ impl GitHub {
 
     /// CI on `sha`: Ok(None) green, Ok(Some(msg)) failed, Err pending or missing.
     fn ci(&self, sha: &str) -> Result<Option<String>> {
+        self.ci_where(sha, &|_| true)
+    }
+
+    /// `ci` over the check runs `keep` accepts; commit statuses always count.
+    fn ci_where(&self, sha: &str, keep: &dyn Fn(&Value) -> bool) -> Result<Option<String>> {
         let runs = self.api.call("GET", &format!("/commits/{sha}/check-runs?per_page=100"), None)?.json()?;
-        let runs = runs["check_runs"].as_array().cloned().unwrap_or_default();
+        let runs: Vec<Value> = runs["check_runs"].as_array().into_iter().flatten().filter(|r| keep(r)).cloned().collect();
         let status = self.api.call("GET", &format!("/commits/{sha}/status"), None)?.json()?;
         let statuses = status["total_count"].as_u64().unwrap_or(0);
         if runs.is_empty() && statuses == 0 {
@@ -139,7 +144,10 @@ impl GitHub {
         if !runs.iter().any(|r| r["head_sha"] == sha && r["event"] == "merge_group" && r["status"] == "completed" && r["conclusion"] == "success") {
             return Err(format!("merge_group CI not green on merge result {sha}"));
         }
-        if let Some(fail) = self.ci(sha)? { return Err(fail); }
+        // #1343: the post-merge push runs on main retest the same tree and held close ~7 minutes; only merge_group Actions suites count.
+        let suites: Vec<&Value> = runs.iter().filter(|r| r["event"] == "merge_group").map(|r| &r["check_suite_id"]).collect();
+        let keep = |c: &Value| c["app"]["slug"] != "github-actions" || suites.contains(&&c["check_suite"]["id"]);
+        if let Some(fail) = self.ci_where(sha, &keep)? { return Err(fail); }
         Ok(())
     }
 
