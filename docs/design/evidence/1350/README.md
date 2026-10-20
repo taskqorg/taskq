@@ -34,3 +34,20 @@ Reproduce after `npm run build`, with the existing Playwright setup:
 ```sh
 FILTER_EVIDENCE=docs/design/evidence/1350/after node tests/tray-state-filter.browser.cjs
 ```
+
+## Candidate checks
+
+- `python3 scripts/check.py --base 981a6525fcf5d8fc8563d492001e2e62342db6cf`:
+  FAIL after 475.730 s; Rust reports 402 passed, 16 failed, 34 ignored. Explicit
+  worker refusals in host/lifecycle tests are sandbox-blocked; the remaining assertion
+  causes are unknown. No assertions or worker permissions were weakened. Integration
+  suites after the failing binary were not reached. Merge-result CI remains required.
+- All `tests/*.test.cjs` component checks pass independently.
+- Isolated `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest`:
+  85 traces and verdict formats pass; telemetry committed 3 observations; board unknown.
+- README snapshots refreshed using `docs/shots/update.sh` with its tray invocations
+  launched through `cargo +stable run --release --locked -- tray` for the signing runner.
+  Native project/icon images were inspected; project/workspace PNGs remain byte-identical.
+  `sh docs/shots/check.sh` passes. These captures do not exercise the new filter route.
+
+No release or deployment was performed. Owner approval and CI are still outstanding.
