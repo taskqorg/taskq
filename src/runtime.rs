@@ -1930,6 +1930,11 @@ fn login(rt: &str, out: Option<(bool, String)>) -> (&'static str, Option<String>
     }
 }
 
+/// `logged in`, `not logged in` or `unknown` for an installed runtime binary.
+pub fn login_state(rt: &str, bin: &Path) -> &'static str {
+    login(rt, probe("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] })).0
+}
+
 /// The runtimes taskq can start here (§ 8): `codex-app` is macOS and Windows only and shares Codex's binary and login.
 pub fn agent_runtimes() -> &'static [&'static str] {
     if cfg!(any(target_os = "macos", windows)) { &["claude", "codex", "codex-app"] } else { &["claude", "codex"] }

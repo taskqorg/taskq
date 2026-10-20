@@ -227,6 +227,9 @@ fn note(install: &Path, id: &str, reason: Option<String>) -> Res<()> {
 
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
 pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
+    let bin = crate::runtime::which("claude");
+    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} claude is not on the host service PATH")); }
+    if crate::runtime::login_state("claude", &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} Claude Code is not logged in on this host")); }
     let install = workdir.parent().and_then(Path::parent).unwrap_or(workdir);
     let policy = Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
@@ -235,7 +238,7 @@ pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
     let access = match crate::runtime::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = workdir.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
-    let mut c = match crate::runtime::executable(crate::runtime::which("claude"), &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
+    let mut c = match crate::runtime::executable(bin, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
         .args(["--bg", "--remote-control", "taskq setup", "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
@@ -247,11 +250,37 @@ pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
         Err(e) => return Launched::Unknown(format!("Claude launch outcome unknown: {e}")),
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let _ = fs::write(workdir.join("launch.log"), format!("{stdout}\n{}", String::from_utf8_lossy(&out.stderr)));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fs::write(workdir.join("launch.log"), format!("{stdout}\n{stderr}"));
+    // Claude refuses before it starts anything: a definite no-start, never `interrupted`.
+    if !out.status.success() && stderr.contains("Workspace not trusted") { return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())); }
+    if !out.status.success() && (stderr.contains("/login") || stderr.contains("Not logged in")) { return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")); }
     match stdout.lines().find_map(|l| l.strip_prefix("backgrounded · ").and_then(|s| s.split_whitespace().next())) {
         Some(id) if out.status.success() && crate::runtime::native_job_id(id) => Launched::Job(id.into()),
         _ => Launched::Unknown("Claude returned no background job; outcome unknown, inspect native sessions".into()),
     }
+}
+
+const MISSING: &str = "runtime missing:";
+const LOGIN: &str = "sign-in needed:";
+const ACCESS: &str = "access refused:";
+
+/// What the tray shows (A1): one distinct kind per actionable state and the owner's next step.
+pub fn view(r: &Request) -> serde_json::Value {
+    let reason = r.reason.as_deref().unwrap_or("");
+    let (kind, next) = match r.state.as_str() {
+        "pending" if reason.starts_with("waiting:") => ("waiting", "Waits for host capacity; nothing to do unless the hold is yours"),
+        "pending" | "launching" => ("starting", "The host service is starting the session"),
+        "running" if r.url.is_some() => ("running", "Open the session to read and answer"),
+        "running" => ("running", "Session runs; its link appears once Claude reports it"),
+        "ended" => ("ended", "Done; run `taskq service setup --new` for another session"),
+        "failed" if reason.starts_with(MISSING) => ("runtime", "Install Claude Code for the service user, then run `taskq service setup --new`"),
+        "failed" if reason.starts_with(LOGIN) => ("login", "Run `claude auth login` as the service user, then `taskq service setup --new`"),
+        "failed" if reason.starts_with(ACCESS) => ("access", "Grant the access named here yourself (taskq never widens it), then `taskq service setup --new`"),
+        "failed" => ("failed", "Read the reason, fix it, then run `taskq service setup --new`"),
+        _ => ("interrupted", "Check `claude agents` for a live session first; only then run `taskq service setup --new`"),
+    };
+    serde_json::json!({"id": r.id, "state": r.state, "kind": kind, "next": next, "reason": r.reason, "url": r.url, "host": r.host, "runtime": r.runtime, "session": r.session})
 }
 
 pub fn claude_state(workdir: &Path, job: &str) -> Res<(String, Option<String>)> {
@@ -335,6 +364,22 @@ mod tests {
         fs::write(dir(i).join("request.json"), r#"{"schema":2}"#).unwrap();
         assert!(read(i).is_err() && submit(i, "claude", None, &[], true).is_err());
         assert!(step(i, &h, false, false, never, live).is_err());
+    }
+
+    // Chain: launch outcome to tray view (A1). Risk: missing runtime, login and access read as one generic failure.
+    #[test]
+    fn view_names_each_actionable_state() {
+        let mut r = Request { schema: 1, id: "a".into(), host: "h".into(), platform: "p".into(), client: "c".into(), runtime: "claude".into(),
+            targets: vec![], brief: String::new(), state: "failed".into(), job: None, session: None, url: None, reason: None };
+        let kind = |r: &Request| view(r)["kind"].as_str().unwrap().to_string();
+        let mut kinds = vec![];
+        for reason in [format!("{MISSING} x"), format!("{LOGIN} x"), format!("{ACCESS} x"), "spawn".into()] { r.reason = Some(reason); kinds.push(kind(&r)); }
+        r.state = "interrupted".into(); kinds.push(kind(&r));
+        assert_eq!(kinds, ["runtime", "login", "access", "failed", "interrupted"]);
+        r.state = "running".into(); r.reason = None; r.url = Some("https://claude.ai/code/session_x".into());
+        assert_eq!((kind(&r).as_str(), view(&r)["url"].as_str()), ("running", Some("https://claude.ai/code/session_x")));
+        r.state = "pending".into(); r.reason = Some("waiting: capacity full".into());
+        assert_eq!(kind(&r), "waiting");
     }
 
     // Chain: setup and project work share one host grant (A3). Risk: setup bypasses hold, limits or spacing, or counts twice.
