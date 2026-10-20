@@ -126,7 +126,7 @@ impl Policy {
 
     pub fn read(install: &Path) -> Res<Self> { Self::read_for_hostname(install,crate::hostname) }
 
-    fn read_for_hostname(install:&Path,hostname:impl FnOnce()->String)->Res<Self> {
+    pub(crate) fn read_for_hostname(install:&Path,hostname:impl FnOnce()->String)->Res<Self> {
         match fs::symlink_metadata(install.join("host.json.pending")) {
             Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
             Err(e)=>return Err(format!("host policy prepare unknown: {e}")),
@@ -564,7 +564,13 @@ impl Host {
     }
 
     pub fn reserve(&mut self, project: &Path, n: u64, a: u64, rt: &str, cap: &Capacity, queue: bool, now: u64) -> Res<usize> {
-        let p = self.policy.as_ref().map_err(Clone::clone)?;
+        let p = self.policy.clone()?;
+        self.grant(&p, project, n, a, rt, cap, queue, now)
+    }
+
+    /// The § 3 grant under `p`: the host policy, or host.json defaults for a fresh host's setup session (§ 4).
+    #[allow(clippy::too_many_arguments)]
+    pub fn grant(&mut self, p: &Policy, project: &Path, n: u64, a: u64, rt: &str, cap: &Capacity, queue: bool, now: u64) -> Res<usize> {
         if self.rebuilding {return Err("host occupancy recovery pending".into());}
         if let Some(reason) = &self.held { return Err(reason.clone()); }
         if self.draining.contains(project) && queue { return Err("project draining".into()); }
@@ -803,6 +809,8 @@ pub fn run(install: &Path) -> Res<()> {
     let mut tray = None;
     let mut registry = Registry::default();
     let mut restart=crate::lifecycle::Monitor::default();
+    if let Err(e)=crate::setup::recover(install) {crate::platform::log(&e);}
+    let mut setup_seen:Option<Instant>=None;
     loop {
         if let Some(line)=telemetry.pass(install) {crate::platform::log(&line);}
         // #1297: steady host passes fold like project passes (main.rs `service.loop`).
@@ -879,6 +887,13 @@ pub fn run(install: &Path) -> Res<()> {
             }
         }
         {let mut h=shared.lock().unwrap_or_else(|e|e.into_inner());if roots.is_empty()&&h.busy.is_empty()&&h.held.is_none() {h.rebuilding=false;}}
+        // § 4 setup session: only this loop launches it. ponytail: the launch blocks this pass up to 30 s; a thread if that matters.
+        let observe=setup_seen.is_none_or(|t|t.elapsed().as_secs()>=30);
+        if observe {setup_seen=Some(Instant::now());}
+        let fresh=roots.is_empty()&&!install.join("host.json").exists()&&!install.join("host-policy-migration").exists();
+        if let Err(e)=crate::setup::step(install,&shared,fresh,observe,crate::setup::claude_launch,crate::setup::claude_state) {
+            if reported!=e {crate::platform::log(&e);reported=e;}
+        }
         let loaded={let h=shared.lock().unwrap_or_else(|e|e.into_inner());
             h.capacity_command.is_none().then(||h.policy.as_ref().ok().cloned()).flatten()};
         if let Some(policy)=loaded {
@@ -1182,6 +1197,8 @@ impl Registry {
         self.poke = poke; self.checked = Some(now);
         match projects(install) {
             Ok(roots) => { self.roots = roots; self.error = None; }
+            // A host that never had a registry has zero projects (setup, § 4); one that loses it reads unknown.
+            Err(_) if self.roots.is_empty() && matches!(project_text(install), Ok(None)) => { self.error = None; }
             Err(e) => { if self.error.as_ref() != Some(&e) { crate::platform::log(&e); } self.error = Some(e); }
         }
     }
@@ -2306,5 +2323,17 @@ mod tests {
         fs::write(install.join("projects"), "relative\n").unwrap(); registry.refresh(&install, 62);
         assert!(registry.error.as_ref().unwrap().contains("unknown")); assert!(registry.roots.is_empty(), "malformed registry retains the last good list");
         child.kill().unwrap(); let _ = child.wait(); fs::remove_dir_all(install).unwrap();
+    }
+
+    #[test]
+    fn never_registered_host_has_zero_projects_but_a_lost_registry_is_unknown() {
+        let install = std::env::temp_dir().join(format!("taskq-registry-{}", crate::runtime::uuid())); fs::create_dir(&install).unwrap();
+        let mut registry = Registry::default(); registry.refresh(&install, 0);
+        assert!(registry.error.is_none() && registry.roots.is_empty(), "fresh host: setup must not wait on a registry");
+        fs::write(install.join("projects"), format!("{}\n", install.display())).unwrap(); registry.refresh(&install, 60);
+        assert_eq!(registry.roots.len(), 1);
+        fs::remove_file(install.join("projects")).unwrap(); registry.refresh(&install, 120);
+        assert!(registry.error.is_some() && registry.roots.len() == 1, "a vanished registry keeps the last roots and reads unknown");
+        fs::remove_dir_all(install).unwrap();
     }
 }
