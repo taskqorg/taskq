@@ -884,6 +884,10 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         // § 8 Access: re-read every pass; a refused runtime is not claimed or resumed
         let access = policy::report(&cfg.install, &cfg.root, &s.cfg.permission_mode, &s.cfg.codex);
         s.refused_access = access.iter().filter_map(|e| Some((e.runtime.clone(), e.refused.clone()?))).collect();
+        // #1393: a runtime whose CLI does not resolve admits nothing instead of failing each spawn with os error 2
+        for rt in runtime::agent_runtimes() {
+            if let Some(r) = runtime::missing_cli(rt) { s.refused_access.entry(rt.to_string()).or_insert(r); }
+        }
         s.full = access.iter().filter(|e| e.mode == "full" && e.refused.is_none()).map(|e| e.runtime.clone()).collect();
         if s.gui_checked.is_none_or(|t: Instant| t.elapsed().as_secs() >= 300) {
             s.gui_checked = Some(Instant::now());

@@ -164,6 +164,8 @@ Host admission, occupancy, gate thresholds and unknown handling follow [taskq.md
 
 Local CLI writes print the original observed-receipt ID and distinguish saved settings from the host's exact acknowledgment. Policy and command descriptor share one atomic host.json replacement; a same-value or stale status cannot confirm a different command. The [host command binding](host-service.md#command-surface-acceptance) defines recovery and receipt failure. Tray/remote adoption and installed acceptance remain separate gates.
 
+A runtime whose CLI does not resolve on the service PATH admits no claim, resume or reviewer and reads as capacity reason `access` (`<cli> CLI not found on the service PATH`). On Linux every taskq process first appends an existing `~/.local/bin` to PATH, so `service install` writes it into the systemd unit and a service under an older unit still finds CLIs installed there (#1393).
+
 ## Usage limit
 
 A worker or reviewer whose runtime reports a usage or quota limit before any work starts ends with `usage-limit attempt <id>` (taskq.md § 2) instead of a plain `gone`:

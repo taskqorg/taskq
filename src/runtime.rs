@@ -404,8 +404,12 @@ pub fn codex_thread(log: &Path) -> Option<String> {
 
 /// `name` on PATH; on Windows also `name.exe` and `name.cmd` (npm installs `.cmd` shims).
 pub fn which(name: &str) -> PathBuf {
+    which_in(name, &std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn which_in(name: &str, path: &std::ffi::OsStr) -> PathBuf {
     let exts: &[&str] = if cfg!(windows) { &[".exe", ".cmd", ""] } else { &[""] };
-    for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+    for dir in std::env::split_paths(path) {
         for e in exts {
             let p = dir.join(format!("{name}{e}"));
             if p.is_file() {
@@ -414,6 +418,23 @@ pub fn which(name: &str) -> PathBuf {
         }
     }
     PathBuf::from(name)
+}
+
+/// PATH with `<home>/.local/bin` appended when it is a directory PATH lacks; `None` when nothing changes.
+/// Linux user installs (codex, npm prefixes, pipx) land there, but a non-login shell, and so the systemd user unit
+/// CoreQ writes from the installer's PATH, may lack it: `which` then missed codex and spawn failed with os error 2 (#1393).
+pub fn user_bin_path(path: &std::ffi::OsStr, home: Option<&std::ffi::OsStr>) -> Option<std::ffi::OsString> {
+    let bin = Path::new(home.filter(|h| !h.is_empty())?).join(".local/bin");
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
+    if !bin.is_dir() || dirs.contains(&bin) { return None; }
+    dirs.push(bin);
+    std::env::join_paths(dirs).ok()
+}
+
+/// Why `rt` cannot start here when its CLI does not resolve on PATH (§ 3: no claim, resume or reviewer).
+pub fn missing_cli(rt: &str) -> Option<String> {
+    let bin = if rt == "claude" { "claude" } else { "codex" };
+    (!which(bin).is_absolute()).then(|| format!("{bin} CLI not found on the service PATH"))
 }
 
 /// An npm launcher is not the executor: SIGKILL cannot reach the native child through Node.
@@ -1951,6 +1972,24 @@ pub fn agent_text(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // Chain: systemd unit PATH frozen without ~/.local/bin -> codex resolves (#1393). Risk: the service spawns a bare
+    // `codex` and every attempt ends in os error 2.
+    #[test]
+    fn user_bin_dir_joins_a_frozen_path() {
+        let home = std::env::temp_dir().join(format!("taskq-user-bin-{}", uuid()));
+        let bin = home.join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("codex"), "").unwrap();
+        let frozen = std::ffi::OsString::from("/usr/bin:/bin");
+        assert_eq!(which_in("codex", &frozen), PathBuf::from("codex"));
+        let path = user_bin_path(&frozen, Some(home.as_os_str())).unwrap();
+        assert_eq!(which_in("codex", &path), bin.join("codex"));
+        assert_eq!(user_bin_path(&path, Some(home.as_os_str())), None, "appended once");
+        assert_eq!(user_bin_path(&frozen, Some(std::env::temp_dir().join("taskq-no-home").as_os_str())), None);
+        assert_eq!(user_bin_path(&frozen, None), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
 
     // Chain: attempt log -> usage limit before work -> reset. Risk: a limit after work started skips its retry,
     // or a limit before work counts against the gone limit (#1276).
