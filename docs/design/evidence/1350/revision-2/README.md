@@ -67,3 +67,26 @@ approved revision. The rebase retains upstream telemetry changes (R1/R13).
 Owner visual approval is recorded. Native filter interaction remains unverified;
 merge-result CI (`merge_group`) is required before publication. The documentation
 follow-up changes no tested implementation or test code. Not merged or deployed.
+
+## Conflict repair after the running-agents merge
+
+Rebased onto `8931e00764293156939bd89c260e5d48adda704a`; tested implementation
+`976611fc`. Before: GitHub reported PR #1368 CONFLICTING and rebase stopped on
+`docs/shots/manifest.json` and its icon capture. After: rebase completed, preserving
+the approved filter and upstream running-agent UI. Refreshed native README shots
+with `sh docs/shots/update.sh`; project/workspace remain unchanged, icon inspected.
+
+- `node tests/tray-state-filter.browser.cjs`: PASS; all four output images are
+  byte-identical to the owner-approved revision. Folded and multi inspected.
+- All `tests/*.test.cjs`: PASS, including navigation and running-agent checks.
+- `python3 scripts/check.py --base 8931e00764293156939bd89c260e5d48adda704a`:
+  FAIL, 409 passed, 18 failed, 34 ignored; 91.617 s. Explicit worker host/lifecycle
+  refusals are sandbox-blocked; remaining assertion causes are unknown. No guards
+  or assertions changed. An initial invocation used the stale local-main base
+  and stopped at whitespace in upstream evidence logs; those files were not edited.
+- Isolated offline selftest: 85 traces and formats PASS; 3 telemetry observations;
+  board unknown. `sh docs/shots/check.sh` and `git diff --check`: PASS.
+- R8: 297 lines, 61401 bytes. R13/Product and UI25 changes retain owner approval.
+
+No new behavior or test changes in this repair. Native filter interaction remains
+unverified. Merge-result CI is required before publication; not merged or deployed.
