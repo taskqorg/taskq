@@ -4121,11 +4121,11 @@ mod tests {
             let review = b.create("R", "", &["taskq".into(), "p1".into()]).unwrap();
             let ready = b.create("P0", "", &["taskq".into(), "p0".into()]).unwrap();
             let w = b.comment(review, "taskq: spawn worker codex:w mac").unwrap();
-            accept_execution(&b, review, w, w).unwrap(); release_execution(&b, review, w, w, "exit").unwrap();
+            accept_execution(&b, review, w, w, None).unwrap(); release_execution(&b, review, w, w, "exit").unwrap();
             b.comment(review, &format!("taskq: result {} attempt {w}", "a".repeat(40))).unwrap();
             if resume {
                 let a = b.comment(live, "taskq: spawn worker claude:session mac").unwrap();
-                accept_execution(&b, live, a, a).unwrap(); release_execution(&b, live, a, a, "exit").unwrap();
+                accept_execution(&b, live, a, a, None).unwrap(); release_execution(&b, live, a, a, "exit").unwrap();
                 b.comment(live, "taskq: steer\ncontinue").unwrap();
             } else {
                 b.comment(live, "taskq: later\nparked").unwrap();
