@@ -17,7 +17,7 @@ The candidate changes only snapshot framing in the renderer: a project capture l
 
 R12 keeps these image checks separate from live operation. No assertion, golden trace, permission, model, working profile or runtime policy changed. Rules R7, R8, R12 and § 7 apply; no rule amendment is required.
 
-Owner visual acceptance under A4 remains pending. This evidence does not authorize merge or deployment.
+The owner accepted these visuals in [answer 1](https://github.com/taskqorg/taskq/issues/1015#issuecomment-6281097452), including the narrow-page link to the readable original. A4 visual acceptance is satisfied; reviewer acceptance and publication CI remain separate (§ 7).
 
 ## Visual inspection
 
