@@ -32,6 +32,7 @@ mod linux_sandbox;
 mod windows_sandbox;
 mod profile;
 mod telemetry;
+mod telemetry_sync;
 mod retro;
 mod runtime;
 mod service;
@@ -73,7 +74,7 @@ const USAGE: &str = "taskq agents
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro | taskq add --retro K [--type T ..]
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
- taskq enroll <https-url> [--headless] | taskq connection status | taskq disconnect
+ taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
@@ -99,7 +100,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "host-policy" | "project-limits") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -830,6 +831,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut hour: (Instant, BTreeMap<String, u64>) = (Instant::now(), BTreeMap::new());
     let mut last_hour: Option<BTreeMap<String, u64>> = None;
     let mut dashq = enrollment::Sender::default();
+    let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
     let mut panics = host::Panics::default();
     let mut legacy_installation:Option<std::thread::JoinHandle<Res<String>>>=None;
@@ -951,6 +953,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
         if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        // docs/design/standalone-telemetry.md#remote-sync-1353: only under the telemetry grant, on its own thread
+        if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
         if !reduced { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         let tool = platform::tool(&cfg.install);
@@ -968,7 +972,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             ("stop_progress",json!(s.stop_progress)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, &cfg.root, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
-            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("connection", json!(dashq.outcome)), ("telemetry",telemetry::diagnostic::health())]
+            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health())]
         {
             status[k] = v;
         }
@@ -2619,7 +2623,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             }
             println!("board scope: {} {}", enrollment::SCHEMA, board.value());
             println!("grant: observation only; no task answers or commands");
-            let conn = enrollment::pair(&cfg.install, url, &cfg.me, &board, !a.flags.contains_key("headless")).map_err(|e| format!("pairing: {e}\nNext: rerun taskq enroll {url} and approve the new code"))?;
+            let telemetry = a.flags.contains_key("telemetry");
+            if telemetry { println!("telemetry: {} (local telemetry rows; revoke with taskq enroll without --telemetry or taskq disconnect)", telemetry_sync::SCHEMA); }
+            let conn = enrollment::pair(&cfg.install, url, &cfg.me, &board, !a.flags.contains_key("headless"), telemetry).map_err(|e| format!("pairing: {e}\nNext: rerun taskq enroll {url} and approve the new code"))?;
             let (_, rec) = enrollment::record(&cfg.install, &snapshot::read(b, cfg, &c.raw, &[]), &conn)?;
             match enrollment::first_receipt(&cfg.install, &rec, 15)? {
                 "projected" => println!("connected: {dest} workspace {} generation {}; first snapshot projected", conn["workspace"].as_str().unwrap_or("?"), conn["generation"]),
@@ -2655,6 +2661,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 Some(_) => println!("delivery: unknown (the service has not tried yet)"),
                 None => println!("delivery: unknown (no fresh service report for this project)"),
             }
+            if act.is_object() { println!("telemetry: {}", telemetry_line(act, report.as_ref().map(|r| &r["telemetry_sync"]))); }
             Ok(())
         }
         "disconnect" => {
@@ -2762,6 +2769,19 @@ fn with_test_capture<T>(run: impl FnOnce(&coreq::telemetry::Store, &Path) -> T) 
     telemetry::settle(Duration::from_secs(30));capture.flush().unwrap();
     drop(capture);drop(store);fs::remove_dir_all(dir).unwrap();
     result
+}
+
+/// `taskq connection status` telemetry line (docs/design/standalone-telemetry.md#status-a5); unknown stays unknown.
+fn telemetry_line(active: &Value, report: Option<&Value>) -> String {
+    if !telemetry_sync::granted(active) { return format!("off (grant lacks {}; taskq enroll <url> --telemetry)", telemetry_sync::SCHEMA) }
+    let Some(r) = report.filter(|r| r["state"].is_string()) else { return "unknown (no fresh service report for this project)".into() };
+    let n = |k: &str| r[k].as_u64().map_or("unknown".into(), |v| v.to_string());
+    let mut out = r["state"].as_str().unwrap_or("unknown").to_string();
+    if let Some(e) = r["reason"].as_str().or(r["last_error"].as_str()) { out += &format!(" ({e})") }
+    if r["state"] != "off" {
+        out += &format!("; last synced {}; backlog {} rows, {} bytes; gap {} rows", r["last_synced"].as_u64().map_or("never".into(), |t| t.to_string()), n("backlog_rows"), n("backlog_bytes"), n("gap_rows"));
+    }
+    out
 }
 
 #[cfg(test)]
