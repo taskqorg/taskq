@@ -237,10 +237,11 @@ fn release_execution_text(board: &dyn Board, task: u64, attempt: u64, execution:
     else { Err(format!("execution {execution} release unconfirmed: {}", written.err().unwrap_or_else(|| "readback missing".into()))) }
 }
 
-fn accept_execution(board: &dyn Board, task: u64, attempt: u64, execution: u64) -> Result<u64, String> {
+/// `seen`: a log this pass already read after the execution's own write; only the acceptance readback reads again (#1359).
+fn accept_execution(board: &dyn Board, task: u64, attempt: u64, execution: u64, seen: Option<&[core::Entry]>) -> Result<u64, String> {
     let accepted = |log: &[core::Entry]| core::executions(task, log).into_iter()
         .find(|x| x.id == execution && x.attempt == attempt && x.accepted).map(|x| x.through);
-    let log = crate::board::entries(board, task)?;
+    let log = match seen { Some(l) => l.to_vec(), None => crate::board::entries(board, task)? };
     let known = core::executions(task,&log).into_iter().find(|x| x.id == execution && x.attempt == attempt)
         .ok_or_else(|| format!("execution {execution} ownership unknown; acceptance refused"))?;
     if known.release == Some(core::Release::NoStart) { return Err(format!("execution {execution} confirmed no-start; acceptance refused")); }
@@ -289,6 +290,8 @@ pub struct Service<'a> {
     deps: DepCache,
     label_fixes: HashMap<u64, (String, Vec<String>, u8)>,
     cancelled_publications: HashMap<u64, u64>,
+    /// Closed-task terminal rows `repair_ended` proved are not this host's (#1359).
+    unowned: HashSet<(u64, u64)>,
     /// Worktrees of closed tasks already tried once by `prune`.
     pruned: HashSet<u64>,
     start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>,
@@ -589,7 +592,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -665,7 +668,7 @@ impl<'a> Service<'a> {
             let status = crate::runtime::observe_until(until,||k.proc.exited());
             let mut acceptance_unknown = false;
             match crate::runtime::observe_until(until,||k.proc.accepted()) {
-                Ok(true) => match accept_execution(self.board,k.task,k.attempt,k.execution) {
+                Ok(true) => match accept_execution(self.board,k.task,k.attempt,k.execution,None) {
                     Ok(through) => { self.delivered.entry(k.attempt).and_modify(|v| *v = (*v).max(through)).or_insert(through); },
                     Err(e) => { k.unknown=Some(e); return true; }
                 },
@@ -1189,7 +1192,7 @@ impl<'a> Service<'a> {
             let confirmed = by_n.get(&k.task).and_then(|v| v.projection.executions.iter().find(|x| x.id == k.execution && x.accepted));
             let accepted = if let Some(x) = confirmed { Ok(Some(x.through)) } else {
                 crate::runtime::observe_until(observation_until,||k.proc.accepted()).and_then(|yes| if yes {
-                    accept_execution(self.board, k.task, k.attempt, k.execution).map(Some).inspect_err(|_| { pending_acceptance.insert(k.attempt); })
+                    accept_execution(self.board, k.task, k.attempt, k.execution, None).map(Some).inspect_err(|_| { pending_acceptance.insert(k.attempt); })
                 } else { Ok(None) })
             };
             let acceptance_unknown = accepted.is_err();
@@ -1344,7 +1347,8 @@ impl<'a> Service<'a> {
             }
         }
 
-        crate::profile::repair_ended(&self.cfg.install, &self.cfg.root, &self.cfg.repo, &me, self.board);
+        let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
+        crate::profile::repair_ended(&self.cfg.install, &self.cfg.root, &self.cfg.repo, &me, self.board, &open, &mut self.unowned);
         self.prune(&by_n);
 
         // 5. projected labels
@@ -1389,8 +1393,14 @@ impl<'a> Service<'a> {
         }
 
         // § 7 publication intent is board state; every host can reconcile the queue after a restart, even with focus off.
+        // The attempt host polls while its heartbeat is fresh; others take over only when it is stale or gone (#1359).
+        let live = |h: &str| h != me && hosts.iter().any(|i| i.title == format!("taskq host {h}") && now - i.updated <= ttl);
         for v in views.iter().filter(|v| v.projection.task.publication.is_some() && !touched.contains(&v.issue.number)) {
-            let r = crate::dispatch::resume_publication(self.board, &self.cfg, v.issue.number);
+            // the publish verdict ends the attempt, so its last execution names the attempt host
+            if v.projection.executions.last().is_some_and(|x| live(&x.host)) { continue; }
+            // written since `views` read it: the next pass resumes from a fresh read
+            if !self.cache.contains_key(&v.issue.number) { continue; }
+            let r = crate::dispatch::resume_publication(self.board, &self.cfg, &v.issue, &v.projection.task, &v.log);
             if !r.ok() { log!("#{} publication: {}", v.issue.number, r.reason); }
         }
         touched.extend(views.iter().filter(|v| v.projection.task.publication.is_some()).map(|v| v.issue.number));
@@ -1411,7 +1421,8 @@ impl<'a> Service<'a> {
                 let rt = self.held[i].rt.clone();
                 if !self.gui_refused(&v.issue, &rt) && self.reserve(n, a, &rt) {
                     let l = self.held.remove(i);
-                    self.launch(l, a)?;
+                    let log = self.seen_log(v)?;
+                    self.launch(l, a, log)?;
                 } else {
                     pending.insert((n, a));
                 }
@@ -1449,7 +1460,8 @@ impl<'a> Service<'a> {
                 pending.insert((n, a)); // the inbox stays undelivered
                 continue;
             }
-            self.launch(l, last)?;
+            let log = self.seen_log(v)?;
+            self.launch(l, last, log)?;
         }
         pending.extend(self.held.iter().map(|l| (l.task, l.attempt)));
         if pending != self.pending {
@@ -1649,26 +1661,32 @@ impl<'a> Service<'a> {
         (left > 0).then(|| rt.to_string())
     }
 
+    /// The view's log while nothing this pass wrote the task (every write drops its cache entry), else a fresh read:
+    /// a claim or launch never rereads what `views` just read (#1359).
+    fn seen_log(&self, v: &View) -> Result<Vec<core::Entry>, String> {
+        if self.cache.contains_key(&v.issue.number) { Ok(v.log.clone()) } else { crate::board::entries(self.board, v.issue.number) }
+    }
+
     /// Post `spawn`, re-read, start the child only if `fold` accepted this spawn (§ 3 claim).
     fn claim(&mut self, v: &View, role: &str, rt: &str) -> Result<(), String> {
         let (n, began) = (v.issue.number, std::time::Instant::now());
         let r = crate::profile::measure("dispatch", || self.claim_inner(v, role, rt));
         let held = self.held.iter().find(|l| l.task == n).map(|l| l.attempt);
         let (a, outcome, err) = match &r {
-            Ok(Some(l)) => (l.attempt, "ok", "none"),
+            Ok(Some((l, _))) => (l.attempt, "ok", "none"),
             Ok(None) => held.map_or((0, "cancelled", "none"), |a| (a, "ok", "none")),
             Err(e) => (0, "failed", crate::profile::class(e)),
         };
         crate::profile::stage("claim", n, a, rt, Some(began.elapsed()), outcome, err, crate::profile::Usage::NoModel);
         match r? {
-            Some(l) => { let through = l.attempt; self.launch(l, through) },
+            Some((l, log)) => { let through = l.attempt; self.launch(l, through, log) },
             None => Ok(()),
         }
     }
 
-    fn claim_inner(&mut self, v: &View, role: &str, rt: &str) -> Result<Option<Launch>, String> {
+    fn claim_inner(&mut self, v: &View, role: &str, rt: &str) -> Result<Option<(Launch, Vec<core::Entry>)>, String> {
         let n = v.issue.number;
-        let before = crate::board::entries(self.board, n)?;
+        let before = self.seen_log(v)?;
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
         let session = crate::runtime::new_session(rt);
         let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, ""))?;
@@ -1693,7 +1711,7 @@ impl<'a> Service<'a> {
             self.beat()?;
             return Ok(None);
         }
-        Ok(Some(l))
+        Ok(Some((l, log)))
     }
 
     /// This host lists `gui` (§ 4 Filter): the probe holds and a runtime runs with Full access.
@@ -1730,8 +1748,10 @@ impl<'a> Service<'a> {
     }
 
     #[tracing::instrument(name="service.Service.launch",skip_all)]
-    fn launch(&mut self, mut l: Launch, through: u64) -> Result<(), String> {
-        let log = crate::board::entries(self.board, l.task)?;
+    /// `log`: this pass's read of the task (the view, or the claim's spawn readback); launch reads it again only to
+    /// confirm its own writes (#1359).
+    fn launch(&mut self, mut l: Launch, through: u64, log: Vec<core::Entry>) -> Result<(), String> {
+        let mut readback = None;
         let projection = core::project(l.task, &log, false);
         let (executions, t) = (&projection.executions, &projection.task);
         if t.attempt != Some(l.attempt) || !matches!(t.state, State::Doing | State::Review) {
@@ -1751,6 +1771,7 @@ impl<'a> Service<'a> {
             let id = self.post(l.task, core::with_fields(core::entry("executing", &[&through.to_string()], Some(l.attempt), ""), Some(&op), None))?;
             let fresh = crate::board::entries(self.board, l.task)?;
             if !core::executions(l.task, &fresh).iter().any(|x| x.id == id && x.release.is_none()) { return Err("execution intent readback missing".into()); }
+            readback = Some(fresh);
             id
         } else {
             if !executions.iter().any(|x| x.id == l.attempt && x.release.is_none()) { return Err("initial execution ownership missing".into()); }
@@ -1791,7 +1812,7 @@ impl<'a> Service<'a> {
                 self.gate.launch(self.mono);
                 // Keep the owned handle even if acceptance/readback fails.
                 let k = self.kids.last_mut().unwrap();
-                match k.proc.accepted().and_then(|yes| if yes { accept_execution(self.board, l.task, l.attempt, execution).map(Some) } else { Ok(None) }) {
+                match k.proc.accepted().and_then(|yes| if yes { accept_execution(self.board, l.task, l.attempt, execution, Some(readback.as_deref().unwrap_or(&log))).map(Some) } else { Ok(None) }) {
                     Ok(Some(cursor)) => { self.delivered.insert(l.attempt, cursor); self.cache.remove(&l.task); },
                     Ok(None) => {},
                     Err(e) => { k.unknown=Some(e); },
@@ -1919,7 +1940,7 @@ mod tests {
     fn handover_uses_execution_identity_before_input_acceptance() {
         let b=Fake::default(); let n=b.create("T","",&[TASK_LABEL.into()]).unwrap(); let c=cfg("mac");
         let a=b.comment(n,"taskq: spawn worker codex:session mac").unwrap();
-        accept_execution(&b,n,a,a).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
+        accept_execution(&b,n,a,a,None).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
         let input=b.comment(n,"taskq: steer\ncontinue").unwrap();
         let execution=b.comment(n,&core::entry("executing",&[&input.to_string()],Some(a),"")).unwrap();
         let mut s=service(&b,&c,Default::default());
@@ -1935,7 +1956,7 @@ mod tests {
             let b = Fake::default();
             let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
             let a = b.comment(n, "taskq: spawn worker codex:session mac").unwrap();
-            accept_execution(&b,n,a,a).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
+            accept_execution(&b,n,a,a,None).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
             let cursor = b.comment(n,"taskq: steer\nretained user input").unwrap();
             let c = cfg("mac");
             let calls = Rc::new(RefCell::new(Vec::new()));
@@ -2054,7 +2075,7 @@ mod tests {
         for (runtime, host) in [("codex:session","other"),("codex:-","mac")] {
             let b=Fake::default(); let n=b.create("T","",&[TASK_LABEL.into()]).unwrap(); let c=cfg("mac");
             let a=b.comment(n,&core::entry("spawn",&["worker",runtime,host],None,"")).unwrap();
-            accept_execution(&b,n,a,a).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
+            accept_execution(&b,n,a,a,None).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
             let input=b.comment(n,"taskq: steer\nkeep this input").unwrap();
             b.advance(3600);
             let mut s=service(&b,&c,Default::default()); s.pass().unwrap();
@@ -2384,6 +2405,53 @@ mod tests {
         core::fold(n, &entries(b, n).unwrap(), false)
     }
 
+    // Chain: #1359 § 3 claim -> launch -> acceptance, one pass. Risk: a claim rereads the task log the pass just read.
+    #[test]
+    fn one_claim_reads_its_task_log_once() {
+        let (b, c) = (Fake::default(), cfg("mac"));
+        let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+        let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
+        s.pass().unwrap();
+        assert_eq!(s.kids.len(), 1);
+        // was 6: views, pre-spawn, spawn readback, launch, acceptance before and after; the two readbacks stay (§ 3)
+        assert_eq!(b.state.borrow().comment_reads, 3, "views, spawn readback, acceptance readback");
+        assert_eq!(task(&b, n).state, State::Doing);
+    }
+
+    // Chain: #1359 § 7 waiting publication -> service pass on the owning and another host. Risk: every pass rereads
+    // the issue and log that `views` just read, and every host polls the same publication.
+    #[test]
+    fn a_waiting_publication_reads_nothing_twice_and_only_its_host_polls() {
+        let b = Fake::default();
+        let n = b.create("Invented publication", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "queue-waiting".into();
+        let (win, mac) = (cfg("win"), cfg("mac"));
+        let mut owner = Service::new(&b, &win, "test", Box::new(|_| panic!("no process while queued")));
+        let mut other = Service::new(&b, &mac, "test", Box::new(|_| panic!("no process while queued")));
+        let count = |b: &Fake| { let s = b.state.borrow(); (s.reads, s.comment_reads, s.publications) };
+        let mut passes = vec![];
+        for _ in 0..2 {
+            for s in [&mut owner, &mut other] {
+                let before = count(&b);
+                s.pass().unwrap();
+                let after = count(&b);
+                passes.push((after.0 - before.0, after.1 - before.1, after.2 - before.2));
+            }
+        }
+        // (issue reads, comment reads, publication polls) per pass, owner then other; was (1, 3, 1) on both hosts
+        assert_eq!(passes, [(0, 1, 1), (0, 1, 0), (0, 1, 1), (0, 0, 0)]);
+        // a stale owner heartbeat hands the poll to any host
+        b.state.borrow_mut().clock += win.ttl + 1;
+        let before = count(&b).2;
+        other.pass().unwrap();
+        assert_eq!(count(&b).2 - before, 1, "no host polls a publication whose owner is gone");
+        assert_eq!(task(&b, n).state, State::Review);
+    }
+
     // R12 / §3: a last-moment admission hold is not a failed native submission.
     #[test]
     fn admission_wait_preserves_worker_reviewer_and_resume_execution() {
@@ -2392,12 +2460,12 @@ mod tests {
             let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
             let w=b.comment(n,"taskq: spawn worker codex:session mac").unwrap();
             let a=if role=="reviewer" {
-                accept_execution(&b,n,w,w).unwrap();release_execution(&b,n,w,w,"exit").unwrap();
+                accept_execution(&b,n,w,w,None).unwrap();release_execution(&b,n,w,w,"exit").unwrap();
                 b.comment(n,&format!("taskq: result {} attempt {w}","a".repeat(40))).unwrap();
                 b.comment(n,"taskq: spawn reviewer codex:session mac").unwrap()
             } else {w};
             let through=if role=="resume" {
-                accept_execution(&b,n,a,a).unwrap();release_execution(&b,n,a,a,"exit").unwrap();
+                accept_execution(&b,n,a,a,None).unwrap();release_execution(&b,n,a,a,"exit").unwrap();
                 b.comment(n,"taskq: steer\ncontinue").unwrap()
             } else {a};
             let calls=Rc::new(RefCell::new(0));let called=calls.clone();
@@ -2407,14 +2475,14 @@ mod tests {
                 else {Ok(Box::new(FakeProc(Rc::new(RefCell::new(None)))) as Box<dyn Proc>)}
             }));
             let l=Launch {execution:None,task:n,title:"T".into(),attempt:a,role:if role=="reviewer" {"reviewer"} else {"worker"}.into(),rt:"codex".into(),session:"session".into(),url:b.url(n),resume:(role=="resume").then(||"continue".into())};
-            s.launch(l,through).unwrap();
+            s.launch(l,through,entries(&b,n).unwrap()).unwrap();
             assert_eq!(task(&b,n).attempt,Some(a),"{role}: admission consumed the attempt");
             assert_eq!(task(&b,n).retries,0);
             assert_eq!(s.held.len(),1,"{role}: pending launch lost");
             assert!(s.kids.is_empty());assert_eq!(s.delivered(a),0);
             let before=core::executions(n,&entries(&b,n).unwrap());
             assert_eq!(before.last().unwrap().release,None);
-            let held=s.held.remove(0);s.launch(held,a).unwrap();
+            let held=s.held.remove(0);s.launch(held,a,entries(&b,n).unwrap()).unwrap();
             let after=core::executions(n,&entries(&b,n).unwrap());
             assert_eq!(after.len(),before.len(),"admission retry duplicated execution intent");
             assert_eq!(s.kids.len(),1);assert_eq!(s.delivered(a),through);
@@ -4053,11 +4121,11 @@ mod tests {
             let review = b.create("R", "", &["taskq".into(), "p1".into()]).unwrap();
             let ready = b.create("P0", "", &["taskq".into(), "p0".into()]).unwrap();
             let w = b.comment(review, "taskq: spawn worker codex:w mac").unwrap();
-            accept_execution(&b, review, w, w).unwrap(); release_execution(&b, review, w, w, "exit").unwrap();
+            accept_execution(&b, review, w, w, None).unwrap(); release_execution(&b, review, w, w, "exit").unwrap();
             b.comment(review, &format!("taskq: result {} attempt {w}", "a".repeat(40))).unwrap();
             if resume {
                 let a = b.comment(live, "taskq: spawn worker claude:session mac").unwrap();
-                accept_execution(&b, live, a, a).unwrap(); release_execution(&b, live, a, a, "exit").unwrap();
+                accept_execution(&b, live, a, a, None).unwrap(); release_execution(&b, live, a, a, "exit").unwrap();
                 b.comment(live, "taskq: steer\ncontinue").unwrap();
             } else {
                 b.comment(live, "taskq: later\nparked").unwrap();

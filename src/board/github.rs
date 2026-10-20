@@ -13,7 +13,7 @@ pub const KIND: Kind = Kind {
     token: |tool, _host| token(&tool.install),
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| Box::new(GitHub { api }),
+    board: |api| Box::new(GitHub { api, rules: Default::default() }),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
@@ -30,6 +30,8 @@ fn api(host: &str, repo: &str, token: &str) -> Api {
 
 pub struct GitHub {
     pub(super) api: Api,
+    /// `main` branch rules, read once per process (#1359). ponytail: a rules change applies after a service restart.
+    rules: std::cell::RefCell<Option<Value>>,
 }
 
 fn trusted(v: &Value) -> bool {
@@ -124,10 +126,17 @@ impl GitHub {
     /// a ruleset it can never bypass, or classic protection the token can read that binds admins too.
     fn strict_main(&self) -> bool {
         let read = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
-        read("/rules/branches/main").is_ok_and(|v| v.as_array().into_iter().flatten()
+        self.main_rules().is_ok_and(|v| v.as_array().into_iter().flatten()
             .filter(|r| r["type"] == "required_status_checks" && r["parameters"]["strict_required_status_checks_policy"] == true)
             .any(|r| r["ruleset_id"].as_u64().is_some_and(|id| read(&format!("/rulesets/{id}")).is_ok_and(|s| s["current_user_can_bypass"] == "never"))))
             || read("/branches/main/protection").is_ok_and(|v| v["required_status_checks"]["strict"] == true && v["enforce_admins"]["enabled"] == true)
+    }
+
+    fn main_rules(&self) -> Result<Value> {
+        if let Some(v) = self.rules.borrow().clone() { return Ok(v); }
+        let v = self.api.call("GET", "/rules/branches/main", None)?.json()?;
+        *self.rules.borrow_mut() = Some(v.clone());
+        Ok(v)
     }
 
     fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
@@ -259,7 +268,7 @@ impl GitHub {
             self.publication_ancestry(sha, mode);
             return Ok(Publish::Done(format!("main fast-forwarded to {sha}")));
         }
-        let rules = self.api.call("GET", "/rules/branches/main", None)?.json()?;
+        let rules = self.main_rules()?;
         let rules = rules.as_array().ok_or("unknown main rules")?;
         let queue = rules.iter().any(|r| r["type"] == "merge_queue");
         let owner = self.api.base.rsplit_once("/repos/").map(|x| x.1).and_then(|r| r.split('/').next()).unwrap_or_default().to_string();

@@ -247,10 +247,14 @@ pub fn repair(install: &Path, project: &str, host: &str, task: u64, attempt: u64
 
 /// Repair retained attempts only when a fresh issue read proves closure or board removal.
 /// Unreadable issues/logs and attempts still on the board remain unknown.
-pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, board: &dyn crate::board::Board) {
+/// `open`: tasks this pass listed open, so no issue read; `unowned`: closed-task rows already proved another host's,
+/// so no reread each pass (#1359). ponytail: in-process; a restart checks each once again.
+pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, board: &dyn crate::board::Board,
+    open: &std::collections::HashSet<u64>, unowned: &mut std::collections::HashSet<(u64, u64)>) {
     let Ok(rows) = crate::telemetry::report_samples(install,&["stage"]).and_then(|t| unresolved_samples(&t)) else { return };
     for mut r in rows.into_iter().filter(|r| r.project.as_deref() == Some(project)
-        && r.host.as_deref().is_none_or(|h| h == host)) {
+        && r.host.as_deref().is_none_or(|h| h == host) && !open.contains(&r.task)) {
+        if unowned.contains(&(r.task, r.attempt)) { continue; }
         let Ok(issue) = board.issue(r.task) else { continue };
         if issue.open && crate::service::is_task(&issue) { continue; }
         let Ok(log) = crate::board::entries(board, r.task) else { continue };
@@ -259,11 +263,12 @@ pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, boar
             let owner = crate::core::fold(r.task, &through, false);
             if owner.attempt != Some(r.attempt) || crate::service::host_of(&owner) != Some(host)
                 || owner.session.as_deref().and_then(|s| s.split_once(':')).map(|s| s.0) != Some(r.rt.as_str()) {
+                unowned.insert((r.task, r.attempt));
                 continue;
             }
-            let Some(role) = owner.role.as_deref() else { continue };
+            let Some(role) = owner.role.as_deref() else { unowned.insert((r.task, r.attempt)); continue };
             let path = crate::runtime::attempt_log(root, role, r.task, r.attempt);
-            if !fs::read_to_string(path).is_ok_and(|text| !text.is_empty()) { continue; }
+            if !fs::read_to_string(path).is_ok_and(|text| !text.is_empty()) { unowned.insert((r.task, r.attempt)); continue; }
             r.host = Some(host.into());
             r.stage = if role == "reviewer" { "review" } else { "build" }.into();
         }
@@ -1088,6 +1093,39 @@ pub(crate) mod tests {
         assert_eq!(reader.export_kinds(&["operation"],0,0,1024).unwrap()["events"].as_array().unwrap().len(),201);
         drop(reader);
         drop(dispatch);drop(_guard);drop(capture);fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #1359 A3: a closed task's stage row without a host that another host owns was reread (issue and comments)
+    // every pass, forever. Retained protection: the first pass still reads and leaves the row unknown, and an open
+    // task's row is never repaired.
+    #[test]
+    fn repair_ended_reads_an_unowned_closed_row_once() {
+        let dir = std::env::temp_dir().join(format!("taskq-repair-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let (capture, _guard) = collecting(&dir);
+        use crate::board::Board;
+        let b = crate::board::Fake::default();
+        let closed = b.create("Invented closed", "", &["taskq".into()]).unwrap();
+        let a = b.comment(closed, "taskq: spawn worker codex:w other").unwrap();
+        b.close(closed).unwrap();
+        let open = b.create("Invented open", "", &["taskq".into()]).unwrap();
+        let o = b.comment(open, "taskq: spawn worker codex:w mac").unwrap();
+        for (task, attempt) in [(closed, a), (open, o)] {
+            write_stage(&dir.join("taskq.log"), &Stage { project: Some("o/r".into()), host: None, open: true, stage: "build".into(), task, attempt,
+                rt: "codex".into(), us: None, outcome: "unknown".into(), error: "none".into(), at_ms: Some(1), calls: None, tokens: None, unknown: Some("open-stage".into()) });
+        }
+        capture.flush().unwrap();
+        let (listed, mut unowned) = (std::collections::HashSet::from([open]), std::collections::HashSet::new());
+        let reads = || (b.state.borrow().reads, b.state.borrow().comment_reads);
+        let mut counts = vec![];
+        for _ in 0..2 {
+            let before = reads();
+            repair_ended(&dir, &dir, "o/r", "mac", &b, &listed, &mut unowned);
+            counts.push((reads().0 - before.0, reads().1 - before.1));
+        }
+        assert_eq!(counts, [(1, 1), (0, 0)], "issue and comment reads per pass");
+        assert_eq!(unresolved_samples(&crate::telemetry::report_samples(&dir, &["stage"]).unwrap()).unwrap().len(), 2, "nothing repaired");
+        drop(_guard); drop(capture); fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: A2/A3 operation -> bounded log -> ranked report. Risk: lost failures, wrong ranks/quantiles,

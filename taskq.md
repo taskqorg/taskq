@@ -236,12 +236,12 @@ Worker brief: task, attempt, branch, commands, contract path (release URL if abs
 then `Open: <remaining item|none>` (1-2 lines); at most 12 lines, at most 240 characters per line. Keep exact commands and platform qualifications (R12).
 `--text`: literal Changed/Open, optional Done/Problem (§ 2), `--option`/`--recommend`/`--link`; absent: no card. `--checks` prefixes Checks. SHA: log header. Changed may link one PR/evidence with [risk](https://github.com/taskqorg/specq/blob/main/caveman/rules/changes.md#merge-request-description-markdown), either route.
 `close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA).
-Review Acceptance/contract. Publication: green `merge_group` CI (private fallback: exact-SHA). Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). No research/proposal ask and owner answer before result/close: task-fit gap. Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim with links.
+Review Acceptance/contract. Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). No research/proposal ask and owner answer before result/close: task-fit gap. Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim with links.
 
 `close`: board API, except private fallback rebase/push:
 - `direct`: branch `taskq-<N>` equals the result SHA, `main` is its ancestor, CI green on that SHA; move `main` to it
   without force, read back, close. GitLab has no fast-forward ref API: `direct` there merges a fast-forward MR.
-- GitHub `pr`: one PR at result SHA; no rebase check. `close` records `publish`, ends review. Service readies drafts, enqueues at expected SHA, resumes after restart. Close needs merge + green `merge_group` CI. Conflict: `main-moved`; unknown: pending. Cancel dequeues, hand-typed too.
+- GitHub `pr`: one PR at result SHA; no rebase check. `close` records `publish`, ends review. Service readies drafts, enqueues at expected SHA; the attempt host polls, others once its heartbeat is stale. Close needs merge + green `merge_group` CI. Conflict: `main-moved`; unknown: pending. Cancel dequeues, hand-typed too.
 - Private GitHub without queue: service fetches/rebases a clean owned task worktree at result SHA, leased-pushes, records `rebased`, waits exact-SHA CI, merges under strict main protection, reads back. Conflict: `main-moved`; dirty/missing/unknown: untouched. Rebase stales approval for review. Public: queue required, Git-free.
 - GitLab `pr`: main ancestor, green exact-SHA CI, fast-forward/semi-linear protection; squash-merge/readback. Incident ancestry: squash merge SHA, direct result SHA.
 - No commit (research, or SHA already on `main`): verify ancestry, close.
