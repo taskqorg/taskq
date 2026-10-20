@@ -61,7 +61,8 @@ def main():
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
-            run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']))
+            # temporary (#1376): per-test times; reverted before review
+            run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']) + ['--', '-Z', 'unstable-options', '--report-time'], {'RUSTC_BOOTSTRAP': '1'})
             if scope == 'full':
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
                     run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_INSTALL':install, 'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'})
