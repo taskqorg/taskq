@@ -328,7 +328,7 @@ def run_case(phase):
                 (install / 'interrupted-at').unlink()
                 attach = start('recover', project=second)
                 until(lambda: json.loads(cursor.read_text())['phase'] == 'registered')
-                until(lambda: 'project registration acknowledgement pending' in (install / 'resources/state.json').read_text())
+                until(lambda: 'project registration acknowledgement pending' in (install / 'resource-state/state.json').read_text())
                 assert attach.poll() is None and not (second / '.taskq/status.json').exists()
                 until(lambda: json.loads((root / '.taskq/status.json').read_text())['at'] > first_status['at'])
                 sibling = json.loads((root / '.taskq/status.json').read_text())
@@ -355,7 +355,7 @@ def run_case(phase):
         item['passed'] = False
         item['error'] = repr(error)
         item['traceback'] = traceback.format_exc()[-6000:]
-        item['failure_snapshot'] = {str(path.relative_to(base)): path.read_text(errors='replace')[-16000:] for path in (install / 'projects.installing', root / '.taskq/status.json', install / 'controller-error.txt', install / 'resources/state.json') if path.is_file()}
+        item['failure_snapshot'] = {str(path.relative_to(base)): path.read_text(errors='replace')[-16000:] for path in (install / 'projects.installing', root / '.taskq/status.json', install / 'controller-error.txt', install / 'resource-state/state.json') if path.is_file()}
     finally:
         (install / 'finish-owned-work').touch()
         (install / 'allow-retirement').touch()
