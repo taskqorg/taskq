@@ -48,7 +48,7 @@ fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[board::Issue], 
         }
     }
     let mut value=serde_json::to_value(status).unwrap();
-    value["host"]=json!(x.host);value["observed"]=json!(observed);value
+    value["host"]=json!(x.host);value["runtime"]=json!(x.runtime);value["observed"]=json!(observed);value
 }
 
 pub struct Row {
@@ -102,7 +102,11 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     let urls = session_urls(hosts);
     let tasks = open.into_iter().map(|v| {
         let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none())
-            .map(|x|execution_status(v.issue.number,x,hosts,observed,cfg.ttl)).collect();
+            .map(|x| {
+                let mut value=execution_status(v.issue.number,x,hosts,observed,cfg.ttl);
+                value["role"]=json!(v.projection.changes.iter().find(|(id,_,_)| *id==x.attempt).and_then(|(_,_,t)|t.role.as_deref()));
+                value
+            }).collect();
         Row {
         n: v.issue.number,
         title: v.issue.title.clone(),
@@ -249,11 +253,11 @@ impl Snapshot {
     }
 
     /// The snapshot keys of `status.json` (§ 4) after a pass; `error`: the pass failed, so tasks are the last read's.
-    pub fn status_keys(&self, error: Option<&str>) -> [(&'static str, Value); 7] {
+    pub fn status_keys(&self, error: Option<&str>) -> [(&'static str, Value); 8] {
         let reason = error.map(String::from).or(self.reason.clone());
         [("schema", json!(SCHEMA)), ("source", json!("host")), ("observed", json!(self.observed)), ("complete", json!(reason.is_none())),
             ("reason", json!(reason)), ("totals", json!(reason.is_none().then(|| self.totals()))),
-            ("tasks", json!(self.tasks.iter().map(Row::json).collect::<Vec<_>>()))]
+            ("tasks", json!(self.tasks.iter().map(Row::json).collect::<Vec<_>>())), ("hosts", self.json()["hosts"].clone())]
     }
 
     /// R6 text report.

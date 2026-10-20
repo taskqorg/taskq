@@ -1085,7 +1085,7 @@ impl<'a> Service<'a> {
                 for value in &mut row.executions {
                     if let Some(status)=observations.iter().find(|s|s.task==row.n && Some(s.id)==value["id"].as_u64()
                         && Some(s.through)==value["through"].as_u64()) {
-                        *value=serde_json::to_value(status).unwrap();
+                        value["state"]=json!(status.state);value["reason"]=json!(status.reason);
                         value["host"]=json!(self.cfg.me);value["observed"]=json!(snapshot.observed);
                     }
                 }
@@ -3152,6 +3152,12 @@ mod tests {
         let host=b.issues(None).unwrap().into_iter().find(|i|i.title=="taskq host mac").unwrap();
         let running=host.body.clone();
         assert_eq!(read()["executions"][0]["state"],"running");
+        assert_eq!(read()["executions"][0]["runtime"],"claude");
+        assert_eq!(read()["executions"][0]["role"],"worker");
+        let snapshot=s.snapshot.as_ref().unwrap();
+        assert_eq!(snapshot.tasks[0].executions[0]["runtime"],"claude","local overlay keeps runtime");
+        assert_eq!(snapshot.tasks[0].executions[0]["role"],"worker","local overlay keeps role");
+        assert_eq!(snapshot.status_keys(None).into_iter().find(|(k,_)|*k=="hosts").unwrap().1,snapshot.json()["hosts"]);
         for fault in ["foreign","execution","input","duplicate","malformed","partial-duplicate","invalid-state","untrusted","stale","future"] {
             let mut body=running.clone();
             if fault=="foreign" {body=body.replace("execution ","ignored ");}

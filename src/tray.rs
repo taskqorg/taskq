@@ -462,7 +462,7 @@ fn project(install: &Path, root: &str) -> Value {
         "complete": crate::snapshot::complete(&s) && age.is_some_and(|a| a < 300),
         "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::status_labels(r),
         "focus_command": s["focus_command"],"service_pid":s["pid"],"host_instance":s["host_instance"],"restart_waits":s["restart_waits"],"stop_progress":s["stop_progress"],"uninstall_review":crate::lifecycle::uninstall_review(install,"review",Some(r)).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})), "request": s["request"], "since": since, "events": events, "tasks": tasks, "host": s["host"], "version": s["version"], "update": s["update"],
-        "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
+        "hosts": s["hosts"], "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO})
 }
@@ -2548,6 +2548,15 @@ mod tests {
         let install = std::env::temp_dir().join(format!("taskq-tray-corrupt-{}", std::process::id()));
         let root = install.join("project");
         fs::create_dir_all(crate::dot(&root)).unwrap();
+        // R6/M3: the native adapter preserves the same observation used by status and capacity.
+        let status=json!({"observed":99,"tasks_age_seconds":3,"hosts":[{"name":"mac","updated":98}],
+            "capacity":{"host_runtime_used":{"codex":2},"reservations":[]},
+            "tasks":[{"n":1,"executions":[{"id":7,"role":"worker","runtime":"codex","state":"running"}]}]});
+        fs::write(crate::dot(&root).join("status.json"),status.to_string()).unwrap();
+        let projected=project(&root,root.to_str().unwrap());
+        for key in ["observed","tasks_age_seconds","hosts","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
+        assert_eq!(projected["tasks"][0]["executions"],status["tasks"][0]["executions"]);
+        assert_eq!(projected["tasks"][0]["local_session"],false);
         fs::write(crate::dot(&root).join("status.json"), "{\"tasks\": [{\"n\": 1").unwrap();
         let p = project(&root, root.to_str().unwrap());
         assert!(p["complete"] == false && p["tasks"] == json!([]) && p["error"].as_str().unwrap().starts_with("status.json: corrupt"), "{p}");
