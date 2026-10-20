@@ -64,7 +64,7 @@ const USAGE: &str = "taskq agents
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
- taskq answer N --text A | taskq answer N.K [M.K..]
+ taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
  taskq requeue N [--text T] | taskq later N [--text T]
  taskq steer N --text T | taskq failed N --text T
@@ -112,7 +112,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "start" | "approve" | "recipe" | "ask" | "answer" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "start" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -610,7 +610,13 @@ fn inbox(b: &dyn Board, n: u64) -> Res<String> {
     let projection = core::project(n, &log, deps_open(b, &issue.body));
     let t = &projection.task;
     let mut out = vec![format!("#{n} {}\n{}", issue.title, b.url(n)), issue.body.trim().to_string(), format!("Folded: {}", serde_json::to_string(&t).unwrap_or_default())];
-    out.extend([format!("Revision: {}", projection.revision), "Log:".into()]);
+    out.push(format!("Revision: {}", projection.revision));
+    if let Some((k, why)) = &t.pick {
+        // § 2: the worker's star and the PM's pick, side by side
+        let star = core::options(t.card.as_deref().unwrap_or("")).into_iter().find(|o| o.2).map_or("none".into(), |o| format!("{n}.{}", o.0));
+        out.push(format!("Recommendation: worker ★ {star} · PM {n}.{k}: {why}"));
+    }
+    out.push("Log:".into());
     for e in log {
         out.push(format!("[{}{}] {}", e.id, if e.edited { " edited, ignored" } else { "" }, e.body.trim()));
     }
@@ -2607,6 +2613,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             }
             emit(&rs, json)
         }
+        "pick" => emit(&[dispatch::pm_pick(b, root, a.pos.get(1).ok_or("N.K missing")?, text, &op)?], json),
         "answer" => {
             let n = a.num(1)?;
             logged(root, "answer", a.need("text")?, act(b, root, n, "answer", &[], a.need("text")?, &op), json)
@@ -4106,8 +4113,17 @@ mod tests {
         let r = report(&b, &c, &Value::Null, &[]).unwrap();
         assert!(r.contains("In work 0 · Waiting for answer 1 · Ready 1"), "{r}");
         assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | ready |")), "{r}");
-        assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★")), "{r}");
+        assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★ |")), "only the star without a pick: {r}");
         assert!(r.contains("Hosts: mac v4.0.0"), "{r}");
+        assert!(!inbox(&b, q).unwrap().contains("Recommendation:"));
+        // § 2: the PM pick and its reason sit beside the worker's star in status, status --json and inbox
+        b.comment(q, &entry("pick", &["1"], None, "left | is cheaper")).unwrap();
+        let r = report(&b, &c, &Value::Null, &[]).unwrap();
+        assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★ · PM {q}.1: left \\| is cheaper |")), "{r}");
+        let rows = snapshot::read(&b, &c, &Value::Null, &[]).json()["tasks"].clone();
+        let row = rows.as_array().unwrap().iter().find(|t| t["n"] == q).unwrap().clone();
+        assert_eq!(row["pick"], json!({"id": 1, "reason": "left | is cheaper"}));
+        assert!(inbox(&b, q).unwrap().contains(&format!("Recommendation: worker ★ {q}.2 · PM {q}.1: left | is cheaper")));
     }
 
     /// A board with one task per report part: ready, ask with a card, blocked, failed, plus a host heartbeat.

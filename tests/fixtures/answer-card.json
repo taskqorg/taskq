@@ -61,7 +61,8 @@
           ],
           "not": [
             "To answer",
-            "disabled>1."
+            "disabled>1.",
+            "qac-pick"
           ]
         },
         {
@@ -92,6 +93,81 @@
           "has": [
             "Answer accepted on the board"
           ]
+        }
+      ]
+    },
+    {
+      "name": "pm pick beside the worker star",
+      "board": "github.com/o/r",
+      "capability": {
+        "answer": true
+      },
+      "rows": [
+        {
+          "n": 841,
+          "title": "Keep the old API?",
+          "state": "ask",
+          "url": "https://github.com/o/r/issues/841",
+          "revision": 4,
+          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "question": {
+            "parsed": true,
+            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "done": "compared both clients",
+            "problem": "Should the new admin API keep compatibility with existing clients?",
+            "evidence": [
+              {
+                "label": "#12",
+                "url": "https://github.com/o/r/pull/12"
+              }
+            ],
+            "choices": [
+              {
+                "id": 1,
+                "text": "Keep compatibility",
+                "recommended": true,
+                "consequential": false
+              },
+              {
+                "id": 2,
+                "text": "Remove the old API",
+                "recommended": false,
+                "consequential": false
+              }
+            ],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          },
+          "pick": {
+            "id": 2,
+            "reason": "no client uses the old API since v3"
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "check",
+          "status": "actionable",
+          "sent": 0,
+          "has": [
+            "aria-label=\"Recommended\">★</span>",
+            "<p class=\"qac-pick\"><span class=\"qac-muted\">PM</span> 841.2: no client uses the old API since v3</p>"
+          ]
+        },
+        {
+          "type": "choose",
+          "id": 1
+        },
+        {
+          "type": "check",
+          "status": "sending",
+          "sent": 1,
+          "op": {
+            "choice": 1,
+            "task": 841
+          }
         }
       ]
     },

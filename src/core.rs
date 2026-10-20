@@ -172,6 +172,9 @@ pub struct Task {
     pub enqueued: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<Gate>,
+    /// The PM's pick of an open `ask` card (§ 2): option K and its one-line reason; never an answer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pick: Option<(usize, String)>,
 }
 
 /// A comment by a trusted author; the board adapter drops everyone else's.
@@ -416,6 +419,10 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             let asked = t.state == State::Ask;
             let before = t.clone();
             step(&mut t, &mut resume, e.id, &l, last == 0);
+            // § 2: a pick belongs to the card it was made on
+            if t.card != before.card || t.state != State::Ask {
+                t.pick = None;
+            }
             if l.kind == "spawn" && t.attempt == Some(e.id) && before.attempt != t.attempt {
                 executions.push(Execution { id:e.id, attempt:e.id, through:e.id, host:l.args[2].into(),
                     runtime:l.args[1].split(':').next().unwrap_or("").into(), accepted:false, release:None,usage_hold:None });
@@ -565,6 +572,12 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         (Later | Failed, "close", false) => {
             end(t);
             t.state = Closed;
+        }
+        (Ask, "pick", false) if l.args.len() == 1 && !l.text.is_empty() && !l.text.contains('\n') => {
+            let card = t.card.as_deref().unwrap_or("");
+            if let Some(k) = l.args[0].parse().ok().filter(|k| options(card).iter().any(|o| o.0 == *k)) {
+                t.pick = Some((k, l.text.to_string()));
+            }
         }
         (Ask, "answer", _) if !l.bare || pick(t.card.as_deref().unwrap_or(""), l.args[0]).is_some() => {
             if !own {
@@ -880,6 +893,10 @@ mod tests {
         assert_eq!(super::delivery(7, &log, 12), "y");
         log[2] = e(12, "taskq answer 3");
         assert_eq!(super::delivery(7, &log, 12), "taskq answer 3");
+        // § 2: a PM pick is never the answer; the worker receives the owner's option
+        log[2] = e(12, "taskq: pick 1\nx is cheaper");
+        log.push(e(13, "taskq answer 7.2"));
+        assert_eq!(super::delivery(7, &log, 13), "y");
     }
 
     // Chain: § 2 ask to owner comment request. Risk: taskq entries or edited text treated as an owner request.

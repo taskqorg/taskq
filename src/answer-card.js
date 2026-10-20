@@ -94,6 +94,8 @@ render:function(board, row, local, cap) {
       if (why) h += '<span class="qac-why" id="' + id + '-c' + c.id + '">' + esc(why) + ' <a href="' + href(row.url) + '" target="_blank" rel="noopener">board ↗</a></span>';
     }
     h += '</div>';
+    // § 2: the PM's pick sits beside the worker's star; it is a view, never an answer
+    if (row.pick) h += '<p class="qac-pick"><span class="qac-muted">PM</span> ' + esc(row.n) + '.' + esc(row.pick.id) + ': ' + esc(row.pick.reason) + '</p>';
     if (st !== 'read-only') {
       const bad = textProblem(q, local.draft);
       // Q1: Other answer opens a compact field; a kept draft keeps it open

@@ -342,6 +342,23 @@ pub fn approve(b: &dyn Board, root: &Path, n: u64, sha: Option<&str>, op: &Op, a
     act_as(b, root, n, "approve", &[&result], "", op, None, None)
 }
 
+/// `pick N.K --text R`: the PM's view of an open `ask` card; never an answer (§ 2).
+pub fn pm_pick(b: &dyn Board, root: &Path, pick: &str, reason: &str, op: &Op) -> Res<Receipt> {
+    let (n, k) = pick.trim_start_matches('#').split_once('.').and_then(|(n, k)| Some((n.parse::<u64>().ok()?, k.parse::<usize>().ok()?))).ok_or(format!("not N.K: {pick}"))?;
+    let reason = reason.trim();
+    if reason.is_empty() || reason.contains('\n') || reason.chars().count() > 160 {
+        return Err("pick needs a one-line --text reason of at most 160 characters".into());
+    }
+    let (issue, t, _) = current(b, n)?;
+    if !issue.open || t.state != State::Ask {
+        return Err(format!("#{n} is {} without an open question", if issue.open { t.state.name() } else { "closed" }));
+    }
+    if !options(t.card.as_deref().unwrap_or("")).iter().any(|o| o.0 == k) {
+        return Err(format!("#{n} has no option {k}"));
+    }
+    Ok(act(b, root, n, "pick", &[&k.to_string()], reason, op))
+}
+
 /// `answer N.K [M.K..]`: every pick is checked before any is written (§ 5).
 pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> Res<Vec<Receipt>> {
     let mut plan = vec![];
@@ -572,6 +589,28 @@ g", &["taskq".into()]).unwrap();
         let r = answer_picks(&b, &cfg, &[format!("{n}.1")], &Op::default()).unwrap().remove(0);
         assert_eq!((r.outcome, r.state), ("accepted", Some("ready")), "{}", r.text());
         assert_eq!(fold(n, &entries(&b, n).unwrap(), false).retries, 0);
+    }
+
+    // Chain: § 2 PM pick. Risk: a pick lands on a closed card, names no option, or becomes the answer.
+    #[test]
+    fn pm_pick_records_a_view_and_refuses_bad_input() {
+        let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-pick-{}", std::process::id())));
+        let n = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
+        let pick = |k: &str, r: &str| pm_pick(&b, &root, &format!("{n}.{k}"), r, &Op::default());
+        assert!(pick("1", "cheaper").is_err_and(|e| e.contains("without an open question")), "no card yet");
+        b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let a = fold(n, &entries(&b, n).unwrap(), false).attempt.unwrap();
+        b.comment(n, &entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★")).unwrap();
+        let count = || b.comments(n).unwrap().len();
+        let before = count();
+        assert!(pick("3", "r").is_err_and(|e| e.contains("no option 3")));
+        assert!(pick("1", " ").is_err() && pick("1", "a\nb").is_err() && pick("1", &"x".repeat(161)).is_err());
+        assert_eq!(count(), before, "refusals write nothing");
+        let r = pick("1", "x is cheaper").unwrap();
+        assert_eq!((r.outcome, r.state), ("accepted", Some("ask")), "{}", r.text());
+        assert_eq!(fold(n, &entries(&b, n).unwrap(), false).pick, Some((1, "x is cheaper".into())));
+        b.close(n).unwrap();
+        assert!(pick("1", "x").is_err_and(|e| e.contains("closed")));
     }
 
     // Chain: § 5 dispatch receipt and readback. Risk: a stale or retried op writes a second entry.
