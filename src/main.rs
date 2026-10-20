@@ -1095,7 +1095,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             publish_status(&tool, &cfg.root, &status, host.as_ref());
         };
         tick();
-        sleep_until_poke(&pokes, poke_start, pass_began+Duration::from_secs(if reduced {1} else {cfg.poll}), &mut tick);
+        // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
+        sleep_until_poke(&pokes, poke_start, pass_began+Duration::from_secs(if reduced&&handoff_error.is_none() {1} else {cfg.poll}), &mut tick);
         Ok(())
         }));
         match outcome {

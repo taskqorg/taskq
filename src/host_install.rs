@@ -654,6 +654,16 @@ fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,own
     Ok(Some(p.version))
 }
 
+/// #1357: an intent whose candidate already runs waits only for its repeated install. The host reports it in the
+/// log and the receipt instead of keeping it silently; the repeated install still continues the same command.
+pub fn stale_upgrade(install:&Path)->Option<String> {
+    let p=upgrade_intent(install).ok()??;
+    if p.version!=crate::platform::VERSION||installation_status(install,Some(&p.id))["state"]!="queued" {return None;}
+    let reason=format!("upgrade {} already runs {}; repeat service install in {} to finish it",p.id,p.version,p.root.display());
+    let _=retain_reason(install,&p,&reason);
+    Some(reason)
+}
+
 /// The attach under a host that already runs an upgrade's candidate continues that command and its receipt.
 fn adopt_upgrade(install:&Path,root:&Path,running:&str)->Res<Option<Pending>> {
     Ok(upgrade_intent(install)?.filter(|p|p.root==root&&p.version==running&&installation_status(install,Some(&p.id))["state"]=="queued"))

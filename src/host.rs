@@ -426,6 +426,8 @@ pub struct Host {
     turn: Option<PathBuf>,
     pub held: Option<String>,
     pub restart: bool,
+    /// Projects were woken for this handover; later passes keep `poll` (#1357).
+    restart_woken: bool,
     pub stopping: bool,
     pub stop_controller:Option<crate::host_control::Control>,
     /// Each thread reports active turns/children before the host considers an image switch.
@@ -445,7 +447,7 @@ pub struct Host {
 impl Host {
     pub fn new(policy: Res<Policy>) -> Self {
         Self { instance:crate::runtime::uuid(),policy, capacity_command:None, slots: BTreeMap::new(), gate: Gate::default(), began: Instant::now(), last: None,
-            ready: BTreeSet::new(), turn: None, held: None, restart: false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
+            ready: BTreeSet::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
             rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
     }
@@ -522,6 +524,12 @@ impl Host {
             ||self.busy.keys().chain(self.slots.keys().map(|(root,_,_)|root)).any(|root|!self.prepared.contains(root)) {Some(Project)}
         else if self.updating.is_some() {Some(Maintenance)}
         else {None}
+    }
+
+    /// #1357: a pending handover wakes each project once. Waking every host second made every project list the
+    /// board every second; each pass already reports its preparation, so the handover follows within one `poll`.
+    pub fn restart_wake(&mut self) -> bool {
+        self.restart && !std::mem::replace(&mut self.restart_woken,true)
     }
 
     /// A drained Stop project cannot revoke preparation while other projects are still draining.
@@ -763,6 +771,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut native_requested:Option<Instant>=None;
     let mut native_legacy:Res<Vec<String>>=Err("native legacy inventory pending; host admission held".into());
     let mut maintenance_result=String::new();
+    let mut upgrade_report:Option<String>=None;
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
     let mut tray = None;
@@ -932,10 +941,16 @@ pub fn run(install: &Path) -> Res<()> {
             match job {Ok(job)=>h.updating=Some(job),Err(error)=>crate::platform::log(&format!("update not started: {error}"))}
         }
         if install.join("restart").exists() || roots.iter().any(|r| crate::dot(r).join("restart").exists()) { h.restart = true; }
-        if h.restart {
+        if h.restart_wake() {
             for root in &roots {
                 if let Err(e) = crate::poke(root) { append_project(install, root, &e); }
             }
+        }
+        // After the installer's 300 s wait, which began before this generation started.
+        if let Some(reason)=(upgrade_report.is_none()&&began.elapsed().as_secs()>=300).then(||installation::stale_upgrade(install)).flatten() {
+            crate::platform::log(&reason);for root in &roots {append_project(install,root,&reason);}upgrade_report=Some(reason);
+        }
+        if h.restart {
             let wait=h.handoff_wait();
             drop(h);
             if let Err(e)=crate::lifecycle::handoff_wait(install,&instance,wait) {if reported!=e {crate::platform::log(&e);reported=e;}}
@@ -1488,6 +1503,40 @@ mod tests {
             }
         }
         assert!(h.handoff_ready());
+    }
+
+    // #1357 A4: live work elsewhere defers the handover. The host loop poked every project each second, so every
+    // project listed the board each second (about 20k requests/h for six projects). The list stays at one per poll.
+    #[test]
+    fn deferred_handover_lists_the_board_once_per_poll() {
+        use std::sync::atomic::{AtomicUsize,Ordering};
+        let base=std::env::temp_dir().join(format!("taskq-deferred-handover-{}",crate::runtime::uuid()));
+        let install=base.join("install");let root=base.join("project");
+        fs::create_dir_all(&install).unwrap();fs::create_dir_all(&root).unwrap();
+        fs::write(install.join("token"),"owned-fixture-not-a-credential").unwrap();
+        let root=root.canonicalize().unwrap();
+        let shared=Arc::new(Mutex::new(Host::new(Err("fixture".into()))));
+        {let mut h=shared.lock().unwrap();h.attach(&root);h.restart=true;h.sync(&base.join("busy"),vec![(1,7,"codex".into())]);}
+        let lists=Arc::new(AtomicUsize::new(0));
+        let project={let (root,install,host,lists)=(root.clone(),install.clone(),shared.clone(),lists.clone());std::thread::spawn(move || {
+            enter(&root,&install);
+            let mut cfg=crate::tests::cfg();cfg.root=root;cfg.install=install;cfg.poll=2;
+            let board=crate::board::Fake::default();board.state.borrow_mut().lists=Some(lists);
+            crate::board::Board::create(&board,"Waits for the handover","",&["taskq".into()])?;
+            crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host),None)
+        })};
+        let until=Instant::now()+std::time::Duration::from_secs(5);
+        while Instant::now()<until {
+            if shared.lock().unwrap().restart_wake() {crate::poke(&root).unwrap();}
+            assert!(!shared.lock().unwrap().handoff_ready(),"the unrepresented slot defers the handover");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if project.is_finished() {panic!("project loop ended: {:?}",project.join().unwrap());}
+        let listed=lists.load(Ordering::SeqCst);
+        assert!((1..=4).contains(&listed),"5 s at poll 2 allows the first pass, one wake and two polls; listed {listed}");
+        shared.lock().unwrap().draining.insert(root.clone());crate::poke(&root).unwrap();
+        assert_eq!(project.join().unwrap().unwrap_err(),"project drained");
+        let _=fs::remove_dir_all(base);
     }
 
     // #1297 A1/A2: the defect was one detailed row per identity and status poll (63 MB/h live against 0.56 MB/h).
