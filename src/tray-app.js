@@ -342,21 +342,25 @@ runningAgents:function(){
   }
   let partial=false,doing=0,review=0;
   for(const p of boards.values()){
-    const fresh=p.complete===true&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&Number.isFinite(p.observed);
+    const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
+    const fresh=p.complete===true&&elapsed!==null&&elapsed<=60&&Number.isFinite(p.observed);
     partial ||= !fresh||!Array.isArray(p.hosts);
-    for(const h of p.hosts||[]){
-      const age=Number.isFinite(h.updated)&&Number.isFinite(p.observed)&&Number.isFinite(p.age)?p.observed-h.updated+p.age:null;
+    for(const h of Array.isArray(p.hosts)?p.hosts:[]){
+      if(!h||typeof h.name!=='string'||!h.name){partial=true;continue;}
+      const age=Number.isFinite(h.updated)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-h.updated+elapsed:null;
       const old=hosts.get(h.name);
       if(!old)hosts.set(h.name,{name:h.name,age,unknown:!fresh||age===null||age<0||age>60,counts:new Map()});
       else {old.unknown ||= !fresh||age===null||age<0||age>60;old.age=old.age===null||age===null?null:Math.max(old.age,age);}
     }
     for(const t of p.tasks||[]){
       doing+=t.state==='doing'?1:0;review+=t.state==='review'?1:0;
-      for(const x of t.executions||[]){
+      if(t.executions!=null&&!Array.isArray(t.executions))partial=true;
+      for(const x of Array.isArray(t.executions)?t.executions:[]){
+        if(!x||typeof x.host!=='string'){partial=true;continue;}
         const name=x.host||'Unknown host';
         if(!hosts.has(name))hosts.set(name,{name,age:null,unknown:true,counts:new Map()});
-        const h=hosts.get(name),age=Number.isFinite(x.observed)&&Number.isFinite(p.observed)&&Number.isFinite(p.age)?p.observed-x.observed+p.age:null;
-        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||!x.runtime){h.unknown=true;continue;}
+        const h=hosts.get(name),age=Number.isFinite(x.observed)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-x.observed+elapsed:null;
+        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime){h.unknown=true;continue;}
         const counts=h.counts.get(x.runtime)||{worker:0,reviewer:0};counts[x.role]++;h.counts.set(x.runtime,counts);
       }
     }
@@ -380,10 +384,10 @@ runningAgents:function(){
     h+='<div class="body meta">'+esc(view.S.host)+' · Occupied: '+(Object.entries(cap).map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old</div>';
     const reserved=new Map();let known=local.length>0;
     for(const p of local){
-      if(!Number.isFinite(p.age)||p.age<0||p.age>60||p.complete!==true||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
+      if(!Number.isFinite(p.age)||p.age<0||p.age>60||p.complete!==true||!Number.isFinite(p.tasks_age_seconds)||p.tasks_age_seconds<0||p.tasks_age_seconds+p.age>60||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
       for(const r of p.capacity.reservations){
-        if(!r.rt||!['held','requested'].includes(r.state)){known=false;continue;}
-        const running=(p.tasks||[]).some(t=>t.n===r.task&&(t.executions||[]).some(x=>x.attempt===r.attempt&&x.host===view.S.host&&x.runtime===r.rt&&x.state==='running'&&Number.isFinite(x.observed)&&p.observed-x.observed+p.age>=0&&p.observed-x.observed+p.age<=60));
+        if(!r||typeof r.rt!=='string'||!r.rt||!['held','requested'].includes(r.state)){known=false;continue;}
+        const running=(p.tasks||[]).some(t=>t.n===r.task&&(Array.isArray(t.executions)?t.executions:[]).some(x=>x&&x.attempt===r.attempt&&x.host===view.S.host&&x.runtime===r.rt&&x.state==='running'&&Number.isFinite(x.observed)&&p.observed-x.observed+p.age+p.tasks_age_seconds>=0&&p.observed-x.observed+p.age+p.tasks_age_seconds<=60));
         if(!running)reserved.set(p.issues+'/'+r.task+'/'+r.attempt,r.rt);
       }
     }
