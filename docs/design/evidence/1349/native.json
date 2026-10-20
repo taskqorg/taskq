@@ -1,6 +1,6 @@
 {
-  "sourceCommit": "261aea8572af249da1600361c43587ec0dc86236",
-  "binarySha256": "cae7238397f30fee93f69bf9de1b1be119110a69703169471f0c668231797dfa",
+  "sourceCommit": "bb48724ed74cc8303ea2c1d5227b8de94460a6ac",
+  "binarySha256": "4778257c23ad7e0fa9da6b64ff9ffec1c72a66a81b8b20dc61f499340c192b49",
   "renderer": "macOS WKWebView",
   "scope": "invented fixture, Home only; 16/20 px, dark/light; no installed service or live-board proof"
 }
