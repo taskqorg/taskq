@@ -1484,7 +1484,8 @@ impl<'a> Service<'a> {
             // last: the github.com list carries no assignees (§ 4 budget), so only a candidate reads them
             .filter(|v| !v.issue.labels.iter().any(|l| l == "assignee-only") || assigned(self.board, &v.issue, &user).unwrap_or(false))
             .collect();
-        queue.sort_by_key(|v| (priority(&v.issue), v.issue.number));
+        // reviews before ready tasks, then priority and number within each (§ 4 step 6)
+        queue.sort_by_key(|v| (v.projection.task.state != State::Review, priority(&v.issue), v.issue.number));
         let ready = queue.iter().any(|v| self.free(&route(&v.issue, v.projection.task.state == State::Review), needs_gui(&v.issue)).is_some());
         if let Some(host) = &self.host {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
@@ -4041,6 +4042,35 @@ mod tests {
         assert_eq!(task(&b, new).state, State::Doing);
         assert_eq!(task(&b, conflict).state, State::Ready);
         assert!(b.comments(conflict).unwrap().is_empty(), "conflicting restriction never claimed");
+    }
+
+    // Chain: § 4 step 6 order with one slot. Risk: p0 workers starve pending reviews (#1365), or a review jumps a resume.
+    #[test]
+    fn one_slot_goes_to_resume_then_review_then_ready() {
+        for resume in [false, true] {
+            let b = Fake::default();
+            let live = b.create("L", "", &["taskq".into(), "p2".into()]).unwrap();
+            let review = b.create("R", "", &["taskq".into(), "p1".into()]).unwrap();
+            let ready = b.create("P0", "", &["taskq".into(), "p0".into()]).unwrap();
+            let w = b.comment(review, "taskq: spawn worker codex:w mac").unwrap();
+            accept_execution(&b, review, w, w).unwrap(); release_execution(&b, review, w, w, "exit").unwrap();
+            b.comment(review, &format!("taskq: result {} attempt {w}", "a".repeat(40))).unwrap();
+            if resume {
+                let a = b.comment(live, "taskq: spawn worker claude:session mac").unwrap();
+                accept_execution(&b, live, a, a).unwrap(); release_execution(&b, live, a, a, "exit").unwrap();
+                b.comment(live, "taskq: steer\ncontinue").unwrap();
+            } else {
+                b.comment(live, "taskq: later\nparked").unwrap();
+            }
+            let c = cfg("mac");
+            let e: Exits = Default::default();
+            let mut s = service(&b, &c, e.clone());
+            s.pass().unwrap();
+            let launched: Vec<u64> = e.borrow().iter().map(|x| x.0).collect();
+            assert_eq!(launched, vec![if resume { live } else { review }], "resume={resume}");
+            assert_eq!(task(&b, ready).state, State::Ready, "p0 waits for the slot");
+            assert_eq!(task(&b, review).attempt.is_some(), !resume, "a resume keeps precedence over a review");
+        }
     }
 
     // Chain: § 3 p0 admission. Risk: p0 blocked by focus or passes pause.

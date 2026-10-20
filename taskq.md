@@ -157,7 +157,7 @@ One loop:
    (12 hex of SHA-256 of `<install>/installation-id`), `machine <hostname>[ wsl]` (`hostname` output, as agentq `host.name`; `wsl` under WSL; DashQ joins Hosts rows by it, [H2](https://github.com/taskqorg/dashq/blob/main/docs/design/hosts.md)), `#<N> <id>` per live child or launch held by the load gate, `session #<N> <id> <url>` per live Claude child with a Remote Control URL, `focus off|unknown` when the focus admits nothing, `limit <rt> until|probe <time>` per held runtime, plus `at <board time>` (a same-body edit keeps `updated_at`). Freshness uses the board's `updated_at` and the response `Date`, never local clocks.
 4. Reconcile unresolved executions; unreachable owners remain unknown (§ 3).
 5. Fix projected labels; `waiting` with closed deps becomes `ready`. Research/proposal decisions use `ask` (§ 7.5), not closed results.
-6. Resume the session of a live attempt for a new `answer` or `steer` (text on stdin); reconcile pending publications (§ 7); spawn a reviewer for `review` without a live one or pending publication; admit `ready` tasks matching this host by priority then number within capacity.
+6. Resume the session of a live attempt for a new `answer` or `steer` (text on stdin); reconcile pending publications (§ 7); within capacity, spawn reviewers for `review` without a live one or pending publication, then admit matching `ready` tasks; each by priority then number.
 7. Host update check (§ 8): every host.json `update_every` (60 s) or any `<root>/.taskq/update`; installed `live` services apply newer versions (§ 8), others report. Log the outcome in every project log.
 8. Sleep until a poke or `poll` seconds.
 
