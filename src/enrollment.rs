@@ -133,15 +133,24 @@ pub fn speaks(active: &Value, snap: Option<&Snapshot>) -> bool {
 
 /// The record of one snapshot: payload without `observed` names its content, so equal content dedupes by digest.
 pub fn record(install: &Path, s: &Snapshot, active: &Value) -> Res<(String, Value)> {
+    let (digest, at, payload) = payload(s, active)?;
+    Ok((digest.clone(), stamp(install, &digest, at, payload)?))
+}
+
+/// The board payload of [`record`]: pure, so a service pass builds it without touching connection storage.
+fn payload(s: &Snapshot, active: &Value) -> Res<(String, u64, Value)> {
     let board = approved(active).ok_or("connection has no readable board scope")?;
     let id = active["installation"].as_str().unwrap_or_default();
     let mut payload = serde_json::to_value(project(s, id, &[board])?).map_err(|e| e.to_string())?;
     let observed = payload.as_object_mut().unwrap().remove("observed");
     let digest = enroll::digest(&payload);
     payload["observed"] = observed.unwrap_or_default();
-    let at = u64::try_from(s.observed).unwrap_or(0);
-    let r = enroll::stamp(&dir(install), SCHEMA, &format!("{at}-{}", &digest[..16]), at, payload)?;
-    Ok((digest, r))
+    Ok((digest, u64::try_from(s.observed).unwrap_or(0), payload))
+}
+
+/// coreq loads (and on Windows re-protects through `whoami` and `icacls`) the connection state to bind the grant.
+fn stamp(install: &Path, digest: &str, at: u64, payload: Value) -> Res<Value> {
+    enroll::stamp(&dir(install), SCHEMA, &format!("{at}-{}", &digest[..16]), at, payload)
 }
 
 /// The resources record, only when the grant lists [`RESOURCES`] (a connection paired before it needs `taskq enroll`
@@ -162,14 +171,15 @@ pub fn resources_record(install: &Path, active: &Value, now: u64) -> Res<(String
     Ok((digest, r))
 }
 
-type Job = JoinHandle<(Backoff, Result<String, Delivery>)>;
+/// Backoff, content digest (empty for a revoke retry) and outcome; `Ok(None)`: unchanged and sent recently.
+type Job = JoinHandle<(Backoff, String, Result<Option<String>, Delivery>)>;
 
 /// The service's sender: one delivery at a time on its own thread, never blocking a pass; each try sends the
 /// latest snapshot (an older unsent one is dropped); a failure only waits (docs/design/enrollment.md).
 #[derive(Default)]
 pub struct Sender {
-    /// Content digest (empty for a revoke retry), start time, thread.
-    job: Option<(String, u64, Job)>,
+    /// Start time, thread.
+    job: Option<(u64, Job)>,
     backoff: Backoff,
     wait_until: u64,
     sent: Option<(String, u64)>,
@@ -181,17 +191,18 @@ impl Sender {
     /// One step per service pass; returns a log line when the outcome changes.
     pub fn tick(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64) -> Option<String> {
         let before = self.outcome.clone();
-        if self.job.as_ref().is_some_and(|j| j.2.is_finished()) {
-            let (digest, started, job) = self.job.take().unwrap();
-            let r = job.join().map(|(b, r)| { self.backoff = b; r }).unwrap_or_else(|_| Err(Delivery::Retry(60)));
-            self.outcome = Some(match r {
-                Ok(state) => {
+        if self.job.as_ref().is_some_and(|j| j.1.is_finished()) {
+            let (started, job) = self.job.take().unwrap();
+            let (digest, r) = job.join().map(|(b, d, r)| { self.backoff = b; (d, r) }).unwrap_or_else(|_| (String::new(), Err(Delivery::Retry(60))));
+            match r {
+                Ok(None) => {}
+                Ok(Some(state)) => {
                     if digest.is_empty() { self.wait_until = now + RESEND } else { self.sent = Some((digest, started)) }
-                    state
+                    self.outcome = Some(state);
                 }
-                Err(Delivery::Retry(secs)) => { self.wait_until = now + secs; format!("retry in {secs} s") }
-                Err(Delivery::Stopped(e)) => { self.wait_until = now + RESEND; format!("stopped: {e}") }
-            });
+                Err(Delivery::Retry(secs)) => { self.wait_until = now + secs; self.outcome = Some(format!("retry in {secs} s")) }
+                Err(Delivery::Stopped(e)) => { self.wait_until = now + RESEND; self.outcome = Some(format!("stopped: {e}")) }
+            }
         }
         if self.job.is_none() && now >= self.wait_until {
             if let Err(e) = self.start(install, snap, now) {
@@ -204,41 +215,48 @@ impl Sender {
 
     fn start(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64) -> Result<(), String> {
         let d = dir(install);
-        let Some(a) = active(install)? else {
+        // #1328: the pass reads the state file only; every coreq load (Windows: `whoami` and `icacls` per load)
+        // runs on the delivery thread
+        let st = state(install)?;
+        let Some(a) = st.as_ref().map(|s| s["active"].clone()).filter(Value::is_object) else {
             if self.sent.take().is_some() { self.outcome = Some("disconnected".into()) }
             // disconnected offline: queued revokes retry until DashQ confirms them
-            if state(install).ok().flatten().is_some_and(|s| s["revoke"].as_array().is_some_and(|r| !r.is_empty())) {
+            if st.is_some_and(|s| s["revoke"].as_array().is_some_and(|r| !r.is_empty())) {
                 let mut backoff = std::mem::take(&mut self.backoff);
-                self.job = Some((String::new(), now, std::thread::spawn(move || {
+                self.job = Some((now, std::thread::spawn(move || {
                     let r = enroll::retry_revokes(&d, &mut Https { browser: false });
                     let wait = backoff.next(None);
-                    (backoff, r.map(|_| "revoke confirmed".into()).map_err(|_| Delivery::Retry(wait)))
+                    (backoff, String::new(), r.map(|_| Some("revoke confirmed".into())).map_err(|_| Delivery::Retry(wait)))
                 })));
             }
             return Ok(());
         };
         // another project's board, or no board read yet: nothing to send from here
         let Some(s) = snap.filter(|s| speaks(&a, Some(s))) else { return Ok(()) };
-        let (mut digest, rec) = record(install, s, &a).map_err(|e| format!("not sent: {e}"))?;
-        let mut recs = vec![rec];
-        // the board record goes alone when the resources one cannot be built; the outcome names why
-        let skipped = match resources_record(install, &a, now) {
-            Ok((d, r)) => { digest = format!("{digest}:{d}"); recs.push(r); None }
-            Err(e) => Some(format!("resources not sent: {e}")),
-        };
-        if self.sent.as_ref().is_some_and(|(d, at)| *d == digest && now < at + RESEND) { return Ok(()) }
+        let (board, at, payload) = payload(s, &a).map_err(|e| format!("not sent: {e}"))?;
         let mut backoff = std::mem::take(&mut self.backoff);
-        let install = install.to_path_buf();
-        self.job = Some((digest, now, std::thread::spawn(move || {
+        let (install, sent) = (install.to_path_buf(), self.sent.clone());
+        self.job = Some((now, std::thread::spawn(move || {
+            let rec = match stamp(&install, &board, at, payload) {
+                Ok(r) => r,
+                Err(e) => return (backoff, String::new(), Err(Delivery::Stopped(format!("not sent: {e}")))),
+            };
+            let (mut digest, mut recs) = (board, vec![rec]);
+            // the board record goes alone when the resources one cannot be built; the outcome names why
+            let skipped = match resources_record(&install, &a, now) {
+                Ok((d, r)) => { digest = format!("{digest}:{d}"); recs.push(r); None }
+                Err(e) => Some(format!("resources not sent: {e}")),
+            };
+            if sent.is_some_and(|(d, at)| d == digest && now < at + RESEND) { return (backoff, digest, Ok(None)) }
             let r = enroll::deliver(&d, &recs, &mut backoff, &mut resources::Fenced::new(&install, Https { browser: false })).map(|r| {
                 let state = |x: &Value| match x["state"].as_str() {
                     Some("accepted") => "accepted".to_string(),
                     _ => format!("rejected: {}", x["reason"].as_str().unwrap_or("unknown")),
                 };
                 let res = r.get(1).map(|x| format!("resources {}", state(x))).or(skipped);
-                std::iter::once(state(&r[0])).chain(res).collect::<Vec<_>>().join("; ")
+                Some(std::iter::once(state(&r[0])).chain(res).collect::<Vec<_>>().join("; "))
             });
-            (backoff, r)
+            (backoff, digest, r)
         })));
         Ok(())
     }
@@ -526,10 +544,18 @@ mod tests {
         assert!(s.job.is_none());
         let (_, rec) = record(&install, &snap("o/a"), &conn).unwrap();
         assert_eq!((rec["schema"].as_str(), rec["payload"]["board"]["repo"].as_str()), (Some(SCHEMA), Some("o/a")));
+        // #1328: each step's cost on this OS, printed on success and failure; only the state read and the payload
+        // stay on the pass
+        let timed = |f: &dyn Fn()| { let t = std::time::Instant::now(); f(); t.elapsed() };
+        let steps = format!("state read {:?}, coreq active read {:?}, record build {:?}, resources read {:?}",
+            timed(&|| { state(&install).unwrap(); }), timed(&|| { active(&install).unwrap(); }),
+            timed(&|| { record(&install, &snap("o/a"), &conn).unwrap(); }), timed(&|| { let _ = resources_record(&install, &conn, 1); }));
         let t = std::time::Instant::now();
         assert_eq!(s.tick(&install, Some(&snap("o/a")), 1), None);
-        assert!(s.job.is_some() && t.elapsed().as_secs() < 2, "delivery runs on its own thread");
-        while !s.job.as_ref().unwrap().2.is_finished() { std::thread::sleep(std::time::Duration::from_millis(50)) }
+        let steps = format!("{steps}, tick with thread spawn {:?}", t.elapsed());
+        eprintln!("sender steps: {steps}");
+        assert!(s.job.is_some() && t.elapsed().as_secs() < 2, "delivery runs on its own thread: {steps}");
+        while !s.job.as_ref().unwrap().1.is_finished() { std::thread::sleep(std::time::Duration::from_millis(50)) }
         assert_eq!(s.tick(&install, Some(&snap("o/a")), 2).as_deref(), Some("dashq connection: retry in 1 s"), "outage only waits");
         fs::remove_dir_all(install).unwrap();
     }
