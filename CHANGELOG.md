@@ -5,9 +5,21 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.25
+
+DashQ receives the `taskq.resources/1` project-limits projection as record `taskq-resources/1` beside the board snapshot (#1299; [enrollment record](docs/design/shared-resource-controls.md#project-overlay)). Existing connections keep sending the board alone until `taskq enroll` is rerun and approved in the browser; host resource grants name the connection generation and may need to be made again. No board change.
+
+Telemetry pruning removes old rows in bulk under the profile lock, so a full store no longer stalls appends for tens of seconds (#1321, coreq pin). No board change.
+
+`scripts/dev-install.sh` installs a newer local build under a running host service and waits until the service runs it (#1306); its rollback hint needs one `service restart` for every project. No board change.
+
 The service pass no longer waits for DashQ connection storage (#1328): on Windows each CoreQ connection load ran `whoami` and `icacls`, up to four times per pass before the delivery thread started. The pass now reads `connection.json` only; stamping, the resources record and the unchanged-content check run on the delivery thread. A storage failure while stamping now reads `stopped: not sent: <reason>`. No board change.
 
 Host update channel (#1325): `taskq service channel dev|live` saves `channel` in host.json and reports it applied after the host service reads it back; with no argument it prints the channel. On `dev` the update check installs no release and only re-execs into a newer local `current`; on `live` (also when `channel` is missing) it installs the latest release, also over a higher `-dev` build. `scripts/dev-install.sh` sets `dev` before installing and prints the channel; switch back with `taskq service channel live`. No board change.
+
+`taskq service channel dev|live` accepts its value; it was refused as an unused positional argument, so `scripts/dev-install.sh` stopped before installing (#1335). A host that starts while the tray still owns a stale telemetry writer retries the collector each pass instead of admitting nothing until a manual restart (#1336). No board change.
+
+Local macOS builds are signed like releases before their first start, so cargo runs and dev installs keep the granted privacy permissions (#1329). The tray header stays fixed on scroll and carries icon controls for Home, Settings, close, pin, Top and a size anchor; zero summary counts are hidden (#1326). No board change.
 
 ## v4.6.24
 
