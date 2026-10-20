@@ -56,6 +56,7 @@ impl Policy {
         };
         let timer = |k: &str, d| if v[k].is_null() { Ok(d) } else { v[k].as_u64().filter(|n| *n > 0).ok_or(format!("host.json: {k} must be positive seconds")) };
         let (update_every, rollback_after) = (timer("update_every", 60)?, timer("rollback_after", 600)?);
+        crate::platform::channel_of(&v)?;
         let mut c = v.clone();
         if c["admission"].is_null() { c["admission"] = json!({}); }
         c["admission"]["mode"] = json!("auto");

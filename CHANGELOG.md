@@ -7,6 +7,8 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 The service pass no longer waits for DashQ connection storage (#1328): on Windows each CoreQ connection load ran `whoami` and `icacls`, up to four times per pass before the delivery thread started. The pass now reads `connection.json` only; stamping, the resources record and the unchanged-content check run on the delivery thread. A storage failure while stamping now reads `stopped: not sent: <reason>`. No board change.
 
+Host update channel (#1325): `taskq service channel dev|live` saves `channel` in host.json and reports it applied after the host service reads it back; with no argument it prints the channel. On `dev` the update check installs no release and only re-execs into a newer local `current`; on `live` (also when `channel` is missing) it installs the latest release, also over a higher `-dev` build. `scripts/dev-install.sh` sets `dev` before installing and prints the channel; switch back with `taskq service channel live`. No board change.
+
 ## v4.6.24
 
 Unlabeled tasks and every review run on Claude (#1314). Work waits for a free slot of its runtime instead of moving to the other one: an unlabeled task no longer starts on Codex, and a review no longer falls back to Codex or Codex app. `taskq add --prefer` is refused with a hint to `--runtime`.
