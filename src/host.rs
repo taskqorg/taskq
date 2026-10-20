@@ -1197,6 +1197,8 @@ impl Registry {
         self.poke = poke; self.checked = Some(now);
         match projects(install) {
             Ok(roots) => { self.roots = roots; self.error = None; }
+            // A host that never had a registry has zero projects (setup, § 4); one that loses it reads unknown.
+            Err(_) if self.roots.is_empty() && matches!(project_text(install), Ok(None)) => { self.error = None; }
             Err(e) => { if self.error.as_ref() != Some(&e) { crate::platform::log(&e); } self.error = Some(e); }
         }
     }
@@ -2321,5 +2323,17 @@ mod tests {
         fs::write(install.join("projects"), "relative\n").unwrap(); registry.refresh(&install, 62);
         assert!(registry.error.as_ref().unwrap().contains("unknown")); assert!(registry.roots.is_empty(), "malformed registry retains the last good list");
         child.kill().unwrap(); let _ = child.wait(); fs::remove_dir_all(install).unwrap();
+    }
+
+    #[test]
+    fn never_registered_host_has_zero_projects_but_a_lost_registry_is_unknown() {
+        let install = std::env::temp_dir().join(format!("taskq-registry-{}", crate::runtime::uuid())); fs::create_dir(&install).unwrap();
+        let mut registry = Registry::default(); registry.refresh(&install, 0);
+        assert!(registry.error.is_none() && registry.roots.is_empty(), "fresh host: setup must not wait on a registry");
+        fs::write(install.join("projects"), format!("{}\n", install.display())).unwrap(); registry.refresh(&install, 60);
+        assert_eq!(registry.roots.len(), 1);
+        fs::remove_file(install.join("projects")).unwrap(); registry.refresh(&install, 120);
+        assert!(registry.error.is_some() && registry.roots.len() == 1, "a vanished registry keeps the last roots and reads unknown");
+        fs::remove_dir_all(install).unwrap();
     }
 }
