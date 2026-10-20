@@ -607,6 +607,7 @@ mod win {
     unsafe extern "system" {
         pub fn GetSystemTimes(idle: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
         pub fn GlobalMemoryStatusEx(m: *mut MemoryStatusEx) -> i32;
+        pub fn GetTickCount64() -> u64;
     }
 }
 
@@ -638,6 +639,37 @@ pub fn host_memory() -> Option<(f64, u32)> {
     let mut m = win::MemoryStatusEx { length: std::mem::size_of::<win::MemoryStatusEx>() as u32, load: 0, total_phys: 0, avail_phys: 0, rest: [0; 5] };
     // SAFETY: dwLength set as the API requires
     (unsafe { win::GlobalMemoryStatusEx(&mut m) } != 0).then(|| (m.avail_phys as f64 / GIB, 0))
+}
+
+/// Host boot as Unix seconds (#1386): proof that every process of an earlier intent ended.
+#[cfg(target_os = "linux")]
+pub fn boot_time() -> Result<i64, String> {
+    let t = fs::read_to_string("/proc/stat").map_err(|e| format!("/proc/stat: {e}"))?;
+    t.lines().find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok()).ok_or("/proc/stat: no btime".into())
+}
+
+#[cfg(target_os = "macos")]
+pub fn boot_time() -> Result<i64, String> {
+    let mut tv = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    let mut len = std::mem::size_of::<libc::timeval>();
+    // SAFETY: kern.boottime fills one struct timeval of the given size
+    let ok = unsafe { libc::sysctlbyname(c"kern.boottime".as_ptr(), (&mut tv as *mut libc::timeval).cast(), &mut len, std::ptr::null_mut(), 0) } == 0;
+    (ok && tv.tv_sec > 0).then_some(tv.tv_sec as i64).ok_or("sysctl kern.boottime failed".into())
+}
+
+/// Wall clock minus `GetTickCount64`. `ponytail:` Fast Startup resumes a hibernated kernel without resetting the
+/// tick count, so its boot reads older and keeps executions held; never the unsafe direction.
+#[cfg(windows)]
+pub fn boot_time() -> Result<i64, String> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+    // SAFETY: no arguments
+    let up = std::time::Duration::from_millis(unsafe { win::GetTickCount64() });
+    now.checked_sub(up).map(|t| t.as_secs() as i64).ok_or("GetTickCount64 exceeds the wall clock".into())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub fn boot_time() -> Result<i64, String> {
+    Err("boot time unsupported on this OS".into())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
@@ -710,6 +742,16 @@ mod tests {
     fn service_log_lines_start_with_utc_time_and_fold() {
         let at = crate::board::iso("2026-10-14T04:27:05Z").unwrap();
         assert_eq!(log_line(at, "pass: PATCH x: HTTP 502 <html>\n  <p>bad</p>\r\n\n</html>"),"2026-10-14T04:27:05Z pass: PATCH x: HTTP 502 <html> <p>bad</p> </html>");
+    }
+
+    // Chain: #1386 boot release. Risk: a wrong boot reading releases a live execution or never releases a dead one.
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[test]
+    fn boot_time_reads_on_this_host() {
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
+        let boot = boot_time().unwrap();
+        assert!(boot > 1_000_000_000 && boot <= now, "boot {boot} now {now}");
+        assert!((boot_time().unwrap() - boot).abs() <= 2, "boot time is stable");
     }
 
     // Chain: § 3 Auto memory floor. Risk: the floor or pressure reading fails on a real host and Auto never admits.

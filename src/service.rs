@@ -296,6 +296,8 @@ pub struct Service<'a> {
     pruned: HashSet<u64>,
     start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>,
     pub recover: Option<Box<dyn FnMut(u64, &core::Execution) -> Result<Box<dyn Proc>, String> + 'a>>,
+    /// Host boot in Unix seconds (#1386); tests replace the OS read.
+    pub boot: fn() -> Result<i64, String>,
     #[cfg(test)]
     agent_status: Value,
     pub log: Vec<String>,
@@ -592,7 +594,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1103,6 +1105,27 @@ impl<'a> Service<'a> {
         r
     }
 
+    /// #1386: a boot strictly later than its intent proves every local process of an execution ended. A failed boot read
+    /// or a missing intent time writes nothing; the execution stays in `execution_waits`. True when a release was written.
+    fn release_before_boot(&mut self, views: &[View]) -> bool {
+        let mut wrote = false;
+        let mut boot = None;
+        for v in views {
+            for x in v.projection.executions.iter().filter(|x| x.host == self.cfg.me && x.release.is_none()) {
+                if self.kids.iter().any(|k| k.execution == x.id) { continue; }
+                let Some(intent) = v.comments.iter().find(|c| c.id == x.id && c.trusted).map(|c| c.created).filter(|t| *t > 0) else { continue };
+                let Ok(at) = *boot.get_or_insert_with(self.boot) else { continue };
+                if at <= intent { continue; }
+                let proof = format!("host booted {} after intent {}", crate::board::stamp(at), crate::board::stamp(intent));
+                match release_execution_text(self.board, v.issue.number, x.attempt, x.id, "exit", &proof) {
+                    Ok(()) => { wrote = true; self.log.push(format!("#{} released {} exit: {proof}", v.issue.number, x.id)); }
+                    Err(e) => self.log.push(format!("#{} boot release: {e}", v.issue.number)),
+                }
+            }
+        }
+        wrote
+    }
+
     fn pass_inner(&mut self, native_budget:std::time::Duration) -> Result<(), String> {
         for (task, attempt, execution) in self.pending_releases.clone() {
             release_execution(self.board, task, attempt, execution, "no-start")?;
@@ -1111,7 +1134,8 @@ impl<'a> Service<'a> {
         let previous_fixes = std::mem::take(&mut self.label_fixes);
         let me = self.cfg.me.clone();
         let ttl = self.cfg.ttl;
-        let (views, hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
+        let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
+        if self.release_before_boot(&views) { (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps)?; }
         let now = self.board.now()?;
         for x in views.iter().flat_map(|v| &v.projection.executions).filter(|x| x.host == me) {
             if let Some(hold) = x.usage_hold.filter(|(at, _)| now < *at) {
@@ -1897,6 +1921,32 @@ mod tests {
         }
         fn id(&self) -> u32 {
             0
+        }
+    }
+
+    // Chain: #1386 boot release. Risk: a dead pre-boot execution holds capacity forever, or a live one is released.
+    #[test]
+    fn boot_after_intent_releases_only_this_hosts_older_executions() {
+        let after: fn() -> Result<i64, String> = || Ok(2_000_000_000);
+        let before: fn() -> Result<i64, String> = || Ok(500_000);
+        let failed: fn() -> Result<i64, String> = || Err("sysctl kern.boottime failed".into());
+        for (case, boot, host) in [("after", after, "mac"), ("before", before, "mac"), ("failed", failed, "mac"), ("foreign", after, "win")] {
+            let b = Fake::default(); b.advance(1_000_000); let c = cfg("mac");
+            let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+            let a = b.comment(n, &format!("taskq: spawn worker codex:session {host}")).unwrap();
+            let mut s = Service::new(&b, &c, "fixture", Box::new(|_| panic!("no launch")));
+            s.boot = boot;
+            s.pass().unwrap(); s.pass().unwrap();
+            let log = entries(&b, n).unwrap();
+            let releases: Vec<_> = log.iter().filter(|e| e.body.starts_with("taskq: released")).collect();
+            if case == "after" {
+                assert_eq!(releases.len(), 1, "one release over two passes");
+                assert_eq!(releases[0].body, format!("taskq: released {a} exit attempt {a}\nhost booted 2033-05-18T03:33:20Z after intent 1970-01-12T13:46:42Z\nop-id: release-{a}"));
+                assert_eq!(core::executions(n, &log)[0].release, Some(core::Release::Exit));
+            } else {
+                assert!(releases.is_empty(), "{case}");
+                assert!(s.execution_waits[&n].contains("termination unconfirmed"), "{case}");
+            }
         }
     }
 
