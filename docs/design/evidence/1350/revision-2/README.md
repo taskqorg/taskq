@@ -17,7 +17,7 @@ arrow overflowing by 1–2 px; replacing its rotation fixes it. No assertions we
 Images use the actual bundled renderer with invented data, Chromium headless,
 360×760, dark 16 px. Visually inspected: selection label, collapsed controls,
 visible task list, checkbox states and no hint text. Browser evidence does not
-qualify native filter interaction. Owner approval is pending; not deployed.
+qualify native filter interaction. The owner [approved this revision](https://github.com/taskqorg/taskq/issues/1350#issuecomment-6290307150); not deployed.
 
 Reproduce after `npm run build` with the existing Playwright setup:
 
@@ -25,7 +25,7 @@ Reproduce after `npm run build` with the existing Playwright setup:
 FILTER_EVIDENCE=docs/design/evidence/1350/revision-2 node tests/tray-state-filter.browser.cjs
 ```
 
-## Verification
+## Previous verification
 
 Tested source: `f2bc48bc5bc724ad86aae063f5f34ddcd5c8a342`.
 
@@ -42,5 +42,28 @@ Tested source: `f2bc48bc5bc724ad86aae063f5f34ddcd5c8a342`.
 - R8: 297 lines, 61439 bytes; within 300 lines and 61440 bytes.
 
 R13/Product and UI25 are amended; UI26–UI28 remain unchanged. Native filter
-interaction, owner visual approval and merge-result CI remain outstanding (R12).
+interaction and merge-result CI remain outstanding (R12).
 The evidence-only follow-up commit leaves tested UI sources unchanged.
+
+## Approved candidate verification
+
+Rebased onto `68bb242b`; tested source `e42ad010c809032b0e9752f4b21b73bb0bc9af81`.
+The UI sources, browser instrument and approved images are identical to the
+approved revision. The rebase retains upstream telemetry changes (R1/R13).
+
+- `python3 scripts/check.py --base 68bb242b`: FAIL, 409 passed, 18 failed,
+  34 ignored; 66.752 s of the 900 s budget. Nine failures explicitly refuse worker
+  host installation, policy or lifecycle operations: sandbox-blocked. The other
+  nine assertion failures remain unknown. No worker guards were removed.
+- `node tests/tray-state-filter.browser.cjs`: PASS; the existing regression
+  protection for selection, counters, keyboard, scope, refresh and Back remains.
+- All `tests/*.test.cjs`: PASS, run separately because the gate stops at Rust failure.
+- Isolated `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest`:
+  85 traces and formats PASS; 3 telemetry observations; board unknown.
+- `sh docs/shots/check.sh` and `git diff --check`: PASS. The existing native
+  captures remain applicable because their UI source blobs have not changed.
+- R8: 297 lines, 61411 bytes; within 300 lines and 61440 bytes.
+
+Owner visual approval is recorded. Native filter interaction remains unverified;
+merge-result CI (`merge_group`) is required before publication. The documentation
+follow-up changes no tested implementation or test code. Not merged or deployed.
