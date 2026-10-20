@@ -38,7 +38,18 @@ fn pending(install:&Path)->Res<Pending> {
         Ok(_)=>return Err("installation cursor publication incomplete; recovery evidence kept".into()),
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string()),
     }
-    let path=install.join(INSTALL_PENDING);
+    read_cursor(install,&install.join(INSTALL_PENDING))
+}
+/// #1306: the receipt-bound upgrade intent waits here, outside `projects.installing`, which an older host
+/// cannot hold transitions on until it re-execs into the candidate.
+const UPGRADE_INTENT:&str="projects.upgrading";
+fn upgrade_intent(install:&Path)->Res<Option<Pending>> {
+    match fs::symlink_metadata(install.join(UPGRADE_INTENT)) {
+        Ok(_)=>read_cursor(install,&install.join(UPGRADE_INTENT)).map(Some),
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(None),Err(e)=>Err(e.to_string()),
+    }
+}
+fn read_cursor(install:&Path,path:&Path)->Res<Pending> {
     let meta=fs::symlink_metadata(&path).map_err(|e|e.to_string())?;
     if !meta.is_file()||meta.len()>1<<20 {return Err("projects.installing unsupported; recovery evidence kept".into());}
     let p:Pending=serde_json::from_slice(&fs::read(path).map_err(|e|e.to_string())?).map_err(|_|"projects.installing retained; installation binding unknown")?;
@@ -570,6 +581,7 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
 
 #[tracing::instrument(name="host.install",skip_all)]
 pub fn install_project(install:&Path,root:&Path)->Res<String> {
+    upgrade(install,root)?;
     install_bound(install,root,None,None)
 }
 
@@ -582,6 +594,69 @@ fn receive_initial(install:&Path,p:&mut Pending)->Res<()> {
     if !exists {record(install,p,"received")?;}
     if retained(install,p)?["state"]!="queued" {return Err("initial installation intent has an incompatible receipt; held".into());}
     p.phase=if p.attach {"owned"}else{"prepared"}.into();save(install,p)
+}
+
+/// #1306, § 8 step 3 under a running older host: the receipt comes first, then the candidate becomes `current`
+/// (previous and rollback floor at the running release) and the host's own update step re-execs into it once live
+/// work hands over. No `projects.installing` exists meanwhile, so a host predating this step keeps its transitions;
+/// the attach that follows adopts this command. A caller that stops waiting repeats the install to continue it.
+fn upgrade(install:&Path,root:&Path)->Res<bool> {
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
+    let tool=crate::platform::tool(install);
+    let root=root.canonicalize().map_err(|e|e.to_string())?;
+    let version={
+        let _update=crate::platform::update_lock(install)?;
+        match fs::symlink_metadata(install.join(INSTALL_PENDING)) {
+            Ok(_)=>return Ok(false),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string()),
+        }
+        let Some(owner)=native_owner(install,None)? else {return Ok(false)};
+        let service=service_status(install);
+        let Some(running)=service["version"].as_str() else {return Ok(false)};
+        if !coreq::update::newer(tool.version,running)&&upgrade_intent(install)?.is_none() {return Ok(false);}
+        crate::host_control::install_state(&tool,Some(&owner))?;
+        match request_upgrade(install,&tool,&root,&service,&owner)? {Some(v)=>v,None=>return Ok(true)}
+    };
+    let until=Instant::now()+std::time::Duration::from_secs(300);
+    loop {
+        let service=service_status(install);
+        if service["fresh"]==true&&service["version"]==version {return Ok(true);}
+        if Instant::now()>=until {return Err(format!("current is {version}; host still runs {} (live work defers the handover); repeat service install for this root",service["version"].as_str().unwrap_or("unknown")));}
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+/// Under the update lock: the version the running `owner` must re-exec into, or None once it runs the candidate.
+fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,owner:&coreq::process::Identity)->Res<Option<String>> {
+    let intent=upgrade_intent(install)?.filter(|p|installation_status(install,Some(&p.id))["state"]!="observed");
+    let p=if let Some(p)=intent {
+        if p.root!=root {return Err(format!("an upgrade to {} is pending for another root; repeat service install there",p.version));}
+        p
+    } else {
+        if !service["version"].as_str().is_some_and(|running|coreq::update::newer(tool.version,running)) {return Ok(None);}
+        if service["install_protocol"]!=1||service["fresh"]!=true {return Err("running host has no compatible installation protocol; update/reconcile it before installing a newer build".into());}
+        let edit=ProjectEdit::new(install,root,true)?;
+        let baseline=fs::read(manifest(install)).map_err(|e|format!("host installation originals missing; upgrade refused: {e}"))?;
+        let p=Pending {schema:1,id:crate::runtime::uuid(),baseline:digest(&baseline),root:root.into(),version:tool.version.into(),
+            candidate:crate::platform::prepare_install(tool)?,original:edit.original.clone(),next:edit.next.clone(),phase:"initial".into(),restore:false,attach:true,
+            owner:Some(InstallOwner {pid:owner.pid,started:owner.started.clone(),instance:service["instance"].as_str().ok_or("host generation missing")?.into()}),
+            command:CommandReceipt::current()?.encode(),legacy:None,activation:None};
+        coreq::write_durable(&install.join(UPGRADE_INTENT),serde_json::to_vec(&p).map_err(|e|e.to_string())?)?;
+        p
+    };
+    if service["fresh"]==true&&service["version"]==p.version {return Ok(None);}
+    if !crate::resources::try_with(install,|state|Ok(state.ops.contains_key(&p.id)))? {record(install,&p,"received")?;}
+    if retained(install,&p)?["state"]!="queued" {return Err("upgrade intent has an incompatible receipt; held".into());}
+    if tool.version!=p.version {return Err(format!("an upgrade to {} is pending; repeat service install with that build",p.version));}
+    if tool.current().as_deref()!=Some(tool.version) {crate::platform::activate_install(tool)?;}
+    if !install.join("rollback-floor").exists() {coreq::launcher::set_rollback_floor(tool,service["version"].as_str().ok_or("running host version unknown")?)?;}
+    coreq::write_durable(&install.join("update"),"")?;
+    retain_reason(install,&p,"host update step pending; live work hands over before the re-exec")?;
+    Ok(Some(p.version))
+}
+
+/// The attach under a host that already runs an upgrade's candidate continues that command and its receipt.
+fn adopt_upgrade(install:&Path,root:&Path,running:&str)->Res<Option<Pending>> {
+    Ok(upgrade_intent(install)?.filter(|p|p.root==root&&p.version==running&&installation_status(install,Some(&p.id))["state"]=="queued"))
 }
 
 fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option<&crate::host_control::LegacyOwner>)->Res<String> {
@@ -625,10 +700,12 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
         let p=if let Some(owner)=owner {
             let service=service_status(install);
             if service["install_protocol"]!=1||service["fresh"]!=true {return Err("running host has no compatible installation protocol; update/reconcile it before attaching a root".into());}
-            let version=service["version"].as_str().ok_or("running host version unknown")?;
+            let running=service["version"].as_str().ok_or("running host version unknown")?;
             let baseline=fs::read(manifest(install)).map_err(|e|format!("host installation originals missing; attach refused: {e}"))?;
-            Pending {schema:1,id:crate::runtime::uuid(),baseline:digest(&baseline),root:root.clone(),version:version.into(),
-                candidate:digest(&fs::read(tool.release_exe(version)).map_err(|e|e.to_string())?),original:edit.original.clone(),next:edit.next.clone(),
+            let intent=if migration.is_none() {adopt_upgrade(install,&root,running)?}else{None};
+            let (id,command,candidate)=match intent {Some(p)=>(p.id,p.command,p.candidate),None=>(crate::runtime::uuid(),command,digest(&fs::read(tool.release_exe(running)).map_err(|e|e.to_string())?))};
+            Pending {schema:1,id,baseline:digest(&baseline),root:root.clone(),version:running.into(),
+                candidate,original:edit.original.clone(),next:edit.next.clone(),
                 phase:"owned".into(),restore:false,attach:true,owner:Some(InstallOwner {pid:owner.pid,started:owner.started,instance:service["instance"].as_str().ok_or("host generation missing")?.into()}),command,
                 legacy:migration.map(|owner|Legacy {owner:owner.clone(),phase:"draining".into()}),activation:None}
         } else {
@@ -653,7 +730,9 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
             p
         };
         let mut p=p;p.phase="initial".into();
-        save(install,&p)?;(edit,p)
+        save(install,&p)?;
+        if let Err(e)=fs::remove_file(install.join(UPGRADE_INTENT)) && e.kind()!=std::io::ErrorKind::NotFound {return Err(e.to_string());}
+        (edit,p)
     };
     let result=(||->Res<String> {
     verify_originals(install)?;verify_legacy_original(install,&p)?;
@@ -1014,6 +1093,47 @@ mod tests {
         assert!(verify_originals(&install).unwrap_err().contains("checksum"));
         assert!(restore_files(&install,&directory(&install),&baseline).unwrap_err().contains("checksum"));
         assert_eq!(fs::read(&paths[0]).unwrap(),b"current-launcher");
+        fs::remove_dir_all(install.parent().unwrap()).unwrap();
+    }
+    // #1306: under an older running host the receipt comes first, then `current`, rollback floor and the host's own
+    // update poke; no `projects.installing` exists until the host runs the candidate, so an older host keeps its
+    // transitions. Replay keeps the command, the attach under the candidate adopts it, and an equal host stays attach-only.
+    #[test]
+    fn older_running_host_upgrades_only_after_the_receipt() {
+        let (install,root,paths)=fixture();snapshot(&install,vec![root.clone()],paths).unwrap();
+        let root=root.canonicalize().unwrap();
+        let tool=crate::platform::tool(&install);
+        fs::create_dir_all(install.join("releases/0.0.1")).unwrap();
+        fs::write(tool.release_exe("0.0.1"),"invented-release").unwrap();fs::write(install.join("current"),"0.0.1").unwrap();
+        let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        let host=|version:&str| {fs::write(install.join("service"),json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"invented-host",
+            "at":wall().unwrap(),"version":version,"install_protocol":1}).to_string()).unwrap();service_status(&install)};
+        let (capture,guard)=crate::profile::tests::collecting(&install);
+        let span=tracing::info_span!("host.install");let entered=span.enter();
+        let old=host("0.0.1");
+        let v=request_upgrade(&install,&tool,&root,&old,&native).unwrap();
+        assert_eq!(v.as_deref(),Some(crate::platform::VERSION));
+        let p=upgrade_intent(&install).unwrap().unwrap();
+        for _ in 0..2 {
+            assert_eq!(installation_status(&install,Some(&p.id))["state"],"queued","the receipt precedes activation");
+            assert!(!install.join(INSTALL_PENDING).exists(),"an older host keeps its transitions");
+            assert_eq!(tool.current().as_deref(),Some(crate::platform::VERSION));
+            assert_eq!(fs::read_to_string(install.join("previous")).unwrap(),"0.0.1");
+            assert_eq!(fs::read_to_string(install.join("rollback-floor")).unwrap(),"0.0.1");
+            assert!(install.join("update").exists()&&!install.join("restart").exists(),"the host's own update step re-execs");
+            assert_eq!(request_upgrade(&install,&tool,&root,&old,&native).unwrap(),v,"replay repeats nothing destructive");
+            assert_eq!(upgrade_intent(&install).unwrap().unwrap().id,p.id);
+        }
+        assert!(installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().contains("re-exec"));
+        assert!(adopt_upgrade(&install,&root,"0.0.1").unwrap().is_none(),"the old host never binds the candidate's command");
+        let new=host(crate::platform::VERSION);
+        assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
+        let adopted=adopt_upgrade(&install,&root,crate::platform::VERSION).unwrap().unwrap();
+        assert_eq!((adopted.id.as_str(),adopted.command.as_str()),(p.id.as_str(),p.command.as_str()),"the attach continues the same command");
+        fs::remove_file(install.join(UPGRADE_INTENT)).unwrap();
+        assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None,"attach-only: an equal host is not upgraded");
+        assert!(upgrade_intent(&install).unwrap().is_none());
+        drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
     }
     // H-A5: an interrupted pre-effect snapshot resumes, while an unknown file is preserved and refused.
