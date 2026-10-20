@@ -24,4 +24,4 @@ target/release/taskq selftest
 now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/service" 2>/dev/null || echo unknown)
 [ "$now" = "$v" ] || { echo "Error: host service runs $now, not $v; not installed" >&2; exit 1; }
 echo "installed $v from $(git rev-parse --short HEAD); was $prev"
-echo "rollback: echo $prev > $d/current, then run '$d/taskq service restart' in each project of $d/projects"
+echo "rollback: echo $prev > $d/current, then run '$d/taskq service restart' once (it restarts the host service for every project)"
