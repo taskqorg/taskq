@@ -437,7 +437,7 @@ pub fn sweep(install: &Path, shim: &Path) {
         match version {Ok(version)=>keep.push(version),Err(_)=>unknown=true}
     }
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "installation-id", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "taskq-tray.exe", "TaskQ.app", "capacity", "resources", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "installation-id", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "taskq-tray.exe", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
     };
@@ -1022,7 +1022,7 @@ mod tests {
         let _ = fs::remove_dir_all(&t);
         // the running version's release stays, whatever the build sets it to (release CI: the tag)
         let mine = format!("releases/{VERSION}");
-        let dirs = ["releases/4.2.0", "releases/4.1.0", "releases/4.0.5", &mine, "releases/cc33ae6", "releases/4.3.0.tmp", "obsolete-service/x", "mac-pre-update-backup", "capacity", "resources", "windows-native/state", "failed-release-evidence"];
+        let dirs = ["releases/4.2.0", "releases/4.1.0", "releases/4.0.5", &mine, "releases/cc33ae6", "releases/4.3.0.tmp", "obsolete-service/x", "mac-pre-update-backup", "capacity", "resources", "resource-state", "windows-native/state", "failed-release-evidence"];
         for d in dirs {
             fs::create_dir_all(install.join(d)).unwrap();
         }
@@ -1069,7 +1069,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&native).unwrap(),recovery);
         assert_eq!(crate::kids_file(&install,&root).unwrap()[0].execution,43,"native execution identity survives update");
         assert_eq!(fs::read_to_string(install.join("rollback-floor")).unwrap(),"4.2.0");
-        let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resources", "taskq", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor"];
+        let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resource-state", "resources", "taskq", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor"];
         owned.extend(protected.iter().map(|(name,_)|*name));owned.sort();
         assert_eq!(ls(&install),owned);
         assert_eq!(crate::admission::hold(&install).as_deref(), Some("invented incident hold"), "update cleanup must never release an emergency hold");

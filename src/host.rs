@@ -1948,9 +1948,9 @@ mod tests {
         newer["id"]=json!("store-full");newer["ops"][0]["expected_revision"]=json!(Policy::read(&install).unwrap().revision().unwrap());
         assert_eq!(local_capacity(&install,&owner,&newer).unwrap()["state"],"rejected");
         assert_eq!(fs::read(install.join("host.json")).unwrap(),bytes);
-        fs::write(install.join("resources/state.json"),"{").unwrap();
+        fs::write(install.join("resource-state/state.json"),"{").unwrap();
         assert!(local_capacity(&install,&owner,&newer).unwrap_err().contains("file kept"));
-        assert_eq!(fs::read_to_string(install.join("resources/state.json")).unwrap(),"{");
+        assert_eq!(fs::read_to_string(install.join("resource-state/state.json")).unwrap(),"{");
         assert_eq!(fs::read(install.join("host.json")).unwrap(),bytes);
         capture.flush().unwrap();drop(guard);drop(capture);fs::remove_dir_all(base).unwrap();
     }

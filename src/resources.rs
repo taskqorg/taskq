@@ -1,7 +1,7 @@
 //! Resource policy host adapter (docs/design/shared-resource-controls.md § Host adapter, `taskq.resources/1`): the
 //! host operator's own resource grants, opaque project IDs and policy revisions, and the exchange that applies
 //! DashQ-delivered operations through the canonical capacity writer. No listener, shell or second task queue: the
-//! enrolled service posts its receipts and receives operations. State: `<install>/resources/` (kept by sweep).
+//! enrolled service posts its receipts and receives operations. State: `<install>/resource-state/` (kept by sweep).
 
 use crate::{CapEdit, Res, enrollment, snapshot::Snapshot};
 use coreq::enroll::{Https, Wire};
@@ -93,8 +93,13 @@ pub struct Op {
 
 fn local(o:&Op)->bool {o.bound.get("local_capacity").is_some()||o.bound.get("local_restart").is_some()||o.bound.get("local_stop").is_some()||o.bound.get("local_uninstall").is_some()||o.bound.get("local_install").is_some()}
 
+/// Never `resources`: with it, macOS reads `<install>` (`.../taskq` holding `taskq`) as a bundle, the launcher's signature
+/// stops validating and TCC can never match its Screen Recording grant (#1395). An old store moves once; a failed move
+/// keeps using it.
 pub fn dir(install: &Path) -> PathBuf {
-    install.join("resources")
+    let (new, old) = (install.join("resource-state"), install.join("resources"));
+    if !new.exists() && old.is_dir() && fs::rename(&old, &new).is_err() { return old }
+    new
 }
 
 fn read(install: &Path) -> Res<State> {
@@ -909,6 +914,17 @@ mod tests {
 
     fn active() -> Value {
         json!({"installation": INST, "generation": 1, "destination": "https://x/machine", "credential": "c"})
+    }
+
+    // #1395: the store never makes `<install>` a macOS bundle and an old `resources` store keeps its state.
+    #[test]
+    fn store_leaves_install_no_bundle() {
+        let base=std::env::temp_dir().join(format!("taskq-res-dir-{}",std::process::id()));let _=fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("resources")).unwrap();fs::write(base.join("resources").join(FILE),"{}").unwrap();
+        let d=dir(&base);
+        assert!(!d.file_name().unwrap().to_string_lossy().eq_ignore_ascii_case("resources"));
+        assert_eq!(fs::read_to_string(d.join(FILE)).unwrap(),"{}");assert!(!base.join("resources").exists());
+        fs::remove_dir_all(base).unwrap();
     }
 
     // H-A2: legacy remote profiles cannot report saved after writing an ignored project fallback.

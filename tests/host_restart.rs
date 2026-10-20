@@ -110,7 +110,7 @@ fn real_host_restart_preserves_request_after_the_caller_exits() {
             .env("TASKQ_ATTEMPT","42").env("TASKQ_TASK","1"),Duration::from_secs(20));
         let denied=match denied {Err(coreq::process::Failure::Exit(out))=>out,other=>panic!("worker {action} did not refuse: {other:?}")};
         assert!(String::from_utf8_lossy(&denied.stderr).contains("worker cannot restart"));
-        assert!(json(&install.join("resources/state.json")).is_none_or(|s|s["ops"].get("denied-worker").is_none()));
+        assert!(json(&install.join("resource-state/state.json")).is_none_or(|s|s["ops"].get("denied-worker").is_none()));
     }
     let accepted=run(&install,&proxy,&outside,&["service","restart","--request",id,"--json"]);
     assert_eq!(accepted["id"],id);assert_eq!(accepted["state"],"queued");
@@ -119,7 +119,7 @@ fn real_host_restart_preserves_request_after_the_caller_exits() {
             assert_eq!(status.code(),Some(75),"host restart must request the documented manager action");
             owner.0=Some(spawn());
         }
-        if let Some(state)=json(&install.join("resources/state.json")) {
+        if let Some(state)=json(&install.join("resource-state/state.json")) {
             let receipt=&state["ops"][id]["receipt"];if receipt["state"]=="observed" {break receipt.clone();}
         }
         #[cfg(unix)] assert!(owner.0.as_mut().unwrap().try_wait().unwrap().is_none(),"fixture host exited: {}",fs::read_to_string(&log).unwrap());
