@@ -3,6 +3,8 @@ name = "taskq"
 version = "4.6.25"
 edition = "2024"
 publish = false
+# #1376: tests/*.rs are modules of tests/integration.rs
+autotests = false
 
 [dependencies]
 coreq = { git = "https://github.com/taskqorg/coreq", rev = "3efd3cd8a8bd36b880a93a3008f2a5d212015136" }
@@ -65,3 +67,12 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 [[bin]]
 name = "taskq"
 path = "entry.rs"
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+# #1376: tests/host_restart.rs's Windows powershell shim, prebuilt by `cargo test`
+[[example]]
+name = "native-inventory-windows"
+path = "tests/fixtures/native-inventory-windows.rs"

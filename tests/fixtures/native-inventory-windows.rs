@@ -1,7 +1,15 @@
+// #1376: built by `cargo test` as an example, so host_restart copies it instead of compiling it.
+#[cfg(not(windows))]
+fn main() {}
+#[cfg(windows)]
+fn main() { shim::main() }
+
+#[cfg(windows)]
+mod shim {
 use std::{env, fs, io::Write, process};
 
 #[link(name = "crypt32")]
-extern "system" {
+unsafe extern "system" {
     fn CryptStringToBinaryW(
         text: *const u16, chars: u32, flags: u32, output: *mut u8, bytes: *mut u32,
         skip: *mut u32, flags_out: *mut u32,
@@ -14,7 +22,7 @@ fn utf16le(value: &str) -> Vec<u8> {
     value.encode_utf16().flat_map(u16::to_le_bytes).collect()
 }
 
-fn main() {
+pub fn main() {
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.len() != 6 || args[0] != "-NoProfile" || args[1] != "-NonInteractive"
         || args[2] != "-WindowStyle" || args[3] != "Hidden" || args[4] != "-EncodedCommand" || args[5].len() > 32768 { reject(); }
@@ -39,4 +47,5 @@ fn main() {
     }
     let calls = env::current_exe().unwrap().with_extension("calls");
     fs::OpenOptions::new().create(true).append(true).open(calls).unwrap().write_all(b"read\n").unwrap();
+}
 }

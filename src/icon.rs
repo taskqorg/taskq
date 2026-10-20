@@ -130,8 +130,19 @@ impl Rgba {
 
     /// Paint `rgb` where `inside(x, y)` holds, in points, 4×4 samples per pixel.
     pub fn fill(&mut self, rgb: [u8; 4], inside: impl Fn(f32, f32) -> bool) {
-        for y in 0..self.h {
-            for x in 0..self.w {
+        self.fill_px(rgb, 0..self.w, 0..self.h, inside);
+    }
+
+    /// `fill` of `rect(x0, y0, x1, y1)`, visiting only the pixels it can cover.
+    fn fill_rect(&mut self, rgb: [u8; 4], x0: f32, y0: f32, x1: f32, y1: f32) {
+        let span = |a: f32, b: f32, n: u32| ((a * self.s).floor().max(0.0) as u32).min(n)..((b * self.s).ceil().max(0.0) as u32).min(n);
+        let (xs, ys) = (span(x0, x1, self.w), span(y0, y1, self.h));
+        self.fill_px(rgb, xs, ys, rect(x0, y0, x1, y1));
+    }
+
+    fn fill_px(&mut self, rgb: [u8; 4], xs: std::ops::Range<u32>, ys: std::ops::Range<u32>, inside: impl Fn(f32, f32) -> bool) {
+        for y in ys {
+            for x in xs.clone() {
                 let hit = (0..16).filter(|i| inside((x as f32 + (i % 4) as f32 / 4.0 + 0.125) / self.s, (y as f32 + (i / 4) as f32 / 4.0 + 0.125) / self.s)).count();
                 if hit > 0 {
                     self.blend(x, y, rgb, hit as f32 / 16.0);
@@ -192,14 +203,14 @@ fn draw_q(img: &mut Rgba, x0: f32, y0: f32, z: f32, run: bool, ink: [u8; 4], p: 
     let (x1, y1, t) = (x0 + 18.0 * z, y0 + 18.0 * z, 1.8 * z);
     let (outer, inner) = (rrect(x0, y0, x1, y1, t), rrect(x0 + t, y0 + t, x1 - t, y1 - t, 0.4 * z));
     img.fill(ink, |x, y| outer(x, y) && !inner(x, y));
-    img.fill(ink, rect(x1 - t, y1 - z, x1, y1 + 3.6 * z));
+    img.fill_rect(ink, x1 - t, y1 - z, x1, y1 + 3.6 * z);
     let (cx, cy, h) = (x0 + 9.0 * z, y0 + 9.0 * z, 4.5 * z);
     if run {
         let (l, t) = (cx - 3.15 * z, cy - h);
         img.fill(p.work, move |x, y| x >= l && y >= t + (x - l) * 4.5 / 8.1 && y <= t + 2.0 * h - (x - l) * 4.5 / 8.1);
     } else {
-        img.fill(p.muted, rect(cx - h, cy - h, cx - 0.4 * h, cy + h));
-        img.fill(p.muted, rect(cx + 0.4 * h, cy - h, cx + h, cy + h));
+        img.fill_rect(p.muted, cx - h, cy - h, cx - 0.4 * h, cy + h);
+        img.fill_rect(p.muted, cx + 0.4 * h, cy - h, cx + h, cy + h);
     }
 }
 
@@ -297,7 +308,7 @@ pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba,
         // the compact q at 3/4 size on a cleared square, centered at N/2 (I4)
         let z = 0.75;
         let (x0, y0) = (11.0 - 9.0 * z, 11.0 - 9.0 * z - 0.9 * z);
-        img.fill([0, 0, 0, 0], rect(x0 - z, y0 - z, x0 + 19.0 * z, y0 + 22.6 * z));
+        img.fill_rect([0, 0, 0, 0], x0 - z, y0 - z, x0 + 19.0 * z, y0 + 22.6 * z);
         draw_q(&mut img, x0, y0, z, false, p.muted, &p);
     }
     Ok(img)
@@ -391,7 +402,7 @@ fn glyphs(text: &str, size: u32, _mono: bool) -> Mask {
             _ => vec![seg[6]],
         };
         for (a, b, c, d) in rects {
-            img.fill([255; 4], rect(x0 + a, y0 + b, x0 + c, y0 + d));
+            img.fill_rect([255; 4], x0 + a, y0 + b, x0 + c, y0 + d);
         }
     }
     Mask { w: img.w as i32, h: img.h as i32, ox: sz, base: 2 * sz, a: img.px.chunks(4).map(|p| p[3]).collect() }
