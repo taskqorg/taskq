@@ -31,3 +31,16 @@ Before: [dark](before/popover-dark-home-16.png), [light](before/popover-light-ho
 - Native Cmd+Tab/Alt+Tab and notification-banner icon acceptance remain unverified. Packaging/source changes do not prove those interactions.
 
 Nothing is installed or deployed. Owner visual acceptance, the missing native evidence and green merge-result CI remain required before publication.
+
+## Rebased candidate verification
+
+Attempt 6283966999 rebases the two implementation/evidence commits onto `89ada217` without conflicts. UI source blob IDs still match the README manifest; no assertions or runtime rules changed in this continuation (R12, R13, § 7).
+
+The requeue instruction makes the A8 recording optional and leaves motion acceptance to the owner after dev-install. No TCC prompt was clicked and no host permission was changed. `cargo run --locked -- tray --snapshot DIR --route home,icon` now runs through the macOS signing runner and completes. Fresh WKWebView captures are in `rebased/`: both themes at 16/20 px and native-size icon variants. Dark 20 px, light 16 px and both active Summary icons were visually inspected against the baseline: the header controls, content and lower corners are visible; bottom navigation is absent. Snapshots do not prove bounce or app switching.
+
+- `python3 scripts/check.py --base origin/main`: sandbox-blocked; 397 passed, 16 failed, 34 ignored, 93.643 s. Host installation/policy/Stop worker refusals and dependent receipt assertions remain the same failed set. Worker authority was retained; merge-result CI remains the gate.
+- `cargo run --locked -- selftest` with an isolated installation and offline flag: 85 golden traces and formats pass; 3 telemetry observations commit. Board remains unknown.
+- `node tests/tray-window.browser.cjs`: passes stationary header, unique navigation, accessible controls, all size-mode labels and shrinking content in both themes.
+- All `tests/*.test.cjs` Node components pass, including navigation, notifications, independent toggles, resize and content-fit checks.
+
+No dev-install or deployment was performed. Owner visual/motion acceptance, native app-switcher and notification-banner observations, Windows qualification and green merge-result CI remain open. The optional recording was not retried.
