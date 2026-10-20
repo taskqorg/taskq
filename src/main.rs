@@ -1070,12 +1070,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             let drained = s.idle() && !operator::running(&cfg.root);
             if !registered && drained { h.sync(&cfg.root, vec![]); h.ready(&cfg.root, false); return Err("project drained".into()); }
             if registered { h.busy.insert(cfg.root.clone(), !drained); }
-            if h.restart && (if h.stopping {drained}else{lifecycle_waits(&s, &cfg.root, false).is_empty()}) {
-                match save_kids(&s, &cfg.root) {
-                    Ok(()) => { h.prepared.insert(cfg.root.clone()); }
-                    Err(e) => { h.prepared.remove(&cfg.root); log!("handoff unknown: {e}"); }
-                }
-            } else { h.prepared.remove(&cfg.root); }
+            if let Err(e) = report_handoff(&s, &mut h, &cfg.root, drained) { log!("handoff unknown: {e}"); }
             }
         }
         if let Some(owner)=legacy {
@@ -1241,6 +1236,14 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
     write_kids(&s.cfg.install,root,&kids)
 }
 
+/// The end of a project pass under a pending restart: prepared once nothing it owns blocks the re-exec.
+fn report_handoff(s: &Service, h: &mut host::Host, root: &Path, drained: bool) -> Res<()> {
+    let ready = h.restart && (if h.stopping {drained}else{lifecycle_waits(s, root, false).is_empty()});
+    let saved = if ready { save_kids(s, root) } else { Ok(()) };
+    h.end_pass(root, ready && saved.is_ok());
+    saved
+}
+
 /// A failed reduced loop retains its handles; an image switch also needs recovery evidence.
 fn stopped_handoff(s: &mut Service, host: &host::Shared, cfg: &Config) -> Res<bool> {
     if !host.lock().map_err(|_|"stopped project admission unknown")?.begin_pass(&cfg.root) {return Ok(false);}
@@ -1250,10 +1253,7 @@ fn stopped_handoff(s: &mut Service, host: &host::Shared, cfg: &Config) -> Res<bo
     let mut h = host.lock().map_err(|_| "stopped project admission unknown")?;
     let idle = s.idle() && !operator::running(&cfg.root);
     h.busy.insert(cfg.root.clone(), !idle);
-    if h.restart && (if h.stopping {idle}else{lifecycle_waits(s, &cfg.root, false).is_empty()}) {
-        save_kids(s, &cfg.root)?;
-        h.prepared.insert(cfg.root.clone());
-    }
+    report_handoff(s, &mut h, &cfg.root, idle)?;
     Ok(idle && h.draining.contains(&cfg.root))
 }
 

@@ -2812,6 +2812,38 @@ mod tests {
         drop(h); std::fs::remove_dir_all(root).unwrap();
     }
 
+    // #1402 A1: restart pending, a live claude kid with unknown completion defers the handover; once it exits and
+    // is released, the next pass reports prepared. Risk: a released worker keeps the host on the old image.
+    #[test]
+    fn released_kid_lets_the_next_pass_prepare_the_restart() {
+        let root = std::env::temp_dir().join(format!("taskq-host-released-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let p = crate::host::Policy::parse(json!({"limits": {"claude": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p))));
+        let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
+        let mut s = service(&b, &c, Default::default()); s.host = Some(host.clone());
+        let n = b.create("Owned", "", &[TASK_LABEL.into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker claude:fixture invented").unwrap();
+        let exit = Rc::new(RefCell::new(None));
+        s.kids.push(Kid { unknown:Some("native observation deferred; pass budget exhausted".into()), stopping:false, session_url:None, execution: a, task: n, attempt: a, rt: "claude".into(), proc: Box::new(FakeProc(exit.clone())) });
+        { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
+        let project_pass = |s: &mut Service| {
+            assert!(host.lock().unwrap().begin_pass(&root));
+            s.pass().unwrap(); s.sync_host();
+            let mut h = host.lock().unwrap();
+            h.busy.insert(root.clone(), !s.idle());
+            crate::report_handoff(s, &mut h, &root, s.idle()).unwrap();
+            h.handoff_ready()
+        };
+        assert!(!project_pass(&mut s), "the live worker defers the handover");
+        assert_eq!(crate::lifecycle_waits(&s, &root, false), vec![format!("#{n}")]);
+        *exit.borrow_mut() = Some(0);
+        assert!(project_pass(&mut s), "the released worker no longer holds the restart");
+        assert!(s.kids.is_empty() && host.lock().unwrap().prepared.contains(&root));
+        assert!(core::executions(n, &entries(&b,n).unwrap()).iter().all(|x| x.release.is_some()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     // Chain: cross-host recovery. Risk: inbox age or an unlisted lease is mistaken for exit.
     #[test]
     fn cross_host_recovery_needs_exit_regardless_of_inbox_grace() {
