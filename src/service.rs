@@ -4818,14 +4818,14 @@ mod tests {
             .env("TASKQ_POLL_DAY_ROOT", &dir).env_remove("COREQ_TRACE_CONTEXT").env("TASKQ_INCIDENT_REPORTS", "off")
             .output().unwrap();
         assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
-        // ponytail: CoreQ Reader::open validates the whole store, so a pass costs O(store); 6 of 96 intervals keep this near 20 s.
+        // ponytail: CoreQ Reader::open validates the whole store, so a pass costs O(store); 3 of 96 intervals extrapolate within 3% of 6 at a quarter of the time (#1376).
         let day = (size("i") - empty) * 96 / INTERVALS;
         eprintln!("six-project day: {day} stored bytes from {INTERVALS} intervals, limit {}", (384u64 << 20) / 30);
         assert!(day <= (384u64 << 20) / 30, "simulated six-project day stores {day} bytes");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    const INTERVALS: u64 = 6;
+    const INTERVALS: u64 = 3;
 
     #[test]
     #[ignore = "subprocess helper exercised by simulated_six_project_day_fits_a_thirtieth_of_the_store_cap"]
