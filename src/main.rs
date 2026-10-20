@@ -109,6 +109,7 @@ impl Args {
             Some("close") => a.pos.len(),
             Some("answer") if a.pos.get(1).is_some_and(|p| p.contains('.')) => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
+            Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
             Some("service" | "profile" | "add" | "finding" | "start" | "approve" | "recipe" | "ask" | "answer" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "enroll" | "connection") => 2,
             _ => 1,
@@ -1528,7 +1529,6 @@ fn channel_cmd(a: &Args) -> Res<()> {
         println!("Service: {}",observed(0).unwrap_or_else(||"unknown (no fresh status)".into()));
         return Ok(());
     };
-    if a.pos.len()>3 {return Err(format!("unused positional arguments: {}",a.pos[3..].join(" ")));}
     if !matches!(want.as_str(),"dev"|"live") {return Err("channel must be dev or live".into());}
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot change host policy".into());}
     let since=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
@@ -2910,7 +2910,9 @@ mod tests {
         assert!(parse(&["help"]).is_ok());
         assert_eq!(parse(&["service", "status", "extra"]).err().unwrap(), "unused positional arguments: extra");
         assert_eq!(parse(&["add", "T", "--goal", "G", "--acceptance", "A", "--acceptance", "B"]).unwrap().all("acceptance"), vec!["A", "B"]);
-        for v in [vec!["close", "1", "2"], vec!["answer", "1.1", "2.1"], vec!["service", "focus", "code", "docs"]] {
+        assert_eq!(parse(&["service", "channel", "dev", "extra"]).err().unwrap(), "unused positional arguments: extra");
+        assert_eq!(channel_cmd(&parse(&["service", "channel", "beta"]).unwrap()).err().unwrap(), "channel must be dev or live");
+        for v in [vec!["close", "1", "2"], vec!["answer", "1.1", "2.1"], vec!["service", "focus", "code", "docs"], vec!["service", "channel"], vec!["service", "channel", "dev"], vec!["service", "channel", "live"]] {
             assert!(parse(&v).is_ok());
         }
         for flags in [vec!["--host"],vec!["--host","--json"],vec!["--json","--host","--request","original-id"]] {
