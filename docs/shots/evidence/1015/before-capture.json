@@ -1,0 +1,8 @@
+{
+  "release": "v4.6.23",
+  "installedExecutableSha256": "eb95ff1b649ae4f3d00081c4d9f9cb02b3acdff87e6d226c2dc0cc27ccbecfa9",
+  "images": {
+    "rejected-workspace-path-alias.png": "1426b86c56a7097a0cd6c272ccd2d37495304efd39bcb6036f60c4d9bca27c37",
+    "rejected-project-clipped.png": "c6b40c84de59bacb9925bbf70523842bd73a11744c612c8d7844660b4eeab81b"
+  }
+}
