@@ -14,3 +14,5 @@ A2's accepted amendment replaces the TCC screenshot with signed bundle identity/
 After crops: [play](after-app-compact-run-light-256.png), [pause](after-app-compact-pause-dark-256.png), [16 px](after-app-compact-run-light-16.png), [tray](after-icon-compact-run-dark-34pt@2x.png). Play, pause, 16 px and the Summary pause overlay were visually inspected.
 
 Canonical gate: `cargo test --locked` failed (401 passed, 16 failed, 34 ignored). Host install/policy/lifecycle fixtures encounter worker guards (`a worker cannot install the host service`, `a worker cannot change host policy`, `a worker cannot restart the host service or request Stop`): sandbox-blocked, not PASS. The project-overlay fixture also reported `unsupported` instead of `invalid`; its cause remains unknown. No guards or failing assertions were changed. Acceptance still needs green merge-result CI and the remaining native evidence.
+
+`cargo run --locked -- selftest`: failed on two retained attempt terminal records older than ttl 300 s; 85 golden traces and verdict formats passed. This is not a passing selftest. No task history or telemetry records were edited.
