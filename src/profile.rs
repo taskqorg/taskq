@@ -321,7 +321,8 @@ pub fn selftest(install: &Path, project: &str, live: &Live, ttl: u64) -> Result<
     let samples=crate::telemetry::report_samples(install,&["stage"])?;
     if !samples.iter().any(|s|s.kind()=="stage") { return Ok("attempt terminal records: unknown (no stage observations)".into()); }
     let (report, overdue) = defects_samples(&samples, live, Some(project), now, ttl)?;
-    if overdue > 0 { Err(format!("attempt terminal records: FAIL ({overdue} older than ttl {ttl}s)\n{report}")) }
+    // Telemetry gaps never block install/update (#1389); capture health still fails selftest in main.rs.
+    if overdue > 0 { Ok(format!("attempt terminal records: WARN ({overdue} older than ttl {ttl}s; not blocking)\n{report}")) }
     else { Ok("attempt terminal records: no overdue nonlive defects in retained window".into()) }
 }
 

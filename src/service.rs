@@ -2258,7 +2258,7 @@ mod tests {
                 let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
                 crate::telemetry::read(&root,now).unwrap();
             }
-            assert!(crate::profile::selftest(&root, "o/r", &vec![], 300).is_ok(), "legacy log size no longer stops collection");
+            assert!(crate::profile::selftest(&root, "o/r", &vec![], 300).unwrap().contains("no overdue"), "legacy log size no longer stops collection");
             let lock = crate::profile::log_lock(&path).unwrap();
             s.pass().unwrap();
             assert!(std::fs::read_to_string(&path).unwrap()==text, "busy lock preserves evidence");
@@ -3382,9 +3382,13 @@ mod tests {
             "outcome":"unknown","error":"none","at_ms":1,"unknown":"open-stage"});
         drop(crate::profile::log_lock(&dir.join("taskq.log")).unwrap());
         crate::telemetry::append(&dir,&format!("taskq-stage {record}"),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64).unwrap();
-        assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap_err().contains("FAIL"));
+        // #1389: an old gap warns once with a stable reason and passes; unavailable capture still fails (tests/telemetry_process.rs).
+        let warn = crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap();
+        assert!(warn.starts_with("attempt terminal records: WARN (1 older than ttl 300s; not blocking)"), "{warn}");
+        assert_eq!(warn.matches(&format!("| o/r | #{n} | {a} | claude | mac |")).count(), 1, "{warn}");
+        assert!(warn.contains("| missing terminal record |"), "{warn}");
         // A live attempt stays exempt even after ttl; the check never mutates board state.
-        assert!(crate::profile::selftest(&dir, &c.repo, &vec![(c.repo.clone(), a)], 300).is_ok());
+        assert!(crate::profile::selftest(&dir, &c.repo, &vec![(c.repo.clone(), a)], 300).unwrap().contains("no overdue"));
         assert_eq!(task(&b, n).attempt, Some(a));
         let report = crate::profile::report(&dir);
         assert!(report.contains(&format!("| o/r | #{n} | {a} | claude | mac |")), "{report}");
@@ -3400,7 +3404,7 @@ mod tests {
         assert!(!s.heartbeat_body().lines().any(|l| l == format!("#{n} {a}")));
         let repaired = crate::profile::read_log(&dir).unwrap();
         assert!(repaired.contains("\"outcome\":\"failed\",\"error\":\"exit\""), "{repaired}");
-        assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).is_ok());
+        assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap().contains("no overdue"));
         s.pass().unwrap();
         assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired, "repair is idempotent");
 
@@ -3434,11 +3438,11 @@ mod tests {
             } else {
                 b.labels(n, &[], &["taskq".into()]).unwrap();
             }
-            assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).is_err());
+            assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).is_err(), "unimported legacy evidence reads unknown");
             let mut s = service(&b, &c, Default::default());
             s.focus.clear();
             s.pass().unwrap();
-            crate::profile::selftest(&dir, &c.repo, &vec![], 300).expect("ended attempt must have committed terminal evidence");
+            assert!(crate::profile::selftest(&dir, &c.repo, &vec![], 300).unwrap().contains("no overdue"), "ended attempt must have committed terminal evidence");
             let repaired = crate::profile::read_log(&dir).unwrap();
             s.pass().unwrap();
             assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired);
@@ -3509,7 +3513,7 @@ mod tests {
                 crate::profile::prune(&dir).unwrap();
                 let history = crate::profile::read_log(&dir).unwrap();
                 let (_capture,_guard)=crate::profile::tests::collecting(&dir);
-                assert!(crate::profile::selftest(&dir, project, &vec![], 300).is_err());
+                assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("WARN"));
                 let mut s = service(&b, &c, Default::default());
                 s.focus.clear();
                 s.pass().unwrap();
@@ -3517,7 +3521,7 @@ mod tests {
                 assert!(repaired.starts_with(&history), "original history must survive");
                 assert!(std::fs::read_to_string(&path).unwrap().starts_with(&original), "original archive text must survive unchanged");
                 if evidence == "local" {
-                    assert!(crate::profile::selftest(&dir, project, &vec![], 300).is_ok(), "{closed}: {repaired}");
+                    assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("no overdue"), "{closed}: {repaired}");
                     let record: serde_json::Value = serde_json::from_str(repaired.lines().last().unwrap().strip_prefix("taskq-stage ").unwrap()).unwrap();
                     assert_eq!(record["host"], "mac");
                     assert_eq!(record["stage"], "review");
@@ -3527,7 +3531,7 @@ mod tests {
                     assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired, "idempotent repair");
                 } else {
                     assert_eq!(repaired, history, "{closed}: {evidence} must stay unknown");
-                    assert!(crate::profile::selftest(&dir, project, &vec![], 300).is_err());
+                    assert!(crate::profile::selftest(&dir, project, &vec![], 300).unwrap().contains("WARN"));
                 }
                 if attempt_log.is_file() { assert_eq!(std::fs::read_to_string(attempt_log).unwrap(), if evidence == "empty-log" { "" } else { "original reviewer output\n" }); }
                 assert!(!b.comments(n).unwrap().iter().any(|c| c.body.starts_with("taskq: gone")));
