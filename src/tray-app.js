@@ -7,7 +7,7 @@ createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:f
 create:function(view,ports){
 const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
-fit:function(){const size=view.manualSize||view.S.size,w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:size?0:gutter(),w,h:size?size[1]:Math.ceil(menu.getBoundingClientRect().height)});menu.style.width='100%';},
+fit:function(){const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
 actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
 lifecycleStart:function(root,action='restart',mode='drain'){
@@ -128,16 +128,16 @@ focusReadback:function(){
   }
   for(const root of Object.keys(view.pending))if(!view.S.projects.some(p=>p.root===root))delete view.pending[root];
 },
-remember:function(){return {page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard,scroll:document.scrollingElement.scrollTop,open:[...menu.querySelectorAll('details')].map(d=>d.open)};},
+remember:function(){return {page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard,scroll:(menu.querySelector('.content')||document.scrollingElement).scrollTop,open:[...menu.querySelectorAll('details')].map(d=>d.open)};},
 navigate:function(next,filter=null,work=null){
   trail.push(remember());view.page=next;view.taskFilter=filter;view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures=[];
-  present(true);document.scrollingElement.scrollTop=0;
+  present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
   menu.querySelector('h1')?.focus();
 },
 back:function(){
   const prior=trail.pop()||{page:'home',taskFilter:null,working:null,workCard:null,scroll:0,open:[]};
   ({page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard}=prior);view.noted=null;view.disclosures=prior.open;
-  present(true);document.scrollingElement.scrollTop=prior.scroll;
+  present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=prior.scroll;
   menu.querySelector('h1')?.focus({preventScroll:true});
 },
 routeButton:function(route,label=routes[route]){return '<button class="project" data-route="'+route+'">'+esc(label)+'</button>';},
@@ -421,10 +421,10 @@ filteredTasks:function(p){
     (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
     (view.taskFilter==='closed'?'<div class="body meta">Closed total and task list unknown: open the Board for authoritative closed tasks.</div>'+ps.map(p=>TaskqProjectBlocks.summary(blockProject(p))).join(''):rows.map(t=>taskRow(t,!p)).join('')||'<div class="body meta">'+(known(ps)?'No tasks':'Tasks unknown')+'</div>');
 },
-head:function(){return '<div class="row head"><span class="meta">taskq</span>'+(view.S.stop_modes?'<button data-a="stop-review" aria-label="Emergency stop">■ Stop</button>':'')+'<button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'">'+(view.S.pinned?'Pinned':'Pin')+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows">Top</button></div>';},
+head:function(){const mode=view.S.size_anchor||(view.S.size?'fixed':'top'),label={fixed:'Fixed size',bottom:'Keep bottom edge',top:'Keep top edge'}[mode];return '<div class="row head"><nav aria-label="Menu"><button data-route="home" title="Home" aria-label="Home">⌂</button><button data-route="settings" title="Settings" aria-label="Settings">⚙</button></nav><span class="window-controls">'+(view.S.stop_modes?'<button data-a="stop-review" aria-label="Emergency stop" title="Emergency stop">■</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+({fixed:'▣',bottom:'⊥',top:'⊤'}[mode])+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">⧉</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'"><span class="pin-glyph" style="transform:rotate('+(view.S.pinned?'0':'45')+'deg)">📌&#xfe0e;</span></button><button data-a="hide" title="Close window" aria-label="Close window">×</button></span></div>';},
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
-  const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=document.scrollingElement.scrollTop;
+  const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
   const focusKey=!navigating&&active&&menu.contains(active)?JSON.stringify(active.dataset):null;
   // a refresh rebuilds the menu: refocus the same control, link or heading, by tag, data and position (U-A4)
@@ -437,16 +437,16 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   if(!p&&!routes[view.page])view.page='home';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
-  menu.classList.toggle('pinned',!!view.S.pinned);
+  menu.classList.toggle('pinned',!!view.S.pinned);menu.dataset.edge=view.S.attached_edge||'top';
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  menu.innerHTML=head()+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'<div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div><nav class="options footer" aria-label="Menu"><button data-route="home">Home</button><button data-route="settings">Settings</button></nav>'+answerToast();
+  menu.innerHTML=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
   mountAnswers();mountResources();
   menu.querySelectorAll('details').forEach((d,i)=>d.open=open[i]??(!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page)));
   if(view.S.page!==undefined)menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
   const restored=answerFocus&&menu.querySelector('[data-answer="'+CSS.escape(answerFocus.dataset.answer)+'"] '+answerSelector);
   if(restored&&!navigating){restored.focus({preventScroll:true});if(caret)restored.setSelectionRange(...caret);}
   else if(!navigating){const target=focusedSummary>=0?menu.querySelectorAll('summary')[focusedSummary]:focusKey&&active.tagName==='H1'?menu.querySelector('h1'):focusKey&&focusKey!=='{}'?[...menu.querySelectorAll(active.tagName)].filter(same)[focusAt]:null;target?.focus({preventScroll:true});}
-  document.scrollingElement.scrollTop=scroll;
+  (menu.querySelector('.content')||document.scrollingElement).scrollTop=scroll;
   fit();
   // after fit() sets the width: a new exchange or text size opens at the newest entry; a tick keeps the reader's place;
   // a block that drops a cut line asks for the smaller height
@@ -480,6 +480,7 @@ receive:function(s){
   if(s.resources_receipt){view.resourceNotice=s.resources_receipt;present();return;}
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
+  if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
   view.S=s;view.receivedAt=performance.now();focusReadback();answerReadback();api.lifecycleReadback();
   if(view.aiText===null)view.aiText=s.ai.draft||'';
   // snapshot mode names the page

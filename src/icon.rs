@@ -13,7 +13,7 @@ pub fn summary() -> Value {
 
 const VERSION: u64 = 1;
 const FONTS: [&str; 2] = ["System", "Mono"];
-const BINDS: [&str; 4] = ["work", "ask", "ready", "failed"];
+const BINDS: [&str; 5] = ["work", "ask", "ready", "failed", "ready_blocked"];
 const SERIES: [&str; 4] = ["closed", "failed", "ask", "blocked"];
 
 /// Every schema error of a draft, one per field (CI2 Validate); empty: valid.
@@ -23,9 +23,10 @@ pub fn validate(c: &Value) -> Vec<String> {
     if c["version"].as_u64() != Some(VERSION) {
         err.push(format!("version: {} unsupported, want {VERSION}", c["version"]));
     }
-    for k in o.keys().filter(|k| !["version", "font", "gap", "elements"].contains(&k.as_str())) {
+    for k in o.keys().filter(|k| !["version", "font", "gap", "elements", "empty"].contains(&k.as_str())) {
         err.push(format!("{k}: unknown field"));
     }
+    if c.get("empty").is_some() && c["empty"] != "compact" { err.push("empty: want compact".into()); }
     if !c["font"].as_str().is_some_and(|f| FONTS.contains(&f)) {
         err.push(format!("font: {} unsupported, want one of {FONTS:?}", c["font"]));
     }
@@ -43,7 +44,7 @@ pub fn validate(c: &Value) -> Vec<String> {
             err.push(format!("{at}: not an object"));
             continue;
         };
-        for k in eo.keys().filter(|k| !["id", "type", "bind", "cell", "align", "vertical", "period", "series"].contains(&k.as_str())) {
+        for k in eo.keys().filter(|k| !["id", "type", "bind", "cell", "align", "vertical", "period", "series", "hide_zero", "color"].contains(&k.as_str())) {
             err.push(format!("{at}.{k}: unknown field"));
         }
         match e["id"].as_str() {
@@ -72,6 +73,8 @@ pub fn validate(c: &Value) -> Vec<String> {
         match e["type"].as_str() {
             Some("counter") => {
                 one("bind", &BINDS, &mut err);
+                if e.get("hide_zero").is_some_and(|v| !v.is_boolean()) { err.push(format!("{at}.hide_zero: want a boolean")); }
+                if e.get("color").is_some() { one("color", &["work", "ask", "ready", "failed"], &mut err); }
                 one("align", &["left", "center", "right"], &mut err);
                 one("vertical", &["top", "center", "bottom"], &mut err);
             }
@@ -91,6 +94,7 @@ pub fn validate(c: &Value) -> Vec<String> {
 /// (close, failed, ask, blocked; oldest first) and whether every project is paused.
 pub struct Data {
     pub counts: [Option<usize>; 4],
+    pub blocked: Option<usize>,
     pub bins: Vec<[u32; 4]>,
     pub paused: bool,
 }
@@ -240,7 +244,9 @@ pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba,
             let digits: Vec<_> = (0..10).filter_map(|k| glyphs(&k.to_string(), fs, mono).ink()).collect();
             let (asc, desc) = (digits.iter().map(|i| i.1).max().unwrap_or(0), digits.iter().map(|i| i.3).max().unwrap_or(0));
             let i = BINDS.iter().position(|b| e["bind"] == *b).unwrap_or(0);
-            let text = d.counts[i].map_or("–".to_string(), |v| v.to_string());
+            let count = if i == 4 { d.counts[2].zip(d.blocked).map(|(r,b)| r.saturating_add(b)) } else { d.counts[i] };
+            if e["hide_zero"] == true && count == Some(0) { continue; }
+            let text = count.map_or("–".to_string(), |v| v.to_string());
             let fits = |t: &str| glyphs(t, fs, mono).ink().is_none_or(|i| i.2 - i.0 <= w);
             // overflow: an explicit threshold, never clipped digits (CI4)
             let text = if fits(&text) { text } else if fits("9+") { "9+".into() } else { "+".into() };
@@ -256,7 +262,14 @@ pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba,
                 Some("center") => y + (h - asc - desc) / 2 + asc,
                 _ => y + asc,
             };
-            m.blit(&mut img, ox, oy, gray(p.ink));
+            let color = match (e["color"].as_str(), dark) {
+                (Some("work"), true) => [141,210,184,255], (Some("work"), false) => [36,111,89,255],
+                (Some("ask"), true) => [237,188,150,255], (Some("ask"), false) => [149,85,37,255],
+                (Some("ready"), true) => [200,208,217,255], (Some("ready"), false) => [93,104,116,255],
+                (Some("failed"), true) => [238,150,165,255], (Some("failed"), false) => [166,50,75,255],
+                _ => p.ink,
+            };
+            m.blit(&mut img, ox, oy, gray(color));
         } else {
             // R-UI5: B bars b px wide, 1 px gaps, right-aligned; adjacent bins summed (D11), one peak scale
             let b = [12, 6, 4, 3, 2, 1].into_iter().find(|b| b * 2 - 1 <= w).unwrap_or(1);
@@ -276,6 +289,9 @@ pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba,
                 }
             }
         }
+    }
+    if c["empty"] == "compact" && img.px.chunks_exact(4).all(|p| p[3] == 0) {
+        return Ok(compact(!d.paused,dark,n as f32/22.0));
     }
     if d.paused {
         // the compact q at 3/4 size on a cleared square, centered at N/2 (I4)
@@ -387,7 +403,7 @@ mod tests {
     use serde_json::json;
 
     fn data(counts: [usize; 4], paused: bool) -> Data {
-        Data { counts: counts.map(Some), bins: vec![[1, 1, 1, 1]; 12], paused }
+        Data { blocked: Some(0), counts: counts.map(Some), bins: vec![[1, 1, 1, 1]; 12], paused }
     }
 
     fn has(i: &Rgba, c: [u8; 4]) -> bool {
@@ -513,13 +529,36 @@ mod tests {
                 let lit = |x: u32, y0: u32, y1: u32| (y0..y1).any(|y| img.px[((y * img.w + x) * 4 + 3) as usize] > 0);
                 let edge = (0.5 * dpr).round().max(1.0) as u32;
                 // work ink starts at the left inset, answers end at the right inset (I3)
-                assert!(lit(edge, 0, n / 2) && !lit(edge - 1, 0, n / 2), "{n} {counts:?}: work ink left");
-                assert!(lit(n - edge - 1, 0, n / 2) && !lit(n - edge, 0, n / 2), "{n} {counts:?}: answers ink right");
+                assert_eq!(lit(edge, 0, n / 2) && !lit(edge - 1, 0, n / 2), counts[0] != 0, "{n} {counts:?}: work ink left");
+                assert_eq!(lit(n - edge - 1, 0, n / 2) && !lit(n - edge, 0, n / 2), counts[1] != 0, "{n} {counts:?}: answers ink right");
             }
             // equal counts per series: equal pixel rows per color in a bar column
             let img = render(&summary(), n, dpr, &data([0; 4], false), true).unwrap();
             let col = |c: [u8; 4]| (0..img.h).filter(|y| img.px[((y * img.w + img.w - 2) * 4) as usize..][..3] == c[..3]).count();
             assert!(col(p.work) > 0 && col(p.work).abs_diff(col(p.failed)) <= 1 && col(p.failed).abs_diff(col(p.ask)) <= 1, "{n}");
+        }
+    }
+
+    // I1/I4 and CI4: Summary hides zeros and includes blocked; a saved Custom ready binding keeps its meaning.
+    #[test]
+    fn summary_counts_keep_custom_bindings_and_unknown() {
+        let mut d=data([0;4],false);d.bins=vec![[0;4];12];
+        assert_eq!(render(&summary(),44,2.0,&d,true).unwrap().px,compact(true,true,2.0).px);
+        d.blocked=Some(3);
+        let blocked=render(&summary(),44,2.0,&d,true).unwrap();
+        d.blocked=Some(0);d.counts[2]=Some(3);
+        assert_eq!(blocked.px,render(&summary(),44,2.0,&d,true).unwrap().px);
+        let mut custom=summary();custom["elements"][2]["bind"]=json!("ready");
+        d.counts[2]=Some(0);d.blocked=Some(3);
+        assert_eq!(render(&custom,44,2.0,&d,true).unwrap().px,compact(true,true,2.0).px);
+        custom.as_object_mut().unwrap().remove("empty");
+        assert!(render(&custom,44,2.0,&d,true).unwrap().px.iter().all(|v|*v==0));
+        d.blocked=None;
+        assert!(render(&summary(),44,2.0,&d,true).unwrap().px.iter().any(|v|*v!=0));
+        for (dark,colors) in [(true,[[141,210,184,255],[237,188,150,255],[200,208,217,255]]),(false,[[36,111,89,255],[149,85,37,255],[93,104,116,255]])] {
+            d.counts=[Some(8);4];d.blocked=Some(0);
+            let image=render(&summary(),44,2.0,&d,dark).unwrap();
+            for color in colors {assert!(has(&image,color),"menu counter color missing");}
         }
     }
 
@@ -539,7 +578,7 @@ mod tests {
     // Chain: R12 unknown in the icon. Risk: unknown drawn as zero; large counts widen the icon.
     #[test]
     fn unknown_is_a_dash_and_overflow_a_threshold() {
-        let d = Data { counts: [None, Some(2), Some(9), Some(1)], bins: vec![[0; 4]; 12], paused: false };
+        let d = Data { blocked: Some(0), counts: [None, Some(2), Some(9), Some(1)], bins: vec![[0; 4]; 12], paused: false };
         let unknown = render(&summary(), 44, 2.0, &d, true).unwrap();
         let zero = render(&summary(), 44, 2.0, &data([0, 2, 9, 1], false), true).unwrap();
         assert_ne!(unknown.px, zero.px, "unknown never draws as zero");

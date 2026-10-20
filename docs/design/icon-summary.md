@@ -12,11 +12,11 @@ Replaces the wide strip as a design target. Runtime changes with implementation;
 
 ```text
 work       answers
-ready      cadence
+ready+blocked cadence
 ```
 
-- Work = doing + review; answers = ask; ready = ready. Fixed positions; zero remains visible in the icon.
-- Four elements only. Active: no background, frame, grid, labels, q or play.
+- Work = doing + review; answers = ask; third count = ready + blocked. Fixed positions; hide each zero count without shifting other cells. Unknown still draws a dash.
+- Four elements only. Active: no background, frame, grid or labels. If all elements would be empty, show the existing compact Q; otherwise no Q/play overlay.
 - N×N container; value changes never widen it.
 - macOS: 22×22 logical points. Windows: actual slot/DPI; qualify 16/20/24/32 physical pixels, not one repeatedly resized PNG.
 - Reference grid and light/dark backing surfaces are inspection aids; export transparent assets.
@@ -68,6 +68,7 @@ bottom alignment: baselineY = R - actualBoundingBoxDescent
 - Earlier reference contains only close/failed. Product preserves all four M6 series; fixture simplification cannot remove data.
 - Runtime has 12 bins. Adaptive rebinning is accepted under D11; sum adjacent bins, preserving period and every series total. Do not discard half the history.
 - Acceptance fixture has nonzero first/last bars. Real zero edges stay zero. Expose exact totals in the menu when pixels cannot resolve a segment.
+- Counts use the menu counter colors (K-A1–K-A6): work, ask and neutral ready/blocked respectively.
 - UI colors come from [visual-style.md](visual-style.md#palette). Board labels keep their separate API palette.
 - Paused: same geometry/data in gray, existing compact q/pause centered at N/2,N/2. Never substitute a new pause-button shape. Qualify overlay readability separately; partial pause does not gray everything.
 

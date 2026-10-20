@@ -45,7 +45,7 @@ console.log('PASS WS11 nested Back, filter/scroll/disclosure restoration, settin
 
 // Chain: M13 header/fit -> native size request -> reopened persisted dimensions.
 // Risk: Top is coupled to Pin or a refresh overwrites the user's chosen size.
-const sizing={devicePixelRatio:1.4,gutter:()=>8,S:{font:20,pinned:false,top:true,size:null},sent:[],document:{body:{style:{}}},menu:{style:{},getBoundingClientRect:()=>({height:421.4})},send:m=>sizing.sent.push(m)};
+const sizing={devicePixelRatio:1.4,gutter:()=>8,S:{font:20,pinned:false,top:true,size:null},sent:[],document:{body:{style:{}}},menu:{style:{},querySelector:()=>null,getBoundingClientRect:()=>({height:421.4})},send:m=>sizing.sent.push(m)};
 require('./tray-harness.cjs').install(sizing);
 (sizing.fit());assert.deepEqual(JSON.parse(JSON.stringify(sizing.sent.pop())),{a:'size',d:1.4,g:8,w:360,h:422});
 assert((sizing.head()).includes('data-a="top" aria-pressed="true"'));
@@ -65,3 +65,9 @@ fire('pointermove',{screenX:30,screenY:25});fire('lostpointercapture');fire('los
 assert.equal(drag.resizing,null);assert.equal(messages.filter(m=>m.a==='resize-end').length,1);
 assert.deepEqual(drag.manualSize,[340,415]);
 console.log('PASS actual resize listeners release once after capture loss');
+
+// A2/A4: header destinations and content-fit modes preserve the user's width.
+assert.match(sizing.head(),/data-route="home"/);assert.match(sizing.head(),/data-route="settings"/);
+for(const mode of ['bottom','top']){sizing.S.size_anchor=mode;sizing.fit();assert.equal(sizing.sent.at(-1).h,422);assert.equal(sizing.sent.at(-1).w,500);}
+sizing.S.size_anchor='fixed';sizing.fit();assert.equal(sizing.sent.at(-1).h,300);
+console.log('PASS A2/A4 header navigation and fixed/content-fit modes');

@@ -7,7 +7,7 @@ Approved layout; unimplemented capabilities remain design targets. Runtime follo
 
 - Start compact. Show Icon / Summary / Custom on both macOS and Windows; apply immediately and persist. Square rendering follows I6; Windows compact-only runtime is a migration baseline, not the target.
 - Fixed top strip: view, named host, admission state, icon-only pause/resume and Controls. Mixed/unknown state must remain explicit.
-- Summary: fixed two-level square under [I1–I5](icon-summary.md); work = doing + review, answers = ask, ready = ready, cadence in the fourth cell. No active q/play overlay.
+- Summary: fixed two-level square under [I1–I5](icon-summary.md); work = doing + review, answers = ask, third count = ready + blocked, cadence in the fourth cell. Hide zero counts without moving the other cells; use the corresponding K-A1–K-A6 counter colors. No active q/play overlay unless Summary would be empty; then show the existing compact Q.
 - Pause keeps the same gray data and geometry with the existing compact q/pause centered. Partial pause is not full grayscale.
 - Work is mint, questions peach, ready neutral, failures muted red. Unknown is explicit with cause; incomplete sums remain marked.
 - Menu font options 14/16/18/20, default 16; typography and bounded-window behavior follow visual-style.md. Icon sizing is independent.
@@ -27,6 +27,8 @@ Counter scope, all states and quiet Closed totals: [K-A1–K-A6](task-counters.m
 
 ## M3 Navigation and tasks
 
+- Header outside the scrolling content: Home icon then Settings gear at left; size anchor, Top, pin and close × at right. No bottom Home or Settings navigation. Its slightly contrasting strip never moves during scroll bounce.
+- Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.
 - Home: fixed controls, Work mode, Attention, short AI composer with attachments, project shortcuts, Settings and AI workspace access.
 - Attention contains decisions, failed tasks and actionable service/admission problems under [A2](adaptive-menu.md#a2-explain-the-queue). Ordinary waits remain neutral.
 - Project header: Back, name, Board link and compact nonzero counters. Add is a plus in the Projects header.
@@ -152,12 +154,13 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 
 ## M13 Pinned window
 
-- The menu header carries a pin control. Unpinned (default): the popover closes on blur, as today.
-- Pinned: the same content stays open as a standalone window with the same width rules; it moves anywhere by dragging its header, does not close on blur or on a tray icon click (the click raises it).
+- The menu header carries icon-only Pin and Top controls with tooltips and accessible names. Pin orientation distinguishes pinned from unpinned; Top uses overlapping squares. × hides either window. Unpinned (default): the popover closes on blur, as today.
+- Pinned: the same content stays open as a normal app window in Cmd+Tab/Alt+Tab where supported (unsupported behavior requires an owner decision), with the same width rules; it moves anywhere by dragging its header, does not close on blur or on a tray icon click (the click raises it).
 - The window snaps to the screen work-area edges where the OS provides it (Windows Snap); on macOS it keeps within the work area and remembers the last position per display.
 - Unpin returns to the popover at the tray icon. Pinned state and position persist in `<install>/tray.json`; a missing or off-screen position falls back to the tray icon.
 - Top independently keeps the window above normal windows (default on); with Top off it can go behind others and a tray click raises it. Pin and Top persist independently.
-- The header stays visible while content scrolls and is the drag handle; controls act on the first click on macOS.
+- The header stays outside the scrolling and rubber-band region and is the drag handle; controls act on the first click on macOS.
+- Size anchor cycles Fixed size, Keep bottom edge, Keep top edge; its icon, tooltip and accessible name show the selected mode. Fixed keeps both dimensions; the edge modes fit content vertically while keeping the named edge, clamped to the work area. Persist the mode in `tray.json`; existing manually sized windows keep Fixed size, other windows keep top-edge content fit.
 - A bottom-right resize grip changes both dimensions; the chosen logical size persists across reopen and restart. Before a manual resize, fit content at the current font and DPI up to the monitor work area; scroll only when content exceeds available space.
 
 ## M14 Notifications
@@ -170,7 +173,7 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 - The first enable asks the OS for permission on macOS; Windows reads the OS notification setting without a consent prompt. While the prompt is open Settings shows `Asked`; a failed request shows its OS error, never `Not asked`. Denied or revoked: Settings shows `Blocked by the OS` with a link to the OS setting, and nothing falls back to another channel. `Send test` posts one sample of the selected kind.
 - An unknown `tray.json` value reads as the default and keeps the file.
 - Windows toasts use AppUserModelID `org.taskq.tray` on a TaskQ-owned Start Menu shortcut to the stable tray executable, whose toast activator CLSID names the running tray's COM activator, so a click on a banner or in Notification Center reaches it; OS settings are read through the notifier (denied: Blocked, no setting recorded before the first toast: the OS default, allowed, other errors: Unknown). A failed authorization request is logged in `tray.log`.
-- Packaging: Windows runs the tray as `<install>/taskq-tray.exe`, so the notification-area pin follows the exe path across updates. macOS runs `<install>/TaskQ.app` (bundle `org.taskq.tray`, signed as taskq.md § 8 step 5), which notifications need, started through LaunchServices (`open`; the bundle with no args is the tray of its parent folder and appends its stderr to `tray.log`): a bundle exec'd by the service is refused authorization.
+- Packaging: Windows runs the tray as `<install>/taskq-tray.exe`, so the notification-area pin follows the exe path across updates. macOS notifications show the TaskQ app icon, packaged in `<install>/TaskQ.app` (bundle `org.taskq.tray`, signed as taskq.md § 8 step 5), which notifications need, started through LaunchServices (`open`; the bundle with no args is the tray of its parent folder and appends its stderr to `tray.log`): a bundle exec'd by the service is refused authorization.
 
 ## Acceptance
 
@@ -197,7 +200,7 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 | M-A18 | Pinned/recent, searchable All, header plus; all-state aggregate/project counters and quiet Closed follow K-A1–K-A6. |
 | M-A19 | Both composers accept attachments; workspace/window recovery follows C-A1–C-A10. |
 | M-A20 | Shared editor preserves Mixed, untouched fields/targets and per-project readback. |
-| M-A21 | Pin keeps the menu open; Top independently controls above-normal placement; fixed header, first-click controls and a bottom-right resize grip; size, position and toggles survive a tray restart; unpin returns to the popover; Windows edge snap, macOS work-area clamp. |
+| M-A21 | Pin keeps a normal app window open; Top independently controls above-normal placement; bounce-proof icon header, close ×, three size-anchor modes, first-click controls and a bottom-right resize grip; size, position and toggles survive a tray restart; unpin returns to the popover; Windows edge snap, macOS work-area clamp. |
 
 [Verification](verification.md) separates historical evidence from the current candidate. General principles change per [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules); TaskQ behavior changes here under R13.
 | M-A22 | Each kind follows its host or project setting; an event notifies once across tray restarts; a burst becomes one summary; a click opens the card; OS denial shows Blocked and posts nothing. |
