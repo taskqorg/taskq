@@ -2162,7 +2162,7 @@ mod tests {
     fn blocked_capacity_does_not_block_pause() {
         crate::with_test_capture(|_store,dir| {
             let root=dir.join("project");let install=dir.join("install");
-            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resource-state")).unwrap();
+            fs::create_dir_all(crate::dot(&root)).unwrap();fs::create_dir_all(install.join("resources")).unwrap();
             fs::write(root.join("taskq.json"),"{\"repo\":\"fixture/project\"}").unwrap();
             fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
             fs::write(install.join("host.json"),json!({"hosts":{crate::hostname():"capacity-host"},"limits":{"codex":2}}).to_string()).unwrap();
@@ -2173,7 +2173,7 @@ mod tests {
             let message=json!({"a":"capacity","root":root,"id":"blocked","issued_at":now,"expires_at":now+300,"ops":[{
                 "target":{"installation_id":null,"generation":1,"project_id":null,"runtime_id":"codex"},
                 "policy_schema":"taskq.host-capacity/1","expected_revision":policy.revision().unwrap(),"changes":{"runtime_limit":3}}]});
-            let lock=coreq::file_lock::lock(&install.join("resource-state/lock")).unwrap();
+            let lock=coreq::file_lock::lock(&install.join("resources/lock")).unwrap();
             let (capacity_tx,capacity_rx)=std::sync::mpsc::channel();
             let blocked=ActionQueue::start(install.clone(),&["capacity"],true,|install,root,message| {
                 crate::platform::write_atomic(&install.join("capacity-entered"),"")?;
