@@ -770,8 +770,13 @@ mod tests {
     }
     #[test]
     fn archive_pressure_refuses_growth_without_deleting_history() {
-        let d=dir();let mut accepted=0;
-        for n in 0..600 {
+        // Bulk-load the first rows in one transaction; per-append open and checkpoint made 60 s on Windows (#1376).
+        let (d,filled)=(dir(),440);
+        {let mut db=open(&d).unwrap();let tx=db.transaction().unwrap();
+        for n in 0..filled {insert(&tx,&format!("{n}:{}","x".repeat(60<<10)),100).unwrap();}
+        tx.commit().unwrap();checkpoint(&db).unwrap();}
+        let mut accepted=filled;
+        for n in filled..600 {
             match append(&d,&format!("{n}:{}\n","x".repeat(60<<10)),100) {
                 Ok(())=>accepted+=1,
                 Err(error)=>{assert!(error.contains("source archive preserved"),"append {n} at {}: {error}",d.display());break;}
@@ -779,7 +784,7 @@ mod tests {
             let bytes:u64=std::fs::read_dir(d.join("telemetry.log")).unwrap().map(|e|e.unwrap().metadata().unwrap().len()).sum();
             assert!(bytes<64<<20);
         }
-        assert!(accepted>0&&accepted<600);
+        assert!(accepted>filled&&accepted<600,"{accepted}");
         let text=read(&d,100).unwrap();assert_eq!(text.lines().count(),accepted);assert!(text.starts_with("0:"));
         std::fs::remove_dir_all(d).unwrap();
     }
