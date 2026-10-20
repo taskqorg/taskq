@@ -354,6 +354,7 @@ impl GitHub {
 }
 
 impl Board for GitHub {
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha) }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }
