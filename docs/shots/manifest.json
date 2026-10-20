@@ -1,7 +1,7 @@
 {
   "version": "4.6.25",
-  "sourceCommit": "976611fca5e028fc0c8a1dbf7ba194c92be46dac",
-  "binarySha256": "dc108a40a7fe03136320021a1cf22df35a05a7071a794b002349e2454c669ee4",
+  "sourceCommit": "10c42d45f3586fc643c5bb13749b6935036938bc",
+  "binarySha256": "f9db1881b963a991d55a20ee286f3cc2a946b5798c2cf4dc6b8585034318a1f1",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -16,7 +16,7 @@
     "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
     "src/workspace-entry.js": "4a0dc64f9d25fb8d9c4e945c1d74c2563a3a9e67",
     "scripts/build-web.cjs": "1cdc726f88e8ed3ddaa50efb3550a5f48a0f0318",
-    "src/icon.rs": "cc8eca744a75bff551c6dd09f1c18b43c3c17c84",
+    "src/icon.rs": "1d5823aa09be26a4ae62950b10b0ce6025482073",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
@@ -27,7 +27,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "410f388d895bd0b834b58e9e0bb3860c29901b38a5561e5000becddd4f98545d"
+      "sha256": "7fe18227cb3dc3bae0a0030ef4db85459f999fc1e64567015903da48eddf6ef9"
     },
     {
       "file": "popover-dark-project-16.png",
