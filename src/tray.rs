@@ -2145,6 +2145,7 @@ mod tests {
             release_tx.send(()).unwrap();
             let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
             assert!(crate::data::focus(&root).unwrap().is_empty());
+            assert!(crate::telemetry::settle(Duration::from_secs(30)));
             let page=store.export(0,0,1024).unwrap();
             let rows:Vec<_>=page["events"].as_array().unwrap().iter().map(|r|&r["observation"]).collect();
             let receipts:Vec<_>=rows.iter().copied().filter(|r|r["source"]=="command").collect();
