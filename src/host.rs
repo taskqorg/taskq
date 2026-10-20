@@ -1522,7 +1522,10 @@ mod tests {
                 let _repeating=tracing::info_span!("tray.refresh",coreq_repeating=folded).entered();
                 assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
             });
-            capture.flush().unwrap();
+            // #1339: folded aggregates persist only through finish() or the last Capture drop; another thread's
+            // tracing interest rebuild can briefly own a Dispatch clone, so `late` makes that drop order deterministic.
+            let late=dispatch.clone();
+            capture.finish().unwrap();
             let health=capture.health();
             assert_eq!((&health["lost"],&health["failed_batches"]),(&json!(0),&json!(0)),"{health}");
             drop(dispatch);drop(capture);drop(store);
@@ -1543,7 +1546,7 @@ mod tests {
                 let calls=|op:&str|rows.iter().filter(|r|r["operation"]==op).filter_map(|r|r["calls"].as_u64()).sum::<u64>();
                 assert_eq!((calls("taskq.tray.refresh"),calls("taskq.service.loop")+passes),(1800,360),"aggregates keep every poll");
             }
-            drop(store);fs::remove_dir_all(&install).unwrap();
+            drop(late);drop(store);fs::remove_dir_all(&install).unwrap();
         }
     }
 
