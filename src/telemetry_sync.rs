@@ -311,6 +311,7 @@ mod tests {
         let n = d.sent.len();
         assert_eq!(go(&install, &mut d).0["state"], "off", "revoked: off");
         assert_eq!(d.sent.len(), n);
+        drop(store);
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -372,6 +373,7 @@ mod tests {
         while !s.job.as_ref().unwrap().is_finished() { std::thread::sleep(Duration::from_millis(50)) }
         assert_eq!(s.tick_with(&install, Some(&snap("o/a")), 3, |_| Box::new(Slow)).as_deref(), Some("telemetry sync: retrying (unreachable)"));
         assert_eq!(s.status["backlog_rows"], 10);
+        drop(store);
         fs::remove_dir_all(install).unwrap();
     }
 }
