@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Publication requires successful tests.yml for the exact source commit on main (SOURCE_BRANCH).
 
-Releases push live to a main commit, so runs on main count, up to 30 days old: a release may promote an older commit.
-The merge queue tests the commit that main fast-forwards to, so its merge_group run on the same SHA counts
-while the duplicate push run is still pending; a newer completed failure still refuses."""
+Releases push live to a main commit, so its runs count up to 30 days old: a release may promote an older commit.
+The merge queue tests the commit that main fast-forwards to, so its merge_group run on the same SHA is the gate;
+a workflow_dispatch run on main also counts. Push runs carry no tests (docs/testing.md) and never count.
+A newer completed failure still refuses."""
 import datetime
 import json
 import os
@@ -16,7 +17,7 @@ def selected(runs, sha, branch, now):
     for run in runs:
         if run.get('head_sha') != sha or run.get('path') != '.github/workflows/tests.yml':
             continue
-        if run.get('event') in {'push', 'workflow_dispatch'}:
+        if run.get('event') == 'workflow_dispatch':
             if run.get('head_branch') != branch:
                 continue
         elif run.get('event') != 'merge_group' or not str(run.get('head_branch')).startswith(f'gh-readonly-queue/{branch}/'):
