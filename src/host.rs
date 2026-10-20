@@ -437,7 +437,9 @@ pub struct Host {
     pub stop_controller:Option<crate::host_control::Control>,
     /// Each thread reports active turns/children before the host considers an image switch.
     pub busy: BTreeMap<PathBuf, bool>,
+    /// The last finished pass of each project reported its handover prepared; `passing` projects have not finished.
     pub prepared: BTreeSet<PathBuf>,
+    passing: BTreeSet<PathBuf>,
     pub recovered: BTreeSet<PathBuf>,
     pub updating:Option<std::thread::JoinHandle<Res<Maintenance>>>,
     pub draining: BTreeSet<PathBuf>,
@@ -452,7 +454,7 @@ pub struct Host {
 impl Host {
     pub fn new(policy: Res<Policy>) -> Self {
         Self { instance:crate::runtime::uuid(),policy, capacity_command:None, slots: BTreeMap::new(), gate: Gate::default(), began: Instant::now(), last: None,
-            ready: BTreeSet::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
+            ready: BTreeSet::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
             rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
     }
@@ -477,7 +479,7 @@ impl Host {
     /// A newly attached project may carry old occupancy, even if its root was drained earlier.
     fn attach(&mut self,root:&Path) {
         self.busy.insert(root.into(),true);
-        self.prepared.remove(root);self.recovered.remove(root);self.rebuilt.remove(root);
+        self.prepared.remove(root);self.passing.remove(root);self.recovered.remove(root);self.rebuilt.remove(root);
         self.rebuilding=true;
     }
 
@@ -513,7 +515,10 @@ impl Host {
             self.published.get(root).is_some_and(|at| at.elapsed().as_secs() < 60))
     }
 
-    pub fn handoff_ready(&self) -> bool {
+    pub fn handoff_ready(&self) -> bool {self.handoff_settled()&&self.passing.is_empty()}
+
+    /// The handover waits only for passes in flight: no project starts another one (#1402).
+    pub(crate) fn handoff_settled(&self) -> bool {
         self.restart && !self.rebuilding && self.held.is_none()&&self.updating.is_none()
             &&(!self.stopping||(self.slots.is_empty()&&self.busy.values().all(|busy|!*busy)))
             && self.busy.keys().all(|root|self.prepared.contains(root))
@@ -526,7 +531,8 @@ impl Host {
         else if self.stopping&&!self.slots.is_empty() {Some(Execution)}
         else if self.rebuilding||self.held.is_some() {Some(Recovery)}
         else if self.stopping&&self.busy.values().any(|busy|*busy)
-            ||self.busy.keys().chain(self.slots.keys().map(|(root,_,_)|root)).any(|root|!self.prepared.contains(root)) {Some(Project)}
+            ||self.busy.keys().chain(self.slots.keys().map(|(root,_,_)|root)).any(|root|!self.prepared.contains(root))
+            ||self.updating.is_none()&&!self.passing.is_empty() {Some(Project)}
         else if self.updating.is_some() {Some(Maintenance)}
         else {None}
     }
@@ -537,14 +543,24 @@ impl Host {
         self.restart && !std::mem::replace(&mut self.restart_woken,true)
     }
 
-    /// A drained Stop project cannot revoke preparation while other projects are still draining.
+    /// A drained Stop project cannot revoke preparation while other projects are still draining. #1402: a pass
+    /// keeps the project's last report until it ends; once every report is prepared no new pass starts, so six
+    /// projects whose passes overlap still reach a moment with none in flight.
     pub fn begin_pass(&mut self, root:&Path) -> bool {
-        if self.handoff_ready() || self.stopping && self.prepared.contains(root)
+        // A pass that never reported (an error or panic) leaves no acknowledgment.
+        if self.passing.remove(root) {self.prepared.remove(root);}
+        if self.handoff_settled() || self.stopping && self.prepared.contains(root)
             && self.busy.get(root)==Some(&false) && !self.slots.keys().any(|(project,_,_)|project==root) {return false;}
-        self.prepared.remove(root);
+        self.passing.insert(root.into());
         self.recovered.remove(root);
         self.busy.insert(root.into(),true);
         true
+    }
+
+    /// The pass's handover report; `prepared` only when nothing it owns blocks the re-exec.
+    pub fn end_pass(&mut self, root:&Path, prepared:bool) {
+        self.passing.remove(root);
+        if prepared {self.prepared.insert(root.into());} else {self.prepared.remove(root);}
     }
 
     pub fn reserve(&mut self, project: &Path, n: u64, a: u64, rt: &str, cap: &Capacity, queue: bool, now: u64) -> Res<usize> {
@@ -776,7 +792,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut native_requested:Option<Instant>=None;
     let mut native_legacy:Res<Vec<String>>=Err("native legacy inventory pending; host admission held".into());
     let mut maintenance_result=String::new();
-    let mut upgrade_report:Option<String>=None;
+    let mut upgrade_report:Option<bool>=None;
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
     let mut tray = None;
@@ -876,6 +892,7 @@ pub fn run(install: &Path) -> Res<()> {
             let drained = matches!(&outcome, Ok(Err(e)) if e == "project drained");
             let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
             h.publication(&root, false);
+            h.passing.remove(&root);
             if drained { h.busy.remove(&root); h.prepared.remove(&root);h.recovered.remove(&root);drained_roots.insert(root.clone()); }
             else {
                 // A reduced loop failed: its attempts expire on other hosts, and local launches hold for inspection.
@@ -915,7 +932,8 @@ pub fn run(install: &Path) -> Res<()> {
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
         let transitioning=h.restart||restart.current.as_ref().map_or(true,Option::is_some)||!transition_ready;
-        if h.updating.is_none()&&native_inventory_due(&native_legacy,native_requested.or(native_checked),transitioning) {
+        // #1402: a refresh started while passes drain for the handover would let them start again.
+        if h.updating.is_none()&&!h.handoff_settled()&&native_inventory_due(&native_legacy,native_requested.or(native_checked),transitioning) {
             // Keep the last observation and its age while refreshing; stale/unknown still holds.
             native_requested=Some(Instant::now());
             let install=install.to_path_buf();
@@ -951,10 +969,12 @@ pub fn run(install: &Path) -> Res<()> {
                 if let Err(e) = crate::poke(root) { append_project(install, root, &e); }
             }
         }
-        // After the installer's 300 s wait, which began before this generation started.
-        if let Some(reason)=(upgrade_report.is_none()&&began.elapsed().as_secs()>=300).then(||installation::stale_upgrade(install)).flatten() {
-            crate::platform::log(&reason);for root in &roots {append_project(install,root,&reason);}upgrade_report=Some(reason);
-        }
+        // The installer's 300 s wait began before this generation started; a reason not retained retries next tick.
+        let late=began.elapsed().as_secs()>=300;
+        if upgrade_report!=Some(late) {if let Some(reason)=installation::stale_upgrade(install,late) {
+            if late {crate::platform::log(&reason);for root in &roots {append_project(install,root,&reason);}}
+            upgrade_report=Some(late);
+        }}
         if h.restart {
             let wait=h.handoff_wait();
             drop(h);
@@ -1464,25 +1484,25 @@ mod tests {
     fn handover_preparation_latches_only_after_every_owned_project() {
         let a=PathBuf::from("a");let b=PathBuf::from("b");
         let mut h=Host::new(Err("fixture".into()));
-        assert!(h.begin_pass(&a));h.restart=true;h.prepared.insert(a.clone());
+        assert!(h.begin_pass(&a));h.restart=true;h.end_pass(&a,true);
         h.sync(&b,vec![(1,7,"codex".into())]);
         assert!(!h.handoff_ready(),"an unrepresented slot is not an idle project");
-        assert!(h.begin_pass(&a));assert!(!h.prepared.contains(&a));
-        h.prepared.insert(a.clone());assert!(h.begin_pass(&b));
-        h.prepared.insert(b.clone());
+        assert!(h.begin_pass(&a));assert!(!h.handoff_ready(),"a pass in flight holds the handover");
+        h.end_pass(&a,true);assert!(h.begin_pass(&b));
+        h.end_pass(&b,true);
         h.held=Some("registry unknown".into());assert!(!h.handoff_ready());
         h.held=None;assert!(h.handoff_ready());
         for _ in 0..3 {
             assert!(!h.begin_pass(&a));assert!(!h.begin_pass(&b));assert!(h.handoff_ready());
         }
         h.prepared.remove(&b);assert!(!h.handoff_ready(),"failed ownership cannot keep an old acknowledgment");
-        assert!(h.begin_pass(&a));assert!(!h.prepared.contains(&a));
-        h.prepared.insert(a.clone());h.prepared.insert(b.clone());
+        assert!(h.begin_pass(&a));assert!(!h.handoff_ready());
+        h.end_pass(&a,true);h.end_pass(&b,true);
         let (send,receive)=std::sync::mpsc::channel();
         h.updating=Some(std::thread::spawn(move || {receive.recv().map_err(|e|e.to_string())?;Ok(Maintenance::Update(None))}));
         assert!(!h.handoff_ready(),"an update owner must finish before image replacement");
         assert!(h.begin_pass(&a),"projects keep heartbeat/native monitoring while the update waits");
-        h.prepared.insert(a);send.send(()).unwrap();h.updating.take().unwrap().join().unwrap().unwrap();assert!(h.handoff_ready());
+        h.end_pass(&a,true);send.send(()).unwrap();h.updating.take().unwrap().join().unwrap().unwrap();assert!(h.handoff_ready());
         h.stopping=true;
         assert!(!h.handoff_ready(),"Stop cannot reuse a CLI handover acknowledgment while a native slot remains");
         h.sync(&b,vec![]);assert!(!h.handoff_ready(),"Stop still waits for active project/operator ownership");
@@ -1490,6 +1510,36 @@ mod tests {
         assert!(h.handoff_ready(),"only the prepared host with no occupied work may stop");
 
     }
+    // #1402: six projects whose passes overlap. Revoking preparation at each pass start left no moment with all
+    // six prepared, so the host kept the old image. Risk: the handover waits on passes forever, or re-execs mid-pass.
+    #[test]
+    fn overlapping_passes_reach_the_handover() {
+        let roots:Vec<_>=(0..6).map(|n|PathBuf::from(format!("project-{n}"))).collect();
+        let mut h=Host::new(Err("fixture".into()));h.restart=true;
+        for root in &roots {h.busy.insert(root.clone(),true);}
+        for root in &roots {assert!(h.begin_pass(root));}
+        // Staggered: each project ends a pass prepared and, before the others end, would start its next one.
+        for (n,root) in roots.iter().enumerate() {
+            h.end_pass(root,true);
+            assert!(!h.handoff_ready(),"no re-exec while a pass is in flight");
+            if n+1<roots.len() {assert!(h.begin_pass(root),"a project keeps passing while another has not reported");}
+        }
+        for root in &roots[..5] {
+            assert_eq!(h.handoff_wait(),Some(crate::lifecycle::HandoffWait::Project));
+            assert!(!h.begin_pass(&roots[5]),"every report prepared: no new pass starts");
+            h.end_pass(root,true);assert!(!h.begin_pass(root));
+        }
+        assert!(h.handoff_ready());
+        let mut h=Host::new(Err("fixture".into()));h.restart=true;
+        for root in &roots {h.busy.insert(root.clone(),true);}
+        for root in &roots {assert!(h.begin_pass(root));h.end_pass(root,true);}
+        assert!(h.handoff_ready());
+        h.prepared.remove(&roots[1]);assert!(h.begin_pass(&roots[0]),"an unprepared report lifts the barrier");
+        assert!(h.begin_pass(&roots[0]),"a pass that never reported");assert!(!h.prepared.contains(&roots[0]),"leaves no acknowledgment");
+        h.end_pass(&roots[0],true);assert!(h.begin_pass(&roots[1]));h.end_pass(&roots[1],false);
+        assert!(!h.handoff_ready(),"an unprepared pass result keeps the old image");
+    }
+
     // H-A3: idle projects must not revoke Stop preparation while another project is still draining.
     #[test]
     fn six_project_stop_retains_idle_preparation() {
@@ -1498,10 +1548,10 @@ mod tests {
         for root in &roots {h.busy.insert(root.clone(),true);}
         h.prepared.insert(roots[0].clone());h.sync(&roots[0],vec![(1,7,"codex".into())]);h.busy.insert(roots[0].clone(),false);
         assert!(h.begin_pass(&roots[0]),"an owned execution must continue to be monitored");
-        h.sync(&roots[0],vec![]);h.prepared.insert(roots[0].clone());
+        h.sync(&roots[0],vec![]);h.end_pass(&roots[0],true);
         assert!(h.begin_pass(&roots[0]),"an active operator/project cannot freeze");
         for (n,root) in roots.iter().enumerate() {
-            assert!(h.begin_pass(root));h.busy.insert(root.clone(),false);h.prepared.insert(root.clone());
+            assert!(h.begin_pass(root));h.busy.insert(root.clone(),false);h.end_pass(root,true);
             if n+1<roots.len() {
                 assert!(!h.handoff_ready());
                 for ready in &roots[..=n] {assert!(!h.begin_pass(ready),"a drained project cannot reopen the Stop barrier");}

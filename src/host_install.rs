@@ -656,11 +656,13 @@ fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,own
 
 /// #1357: an intent whose candidate already runs waits only for its repeated install. The host reports it in the
 /// log and the receipt instead of keeping it silently; the repeated install still continues the same command.
-pub fn stale_upgrade(install:&Path)->Option<String> {
+/// #1402: the receipt drops the pre-re-exec handover reason at once; None until the reason is retained.
+pub fn stale_upgrade(install:&Path,late:bool)->Option<String> {
     let p=upgrade_intent(install).ok()??;
     if p.version!=crate::platform::VERSION||installation_status(install,Some(&p.id))["state"]!="queued" {return None;}
-    let reason=format!("upgrade {} already runs {}; repeat service install in {} to finish it",p.id,p.version,p.root.display());
-    let _=retain_reason(install,&p,&reason);
+    let reason=if late {format!("upgrade {} already runs {}; repeat service install in {} to finish it",p.id,p.version,p.root.display())}
+        else {format!("upgrade {} runs {}; the waiting service install in {} finishes it",p.id,p.version,p.root.display())};
+    retain_reason(install,&p,&reason).ok()?;
     Some(reason)
 }
 
@@ -1138,6 +1140,11 @@ mod tests {
         assert!(adopt_upgrade(&install,&root,"0.0.1").unwrap().is_none(),"the old host never binds the candidate's command");
         let new=host(crate::platform::VERSION);
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
+        // #1402: the host that runs the candidate drops the pre-re-exec reason at once, before the 300 s report.
+        assert!(stale_upgrade(&install,false).unwrap().contains("the waiting service install"));
+        let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
+        assert!(!reason.contains("live work hands over")&&reason.contains(&p.id),"{reason}");
+        assert!(stale_upgrade(&install,true).unwrap().contains("repeat service install"));
         let adopted=adopt_upgrade(&install,&root,crate::platform::VERSION).unwrap().unwrap();
         assert_eq!((adopted.id.as_str(),adopted.command.as_str()),(p.id.as_str(),p.command.as_str()),"the attach continues the same command");
         fs::remove_file(install.join(UPGRADE_INTENT)).unwrap();
