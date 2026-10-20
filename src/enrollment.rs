@@ -58,11 +58,13 @@ pub fn state(install: &Path) -> Res<Option<Value>> {
 
 /// `taskq enroll`: browser or headless approval of this board's scope, then the first snapshot until DashQ
 /// projects it. Capabilities are none: the grant can neither answer tasks nor run commands.
-pub fn pair(install: &Path, url: &str, host: &str, board: &BoardScope, browser: bool) -> Res<Value> {
+/// `telemetry` adds the opt-in [`crate::telemetry_sync::SCHEMA`]; a changed schema list is a new approval.
+pub fn pair(install: &Path, url: &str, host: &str, board: &BoardScope, browser: bool, telemetry: bool) -> Res<Value> {
     let dest = destination(url)?;
     let id = installation_id(install)?;
     let value = board.value();
-    let req = enroll::Request { installation: Some(&id), product: "taskq", host_label: host, schemas: &[SCHEMA, RESOURCES], scope: Some((SCHEMA, &value)), capabilities: &[] };
+    let schemas: &[&str] = if telemetry { &[SCHEMA, RESOURCES, crate::telemetry_sync::SCHEMA] } else { &[SCHEMA, RESOURCES] };
+    let req = enroll::Request { installation: Some(&id), product: "taskq", host_label: host, schemas, scope: Some((SCHEMA, &value)), capabilities: &[] };
     enroll::pair(&dir(install), &dest, &req, &mut resources::Fenced::new(install, Https { browser }))
 }
 

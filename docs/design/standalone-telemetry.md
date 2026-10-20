@@ -87,13 +87,13 @@ For the R8 exception in taskq.md § 4, bootstrap first requests the current budg
 
 The second R8 exception is [receipt-degraded Stop](host-service.md#receipt-degraded-stop-r8). The new service advertises Stop protocol 2; healthy receipt-backed requests also accept protocol 1. A failed received receipt with protocol 1 refuses before writing intent, so an old service is never wedged by an unsupported degraded record.
 
-## Remote sync proposal (#1353)
+## Remote sync (#1353)
 
-Proposal for owner acceptance; not a runtime rule until accepted and implemented (R8, R12, R13). Facts it builds on: the only live store is the coreq universal store `telemetry.log/universal.sqlite3`; `coreq::telemetry::Reader` reads one committed snapshot without the writer lock; observations carry stable ids; the coreq [connection client](https://github.com/taskqorg/coreq/blob/main/docs/design/enrollment.md) delivers `/ingest` records (at most 100 records and 1 MiB per call) with per-record receipts, backoff and revoke. ServerQ has no ingest route: it is itself a DashQ connection client. The only existing collector is DashQ.
+Owner-accepted S1–S5, implemented in `src/telemetry_sync.rs`. Facts it builds on: the only live store is the coreq universal store `telemetry.log/universal.sqlite3`; `coreq::telemetry::Reader` reads one committed snapshot without the writer lock; observations carry stable ids; the coreq [connection client](https://github.com/taskqorg/coreq/blob/main/docs/design/enrollment.md) delivers `/ingest` records (at most 100 records and 1 MiB per call) with per-record receipts, backoff and revoke. ServerQ has no ingest route: it is itself a DashQ connection client. The only existing collector is DashQ.
 
-### Decisions to accept
+### Decisions
 
-| ID | Decision | Options | Recommendation |
+| ID | Decision | Options | Accepted |
 |---|---|---|---|
 | S1 | Destination | A. DashQ `/ingest` over the existing TaskQ connection. B. A new ServerQ collector service: new server, new deploy, changes ServerQ from read-only checker to collector. | A. No new server or transport; the serverq-named item becomes a DashQ task (A6). |
 | S2 | Grant | A. A separate opt-in schema `taskq-telemetry/1` in the connection request, shown on the approval page; adding it needs a new browser approval (new generation); `taskq disconnect` revokes it with the rest. B. Send under the existing grant. | A. Without the schema in the active grant no telemetry code path runs (A3). |
@@ -101,10 +101,12 @@ Proposal for owner acceptance; not a runtime rule until accepted and implemented
 | S4 | Cursor and pruning | A. Durable cursor `<install>/connection/telemetry.json` (last accepted row position, written atomically after `accepted` receipts). Retention and capacity pruning stay unchanged; rows pruned before upload are reported as a counted `gap`, never resent or invented. B. Pruning skips unconfirmed rows: the 1 GiB budget can be exceeded while offline. | A. The store bound holds; sync itself never deletes rows (A4). |
 | S5 | Runner | A. One background thread in the host service, started per pass when the grant lists the schema; it opens the Reader, sends at most one batch in flight, follows coreq backoff and `Retry-After`, and never holds the profile or writer lock across network I/O. B. A separate process or scheduler. | A. Capture, CLI and service passes never wait on it; failures are one log line and status fields. |
 
+Implementation details: `taskq enroll <url> --telemetry` adds the schema; enrolling again without it, or `taskq disconnect`, revokes it. Only the universal store is sent, not the legacy archive. Rows go as their export JSON lines; `first`/`last` are `{seq, id}`. A block holds at most 1 MiB of raw rows, halved until it compresses under 512 KiB; one record per `/ingest` call. A job reads at most 8 blocks from one Reader snapshot, drops the Reader, then sends; it runs at most 30 s, then waits 60 s when caught up and 300 s after a stop. Before each send the cursor stores the block's last seq as `pending`, so a retry after a lost reply rebuilds the same block and event id. A rejected receipt stops sending and keeps the cursor. A store whose newest seq is below the cursor was replaced; sync restarts at its first row (new rows have new ids). DashQ's metadata allowlist refuses a payload string over 256 characters, so DashQ must accept and project `taskq-telemetry/1` blocks before receipts read `accepted`; until then sync reads `stopped (rejected: …)` and keeps every row.
+
 ### Status (A5)
 
-`taskq connection status` and `status.json` `connection.telemetry`: `state` (`off`, `syncing`, `idle`, `retrying`, `stopped`, `unknown`), `last_synced` (board-independent local receipt time of the last accepted batch), `backlog_rows`, `backlog_bytes` (from the Reader after the cursor), `gap_rows`, `last_error` (a code, never a credential). An unreadable store or cursor reads unknown with its reason.
+`taskq connection status` (line `telemetry:`) and `status.json` `telemetry_sync` (`connection` stays the board delivery string): `state` (`off`, `syncing`, `idle`, `retrying`, `stopped`, `unknown`), `last_synced` (local Unix seconds of the last accepted block), `backlog_rows` (by sequence after the cursor), `backlog_bytes` (raw export bytes; null when the job did not read to the newest row), `gap_rows`, `last_error` (a code, never a credential). `off` also covers another project's service on the same install. An unreadable connection, store or cursor reads unknown with its reason; the cursor file is kept.
 
-### Checks after acceptance
+### Checks
 
-Chain checks against the coreq reference server: restart resumes from the cursor with no duplicate or missing `event_id`; lost reply retries the same record; `429`/`5xx` back off; a revoke stops sending immediately; no grant, no `/ingest` call; pruned rows count as `gap`; a slow server never delays a capture flush or a service pass. No deploy to FRA or another host without owner approval (A6).
+`telemetry_sync::tests`, against a fake `/ingest` that stores records by event id: no grant, no `/ingest` call; restart resumes from the cursor with no duplicate or missing row; a lost reply repeats the pending event id; `429` (Retry-After) and `5xx` back off with the cursor kept; `401` stops and later jobs read `off`; pruned rows count as `gap` and sync deletes nothing; an unreadable cursor is unknown and kept; a slow server never delays a service pass. The coreq reference server and DashQ projection are qualified in the DashQ task. No deploy to FRA or another host without owner approval (A6).
