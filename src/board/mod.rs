@@ -16,6 +16,8 @@ pub struct Issue {
     pub labels: Vec<String>,
     pub assignees: Vec<String>,
     pub updated: i64,
+    /// Board creation time: the entry time of the first state, ready (§ 1)
+    pub created: i64,
     pub open: bool,
     pub trusted: bool,
     /// Why a closed issue closed, when the board records it (GitHub `state_reason`): `completed`, `not_planned`, ...
@@ -678,7 +680,7 @@ impl Board for Fake {
         let t = st.tick();
         st.next_id += 1;
         let number = st.issues.len() as u64 + 1;
-        st.issues.push(Issue { number, title: title.into(), body: body.into(), labels: labels.to_vec(), assignees: vec![], updated: t, open: true, trusted: true, reason: None });
+        st.issues.push(Issue { number, title: title.into(), body: body.into(), labels: labels.to_vec(), assignees: vec![], updated: t, created: t, open: true, trusted: true, reason: None });
         Ok(number)
     }
     fn edit(&self, n: u64, body: &str) -> Result<()> {
@@ -1405,7 +1407,7 @@ exit 0
                 ("X-RateLimit-Limit".into(), "5000".into()), ("X-RateLimit-Reset".into(), "1791964800".into())];
             let value = if *flag.borrow() { json!({"errors": [{"type": "RATE_LIMITED", "message": "API rate limit exceeded"}]}) }
                 else if body["variables"]["after"].is_null() { json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": true, "endCursor": "c1"},
-                    "nodes": [{"number": 5, "title": "t", "body": "b", "updatedAt": "2026-10-14T04:27:00Z", "authorAssociation": "OWNER",
+                    "nodes": [{"number": 5, "title": "t", "body": "b", "updatedAt": "2026-10-14T04:27:00Z", "createdAt": "2026-10-14T04:20:00Z", "authorAssociation": "OWNER",
                         "labels": {"nodes": [{"name": "q-ready"}]}}]}}}}) }
                 else { json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": false, "endCursor": null},
                     "nodes": [{"number": 6, "title": "u", "body": null, "updatedAt": "2026-10-14T04:28:00Z", "authorAssociation": "NONE",
@@ -1414,7 +1416,7 @@ exit 0
         }));
         let list = h.issues(None).unwrap();
         assert_eq!(list.iter().map(|i| (i.number, i.open, i.trusted)).collect::<Vec<_>>(), [(5, true, true), (6, true, false)]);
-        assert_eq!((list[0].labels.clone(), list[0].assignees.clone(), list[0].updated), (vec!["q-ready".to_string()], vec![], iso("2026-10-14T04:27:00Z").unwrap()));
+        assert_eq!((list[0].labels.clone(), list[0].assignees.clone(), list[0].updated, list[0].created), (vec!["q-ready".to_string()], vec![], iso("2026-10-14T04:27:00Z").unwrap(), iso("2026-10-14T04:20:00Z").unwrap()));
         let b = h.requests();
         assert_eq!((b.ops.clone(), b.resource.clone(), b.remaining), (std::collections::BTreeMap::from([("POST graphql".to_string(), 2)]), Some("graphql".into()), Some(4990)));
         *limited.borrow_mut() = true;

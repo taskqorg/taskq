@@ -1522,13 +1522,15 @@ impl<'a> Service<'a> {
                 // `ask` and `waiting` without an attempt: the last comment, else the issue number
                 Some(v) if matches!(v.projection.task.state, State::Ask | State::Waiting) => (v.projection.task.state, attempt(&v.projection.task, &v.comments).or(v.comments.last().map(|c| c.id)).or(Some(n))),
                 Some(v) => (v.projection.task.state, attempt(&v.projection.task, &v.comments)),
-                None if self.board.issue(n).is_ok_and(|i| !i.open) => {
-                    let c = self.board.comments(n)?;
-                    let a = attempt(&Task::default(), &c);
-                    closed.push((n, c));
-                    (State::Closed, a)
-                }
-                None => continue,
+                None => match self.board.issue(n) {
+                    Ok(i) if !i.open => {
+                        let c = self.board.comments(n)?;
+                        let a = attempt(&Task::default(), &c);
+                        closed.push((n, i.created, c));
+                        (State::Closed, a)
+                    }
+                    _ => continue,
+                },
             };
             let kind = match to {
                 State::Closed => "close",
@@ -1554,16 +1556,21 @@ impl<'a> Service<'a> {
         }
         // queue transitions (§ 4 Profiling): accepted entries newer than the previous pass that changed the fold
         if let Some(after) = self.moved_after {
-            let closed: Vec<_> = closed.iter().map(|(n,c)| {
+            let closed: Vec<_> = closed.iter().map(|(n,created,c)| {
                 let log: Vec<_> = c.iter().filter(|c| c.trusted).map(|c| core::Entry { id:c.id, body:c.body.clone(), edited:c.edited }).collect();
-                (*n, c, core::project(*n, &log, false))
+                (*n, *created, c, core::project(*n, &log, false))
             }).collect();
-            let histories = views.iter().map(|v| (v.issue.number, &v.comments, &v.projection))
-                .chain(closed.iter().map(|(n,c,p)| (*n,*c,p)));
-            for (n, comments, projection) in histories.filter(|(_,c,_)| c.iter().any(|c| c.trusted && c.id > after)) {
+            let histories = views.iter().map(|v| (v.issue.number, v.issue.created, &v.comments, &v.projection))
+                .chain(closed.iter().map(|(n,created,c,p)| (*n,*created,*c,p)));
+            // review with a deferred publication is the `merge-queue` state: its wait is not reviewer work (#1344)
+            let name = |t: &Task| if t.state == State::Review && t.publication.is_some() { "merge-queue" } else { t.state.name() };
+            for (n, created, comments, projection) in histories.filter(|(_,_,c,_)| c.iter().any(|c| c.trusted && c.id > after)) {
                 let at = |id: u64| comments.iter().find(|c| c.id == id).map(|c| c.created);
-                let mut since = None;
-                for (id, from, to) in &projection.changes {
+                // the issue creation is the entry into the first state, ready; a board without it leaves it unknown
+                let mut since = Some(created).filter(|c| *c > 0);
+                let mut moved: Vec<_> = projection.changes.iter().chain(&projection.queue).collect();
+                moved.sort_by_key(|m| m.0);
+                for (id, from, to) in moved {
                     let id = *id;
                     let entered = std::mem::replace(&mut since, at(id));
                     // `held` is outside the queue model (§ Executable behavioral model): `hold` and `start` add none
@@ -1572,7 +1579,7 @@ impl<'a> Service<'a> {
                     let host = host_of(side);
                     if host.is_none_or(|h| h == self.cfg.me) {
                         let prev = entered.zip(at(id)).and_then(|(a, b)| u64::try_from(b - a).ok());
-                        crate::profile::transition(n, id, from.state.name(), to.state.name(), prev, rt_of(side).map(|r| r.0), host);
+                        crate::profile::transition(n, id, name(from), name(to), prev, rt_of(side).map(|r| r.0), host);
                     }
                 }
             }
@@ -3017,11 +3024,11 @@ mod tests {
         assert!(body.lines().any(|l| l.starts_with("diagnostics ")));
         let diagnostics:Value=serde_json::from_str(body.lines().find_map(|l|l.strip_prefix("diagnostics ")).unwrap()).unwrap();
         let at=diagnostics["observed"].as_i64().unwrap();
-        let issue=crate::board::Issue {number:1,title:"taskq host mac".into(),body,labels:vec![],assignees:vec![],updated:at,open:true,trusted:true,reason:None};
+        let issue=crate::board::Issue {number:1,title:"taskq host mac".into(),body,labels:vec![],assignees:vec![],updated:at,created:at,open:true,trusted:true,reason:None};
         let snapshot=crate::snapshot::from_views("board",&b,&c,at,&[],&[issue]);
         assert_eq!(snapshot.json()["hosts"][0]["diagnostics"]["running"]["value"],"4.0.0");
         let stale=crate::snapshot::from_views("board",&b,&c,at+c.ttl as i64+1,&[],&[crate::board::Issue {
-            number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,open:true,trusted:true,reason:None}]);
+            number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,created:at,open:true,trusted:true,reason:None}]);
         assert_eq!(stale.json()["hosts"][0]["diagnostics"]["running"]["state"],"stale");
     }
 
@@ -3060,7 +3067,7 @@ mod tests {
         s.pending.insert((7, 42));
         s.kids.push(Kid { unknown:None, stopping:false, session_url:Some("https://claude.ai/code/session_014abc".into()), task:7,attempt:42,execution:42,rt:"claude".into(),proc:Box::new(FakeProc(Default::default())) });
         assert_eq!(legacy(&s), "version 4.0.0\nservice abc123\n#7 42\nsession #7 42 https://claude.ai/code/session_014abc");
-        let host = |body: String| crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 0, open: true, trusted: true, reason: None };
+        let host = |body: String| crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 0, created: 0, open: true, trusted: true, reason: None };
         let urls = crate::snapshot::session_urls(&[host(s.heartbeat_body()), host("session #8 43 https://evil.example/x".into())]);
         assert_eq!(urls.into_iter().collect::<Vec<_>>(), vec![(("win".to_string(), 42), "https://claude.ai/code/session_014abc".to_string())]);
     }
@@ -4515,7 +4522,9 @@ mod tests {
         let r: Vec<serde_json::Value> = records.lines().map(|l| serde_json::from_str(l.strip_prefix("taskq-transition ").unwrap()).unwrap()).collect();
         let row = |v: &serde_json::Value| (v["task"].as_u64().unwrap(), v["from"].as_str().unwrap().to_string(), v["to"].as_str().unwrap().to_string(), v["prev_s"].as_u64(), v["host"].as_str().map(String::from));
         let mac = Some("mac".to_string());
-        assert_eq!(r.iter().map(row).collect::<Vec<_>>()[..3], [(x, "ready".into(), "doing".into(), None, mac.clone()),
+        // the issue creation is the entry into ready: no new task shows `no entry time` (#1344)
+        let opened = b.state.borrow().issues[x as usize - 1].created;
+        assert_eq!(r.iter().map(row).collect::<Vec<_>>()[..3], [(x, "ready".into(), "doing".into(), Some((created(ids[0]) - opened) as u64), mac.clone()),
             (x, "doing".into(), "review".into(), Some((created(ids[1]) - created(ids[0])) as u64), mac.clone()),
             (x, "review".into(), "ready".into(), Some((created(ids[2]) - created(ids[1])) as u64), None)], "{records}");
         assert!(r.iter().all(|v| v["from"] != "held" && v["to"] != "held"), "{records}");
@@ -4529,6 +4538,36 @@ mod tests {
         restarted.pass().unwrap();
         restarted.pass().unwrap();
         assert!(!crate::profile::take_moves().0.contains("\"to\":\"review\""));
+    }
+
+    // Chain: #1344 ready -> doing -> review -> deferred publish -> merge queue -> close, replayed by a pass. Risk: review
+    // time absorbs the merge queue wait, the reviewer's runtime and host are lost, or a state has no entry time.
+    #[test]
+    fn a_pass_splits_review_from_the_merge_queue_wait() {
+        let b = Fake::default();
+        let x = b.create("X", "", &["taskq".into()]).unwrap();
+        let mut c = cfg("mac");
+        c.limits.insert("claude".into(), 1);
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.pass().unwrap();
+        let _ = crate::profile::take_moves();
+        let aw = task(&b, x).attempt.unwrap();
+        b.comment(x, &core::entry("result", &["0123456789abcdef0123456789abcdef01234567"], Some(aw), "ok")).unwrap();
+        let ar = b.comment(x, &core::entry("spawn", &["reviewer", "codex:r", "mac"], None, "")).unwrap();
+        b.comment(x, &core::entry("publish", &[], Some(ar), "PR 1")).unwrap();
+        b.comment(x, &core::entry("enqueued", &["MQ_1"], None, "")).unwrap();
+        b.comment(x, &core::entry("close", &[], None, "merged")).unwrap();
+        *e.borrow()[0].1.borrow_mut() = Some(0);
+        s.pass().unwrap();
+        let (records, report) = crate::profile::take_moves();
+        let r: Vec<serde_json::Value> = records.lines().map(|l| serde_json::from_str(l.strip_prefix("taskq-transition ").unwrap()).unwrap()).collect();
+        let row = |v: &serde_json::Value| format!("{} {} {} {} {}", v["from"].as_str().unwrap(), v["to"].as_str().unwrap(),
+            v["rt"].as_str().unwrap_or("-"), v["host"].as_str().unwrap_or("-"), v["prev_s"].is_u64());
+        assert_eq!(r.iter().map(row).collect::<Vec<_>>(), ["ready doing claude mac true", "doing review claude mac true",
+            "review merge-queue codex mac true", "merge-queue closed - - true"], "{records}");
+        assert!(report.contains("| review | merge-queue | codex |") && report.contains("| merge-queue | closed |"), "{report}");
+        assert!(!report.contains("no entry time"), "{report}");
     }
 
     // Chain: § 4 history across restart. Risk: a restart loses or doubles events.

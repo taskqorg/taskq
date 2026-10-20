@@ -207,6 +207,8 @@ pub struct Projection {
     accepted: Vec<u64>,
     pub executions: Vec<Execution>,
     pub changes: Vec<(u64, Task, Task)>,
+    /// Review entries that start or end a deferred publication: the merge queue, a profile-only state (#1344)
+    pub queue: Vec<(u64, Task, Task)>,
 }
 
 impl Projection {
@@ -403,7 +405,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut resume = None; // the state an `ask` entry left; None when a retry limit asked
     let (mut free, mut accepted) = (vec![], vec![]);
     let mut executions: Vec<Execution> = vec![];
-    let mut changes = vec![];
+    let (mut changes, mut queue) = (vec![], vec![]);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
     for e in log {
         if let Some(l) = parse(n, &e.body) {
@@ -456,6 +458,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 }
             }
             if t.state != before.state { changes.push((e.id, before, t.clone())); }
+            else if t.state == State::Review && t.publication.is_some() != before.publication.is_some() { queue.push((e.id, before, t.clone())); }
             match (asked, t.state == State::Ask) {
                 (true, true) if l.bare && !e.body.trim().is_empty() => free.push(e.id),
                 (_, false) => free.clear(),
@@ -468,7 +471,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, owner_comments:free, revision:rev, accepted, executions, changes }
+    Projection { task:t, owner_comments:free, revision:rev, accepted, executions, changes, queue }
 }
 
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
