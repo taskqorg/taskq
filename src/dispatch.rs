@@ -292,19 +292,14 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
 }
 
 /// Service continuation of the saved reviewer verdict; writes are not attempt-bound (section 7).
-pub fn resume_publication(b: &dyn Board, cfg: &Config, n: u64) -> Receipt {
-    let (issue, t, _) = match current(b, n) {
-        Ok(v) => v,
-        Err(e) => return Receipt::rejected(n, &Op::default(), e),
-    };
+/// `issue`, `t` and `log` are the service pass's view; resuming reads no task state again (#1359).
+pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: &Task, log: &[core::Entry]) -> Receipt {
+    let n = issue.number;
     let Some(verdict) = &t.publication else { return Receipt::rejected(n, &Op::default(), "no pending publication") };
     if t.state != State::Review || needs_approval(cfg, &t) && t.gate != Some(Gate::Approved) {
         return Receipt::rejected(n, &Op::default(), "publication no longer approved");
     }
-    let rev = match entries(b, n) {
-        Ok(log) => core::revision(n, &log),
-        Err(e) => return Receipt { outcome: "unknown", ..Receipt::rejected(n, &Op::default(), e) },
-    };
+    let rev = core::revision(n, log);
     let op = Op { revision: Some(rev), ..Default::default() };
     let write = |kind, args: &[&str], text: &str| act_as(b, &cfg.root, n, kind, args, text, &op, None, None);
     match b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some()) {

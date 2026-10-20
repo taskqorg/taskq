@@ -573,6 +573,9 @@ pub struct FakeState {
     pub reads: usize,
     /// Open-list reads, visible outside the thread that owns this board.
     pub lists: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
+    /// Comment-list reads and publication attempts, for request-count checks (#1359).
+    pub comment_reads: usize,
+    pub publications: usize,
 }
 
 #[cfg(test)]
@@ -639,6 +642,7 @@ impl Board for Fake {
             self.state.borrow_mut().fail_comment_reads -= 1;
             return Err("comment read failed".into());
         }
+        self.state.borrow_mut().comment_reads += 1;
         let st = self.state.borrow();
         Ok(st.comments.iter().filter(|(i, c)| *i == n && !(st.hide_latest_comment && c.id == st.next_id)).map(|(_, c)| c.clone()).collect())
     }
@@ -721,6 +725,7 @@ impl Board for Fake {
     }
 
     fn publish(&self, _n: u64, sha: &str, _mode: &str, _title: &str, _task_line: &str) -> Publish {
+        self.state.borrow_mut().publications += 1;
         match self.state.borrow().publish.as_str() {
             "pending" => Publish::Pending("CI pending".into()),
             "failed" => Publish::Failed("CI failed".into()),
@@ -929,11 +934,13 @@ mod tests {
             let queued = admitted.clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
             let captured = writes.clone();
+            let rules = std::rc::Rc::new(RefCell::new(0));
+            let ruled = rules.clone();
             let h = http(&github::KIND, None, Box::new(move |method, url, body| {
                 let (head, merge) = ("a".repeat(40), "b".repeat(40));
                 if method != "GET" { captured.borrow_mut().push(body.clone().unwrap_or_default()); }
                 let value = if url.contains("/compare/") { json!({"status": if url.ends_with(&merge) { "identical" } else { "diverged" }}) }
-                    else if url.ends_with("/rules/branches/main") { if scenario == "rules-unknown" { return Err("HTTP 403".into()); } if scenario == "public" { json!([]) } else { json!([{"type": "merge_queue"}]) } }
+                    else if url.ends_with("/rules/branches/main") { *ruled.borrow_mut() += 1; if scenario == "rules-unknown" { return Err("HTTP 403".into()); } if scenario == "public" { json!([]) } else { json!([{"type": "merge_queue"}]) } }
                     else if url.ends_with("/repos/o/r") { assert_eq!(scenario, "public"); json!({"private": false}) }
                     else if url.contains("/pulls?") { json!([{"number": 7, "node_id": "PR_7", "draft": scenario == "draft", "head": {"sha": head}}]) }
                     else if url.ends_with("/graphql") {
@@ -975,6 +982,11 @@ mod tests {
                 "conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),
+            }
+            if scenario == "waiting" {
+                // #1359: a waiting publication polls the queue each pass; main rules stay read once per process.
+                assert!(matches!(h.resume_publication(1, &"a".repeat(40), "title", "Task: invented", std::path::Path::new("missing-worktree"), prior), Publish::Enqueued(_)));
+                assert_eq!(*rules.borrow(), 1, "main rules reread");
             }
             assert!(!writes.borrow().iter().any(|b| b.get("merge_method").is_some()), "queue never calls REST merge");
             assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback")));
