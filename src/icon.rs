@@ -220,7 +220,10 @@ pub fn compact(run: bool, dark: bool, s: f32) -> Rgba {
     let p = palette(dark);
     let n = (22.0 * s).round() as u32;
     let mut img = Rgba::new(n, n, s);
-    draw_q(&mut img, 2.0, 0.2, 1.0, run, p.ink, &p);
+    // Center the body; leave space below for the tail without shifting the body up.
+    let z = 22.0 / 25.2;
+    let inset = (22.0 - 18.0 * z) / 2.0;
+    draw_q(&mut img, inset, inset, z, run, p.ink, &p);
     img
 }
 
@@ -307,7 +310,7 @@ pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba,
     if d.paused {
         // the compact q at 3/4 size on a cleared square, centered at N/2 (I4)
         let z = 0.75;
-        let (x0, y0) = (11.0 - 9.0 * z, 11.0 - 9.0 * z - 0.9 * z);
+        let (x0, y0) = (11.0 - 9.0 * z, 11.0 - 9.0 * z);
         img.fill_rect([0, 0, 0, 0], x0 - z, y0 - z, x0 + 19.0 * z, y0 + 22.6 * z);
         draw_q(&mut img, x0, y0, z, false, p.muted, &p);
     }
@@ -421,8 +424,23 @@ mod tests {
         i.px.chunks(4).any(|p| p[3] == 255 && p[..3] == c[..3])
     }
 
-    // Chain: native tray's first icon -> always-on collector -> committed readback.
-    // Risk: per-sample instrumentation stalls the UI and loses observations despite renderer-only tests passing.
+    // #1347: the tail must not pull the square body above the canvas center.
+    #[test]
+    fn q_body_is_centered() {
+        for size in [16, 22, 44, 256] {
+            for run in [true, false] {
+                let image = compact(run, false, size as f32 / 22.0);
+                let mid = size / 2;
+                let visible = |x: u32, y: u32| image.px[((y * size + x) * 4 + 3) as usize] > 0;
+                let xs: Vec<_> = (0..size).filter(|&x| visible(x, mid)).collect();
+                let ys: Vec<_> = (0..size).filter(|&y| visible(mid, y)).collect();
+                assert_eq!(xs.first(), ys.first(), "body top/left at {size}");
+                assert_eq!(xs.last(), ys.last(), "body bottom/right at {size}");
+                assert_eq!(xs[0] + xs[xs.len()-1], size - 1, "center at {size}");
+            }
+        }
+    }
+
     // #1347: shipped resources must stay byte-identical to the existing compact Q renderer.
     // Regenerate deliberately with TASKQ_WRITE_APP_ICONS=1 cargo test app_icon_assets.
     #[test]
@@ -457,6 +475,8 @@ mod tests {
         }
     }
 
+    // Chain: native tray's first icon -> always-on collector -> committed readback.
+    // Risk: per-sample instrumentation stalls the UI and loses observations despite renderer-only tests passing.
     #[test]
     fn first_icon_with_capture_finishes_without_collection_loss() {
         use std::process::{Command, Stdio};

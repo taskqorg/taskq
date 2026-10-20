@@ -14,6 +14,8 @@ Approved layout; unimplemented capabilities remain design targets. Runtime follo
 - HTML popover in wry (WKWebView/WebView2) with a Rust state/action bridge; no OpenAI widget dependency in production. Product content is English under R7.
 - Overflow, unknown icon representation, bin count and Windows legibility remain I5 decisions, not permission to shrink arbitrarily.
 
+Center the square Q body horizontally and vertically, excluding its descending tail; keep the whole tail inside the canvas. Apply this geometry to compact, empty-fallback and paused-overlay Qs at tray and app sizes.
+
 The app icon reuses the tray renderer and its existing state logic, including the compact-Q fallback for an empty Summary (#1326). The macOS Dock/app switcher and Windows window/taskbar icons follow the live tray view; static Finder/TCC/notification identity and EXE resources use the compact Q. Package ICNS at 16–1024 px and ICO at 16–256 px. Keep `org.taskq.tray` and sign only after writing resources; live updates never modify the signed bundle. Pinned-window visibility stays governed by M13.
 
 ## M2 Scope and projects

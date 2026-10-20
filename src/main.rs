@@ -2830,7 +2830,6 @@ mod tests {
     use board::Fake;
     use dispatch::close_one;
 
-    // Chain: shared wakeup metadata -> bounded, locked read -> link or explicit unknown.
     // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
     #[cfg(target_os = "macos")]
     #[test]
@@ -2854,6 +2853,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    // Chain: shared wakeup metadata -> bounded, locked read -> link or explicit unknown.
     #[test]
     fn wakeup_context_refuses_partial_or_busy_input() {
         let root = std::env::temp_dir().join(format!("qw-link-{}", std::process::id()));
