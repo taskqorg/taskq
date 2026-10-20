@@ -45,6 +45,13 @@ webview2-com = "0.39"
 windows-core = "0.62"
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage", "Win32_System_Variant", "Win32_System_WinRT", "Win32_UI_Notifications", "Foundation", "Data_Xml_Dom", "UI_Notifications"] }
 
+# #1377: faster test builds and runs; a debugger session needs `CARGO_PROFILE_DEV_DEBUG=2`.
+[profile.dev]
+debug = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 strip = true
 lto = "thin"
