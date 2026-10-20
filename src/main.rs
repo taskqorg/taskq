@@ -413,6 +413,12 @@ fn limit(what: &str, lines: &[String], min: usize, max: usize, chars: usize) -> 
     }
 }
 
+/// All violations of `checks` in one error, `; `-joined, so one retry fixes them (#1346).
+fn all(checks: impl IntoIterator<Item = Res<()>>) -> Res<()> {
+    let errs: Vec<String> = checks.into_iter().filter_map(Result::err).collect();
+    if errs.is_empty() { Ok(()) } else { Err(errs.join("; ")) }
+}
+
 fn one_line(what: &str, items: &[String]) -> Res<()> {
     if items.iter().any(|s| s.contains(['\r', '\n']) || s.trim().is_empty()) { Err(format!("{what}: one nonempty line each")) } else { Ok(()) }
 }
@@ -421,8 +427,7 @@ fn task_text(cmd: &str, text: &str) -> Res<()> {
     if matches!(cmd, "requeue" | "later" | "failed") {
         if text.is_empty() && cmd != "failed" { return Ok(()); }
         let lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
-        limit(cmd, &lines, 1, 2, 240)?;
-        fields(text, &[("Reason", 1, 1, 240), ("Next", 0, 1, 240)])?;
+        all([limit(cmd, &lines, 1, 2, 240), fields(text, &[("Reason", 1, 1, 240), ("Next", 0, 1, 240)]).map(drop)])?;
     } else {
         let lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
         limit(cmd, &lines, 1, snapshot::ANSWER_LINES, snapshot::ANSWER_CHARS)?;
@@ -445,9 +450,7 @@ fn fields(text: &str, spec: &[(&str, usize, usize, usize)]) -> Res<Vec<Vec<Strin
         }
         out[cur.unwrap()].push(l.to_string());
     }
-    for (f, s) in out.iter().zip(spec) {
-        limit(s.0, f, s.1, s.2, s.3)?;
-    }
+    all(out.iter().zip(spec).map(|(f, s)| limit(s.0, f, s.1, s.2, s.3)))?;
     Ok(out)
 }
 
@@ -2072,17 +2075,19 @@ pub struct NewTask {
 
 /// Task body and create claim shared by direct adds and recipes; limits checked before any write.
 fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>, bool)> {
-    if t.title.trim().is_empty() || t.title.contains(['\r', '\n']) || t.title.chars().count() > 80 {
-        return Err("title: one line, at most 80 characters; shorten it".into());
-    }
+    let title = t.title.chars().count();
     let goal: Vec<String> = t.goal.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect();
-    limit("Goal", &goal, 1, 2, 240)?;
-    one_line("--acceptance", &t.acceptance)?;
-    one_line("--scope", &t.scope)?;
     let acc: Vec<String> = t.acceptance.iter().enumerate().map(|(i, s)| format!("A{}. {s}", i + 1)).collect();
-    limit("Acceptance", &acc, 1, 8, 240).map_err(|e| if acc.len() > 8 { format!("{e} (split the task, R2)") } else { e })?;
     let scope: Vec<String> = t.scope.iter().map(|s| format!("- {s}")).collect();
-    limit("Scope", &scope, 0, 4, 240)?;
+    all([
+        if t.title.trim().is_empty() || t.title.contains(['\r', '\n']) { Err("title: one nonempty line".into()) } else { Ok(()) },
+        if title > 80 { Err(format!("title: {title} characters, limit 80; shorten it")) } else { Ok(()) },
+        limit("Goal", &goal, 1, 2, 240),
+        one_line("--acceptance", &t.acceptance),
+        one_line("--scope", &t.scope),
+        limit("Acceptance", &acc, 1, 8, 240).map_err(|e| if acc.len() > 8 { format!("{e} (split the task, R2)") } else { e }),
+        limit("Scope", &scope, 0, 4, 240),
+    ])?;
     let mut body = format!("## Goal\n{}\n\n## Acceptance\n{}\n", goal.join("\n"), acc.join("\n"));
     if !scope.is_empty() {
         body += &format!("\n## Scope\n{}\n", scope.join("\n"));
@@ -3336,6 +3341,12 @@ mod tests {
         let mut v = vec!["add", "T", "--goal", "G"];
         v.extend(["--acceptance", "a"].repeat(9));
         assert!(run(&v).unwrap_err().contains("split the task"));
+        // three violations, one error (#1346)
+        let title = "t".repeat(81);
+        v[1] = &title;
+        v[3] = "1\n2\n3";
+        let e = run(&v).unwrap_err();
+        assert!(e.contains("title: 81 characters, limit 80") && e.contains("Goal: 3 lines, allowed 1-2") && e.contains("Acceptance: 9 lines, allowed 1-8"), "{e}");
         assert_eq!(c.board.issues(None).unwrap().len(), 2, "rejected input writes nothing");
     }
 
@@ -4222,6 +4233,8 @@ mod tests {
         close_verdict(text, "A1. a\nA2. b").unwrap();
         assert!(task_text("requeue", "unlabelled reason").is_err());
         assert!(task_text("requeue", &format!("Reason: ok{}", " ".repeat(240))).is_err());
+        let e = task_text("requeue", &format!("Reason: {}\nNext: a\nb", "r".repeat(240))).unwrap_err();
+        assert!(e.contains("requeue: 3 lines, allowed 1-2") && e.contains("Reason: a line has 248 characters, limit 240") && e.contains("Next: 2 lines, allowed 0-1"), "{e}");
         assert!(task_text("failed", "Reason: blocked\nNext: repair").is_ok());
         assert!(task_text("steer", "1\n2\n3\n4\n5").is_err());
         let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
