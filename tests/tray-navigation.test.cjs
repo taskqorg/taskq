@@ -11,7 +11,7 @@ assert.equal(context.page,'appearance');assert.equal(context.document.scrollingE
 assert.equal((JSON.stringify(context.disclosures)),'[true,false]');
 (context.navigate('project'),context.navigate('project','review'),context.navigate('project',null,{project:true}));
 assert.equal(context.working.project,true);
-(context.back());assert.equal(context.page,'project');assert.equal(context.taskFilter,'review');
+(context.back());assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['review']);
 (context.back());assert.equal(context.page,'project');assert.equal(context.taskFilter,null);
 (context.back(),context.back());assert.equal(context.page,'home');
 // Render all five categories from the same snapshot, including empty and unknown states.
