@@ -964,7 +964,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             ("stop_progress",json!(s.stop_progress)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, &cfg.root, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
-            ("requests", requests_json), ("connection", json!(dashq.outcome)), ("telemetry",telemetry::diagnostic::health())]
+            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("connection", json!(dashq.outcome)), ("telemetry",telemetry::diagnostic::health())]
         {
             status[k] = v;
         }
@@ -1512,6 +1512,42 @@ fn capacity_cmd(a: &Args) -> Res<()> {
     Ok(())
 }
 
+/// § 8 item 1: print the host channel, or write it to host.json and wait for the service to read it back.
+fn channel_cmd(a: &Args) -> Res<()> {
+    let install=platform::default_install();
+    let me=host::Policy::read(&install).map(|p|p.me).unwrap_or_else(|_|std::env::var("TASKQ_HOST").unwrap_or_else(|_|hostname()));
+    let observed=|since:u64| -> Option<String> {
+        let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
+        host::projects(&install).ok()?.iter().find_map(|root| {
+            let st:Value=serde_json::from_slice(&fs::read(dot(root).join("status.json")).ok()?).ok()?;
+            (st["host"]==me.as_str() && st["at"].as_u64().is_some_and(|at|at>=since && at<=now && now-at<=60)).then(||st["channel"].as_str().map(String::from)).flatten()
+        })
+    };
+    let Some(want)=a.pos.get(2) else {
+        println!("Channel on {me}: {}",platform::channel(&install).map(String::from).unwrap_or_else(|e|format!("unknown ({e})")));
+        println!("Service: {}",observed(0).unwrap_or_else(||"unknown (no fresh status)".into()));
+        return Ok(());
+    };
+    if a.pos.len()>3 {return Err(format!("unused positional arguments: {}",a.pos[3..].join(" ")));}
+    if !matches!(want.as_str(),"dev"|"live") {return Err("channel must be dev or live".into());}
+    if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot change host policy".into());}
+    let since=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
+    resources::locked(&install,|| {
+        let path=install.join("host.json");
+        let mut v:Value=serde_json::from_str(&fs::read_to_string(&path).map_err(|e|format!("host.json unknown: {e}"))?).map_err(|e|format!("host.json unknown: {e}"))?;
+        v["channel"]=json!(want);
+        host::Policy::parse(v.clone(),&hostname())?;
+        platform::write_atomic(&path,&(serde_json::to_string_pretty(&v).map_err(|e|e.to_string())?+"\n"))
+    })?;
+    touch(&install.join("poke"));
+    for _ in 0..20 {
+        if observed(since).as_deref()==Some(want.as_str()) {println!("Applied on {me}: channel {want}");return Ok(());}
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    println!("Saved; waiting for host service on {me}: channel {want}");
+    Ok(())
+}
+
 /// Start the host's one `taskq tray` of the current release when its heartbeat `<install>/tray` is stale (§ 4); reap
 /// the one this image started.
 fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
@@ -1778,6 +1814,7 @@ fn service_report(a:&Args)->Res<()> {
             let notice=status.as_ref().ok().and_then(Option::as_ref).is_some_and(|s|s["incident_notice"]==true);
             let update=status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["update"].as_str()).unwrap_or("unknown");
             println!("Update: {update}");
+            println!("Channel: {}",status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["channel"].as_str()).unwrap_or("unknown"));
             println!("{}\nProject owner: {owner}",service_project_fields(root,status));
             println!("{}",incident::line(&incident::status(root)));
             if notice||incident::notice(root) {println!("Incident reports: notice");}
@@ -1787,7 +1824,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"run"|"focus"|"pause"|"resume"|"capacity"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"complete-legacy"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"run"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"complete-legacy"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -1798,6 +1835,7 @@ fn service(args: &Args) -> Res<()> {
     }
     if matches!(sub,"status"|"list") {return service_report(args);}
     if sub == "capacity" {return capacity_cmd(args);}
+    if sub == "channel" {return channel_cmd(args);}
     if matches!(sub,"complete-stop"|"complete-legacy") {
         platform::service_log();
         if args.pos.len()!=2||args.all("request").len()!=1||args.flags.keys().any(|key|!["request","json"].contains(&key.as_str())) {return Err("usage: taskq service complete-stop --request ID [--json]".into());}
@@ -1917,7 +1955,7 @@ fn service(args: &Args) -> Res<()> {
             println!("{}",host::install_project(&cfg.install,&root)?);
             Ok(())
         }
-        _ => Err("usage: taskq service install|run|focus|pause|resume|capacity|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
+        _ => Err("usage: taskq service install|run|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
     }
 }
 

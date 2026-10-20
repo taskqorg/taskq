@@ -312,9 +312,85 @@ pub fn service_update(install: &Path) -> Result<Option<String>, String> {
 }
 
 fn service_update_locked(install:&Path)->Result<Option<String>,String> {
-    if let Some(v) = tool(install).current().filter(|v| coreq::update::newer(v, VERSION)) {
+    channel_update(install,&|name,to| coreq::update::download(&format!("https://github.com/{RELEASE_REPO}/releases/latest/download/{name}"),to))
+}
+
+/// § 8 item 1 host channel: host.json `channel` `dev|live`; a missing file or key reads `live`.
+pub fn channel(install:&Path)->Result<&'static str,String> {
+    let v:serde_json::Value=match fs::read(install.join("host.json")) {
+        Ok(bytes)=>serde_json::from_slice(&bytes).map_err(|e|format!("host.json: {e}"))?,
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok("live"),
+        Err(e)=>return Err(format!("host.json: {e}")),
+    };
+    channel_of(&v)
+}
+
+pub fn channel_of(v:&serde_json::Value)->Result<&'static str,String> {
+    match v["channel"].as_str() {
+        _ if v["channel"].is_null()=>Ok("live"),
+        Some("dev")=>Ok("dev"),
+        Some("live")=>Ok("live"),
+        _=>Err("host.json: channel must be dev or live".into()),
+    }
+}
+
+/// `fetch(name, to)` reads one file of the latest release; tests pass a local one.
+fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->Result<Option<String>,String> {
+    static NOT_APPLIED:std::sync::Mutex<String>=std::sync::Mutex::new(String::new());
+    let t=tool(install);
+    if let Some(v) = t.current().filter(|v| coreq::update::newer(v, VERSION)) {
         log!("current is {v}; restarting");
         return Ok(Some(v));
+    }
+    let running=t.current().unwrap_or_else(||VERSION.into());
+    let live=channel(install)?=="live";
+    // a dev host, or a live host on a `-dev` build that coreq would never replace by an older release
+    if !live||running.contains('-') {
+        let rel=install.join("releases");
+        fs::create_dir_all(&rel).map_err(|e|e.to_string())?;
+        let probe=rel.join("latest.json.tmp");
+        fetch("latest.json",&probe)?;
+        let latest:serde_json::Value=serde_json::from_slice(&fs::read(&probe).map_err(|e|e.to_string())?).map_err(|e|format!("latest.json: {e}"))?;
+        let _=fs::remove_file(&probe);
+        let ver=latest["version"].as_str().ok_or("latest.json: no version")?.to_string();
+        let name=format!("taskq-{ver}-{}{}",coreq::update::target(),std::env::consts::EXE_SUFFIX);
+        if ver.is_empty()||ver.contains("..")||!ver.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'.'||c==b'-')||latest["files"][coreq::update::target()]!=name.as_str() {
+            return Err(format!("latest.json: unexpected version {ver:?} or file"));
+        }
+        if !live {
+            let mut logged=NOT_APPLIED.lock().unwrap_or_else(|e|e.into_inner());
+            if coreq::update::newer(&ver,&running)&&*logged!=ver {log!("channel dev: release {ver} not applied");*logged=ver;}
+            return Ok(None);
+        }
+        if ver==running {return Ok(None);}
+        if !coreq::update::newer(&ver,&running) {
+            let t=Tool{version:Box::leak(ver.clone().into_boxed_str()),..t};
+            if !t.release_exe(&ver).is_file() {
+                let tmp=rel.join(format!("{ver}.channel"));
+                fs::create_dir_all(&tmp).map_err(|e|e.to_string())?;
+                let staged=(|| {
+                    for f in ["SHA256SUMS",name.as_str()] {fetch(f,&tmp.join(f))?;}
+                    let bytes=fs::read(tmp.join(&name)).map_err(|e|e.to_string())?;
+                    coreq::update::verify(&fs::read(tmp.join("SHA256SUMS")).map_err(|e|e.to_string())?,&name,&bytes)?;
+                    #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;fs::set_permissions(tmp.join(&name),fs::Permissions::from_mode(0o755)).map_err(|e|e.to_string())?;}
+                    let smoke=match coreq::process::output("release.selftest",std::process::Command::new(tmp.join(&name)).arg("selftest").env("TASKQ_INSTALL",install).env("TASKQ_SELFTEST_OFFLINE","1"),std::time::Duration::from_secs(30)) {
+                        Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
+                        Err(e)=>return Err(format!("{ver} selftest failed: {e}")),
+                    };
+                    if !smoke.status.success() {return Err(format!("{ver} selftest failed: {}",String::from_utf8_lossy(&smoke.stderr).trim()));}
+                    coreq::update::prepare_install(&t,&bytes).map(|_|None)
+                })();
+                let _=fs::remove_dir_all(&tmp);
+                update_result(staged)?;
+                #[cfg(target_os="macos")] sign_copies(&t,&ver);
+            }
+            // coreq refuses a downgrade of `current`: select the release first, then activate its launcher
+            coreq::write_durable(&install.join("previous"),&running)?;
+            coreq::write_durable(&install.join("current"),&ver)?;
+            coreq::update::activate_install(&t)?;
+            log!("channel live: replaced {running} with release {ver}; restarting");
+            return Ok(Some(ver));
+        }
     }
     if update_inner(install, true)?.is_some() {
         let v = update_inner(install, false)?;
@@ -651,6 +727,46 @@ mod tests {
         assert!(!install.join("releases").exists());
         assert!(!coreq::update::newer(next, &tool(&install).current().unwrap()));
         assert_eq!(fs::read_to_string(install.join("current")).unwrap().trim(), next);
+        fs::remove_dir_all(&install).unwrap();
+    }
+
+    // Chain: § 8 item 1 host channel dev -> live. Risk: a dev host installs a release, a live host stays on a -dev
+    // build forever, or a missing channel stops releases.
+    #[test]
+    fn channel_dev_holds_releases_and_live_replaces_a_dev_build() {
+        let install=std::env::temp_dir().join(format!("taskq-channel-{}",std::process::id()));
+        let _=fs::remove_dir_all(&install);
+        let t=tool(&install);
+        let (dev,release)=(format!("{VERSION}-dev.1"),"0.9.0");
+        for v in [dev.as_str(),release] {fs::create_dir_all(t.release_exe(v).parent().unwrap()).unwrap();fs::write(t.release_exe(v),v).unwrap();}
+        write_atomic(&install.join("current"),&dev).unwrap();
+        let latest=std::cell::RefCell::new(release.to_string());
+        let fetch=|name:&str,to:&Path| -> Result<(),String> {
+            if name!="latest.json" {return Err("no network in tests".into());}
+            let v=latest.borrow().clone();
+            let file=format!("taskq-{v}-{}{}",coreq::update::target(),std::env::consts::EXE_SUFFIX);
+            fs::write(to,serde_json::json!({"version":v,"files":{coreq::update::target():file}}).to_string()).map_err(|e|e.to_string())
+        };
+        // dev: neither a newer nor an older release replaces the running version
+        fs::write(install.join("host.json"),r#"{"channel":"dev"}"#).unwrap();
+        assert_eq!(channel(&install).unwrap(),"dev");
+        for v in ["999.0.0",release] {
+            *latest.borrow_mut()=v.into();
+            assert_eq!(channel_update(&install,&fetch).unwrap(),None);
+            assert_eq!(t.current().unwrap(),dev);
+        }
+        // dev still re-execs into a newer local current written by dev-install
+        write_atomic(&install.join("current"),"999.0.1-dev.2").unwrap();
+        assert_eq!(channel_update(&install,&fetch).unwrap().as_deref(),Some("999.0.1-dev.2"));
+        write_atomic(&install.join("current"),&dev).unwrap();
+        // missing channel = live: the latest release replaces the higher -dev build at the next check
+        fs::remove_file(install.join("host.json")).unwrap();
+        assert_eq!(channel(&install).unwrap(),"live");
+        assert_eq!(channel_update(&install,&fetch).unwrap().as_deref(),Some(release));
+        assert_eq!((t.current().unwrap(),fs::read_to_string(install.join("previous")).unwrap()),(release.to_string(),dev.clone()));
+        assert_eq!(fs::read_to_string(install.join(t.exe_name())).unwrap(),release);
+        fs::write(install.join("host.json"),r#"{"channel":"beta"}"#).unwrap();
+        assert!(channel(&install).is_err());
         fs::remove_dir_all(&install).unwrap();
     }
 
