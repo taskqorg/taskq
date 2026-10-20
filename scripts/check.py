@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Project-owned selected gate. Unknown impact runs the full Rust suite."""
 import argparse
+import json
 import shutil
 import os
 from pathlib import Path
@@ -55,13 +56,40 @@ def main():
         command = [shutil.which(command[0]) or command[0], *command[1:]]
         subprocess.run(command, cwd=ROOT, env={**env, **(extra_env or {})}, check=True, timeout=left)
 
+    def run_tests():
+        # #1376: one build, then the unit and integration binaries run side by side instead of one after another.
+        left = BUDGET - (time.monotonic() - started)
+        print('+ cargo +stable test --locked (binaries side by side)', flush=True)
+        built = subprocess.run([shutil.which('cargo') or 'cargo', '+stable', 'test', '--locked', '--no-run', '--message-format=json-render-diagnostics'],
+                               cwd=ROOT, env=env, check=True, timeout=left, stdout=subprocess.PIPE, text=True).stdout
+        binaries = [m['executable'] for m in map(json.loads, built.splitlines())
+                    if m.get('reason') == 'compiler-artifact' and m['profile']['test'] and m.get('executable')]
+        running = [(path, subprocess.Popen([path], cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)) for path in binaries]
+        failed = []
+        for path, process in running:
+            try:
+                output = process.communicate(timeout=max(1, BUDGET - (time.monotonic() - started)))[0]
+            except subprocess.TimeoutExpired:
+                for _, other in running:
+                    other.kill()
+                raise TimeoutError('selected gate exceeded 900s including setup/build')
+            print('     Running', path, flush=True)
+            print(output, flush=True)
+            if process.returncode:
+                failed.append(path)
+        if failed or not binaries:
+            raise SystemExit(f'test binaries failed: {failed or "none built"}')
+
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
-            run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']))
+            if scope == 'full':
+                run_tests()
+            else:
+                run(['cargo', '+stable', 'test', '--locked', '--bin', 'taskq', 'core::tests'])
             if scope == 'full':
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
                     run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_INSTALL':install, 'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'})
