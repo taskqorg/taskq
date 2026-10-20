@@ -830,6 +830,70 @@ fn since_ms(s: &str, now: u64) -> Result<u64, String> {
     Ok(now.saturating_sub(n.parse::<u64>().map_err(|_| bad())?.saturating_mul(mins * 60_000)))
 }
 
+/// #1345 `profile health`: this CLI's collector, the host service's from its fresh `status.json`, and the shared store.
+fn health(install:&Path)->String {
+    let now=SystemTime::now().duration_since(UNIX_EPOCH).map_or(0,|d|d.as_secs());
+    let statuses=crate::host::projects(install).map(|roots|roots.iter().map(|r|crate::data::json(&crate::dot(r).join("status.json"))).collect::<Vec<_>>());
+    let service=statuses.and_then(|s|service_health(&s,now,crate::runtime::alive));
+    let mut out=health_lines("CLI telemetry",&Ok((crate::telemetry::diagnostic::health(),std::process::id() as u64,now)));
+    out+=&health_lines("Service telemetry",&service);
+    out+&store_line(install)
+}
+
+/// The freshest status (under 60 s, live pid) among registered projects; anything else is unknown with its reason (R12).
+fn service_health(statuses:&[Result<Option<serde_json::Value>,String>],now:u64,alive:impl Fn(u32)->bool)->Result<(serde_json::Value,u64,u64),String> {
+    let mut reason=String::from("no registered project");
+    let mut best:Option<(serde_json::Value,u64,u64)>=None;
+    for status in statuses {
+        let st=match status {Ok(Some(st))=>st,Ok(None)=>{reason="service status.json missing".into();continue}Err(e)=>{reason=format!("service status unreadable: {e}");continue}};
+        let (Some(at),Some(pid))=(st["at"].as_u64(),st["pid"].as_u64()) else {reason="service status has no pid or time".into();continue};
+        if at>now||now-at>60 {reason=format!("service status {} old",crate::age(now.saturating_sub(at) as i64));continue}
+        if !alive(pid as u32) {reason=format!("service pid {pid} not running");continue}
+        if !st["telemetry"].is_object() {reason="service status has no telemetry snapshot".into();continue}
+        if best.as_ref().is_none_or(|b|at>b.2) {best=Some((st["telemetry"].clone(),pid,at));}
+    }
+    best.ok_or(reason)
+}
+
+/// Service status style: one field per line; unknown keeps its reason, never zero.
+fn health_lines(label:&str,health:&Result<(serde_json::Value,u64,u64),String>)->String {
+    let (h,pid,at)=match health {Ok(v)=>v,Err(reason)=>return format!("{label}: unknown ({reason})\n")};
+    let state=match h["state"].as_str() {
+        Some("collecting")=>"collecting".to_string(),
+        _ if h["reason"].is_string()=>format!("unknown ({})",h["reason"].as_str().unwrap_or_default()),
+        _=>"unknown (collector lost records or failed batches)".into(),
+    };
+    let mut out=format!("{label}: {state} · scope {} · pid {pid} · at {} UTC\n",h["scope"].as_str().unwrap_or("unknown"),crate::retro::utc(*at));
+    let n=|k:&str|h[k].as_u64();
+    if let (Some(lost),Some(failed)) = (n("lost"),n("failed_batches")) {
+        let append=match (n("append_us"),n("append_batches"),n("max_append_us")) {
+            (Some(_),Some(0),_)=>"append none".into(),
+            (Some(us),Some(b),Some(max))=>format!("append avg {} us · max {max} us",us/b),
+            _=>"append unknown".into(),
+        };
+        // ponytail: CoreQ counts no commit timeouts; a counter there replaces this unknown.
+        out+=&format!("{label} counts: lost {lost} · failed batches {failed} · timeouts unknown (not counted) · {append}\n");
+    }
+    out
+}
+
+/// Installation store size against its budget shares; unreadable sizes or limits are unknown.
+fn store_line(install:&Path)->String {
+    let path=install.join("telemetry.log/universal.sqlite3");
+    let size=|suffix:&str| match fs::metadata(format!("{}{suffix}",path.display())) {
+        Ok(m)=>Ok(m.len()),Err(e) if !suffix.is_empty()&&e.kind()==std::io::ErrorKind::NotFound=>Ok(0),Err(e)=>Err(e.to_string()),
+    };
+    let read=|| -> Result<String,String> {
+        let budget=crate::telemetry::budget(install,"telemetry.sqlite3")?;
+        let (db,wal)=(size("")?,size("-wal")?+size("-shm")?);
+        let (db_max,wal_max)=(budget.database_bytes()? as u64,budget.wal_bytes()?);
+        let mib=|b:u64|format!("{:.1} MiB",b as f64/1048576.0);
+        Ok(format!("Telemetry store: database {} of {} · WAL {} of {} · budget {}\n",mib(db),mib(db_max),mib(wal),mib(wal_max),
+            if db<=db_max&&wal<=wal_max {"within"} else {"over"}))
+    };
+    read().unwrap_or_else(|e|format!("Telemetry store: unknown ({e})\n"))
+}
+
 /// § 5 `taskq profile export|tasks|board [--since D]` over this host's retained log; no board access.
 pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, String> {
     if name == "guide" {
@@ -838,7 +902,7 @@ pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, S
     }
     if name=="health" {
         if since.is_some() {return Err("profile health does not accept --since".into());}
-        return Ok(crate::telemetry::diagnostic::health().to_string()+"\n");
+        return Ok(health(install));
     }
     if !["export", "tasks", "board", "actions"].contains(&name) { return Err(format!("unknown profile view: {name} (guide, export, tasks, board, actions or health)")); }
     let now = now_ms().ok_or("system clock before 1970")?;
@@ -961,6 +1025,28 @@ pub(crate) mod tests {
             fs::FileTimes::new().set_modified(UNIX_EPOCH + std::time::Duration::from_secs(1))).unwrap();
         assert!(local_live(&dir).is_empty(), "stale snapshots exclude nothing");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #1345 A1-A4: only a fresh status of a live service speaks for its health; stale, dead or missing reads unknown, never zero.
+    #[test]
+    fn profile_health_shows_service_scope_or_unknown_reason() {
+        let now=1_800_000_000;
+        let tel=serde_json::json!({"state":"collecting","scope":"this-process","lost":0,"failed_batches":0,"append_us":900,"append_batches":3,"max_append_us":700});
+        let st=|at:u64|Ok(Some(serde_json::json!({"at":at,"pid":42,"telemetry":tel})));
+        let lines=|statuses:&[Result<Option<serde_json::Value>,String>],alive:bool|health_lines("Service telemetry",&service_health(statuses,now,|_|alive));
+        let fresh=lines(&[Ok(None),st(now-90),st(now-5)],true);
+        assert_eq!(fresh,"Service telemetry: collecting · scope this-process · pid 42 · at 2027-01-15 07:59 UTC\n\
+            Service telemetry counts: lost 0 · failed batches 0 · timeouts unknown (not counted) · append avg 300 us · max 700 us\n");
+        assert!(fresh.lines().all(|l|l.chars().count()<=160),"{fresh}");
+        assert_eq!(lines(&[st(now-90)],true),"Service telemetry: unknown (service status 90s old)\n");
+        assert_eq!(lines(&[st(now-5)],false),"Service telemetry: unknown (service pid 42 not running)\n");
+        assert_eq!(lines(&[Ok(None)],true),"Service telemetry: unknown (service status.json missing)\n");
+        assert_eq!(lines(&[],true),"Service telemetry: unknown (no registered project)\n");
+        assert_eq!(lines(&[Ok(Some(serde_json::json!({"at":now,"pid":42})))],true),"Service telemetry: unknown (service status has no telemetry snapshot)\n");
+        let lost=serde_json::json!({"state":"unknown","scope":"this-process","lost":2,"failed_batches":1});
+        assert!(health_lines("CLI telemetry",&Ok((lost,7,now))).contains("unknown (collector lost records or failed batches)"));
+        let missing=serde_json::json!({"state":"unknown","scope":"this-process","reason":"collector-snapshot-unavailable"});
+        assert_eq!(health_lines("CLI telemetry",&Ok((missing,7,now))),"CLI telemetry: unknown (collector-snapshot-unavailable) · scope this-process · pid 7 · at 2027-01-15 08:00 UTC\n");
     }
 
     // Chain: producers enqueue without file I/O; the shared budget lock serializes the eventual commit.
