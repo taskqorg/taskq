@@ -568,6 +568,8 @@ pub struct FakeState {
     pub foreign: Vec<(String, Issue)>,
     /// Issue reads, `foreign` included, for budget checks.
     pub reads: usize,
+    /// Open-list reads, visible outside the thread that owns this board.
+    pub lists: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
 }
 
 #[cfg(test)]
@@ -603,6 +605,7 @@ impl Fake {
 #[cfg(test)]
 impl Board for Fake {
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
+        if let Some(lists) = &self.state.borrow().lists { lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
         Ok(self.state.borrow().issues.iter().filter(|i| since.map_or(i.open, |t| i.updated >= t)).cloned().collect())
     }
     fn issue(&self, n: u64) -> Result<Issue> {
