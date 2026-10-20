@@ -102,6 +102,18 @@ pub fn dir(install: &Path) -> PathBuf {
     new
 }
 
+/// An older host can recreate `resources` after the move (#1395), so `<install>` is a bundle again. Called once this
+/// service owns the host, when no older host writes it: the superseded store moves into the real one as `superseded`,
+/// kept for the operator (one copy, a later one replaces it).
+pub fn retire_superseded(install: &Path) -> Res<Option<String>> {
+    let (new, old) = (dir(install), install.join("resources"));
+    if !old.is_dir() || !new.is_dir() { return Ok(None) }
+    let kept = new.join("superseded");
+    if kept.exists() { fs::remove_dir_all(&kept).map_err(|e| format!("resources: superseded copy kept: {e}"))? }
+    fs::rename(&old, &kept).map_err(|e| format!("resources: superseded store not moved: {e}"))?;
+    Ok(Some("resources: superseded <install>/resources moved to resource-state/superseded".into()))
+}
+
 fn read(install: &Path) -> Res<State> {
     match fs::symlink_metadata(dir(install).join("state.json.pending")) {
         Ok(_)=>return Err("resources state prepare retained; authority unknown".into()),
@@ -924,6 +936,23 @@ mod tests {
         let d=dir(&base);
         assert!(!d.file_name().unwrap().to_string_lossy().eq_ignore_ascii_case("resources"));
         assert_eq!(fs::read_to_string(d.join(FILE)).unwrap(),"{}");assert!(!base.join("resources").exists());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    // #1395: an older host recreated `resources` after the move; the owning service retires it and keeps both stores.
+    #[test]
+    fn owner_retires_recreated_store() {
+        let base=std::env::temp_dir().join(format!("taskq-res-both-{}",std::process::id()));let _=fs::remove_dir_all(&base);
+        for (d,t) in [("resource-state","real"),("resources","fresh")] {fs::create_dir_all(base.join(d)).unwrap();fs::write(base.join(d).join(FILE),t).unwrap();}
+        assert_eq!(dir(&base),base.join("resource-state"),"both present: the real store stays the store");
+        assert!(retire_superseded(&base).unwrap().is_some());
+        assert!(!base.join("resources").exists(),"<install> is no bundle");
+        assert_eq!(fs::read_to_string(base.join("resource-state").join(FILE)).unwrap(),"real");
+        assert_eq!(fs::read_to_string(base.join("resource-state/superseded").join(FILE)).unwrap(),"fresh");
+        fs::create_dir_all(base.join("resources")).unwrap();fs::write(base.join("resources").join(FILE),"again").unwrap();
+        assert!(retire_superseded(&base).unwrap().is_some());
+        assert_eq!(fs::read_to_string(base.join("resource-state/superseded").join(FILE)).unwrap(),"again");
+        assert_eq!(retire_superseded(&base).unwrap(),None,"nothing to retire");
         fs::remove_dir_all(base).unwrap();
     }
 
