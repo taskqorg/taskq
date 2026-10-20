@@ -982,10 +982,17 @@ pub(crate) mod tests {
         assert!(append_line(&path,"not metadata").is_err());
         // #1297 A3: admission is not commit, and an occupied budget lock delays the batch instead of losing it
         // (was: lost 1, failed_batches 1). Retained protection: flush stays unacknowledged while held, then commits.
+        // #1333: CoreQ's 10 s retry window starts at the writer's commit and its flush waits 10 s; a test stall over
+        // ~1 s after admission let the window expire first (lost 1). The commit now waits in the blocking store write
+        // lock after the budget lock: it outlasts the flush and commits on release, whatever the scheduling.
         let held=log_lock(&path).unwrap();
         append_line(&path,r#"taskq-profile {"op":"spawn","us":1,"error":"none","at_ms":1}"#).unwrap();
-        assert!(capture.flush().unwrap_err().starts_with("telemetry flush unacknowledged ("));
+        let until=Instant::now()+std::time::Duration::from_secs(5);
+        while capture.health()["inflight"]!=1 {assert!(Instant::now()<until,"commit never met the held budget lock");std::thread::sleep(std::time::Duration::from_millis(5));}
+        let write=OpenOptions::new().write(true).open(dir.join("telemetry.log/universal.sqlite3.write.lock")).unwrap();write.lock().unwrap();
         drop(held);
+        assert!(capture.flush().unwrap_err().starts_with("telemetry flush unacknowledged ("));
+        drop(write);
         capture.flush().unwrap();
         assert_eq!(capture.health()["lost"],0);assert_eq!(capture.health()["failed_batches"],0);
         let reader=coreq::telemetry::Reader::open(&dir.join("telemetry.log/universal.sqlite3")).unwrap();
