@@ -1,6 +1,11 @@
 use std::process::Command;
 
 fn main() {
+    println!("cargo:rerun-if-changed=assets/TaskQ.ico");
+    println!("cargo:rerun-if-changed=assets/taskq.rc");
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        embed_resource::compile("assets/taskq.rc", embed_resource::NONE).manifest_required().expect("TaskQ app icon resource");
+    }
     println!("cargo:rerun-if-changed=Cargo.lock");
     let lock=std::fs::read_to_string("Cargo.lock").expect("locked dependencies");
     let package=lock.split("[[package]]").find(|p|p.lines().any(|l|l=="name = \"coreq\"")).expect("CoreQ in lock");

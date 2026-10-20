@@ -39,6 +39,7 @@ fn shortcut(path: &std::path::Path, exe: &std::path::Path) -> Result<()> {
         }
         link.SetPath(&HSTRING::from(exe.as_os_str()))?;
         link.SetArguments(w!("tray"))?;
+        link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
         props.SetValue(&key, &PROPVARIANT::from(APP))?;
         props.SetValue(&activator, &InitPropVariantFromCLSID(&ACTIVATOR)?)?;
         props.Commit()?;
@@ -205,6 +206,13 @@ mod tests {
             let mut args = [0u16; 32];
             link.GetArguments(&mut args)?;
             assert_eq!(String::from_utf16_lossy(&args[..4]), "tray");
+            let mut icon_path=[0u16;1024];let mut icon_index=0;
+            link.GetIconLocation(&mut icon_path,&mut icon_index)?;
+            let end=icon_path.iter().position(|c|*c==0).unwrap();
+            assert_eq!(std::path::PathBuf::from(String::from_utf16_lossy(&icon_path[..end])),exe);
+            assert_eq!(icon_index,0);
+            // The shortcut used by toasts must resolve to an actual icon in this built PE, not a generic fallback.
+            assert!(windows::Win32::UI::Shell::ExtractIconExW(&HSTRING::from(exe.as_os_str()),-1,None,None,0)>0);
             let props: IPropertyStore = link.cast()?;
             let mut activator = windows::Win32::Foundation::PROPERTYKEY::default();
             PSGetPropertyKeyFromName(w!("System.AppUserModel.ToastActivatorCLSID"), &mut activator)?;

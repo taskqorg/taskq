@@ -423,6 +423,40 @@ mod tests {
 
     // Chain: native tray's first icon -> always-on collector -> committed readback.
     // Risk: per-sample instrumentation stalls the UI and loses observations despite renderer-only tests passing.
+    // #1347: shipped resources must stay byte-identical to the existing compact Q renderer.
+    // Regenerate deliberately with TASKQ_WRITE_APP_ICONS=1 cargo test app_icon_assets.
+    #[test]
+    fn app_icon_assets() {
+        let mut chunks=Vec::new();
+        for (kind,size) in [(b"icp4",16u32),(b"icp5",32),(b"icp6",64),(b"ic07",128),(b"ic08",256),(b"ic09",512),(b"ic10",1024)] {
+            let png=compact(true,false,size as f32/22.0).png();
+            chunks.extend_from_slice(kind);
+            chunks.extend_from_slice(&((png.len()+8) as u32).to_be_bytes());
+            chunks.extend(png);
+        }
+        let mut icns=b"icns".to_vec();
+        icns.extend_from_slice(&((chunks.len()+8) as u32).to_be_bytes());icns.extend(chunks);
+        let sizes=[16u32,24,32,48,64,128,256];
+        let mut ico=vec![0,0,1,0,sizes.len() as u8,0];
+        let mut images=Vec::new();
+        for size in sizes {
+            let png=compact(true,false,size as f32/22.0).png();
+            ico.extend_from_slice(&[size as u8,size as u8,0,0,1,0,32,0]);
+            ico.extend_from_slice(&(png.len() as u32).to_le_bytes());
+            ico.extend_from_slice(&((6+16*sizes.len()+images.len()) as u32).to_le_bytes());
+            images.extend(png);
+        }
+        ico.extend(images);
+        let root=std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+        for (name,bytes) in [("TaskQ.icns",icns),("TaskQ.ico",ico)] {
+            let path=root.join(name);
+            if std::env::var_os("TASKQ_WRITE_APP_ICONS").is_some() {
+                std::fs::create_dir_all(&root).unwrap();std::fs::write(&path,&bytes).unwrap();
+            }
+            assert_eq!(std::fs::read(&path).expect("generated app icon asset"),bytes,"{name}: regenerate after changing Q");
+        }
+    }
+
     #[test]
     fn first_icon_with_capture_finishes_without_collection_loss() {
         use std::process::{Command, Stdio};

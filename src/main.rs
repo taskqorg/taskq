@@ -1649,14 +1649,7 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     fs::write(app.join("Contents/Info.plist"), PLIST).ok()?;
     let resources=app.join("Contents/Resources");
     fs::create_dir_all(&resources).ok()?;
-    // ICNS PNG representations retain the same TaskQ geometry at native app-icon sizes.
-    let mut images=Vec::new();
-    for (kind,size) in [(b"ic07",128u32),(b"ic08",256),(b"ic09",512),(b"ic10",1024)] {
-        let png=icon::compact(true,false,size as f32/22.0).png();
-        images.extend_from_slice(kind); images.extend_from_slice(&((png.len()+8) as u32).to_be_bytes()); images.extend(png);
-    }
-    let mut icns=b"icns".to_vec(); icns.extend_from_slice(&((images.len()+8) as u32).to_be_bytes()); icns.extend(images);
-    fs::write(resources.join("TaskQ.icns"),icns).ok()?;
+    fs::write(resources.join("TaskQ.icns"),include_bytes!("../assets/TaskQ.icns")).ok()?;
     let tmp = bin.with_extension("tmp");
     fs::copy(exe, &tmp).and_then(|_| fs::rename(&tmp, &bin)).ok()?;
     let signed = match platform::codesign(platform::SIGNING_IDENTITY, &app, "org.taskq.tray") {
@@ -2838,6 +2831,29 @@ mod tests {
     use dispatch::close_one;
 
     // Chain: shared wakeup metadata -> bounded, locked read -> link or explicit unknown.
+    // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn app_bundle_icon_resources_preserve_signature() {
+        let dir=std::env::temp_dir().join(format!("taskq-app-icon-{}",runtime::uuid()));
+        let app=tray_app(&dir,&std::env::current_exe().unwrap()).expect("signed tray bundle");
+        let plist=fs::read_to_string(app.join("Contents/Info.plist")).unwrap();
+        assert!(plist.contains("org.taskq.tray"));
+        let bytes=fs::read(app.join("Contents/Resources/TaskQ.icns")).unwrap();
+        let mut sizes=Vec::new(); let mut offset=8;
+        while offset<bytes.len() {
+            let len=u32::from_be_bytes(bytes[offset+4..offset+8].try_into().unwrap()) as usize;
+            let decoder=png::Decoder::new(std::io::Cursor::new(&bytes[offset+8..offset+len]));
+            let reader=decoder.read_info().unwrap();
+            sizes.push(reader.info().width);
+            assert_eq!(reader.info().width,reader.info().height);
+            offset+=len;
+        }
+        assert_eq!(sizes,vec![16,32,64,128,256,512,1024]);
+        assert!(std::process::Command::new("codesign").args(["--verify","--strict"]).arg(&app).status().unwrap().success());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn wakeup_context_refuses_partial_or_busy_input() {
         let root = std::env::temp_dir().join(format!("qw-link-{}", std::process::id()));

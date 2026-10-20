@@ -940,11 +940,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             Event::UserEvent(Ev::WorkspaceOpen) => {
                 if workspace.is_none() {
                     let p=proxy.clone();
-                    let built=WindowBuilder::new().with_title("TaskQ · AI conversations").with_inner_size(LogicalSize::new(860.0,680.0)).with_min_inner_size(LogicalSize::new(360.0,400.0)).build(target).map_err(|e|e.to_string()).and_then(|window|{
+                    let built=WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ · AI conversations").with_inner_size(LogicalSize::new(860.0,680.0)).with_min_inner_size(LogicalSize::new(360.0,400.0)).build(target).map_err(|e|e.to_string()).and_then(|window|{
                         WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::WorkspaceIpc(r.into_body()));}).build(&window).map(|view|Workspace{window,view,calls:WebCalls::new(),shown:String::new()}).map_err(|e|e.to_string())
                     });
                     match built {Ok(ws)=>workspace=Some(ws),Err(reason)=>{push(&mut web,&ui,&json!({"aiError":reason}));return;}}
                 }
+                icon_sig.clear();
                 let ws=workspace.as_mut().unwrap();ws.window.set_visible(true);ws.window.set_focus();
                 workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":true,"font":settings.font}),&proxy);
             }
@@ -974,7 +975,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
             }
             Event::NewEvents(StartCause::Init) => {
-                let b = WindowBuilder::new().with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
+                let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // a snapshot renders off the visible screen (taskq.md R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(-20000.0, -20000.0)).with_always_on_top(false).with_focused(false) } else { b };
@@ -1076,7 +1077,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     if signature!=ws.shown&&!ws.calls.pending.contains_key(&0){ws.shown=signature;workspace_push(ws,&json!({"data":data,"font":settings.font}),&proxy);}
                 }
                 let st = state(&install, &settings, dark, None, &adding);
-                if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig);}
+                if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w), workspace.as_ref().map(|ws|&ws.window));}
                 notes(&install, &mut settings, &st, &mut asked, &mut bursts);
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
@@ -1245,7 +1246,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     if signature!=ws.shown&&!ws.calls.pending.contains_key(&0){ws.shown=signature;workspace_push(ws,&json!({"data":data,"font":settings.font}),&proxy);}
                 }
                 let st = state(&install, &settings, dark, None, &adding);
-                        refresh_icon(&tray, &st, &settings, dark, &mut icon_sig);
+                        refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w), workspace.as_ref().map(|ws|&ws.window));
                         push(&mut web,&ui, &st);
                     }
                     // `Edit limits` after the page's confirm: the same write as `service capacity` (§ 5), this host only
@@ -1343,6 +1344,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     views.extend((!settings.icon.is_null()).then(|| ("custom", settings.icon.clone())));
                     for (theme, d) in [("dark", true), ("light", false)] {
                         for (mode, run) in [("run", true), ("pause", false)] {
+                            for n in [16u32,32,64,128,256,512,1024] {
+                                let _=fs::write(dir.join(format!("app-compact-{mode}-{theme}-{n}.png")),compact(run,d,n as f32/22.0).png());
+                            }
                             let s = Summary { run, ..s.clone() };
                             let _ = fs::write(dir.join(format!("icon-compact-{mode}-{theme}-{size}.png")), compact(run, d, k * dpr).png());
                             for (name, c) in &views {
@@ -1539,7 +1543,7 @@ fn draw(c: &Value, s: &Summary, dark: bool, k: f32, dpr: f32) -> Result<Rgba, Ve
     icon::render(c, (22.0 * k * dpr).round() as u32, dpr, &d, dark)
 }
 
-fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String) {
+fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>, workspace: Option<&Window>) {
     let Some(t) = tray else { return };
     let sum = summary(st["projects"].as_array().map_or(&[][..], |v| v), day(now()));
     // Windows shows only the compact q (menu.md M1)
@@ -1554,18 +1558,42 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
     if *sig == new {
         return;
     }
-    *sig = new;
-    let _ = crate::profile::measure("tray.render", || {
-        let rendered = config.map(|c| draw(&c, &sum, dark, k, dpr));
+    let applied = crate::profile::measure("tray.render", || {
+        let rendered = config.as_ref().map(|c| draw(c, &sum, dark, k, dpr));
         let failed = rendered.as_ref().is_some_and(Result::is_err);
         let img = rendered.and_then(Result::ok).unwrap_or_else(|| compact(sum.run, dark, k * dpr));
         let applied = t.set_icon(Some(rgba_icon(&img)));
+        // Same configuration, state and fallback as the tray, rendered at native app-icon resolution.
+        let app = config.as_ref().and_then(|c| draw(c, &sum, dark, 1.0, 256.0/22.0).ok())
+            .unwrap_or_else(|| compact(sum.run, dark, 256.0/22.0));
+        refresh_app_icon(&app, window, workspace)?;
         if k > 1.0 { fit_status_image(k); }
         if failed { Err("invalid icon render".to_string()) } else { applied.map_err(|e| e.to_string()) }
     });
+    match applied { Ok(()) => *sig = new, Err(e) => eprintln!("taskq app icon: {e}") }
     let [w, a, r, _] = sum.counts;
     let counts = if sum.known { format!("in work {w} · waiting for answer {a} · ready + blocked {}",r + sum.blocked) } else { "counts unknown (service error or stale status)".into() };
     let _ = t.set_tooltip(Some(format!("taskq: {counts}{}", if sum.run { "" } else { " · paused" })));
+}
+
+fn window_icon(img: &Rgba) -> tao::window::Icon {
+    tao::window::Icon::from_rgba(img.px.clone(),img.w,img.h).expect("renderer RGBA dimensions")
+}
+
+/// Live app identity is in memory; never invalidate the signed bundle by rewriting its icon.
+fn refresh_app_icon(img: &Rgba, window: Option<&Window>, workspace: Option<&Window>) -> Result<(),String> {
+    for w in window.into_iter().chain(workspace) {w.set_window_icon(Some(window_icon(img)));}
+    #[cfg(target_os = "macos")]
+    {
+        use objc2::AnyThread;
+        use objc2_app_kit::{NSApplication,NSImage};
+        use objc2_foundation::{NSData,MainThreadMarker};
+        let mtm=MainThreadMarker::new().ok_or("app icon requires main thread")?;
+        let image=NSImage::initWithData(NSImage::alloc(),&NSData::with_bytes(&img.png())).ok_or("app icon PNG decode failed")?;
+        // SAFETY: main thread and a live decoded image retained by NSApplication.
+        unsafe { NSApplication::sharedApplication(mtm).setApplicationIconImage(Some(&image)); }
+    }
+    Ok(())
 }
 
 /// M13: only a pinned tray participates in the normal macOS app switcher.
