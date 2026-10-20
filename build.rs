@@ -13,7 +13,10 @@ fn main() {
     coreq_instrument::generate(&root.join("src"),"main.rs",&std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("instrumented")).expect("automatic telemetry source instrumentation");
     let git = |args: &[&str]| Command::new("git").args(args).output().ok()
         .filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
-    for name in [Some("HEAD".into()), git(&["symbolic-ref", "-q", "HEAD"])].into_iter().flatten() {
+    // #1384: a dev/test build reads HEAD only when sources rerun this script, so a commit alone rebuilds nothing;
+    // release builds (CI artifacts, dev-install.sh) still track HEAD and always embed the exact commit.
+    let release = std::env::var("PROFILE").as_deref() == Ok("release");
+    for name in [Some("HEAD".into()), git(&["symbolic-ref", "-q", "HEAD"])].into_iter().flatten().filter(|_| release) {
         if let Some(path) = git(&["rev-parse", "--git-path", &name]) {
             println!("cargo:rerun-if-changed={path}");
         }
