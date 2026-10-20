@@ -210,6 +210,8 @@ impl Row {
             "deps": self.deps.iter().filter(|b| b.dep.repo.is_none() && b.reason == "open").map(|b| b.dep.n).collect::<Vec<_>>(),
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
             "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed});
+        // § 2: the PM's pick sits beside the worker's star; it is never an answer
+        if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
@@ -301,6 +303,7 @@ impl Snapshot {
                 }).collect();
                 // § 2: an `ask` card without options is an owner action
                 let o = if o.is_empty() && r.task.state == State::Ask { cell(&format!("waiting for owner: {}", compact(&brief(&card), 120))) } else { o.join(" · ") };
+                let o = match &r.task.pick { Some((k, why)) => format!("{o} · PM {n}.{k}: {}", cell(&compact(why, 160))), None => o };
                 format!("| {} | [{}]({}) | {o} |", link(r), cell(&compact(&brief(&card), 160)), url)
             })
             .collect();

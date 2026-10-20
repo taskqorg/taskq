@@ -51,6 +51,28 @@
    {"id": 12, "body": "taskq: gone attempt 10\nexit 0"},
    {"id": 13, "body": "taskq: answer 1"}
   ], "expect": {"state": "doing", "attempt": 10, "role": "worker", "session": "claude:s1 mac", "inbox": [13]}},
+  {"name": "pm pick sits beside the worker's star; bad picks are ignored", "entries": [
+   {"id": 10, "body": "taskq: spawn worker claude:s1 mac"},
+   {"id": 11, "body": "taskq: ask attempt 10\nWhich DB?\n1. sqlite ★\n2. postgres"},
+   {"id": 12, "body": "taskq: pick 2\nload needs concurrent writers"},
+   {"id": 13, "body": "taskq: pick 3\nno such option"},
+   {"id": 14, "body": "taskq: pick 1"},
+   {"id": 15, "body": "taskq: pick 1 attempt 10\nworker cannot pick"},
+   {"id": 16, "body": "taskq: pick 1\ntwo\nlines"}
+  ], "expect": {"state": "ask", "attempt": 10, "role": "worker", "session": "claude:s1 mac", "card": "Which DB?\n1. sqlite ★\n2. postgres", "pick": [2, "load needs concurrent writers"]}},
+  {"name": "an answer supersedes the pm pick and takes the owner's option", "entries": [
+   {"id": 10, "body": "taskq: spawn worker claude:s1 mac"},
+   {"id": 11, "body": "taskq: ask attempt 10\nWhich DB?\n1. sqlite ★\n2. postgres"},
+   {"id": 12, "body": "taskq: pick 2\nload needs concurrent writers"},
+   {"id": 13, "body": "taskq: answer 1"}
+  ], "expect": {"state": "doing", "attempt": 10, "role": "worker", "session": "claude:s1 mac", "inbox": [13]}},
+  {"name": "a newer worker ask supersedes the pm pick", "entries": [
+   {"id": 10, "body": "taskq: spawn worker claude:s1 mac"},
+   {"id": 11, "body": "taskq: ask attempt 10\nWhich DB?\n1. sqlite ★\n2. postgres"},
+   {"id": 12, "body": "taskq: pick 2\nload needs concurrent writers"},
+   {"id": 13, "body": "taskq: answer 1"},
+   {"id": 14, "body": "taskq: ask attempt 10\nWhich index?\n1. btree ★\n2. hash"}
+  ], "expect": {"state": "ask", "attempt": 10, "role": "worker", "session": "claude:s1 mac", "card": "Which index?\n1. btree ★\n2. hash", "inbox": [13]}},
   {"name": "hand-typed CLI form answers", "task": 7, "entries": [
    {"id": 10, "body": "taskq: spawn worker claude:s1 mac"},
    {"id": 11, "body": "taskq: ask attempt 10\nWhich DB?\n1. sqlite ★\n2. postgres"},

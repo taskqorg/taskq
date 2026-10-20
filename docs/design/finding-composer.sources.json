@@ -14,7 +14,7 @@
     "src/finding-composer.css": "59429c0cf812caf40b3478cd95ab32f4f5e87b2841e9584b9480f9a0304e01c4",
     "src/project-blocks.js": "6db9a508474c5bc216dddb9b10d92d6d54fedf712cc1fbf10df6cac83d6b32d7",
     "src/project-blocks.css": "1a2471d13a850a66eb3f8ea9f5745ad2fa3bad1ce67305173d17ba1ae2f0ca64",
-    "src/answer-card.js": "1ea77cc76cc93557787224b2f5d017c1ff765980c940f5ef62f3e733a9ede59c",
+    "src/answer-card.js": "199986adab9b4520163880451cf2d491f67e4acc474cd4f2fe62c8eecbe6e40b",
     "src/answer-card.css": "b33ea8d5ba6ec70931ecc2cac745bf1808181b4939019bf478f09cdd7791a796",
     "tests/fixtures/finding-composer.json": "b8fad03ef30f7d594934baf82754fb97497f661cdc942d860367e351396ffa16",
     "docs/design/project-blocks.sources.json": "e4d125cc26fc7ce809a439c38d290a30d42faea201d63ee1d0a7269bbd21a1f6"
