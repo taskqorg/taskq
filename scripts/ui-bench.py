@@ -140,6 +140,10 @@ def summary(r, hold):
     row["mem_peak_mb"] = max(x["mem"] for x in s) / 2**20 if s else None
     row["mem_end_mb"] = s[-1]["mem"] / 2**20 if s else None
     row["js_heap_mb"] = page["heap"] / 2**20 if ok and page.get("heap") else None
+    # the one enforced rule (shared performance rule): at most 70% sustained CPU of the host on the hold; the rest only compares
+    host = row["cpu_mean_pct"] / row["cores"] if row["cpu_mean_pct"] is not None else None
+    if ok and (host is None or host > 70):
+        row.update(ok=False, status="sustained CPU unknown" if host is None else f"sustained CPU {host:.1f}% of host > 70%")
     return row
 
 
