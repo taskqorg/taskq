@@ -1,0 +1,172 @@
+# Tray and workspace v2 review — #1443
+
+Proposal for owner review under R13 and § 7.5. No UI implementation, rule amendment,
+task filing, installation or production effect is included. This is **before**
+evidence; no fix or after-pass is claimed.
+
+Review source: `8bf66914f03560c8c3f979523dce7d6781fe5420`, the merged #1442 profile.
+Rules: [TaskQ v2](../../ui-rules-v2.md) and its exact
+[38 shared checks](https://github.com/taskqorg/specq/blob/d54981e576a80c3854b455c5eb1a441a676f4497/design/app-ui.md).
+The shared revision is a review input, not proof of upstream merge or deployment.
+
+## Evidence boundary
+
+[Capture instrument](capture.cjs) extends the existing
+[#1348 instrument](../1348/capture.cjs), using the actual bundled tray and workspace
+and the existing `tests/browser.cjs` launcher. Existing answer-card and resource
+fixtures supply their own data shapes. All data is invented; outbound IPC is
+recorded in memory, without a native bridge. No queue or policy operation executes.
+
+The [route matrix](matrix.md) links 304 screenshots: 19 concrete routes/views ×
+light/dark × 16/20 CSS px × 320/360 CSS px × fine/coarse pointer emulation.
+The eight A1 surfaces account for 128 of those images. The additional views cover
+all named Settings children, stop/recovery, Work mode, and workspace list/new.
+The workspace's narrow list toggle is a view, not a new native window.
+Logical Work sessions and Agent settings destinations are approved targets absent
+from the current workspace; their absence is recorded below, not hidden by a mock.
+
+[Observations](observations.json) contain per-image SHA-256, rectangles, typography,
+scroll bounds and interaction probes. Every main capture requires two matching
+consecutive PNG rasters; the final run needed no third-frame retries.
+[Source identity](source.json) hashes the
+product source, compiled HTML and instrument. Chromium 156.0.8078.4 runs at DPR 1
+with simulated Windows branches; this is neither WebView2 nor WKWebView evidence.
+The fixed 600 CSS px viewport is an instrument boundary, not native content-fit
+acceptance. Fine/coarse emulation does not qualify hardware, DPI or screen readers.
+
+Visually inspected at actual size: all eight A1 routes in dark/20/320/fine;
+Home light/16/360/fine; Project light/20/320/fine; Workspace light/20/360/coarse;
+Appearance, Activity history, Notifications, Agents, Services, About, Stop and
+workspace list/new at light/20/320/fine; recovery and Work mode at
+dark/20/320/fine; and the scrolled, empty, unavailable, count-growth and 200% probes.
+Other cells have capture/geometry evidence, not individual visual acceptance.
+R12 keeps native sizing, accessibility and complete keyboard qualification unknown.
+
+Reproduce from the worktree root, with Node and the existing Playwright setup:
+
+```sh
+npm ci --ignore-scripts
+npm install --no-save --package-lock=false --ignore-scripts playwright
+npm run build
+npx playwright install chromium-headless-shell
+node docs/design/evidence/1443/capture.cjs
+```
+
+On this Windows host use `npm.cmd`/`npx.cmd`; PowerShell script execution policy
+blocks their `.ps1` entrypoints. No execution-policy change was made. Browser
+binaries were stored in OS temporary storage with `PLAYWRIGHT_BROWSERS_PATH`.
+Reproduction regenerates evidence; preserve this revision before comparing a fix.
+
+## Findings against all approved checks
+
+**Pass** is bounded to the named observation, never whole-product conformance.
+**Gap — observed** is a measured discrepancy. **Gap — evidence** means acceptance
+is unproved, not that a defect was reproduced. **N/A** names its limited scope.
+H/T/S/L/U identify the proposed tasks below. Screenshots show context; numeric and
+interaction observations are in `observations.json` unless a source check is named.
+
+| Rule | Verdict | Route and screenshot | Measured value / observation | Fix or retained protection |
+|---|---|---|---|---|
+| V01 | Gap — observed | [Workspace](screens/workspace-dark-20-320-fine.png) | Only Conversations/new are implemented; source has no Work sessions or Agent settings route. | H: explicit supported route ledger and unavailable destinations; keep new feature implementation outside this UI repair. |
+| V02 | Gap — observed | [Scrolled project](project-scrolled.png) | Back y changes from 45 to −4750 CSS px; permitted drift ≤1. | H: move Back into fixed leading slot; retain root/window boundaries. |
+| V03 | Gap — observed | [Settings](screens/settings-dark-20-320-fine.png) | Header has 7 buttons, 0 route titles; Back and title are separate content rows. | H: one Back/title/action header, accessible overflow, separate emergency/window actions. |
+| V04 | Pass — browsing scope | [Workspace](screens/workspace-dark-20-320-fine.png) | Long conversation uses its own root; browsing uses push state; existing browser checks retain two drafts. | H/U: preserve drafts and non-applying exits; modal behavior is separately N/A below. |
+| V05 | Gap — observed | [Settings](screens/settings-dark-20-320-fine.png) | Navigation leaves `about:blank` unchanged; recreating the WebView starts at Home; route state is an in-memory stack. | H: native route persistence/declared supported entry handling under #1440; no invented URL scheme or filesystem URLs. |
+| V06 | Gap — observed | [Projects](screens/projects-dark-20-320-fine.png) | Projects → Back focuses H1 Home, not the invoking Projects button; code retains scroll/disclosures but no invoker identity. | H: restore invoker or surviving-item fallback with filters/scroll. |
+| V07 | Gap — observed | [Unavailable workspace](workspace-unavailable.png) | Focused Refresh → received update leaves `document.activeElement` at BODY; button lacks a retained focus identity. | U: preserve active control across changed updates, retaining draft/caret checks. |
+| V08 | Gap — evidence | [Project](screens/project-dark-20-320-fine.png) | Board/issue controls have independent targets in source; shared browser check fails at a stale heading assertion before completing its navigation checks. | L: repair the obsolete expectation, then complete independent issue/session/PR/Board navigation checks. |
+| V09 | Gap — observed | [Home](screens/home-dark-16-320-fine.png), [coarse](screens/home-dark-16-320-coarse.png) | Fine Home 25.67×27.59; count height 28; grip 18×18. Coarse Home 25.67×44, below 44×44 width. Workspace history is 142.61×21 at 16 px. | T: measure effective labelled hit areas; enforce both dimensions, spacing and nonoverlap without shrinking text. |
+| V10 | Gap — evidence | [Home](screens/home-dark-16-320-fine.png) | Product 32/44 minima fail; no per-control WCAG exception ledger was supplied. Native controls/spacing exceptions cannot establish the product minimum. | T: record applicable WCAG exceptions separately; none waive TaskQ dimensions. |
+| V11 | Gap — evidence | [Home](screens/home-dark-20-320-fine.png) | All 7 header buttons have names/tooltips; the complete enabled icon/focus inventory is not keyboard-qualified. | T: complete names/tooltips/focus pass including resize and AI history. |
+| V12 | Gap — evidence | [Filter](screens/filtered-dark-20-320-fine.png) | Existing filter suite passes Space/Enter and selection; no complete keyboard-only traversal of all 19 views was performed. | T: keyboard pass through all enabled controls and exits; retain existing keyboard checks. |
+| V13 | Gap — observed | [Workspace](workspace-unavailable.png) | Refresh focus is lost to BODY; Back restores H1 rather than invoker. | H/U: stable focus identity/order and visible focus after navigation/refresh. |
+| V14 | N/A — web modal scope | [Stop](screens/stop-dark-20-320-fine.png) | Captured views use pushed pages/disclosures, not a web modal; native picker/sheet focus was not exercised. | Preserve this boundary; any future modal requires its own trap/exit/restore checks. |
+| V15 | Pass — fixture/source scope | [Stop](screens/stop-dark-20-320-fine.png), [recovery](screens/recovery-dark-20-320-fine.png) | Missing review capability disables consequential confirms; target/effects and unknown state are explained. Existing answer/workspace checks bind confirmation to exact revisions and distinguish partial readback. | U: retain receipts, disabled unknown actions, read-only review and exact-revision confirmation. No live effect acceptance claimed. |
+| V16 | Gap — observed | [Project](screens/project-light-20-320-fine.png) | Alpha appears as route title and project identity; ask #841/title repeat in the task block and card. Board also repeats lower on the project page. | L: render one identity/Board target and one task/card heading; keep independent destinations. |
+| V17 | Gap — observed | [Empty Home](empty-home.png) | With 0 ask/failed tasks, Home retains Attention + All as a row. Direct empty Attention does explain its state in source. | L: omit empty summary rows, retain explicit direct-empty explanation and urgent-first order. |
+| V18 | Pass — fixture scope | [Filter](screens/filtered-dark-20-320-fine.png) | 180-character titles use full-width continuation; captured scrollWidth equals 320 at the narrow boundary. Metadata and title remain adjacent flowing lines per M3. | L: preserve full titles and atomic identifiers; no new columns or truncation. |
+| V19 | Pass — fixture scope | [1000 counters](counts-1000.png), [zero](counts-0.png) | Counts 0 emit 0 buttons; 1/12/100/1000 emit 8 in stable state order; strip width/scrollWidth both 304. Baseline Closed remains labelled unknown. | L: retain zero omission, Doing/Review separation and unknown semantics (R6/R12). |
+| V20 | Gap — observed | [Home](screens/home-dark-20-320-fine.png) | Tray content inset is 6 px vertical/8 horizontal; group margin and padding are 5 px each, against 6 px section target. Workspace uses 12 px insets without a shared declared surface token set. | S: declared per-surface tokens, one 1 px divider/6 px section treatment; do not impose tray dimensions on workspace. |
+| V21 | Gap — evidence | [1000 counters](counts-1000.png) | Growth probe has no horizontal overflow at 320/20; existing shared comparator stops at its unrelated stale heading assertion. All route/right-edge/collision combinations remain unproved. | L: finish K-A8/visible-edge checks after repairing the obsolete expectation. |
+| V22 | Gap — observed | [Settings](screens/settings-dark-20-320-fine.png) | Tray H1 computes to 20 px/700, versus target 22 px/600 at b=20. Workspace title is 22 px/700. | S: system type roles at b and 1.1b semibold; retain secondary floors and independent icon calibration. |
+| V23 | Gap — observed | [200% text](resize-200.png) | At 320 px, 40 px text puts Close x=329.31, width=43.38, outside the viewport; document overflow=0 because content clips. | H/T: reachable essential header controls and overflow at 200%; test rectangles, not only document scrollWidth. |
+| V24 | Gap — observed | [Light counters](screens/project-light-20-320-fine.png) | Light Closed text `#68727d` on opaque `#eff1f3` computes 4.32:1, below 4.5:1. Other composited/disabled states remain unqualified. | S: correct quiet-text token and measure both themes/all states; preserve non-color semantics. |
+| V25 | Gap — evidence | [Workspace light](screens/workspace-light-20-360-coarse.png) | Input edge `#ccd3da` vs `#fafbfc` is 1.46:1; dark `#53616e` vs `#252b32` is 2.25:1. Whether each boundary is essential/excepted is not documented. | S: qualify essential graphics at ≥3:1 and document valid exceptions; do not claim WCAG failure solely from a decorative edge. |
+| V26 | Gap — observed | [Scrolled project](project-scrolled.png) | One main tray scroller exists, but Back leaves it; fixed 600 px captures cannot establish native natural-fit or usable-area sizing. | H: fixed navigation; retain one intended main scroller. Native content-fit acceptance remains separate. |
+| V27 | Gap — evidence | [Unavailable workspace](workspace-unavailable.png), [Agents](screens/agents-dark-20-320-fine.png) | Unknown capability, unavailable service, partial/Closed-unknown and empty probes exist; full normal/loading/no-match/stale/failed matrix across all routes is not complete. | U: named state fixtures with reason/recovery, never default unknown to zero/healthy (R12). |
+| V28 | Pass — bounded fixture checks | [Workspace](screens/workspace-dark-20-320-fine.png) | Existing answer suite passes same-ID retry, stale review, pending and accepted readback; workspace suite passes double-click suppression and partial outcomes. | U: retain those assertions and exact revision/receipt semantics during migration; no live execution claim. |
+| V29 | Gap — observed | [Workspace](workspace-unavailable.png) | Workspace contains 0 status/live regions; routine transcript/status updates have no programmatic status announcement. Errors have role=alert, which does not cover routine status. | U: polite non-focus status announcements; do not move focus or announce every refresh urgently. |
+| V30 | Pass — bounded browser check | [Filter](screens/filtered-dark-20-320-fine.png) | Filter starts closed, summary names Doing, 3 loaded; existing suite passes Space/Enter without hiding the result list. | L: keep existing disclosure/summary/independent-checkbox behavior; no usage hint. |
+| V31 | Pass — bounded browser check | [Filter](screens/filtered-dark-20-320-fine.png) | Existing suite verifies all/none/some and DOM `indeterminate`; captured default hides choices until expanded. | L: retain native accessible mixed state and selection indicators. |
+| V32 | Pass — bounded browser check | [All tasks](screens/all-tasks-dark-20-320-fine.png) | Existing suite passes state OR/project scope, no selection = all, Reset and counter shortcuts. | L: retain set operations; do not substitute queue focus for view filters. |
+| V33 | Pass — bounded browser check | [Filter](screens/filtered-dark-20-320-fine.png) | Existing suite passes Back/refresh selection retention, zero-match Reset, no policy writes. | H/L: preserve filters independently of admission/capacity/labels. |
+| V34 | Gap — observed | [Projects](screens/projects-dark-20-320-fine.png), [Settings](screens/settings-dark-20-320-fine.png) | Add project is after project rows rather than beside the section heading; Settings children are text-only rows without purpose icons. | L: place add/link actions beside subjects, group Settings by purpose with recognizable icons/labels. |
+| V35 | N/A — spatial animation scope | [Workspace](screens/workspace-dark-20-320-fine.png) | Reviewed tray/workspace source defines no spatial animation/keyframes/transitions to disable. Disclosure arrows switch without animation. | Keep no-bounce behavior; native motion is unknown and outside this browser observation. |
+| V36 | Gap — evidence | [Home](screens/home-dark-20-320-fine.png) | Normal/empty/unavailable views captured; no complete normal/blocked/critical/frequent-use refresh sequence with an active pointer/keyboard target. | U: explicit state-update sequences; keep essential controls stable without frequency-based rearrangement. |
+| V37 | Pass — document scope | [Approved profile](../../ui-rules-v2.md) | Exactly 38 canonical V IDs; 28 UI and 14 D mappings retained; reviewed owner answer records target choices. | Keep canonical links and local values; no additional competing checklist or amended R-number here. |
+| V38 | Gap — evidence | [Route matrix](matrix.md) | All concrete route/view captures exist; owner visual acceptance, native keyboard/accessibility and corrected full return/error flows remain unproved. | Each fix supplies its own measured before/after plus actual-size component/route review before reuse (R12/§ 7.4). |
+
+Contrast figures use the sRGB relative-luminance formula on the opaque source
+tokens named in the row; they are not a complete composited-color audit.
+Targets use the associated clickable label for checkboxes, exclude closed
+disclosure contents, and retain offscreen controls in the raw inventory for
+reachability analysis. A target inventory is not proof that every rectangle is
+reachable or nonoverlapping. The 200% probe demonstrates why scrollWidth alone
+would falsely pass clipped header actions.
+
+## Proposed fix tasks and order
+
+These are **draft briefs, not filed tasks**. The owner selected Preact + Signals +
+Wouter in [#1440](https://github.com/taskqorg/taskq/issues/1440#issuecomment-6309805829).
+At this review's board read #1440 was still doing; its accepted specification,
+route/store ports and foundation migration handoff are a prerequisite, not a
+shipped dependency. Do not build a second vanilla router/store or migrate shared
+framework-free project blocks to the framework. Keep native persistence, IPC,
+snapshot ownership, permissions and effects intact.
+
+Size is a planning estimate: S = one component/token diff; M = one coherent
+cross-route behavior diff. If the foundation handoff makes a brief larger than
+one reviewable diff, split by complete user scenario before filing (R2/§ 7.1).
+
+| Order / draft title | Rules | #1440 foundation and scope | Size / real prerequisite | Observable acceptance and preservation |
+|---|---|---|---|---|
+| 1. H — Keep route identity and Back reachable | V01–V08, V13, V23, V26 | Preact shell, Wouter memory route ledger, Signals view state; native route persistence through the agreed adapter. Include explicit supported/unavailable entry states; workspace stays its own root. | M; foundation handoff. | One fixed Back/title/action header; ≤1 px Back drift; child/deep-entry return; reload and filter restoration; invoker focus; Close/Back reachable at 320 px/200%. Preserve native chrome and emergency distinction. No new Work sessions/Agent settings backend. |
+| 2. T — Make every input target usable | V09–V14, V23 | Shared Preact controls use H's narrow overflow slot; existing project/answer components retain their APIs. | M; H only for the overflow slot. | Fine/coarse ≥32×32/44×44 effective targets with nonoverlap; keyboard activate/exit, tooltips/names/focus; exceptions recorded separately. Keep width, text size, action semantics and independent issue/session/Board links. |
+| 3. S — Apply spacing, type and contrast tokens | V20, V22, V24, V25 | One CSS token layer consumed by Preact tray/workspace, with explicit per-surface values; Signals font preference uses native persistence. | S; foundation handoff; order after T is coordination, not a hard dependency. | Exact local spacing/type roles at 14/16/18/20; 4.5:1 text, 3:1 essential graphics or documented exception; preserve independent summary icon sizing. No new theme preference or platform scaling policy. |
+| 4. L — Remove repeated list content and preserve filters | V08, V16–V19, V21, V30–V34 | Existing framework-free project/answer blocks mounted through #1440 component ports; filter/view state uses the agreed Signals store. | M; foundation handoff; coordinate shared target/token edits with T/S. | One project identity/Board target and task/card heading; empty summary omitted; inline Add; Settings purpose groups; full-width 180-character titles; 0/1/12/100/1000 right-aligned counts; filter keyboard/OR/AND/Reset/Back/no-write checks retained. Repair obsolete heading expectation without deleting navigation assertions. |
+| 5. U — Preserve focus and explain every update state | V07, V13, V15, V27–V29, V36, V38 | Stable Preact node identity and Signals subscriptions over existing native snapshots/receipts; no query cache or new effect executor. | M; foundation handoff; use H's focus identity contract. | All eight display states have reason/recovery where relevant; focused refresh/control and drafts/caret survive; polite status announcements; same-ID retry and exact revision/readback remain; normal/blocked/critical updates preserve active targets. |
+
+All briefs retain R6 data meanings, R9 authority, R11 active work and R12 unknown
+semantics. Ordering is a recommended execution sequence, not five artificial
+blocking dependencies. H owns shared route/focus identity; U owns updates. T owns
+hit-box/keyboard behavior; S owns paint/type tokens; L owns list composition.
+The five writers must not edit the same uncommitted shell/shared files in parallel.
+
+Common delivery: reuse this source/hash-pinned baseline; reproduce the named
+failure, change only the accepted behavior, rerun that check for an after-pass,
+run the selected project gate, update affected source/fixture evidence, and obtain
+owner actual-size visual acceptance. Do not call browser proof native acceptance.
+GitHub publication uses green merge-result `merge_group` CI; private fallback uses
+exact-SHA CI. This proposal neither merges a PR nor claims those gates passed.
+
+## Checks and remaining work
+
+- `npm.cmd ci --ignore-scripts`; `npm.cmd run build`: passed; source bundle generated.
+- `node docs/design/evidence/1443/capture.cjs`: 304 cells; pointer mode and exact count asserted; zero page errors on the complete run.
+- `node tests/tray-state-filter.browser.cjs`: passed; selection, keyboard, scope, Back/refresh and no writes retained.
+- `node tests/workspace.browser.cjs`: passed; drafts, full replies, IME, exact revisions, double-click and partial-outcome checks retained.
+- `node tests/tray-answer.browser.cjs`: passed in both themes at 16/20 px; unchanged DOM, draft/caret/focus, stale review, same-ID retry and accepted-readback checks retained.
+- `node tests/project-blocks.browser.cjs`: **failed** at `tests/project-blocks.browser.cjs:71`. Expected `/project-with-a-long-name.* · Review/`; actual heading `Tasks`, with separate `Filter: Review`. Product source and assertions were unchanged. This blocks a complete V08/V21 pass; no after-pass is claimed.
+- `python3 scripts/check.py --base 8bf66914f03560c8c3f979523dce7d6781fe5420`: **failed**, full selection; Rust 427 passed, 21 failed, 36 ignored; 322.562 s / 900 s. [Failure inventory](checks.md). Host tests refused by worker authorization are `sandbox-blocked`; other failures remain unqualified. The gate stopped before offline selftest and its Node stage. Worker environment and all assertions were retained; no permission change or retry.
+- `node --check docs/design/evidence/1443/capture.cjs`; report/matrix local links; 38 unique ordered verdicts; 304 image hashes and source hashes; `git diff --check`: passed. Final capture rerun checks only the research instrument's raster stability; product source is unchanged.
+
+The first extended capture attempts used an incomplete history/notification
+fixture; source-owned period/notification fields were then supplied before the
+complete run. Those harness failures do not establish a product defect.
+All original regression assertions are retained. No new production logic or CI
+gate was added; the capture is a research instrument under R12.
+
+Owner decision: approve all five briefs in the listed order, approve H+T first and
+defer the rest, or revise named briefs. No dependent task is filed before that
+answer (§ 7.5, A4). UI fixes, after-pass evidence, native qualification, full
+keyboard/contrast/state coverage and foundation readiness remain open.
