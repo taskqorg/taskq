@@ -301,7 +301,7 @@ attention:function(){
   return setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('')+globalGroup('ask',all)+globalGroup('failed',all)+answerNotices();
 },
 projects:function(){
-  return TaskqProjectBlocks.aggregate(view.S.projects.map(blockProject),[])+(view.S.projects.length?view.S.projects.map(p=>TaskqProjectBlocks.summary(blockProject(p))+'<div class="body meta">'+esc(modeText(p))+'</div>').join(''):'<div class="body meta">No projects yet</div>')+addProject();
+  return TaskqProjectBlocks.aggregate(view.S.projects.map(blockProject),[])+(view.S.projects.length?view.S.projects.map(p=>TaskqProjectBlocks.summary(blockProject(p))+'<div class="body meta">'+esc(modeText(p))+'</div><div class="body meta">You asked: '+esc(p.request||'not recorded')+'</div>').join(''):'<div class="body meta">No projects yet</div>')+addProject();
 },
 controls:function(){
   const run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
@@ -314,10 +314,13 @@ runningAgents:function(){
     if(!old||p.observed>old.observed)boards.set(key,p);
   }
   let partial=false,doing=0,review=0;
+  const reasons=new Set(),seen=new Map();
   for(const p of boards.values()){
     const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
     const fresh=p.complete===true&&elapsed!==null&&elapsed<=60&&Number.isFinite(p.observed);
-    partial ||= !fresh||!Array.isArray(p.hosts);
+    partial ||= !fresh||!Array.isArray(p.hosts)||!Array.isArray(p.tasks);
+    if(!fresh)reasons.add(!p.complete?'partial board snapshot':elapsed===null?'missing task observation':'stale task observation');
+    if(!Array.isArray(p.hosts)||!Array.isArray(p.tasks))reasons.add('missing host/task data');
     for(const h of Array.isArray(p.hosts)?p.hosts:[]){
       if(!h||typeof h.name!=='string'||!h.name){partial=true;continue;}
       const age=Number.isFinite(h.updated)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-h.updated+elapsed:null;
@@ -325,15 +328,18 @@ runningAgents:function(){
       if(!old)hosts.set(h.name,{name:h.name,age,unknown:!fresh||age===null||age<0||age>60,counts:new Map()});
       else {old.unknown ||= !fresh||age===null||age<0||age>60;old.age=old.age===null||age===null?null:Math.max(old.age,age);}
     }
-    for(const t of p.tasks||[]){
+    for(const t of Array.isArray(p.tasks)?p.tasks:[]){
       doing+=t.state==='doing'?1:0;review+=t.state==='review'?1:0;
       if(t.executions!=null&&!Array.isArray(t.executions))partial=true;
       for(const x of Array.isArray(t.executions)?t.executions:[]){
-        if(!x||typeof x.host!=='string'){partial=true;continue;}
+        if(!x||typeof x.host!=='string'){partial=true;reasons.add('invalid execution host');continue;}
         const name=x.host||'Unknown host';
         if(!hosts.has(name))hosts.set(name,{name,age:null,unknown:true,counts:new Map()});
         const h=hosts.get(name),age=Number.isFinite(x.observed)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-x.observed+elapsed:null;
-        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime){h.unknown=true;continue;}
+        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason=x.reason||'execution observation missing, stale or incomplete';continue;}
+        const identity=JSON.stringify([p.issues||p.root,t.n,x.id]),prior=seen.get(identity);
+        if(prior){if(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role){h.unknown=true;hosts.get(prior.host).unknown=true;reasons.add('conflicting execution observations');}continue;}
+        seen.set(identity,x);
         const counts=h.counts.get(x.runtime)||{worker:0,reviewer:0};counts[x.role]++;h.counts.set(x.runtime,counts);
       }
     }
@@ -346,7 +352,7 @@ runningAgents:function(){
       h+='<details data-view-key="host:'+esc(host.name)+'"><summary><strong>'+esc(host.name)+'</strong> · '+runtimes.map(([rt,c])=>esc(rt)+' '+(c.worker+c.reviewer)).join(' · ')+'</summary><div class="body">';
       for(const [rt,c] of runtimes)h+='<div>'+esc(rt)+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')+'</div>';
       h+='</div></details>';
-    }else h+='<div class="body"><strong>'+esc(host.name)+'</strong>'+(unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':''):' · idle')+'</div>';
+    }else h+='<div class="body"><strong>'+esc(host.name)+'</strong>'+(unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':'')+': '+esc([...reasons].join('; ')||host.reason||'host observation missing or stale'):' · idle')+'</div>';
   }
   if(!hosts.size)h+='<div class="body meta">Hosts unknown: no observation</div>';
   const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
@@ -354,7 +360,7 @@ runningAgents:function(){
   const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
   h+='<details data-view-key="counts"><summary>Reconcile counts</summary><div class="body meta">Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review)+'</div>';
   if(capFresh&&occupied){
-    h+='<div class="body meta">'+esc(view.S.host)+' · Occupied: '+(Object.entries(cap).map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old</div>';
+    h+='<div class="body meta">'+esc(view.S.host)+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old</div>';
     const reserved=new Map();let known=local.length>0;
     for(const p of local){
       if(!Number.isFinite(p.age)||p.age<0||p.age>60||p.complete!==true||!Number.isFinite(p.tasks_age_seconds)||p.tasks_age_seconds<0||p.tasks_age_seconds+p.age>60||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
@@ -370,19 +376,16 @@ runningAgents:function(){
   return h+'<div class="body meta">Reservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.</div></details></section>';
 },
 home:function(){
-  let h='<div class="body meta">'+esc(view.S.host)+'</div>'+views()+controls();
-  h+='<details data-view-key="scope"><summary>↳ Scope <span class="meta">'+view.S.projects.length+' projects</span></summary><div class="body">'+view.S.projects.map(p=>'<div><strong>'+esc(p.name)+'</strong> <span class="meta">'+esc(modeText(p))+'</span></div><div class="meta">You asked: '+esc(p.request||'not recorded')+'</div>').join('')+'</div></details>';
-  h+='<div class="row">Attention'+routeButton('attention','All')+'</div>'+attention();
-  h+=api.runningAgents();
-  h+=ai();
-  h+='<div class="group"><div class="row">Projects'+routeButton('projects','All '+view.S.projects.length)+'</div>'+projects()+'</div>';
-  return h+routeButton('cadence');
+  const faults=setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('');
+  return api.runningAgents()+controls()+ai()+'<button class="project" data-a="workspace" data-page="messages">Messages…</button>'+
+    (faults?'<section class="group" aria-label="Attention">'+faults+'</section>':'')+filteredTasks()+
+    '<div class="group">'+routeButton('projects')+routeButton('appearance')+'</div>';
 },
 routeBody:function(){
   switch(view.page){
     case 'projects':return projects();
     case 'attention':return attention()||'<div class="body meta">'+(known(view.S.projects)?'No reported questions or failures':'Status incomplete; check Services')+'</div>';
-    case 'settings':return ['appearance','cadence','notifications','agents','services','about'].map(r=>routeButton(r)).join('')+workEntry();
+    case 'settings':return '<div class="row meta">Display and notices</div>'+['appearance','cadence','notifications'].map(r=>routeButton(r)).join('')+'<div class="row meta">Host and maintenance</div>'+['agents','services','about'].map(r=>routeButton(r)).join('')+workEntry();
     case 'appearance':return appearance();
     case 'cadence':return history();
     case 'notifications':return notifications();
@@ -448,13 +451,13 @@ const {find}=execution.module("tray.create.openCard.helpers",{find:()=>o.n!=null
 notedCard:function(p){return view.noted&&view.noted.root===p.root?'<div class="group"><div class="row meta"><span>Notification</span></div><div data-card="'+esc(view.noted.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),view.noted)+'</div></div>':'';},
 project:function(p){
   const ts=tasks(p);
-  return TaskqProjectBlocks.summary(blockProject(p))+'<div class="body meta">'+esc(modeText(p))+'</div>'+problem(p)+incident(p,true)+incidentNotice(p)+notedCard(p)+
+  return '<section class="tqp">'+TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name)+'</section><div class="body meta">'+esc(modeText(p))+'</div>'+problem(p)+incident(p,true)+incidentNotice(p)+notedCard(p)+
   (['ask','failed','doing','review','ready','waiting','later','held'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?'<div class="group"><div class="row meta"><span>'+names[st]+'</span>'+counter(r.length,color(st),names[st])+(r.length>1?startButton(r):'')+'</div>'+r.map(t=>taskRow(t)).join('')+'</div>':'';}).join('')||'<div class="body muted">No open tasks</div>')+answerNotices(p.issues)+
-  '<div class="group">'+(p.issues?'<a class="project" href="'+esc(p.issues)+'" data-url="'+esc(p.issues)+'"><span>Board ↗</span><span></span><span></span></a>':'')+admission(p)+'</div>'+capacity(p)+notifyGroup(p)+workEntry(p.root)+service(p);},
+  '<div class="group">'+admission(p)+'</div>'+capacity(p)+notifyGroup(p)+workEntry(p.root)+service(p);},
 filteredTasks:function(p){
-  const ps=p?[p]:view.S.projects,selected=view.taskFilter,states=TaskqProjectBlocks.states;
+  const ps=p?[p]:view.S.projects,selected=view.taskFilter||[],states=TaskqProjectBlocks.states;
   const rows=unique(ps.flatMap(tasks)).filter(t=>!selected.length||selected.includes(t.state));
-  return '<header class="filter-header">'+(p?TaskqProjectBlocks.summary(blockProject(p),selected,TaskqProjectBlocks.observation(view.S.projects.map(blockProject)).open):TaskqProjectBlocks.aggregate(ps.map(blockProject),selected))+
+  return '<header class="filter-header">'+(p?'<section class="tqp">'+TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name,p.complete===true?[]:[p.name],selected,TaskqProjectBlocks.observation(view.S.projects.map(blockProject)).open)+'</section>':TaskqProjectBlocks.aggregate(ps.map(blockProject),selected))+
     '<div class="body meta" role="status">'+esc(selected.length?states.filter(([s])=>selected.includes(s)).map(([,name])=>name).join(', '):'All states')+' · '+rows.length+' loaded'+(known(ps)?'':' · Partial')+'</div></header>'+
     (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
     (rows.filter(t=>t.state==='held').length>1?'<div class="row">'+startButton(rows)+'</div>':'')+answerNotices(p?.issues)+
@@ -467,7 +470,7 @@ head:function(){
   const mode=view.S.size_anchor||(view.S.size?'fixed':'top'),label={fixed:'Fixed size',bottom:'Keep bottom edge',top:'Keep top edge'}[mode],p=view.S.projects?.find(p=>p.root===view.page);
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page]||'Unavailable';
   const crumbs=p?'<a href="#" data-route="projects">Projects</a>'+((view.taskFilter||view.working)?' › <a href="#" data-route="'+esc(p.root)+'" title="'+esc(p.name)+'">'+esc(p.name)+'</a>':''):['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'<a href="#" data-route="settings">Settings</a>':'';
-  const actions='<details class="shell-overflow" data-view-key="navigation-actions"><summary title="Navigation and window options" aria-label="Navigation and window options">⋯</summary><nav class="overflow-actions" aria-label="Menu"><button data-route="home" title="Home">Home</button><button data-route="settings" title="Settings">Settings</button><button data-a="workspace" title="Open workspace">Workspace</button>'+(view.S.stop_modes?'<button data-a="stop-review" title="Emergency stop">Emergency stop…</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+label+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">Keep above other windows</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'">'+(view.S.pinned?'Unpin window':'Pin window')+'</button></nav></details>';
+  const actions=(p?.issues?'<a href="'+esc(p.issues)+'" data-url="'+esc(p.issues)+'" aria-label="Open '+esc(p.name)+' Board" title="Open Board">Board ↗</a>':'')+'<details class="shell-overflow" data-view-key="navigation-actions"><summary title="Navigation and window options" aria-label="Navigation and window options">⋯</summary><nav class="overflow-actions" aria-label="Menu"><button data-route="home" title="Home">Home</button><button data-route="settings" title="Settings">Settings</button><button data-a="workspace" title="Open workspace">Workspace</button>'+(view.S.stop_modes?'<button data-a="stop-review" title="Emergency stop">Emergency stop…</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+label+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">Keep above other windows</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'">'+(view.S.pinned?'Unpin window':'Pin window')+'</button></nav></details>';
   return shell.bar({title,crumbs,back:view.page!=='home'||!!view.taskFilter||!!view.working,actions,windows:'<button data-a="hide" title="Close window" aria-label="Close window">×</button>'});
 },
 draw:function(navigating=false){
