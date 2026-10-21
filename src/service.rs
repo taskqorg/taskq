@@ -40,6 +40,18 @@ pub const TASK_LABEL: &str = "taskq";
 const NATIVE_PASS_BUDGET:std::time::Duration=std::time::Duration::from_secs(20);
 
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
+/// Heartbeat lines a write compares: the `at` stamp and diagnostics observation times change every pass (#1358).
+fn stable(body: &str) -> Vec<String> {
+    body.lines().filter(|l| !l.starts_with("at ")).map(|l| match l.strip_prefix("diagnostics ").and_then(|t| serde_json::from_str::<Value>(t).ok()) {
+        Some(Value::Object(mut d)) => {
+            d.remove("observed");
+            d.values_mut().filter_map(Value::as_object_mut).for_each(|f| { f.remove("at"); });
+            format!("diagnostics {}", Value::Object(d))
+        }
+        _ => l.to_string(),
+    }).collect()
+}
+
 pub fn is_task(i: &Issue) -> bool {
     i.trusted && i.labels.iter().any(|l| l == TASK_LABEL)
 }
@@ -1363,7 +1375,9 @@ impl<'a> Service<'a> {
         let body = self.heartbeat_body();
         self.host_issue = hosts.iter().find(|h| h.title == title).map(|h| h.number);
         match hosts.iter().find(|h| h.title == title) {
-            Some(h) if h.body.lines().filter(|l| !l.starts_with("at ")).eq(body.lines()) && now - h.updated < 60.min(ttl / 3) => {}
+            // execution rows are read within 60 s (snapshot.rs); without them ttl / 3 keeps every lease fresh (#1358)
+            Some(h) if stable(&h.body) == stable(&body)
+                && now - h.updated < if body.lines().any(|l| l.starts_with("execution ")) { 60.min(ttl / 3) } else { ttl / 3 } => {}
             // a same-body edit leaves `updated_at` as is (GitHub), so the stamp keeps the heartbeat fresh
             Some(h) => self.board.edit(h.number, &format!("{body}\nat {now}"))?,
             None => {
@@ -3360,10 +3374,10 @@ mod tests {
         for task in tasks {assert!(core::executions(task,&entries(&b,task).unwrap()).iter().all(|x|x.release.is_none()));}
     }
 
-    // Chain: § 4 board budget, heartbeat. Risk: a PATCH every pass burns the shared budget, or a sparse heartbeat
-    // lets another host expire a live lease.
+    // Chain: § 4 board budget, heartbeat. Risk: a PATCH every pass burns the shared budget (#1358: the diagnostics
+    // observation time changed the body every pass), or a sparse heartbeat lets another host expire a live lease.
     #[test]
-    fn idle_heartbeat_is_batched_at_sixty_seconds_and_stays_fresh() {
+    fn idle_heartbeat_is_batched_at_a_third_of_ttl_and_stays_fresh() {
         let b = Fake::default();
         let c = cfg("mac");
         let mut s = service(&b, &c, Default::default());
@@ -3374,10 +3388,22 @@ mod tests {
         for _ in 0..360 {
             b.advance(10);
             assert!(b.now().unwrap() - beat(&b) < c.ttl, "lease stays fresh between passes");
+            // a live producer clock: every pass reports new observation times
+            let mut d = s.service_diagnostics();
+            d["observed"] = json!(b.now().unwrap());
+            d["running"]["at"] = json!(b.now().unwrap());
+            *s.diagnostics.borrow_mut() = Some((std::time::Instant::now(), d));
             s.pass().unwrap();
             if beat(&b) != last { writes += 1; last = beat(&b); }
         }
-        assert_eq!(writes, 60, "one periodic write per minute, not one per fast pass");
+        assert_eq!(writes, 3600 / (c.ttl / 3), "one periodic write per ttl/3, not one per fast pass");
+        let body = b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").unwrap().body;
+        let at = body.lines().find_map(|l| l.strip_prefix("at ")).unwrap();
+        assert!(body.contains(&format!("\"observed\":{at},")), "a write carries the current diagnostics");
+        let line = body.lines().find(|l| l.starts_with("diagnostics ")).unwrap();
+        let mut d: Value = serde_json::from_str(&line["diagnostics ".len()..]).unwrap();
+        d["running"]["value"] = json!("9.9.9");
+        assert_ne!(stable(&body), stable(&body.replace(line, &format!("diagnostics {d}"))), "a changed diagnostics value is written at once");
     }
 
     // Chain: R2 two hosts -> lost heartbeat -> still-live executor -> confirmed exit -> replacement.
