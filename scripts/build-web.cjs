@@ -12,13 +12,9 @@ fs.mkdirSync(out,{recursive:true});
 require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-web.cjs'),out],{stdio:'inherit'});
 const components={'answer-card':'TaskqAnswerCard','resource-controls':'TaskqResources','project-blocks':'TaskqProjectBlocks','finding-composer':'TaskqFindingComposer'};
 for(const [name,globalName] of Object.entries(components))esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',globalName,outfile:path.join(out,name+'.js'),target:'es2022'});
-for(const name of ['tray-guard','tray-entry','workspace-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
+for(const name of ['tray-guard','tray-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
 let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8');
 for(const name of ['answer-card','project-blocks','resource-controls'])html=html.replace('{{'+name.toUpperCase().replaceAll('-','_')+'_CSS}}',fs.readFileSync(path.join(root,'src',name+'.css'),'utf8'));
 for(const [key,name] of [['GUARD_JS','tray-guard'],['APP_JS','tray-entry']])html=html.replace('{{'+key+'}}',fs.readFileSync(path.join(out,name+'.js'),'utf8').replaceAll('</script','<\/script'));
 if(/\{\{[A-Z_]+\}\}/.test(html))throw Error('Unresolved web asset');
 fs.writeFileSync(path.join(out,'tray.html'),html);
-
-let workspace=fs.readFileSync(path.join(root,'src/workspace.html'),'utf8');
-for(const [key,name] of [['GUARD_JS','tray-guard'],['APP_JS','workspace-entry']])workspace=workspace.replace('{{'+key+'}}',fs.readFileSync(path.join(out,name+'.js'),'utf8').replaceAll('</script','<\\/script'));
-fs.writeFileSync(path.join(out,'workspace.html'),workspace);

@@ -79,7 +79,7 @@ Each task carries: the backlog row and design IDs; the affected R and § rules; 
 
 ## Owner request log
 
-Owner decision 2026-10-14: TaskQ keeps every owner and operator request, and a manual `taskq retro` turns them into recommendations. The PM appends each improvement proposal it makes in chat as one line to [use cases](../use-cases/README.md) so the retrospective sees it; the F-retro row carries the implementation.
+Owner decision 2026-10-14: TaskQ keeps every owner and operator request, and a manual `taskq retro` turns them into recommendations. The PM appends each improvement proposal it makes in chat as one line to [use cases](../use-cases/README.md) so the retrospective sees it; the F-retro row carries the implementation. Owner answer on #1427: the request log goes; `taskq retro` opens an owner session over the use cases and the board's ask/answer/requeue history, and that session files tasks with `add`.
 
 ## Batch 2 tasks
 

@@ -1,5 +1,6 @@
 //! Host setup sessions (taskq.md § 4, [detail](../docs/design/standalone-onboarding.md#contract-detail)): each `service setup`
 //! writes a new `<install>/setup/<id>.json`; the host service launches each once, then the Claude session manager owns it.
+//! Tray AI requests and `taskq retro` take the same path with a project `root` ([AI requests](../docs/design/ai-workspace.md#contract-detail)).
 //! A crash between `launching` and the native answer reads `interrupted`; nothing relaunches.
 
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,8 @@ pub struct Request {
     #[serde(default)] pub session: Option<String>,
     #[serde(default)] pub url: Option<String>,
     #[serde(default)] pub reason: Option<String>,
+    /// The registered project an AI request or retro session runs in; none: a setup session.
+    #[serde(default, skip_serializing_if = "Option::is_none")] pub root: Option<String>,
 }
 
 const STATES: [&str; 5] = ["pending", "launching", "launched", "failed", "interrupted"];
@@ -99,20 +102,47 @@ installation or savings; TaskQ independently rereads status.
 ", host = r.host, platform = r.platform, client = r.client, runtime = r.runtime, workdir = workdir.display())
 }
 
+/// A project session's brief: the owner's request (tray) or the retro task, inside the fixed project frame.
+fn project_brief(root: &str, task: &str) -> String {
+    format!("You are a TaskQ session opened by the host service because the owner asked for it.
+Project: {root}
+Read its AGENTS.md and taskq.md first and follow them; you may act as the TaskQ PM for this project.
+Confirm concrete external effects with the owner first (taskq.md section 6). Never run gh auth login.
+Touch only this project, ~/.claude, ~/.codex and the OS temp dir. Task-state writes use taskq commands.
+
+{task}
+")
+}
+
+pub const RETRO: &str = "Retrospective (`taskq retro`): read the Proposals section of docs/use-cases/README.md and the board's
+recent `ask`, `answer` and `requeue` entries (`taskq status --json`, `taskq inbox N`). Give the owner numbered
+recommendations: simpler flows, missing options, quick commands. File each one the owner accepts with `taskq add`.";
+
 /// `service setup`: a new `pending` request every call.
 pub fn submit(install: &Path, runtime: &str, client: Option<&str>, targets: &[String]) -> Res<Request> {
-    if runtime != "claude" { return Err(format!("setup runtime {runtime}: only claude has a qualified visible session")); }
     let targets = targets.iter().map(|t| {
         let p = Path::new(t);
         if !p.is_absolute() { return Err(format!("setup target {t}: expected an absolute path")); }
         p.canonicalize().map(|p| p.display().to_string()).map_err(|e| format!("setup target {t}: {e}"))
     }).collect::<Res<Vec<_>>>()?;
+    save(install, runtime, client, targets, None, |r, id| brief(r, &dir(install).join(id)))
+}
+
+/// Tray AI request or `taskq retro`: a new `pending` session in project `root` with `task` as its brief.
+pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
+    if task.trim().is_empty() { return Err("Write a request before sending".into()); }
+    let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
+    save(install, "claude", None, vec![], Some(root.clone()), |_, _| project_brief(&root, task.trim()))
+}
+
+fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
+    if runtime != "claude" { return Err(format!("setup runtime {runtime}: only claude has a qualified visible session")); }
     let id = crate::runtime::uuid();
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
     let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or("Claude Code").into(), runtime: runtime.into(),
-        targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None };
-    r.brief = brief(&r, &dir(install).join(&id));
+        targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root };
+    r.brief = brief(&r, &id);
     locked(install, || {
         // Same-millisecond calls keep call order: created is strictly after the newest request.
         r.created = all(install)?.0.last().map_or(r.created, |n| r.created.max(n.created + 1));
@@ -136,10 +166,10 @@ pub fn recover(install: &Path) -> Res<()> {
 
 pub enum Launched { Job { job: String, session: Option<String>, url: Option<String> }, NoStart(String), Unknown(String) }
 
-/// The native call, replaceable in tests.
+/// The native call with the request's own folder, replaceable in tests.
 pub type Launcher = fn(&Path, &Request) -> Launched;
 
-/// One host pass: launch the oldest `pending` request. Setup is a session for the human (owner, #1426):
+/// One host pass: launch the oldest `pending` request. Owner sessions are for the human (owner, #1426, #1427):
 /// no § 3 grant and no hold, Stop or restart waits for it.
 pub fn step(install: &Path, launch: Launcher) -> Res<()> {
     let (requests, bad) = all(install)?;
@@ -151,9 +181,9 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
         r.state = "launching".into(); r.reason = None;
         write(install, &r)
     })?;
-    let workdir = dir(install).join(&id);
-    let outcome = match fs::create_dir_all(&workdir) {
-        Ok(()) => launch(&workdir, &r),
+    let own = dir(install).join(&id);
+    let outcome = match fs::create_dir_all(&own) {
+        Ok(()) => launch(&own, &r),
         Err(e) => Launched::NoStart(format!("setup directory: {e}")),
     };
     match outcome {
@@ -166,22 +196,23 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
 }
 
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
-pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
+pub fn claude_launch(own: &Path, r: &Request) -> Launched {
+    let workdir = r.root.as_deref().map_or(own, Path::new);
     let bin = crate::runtime::which("claude");
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} claude is not on the host service PATH")); }
     if crate::runtime::login_state("claude", &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} Claude Code is not logged in on this host")); }
-    let install = workdir.parent().and_then(Path::parent).unwrap_or(workdir);
+    let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
     let env = crate::runtime::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[] };
     let access = match crate::runtime::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
-    let path = workdir.join("brief.txt");
+    let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match crate::runtime::executable(bin, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
-        .args(["--bg", "--remote-control", "taskq setup", "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+        .args(["--bg", "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
     let input = format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default());
     use coreq::process::Failure;
     let out = match coreq::process::exchange("setup.claude-launch", &mut c, input.as_bytes(), std::time::Duration::from_secs(30)) {
@@ -191,7 +222,7 @@ pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
     };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let _ = fs::write(workdir.join("launch.log"), format!("{stdout}\n{stderr}"));
+    let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
     // Claude refuses before it starts anything: a definite no-start, never `interrupted`.
     if !out.status.success() && stderr.contains("Workspace not trusted") { return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())); }
     if !out.status.success() && (stderr.contains("/login") || stderr.contains("Not logged in")) { return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")); }
@@ -214,23 +245,24 @@ const ACCESS: &str = "access refused:";
 /// What the tray shows (A1): one distinct kind per actionable state and the owner's next step.
 pub fn view(r: &Request) -> serde_json::Value {
     let reason = r.reason.as_deref().unwrap_or("");
+    let again = if r.root.is_some() { "send the request again" } else { "run `taskq service setup`" };
     let (kind, next) = match r.state.as_str() {
-        "pending" | "launching" => ("starting", "The host service is starting the session"),
-        "launched" if r.url.is_some() => ("launched", "Open the session to read and answer; archive it in Claude when done"),
-        "launched" => ("launched", "Session started; find it in Claude (`claude agents`), archive it when done"),
-        "failed" if reason.starts_with(MISSING) => ("runtime", "Install Claude Code for the service user, then run `taskq service setup`"),
-        "failed" if reason.starts_with(LOGIN) => ("login", "Run `claude auth login` as the service user, then `taskq service setup`"),
-        "failed" if reason.starts_with(ACCESS) => ("access", "Grant the access named here yourself (taskq never widens it), then `taskq service setup`"),
-        "failed" => ("failed", "Read the reason, fix it, then run `taskq service setup`"),
-        _ => ("interrupted", "Check `claude agents` for a live session first; only then run `taskq service setup`"),
+        "pending" | "launching" => ("starting", "The host service is starting the session".into()),
+        "launched" if r.url.is_some() => ("launched", "Open the session to read and answer; archive it in Claude when done".into()),
+        "launched" => ("launched", "Session started; find it in Claude (`claude agents`), archive it when done".into()),
+        "failed" if reason.starts_with(MISSING) => ("runtime", format!("Install Claude Code for the service user, then {again}")),
+        "failed" if reason.starts_with(LOGIN) => ("login", format!("Run `claude auth login` as the service user, then {again}")),
+        "failed" if reason.starts_with(ACCESS) => ("access", format!("Grant the access named here yourself (taskq never widens it), then {again}")),
+        "failed" => ("failed", format!("Read the reason, fix it, then {again}")),
+        _ => ("interrupted", format!("Check `claude agents` for a live session first; only then {again}")),
     };
     serde_json::json!({"id": r.id, "state": r.state, "kind": kind, "next": next, "reason": r.reason, "url": r.url, "host": r.host, "runtime": r.runtime, "session": r.session})
 }
 
-/// The tray row: the newest request, or unknown when no request reads and some record is unreadable (R12).
-pub fn last(install: &Path) -> serde_json::Value {
+/// The tray row: the newest setup (`project` false) or project request, or unknown when none reads and some record is unreadable (R12).
+pub fn last(install: &Path, project: bool) -> serde_json::Value {
     match all(install) {
-        Ok((ok, bad)) => ok.last().map(view).or_else(|| bad.first().map(|e| serde_json::json!({"kind": "unknown", "reason": e}))).unwrap_or(serde_json::Value::Null),
+        Ok((ok, bad)) => ok.iter().rfind(|r| r.root.is_some() == project).map(view).or_else(|| bad.first().map(|e| serde_json::json!({"kind": "unknown", "reason": e}))).unwrap_or(serde_json::Value::Null),
         Err(e) => serde_json::json!({"kind": "unknown", "reason": e}),
     }
 }
@@ -264,7 +296,7 @@ mod tests {
         // A restarted service never relaunches a launched request.
         recover(i).unwrap();
         step(i, never).unwrap();
-        assert_eq!(last(i)["kind"], "launched");
+        assert_eq!(last(i, false)["kind"], "launched");
     }
 
     // Chain: crash boundary between `launching` and the native answer (A2). Risk: an uncertain launch is replayed.
@@ -287,13 +319,13 @@ mod tests {
         step(i, never).unwrap();
         fs::write(dir(i).join("x.json"), r#"{"schema":3}"#).unwrap();
         assert!(step(i, never).is_err());
-        assert_eq!(last(i)["kind"], "interrupted", "the newest readable request still shows");
+        assert_eq!(last(i, false)["kind"], "interrupted", "the newest readable request still shows");
         fs::remove_file(file(i, &r.id)).unwrap();
-        assert_eq!(last(i)["kind"], "unknown");
+        assert_eq!(last(i, false)["kind"], "unknown");
     }
 
-    // Chain: host policy and holds to launch (A5, owner answer 2). Risk: a session the owner opened waits on queue limits or holds.
-    // `step` takes no host state, so Claude capacity 0, the emergency hold, Stop and restart cannot reach it.
+    // Chain: host policy and holds to launch (#1426 A5, #1427 A4). Risk: a session the owner opened (setup or AI request)
+    // waits on queue limits or holds. `step` takes no host state, so Claude capacity 0, the emergency hold, Stop and restart cannot reach it.
     #[test]
     fn limits_and_holds_do_not_wait() {
         let t = tmp();
@@ -302,15 +334,21 @@ mod tests {
         fs::write(i.join("hold"), "emergency").unwrap();
         fs::write(i.join("restart"), "").unwrap();
         submit(i, "claude", None, &[]).unwrap();
+        let ai = open(i, i, "  Why is nothing starting?  ").unwrap();
         step(i, ok).unwrap();
-        assert_eq!(states(i), ["launched"]);
+        step(i, ok).unwrap();
+        assert_eq!(states(i), ["launched", "launched"]);
+        assert_eq!(last(i, true)["id"], ai.id.as_str(), "the AI request row shows the project request, not setup");
+        assert!(ai.brief.contains("\nWhy is nothing starting?\n") && ai.root.is_some());
+        assert!(open(i, i, " ").is_err(), "empty request writes nothing");
+        assert_eq!(states(i).len(), 2);
     }
 
     // Chain: launch outcome to tray view (A4). Risk: missing runtime, login and access read as one generic failure.
     #[test]
     fn view_names_each_actionable_state() {
         let mut r = Request { schema: 2, id: "a".into(), created: 0, host: "h".into(), platform: "p".into(), client: "c".into(), runtime: "claude".into(),
-            targets: vec![], brief: String::new(), state: "failed".into(), job: None, session: None, url: None, reason: None };
+            targets: vec![], brief: String::new(), state: "failed".into(), job: None, session: None, url: None, reason: None, root: None };
         let kind = |r: &Request| view(r)["kind"].as_str().unwrap().to_string();
         let mut kinds = vec![];
         for reason in [format!("{MISSING} x"), format!("{LOGIN} x"), format!("{ACCESS} x"), "spawn".into()] { r.reason = Some(reason); kinds.push(kind(&r)); }

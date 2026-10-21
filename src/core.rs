@@ -205,7 +205,6 @@ pub struct Execution {
 /// All derived facts for one immutable board read; dependency blocking only adjusts the current task.
 pub struct Projection {
     pub task: Task,
-    pub owner_comments: Vec<u64>,
     pub revision: u64,
     accepted: Vec<u64>,
     pub executions: Vec<Execution>,
@@ -395,10 +394,6 @@ pub fn revision(n: u64, entries: &[Entry]) -> u64 {
     project(n, entries, false).revision
 }
 
-/// Owner comments (§ 4): ids of the bare comments that the open `ask` ignored, i.e. that name no option of its card.
-pub fn owner_comments(n: u64, entries: &[Entry]) -> Vec<u64> {
-    project(n, entries, false).owner_comments
-}
 
 /// Parse and reduce once, retaining facts needed by the service and command surfaces.
 pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
@@ -406,7 +401,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     log.sort_by_key(|e| e.id);
     let mut t = Task::default();
     let mut resume = None; // the state an `ask` entry left; None when a retry limit asked
-    let (mut free, mut accepted) = (vec![], vec![]);
+    let mut accepted = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
@@ -416,7 +411,6 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             if l.op.is_some_and(|o| !ops.insert(o)) {
                 continue;
             }
-            let asked = t.state == State::Ask;
             let before = t.clone();
             step(&mut t, &mut resume, e.id, &l, last == 0);
             // § 2: a pick belongs to the card it was made on
@@ -466,11 +460,6 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
             }
             if t.state != before.state { changes.push((e.id, before, t.clone())); }
             else if t.state == State::Review && t.publication.is_some() != before.publication.is_some() { queue.push((e.id, before, t.clone())); }
-            match (asked, t.state == State::Ask) {
-                (true, true) if l.bare && !e.body.trim().is_empty() => free.push(e.id),
-                (_, false) => free.clear(),
-                _ => {}
-            }
         }
     }
     // ponytail: dependencies are judged at read time only, so a hand-typed spawn while waiting is accepted
@@ -478,7 +467,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, owner_comments:free, revision:rev, accepted, executions, changes, queue }
+    Projection { task:t, revision:rev, accepted, executions, changes, queue }
 }
 
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
@@ -902,18 +891,5 @@ mod tests {
         log[2] = e(12, "taskq: pick 1\nx is cheaper");
         log.push(e(13, "taskq answer 7.2"));
         assert_eq!(super::delivery(7, &log, 13), "y");
-    }
-
-    // Chain: § 2 ask to owner comment request. Risk: taskq entries or edited text treated as an owner request.
-    #[test]
-    fn only_free_comments_of_the_open_ask_are_owner_comments() {
-        let e = |id, body: &str| super::Entry { id, body: body.into(), edited: false };
-        let mut log = vec![e(9, "before any ask"), e(10, "taskq: spawn worker claude:s1 mac"), e(11, "taskq: ask attempt 10\nWhich?\n1. x\n2. y ★")];
-        log.extend([e(12, "x or y? prefer z"), e(13, "taskq: steer\nlog entry"), e(14, "  ")]);
-        log.push(super::Entry { id: 15, body: "edited".into(), edited: true });
-        assert_eq!(super::owner_comments(7, &log), [12]);
-        log.push(e(16, "2"));
-        assert_eq!(super::owner_comments(7, &log), [0u64; 0], "an option answers the ask: as today, no owner comment");
-        assert_eq!(super::fold(7, &log, false).state, super::State::Doing);
     }
 }

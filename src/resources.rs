@@ -779,7 +779,7 @@ pub fn grant(install: &Path, grant_id: &str, actor: &str, scope: &Scope, by: &st
     let (Some(inst), Some(generation)) = (a["installation"].as_str(), a["generation"].as_u64()) else {
         return Err("connection has no installation or generation".into());
     };
-    let names: BTreeMap<String, String> = crate::operator::projects(install).into_iter().map(|(n, r)| (r.display().to_string(), n)).collect();
+    let names = names(install);
     with(install, |s| {
         sync(s, install, now)?;
         let mut ids = vec![];
@@ -803,6 +803,14 @@ pub fn grant(install: &Path, grant_id: &str, actor: &str, scope: &Scope, by: &st
     })
 }
 
+/// Registered roots by display path, named like status.json (else the folder name).
+fn names(install: &Path) -> BTreeMap<String, String> {
+    fs::read_to_string(install.join("projects")).unwrap_or_default().lines().filter(|l| !l.is_empty()).map(|r| {
+        let st: Value = fs::read_to_string(crate::dot(Path::new(r)).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+        (r.to_string(), st["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(Path::new(r))))
+    }).collect()
+}
+
 /// `service resources --revoke`: the grant stays, revoked, so its ID is never silently reissued.
 pub fn revoke(install: &Path, grant_id: &str) -> Res<()> {
     with(install, |s| match s.grants.get_mut(grant_id) {
@@ -813,7 +821,7 @@ pub fn revoke(install: &Path, grant_id: &str) -> Res<()> {
 
 /// `service resources`: projects with IDs and revisions, grants and operation receipts.
 pub fn report(install: &Path, now: u64) -> Res<Vec<String>> {
-    let names: BTreeMap<String, String> = crate::operator::projects(install).into_iter().map(|(n, r)| (r.display().to_string(), n)).collect();
+    let names = names(install);
     let conn = enrollment::active(install).ok().flatten();
     with(install, |s| {
         prepare(s, install, now)?;

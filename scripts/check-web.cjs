@@ -42,7 +42,7 @@ function inventory(source,name){
 if(require.main===module){
  const root=path.resolve(__dirname,'..'),operations=new Set(['js.ui.timer','js.collector.diagnostic','js.collector.health']);
  // Capture/bootstrap infrastructure is deliberately outside recursive self-instrumentation.
- const infrastructure=new Set(['ui-runtime.js','tray-web.js','tray-entry.js','tray-guard.js','workspace-entry.js']);
+ const infrastructure=new Set(['ui-runtime.js','tray-web.js','tray-entry.js','tray-guard.js']);
  for(const file of fs.readdirSync(path.join(root,'src'),{recursive:true}).filter(file=>file.endsWith('.js')&&!infrastructure.has(file)))
   for(const operation of inventory(fs.readFileSync(path.join(root,'src',file),'utf8'),file))operations.add(operation);
  const out=process.argv[2];if(out){fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'operations.json'),JSON.stringify([...operations].sort()));}

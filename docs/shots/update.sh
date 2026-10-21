@@ -3,7 +3,7 @@
 # copy the dark images here and write manifest.json (shape of docs/design/evidence/4.1.9/manifest.json).
 set -eu
 cd "$(dirname "$0")/../.."
-ui='src/tray.rs src/tray.html src/tray-app.js src/tray-web.js src/workspace.html src/workspace.js src/workspace-entry.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json'
+ui='src/tray.rs src/tray.html src/tray-app.js src/tray-web.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json'
 # the images must come from sourceCommit, so UI sources must be committed
 git diff --quiet HEAD -- $ui || { echo "update.sh: commit UI source changes first: $ui" >&2; exit 1; }
 cargo build --release --locked
@@ -18,9 +18,7 @@ printf '%s\n' "$tmp/billing-api" "$tmp/storefront" > "$tmp/install/projects"
 # only the routes the README shows (taskq.md R12)
 TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/shots" --route project,icon
 rm -f docs/shots/*.png
-python3 docs/design/evidence/workspace-1122/fixture.py "$tmp"
-TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/workspace" --route workspace
-cp "$tmp/shots/popover-dark-project-16.png" "$tmp/workspace/popover-dark-workspace-16.png" docs/shots/
+cp "$tmp/shots/popover-dark-project-16.png" docs/shots/
 # Menu-bar size and scale differ between the owner's Mac and CI; keep the README link stable.
 cp "$tmp"/shots/icon-summary-run-dark-*.png docs/shots/icon-summary-run-dark.png
 sha() { shasum -a 256 "$1" | cut -d' ' -f1; }

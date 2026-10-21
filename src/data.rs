@@ -18,10 +18,6 @@ pub const INPUTS: usize = 50;
 /// A turn owns the lock, even when a forked child still holds a copy of its descriptor.
 pub type InputLock = coreq::file_lock::Lock;
 
-/// Lines of `<root>/.taskq/requests/comments`: past it the newest half and every comment still pending stay.
-pub const COMMENT_IDS: usize = 1000;
-/// Lines of `<root>/.taskq/requests.log`: the newest stay; pruned on every append (`retro::append`).
-pub const REQUEST_LOG: usize = 500;
 const FOCUS_MAX: u64 = 4096;
 
 /// Keep the newest `max / 2` bytes of `p`, from a line start, once it is over `max`. Rewritten in place, not renamed:
@@ -134,18 +130,6 @@ pub fn prune(root: &Path, install: &Path, project: &str, live: &[u64]) -> Vec<St
         out.push(format!("pruned {n} incident reports beyond the newest {INCIDENTS}"));
     }
     out
-}
-
-/// `requests/comments` lines after pruning (§ 4): unchanged up to `COMMENT_IDS`; past it the newest half plus every id
-/// in `pending` (comments still eligible, so never made a request twice).
-pub fn comment_ids(text: &str, pending: &[u64]) -> Option<String> {
-    let lines: Vec<&str> = text.lines().collect();
-    if lines.len() <= COMMENT_IDS {
-        return None;
-    }
-    let cut = lines.len() - COMMENT_IDS / 2;
-    let kept: Vec<&str> = lines.iter().enumerate().filter(|(i, l)| *i >= cut || pending.iter().any(|p| p.to_string() == **l)).map(|(_, l)| *l).collect();
-    Some(kept.join("\n") + "\n")
 }
 
 /// #1445: a power loss can leave a record of zero length or only NUL bytes. The caller proves no live owner; the
@@ -289,12 +273,6 @@ mod tests {
         assert_eq!(fs::read_dir(d.join("incidents")).unwrap().count(), INCIDENTS);
         assert!(d.join("status.json").exists());
         assert!(prune(&root, &install, "p", &[0]).is_empty(), "a second round finds nothing");
-        // comment ids: past the bound the newest half and the pending ones stay
-        let text: String = (1..=COMMENT_IDS as u64 + 1).map(|i| format!("{i}\n")).collect();
-        assert_eq!(comment_ids(&text[..text.len() - 5], &[]), None);
-        let kept = comment_ids(&text, &[3]).unwrap();
-        assert_eq!(kept.lines().count(), COMMENT_IDS / 2 + 1);
-        assert!(kept.starts_with("3\n") && kept.ends_with(&format!("{}\n", COMMENT_IDS + 1)));
         let _ = fs::remove_dir_all(&root);
     }
 

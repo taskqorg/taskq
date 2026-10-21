@@ -33,10 +33,6 @@ Synthetic project data captured with the macOS v4.6.23 renderer. These examples 
 
 <a href="docs/shots/popover-dark-project-16.png"><img src="docs/shots/popover-dark-project-16.png" alt="Billing task list with work, review and ready states" width="320"></a>
 
-**Review the full exchange before confirming a change.** The proposed task pause has not been applied.
-
-<a href="docs/shots/popover-dark-workspace-16.png"><img src="docs/shots/popover-dark-workspace-16.png" alt="Owner request, agent reply and proposed task pause awaiting confirmation" width="860"></a>
-
 ### From any agent chat
 
 The tray and the CLI are not the only way in. Any agent session that has taskq available, not only Claude or Codex, runs the same commands from its chat, so you ask in words and the agent runs them. The outputs below are real; the conversation lines are condensed.

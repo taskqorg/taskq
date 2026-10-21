@@ -1,7 +1,7 @@
 # TaskQ operator menu
 
 Approved layout; unimplemented capabilities remain design targets. Runtime follows [taskq.md](../../taskq.md).
-[Shared principles](https://github.com/taskqorg/specq/blob/main/design/operator-ui.md) · [Visual style](visual-style.md) · [TaskQ checks](operator-ui.md) · [AI workspace](ai-workspace.md).
+[Shared principles](https://github.com/taskqorg/specq/blob/main/design/operator-ui.md) · [Visual style](visual-style.md) · [TaskQ checks](operator-ui.md) · [AI requests](ai-workspace.md).
 
 ## M1 Appearance
 
@@ -35,7 +35,7 @@ Approved navigation/header and view-only multi-select targets: [UI01–UI04 and 
 
 - Header outside the scrolling content: Home icon then Settings gear at left; size anchor, Top, pin and close × at right. No bottom Home or Settings navigation. Its slightly contrasting strip never moves during scroll bounce.
 - Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.
-- Home: fixed controls, Work mode, Attention, short AI composer with attachments, project shortcuts, Settings and AI workspace access.
+- Home: fixed controls, Work mode, Attention, short Ask AI composer, project shortcuts and Settings.
 - Attention contains decisions, failed tasks and actionable service/admission problems under [A2](adaptive-menu.md#a2-explain-the-queue). Ordinary waits remain neutral.
 - Project header: Back, name, Board link and compact nonzero counters. Add is a plus in the Projects header.
 - Task row: the first row holds state, board-provider mark, linked issue number, age, known host/runtime, session and other available links; global rows also identify project. The full title starts on the second row and wraps across the block width, never truncated. Age counts from the board time of the entry behind the last logged state change (`since` in the status row; Waiting and Held derive outside the log and keep it) in short units (`<1m`, `5m`, `2h`, `3d`); without a logged change it shows `age ?` with the reason. Open menus update ages in place every 30 s, without a redraw. Metadata may wrap when space is exhausted; links remain separate controls.
@@ -87,23 +87,16 @@ Local capacity remains a separate observation: show occupied slots and held/requ
 
 ## M7 AI entry
 
-- Menu composer shows target context, Attach, History/commands and Send. File/image drag/drop works here and in the workspace once the attachment contract is implemented.
-- Send opens or raises the main AI workspace. One main window plus explicit detached conversations; reopening raises the existing owner window. Full conversation design: [C1–C8](ai-workspace.md).
-- Conversations, work sessions and command history are separate collections. A selected conversation gets the reply; never route by newest request.
-- Menu shows compact active/pending status; full replies, change review and readback stay in the workspace. Closing menu/window does not cancel work.
-- History: last 20 distinct sent nonempty texts, newest first; selecting fills only. Clear affects command history, not conversations/drafts/results.
-- Suggested commands and recent requests share the small history control. No full-width example button.
-- Read requests return evidence. Changes show allowlisted operations, targets and effects before revision-bound confirmation. No arbitrary model shell execution or silent permission change.
-- Success requires readback; partial/unknown results are explicit. Working tasks use the board lifecycle, not a second queue. AI failure is not failed-task count.
-- Current request/operator protocol remains §4; attachments, durable conversations, session browsing and cancellation require explicit contract/data extensions before runtime implementation.
-- Shipped inline chain: the clarify chain is shown oldest first; the input and a visible Reply button sit directly under the newest question, with placeholder `Answer…` while clarify is open. An answer whose last line is a well-formed R6 `Next:` line (1..n in order, at most one ★) gets one button per action, labelled with its text, ★ marked; a press replies with its number like typing it; any other line stays text only. Clear history removes only command history.
+- Ask AI composer: project picker (registered projects), input, History/commands and Send. Send opens one new visible session in that project with the text as brief ([AI requests](ai-workspace.md#contract-detail)); no operator turn, conversation or confirm step.
+- Under the composer the newest request shows `starting`, `launched` with `Open session`, or its no-start reason and next step. Closing the menu cancels nothing.
+- History: last 20 distinct sent nonempty texts, newest first; selecting fills only. Clear affects history only. Suggested commands share the history control.
+- An AI request is no task: its failure is not a failed-task count.
 
 ## M8 Implementation boundary
 
-WS11 first slice (#976, accepted split): native Home / Projects / Attention / Settings and its five categories reuse the existing snapshot and action bridge. Back restores the calling route, disclosure state and scroll; refresh keeps the current route. Existing Work mode and inline AI remain accessible; no new backend authority. Appearance exposes the currently supported view/font controls and reports the system theme.
+WS11 first slice (#976, accepted split): native Home / Projects / Attention / Settings and its five categories reuse the existing snapshot and action bridge. Back restores the calling route, disclosure state and scroll; refresh keeps the current route. Existing Work mode and Ask AI remain accessible; no new backend authority. Appearance exposes the currently supported view/font controls and reports the system theme.
 
 Deferred follow-up contracts (not acceptance claims for this slice):
-- AI backend/workspace: C-A1–C-A10, including two independent conversations, immutable attachments, durable drafts/history, native window ownership, revision-bound apply and acknowledged cancellation. Qualify persistence and cancellation before enabling their controls.
 - Selective recovery: E-A1–E-A9, including durable hold, owned-process identity, unknown-liveness refusal and selected fenced restart with readback. Keep ordinary pause distinct.
 
 F5 for this slice covers the native navigation/settings ledger and preserved existing actions ([evidence](evidence/ws11/README.md)). Full AI/recovery rows remain Not tested; no disabled placeholders count as their completion.
@@ -136,9 +129,7 @@ Native sizing, scroll ownership and cadence rendering follow [R-UI1–R-UI6](ren
 - Empty folder without config: new setup. Existing files without config: preserve files, Git and ownership during connection/setup.
 - Existing taskq.json + passing selftest: register/install through the existing confirmed flow; already registered is idempotent.
 - Existing taskq.json + failing selftest: show first verified reason and repair/cutover route; no automatic replacement or migration.
-- Onboarding proceeds in its AI conversation with account/repository/visibility and every external effect reviewed before apply. New repositories default private under §6.
-- The § 6 inspection the onboarding operator gets: entries, Git root, remotes, uncommitted count, `gh`/`glab` logins, and an existing GitHub repository's name and visibility from `gh repo view --json nameWithOwner,visibility`.
-- Empty-install AI bootstrap currently lacks a running service; resolve that route before claiming first-project onboarding is complete. Do not hide it behind an unusable Send button.
+- `Set up with AI…` (new or plain folder) writes a setup request with that folder as its only target ([setup](standalone-onboarding.md#contract-detail)); the session confirms account, repository, visibility and every external effect under § 6. New repositories default private.
 
 Product choices and approval boundaries: [MP1–MP9](menu-product.md).
 
@@ -146,7 +137,6 @@ Product choices and approval boundaries: [MP1–MP9](menu-product.md).
 
 Canonical selections/default candidates: [D01–D14](decision-register.md). The following constraints remain until their implementation gates pass.
 
-- One main AI window plus explicit detached conversations, retained history/archive and one active request per conversation are approved. C3–C7/MP3–MP4 retain backend qualification and attachment-budget gaps.
 - Final shortlist count/recent ranking and attention grouping caps remain tunable proposals; stable control locations and attention-first layout are approved.
 - Scope semantics, per-project budgets, urgent ordering and multi-repository workflow follow use-case Q1/Q3–Q6; do not infer new backend authority.
 - Remote sessions remain informational; tmux is research, not a delivery promise.
@@ -161,7 +151,6 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 - Different current focus displays Mixed. Opening does not overwrite it. Change only explicitly edited fields.
 - Review exact project/host old→new changes; current attempts continue. Cancel preserves settings; readback is per project, including partial failure.
 - Preserve CPU/memory gate controls and saved-vs-applied distinction from the current UI. Gate semantics remain in taskq.md.
-- AI prepares the same reviewable operations; no hidden alternate apply route. Preview matches/exclusions for UC-05 once the filter contract exists.
 - Native tray (#954): Work mode exposes one host editor for maximum, runtime limits and load gate, without project-selection controls that could imply a narrower effect. Project entry retains that project's observation context. Fixed remains legacy-only. Use the [shared resource controls](shared-resource-controls.md#shared-component-930); project focus/filter/ceiling work remains a separate target until its contracts and backends are qualified.
 
 ## M13 Pinned window
@@ -210,7 +199,6 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 | M-A16 | View/admission/pause together; mixed and target scope explicit. |
 | M-A17 | Flowing title, header Board, separate session link: Claude on every host, Codex only on its owning host; remote mark before the runtime mark. |
 | M-A18 | Pinned/recent, searchable All, header plus; all-state aggregate/project counters and quiet Closed follow K-A1–K-A6. |
-| M-A19 | Both composers accept attachments; workspace/window recovery follows C-A1–C-A10. |
 | M-A20 | Shared editor preserves Mixed, untouched fields/targets and per-project readback. |
 | M-A21 | Pin keeps a normal app window open; Top independently controls above-normal placement; bounce-proof icon header, close ×, three size-anchor modes, first-click controls and a bottom-right resize grip; size, position and toggles survive a tray restart; unpin returns to the popover; Windows edge snap, macOS work-area clamp. |
 

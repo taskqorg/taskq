@@ -892,7 +892,7 @@ fn health_lines(label:&str,health:&Result<(serde_json::Value,u64,u64),String>)->
         _ if h["reason"].is_string()=>format!("unknown ({})",h["reason"].as_str().unwrap_or_default()),
         _=>"unknown (collector lost records or failed batches)".into(),
     };
-    let mut out=format!("{label}: {state} · scope {} · pid {pid} · at {} UTC\n",h["scope"].as_str().unwrap_or("unknown"),crate::retro::utc(*at));
+    let mut out=format!("{label}: {state} · scope {} · pid {pid} · at {} UTC\n",h["scope"].as_str().unwrap_or("unknown"),crate::board::stamp(*at as i64)[..16].replace('T'," "));
     let n=|k:&str|h[k].as_u64();
     if let (Some(lost),Some(failed)) = (n("lost"),n("failed_batches")) {
         let append=match (n("append_us"),n("append_batches"),n("max_append_us")) {

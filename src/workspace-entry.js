@@ -1,1 +1,0 @@
-require('./workspace.js').mount();

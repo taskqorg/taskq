@@ -1,24 +1,18 @@
-// Chain: #1059 Home inline AI exchange in src/tray.html. Risk: a long answer fills Home and pushes Projects off it, or the bounded preview swallows reply and confirm controls.
-const fs=require('node:fs'),assert=require('node:assert/strict');
-// Layout bounds are checked by tray-home-proposal.browser.cjs.
-const long=Array.from({length:40},(_,i)=>'Answer line '+(i+1)).join('\n');
-const cases={
-  result:[{state:'result',text:long+'\nNext: 1 Open #41 ★ · 2 Start #44'},['data-a="ai-next" data-v="1"','data-a="ai-send"','<textarea id="ai"']],
-  clarify:[{state:'clarify',text:'Which project?'},['>Reply</button>','placeholder="Answer…"']],
-  proposal:[{state:'proposal',rev:3,text:'Plan ready.',ops:[{project:'p',op:'add',title:'T'}]},['data-a="ai-confirm"','>Review changes: 1 change</button>']],
-  failed:[{state:'failed',reason:'timeout',text:long},['>Edit and send again</button>','data-a="ai-send"']],
-};
-for(const [name,[answer,controls]] of Object.entries(cases)){
-  const request={id:'2',root:'p',text:'Ask',answer,chain:[{text:'Older',answer:{state:'clarify',text:'Older question'}},{text:'Ask',answer}]};
-  const context={S:{projects:[],ai:{target:'p',history:[],request}},esc:s=>String(s).replaceAll('<','&lt;'),aiText:'',aiMenu:false,aiConfirm:null};
+// Chain: #1427 tray AI request (menu.md M7). Risk: Send goes to no project or an unlisted one, the request row hides
+// its no-start reason, or Open session links outside claude.ai.
+const assert=require('node:assert/strict');
+const row=(request,projects=[{root:'/a',name:'a'},{root:'/b',name:'b'}],aiRoot=null)=>{
+  const context={S:{projects,ai:{history:[],request}},esc:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;'),aiText:'<draft>',aiMenu:false,aiRoot};
   require('./tray-harness.cjs').install(context);
-  const h=(context.ai());
-  const start=h.indexOf('<div class="aichain"');
-  assert(start>0,name);
-  let depth=0,end=start;
-  for(const m of h.slice(start).matchAll(/<div\b|<\/div>/g)){depth+=m[0]==='</div>'?-1:1;if(!depth){end=start+m.index;break;}}
-  const inside=h.slice(start,end);
-  assert(inside.includes('Older question')&&inside.includes(answer.text.split('\n')[0]),name+': the exchange is in the preview');
-  for(const c of controls)assert(h.indexOf(c)>end,name+': '+c+' stays below the preview');
-}
-console.log('PASS bounded Home AI preview; Next, Reply, Confirm and Edit stay outside it');
+  return context.ai();
+};
+assert(row(null).includes('data-a="ai-send" data-root="/a">'),'Send targets the first project by default');
+assert(row(null).includes('&lt;draft&gt;')&&!row(null).includes('<draft>'),'the draft is escaped');
+assert(row(null,undefined,'/b').includes('data-a="ai-send" data-root="/b">'),'Send targets the chosen project');
+assert(row(null,undefined,'/gone').includes('data-root="/a">'),'an unlisted choice falls back to a listed project');
+assert(row(null,[]).includes('data-root="" disabled'),'no project: Send disabled');
+const failed=row({kind:'runtime',reason:'runtime missing: claude',next:'Install Claude Code, then send the request again',url:null});
+assert(failed.includes('runtime missing: claude')&&failed.includes('send the request again')&&!failed.includes('Open session'));
+assert(row({kind:'launched',url:'https://claude.ai/code/session_01Ab',next:'Open the session'}).includes('data-url="https://claude.ai/code/session_01Ab">Open session'));
+assert(!row({kind:'launched',url:'https://evil.example/x',next:'n'}).includes('Open session'),'only a claude.ai session link opens');
+console.log('PASS AI request: project choice, no-start reason, Open session link');

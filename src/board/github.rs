@@ -5,11 +5,8 @@ use serde_json::{Value, json};
 
 pub const KIND: Kind = Kind {
     name: "github",
-    cli: "gh",
-    host_env: "GH_HOST",
     user_key: "login",
     default_host: "github.com",
-    repo_view: Some(&["repo", "view", "--json", "nameWithOwner,visibility"]),
     token: |tool, _host| token(&tool.install),
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,

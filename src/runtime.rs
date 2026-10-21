@@ -61,7 +61,6 @@ pub trait Proc {
     /// The exit code once the child has exited; `Err` is an unknown read (§ 4 reconciliation), never an exit.
     fn exited(&mut self) -> Result<Option<i32>, String>;
     fn exit_error(&self) -> Option<&'static str> { None }
-    fn exit_reason(&self) -> Option<&str> { None }
     /// Request termination; success is not exit. The owner retains this handle until `exited` confirms it.
     fn kill(&mut self) -> Result<(), String>;
     fn id(&self) -> u32;
@@ -927,7 +926,8 @@ fn compact_settings(root: &Path, l: &Launch) -> String {
     serde_json::json!({"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": cmd}]}]}}).to_string()
 }
 
-/// The operator's current rules and turn text (§ 8 Rule delivery).
+/// Current rules and turn text (§ 8 Rule delivery) for the Windows boundary qualification.
+#[cfg(all(windows, test))]
 pub fn instructions(root: &Path, task: &str, resume: bool) -> Result<String, StartError> {
     rule_text(root, task, resume, rule_file)
 }
@@ -1474,7 +1474,6 @@ impl Proc for ClaudeTurn {
         observed
     }
     fn exit_error(&self) -> Option<&'static str> { self.failure }
-    fn exit_reason(&self) -> Option<&str> {self.history.failure.as_ref().map(|(_,reason)|reason.as_str())}
     fn kill(&mut self) -> Result<(), String> {
         let rows=claude_agents(&self.root)?;
         self.recover_job(&rows,claude_home().as_deref())?;
@@ -3114,9 +3113,9 @@ mod tests {
             let turn=ClaudeTurn {root:root.clone(),log,session:String::new(),id:"c37eb75a".into(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"dontAsk".into(),input,
                 _input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,launch_error:None};
             s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
-            assert!(crate::lifecycle_waits(&s,&root,false).contains(&format!("#{n}")),"no native identity: re-exec defers");
+            assert!(crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"no native identity: re-exec defers");
             s.kids[0].proc.checkpoint(&c,&l,a).unwrap();
-            assert!(!crate::lifecycle_waits(&s,&root,false).contains(&format!("#{n}")),"saved native identity: re-exec passes over the live turn");
+            assert!(!crate::lifecycle_waits(&s,false).contains(&format!("#{n}")),"saved native identity: re-exec passes over the live turn");
             crate::save_kids(&s,&root).unwrap();
             coreq::telemetry::capture::before_exec();
             let error=Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::claude_image_child","--ignored","--nocapture"])
@@ -3193,7 +3192,7 @@ mod tests {
             t.native=Some(identity.clone());
             assert_eq!(t.observe(&row),Ok(Some(if api_error {-1} else {0})),"completed input outcome lost after stopped");
             assert_eq!(t.exited(),Ok(Some(if api_error {-1} else {0})),"terminal result must remain stable");
-            if api_error {assert_eq!(t.exit_error(),Some("auth"));assert!(t.history.answer.is_none(),"native API error cannot be a success answer");assert!(t.exit_reason().unwrap().contains("authentication_failed: Login expired; please run /login"));}
+            if api_error {assert_eq!(t.exit_error(),Some("auth"));assert!(t.history.answer.is_none(),"native API error cannot be a success answer");assert!(t.history.failure.as_ref().unwrap().1.contains("authentication_failed: Login expired; please run /login"));}
         }
         std::fs::remove_dir_all(root).unwrap();
     }
