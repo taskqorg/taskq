@@ -31,7 +31,7 @@ Counter scope, all states and quiet Closed totals: [K-A1–K-A6](task-counters.m
 
 ## M3 Navigation and tasks
 
-Approved navigation/header and view-only multi-select targets: [UI01–UI04 and UI25–UI28](ui-rules.md#checklist-28-rules). Implement separately from the shipped behavior below; filters never change admission focus.
+Approved navigation/header and view-only multi-select targets: [UI01–UI04 and UI25–UI28](ui-rules.md#checklist-28-rules). The task-list counter strip alone toggles states with OR; all eight states show, zero as icon-only and unknown as `?`. Selected capsules expose `aria-pressed` and a visible outline. No Filter checkbox group. All tasks in that row counts deduplicated open tasks across all projects (not closed tasks), clears state/project restrictions and shows each observed project with nonzero counters and its tasks; partial/unknown stays explicit. This control alone is exempt from the no-Work-total rule. Project-summary strips still hide zero. Filters never change admission focus or write the queue.
 
 - Header outside the scrolling content: Home icon then Settings gear at left; size anchor, Top, pin and close × at right. No bottom Home or Settings navigation. Its slightly contrasting strip never moves during scroll bounce.
 - Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.

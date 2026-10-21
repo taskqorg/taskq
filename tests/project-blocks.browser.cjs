@@ -68,7 +68,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         else await page.evaluate(({p,row})=>taskq.receive({page:p.id,font:20,theme:'dark',projects:[{...p,root:p.id,issues:p.board.url,board_kind:'github',alive:true,focus:[],labels:[],tasks:[row],cap_saved:{error:'fixture'}}],ai:{draft:''},notify:{projects:{}}}),{p,row});
         await page.locator('[data-tqp=tasks][data-state=review]').first().click();
         if(mode==='browser')assert.deepEqual(await page.evaluate(()=>navigation),[['tasks',p.id,'review']]);
-        else {assert.match(await page.locator('.menu').innerText(),/project-with-a-long-name.* · Review/);assert.equal(await page.locator('.tqp-task').count(),1);}
+        else {assert.equal(await page.locator('.filter-header .tqp-project').getAttribute('aria-label'),p.name);assert.equal(await page.locator('.filter-header [data-state=review]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.tqp-task').count(),1);}
         await page.locator('[data-tqp=project]').first().click();
         if(mode==='browser')assert.deepEqual(await page.evaluate(()=>navigation.at(-1)),['project',p.id]);
         await page.locator('.tqp-task a').first().click();await page.locator('.tqp-task a[aria-label="Open codex session"]').click();

@@ -1,0 +1,8 @@
+{
+  "before": "377a424d4907120e7c5ddb0b1032c68ddaaf7c76",
+  "afterBlobs": {
+    "src/tray-app.js": "c966c3ee6a0c557cf24fbd64d633f7031b43b239",
+    "src/tray.html": "ff51188238994f862e91191b031d9c8f398638c3",
+    "src/project-blocks.js": "7526cf88209bb19ab9a7fa47ffaf4c31571c9491"
+  }
+}

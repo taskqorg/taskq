@@ -5,6 +5,13 @@ const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-block
 const p=fx.project,row=fx.row;
 let got=q.observation([{...p,tasks:[row]},{...p,id:'second-registration',tasks:[row]}]);
 assert.equal(got.counts.doing,1);assert.equal(got.counts.review,0);assert.deepEqual(got.partial,[]);
+// K-A1/K-A6: All tasks counts open rows once, includes held, excludes Closed totals and rows.
+assert.equal(got.open,1);
+assert.equal(q.observation([{...p,closed:100,tasks:[row,{...row,n:2,state:'held'},{...row,n:3,state:'closed'}]}]).open,2);
+assert.equal(q.observation([{...p,complete:false,tasks:[row]}]).open,null);
+assert.match(q.aggregate([{...p,complete:false,tasks:[row]}],[]),/All tasks \?<\/button>/);
+assert(!q.summary(p,[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
+assert.match(q.aggregate([{...p,closed:100,tasks:[row]},{...p,id:'duplicate',tasks:[row],closed:100}],[]),/All tasks 1<\/button>/);
 assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,state:'review'}]}]).counts.doing,null);
 assert.equal(q.observation([{...p,complete:false}]).counts.ready,null);
 assert.equal(q.observation([{...p,closed:undefined}]).counts.closed,null,'open snapshots never invent Closed');
