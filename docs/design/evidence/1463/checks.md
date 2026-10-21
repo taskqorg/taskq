@@ -1,5 +1,12 @@
 # Canonical gate failure inventory
 
+Owner-revision gate: `python scripts/check.py --base a4605ba` failed with
+421 passed, 21 failed, 35 ignored (91.047 s / 900 s). Its extra failure was
+`core::tests::every_table_row_has_a_golden_trace`: contract over 60 KiB after
+the intake rebase. After shortening the Product pointer to 61,433 bytes /
+298 lines, all nine core checks pass. The remaining 20 failures below remain
+unresolved; the full gate was not rerun.
+
 `python scripts/check.py --base 58744e1`: Rust 421 passed, 20 failed, 35 ignored; 50.375 s / 900 s.
 
 The pre-rebase run against `0804397` had the same 20 failures (53.859 s).

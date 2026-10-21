@@ -1,10 +1,45 @@
 # #1463 navigation and controls
 
-Implemented source, awaiting A8 owner visual review. Not merged, released or
+Implemented source. The owner accepted the earlier set except the heading-focus
+and breadcrumb corrections below; four refreshed after-images await A8 review. Not merged, released or
 deployed. Native qualification and the merge gate are incomplete (R12).
 Source blobs are pinned in the artifact receipts; UI before evidence: `0804397`.
-Candidate rebased on `58744e1`; its M2 one-time note and publication fix are retained.
+Candidate rebased on `a4605ba`; the M2 note, publication fix and new-task intake change are retained.
 [Seven actual-size images](screenshots.md) · [source/artifact receipts](artifacts.json).
+
+## Owner correction: heading focus and breadcrumbs
+
+[Steer 6315125709](https://github.com/taskqorg/taskq/issues/1463#issuecomment-6315125709)
+supersedes the earlier full-set answer. The rest of the set remains accepted.
+Only G01-after, G02-after, workspace-root-after and webview2-project-after were
+re-recorded; all three before-images are byte-identical. Compare the
+[previous seven-image set](https://github.com/taskqorg/taskq/blob/0dd5589019061b4f0755709efe666d8327a8f262/docs/design/evidence/1463/screenshots.md).
+
+R13/TW1 now specifies linked ancestors only: Projects for a project overview,
+Projects › project for Tasks/Work mode, Settings for a settings category. The
+current page appears once in the route title. Programmatic heading focus remains
+for accessibility and route restoration, with no box; keyboard controls retain
+`:focus-visible` rings. Before: `Projects › Alpha` repeated the current title and
+the workspace heading computed `outline: auto`. After: parent-only route checks
+and `outline: none` pass in both shells. Parent-link navigation, Back restoration,
+keyboard focus, target/nonoverlap and G01/G02 protection remain. The old
+current-page-link/count assertion was replaced under the owner-approved TW1
+change; no unrelated guard was removed. The added filtered-route case caught a
+misencoded separator, which was repaired as UTF-8 before passing.
+
+`node tests/shell-navigation.browser.cjs`, the view-state/filter/window checks,
+all component checks and the 304-cell text instrument pass after the corrections.
+Windows WebView2 project evidence was refreshed with `cargo +stable run --locked -- tray --snapshot .taskq/evidence/1463/native/owner-revision-shots --route project`; workspace/WKWebView rendering
+qualification remains unknown. Native click/raise is owner-observed per the UI
+acceptance contract, not an additional click-proof gate.
+
+`python scripts/check.py --base a4605ba` failed: 421 passed, 21 failed, 35 ignored,
+91.047 s / 900 s. The additional failure was R8 size after the intake rebase.
+The touched Product pointer was shortened; 61,433 bytes / 298 lines now satisfy
+the unchanged bounds and all nine `core::tests` pass. The remaining 20 canonical
+failures are unchanged. This is not a green full gate. The separator and pointer
+repairs were checked at their affected boundaries; the full suite was not rerun.
+Offline selftest again passes 92 traces/formats/staged telemetry, board unknown.
 
 ## Change and handoff
 
@@ -41,7 +76,7 @@ queue, grant, capacity, task attempt or native agent session was changed.
 
 | Item | Evidence and limit |
 |---|---|
-| A1 / TW1 | One fixed title/bar on all supported route families; reserved leading root slot, breadcrumbs for projects/settings, logical-parent Back and explicit unavailable destinations. Workspace never returns to the tray through Back. |
+| A1 / TW1 | One fixed title/bar on all supported route families; reserved leading root slot, parent-only breadcrumbs for projects/settings, logical-parent Back and explicit unavailable destinations. Workspace never returns to the tray through Back. |
 | A2 / V05–V07 | Existing reload/filter/scroll/disclosure suite passes. The new shell suite proves invoking-control return, surviving heading fallback, heading focus on first entry/hydrated child, stable header DOM, keyboard Back, and independent workspace reload/Back. Native settings round-trip and size/schema refusal assertions pass in the Rust gate. |
 | A3 / G01 | Baseline Back y: 45 → −4328 CSS px (4373 drift). Candidate: 4 → 4 (0 drift; limit 1). Same real-bundle browser boundary before/after. |
 | A3 / G02 | At 320 CSS px / 40 px text, baseline Close right edge 372.69; candidate 312. Back is x=8, width=32, y=4, height=63. Both essential controls remain inside the viewport. A 210-character project name at the same size first exhausted the content area; the two-line title and single-line linked breadcrumbs now retain usable content and the resize control. Full route names remain in text and title attributes. |
@@ -49,7 +84,7 @@ queue, grant, capacity, task attempt or native agent session was changed.
 | A5 / TW8 | One pressed/current/focus treatment, preserving native checkboxes and source semantics. All tasks is pressed only for unrestricted scope; selected state capsules remain independent OR toggles. Existing font/notification/window groups use the same treatment. Mac-only controls remain platform-unqualified. |
 | A6 | [304 text cells](text-checks.json): 19 route variants × two themes × four fonts (14/16/18/20) × two widths (320/360). Zero measured type, horizontal-overflow, active-text contrast or enabled input-edge gaps. Titles compute to 1.1b/600; text ≥4.5:1 and measured essential input edges ≥3:1. Tray/workspace declare distinct spacing tokens. No spatial animation was added. This finite fixture set excludes disabled/native control painting and is not a WCAG or native acceptance claim. |
 | A7 | Existing component, answer, resource, filter and link checks pass. IDs, original operation payloads/receipts, active-work guards and window/emergency distinctions remain. Public JS byte equality and asset hashes pass. |
-| A8 | Seven images, source hashes and whole-route text checks retained. Agent inspection is complete; owner actual-size acceptance is pending. WebView2 evidence is limited to the fixture project route. WKWebView, installed layout and the actual new native workspace path remain unknown. |
+| A8 | Seven images, source hashes and whole-route text checks retained. Agent inspection is complete; the rest of the set is accepted; four changed after-images await owner actual-size acceptance. WebView2 evidence is limited to the fixture project route. WKWebView, installed layout and the actual new native workspace path remain unknown. |
 
 The route ledger is Home, Projects, Project, filtered Tasks, global All tasks,
 Attention, Settings, Appearance, Activity history, Notifications, Agents,
@@ -57,7 +92,7 @@ Services, About, Stop, Recovery, Work mode, workspace Messages, workspace Work
 sessions and workspace Agent settings. The last two are explained unavailable
 destinations, not newly implemented backends.
 
-## Verification and failures
+## Earlier implementation checks and failures
 
 - `python scripts/check.py --base 58744e1`: **failed**, full selection on the
   rebased implementation, 50.375 s / 900 s; Rust 421 passed, 20 failed, 35 ignored. Explicit worker/host
@@ -125,7 +160,8 @@ and browser results stay separate under R12.
 
 ## Remaining acceptance
 
-Owner A8/V38 actual-size review is required before adopting the visual references.
+Owner A8/V38 actual-size review of the four changed after-images is required
+before adopting those visual references; the other images remain accepted.
 Then refresh `docs/shots/manifest.json` through the qualified screenshot path;
 the expanded watcher includes the new shell/workspace sources. Do not hand-edit
 old image hashes to imply a fresh capture. Green merge-result CI and the missing

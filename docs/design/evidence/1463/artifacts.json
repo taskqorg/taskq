@@ -1,17 +1,17 @@
 {
-  "sourceCommit": "79c3d6b55af141f7e1f6815cc338838c885f77ee",
+  "sourceCommit": "a4d8850f4ed2132c2c2d68d1461210afd4a295c8",
   "baseline": "0804397",
   "native": {
     "boundary": "Windows WebView2, tray project only, Cargo development executable; not installed/native workspace or WKWebView qualification",
-    "binarySha256": "69bc047ffed0290b57bcd9bf1de4d2dbda1edb0a54854a4a0bd7b2e684937899"
+    "binarySha256": "7ae305ddeec73f1d1fe7683baaa27488e01a006c61ee2656da5eb88683d9483c"
   },
   "uiSources": {
     "src/tray.rs": "3284363e69316f89a264b3b927edb94040b41068",
     "src/tray.html": "6d0bf9048928b201f5aa57614e1e76dbb673542d",
-    "src/tray-app.js": "7ceae674855a299d837e13add160c70752003cc3",
+    "src/tray-app.js": "54b8285cb2951b625446d6efa8e7b0bd2055678a",
     "src/tray-view-state.js": "cc96a5a739a73faca16211c81f4620620ad25932",
     "src/app-shell.js": "2e422108880ca84d6bb31a3ea82d0096140b2a76",
-    "src/app-shell.css": "98dd41448c1bae024a5d99296ceeabab904605c3",
+    "src/app-shell.css": "e577f9e41dda2b0ad05c06dde97904a7933eabdb",
     "src/workspace.js": "9efd5742e6f27f29426d38bfa591f505765b58b1",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/project-blocks.css": "816f6a11bacd8d139fd202df21ae079298b4dacb",
@@ -20,7 +20,7 @@
   "images": [
     {
       "file": "G01-after.png",
-      "sha256": "28d32355210d933e7451f96509e0a32fb9a168351901aa19bcd607f8059619a0",
+      "sha256": "2b4d6442cfacbe632930dd7085b26f75a74e0bddd7e03a720c77b331fbbb6cd4",
       "pixels": [
         320,
         600
@@ -36,7 +36,7 @@
     },
     {
       "file": "G02-after.png",
-      "sha256": "f3c76d645445f3c1c8478680d40d82ef638f6df20cb5db1c600a99c62dcb84e1",
+      "sha256": "6f53ab66ae959e94aba9658097263d7952c24b32ebbf709d7a7a730515f114e4",
       "pixels": [
         320,
         600
@@ -52,7 +52,7 @@
     },
     {
       "file": "webview2-project-after.png",
-      "sha256": "61801308c812e4d93b6b5f9b80b07fdb0cc2b07842c13596c385770e28a9e302",
+      "sha256": "ad12e100d2e5412d133de240476b1d0eb953acf7b14ba4453259bc3b1afba1c2",
       "pixels": [
         462,
         1393
@@ -60,7 +60,7 @@
     },
     {
       "file": "workspace-root-after.png",
-      "sha256": "79a2757a6a2ac03f10383388aa23104f9a0281eedcfc503f267e3c781f02bc17",
+      "sha256": "cd8d327f7d160e4e9594b46f43820e66761e2a8d139d04bb32bf9c72d86edff9",
       "pixels": [
         320,
         600
@@ -129,5 +129,12 @@
       }
     }
   },
-  "rebaseOnto": "58744e1ac23f731757803113271021c159af75b4"
+  "rebaseOnto": "a4605ba56b6344ceb58f7789ba61ca8cb9f574a5",
+  "supersedesVisualSet": "0dd5589019061b4f0755709efe666d8327a8f262",
+  "refreshedImages": [
+    "G01-after.png",
+    "G02-after.png",
+    "workspace-root-after.png",
+    "webview2-project-after.png"
+  ]
 }

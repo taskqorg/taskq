@@ -2,7 +2,10 @@
 
 Seven images, no scaled collages. Browser images are 320 CSS px at DPR 1.
 The native image retains its captured physical pixels; those units are not CSS px.
-Fixtures are invented. Owner review is pending (A8/V38, R12).
+Fixtures are invented. The owner accepted the rest of the set. Review only the
+four refreshed after-images below for heading focus and parent-only breadcrumbs
+([owner steer](https://github.com/taskqorg/taskq/issues/1463#issuecomment-6315125709); A8/V38, R12).
+[Previous set for comparison](https://github.com/taskqorg/taskq/blob/0dd5589019061b4f0755709efe666d8327a8f262/docs/design/evidence/1463/screenshots.md).
 
 ## G01 before: Back leaves the scroller
 
