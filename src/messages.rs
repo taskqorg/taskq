@@ -56,8 +56,16 @@ fn read(install: &Path) -> Res<Store> {
     Ok(store)
 }
 fn write(install: &Path, store: &Store) -> Res<()> {
-    plain(&install.join("messages.json"))?;plain(&install.join("messages.json.pending"))?;
-    crate::platform::write_atomic(&install.join("messages.json"),&serde_json::to_string(store).map_err(|e|e.to_string())?).map_err(|e|format!("Message marks write unknown: {e}"))?;
+    use std::io::Write;
+    let path=install.join("messages.json");let stage=path.with_extension("tmp");plain(&path)?;
+    let bytes=serde_json::to_vec(store).map_err(|e|e.to_string())?;
+    // Exclusive creation refuses stale files, links and hard links before any target bytes are written.
+    let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&stage).map_err(|e|format!("Message marks temporary file refused; kept: {e}"))?;
+    let result=(|| {
+        file.write_all(&bytes).and_then(|_|file.sync_all()).map_err(|e|e.to_string())?;
+        drop(file);fs::rename(&stage,&path).map_err(|e|e.to_string())
+    })();
+    if let Err(e)=result {let _=fs::remove_file(stage);return Err(format!("Message marks write unknown: {e}"));}
     if read(install)?!=*store {return Err("Message marks readback unknown".into());}
     Ok(())
 }
@@ -152,9 +160,12 @@ pub(crate) fn act(install: &Path, projects: &[Value], action: &str, keys: &[Stri
     let result=crate::setup::locked(install,|| {
         if !["read","archive","delete"].contains(&action)||keys.is_empty() {return Err("Invalid message action".into());}
         let mut store=read(install)?;let (rows,_)=entries(install,projects,&store)?;
-        let mut outcomes=vec![];
+        let mut outcomes=vec![];let mut deletions:BTreeMap<(String,String),Res<()>>=BTreeMap::new();
         for key in keys.iter().collect::<BTreeSet<_>>() {
-            let result=(|| {
+            let source=rows.iter().find(|r|r["key"].as_str()==Some(key.as_str()));
+            let identity=source.filter(|r|action=="delete"&&r["kind"]=="request"&&r["archived"]==true).map(|r|(r["host"].as_str().unwrap_or("").to_string(),r["id"].as_str().unwrap_or("").to_string()));
+            let prior=identity.as_ref().and_then(|id|deletions.get(id));
+            let result=if let Some(result)=prior {result.clone()}else{(|| {
                 let row=rows.iter().find(|r|r["key"].as_str()==Some(key.as_str())).ok_or("Message changed or unavailable; refresh")?;
                 if row["deleting"]==true&&action!="delete" {return Err("Deletion incomplete; retry Delete".into());}
                 if action!="delete" {
@@ -177,7 +188,8 @@ pub(crate) fn act(install: &Path, projects: &[Value], action: &str, keys: &[Stri
                     store.marks.retain(|_,m|m.request.as_ref().is_none_or(|q|q.id!=r.id));
                 } else {store.deleted.insert(key.clone());}
                 store.marks.remove(key);write(install,&store)
-            })();
+            })()};
+            if let Some(id)=identity {deletions.insert(id,result.clone());}
             outcomes.push(match result {Ok(())=>json!({"key":key,"state":"accepted","action":action}),Err(reason)=>json!({"key":key,"state":"unknown","action":action,"reason":reason})});
         }
         Ok(json!({"outcomes":outcomes}))
@@ -251,6 +263,28 @@ mod tests {
         assert!(f.0.join("setup/partial.json").exists());assert_eq!(snapshot(&f.0,&[])["entries"][0]["deleting"],true);
         fs::remove_file(f.0.join("setup/partial")).unwrap();
         assert_eq!(f.action("delete",&key)["outcomes"][0]["state"],"accepted");assert!(snapshot(&f.0,&[])["entries"].as_array().unwrap().is_empty());
+    }
+
+    // TW7: an interrupted or linked temporary metadata file must never overwrite its target.
+    #[test]
+    fn existing_temporary_path_cannot_overwrite_source_data() {
+        let f=Fixture::new();f.request("temp-path","launched");let key=f.key("temp-path");
+        let source=f.0.join("source.txt");fs::write(&source,"source bytes kept").unwrap();
+        fs::hard_link(&source,f.0.join("messages.tmp")).unwrap();
+        assert_eq!(f.action("archive",&key)["outcomes"][0]["state"],"unknown");
+        assert_eq!(fs::read_to_string(source).unwrap(),"source bytes kept");
+    }
+
+    // Delete all returns verified success for every selected state identity of the same request.
+    #[test]
+    fn deleting_archived_aliases_in_one_batch_reports_each_absence() {
+        let f=Fixture::new();f.request("aliases","pending");let starting=f.key("aliases");f.action("archive",&starting);
+        f.request("aliases","launched");let launched=snapshot(&f.0,&[])["entries"].as_array().unwrap().iter().find(|r|r["archived"]!=true).unwrap()["key"].as_str().unwrap().to_string();
+        f.action("archive",&launched);
+        let result=act(&f.0,&[],"delete",&[starting,launched]);
+        assert!(result["outcomes"].as_array().unwrap().iter().all(|r|r["state"]=="accepted"),"{result}");
+        assert!(snapshot(&f.0,&[])["entries"].as_array().unwrap().is_empty());
+        assert!(!f.0.join("setup/aliases.json").exists());assert!(!f.0.join("setup/aliases").exists());
     }
 
     // Archive identities survive a board answer or a launch state change without keeping message text.

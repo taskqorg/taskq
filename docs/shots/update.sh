@@ -14,7 +14,7 @@ case $(uname -s) in
 esac
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 tmp=$(mktemp -d)
-tmp=$(cd "$tmp" && pwd -P)
+tmp=$(cd "$tmp" && (pwd -W 2>/dev/null || pwd -P))
 trap 'rm -rf "$tmp"' EXIT
 TASKQ_VERSION=$version docs/shots/fixture.sh "$tmp"
 # The compact billing queue fits with all lower controls visible.
