@@ -61,10 +61,11 @@ checks remain.
 
 Both images were opened and inspected individually at their actual pixel size:
 review text and essential buttons are visible without horizontal clipping.
-This is browser evidence, not owner acceptance or native effect qualification.
+The browser capture does not establish native effect qualification. Owner layout
+acceptance is recorded below.
 No production Stop, recovery, policy change, update or project registration was
 performed. WKWebView/WebView2 operation dispatch, native picker window ownership
-and owner actual-size review remain unverified. GitHub publication still needs
+remain unverified. Owner actual-size layout review is accepted below. GitHub publication still needs
 green merge-result `merge_group` CI (§ 7); this worker does not wait for CI.
 
 ## Final candidate
@@ -90,5 +91,7 @@ image hashes. These two README images plus the two placement images above make
 four images in this review set (V38). They qualify native menu rendering only;
 workspace dispatch, native picker ownership and actual effects remain unverified.
 `sh docs/shots/check.test.sh` passed the fresh/stale/malformed/missing provenance
-cases. Owner actual-size acceptance is requested through TaskQ; no acceptance is
-inferred from an exported image or a passing test.
+cases. The owner accepted this four-image layout in [answer 6320399983](https://github.com/taskqorg/taskq/issues/1465#issuecomment-6320399983):
+“Accept this layout; retain native operation and picker qualification as release work.”
+This closes the A8/V38 visual decision; it does not qualify native effects or
+replace green merge-result CI (R12/§ 7).
