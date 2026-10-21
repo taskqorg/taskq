@@ -323,9 +323,14 @@ agents:function(){
 about:function(){
   return '<div class="body">Tray '+esc(view.S.version)+' · '+esc(view.S.host)+'</div>'+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+': '+esc(p.version||'version unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>').join('')+update();
 },
+setup:function(){
+  const s=view.S.setup;if(!s)return '';
+  const link=s.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(s.url)?' <a href="#" data-url="'+esc(s.url)+'">Open session</a>':'';
+  return '<div class="group"><div class="row">Setup · '+esc(s.kind)+link+'</div>'+(s.reason?'<div class="body meta">'+esc(s.reason)+'</div>':'')+'<div class="body">'+esc(s.next||'Setup state unknown; run `taskq service setup`')+'</div></div>';
+},
 attention:function(){
   const all=unique(view.S.projects.flatMap(tasks));
-  return view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('')+globalGroup('ask',all)+globalGroup('failed',all)+answerNotices();
+  return setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('')+globalGroup('ask',all)+globalGroup('failed',all)+answerNotices();
 },
 projects:function(){
   return TaskqProjectBlocks.aggregate(view.S.projects.map(blockProject))+(view.S.projects.length?view.S.projects.map(p=>TaskqProjectBlocks.summary(blockProject(p))+'<div class="body meta">'+esc(modeText(p))+'</div>').join(''):'<div class="body meta">No projects yet</div>')+addProject();
@@ -647,7 +652,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,opText,nextActions,ai,addProject,bulk,views,appearance,agents,about,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,opText,nextActions,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function answerSend(board,op){
   const p=view.S&&view.S.projects.find(p=>p.issues===board);
