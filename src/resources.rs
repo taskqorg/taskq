@@ -140,32 +140,31 @@ pub(crate) fn save(install: &Path, s: &State) -> Res<()> {
 /// The host lock, held until the file drops: resource writes and changes of the DashQ connection take turns under it.
 fn lock(install: &Path) -> Res<Held> {
     fs::create_dir_all(dir(install)).map_err(|e| format!("resources: {e}"))?;
-    coreq::file_lock::lock(&dir(install).join("lock")).map(Held::new).map_err(|e|format!("resources lock: {e}"))
+    coreq::file_lock::lock(&dir(install).join("lock")).map(|l|Held::new(l,install)).map_err(|e|format!("resources lock: {e}"))
 }
 
-/// The host lock with its holder's pid in the lock file, cleared before release, so a waiter can name it (#1415).
-pub(crate) struct Held(coreq::file_lock::Lock);
+/// The host lock with its holder's pid in `lock.holder`, removed before release, so a waiter can name it (#1415).
+/// A sibling file: Windows locks are mandatory, so no other process can read the lock file itself.
+pub(crate) struct Held(coreq::file_lock::Lock, PathBuf);
 impl Held {
-    fn new(lock: coreq::file_lock::Lock) -> Self {
-        use std::io::{Seek, Write};
-        let mut file = lock.file();
-        let _ = file.set_len(0).and_then(|_| file.rewind()).and_then(|_| write!(file, "{}", std::process::id()));
-        Held(lock)
+    fn new(lock: coreq::file_lock::Lock, install: &Path) -> Self {
+        let holder = dir(install).join("lock.holder");
+        let _ = fs::write(&holder, std::process::id().to_string());
+        Held(lock, holder)
     }
 }
 impl Drop for Held {
-    fn drop(&mut self) { let _ = self.0.file().set_len(0); }
+    fn drop(&mut self) { let _ = fs::remove_file(&self.1); }
 }
 
 /// Install receipts and the DashQ resources send wait this long for a brief holder (#1415).
 #[cfg(not(test))] pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(test)] pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The host lock within `wait` (zero: one try); a timeout names the holder pid when the lock file records one.
+/// The host lock within `wait` (zero: one try); a timeout names the holder pid when `lock.holder` records one.
 fn acquire(install: &Path, wait: std::time::Duration) -> Res<Held> {
-    let path = dir(install).join("lock");
     poll(install, wait).map_err(|e| {
-        let holder = fs::read_to_string(&path).ok().and_then(|s| s.trim().parse::<u32>().ok()).map_or("holder unknown".into(), |pid| format!("held by pid {pid}"));
+        let holder = fs::read_to_string(dir(install).join("lock.holder")).ok().and_then(|s| s.trim().parse::<u32>().ok()).map_or("holder unknown".into(), |pid| format!("held by pid {pid}"));
         format!("resources lock unavailable: {e}; waited {} ms, {holder}", wait.as_millis())
     })
 }
@@ -175,7 +174,7 @@ fn poll(install: &Path, wait: std::time::Duration) -> Result<Held, fs::TryLockEr
     // ponytail: 50 ms polling of a non-blocking lock; a blocking lock with OS timeout if contention ever matters
     loop {
         match coreq::file_lock::try_lock(&dir(install).join("lock")) {
-            Ok(lock) => return Ok(Held::new(lock)),
+            Ok(lock) => return Ok(Held::new(lock, install)),
             Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(50)),
             Err(e) => return Err(e),
         }
