@@ -1,6 +1,6 @@
-// #1443 research: extend #1348's real-bundle instrument; no native bridge or board writes.
-const fs=require('node:fs'),crypto=require('node:crypto'),assert=require('node:assert/strict'),{chromium}=require('playwright');
-const out=__dirname, routes=['home','projects','project','filtered','all-tasks','attention','settings','workspace','appearance','cadence','notifications','agents','services','about','stop','recovery','work-mode','workspace-list','workspace-new'];
+// #1443 research: check every cell; emit text only. Review keeps eight selected gap images.
+const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const out=process.argv[2]||__dirname, routes=['home','projects','project','filtered','all-tasks','attention','settings','workspace','appearance','cadence','notifications','agents','services','about','stop','recovery','work-mode','workspace-list','workspace-new'];
 const states=['doing','review','ready','waiting','later','failed'];
 const tasks=Array.from({length:18},(_,i)=>({n:100+i,state:states[i%states.length],title:('Preserve the complete review title, dependencies and owner decisions across every navigation and refresh. ').repeat(2).slice(0,180),revision:1,reason:'Invented failure; inspect the issue before retrying'}));
 const card=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8')).cases.find(c=>c.name.startsWith('stale')).rows[0];
@@ -28,8 +28,7 @@ async function load(page,route,font,theme){
   if(route==='work-mode')await page.locator('[data-a=work]').first().click();
   if(['filtered','all-tasks'].includes(route))await page.locator('.tqp-counts [data-state=doing]').first().click();
   if(route==='all-tasks'){
-   await page.locator('.state-filter > summary').click();await page.locator('[data-a=filter-clear]').click();
-   await page.locator('.state-filter > summary').click();
+   await page.locator('.filter-header [data-a=all-tasks]').click();
   }
   await page.locator('.content').evaluate(e=>e.scrollTop=0);
  }
@@ -46,28 +45,43 @@ async function measure(page){return page.evaluate(()=>{
   back:document.querySelector('[data-a=back]')?rect(document.querySelector('[data-a=back]')):null,bodyOverflow:document.documentElement.scrollWidth-innerWidth,
   statusRegions:document.querySelectorAll('[role=status],[aria-live]').length,location:location.href,historyLength:history.length};
  });}
-async function stableShot(page,path){
- const first=await page.screenshot(),second=await page.screenshot();
- if(!first.equals(second)){const third=await page.screenshot();assert(second.equals(third),'capture raster did not settle: '+path);fs.writeFileSync(path,third);return 1;}
- fs.writeFileSync(path,second);return 0;
+function assess(cell){
+ const gaps=[],minimum=cell.pointer==='coarse'?44:32;
+ if(!cell.route.startsWith('workspace')&&!cell.headerTitle)gaps.push('V03: no route title in fixed header');
+ const small=cell.controls.filter(c=>!c.disabled&&(c.rect.width<minimum-.01||c.rect.height<minimum-.01));
+ if(small.length)gaps.push('V09: '+small.length+' targets below '+minimum+'x'+minimum+' CSS px; '+small[0].label+' '+small[0].rect.width.toFixed(2)+'x'+small[0].rect.height.toFixed(2));
+ const title=cell.styles.h1;
+ if(title&&(Math.abs(parseFloat(title.font)-1.1*cell.font)>.1||title.weight!=='600'))gaps.push('V22: title '+title.font+'/'+title.weight+'; target '+(1.1*cell.font).toFixed(1)+'px/600');
+ if(cell.bodyOverflow>1||cell.scrolls.some(s=>s.scrollWidth>s.clientWidth+1))gaps.push('V23: horizontal overflow');
+ if(cell.back&&cell.backAfterScroll&&Math.abs(cell.back.y-cell.backAfterScroll.y)>1)gaps.push('V02: Back moves '+Math.abs(cell.back.y-cell.backAfterScroll.y).toFixed(2)+' CSS px when scrolled');
+ return {name:cell.name,route:cell.route,theme:cell.theme,font:cell.font,width:cell.width,pointer:cell.pointer,verdict:gaps.length?'gap':'pass',gaps};
 }
-(async()=>{
- fs.mkdirSync(out+'/screens',{recursive:true});
+function table(cells){
+ const text=s=>String(s).replaceAll('|','/').replaceAll('\n',' ');
+ return '# Script pass/gap table\n\nOnly measured header, target, type, overflow and scroll checks; not full v2 or native acceptance. No screenshots per cell.\n\n| Route | Theme | Text px | Width px | Pointer | Verdict | Measured gaps |\n|---|---|---|---|---|---|---|\n'+cells.map(c=>'| '+[c.route,c.theme,c.font,c.width,c.pointer,c.verdict,c.gaps.join('; ')||'none in measured checks'].map(text).join(' | ')+' |').join('\n')+'\n';
+}
+async function main(){
+ const good={name:'selfcheck',route:'workspace',theme:'dark',font:16,width:320,pointer:'fine',controls:[],styles:{h1:{font:'17.6px',weight:'600'}},scrolls:[],bodyOverflow:0};
+ assert.equal(assess(good).verdict,'pass');
+ assert(assess({...good,controls:[{label:'small',rect:{width:31,height:32}}]}).gaps.some(g=>g.startsWith('V09:')));
+ assert(assess({...good,route:'project',back:{y:45},backAfterScroll:{y:-10}}).gaps.some(g=>g.startsWith('V02:')));
+ fs.mkdirSync(out,{recursive:true});
  const browser=await chromium.launch(require('../../../../tests/browser.cjs')());
- const result={source:require('node:child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),renderer:await browser.version(),fixture:'invented, simulated Windows branches; no bridge; 600 CSS px viewport is not native content-fit evidence',screens:[],probes:{}};
+ const result={source:require('node:child_process').execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),renderer:await browser.version(),fixture:'invented, simulated Windows branches; no bridge; 600 CSS px viewport is not native content-fit evidence',cells:[],probes:{}};
  try{
   for(const pointer of ['fine','coarse'])for(const theme of ['dark','light'])for(const font of [16,20])for(const width of [320,360]){
    const context=await browser.newContext({viewport:{width,height:600},colorScheme:theme,hasTouch:pointer==='coarse',deviceScaleFactor:1});
    for(const route of routes){
     const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
     await load(page,route,font,theme);
-    const name=`${route}-${theme}-${font}-${width}-${pointer}`,file='screens/'+name+'.png';
-    const rasterRetry=await stableShot(page,out+'/'+file);
+    const name=`${route}-${theme}-${font}-${width}-${pointer}`;
     const metrics=await measure(page);assert.equal(metrics.coarse,pointer==='coarse');assert.deepEqual(errors,[]);
-    result.screens.push({name,file,route,theme,font,width,pointer,rasterRetry,sha256:crypto.createHash('sha256').update(fs.readFileSync(out+'/'+file)).digest('hex'),...metrics});
+    const cell={name,route,theme,font,width,pointer,...metrics};
+    if(metrics.back){await page.locator('.content').evaluate(e=>e.scrollTop=e.scrollHeight);cell.backAfterScroll=(await measure(page)).back;await page.locator('.content').evaluate(e=>e.scrollTop=0);}
+    result.cells.push(assess(cell));
     if(route==='project'&&pointer==='fine'&&theme==='dark'&&font===20&&width===320){
      const before=metrics.back;await page.locator('.content').evaluate(e=>e.scrollTop=e.scrollHeight);
-     result.probes.backScroll={before,after:(await measure(page)).back};await page.screenshot({path:out+'/project-scrolled.png'});
+     result.probes.backScroll={before,after:(await measure(page)).back};
     }
     await page.close();
    }await context.close();
@@ -79,21 +93,24 @@ async function stableShot(page,path){
   await page.locator('[data-route=settings]').first().click();result.probes.navigationURL=page.url();
   await load(page,'home',16,'dark');result.probes.recreatedViewHeading=await page.locator('h1').innerText();
   await page.evaluate(s=>taskq.receive({...s,page:'home',projects:s.projects.map(p=>({...p,tasks:[]}))}),base);
-  result.probes.emptyAttention={visible:await page.locator('.content').innerText()};await page.screenshot({path:out+'/empty-home.png'});
+  result.probes.emptyAttention={visible:await page.locator('.content').innerText()};
   await load(page,'workspace',16,'dark');await page.locator('[data-a=refresh]').focus();await page.evaluate(()=>taskq.receive({data:{...{conversations:[],projects:[],history:[]},error:'Invented service unavailable'}}));
   result.probes.workspaceRefresh={active:await page.evaluate(()=>document.activeElement.tagName),liveRegions:await page.locator('[role=status],[aria-live]').count()};
-  await page.screenshot({path:out+'/workspace-unavailable.png'});
+
   await load(page,'projects',20,'dark');
   result.probes.counterGrowth=[];
   for(const n of [0,1,12,100,1000]){
    await page.evaluate(n=>{document.querySelector('.content-body').innerHTML='<div class="tqp">'+TaskqProjectBlocks.counters(Object.fromEntries(TaskqProjectBlocks.states.map(([s])=>[s,n])))+'</div>';},n);
    result.probes.counterGrowth.push({n,...await page.evaluate(()=>{const strip=document.querySelector('.tqp-counts');return {buttons:document.querySelectorAll('.tqp-counts button').length,width:strip?.clientWidth||0,scrollWidth:strip?.scrollWidth||0,states:[...document.querySelectorAll('.tqp-counts button')].map(e=>e.dataset.state)};})});
-   await page.screenshot({path:out+`/counts-${n}.png`});
+
   }
   await load(page,'filtered',20,'dark');await page.evaluate(()=>document.querySelector('.menu').style.fontSize='40px');
-  result.probes.resize200=await measure(page);await page.screenshot({path:out+'/resize-200.png'});
-  await page.close();assert.equal(result.screens.length,routes.length*16);
+  result.probes.resize200=await measure(page);
+  await page.close();assert.equal(result.cells.length,routes.length*16);
   fs.writeFileSync(out+'/observations.json',JSON.stringify(result,null,2)+'\n');
-  console.log('Captured '+result.screens.length+' cells; zero page errors; pointer emulation and exact count asserted. Measurements: '+out+'/observations.json');
+  fs.writeFileSync(out+'/matrix.md',table(result.cells));
+  console.log('Checked '+result.cells.length+' cells; '+result.cells.filter(c=>c.verdict==='pass').length+' pass, '+result.cells.filter(c=>c.verdict==='gap').length+' gap; zero page errors; no PNGs written.');
  }finally{await browser.close();}
-})().catch(e=>{console.error(e);process.exitCode=1;});
+}
+module.exports={assess,table};
+if(require.main===module)main().catch(e=>{console.error(e);process.exitCode=1;});

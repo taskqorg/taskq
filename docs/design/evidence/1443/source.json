@@ -6,7 +6,13 @@
     "src/workspace.js": "449cc60275e0d170e8dd5938ec813ff3914167a0ecffc9e5a174130bc03870b0",
     "src/workspace.html": "ee8aad66db0f7ee98b8e284fbfb77dbbb9b6bacc60a7b870722faf9010cd7826",
     "build/web/tray.html": "76f845e365b6559de820fc2d25cc8118c63c34162facf09a0b3a51f4cc976d5f",
-    "build/web/workspace.html": "4a5fde08a44c6dffc3ec4412ccc5c20eeaa14d57a15e234c6cc12e048e52b13a",
-    "docs/design/evidence/1443/capture.cjs": "b5e059b9aa262ce49261306ffe1381246d586d8a055433d2a6650956591de9af"
-  }
+    "build/web/workspace.html": "4a5fde08a44c6dffc3ec4412ccc5c20eeaa14d57a15e234c6cc12e048e52b13a"
+  },
+  "historical_instrument": {
+    "revision": "02d3383cc2fb595e3c93c09303aaed1fe0ecf93f",
+    "files": {
+      "docs/design/evidence/1443/capture.cjs": "b5e059b9aa262ce49261306ffe1381246d586d8a055433d2a6650956591de9af"
+    }
+  },
+  "note": "Historical source hashes; the revised text-only instrument is identified in current/source.json."
 }
