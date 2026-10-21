@@ -42,7 +42,7 @@ const {create}=execution.module('workspace',{
       (t.state==='ask'?answers.answerSlot(row):'<p role="status">Task state: '+esc(t.state)+'. There is no open question.</p>')+answers.answerNotices(p.issues);
     }
     if(view.page==='messages'){
-     const ps=view.S.projects,questions=ps.flatMap(p=>(p.tasks||[]).filter(t=>t.state==='ask').map(t=>'<button class="project" data-a="open-answer" data-board="'+esc(p.issues)+'" data-task="'+t.n+'" data-revision="'+t.revision+'">'+esc(p.name)+' · #'+t.n+' '+esc(t.title)+'</button>')).join('');
+     const ps=view.S.projects,questions=ps.flatMap(p=>(p.tasks||[]).filter(t=>t.state==='ask').map(t=>'<button class="project" data-a="open-answer" data-root="'+esc(p.root)+'" data-board="'+esc(p.issues)+'" data-task="'+t.n+'" data-revision="'+t.revision+'">'+esc(p.name)+' · #'+t.n+' '+esc(t.title)+'</button>')).join('');
      return '<div class="options"><button data-route="request">New AI request</button><button data-route="sessions">Work sessions</button><button data-route="agents">Agent settings</button></div>'+
       (ps.some(p=>!p.alive||p.complete===false)?'<p role="status">Questions may be missing: project status is stale, unavailable or partial. Refresh or inspect the board.</p>':'')+
       (questions||'<p>No questions in the available snapshot.</p>')+answers.answerNotices();
@@ -102,7 +102,7 @@ const {create}=execution.module('workspace',{
      const b=e.target.closest('button');if(!b||b.disabled)return;
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route);
-     else if(b.dataset.a==='open-answer')api.navigate('answer',{board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
+     else if(b.dataset.a==='open-answer')api.navigate('answer',{root:b.dataset.root,board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){api.persist();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}

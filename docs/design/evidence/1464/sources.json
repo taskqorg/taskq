@@ -1,12 +1,12 @@
 {
   "schema": 1,
   "sha256": {
-    "src/workspace.js": "e7a77fdc0d9f34cec8094612bb41bf28853477b2a1003eedb2ac63a2ed09748d",
-    "src/workspace-answers.js": "24e8e1e39ffc6a66e9a1da482b7fd4734019585ae7d6039837487666e85b553d",
+    "src/workspace.js": "259d536ef233ba7993555ae266a6495dd371d3188f3402d4cb6691df2c83d645",
+    "src/workspace-answers.js": "3b9f6a2c878f1b9bfe4cd6ebfee859b4b4a195b904477cf897f3f35f32eb495b",
     "src/app-shell.js": "950902433fb7c567e7c8562761a8e697b9bc79eb27bcd7907be46c1d199f705c",
     "src/app-shell.css": "4a8715293ba2902f622cb54d535e4a9d37ac6d1d8957510b9eec7cbd8b99f691",
     "src/answer-card.js": "9422f61d3f861f31ef99db8200dfbcd1aa44c7bb4ab35b5877ea3348c9ede4fd",
-    "src/tray-app.js": "c49a146bc8b7b501ccf3c670dea282a6da63778593aa7194aa3fbb1bbb766636",
+    "src/tray-app.js": "753afce37d269af4bffee936e35498e3105934f02433be04cd6a7ef87ab8d520",
     "src/tray-view-state.js": "3273c76ff10db0ecc97141e33a719b3105360115787eb76b1c4fb096b1b3cf41",
     "src/tray.rs": "f7c7926ea543cde425eb84613f15b97b6f373c5c8dbfb06c72012ef0d7ee5b8e",
     "src/setup.rs": "d4d592e1e5c1c197e8371d45e2ba8dc3bff7241dde9a0eeaa4c5f9fe8acc2e32",

@@ -143,11 +143,11 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return '<button class="project" data-route="'+route+'">'+esc(label)+'</button>';},
-answerSlot:function(t){return t.state==='ask'?'<button data-a="workspace" data-page="answer" data-board="'+esc(t.key.slice(0,t.key.lastIndexOf('/'))) + '" data-task="'+t.n+'" data-revision="'+t.revision+'">Answer in workspace…</button>':'';},
+answerSlot:function(t){return t.state==='ask'?'<button data-a="workspace" data-page="answer" data-root="'+esc(t.root||'')+'" data-board="'+esc(t.key.slice(0,t.key.lastIndexOf('/'))) + '" data-task="'+t.n+'" data-revision="'+t.revision+'">Answer in workspace…</button>':'';},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 mountAnswers:function(){},
-tasks:function(p){return p.tasks.map(t=>({...t,project:p.name,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
+tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
 blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
 unique:function(ts){return [...new Map(ts.map(t=>[t.key,t])).values()];},
 counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts",{n:f=>ts.filter(t=>f.includes(t.state)).length});return {work:n(['doing','review']),ask:n(['ask']),ready:n(['ready']),failed:n(['failed'])};},

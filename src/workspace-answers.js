@@ -5,7 +5,8 @@ create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={};
  const esc=require('./app-shell.js').escape,CSS=document.defaultView?.CSS||globalThis.CSS;
  const api=execution.module('workspace.answers.instance',{
-answerCapability:function(board){const p=view.S&&view.S.projects.find(p=>p.issues===board);return {manage:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board'};},
+project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
+answerCapability:function(board){const p=api.project(board);return {manage:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board'};},
 
 answerReceipt:function(r){
   const key=r.root+'#'+r.id,request=answerRequests.get(key);
@@ -30,9 +31,9 @@ answerReceipt:function(r){
 },
 answerReadback:function(){
   for(const [key,r] of answerRequests){
-    const p=view.S.projects.find(p=>p.issues===r.board),t=p&&p.complete===true&&p.tasks.find(t=>t.n===r.op.task);
+    const p=api.project(r.board,r.root),t=p&&p.complete===true&&p.tasks.find(t=>t.n===r.op.task);
     if(r.reconciled||r.op.action||!t||(t.state==='ask'&&t.revision===r.op.revision))continue;
-    r.reconciled=true;send({a:'answer',root:p.root,board:r.board,op:r.op});
+    r.reconciled=true;send({a:'answer',root:r.root,board:r.board,op:r.op});
   }
 },
 answerSlot:function(t){return t.state==='ask'?'<div data-answer="'+esc(t.key)+'"></div>':'';},
@@ -49,38 +50,39 @@ answerToast:function(){
 },
 mountAnswers:function(){
   for(const slot of menu.querySelectorAll('[data-answer]')){
-    const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===slot.dataset.answer);
+    const t=unique(view.S.projects.filter(p=>!view.answer?.root||p.root===view.answer.root).flatMap(tasks)).find(t=>t.key===slot.dataset.answer);
     if(!t)continue;
     let card=answerCards.get(t.key);
     if(!card){const el=document.createElement('div');card={el,ui:TaskqAnswerCard.mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
     if(card.el.parentNode!==slot)slot.append(card.el);
-    const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);
+    const p=api.project(t.key.slice(0,t.key.lastIndexOf('/')));
     card.ui.update([{board:p.issues,row:t}]);
     for(const d of slot.querySelectorAll('details')){const key='answer:'+t.key+':'+d.className;if(d.dataset.viewKey!==key)d.dataset.viewKey=key;}
   }
 
 },
 answerSend:function(board,op){
-  const p=view.S&&view.S.projects.find(p=>p.issues===board);
+  const kept=saved[board+'#'+op.task];
+  const p=api.project(board,kept?.op?.id===op.id?kept.projectRoot:undefined);
   if(!p)return Promise.resolve({state:'rejected',reason:'Project is no longer registered'});
   const key=p.root+'#'+op.id;
   if(answerRequests.has(key))return answerRequests.get(key).promise;
   let resolve;
   const promise=new Promise(r=>resolve=r);
   const timer=defer(()=>{answerReceipt({root:p.root,id:op.id,state:'unknown',reason:'No bridge receipt received',next:'Check delivery with the same operation'});},30000);
-  answerRequests.set(key,{promise,resolve,timer,board,op});
+  answerRequests.set(key,{promise,resolve,timer,board,op,root:p.root});
   answerFeedback.set(key,{board,op,state:'sending',reason:''});
   send({a:'answer',root:p.root,board,op,local:saved[board+'#'+op.task]});
   return promise;
 },
 
 load:function(board,row){return saved[board+'#'+row.n];},
-save:function(board,row,local){saved[board+'#'+row.n]=JSON.parse(JSON.stringify(local));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});},
+save:function(board,row,local){const prior=saved[board+'#'+row.n],projectRoot=prior?.op?.id&&prior.op.id===local.op?.id?prior.projectRoot:api.project(board)?.root;saved[board+'#'+row.n]=JSON.parse(JSON.stringify({...local,projectRoot}));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});},
 hydrate:function(locals){
  for(const [key,local] of Object.entries(locals||{}))if(!Object.hasOwn(saved,key)&&local&&typeof local.draft==='string'){
   saved[key]={...local,confirmClose:false};
   if(local.op&&['sending','unknown'].includes(local.receipt?.state))saved[key].receipt={state:'unknown',reason:'Workspace reopened; delivery needs readback',next:'Check delivery with the same operation'};
-  const board=key.slice(0,key.lastIndexOf('#')),p=view.S.projects.find(p=>p.issues===board);
+  const board=key.slice(0,key.lastIndexOf('#')),p=api.project(board,local.projectRoot);
   if(local.op&&p&&saved[key].receipt)answerFeedback.set(p.root+'#'+local.op.id,{board,op:local.op,...saved[key].receipt});
  }
 },

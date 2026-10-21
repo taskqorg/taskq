@@ -16,6 +16,7 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   project.complete=false;assert.equal(call('answerCapability',board).answer,false);
   project.complete=true;project.alive=false;assert.equal(call('answerCapability',board).answer,false);project.alive=true;
   assert.equal(call('answerCapability','other-board').answer,false);
+  context.S.projects=[{...project,root:'same-board-other-root',alive:false},project];context.answer={board,root:project.root};assert.equal(call('answerCapability',board).answer,true,'same board does not substitute another project root');context.S.projects=[project];
   const op={id:'operation-1',task:841,revision:4,text:'literal 2'};
   const first=call('answerSend',board,op);
   assert.equal(call('answerSend',board,op),first,'duplicate bridge request shares its promise');
