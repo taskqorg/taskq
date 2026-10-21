@@ -1,16 +1,17 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "2f3afbbfb1e89fb3f311da6c8d296b463211e3d0",
-  "binarySha256": "7f2edfa2a548defae38f663cc79e7eced6abc0cb9bf925ce83b78e42ef122635",
+  "sourceCommit": "59b321a6343439e9b442bc1eb3ef2bb071abc57d",
+  "binarySha256": "bd8b95ce3f0c74e97399b2542ff0d61626dae9669c990870db2643d7ca972f56",
   "environment": {
-    "os": "macOS 27.0.1",
-    "arch": "arm64",
-    "renderer": "WKWebView snapshot"
+    "os": "Windows-11-10.0.26300-SP0",
+    "arch": "AMD64",
+    "renderer": "WebView2 snapshot",
+    "profile": "cargo dev"
   },
   "uiSources": {
     "src/tray.rs": "9edfc5d3980d7784a9354400200c3101a8b862a4",
-    "src/tray.html": "b66b981c08bc62962c3a334c26011179249449b2",
-    "src/tray-app.js": "7b2684abe8498f4a39663a1cdcce93b28af67902",
+    "src/tray.html": "ff51188238994f862e91191b031d9c8f398638c3",
+    "src/tray-app.js": "c966c3ee6a0c557cf24fbd64d633f7031b43b239",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
     "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
@@ -19,7 +20,7 @@
     "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
-  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
+  "capture": "Isolated TASKQ_INSTALL from docs/shots/fixture.sh with Windows paths and fresh fixture mtimes; cargo dev artifact; dark images only; no service.",
   "images": [
     {
       "file": "../header.webp",
@@ -27,15 +28,15 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "410f388d895bd0b834b58e9e0bb3860c29901b38a5561e5000becddd4f98545d"
+      "sha256": "a2eb05e5d60f02f6d5276ec7bae84f8eb9c18f1c6c785db45d92169c17521a1b"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "97753e496f2926613548bd09cb81965fc3e4854bef77c81f946e36260070c19e"
+      "sha256": "9807cc93603620effae86d32637179693305f6c3c3c4995abaadac2cd9f9d936"
     },
     {
       "file": "popover-dark-workspace-16.png",
-      "sha256": "6a226cf921da6448069d8d0630bb024de1ebe650ae737e4e3cb6ab5e3c4b9aa3"
+      "sha256": "d24d9c69582ce2152c8be88a07702f60c55e1f7d80862a3140e47ef3817a2dc9"
     }
   ]
 }
