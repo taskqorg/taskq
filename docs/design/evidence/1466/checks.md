@@ -54,7 +54,8 @@ unknown-result fencing, drafts, IME and Send/Enter protection.
 
 ## Qualification limits
 
-Owner actual-size acceptance is pending. WKWebView/WebView2 clicks, window raise,
+Owner accepted the G05/G06 actual-size layout in [answer 6328514474](https://github.com/taskqorg/taskq/issues/1466#issuecomment-6328514474). Native limits and merge_group CI remain open.
+WKWebView/WebView2 clicks, window raise,
 real effects and Windows native rendering are unverified. No production policy,
 queue control, update, registration or failed-task retry was applied. Source and
 browser checks cannot replace release-native qualification (R12).
