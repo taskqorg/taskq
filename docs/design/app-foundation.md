@@ -54,7 +54,7 @@ Keep the app foundation in TaskQ initially. CoreQ already supplies execution/tel
 
 Performance is watched through existing CoreQ telemetry. The [owner's #1463 steer](https://github.com/taskqorg/taskq/issues/1463#issuecomment-6314418072) excludes benchmark scripts, performance tests and new latency/memory ceilings from this and later UI PRs (R13). Keep current execution context and collection boundaries; add no second collector or performance harness. No CPU, memory or latency improvement is claimed by the architecture decision.
 
-M2 observation runs in parallel and is not an implementation gate. UI geometry, interaction, functional checks and matching native-renderer qualification remain separate under R12; they do not become performance benchmarks or latency/memory budget approval. The existing shared limit of at most 70% sustained CPU remains; no new performance gate is added. Existing host policy and runtime authority remain unchanged.
+M2 observation runs in parallel and is not an implementation gate. UI geometry, interaction, functional checks and matching native-renderer qualification remain separate under R12; they do not become performance benchmarks or latency/memory budget approval. Per [specq observe, do not gate](https://github.com/taskqorg/specq/blob/main/engineering/performance.md#observe-do-not-gate), any budget or ceiling, including 70% sustained CPU, is a telemetry reference value: never task acceptance, a merge gate or an owner ask. A degradation the report flags becomes its own task. Existing host policy and runtime authority remain unchanged.
 
 ### M2 baseline (#1469, one-time note)
 
@@ -67,7 +67,7 @@ Measured once on main with a throwaway tray route and script that were not merge
 | Windows 11 26300, i5-12600KF, 16 threads, WebView2 155.0.4283.62 | small | 31 / 39 | 8 / 9 | 10 / 14 | 11.7 / 17.0 | 454 MB | 0 |
 | | large | 51 / 56 | 6 / 8 | 36 / 41 | 21.7 / 30.2 | 576 MB | 0 |
 
-The large fixture is 12 projects of 25 tasks and 20 AI requests; small is 2 of 4 and 2. JS heap is 9.5 MB on WebView2 and unknown on WKWebView. CPU stays far below the 70% rule on both. An earlier Windows run had one large-fixture snapshot p99 of 306 ms against 55 ms in its pair: single p99 values are noisy. Unknown: the workspace (not on main), OS-level input dispatch and IME (events were synthetic), physical press/release, a locked or occluded window, Linux.
+The large fixture is 12 projects of 25 tasks and 20 AI requests; small is 2 of 4 and 2. JS heap is 9.5 MB on WebView2 and unknown on WKWebView. CPU stays far below the 70% reference value on both. An earlier Windows run had one large-fixture snapshot p99 of 306 ms against 55 ms in its pair: single p99 values are noisy. Unknown: the workspace (not on main), OS-level input dispatch and IME (events were synthetic), physical press/release, a locked or occluded window, Linux.
 
 Telemetry gaps: CoreQ telemetry records `tray.refresh`, `tray.web.delivery`, `tray.web.error` and the tray operation spans, but no span covers snapshot-to-paint or input-to-paint, and no record samples the CPU or memory of taskq and its webview processes. Until such spans exist, these values read unknown in telemetry.
 
