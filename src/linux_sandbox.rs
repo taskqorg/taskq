@@ -36,6 +36,29 @@ fn read_only_entry(p: &Path) -> bool {
     p.extension().is_some_and(|e| e == "toml") || ["hooks.json", "AGENTS.md", "plugins", "skills", "packages", "app-server-control", "app-server-daemon"].iter().any(|n| p.ends_with(n))
 }
 
+/// Workspace: the project's git common dir (`<root>/.git`), so fetch, commit and push work from linked worktrees (#1490).
+// ponytail: a directory `.git` only; a root whose `.git` is a pointer file keeps Codex's read-only default.
+fn git_dir(mode: &str, root: &Path) -> Option<PathBuf> {
+    Some(root.join(".git")).filter(|g| mode == "workspace" && g.is_dir())
+}
+
+/// Write mounts, in order; read-only mounts follow them.
+fn write_mounts(mode: &str, root: &Path, ch: &Path, home: &Path) -> Vec<PathBuf> {
+    let workspace = if mode == "workspace" { root.to_path_buf() } else { root.join(".taskq") };
+    let mut v = vec![workspace];
+    v.extend(git_dir(mode, root));
+    v.push(ch.to_path_buf());
+    v.extend([".cargo", ".rustup", ".npm", ".cache"].map(|s| home.join(s)));
+    v
+}
+
+/// Native Codex workspace-write keeps `<cwd>/.git` read-only; its bwrap binds a deeper writable root after that mask.
+fn codex_args(mode: &str, root: &Path, args: &[String]) -> Vec<String> {
+    let Some(g) = git_dir(mode, root) else { return args.to_vec() };
+    let roots = format!("sandbox_workspace_write.writable_roots=[{}]", serde_json::to_string(&g.to_string_lossy()).unwrap_or_default());
+    args.iter().map(|a| if a == "sandbox_workspace_write.writable_roots=[]" { roots.clone() } else { a.clone() }).collect()
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 6 { return Err("linux sandbox: expected root, install, mode, Codex executable and exec arguments".into()); }
     let root = Path::new(&args[0]).canonicalize().map_err(|e| e.to_string())?;
@@ -58,8 +81,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     c.args(["--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--cap-drop", "ALL", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var/tmp"]);
     let dns = Path::new("/etc/resolv.conf").canonicalize().map_err(|e| format!("linux sandbox DNS: {e}"))?;
     c.arg("--ro-bind").arg(&dns).arg(&dns);
-    let workspace = if mode == "workspace" { root.clone() } else { root.join(".taskq") };
-    for p in std::iter::once(workspace).chain(std::iter::once(ch.clone())).chain([".cargo", ".rustup", ".npm", ".cache"].map(|s| home.join(s))) {
+    for p in write_mounts(mode, &root, &ch, &home) {
         if p.exists() { let p = p.canonicalize().map_err(|e| e.to_string())?; c.arg("--bind").arg(&p).arg(&p); }
     }
     // Read-only mounts follow every write mount; no caller supplies mount arguments.
@@ -76,7 +98,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     // No sudo/setid escape, even when the host account has broader privileges.
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 { return Err(std::io::Error::last_os_error().to_string()); }
-    c.args(["--setenv", "TMPDIR", "/tmp", "--chdir"]).arg(&root).arg("--").arg(bin).args(&args[4..]);
+    c.args(["--setenv", "TMPDIR", "/tmp", "--chdir"]).arg(&root).arg("--").arg(bin).args(codex_args(mode, &root, &args[4..]));
     coreq::telemetry::capture::before_exec();
     Err(format!("linux sandbox: {}", c.exec()))
 }
@@ -90,6 +112,23 @@ mod tests {
         let ch = Path::new("/home/me/.codex");
         assert!(!read_only_entry(&ch.join("auth.json")), "a read-only auth.json burns the rotated refresh token (#1424)");
         for n in ["config.toml", "hooks.json", "AGENTS.md", "plugins", "skills", "packages"] { assert!(read_only_entry(&ch.join(n)), "{n}"); }
+    }
+
+    // Chain: workspace worker git fetch/commit/push (#1490). Risk: the git common dir stays read-only for linked worktrees.
+    #[test]
+    fn workspace_git_common_dir_stays_writable() {
+        let root = std::env::temp_dir().join(format!("taskq-1490-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        let (ch, home) = (Path::new("/home/me/.codex"), Path::new("/home/me"));
+        let git = root.join(".git");
+        let ws = write_mounts("workspace", &root, ch, home);
+        assert_eq!(ws[..3], [root.clone(), git.clone(), ch.to_path_buf()]);
+        assert!(!write_mounts("restricted", &root, ch, home).contains(&git), "restricted keeps only .taskq");
+        let req: Vec<String> = ["exec", "-s", "workspace-write", "-c", "sandbox_workspace_write.writable_roots=[]"].map(String::from).into();
+        let roots = format!("sandbox_workspace_write.writable_roots=[{:?}]", git.to_str().unwrap());
+        assert_eq!(codex_args("workspace", &root, &req)[4], roots, "native Codex keeps <cwd>/.git read-only without it");
+        assert_eq!(codex_args("restricted", &root, &req), req);
+        std::fs::remove_dir_all(&root).ok();
     }
 
     // Paid chain: role start/resume, denied writes/network and nested-launcher bypass; not per-commit CI.
