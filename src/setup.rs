@@ -136,20 +136,20 @@ pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
 }
 
 /// A workspace retry reads the same owner-session request; its identity never means a second launch.
-pub fn open_id(install: &Path, root: &Path, task: &str, id: &str, runtime: &str) -> Res<Request> {
+pub fn open_id(install: &Path, root: &Path, task: &str, id: &str, runtime: &str, read_only: bool) -> Res<Request> {
     if !crate::resources::id(id) { return Err("Invalid owner request ID".into()); }
     if task.trim().is_empty() { return Err("Write a request before sending".into()); }
     let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
-    save_id(install, runtime, None, vec![], Some(root.clone()), Some(id), |_, _| project_brief(&root, task.trim()))
+    save_id(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), |_, _| project_brief(&root, task))
 }
 
 fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
     save_id(install, runtime, client, targets, root, None, brief)
 }
 
-fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<&str>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
+fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
     if runtime != "claude" { return Err(format!("setup runtime {runtime}: only claude has a qualified visible session")); }
-    let id = requested_id.map(String::from).unwrap_or_else(crate::runtime::uuid);
+    let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
     let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or("Claude Code").into(), runtime: runtime.into(),
@@ -166,7 +166,7 @@ fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<Str
                     r = previous;
                     return Ok(());
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && requested_id.is_some_and(|(_,read_only)|!read_only) => {},
                 Err(e) => return Err(format!("Owner request delivery unknown: {e}")),
             }
         }
@@ -308,19 +308,22 @@ mod tests {
     fn owner_request_retries_read_the_same_record_and_refuse_changed_input() {
         let install=std::env::temp_dir().join(format!("taskq-request-id-{}",crate::runtime::uuid()));
         fs::create_dir_all(&install).unwrap();
-        let first=open_id(&install,&install,"literal request","owner-1464","claude").unwrap();
-        assert_eq!(open_id(&install,&install,"literal request","owner-1464","claude").unwrap(),first);
+        let first=open_id(&install,&install,"literal request","owner-1464","claude",false).unwrap();
+        assert_eq!(open_id(&install,&install,"literal request","owner-1464","claude",true).unwrap(),first);
         step(&install,ok).unwrap();
-        let observed=open_id(&install,&install,"literal request","owner-1464","claude").unwrap();
+        let observed=open_id(&install,&install,"literal request","owner-1464","claude",true).unwrap();
         assert_eq!(observed.state,"launched");
         assert_eq!(all(&install).unwrap().0.len(),1);
-        for (text,id,rt) in [("changed","owner-1464","claude"),("literal request","../escape","claude"),("literal request","owner-1464","codex")] {
-            assert!(open_id(&install,&install,text,id,rt).is_err());
+        for (text,id,rt) in [("changed","owner-1464","claude"),(" literal request","owner-1464","claude"),("literal request","../escape","claude"),("literal request","owner-1464","codex")] {
+            assert!(open_id(&install,&install,text,id,rt,false).is_err());
         }
         assert_eq!(all(&install).unwrap().0.len(),1);
         fs::write(file(&install,"owner-1464"),"corrupt record").unwrap();
-        assert!(open_id(&install,&install,"literal request","owner-1464","claude").is_err());
+        assert!(open_id(&install,&install,"literal request","owner-1464","claude",true).is_err());
         assert_eq!(fs::read_to_string(file(&install,"owner-1464")).unwrap(),"corrupt record");
+        fs::remove_file(file(&install,"owner-1464")).unwrap();
+        assert!(open_id(&install,&install,"literal request","owner-1464","claude",true).is_err(),"missing readback must never recreate a request");
+        assert!(all(&install).unwrap().0.is_empty());
         fs::remove_dir_all(install).unwrap();
     }
 

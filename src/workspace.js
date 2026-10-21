@@ -59,7 +59,8 @@ const {create}=execution.module('workspace',{
     state.flush();
    },
    navigate:function(page,context){
-    if(!Object.hasOwn(routes,page)){view.unavailable='Requested destination is not available.';page='messages';}
+    if(Object.hasOwn(routes,page))view.unavailable=null;
+    else {view.unavailable='Requested destination is not available.';page='messages';}
     trail.push(state.capture());if(trail.length>32)trail.shift();view.page=page;
     if(page==='answer')view.answer=context;
     if(page==='request'&&context?.root)view.aiRoot=context.root;
@@ -72,9 +73,9 @@ const {create}=execution.module('workspace',{
     const op={id:Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''),root:view.aiRoot,text:local.value.text,runtime:snapshot.value.ai.runtime.id};
     local.value={...local.value,op,receipt:{state:'sending'}};api.persist();api.dispatch(op);api.draw();
    },
-   dispatch:function(op){
+   dispatch:function(op,reconcile=false){
     ui.cancel(timer);timer=ui.defer(()=>api.receive({aiReceipt:{id:op.id,state:'unknown',reason:'No native receipt received. Check delivery with the same request ID.'}}),30000);
-    ui.send({a:'ai-send',...op});
+    ui.send({a:'ai-send',...op,reconcile});
    },
    receive:function(s){
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
@@ -105,7 +106,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){api.persist();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
-     else if(b.dataset.a==='request-retry'){const l=local.value;if(l.op&&l.receipt?.state==='unknown'){local.value={...l,receipt:{state:'sending'}};api.persist();api.dispatch(l.op);api.draw();}}
+     else if(b.dataset.a==='request-retry'){const l=local.value;if(l.op&&l.receipt?.state==='unknown'){local.value={...l,receipt:{state:'sending'}};api.persist();api.dispatch(l.op,true);api.draw();}}
      else if(b.dataset.a==='request-pick'&&!local.value.op){local.value={...local.value,text:snapshot.value.ai.history[Number(b.dataset.index)],caret:[0,0]};api.persist();api.draw();menu.querySelector('[data-field=request]')?.focus();}
      else if(b.dataset.a==='answer-retry')answers.retry(b.dataset.key);
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);

@@ -26,7 +26,7 @@ answerReceipt:function(r){
     request.resolve({state:r.state,reason:r.reason,next:r.next});
   }else answerCards.get(item.board+'/'+item.op.task)?.ui.receiveReceipt(item.board,r.id,r);
   draw();
-  
+
 },
 answerReadback:function(){
   for(const [key,r] of answerRequests){

@@ -203,7 +203,7 @@ fn ai(install: &Path, a: &str, m: &Value) -> Result<(), String> {
             let root = m["root"].as_str().filter(|r| roots(install).iter().any(|x| x == r)).ok_or("Choose a registered project")?;
             let text = m["text"].as_str().unwrap_or("");
             let id=m["id"].as_str().ok_or("Owner request ID missing")?;
-            crate::setup::open_id(install, Path::new(root), text, id, m["runtime"].as_str().unwrap_or("claude"))?;
+            crate::setup::open_id(install, Path::new(root), text, id, m["runtime"].as_str().unwrap_or("claude"),m["reconcile"]==true)?;
             f["history"] = json!(remember(f["history"].as_array().map_or(&[][..], |v| v), text.trim()));
             f["draft"]=json!("");
         }

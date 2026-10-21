@@ -34,7 +34,7 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   await page.evaluate(id=>taskq.receive({aiReceipt:{id,state:'unknown',reason:'fixture: receipt lost'}}),sent[0].id);
   if(evidence)await page.screenshot({path:evidence+'/request-unknown-dark-16.png'});
   await page.locator('[data-a=request-retry]').click();
-  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').map(({context,...op})=>op)),sent.map(({context,...op})=>op).concat(sent.map(({context,...op})=>op)),'same-ID retry keeps immutable input');
+  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').map(({context,reconcile,...op})=>op)),sent.map(({context,reconcile,...op})=>op).concat(sent.map(({context,reconcile,...op})=>op)),'same-ID retry keeps immutable input');
   await page.evaluate(id=>taskq.receive({aiReceipt:{id,state:'accepted'}}),sent[0].id);assert.equal(await text.inputValue(),'');
   // Restart preserves request and answer drafts/op identity through the existing native adapter, no auto-replay.
   await text.fill('restart draft');await text.evaluate(e=>e.setSelectionRange(2,5));await text.dispatchEvent('select');
@@ -51,6 +51,8 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   await page.evaluate(()=>taskq.receive({open:{page:'answer',board:'https://missing.example/issues',task:1}}));
   if(evidence)await page.screenshot({path:evidence+'/task-unavailable-dark-16.png'});
   assert.match(await page.locator('.content').innerText(),/task is unavailable/);assert.equal(await page.locator('.qac').count(),0);
+  await page.evaluate(()=>taskq.receive({open:{page:'removed-route'}}));assert.match(await page.locator('.content').innerText(),/surviving destination is Messages/);
+  await page.evaluate(()=>taskq.receive({open:{page:'messages'}}));assert(!/Requested destination/.test(await page.locator('.content').innerText()),'valid navigation clears the obsolete destination warning');
   const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8')),row=fx.cases.find(c=>c.name.startsWith('stale')).rows[0],board=project.issues;
   const question={...snapshot,projects:[{...project,tasks:[row]}]};
   await page.evaluate(s=>taskq.receive(s),question);await page.evaluate(c=>taskq.receive({open:c}),{page:'answer',board,task:row.n,revision:row.revision});
