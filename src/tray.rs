@@ -165,12 +165,22 @@ pub fn use_icon(install: &Path, draft: &Value) -> Result<(), Vec<String>> {
 }
 
 /// Draft and history of AI requests (§ 4): `<install>/tray-requests.json`, apart from the view settings.
+fn requests_file_checked(install: &Path) -> Result<Value, String> {
+    let text=match fs::read_to_string(install.join("tray-requests.json")) {
+        Ok(text)=>text,
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(json!({"draft":"","history":[]})),
+        Err(e)=>return Err(format!("Workspace drafts unavailable: {e}; existing data kept")),
+    };
+    let mut v:Value=serde_json::from_str(&text).map_err(|e|format!("Workspace drafts unreadable: {e}; existing data kept"))?;
+    if !v.is_object(){return Err("Workspace drafts have an unsupported format; existing data kept".into());}
+    for (key,valid) in [("draft",v["draft"].is_null()||v["draft"].is_string()),("history",v["history"].is_null()||v["history"].as_array().is_some_and(|a|a.iter().all(Value::is_string))),("answers",v["answers"].is_null()||v["answers"].is_object())] {
+        if !valid{return Err(format!("Workspace {key} has an unsupported format; existing data kept"));}
+    }
+    if v["draft"].is_null(){v["draft"]=json!("");}if v["history"].is_null(){v["history"]=json!([]);}
+    Ok(v)
+}
 fn requests_file(install: &Path) -> Value {
-    let mut v: Value = fs::read_to_string(install.join("tray-requests.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-    if !v.is_object(){v=json!({});}
-    if !v["draft"].is_string(){v["draft"]=json!("");}
-    if !v["history"].is_array(){v["history"]=json!([]);}
-    v
+    requests_file_checked(install).unwrap_or_else(|e|json!({"error":e,"draft":"","history":[]}))
 }
 
 /// The last 20 distinct sent texts, newest first; the same text moves to the top (menu.md M7).
@@ -180,21 +190,48 @@ fn remember(history: &[Value], text: &str) -> Vec<Value> {
 
 /// AI requests (§ 4): Send opens one new session in a registered project through the setup path.
 fn ai(install: &Path, a: &str, m: &Value) -> Result<(), String> {
-    let mut f = requests_file(install);
+    let mut f = requests_file_checked(install)?;
     match a {
-        "ai-draft" => f["draft"] = json!(m["text"].as_str().unwrap_or("")),
+        "ai-draft" => {
+            f["draft"] = json!(m["text"].as_str().unwrap_or(""));
+            f["root"] = m["root"].clone();
+            if m["local"].is_object() { f["local"] = m["local"].clone(); }
+        },
         "ai-clear" => f["history"] = json!([]),
         "ai-send" => {
             // only a registered project: the page never names a path of its own
             let root = m["root"].as_str().filter(|r| roots(install).iter().any(|x| x == r)).ok_or("Choose a registered project")?;
             let text = m["text"].as_str().unwrap_or("");
-            crate::setup::open(install, Path::new(root), text)?;
+            let id=m["id"].as_str().ok_or("Owner request ID missing")?;
+            crate::setup::open_id(install, Path::new(root), text, id, m["runtime"].as_str().unwrap_or("claude"),m["reconcile"]==true)?;
             f["history"] = json!(remember(f["history"].as_array().map_or(&[][..], |v| v), text.trim()));
             f["draft"]=json!("");
         }
         _ => return Ok(()),
     }
     crate::platform::write_atomic(&install.join("tray-requests.json"), &f.to_string()).map_err(|e| e.to_string())
+}
+
+/// Workspace card drafts/operation identity use the existing native request preferences, never a browser outbox.
+fn answer_local(install: &Path, key: &str, local: &Value) -> Result<(), String> {
+    if key.len()>2048 || !local.is_object() || !local["draft"].is_string() || local.to_string().len()>65536 {
+        return Err("Workspace draft is invalid or too large; not saved".into());
+    }
+    let mut f=requests_file_checked(install)?;
+    if !f["answers"].is_object(){f["answers"]=json!({});}
+    f["answers"][key]=local.clone();
+    crate::platform::write_atomic(&install.join("tray-requests.json"),&f.to_string()).map_err(|e|format!("Workspace draft was not saved: {e}"))
+}
+
+fn owner_runtime(ps: &[Value]) -> Value {
+    let probe=ps.iter().map(|p|&p["agents"]).filter(|a|a["at"].as_i64().is_some_and(|at|(0..=360).contains(&(now()-at)))).max_by_key(|a|a["at"].as_u64());
+    let row=probe.and_then(|a|a["rows"].as_array()).and_then(|rows|rows.iter().find(|r|r["runtime"]=="claude"));
+    let reason=match row {
+        Some(r) if r["login"]=="logged in" => "",
+        Some(r) if r["login"]=="not logged in" => "Claude Code is not logged in; inspect Agents in the tray.",
+        _ => "Claude Code owner-session readiness is unknown; refresh or inspect Agents in the tray.",
+    };
+    json!({"id":"claude","name":"Claude Code","available":reason.is_empty(),"reason":reason})
 }
 
 fn roots(install: &Path) -> Vec<String> {
@@ -840,6 +877,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut workspace: Option<(Window, WebView)> = None;
     let mut workspace_web: Option<WebCalls> = None;
     let mut workspace_handoff=false;
+    let mut workspace_open=Value::Null;
     let mut tray: Option<TrayIcon> = None;
     let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
     let mut workspace_shown=String::new();
@@ -1027,7 +1065,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 w.set_focus();
                 shown_at = Instant::now();
             }
-            Event::UserEvent(Ev::Answer(receipt)) => push(&mut web,&ui, &receipt),
+            Event::UserEvent(Ev::Answer(receipt)) => {
+                push(&mut web,&ui,&receipt);
+                if receipt["answerReceipt"].is_object() && let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
+            },
             // a notification click opens the menu (or raises the pinned window) on that card (M14)
             Event::UserEvent(Ev::Note(id)) => {
                 let Ok(id) = serde_json::from_str::<Value>(&id) else { return };
@@ -1055,12 +1096,33 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if calls.failed {return;}
                 match m["a"].as_str() {
-                    Some("ready") => {calls.finish(0,"ok");web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
+                    Some("ready") | Some("refresh") => {
+                        calls.finish(0,"ok");
+                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
+                        if !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                    }
                     Some("hide") => w.set_visible(false),
                     Some("workspace-set") => {
                         settings.set(&json!({"workspace_navigation":m["navigation"]}));
                         let saved=m["navigation"].is_object() && m["navigation"]["schema"]==1 && settings.workspace_navigation==m["navigation"] && settings.save(&install);
                         web_eval(wv,&format!("taskq.receive({})",json!({"viewStateError":if saved {Value::Null}else{json!("Workspace view state was not saved; close and reopen may lose navigation")}})),"tray.web.receive",&proxy,calls);
+                    }
+                    Some("answer-local") => {
+                        let result=answer_local(&install,m["key"].as_str().unwrap_or(""),&m["local"]);
+                        web_eval(wv,&format!("taskq.receive({})",json!({"workspaceLocalError":result.err()})),"tray.web.receive",&proxy,calls);
+                    }
+                    Some("answer") => {
+                        let key=format!("{}#{}",m["board"].as_str().unwrap_or(""),m["op"]["task"]);
+                        let mut request=m.clone();request["id"]=m["op"]["id"].clone();
+                        let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|answer_actions.submit(&request));
+                        if let Err(error)=result {let r=json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
+                    }
+                    Some("open") => {if let Some(url)=m["url"].as_str().filter(|u|u.starts_with("https://")||u.starts_with("http://")){open(url);}}
+                    Some(a) if matches!(a,"ai-send"|"ai-draft"|"ai-clear") => {
+                        let result=ai(&install,a,&m);
+                        let receipt=if a=="ai-send" {json!({"aiReceipt":{"id":m["id"],"state":if result.is_ok(){"accepted"}else{"unknown"},"reason":result.err().unwrap_or_else(||"Request saved; native launch is separate".into())}})}else{json!({"workspaceLocalError":result.err()})};
+                        web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);
+                        if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
                     }
                     _ => calls.fault("unsupported-workspace-action"),
                 }
@@ -1080,6 +1142,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if web.failed {return;}
                 match m["a"].as_str().unwrap_or("") {
                     "workspace" if snapshot.is_none() => {
+                        workspace_open=m["open"].clone();
                         if workspace.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ Workspace").with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
@@ -1090,15 +1153,16 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                                 Err(error)=>{push(&mut web,&ui,&json!({"workspaceError":format!("Workspace unavailable: {error}")}));return;}
                             }
                         }
+                        if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
+                            if !calls.pending.contains_key(&0) && !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                        }
                         workspace_handoff=w.is_visible() && !settings.pin.pinned;
                         if let Some((window,_))=&workspace {window.set_visible(true);window.set_focus();}
                         push(&mut web,&ui,&json!({"workspaceError":Value::Null}));
                     }
-                    "answer" if snapshot.is_none() => {
+                    "answer" if snapshot.is_none() && m["op"]["action"]=="start" => {
                         let mut request=m.clone();request["id"]=m["op"]["id"].clone();
-                        if let Err(error)=answer_actions.submit(&request) {
-                            push(&mut web,&ui,&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));
-                        }
+                        if let Err(error)=answer_actions.submit(&request){push(&mut web,&ui,&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));}
                     }
                     "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
                     "ready" => {
@@ -1245,10 +1309,6 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     "add-setup" if matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
                         if let Err(reason) = crate::setup::submit(&install, "claude", None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {push(&mut web,&ui,&json!({"aiError":reason}));}
                         adding = Value::Null;
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
-                    }
-                    a if a.starts_with("ai-") => {
-                        match ai(&install,a,&m) {Ok(())=>if a=="ai-send" {push(&mut web,&ui,&json!({"aiSubmitted":true}));},Err(reason)=>push(&mut web,&ui,&json!({"aiError":reason}))}
                         push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
                     }
                     a => {
@@ -1425,7 +1485,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
-        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "ai": {"request": crate::setup::last(install, true), "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
+        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     if cfg!(target_os = "macos") {
@@ -2010,6 +2070,29 @@ mod tests {
         assert!(!own_page("http://example.com".into()));
     }
 
+    // #1464 A4/A5/A7: native drafts survive restart/corruption and never replay owner/task effects.
+    #[test]
+    fn workspace_local_preserves_drafts_and_unknown_identity_without_replay() {
+        let base=std::env::temp_dir().join(format!("taskq-workspace-local-{}",crate::runtime::uuid()));
+        fs::create_dir_all(&base).unwrap();
+        let local=json!({"draft":"kept literal answer","bound":12,"op":{"id":"same-op","task":42,"revision":12,"text":"kept literal answer"},"receipt":{"state":"unknown"},"caret":[2,4]});
+        answer_local(&base,"https://example.org/issues#42",&local).unwrap();
+        ai(&base,"ai-draft",&json!({"text":"native request","root":"registered","local":{"text":"native request","caret":[1,5]}})).unwrap();
+        let observed=requests_file_checked(&base).unwrap();
+        assert_eq!(observed["answers"]["https://example.org/issues#42"],local);
+        assert_eq!(observed["local"]["caret"],json!([1,5]));
+        assert!(crate::setup::all(&base).unwrap().0.is_empty(),"view persistence must not replay effects");
+        let bytes=fs::read(base.join("tray-requests.json")).unwrap();
+        assert!(answer_local(&base,"x",&json!({"draft":"x".repeat(65537)})).is_err());
+        assert_eq!(fs::read(base.join("tray-requests.json")).unwrap(),bytes);
+        fs::write(base.join("tray-requests.json"),"broken kept bytes").unwrap();
+        assert!(ai(&base,"ai-draft",&json!({"text":"replacement"})).is_err());
+        assert!(answer_local(&base,"x",&local).is_err());
+        assert_eq!(fs::read_to_string(base.join("tray-requests.json")).unwrap(),"broken kept bytes");
+        assert!(requests_file(&base)["error"].as_str().unwrap().contains("existing data kept"));
+        fs::remove_dir_all(base).unwrap();
+    }
+
     // A2/M7: Send opens one owner session in the chosen registered project. Risk: an unregistered path or empty
     // text launches a session, or a refused send drops the draft.
     #[test]
@@ -2025,7 +2108,10 @@ mod tests {
         assert!(ai(&install,"ai-send",&json!({"root":r,"text":"  "})).is_err());
         assert_eq!(requests_file(&install)["draft"],"draft","refused send lost its draft");
         assert!(crate::setup::last(&install,true).is_null());
-        ai(&install,"ai-send",&json!({"root":r,"text":" why "})).unwrap();
+        ai(&install,"ai-send",&json!({"id":"owner-request-1464","runtime":"claude","root":r,"text":" why "})).unwrap();
+        ai(&install,"ai-send",&json!({"id":"owner-request-1464","runtime":"claude","root":r,"text":" why "})).unwrap();
+        assert_eq!(crate::setup::all(&install).unwrap().0.len(),1,"same ID retry must not launch twice");
+        assert!(ai(&install,"ai-send",&json!({"id":"owner-request-1464","runtime":"claude","root":r,"text":"changed"})).is_err());
         let req=crate::setup::last(&install,true);
         assert_eq!(req["state"],"pending");
         assert_eq!(crate::setup::all(&install).unwrap().0[0].root.as_deref(),Some(root.canonicalize().unwrap().to_str().unwrap()));

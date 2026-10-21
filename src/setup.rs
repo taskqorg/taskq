@@ -135,21 +135,49 @@ pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
     save(install, "claude", None, vec![], Some(root.clone()), |_, _| project_brief(&root, task.trim()))
 }
 
+/// A workspace retry reads the same owner-session request; its identity never means a second launch.
+pub fn open_id(install: &Path, root: &Path, task: &str, id: &str, runtime: &str, read_only: bool) -> Res<Request> {
+    if !crate::resources::id(id) { return Err("Invalid owner request ID".into()); }
+    if task.trim().is_empty() { return Err("Write a request before sending".into()); }
+    let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
+    save_id(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), |_, _| project_brief(&root, task))
+}
+
 fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
+    save_id(install, runtime, client, targets, root, None, brief)
+}
+
+fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
     if runtime != "claude" { return Err(format!("setup runtime {runtime}: only claude has a qualified visible session")); }
-    let id = crate::runtime::uuid();
+    let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
     let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or("Claude Code").into(), runtime: runtime.into(),
         targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root };
     r.brief = brief(&r, &id);
     locked(install, || {
+        if requested_id.is_some() {
+            match fs::metadata(file(install, &id)) {
+                Ok(_) => {
+                    let previous = read(&file(install, &id))?;
+                    if previous.root != r.root || previous.brief != r.brief || previous.runtime != r.runtime {
+                        return Err("Owner request ID already binds different input".into());
+                    }
+                    r = previous;
+                    return Ok(());
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound && requested_id.is_some_and(|(_,read_only)|!read_only) => {},
+                Err(e) => return Err(format!("Owner request delivery unknown: {e}")),
+            }
+        }
         // Same-millisecond calls keep call order: created is strictly after the newest request.
         r.created = all(install)?.0.last().map_or(r.created, |n| r.created.max(n.created + 1));
         write(install, &r)
     })?;
     crate::platform::write_atomic(&install.join("poke"), "").map_err(|e| format!("setup request saved; host notification unknown: {e}"))?;
-    Ok(r)
+    let observed=read(&file(install,&id))?;
+    if observed.root!=r.root || observed.brief!=r.brief || observed.runtime!=r.runtime {return Err("Owner request readback changed; delivery unknown".into());}
+    Ok(observed)
 }
 
 /// Service start: a launch without a recorded native answer has an unknown outcome and is never replayed.
@@ -274,6 +302,30 @@ mod tests {
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
     fn never(_: &Path, _: &Request) -> Launched { panic!("setup launched again") }
+
+    // #1464 A5: a duplicate/crossed request never creates a second session, even after service launch.
+    #[test]
+    fn owner_request_retries_read_the_same_record_and_refuse_changed_input() {
+        let install=std::env::temp_dir().join(format!("taskq-request-id-{}",crate::runtime::uuid()));
+        fs::create_dir_all(&install).unwrap();
+        let first=open_id(&install,&install,"literal request","owner-1464","claude",false).unwrap();
+        assert_eq!(open_id(&install,&install,"literal request","owner-1464","claude",true).unwrap(),first);
+        step(&install,ok).unwrap();
+        let observed=open_id(&install,&install,"literal request","owner-1464","claude",true).unwrap();
+        assert_eq!(observed.state,"launched");
+        assert_eq!(all(&install).unwrap().0.len(),1);
+        for (text,id,rt) in [("changed","owner-1464","claude"),(" literal request","owner-1464","claude"),("literal request","../escape","claude"),("literal request","owner-1464","codex")] {
+            assert!(open_id(&install,&install,text,id,rt,false).is_err());
+        }
+        assert_eq!(all(&install).unwrap().0.len(),1);
+        fs::write(file(&install,"owner-1464"),"corrupt record").unwrap();
+        assert!(open_id(&install,&install,"literal request","owner-1464","claude",true).is_err());
+        assert_eq!(fs::read_to_string(file(&install,"owner-1464")).unwrap(),"corrupt record");
+        fs::remove_file(file(&install,"owner-1464")).unwrap();
+        assert!(open_id(&install,&install,"literal request","owner-1464","claude",true).is_err(),"missing readback must never recreate a request");
+        assert!(all(&install).unwrap().0.is_empty());
+        fs::remove_dir_all(install).unwrap();
+    }
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
     fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }

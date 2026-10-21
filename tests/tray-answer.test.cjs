@@ -4,9 +4,9 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
 const card=require('../src/answer-card.js');
 const sent=[],timers=new Map();let id=0;
 const board='https://github.com/o/r/issues',project={root:'project',issues:board,alive:true,complete:true};
-const context={S:{projects:[project],font:16},send:m=>sent.push(m),fit:()=>{},render:()=>{},menu:{scrollHeight:400},esc:String,
+const context={S:{projects:[project],font:16},send:m=>sent.push({...m,local:undefined}),fit:()=>{},render:()=>{},menu:{scrollHeight:400},esc:String,
   setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i)};
-require('./tray-harness.cjs').install(context);
+Object.assign(context,require('../src/workspace-answers.js').create(context,{menu:context.menu,document:context.document||{},send:m=>context.send(m),draw:()=>{},defer:(f,ms)=>context.setTimeout(f,ms),cancel:id=>context.clearTimeout(id)}));
 const call=(name,...args)=>context[name](...args);
 const plain=x=>JSON.parse(JSON.stringify(x));
 (async()=>{
@@ -16,6 +16,7 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   project.complete=false;assert.equal(call('answerCapability',board).answer,false);
   project.complete=true;project.alive=false;assert.equal(call('answerCapability',board).answer,false);project.alive=true;
   assert.equal(call('answerCapability','other-board').answer,false);
+  context.S.projects=[{...project,root:'same-board-other-root',alive:false},project];context.answer={board,root:project.root};assert.equal(call('answerCapability',board).answer,true,'same board does not substitute another project root');context.S.projects=[project];
   const op={id:'operation-1',task:841,revision:4,text:'literal 2'};
   const first=call('answerSend',board,op);
   assert.equal(call('answerSend',board,op),first,'duplicate bridge request shares its promise');

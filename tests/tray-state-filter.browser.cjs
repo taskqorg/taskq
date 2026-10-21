@@ -75,6 +75,13 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   const ops=(await page.evaluate(()=>messages.filter(m=>m.a==='answer'))).map(m=>m.op);
   assert.deepEqual(ops.map(o=>[o.task,o.action,o.revision]),[[4,'start',7],[5,'start',8]],'group Start sends one start per shown draft');
   assert(ops.every(o=>!('choice' in o)&&!('text' in o)),'start carries no answer fields');
+  await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root:project.root,id:ops[0].id,state:'unknown',reason:'fixture receipt lost'});
+  await page.locator('[data-a=answer-retry]').click();
+  await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===3);
+  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op),ops[0],'Start reconciliation keeps the exact ID and revision');
+  await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root:project.root,id:ops[0].id,state:'accepted'});
+  assert.match(await page.locator('.toast').innerText(),/#4 · started/,'Start has its own acceptance label');
+  assert.equal(await page.locator('.qac,textarea').count(),0,'Start receipts do not bring answer cards or composers back to the menu');
   if(out)fs.writeFileSync(out+'/observations.json',JSON.stringify({browser:browser.version(),observations},null,2)+'\n');
   console.log('PASS #1438 K-A2/K-A6, UI25–UI28: toggles, zero/unknown, OR, All tasks, keyboard, refresh, Back, no writes; 8 theme/type/width cells');
  }finally{await browser.close();}

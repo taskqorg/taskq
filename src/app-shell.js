@@ -18,11 +18,12 @@ const api=execution.module('shell',{
   if(node.nodeType===3)return node.textContent;
   if(node.nodeType!==1)return null;
   const props=Object.fromEntries([...node.attributes].map(a=>[a.name,a.value]));
+  if(node.localName==='textarea')props.value=node.textContent;
   props.key=props['data-answer']||props['data-resources']||props['data-card']||props['data-view-key']||props.id||index;
   for(const name of ['checked','disabled','multiple','selected','open'])if(node.hasAttribute(name))props[name]=true;
   const island=node.hasAttribute('data-answer')||node.hasAttribute('data-resources')||node.hasAttribute('data-work');
   if(node.classList.contains('tqp'))return h(api.Island,{key:props.key,tag:node.localName,attributes:props,html:node.innerHTML});
-  return h(node.localName,props,...(island?[]:[...node.childNodes].map(api.node)));
+  return h(node.localName,props,...(island||node.localName==='textarea'?[]:[...node.childNodes].map(api.node)));
  },
  Island:function({tag,attributes,html}){
   const ref=useRef(null),previous=useRef(null);

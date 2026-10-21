@@ -98,7 +98,7 @@ render:function(board, row, local, cap) {
     h += '</div>';
     // § 2: the PM's pick sits beside the worker's star; it is a view, never an answer
     if (row.pick) h += '<p class="qac-pick"><span class="qac-muted">PM</span> ' + esc(row.n) + '.' + esc(row.pick.id) + ': ' + esc(row.pick.reason) + '</p>';
-    if (st !== 'read-only') {
+    if (st !== 'read-only' || local.draft) {
       const bad = textProblem(q, local.draft);
       // Q1: Other answer opens a compact field; a kept draft keeps it open
       h += '<details class="qac-other"' + (local.draft ? ' open' : '') + '><summary>Other answer</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="Or type an answer"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
@@ -127,6 +127,7 @@ markup:function() {
 apply:function(k, ev) {
       const {board, row} = cards.get(k), cap = adapter.capability(board, row), r = step(row, locals.get(k), cap, ev, newId);
       locals.set(k, r.local);
+      adapter.save?.(board, row, r.local);
       if (ev.type !== 'input') paint();
       if (r.send) ui.effect('answer.send',()=>adapter.send(board,r.send),x=>{if(cards.has(k))apply(k,{type:'receipt',opId:r.send.id,...x});});
       else if (ev.type === 'input') {
@@ -149,6 +150,7 @@ paint:function() {
       el.innerHTML = painted = html;
       for (const d of el.querySelectorAll('details')) if (open.has(d.closest('[data-qac-key]').dataset.qacKey + ' ' + d.className)) d.open = true;
       el.scrollTop = scroll;
+      for(const [k,local] of locals)if(Array.isArray(local.caret)&&local.caret.length===2){const input=el.querySelector('[data-qac-key="'+CSS.escape(k)+'"] textarea');input?.setSelectionRange(...local.caret);}
       const t = focus && focus.k && el.querySelector('[data-qac-key="' + CSS.escape(focus.k) + '"] ' + focus.sel);
       if (t) { t.focus(); if (focus.s != null && t.setSelectionRange) t.setSelectionRange(focus.s, focus.e); }
     }
@@ -164,6 +166,11 @@ paint:function() {
       if (k && !b.disabled) apply(k, b.dataset.qac === 'choose' ? {type: 'choose', id: Number(b.dataset.choice)} : {type: b.dataset.qac});
     });
     ui.listen(el,'submit', e => { e.preventDefault(); const k = e.target.closest('[data-qac-key]')?.dataset.qacKey; if (k) apply(k, {type: 'submit'}); });
+    ui.listen(el,'keydown', e => { if (e.target.dataset.qac === 'input' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); const k = e.target.closest('[data-qac-key]')?.dataset.qacKey; if(k) apply(k, {type: 'submit'}); } });
+    for(const event of ['select','keyup','click'])ui.listen(el,event,e=>{
+      const k=e.target.dataset.qac==='input'&&e.target.closest('[data-qac-key]')?.dataset.qacKey;
+      if(k&&adapter.save){const c=cards.get(k),local={...locals.get(k),caret:[e.target.selectionStart,e.target.selectionEnd]};locals.set(k,local);adapter.save(c.board,c.row,local);}
+    });
     ui.listen(el,'input', e => { const k = e.target.dataset.qac === 'input' && e.target.closest('[data-qac-key]')?.dataset.qacKey; if (k) apply(k, {type: 'input', text: e.target.value}); });
     return execution.module("answer-card.mount.controller",{
       receiveReceipt(board, opId, reply) {
@@ -174,7 +181,7 @@ paint:function() {
       // rows: [{board, row}] of open questions; a row that left keeps no state
       update(rows) {
         cards.clear();
-        for (const c of rows) { const k = key(c.board, c.row); cards.set(k, c); if (!locals.has(k)) locals.set(k, fresh(c.row)); }
+        for (const c of rows) { const k = key(c.board, c.row); cards.set(k, c); if (!locals.has(k)) locals.set(k, adapter.load?.(c.board, c.row) || fresh(c.row)); }
         for (const k of [...locals.keys()]) if (!cards.has(k)) locals.delete(k);
         paint();
       },

@@ -15,15 +15,13 @@ const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:
    await page.evaluate(s=>taskq.receive(s),state);return page;
   };
   let page=await open(snapshot);
-  await page.locator('#ai-root').selectOption(project.root);
-  await page.locator('#ai-root').dispatchEvent('input');
   await page.locator('[data-tqp="project"]').first().click();
   await page.locator('.service > summary').click();
   await page.locator('.tqp-counts [data-state="doing"]').first().click();
   await page.locator('.content').evaluate(e=>{e.scrollTop=350;});
   await page.waitForTimeout(250); // flush the documented 100 ms scroll debounce
   assert(stored,'navigation must reach the shared native settings adapter');
-  assert.deepEqual(stored.current.taskFilter,['doing']);assert.equal(stored.current.aiRoot,project.root);
+  assert.deepEqual(stored.current.taskFilter,['doing']);assert.equal(stored.current.aiRoot,null,'request selection now belongs to the workspace; tray filters still persist');
   const scroll=await page.locator('.content').evaluate(e=>e.scrollTop),saved=structuredClone(stored);
   assert(scroll>0);await page.close();
   for(const version of ['old','new']){
