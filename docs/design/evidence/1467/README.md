@@ -4,6 +4,20 @@ This candidate implements TW5–TW7 under the [owner's message-only answer](http
 
 The owner [accepted M's seven-image layout and message-only scope](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821), reviewed at `bf2a6f2324cd4e6476ecc87ef38760b8cdeac7e1`. Combined #1465/#1466 and native workspace qualification remain separately gated work. Refreshed captures after rebasing retain that message scope; inherited operation-review changes are not qualified by this acceptance.
 
+## Current Mac repair (R12, § 7)
+
+Candidate `04c62745` rebases the accepted message-only implementation onto main `0128d46faeb25b6c49cd7418582b25755f4f9f1a`. The conflict resolution keeps #1466's current Home panels and complete task list, replacing its Messages placeholder with the native snapshot badge. The following Windows results remain historical evidence, not current Mac qualification.
+
+The new `interrupted_metadata_stage_does_not_block_the_next_write` regression failed before the repair (`unknown` instead of `accepted`). After the repair all nine Mac message tests pass, including partial-stage restart, committed-state preservation, hard-link target preservation, symbolic-link refusal, aliases, partial deletion and late-callback suppression. The hard-link check now accepts safe unlink/recreation while retaining its original source-byte assertion; it never permits writing through the link. No authority, prelaunch, containment or live-work protection was removed (§ 7.4).
+
+The bundled Messages, request/answer, operation-review and Home-panel browser instruments pass on macOS Chromium headless shell. Visual inspection of the current Messages list and narrow 360 px/20 px partial-delete screen finds the required controls and readable unknown/refusal text without horizontal clipping. Platform font pixels differ from the accepted Windows images; those historical images remain the owner-accepted layout reference. Browser checks do not qualify native workspace operations or owner acceptance. All Node component/IPC checks pass.
+
+`python3 scripts/check.py --base 0128d46faeb25b6c49cd7418582b25755f4f9f1a` ran once at `04c62745d5020b05703d7cf01552dc94bfce45f6` on macOS (cold build cache): 455 passed, 18 sandbox-blocked worker-authority refusals, 34 ignored; 84.253 s. The worker cannot install, restart/Stop or change host policy; the guard also makes the project-overlay fixture return `unsupported`. No authority environment was removed. This is not a passing full gate.
+
+`cargo +stable test --locked --test integration`: 19 passed, one sandbox-blocked (`telemetry_process::resume_records_its_result_without_releasing_the_host_hold`: `sandbox-exec: sandbox_apply: Operation not permitted`), one ignored; 7.89 s. Isolated offline selftest passes 97 golden traces, formats and nine staged telemetry observations; no board read. All Node component/IPC checks and screenshot/release-script checks pass independently because the canonical runner stopped at its blocked Rust tests. Green merge-result `merge_group` CI remains required; the worker does not wait (§ 7).
+
+`docs/shots/update.sh` and an isolated Home snapshot pass on macOS 27.0.1 arm64 WKWebView from the same candidate. Visual inspection confirms the project/task layout and `Messages · 2` alongside the incoming Home panels; unknown process counts remain explicit. Source blobs and image hashes read back against the manifest. This is native rendering evidence, not live workspace deletion or owner acceptance.
+
 ## Acceptance and retained protections
 
 | Item | Evidence and limits |
@@ -42,7 +56,7 @@ The local metadata writer discards an interrupted regular `messages.tmp` under t
 |---|---|
 | 1 — navigation | #1463's shared fixed bar remains in both windows. Messages is a root with no cross-window Back. Message details use Back and restore the list's filter/focus. |
 | 2 — dialogue placement | #1464 supplies workspace requests and task answers. Operation reviews now arrive from #1465 on main; their combined acceptance remains separately gated by the owner answer. This candidate retains those routes alongside messages. |
-| 3 — panels before tasks | #1466 owns the remaining compact panel/order work. Messages is added to the current Home surface; this is not acceptance of the final panel composition. |
+| 3 — panels before tasks | Main now includes #1466's panels before the complete task list. This repair retains that composition and its browser assertions; combined native/owner acceptance remains separate. |
 | 4 — other content | Messages and archive live in the workspace; native replies remain in Claude/Codex by the accepted scope. Existing Work sessions/Agent settings fallback screens still name the tray destination; this task does not implement those separate screens. |
 | 5 — messages/archive/delete | Implemented with stable identities, explicit unread/unknown handling, archive-any, archived list, permanent one/all deletion and the prelaunch refusal. |
 | 6 — whole-surface review | Source/route review completed; M's seven-image layout is accepted; the owner explicitly kept combined #1465/#1466 visual/interaction acceptance separately gated. No synthetic fixture qualifies native workspace behavior. |
@@ -50,11 +64,11 @@ The local metadata writer discards an interrupted regular `messages.tmp` under t
 
 ## Visual review set
 
-Seven-image set: four browser images, one native Home image and two native README images. Fixtures are invented; browser images use Chromium headless shell on Windows at actual CSS sizes without resizing. WebView2 images retain their captured physical pixels. The native binary and source blobs are recorded in `docs/shots/manifest.json`; source and image hashes are recorded in `sources.json`.
+Seven-image set: four browser images, one native Home image and two native README images. Fixtures are invented; browser images use Chromium headless shell on Windows at actual CSS sizes without resizing. WebView2 images retain their captured physical pixels. The current Mac native binary and source blobs are recorded in `docs/shots/manifest.json`; `sources.json` separates current native images from the retained owner-accepted Windows browser images.
 
-Native Home, including the Messages badge (the unfinished panel order remains #1466's gap):
+Current macOS native Home, including the Messages badge and incoming #1466 panels:
 
-![Windows WebView2 Home](native-home-dark-16.png)
+![macOS WKWebView Home](native-home-dark-16.png)
 
 Native README [project capture](../../../shots/popover-dark-project-16.png) and [icon capture](../../../shots/icon-summary-run-dark.png). Before: [project](https://github.com/taskqorg/taskq/blob/2f6a2d2c9ac427f9687b64714bd2cfd21805773c/docs/shots/popover-dark-project-16.png), [icon](https://github.com/taskqorg/taskq/blob/2f6a2d2c9ac427f9687b64714bd2cfd21805773c/docs/shots/icon-summary-run-dark.png). Including those two earlier images keeps the review set at nine, below V38's cap.
 
