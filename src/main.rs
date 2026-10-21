@@ -687,15 +687,25 @@ fn poke_times(paths: &[PathBuf; 2]) -> [Option<SystemTime>; 2] {
 }
 
 /// Compare with the pre-pass snapshot: a command arriving during work must not become the sleep baseline.
-fn sleep_until_poke(paths: &[PathBuf; 2], start: [Option<SystemTime>; 2], until: Instant, tick: &mut dyn FnMut()) {
+/// Returns true when a poke (any local command) ended the wait.
+fn sleep_until_poke(paths: &[PathBuf; 2], start: [Option<SystemTime>; 2], until: Instant, tick: &mut dyn FnMut()) -> bool {
     loop {
         let left=until.saturating_duration_since(Instant::now());
-        if left.is_zero() || poke_times(paths) != start {
-            return;
+        if poke_times(paths) != start {
+            return true;
+        }
+        if left.is_zero() {
+            return false;
         }
         std::thread::sleep(Duration::from_secs(1).min(left));
         tick();
     }
+}
+
+/// § 4 step 8 (#1431): an idle pass waits 3×`poll`; board-only changes may show up to 2×`poll` later.
+fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, snapshot: Option<&snapshot::Snapshot>) -> u64 {
+    let active = snapshot.is_none_or(|s| s.reason.is_some() || s.tasks.iter().any(|r| matches!(r.task.state, State::Ready | State::Doing | State::Review)));
+    if !complete || children || poked || active { poll } else { poll * 3 }
 }
 
 /// Read-only recovery evidence; failed identity reads and a still-live foreign owner prevent takeover.
@@ -850,6 +860,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let pokes = [d.join("poke"), cfg.install.join("poke")];
     let mut observed_poke = None;
     let mut observed_command = None;
+    let mut poked = false;
     loop {
         // #1297: steady successful work folds into 15-minute aggregates; failures, changes and command-linked passes stay rows.
         let _repeating = tracing::info_span!("service.loop", coreq_repeating = true, project = cfg.repo.as_str()).entered();
@@ -1098,6 +1109,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 match host::dispatch_legacy(&cfg.install) {Ok(control)=>legacy_controller=Some(control),Err(e)=>legacy_error=Some(e)}
             }
         }
+        // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
+        let wait = if reduced&&handoff_error.is_none() {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle()||operator::running(&cfg.root), poked, s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             if sampled.is_some_and(|t| t.elapsed().as_secs() < 30) {
@@ -1120,8 +1133,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             publish_status(&tool, &cfg.root, &status, host.as_ref());
         };
         tick();
-        // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
-        sleep_until_poke(&pokes, poke_start, pass_began+Duration::from_secs(if reduced&&handoff_error.is_none() {1} else {cfg.poll}), &mut tick);
+        poked = sleep_until_poke(&pokes, poke_start, pass_began+Duration::from_secs(wait), &mut tick);
         Ok(())
         }));
         match outcome {

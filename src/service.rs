@@ -2723,7 +2723,8 @@ mod tests {
             let pokes = [dir.join(".taskq/poke"), c.install.join("poke")];
             let poke_start = crate::poke_times(&pokes);
             crate::touch(&pokes[1]);
-            crate::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(1), &mut || panic!("host poke during a pass was lost"));
+            assert!(crate::sleep_until_poke(&pokes, poke_start, std::time::Instant::now()+std::time::Duration::from_secs(1), &mut || panic!("host poke during a pass was lost")), "a poke reports itself");
+            assert!(!crate::sleep_until_poke(&pokes, crate::poke_times(&pokes), std::time::Instant::now(), &mut || {}), "a timeout is not a poke");
             // A poke during sleep is observed after the current tick, without waiting another second.
             let poke_start = crate::poke_times(&pokes);
             let mut ticks = 0;
@@ -2735,6 +2736,30 @@ mod tests {
             drop(s);
             std::fs::remove_dir_all(dir).unwrap();
         });
+    }
+
+    // Chain #1431 A2: board snapshot, children and pokes -> § 4 step 8 wait.
+    // Risk: an idle board polls at full rate, or a ready/live task or a local command waits 3×poll.
+    #[test]
+    fn idle_passes_wait_three_polls_until_work_or_a_poke() {
+        let c = cfg("mac");
+        let b = Fake::default();
+        let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
+        assert_eq!(crate::poll_wait(60, true, false, false, None), 60, "no board read yet is not idle");
+        s.pass().unwrap();
+        let idle = s.snapshot.as_ref();
+        assert_eq!(crate::poll_wait(60, true, false, false, idle), 180);
+        assert_eq!(crate::poll_wait(60, false, false, false, idle), 60, "a failed pass keeps the normal interval");
+        assert_eq!(crate::poll_wait(60, true, true, false, idle), 60, "a running child keeps the normal interval");
+        assert_eq!(crate::poll_wait(60, true, false, true, idle), 60, "a poke restores the normal interval");
+        let n = b.create("Pending", "", &[TASK_LABEL.into()]).unwrap();
+        s.pass().unwrap();
+        let snap = s.snapshot.as_mut().unwrap();
+        assert!(snap.tasks.iter().any(|r| r.n == n));
+        for state in [State::Ready, State::Doing, State::Review, State::Ask] {
+            snap.tasks.iter_mut().for_each(|r| r.task.state = state);
+            assert_eq!(crate::poll_wait(60, true, false, false, Some(&*snap)), if state == State::Ask {180} else {60}, "{state:?} task");
+        }
     }
 
     // Chain A2: project-thread unwind -> rebuilt board cache -> quarantine with live lease, beside healthy admission.
