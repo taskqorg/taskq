@@ -187,7 +187,7 @@ mountAnswers:function(){
     if(!t)continue;
     let card=answerCards.get(t.key);
     if(!card){const el=document.createElement('div');card={el,ui:TaskqAnswerCard.mount(el,{capability:answerCapability,send:answerSend})};answerCards.set(t.key,card);}
-    slot.append(card.el);
+    if(card.el.parentNode!==slot)slot.append(card.el);
     const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);
     card.ui.update([{board:p.issues,row:t}]);
   }
@@ -454,7 +454,7 @@ mountResources:function(){
     const scope=p.resources.targets?.[0]?.supported?.[0]?.policy_schema;
     let card=resourceCards.get(p.root);
     if(!card||card.scope!==scope){const el=document.createElement('div');card={el,scope,ui:TaskqResources.mount(el,{capability:resourceCapability,send:resourceSend,now:()=>view.S.now})};resourceCards.set(p.root,card);}
-    slot.append(card.el);
+    if(card.el.parentNode!==slot)slot.append(card.el);
     card.ui.update(resourceGroup(p));
   }
 },
@@ -508,9 +508,13 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   if(!p&&!routes[view.page])view.page='home';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
-  menu.classList.toggle('pinned',!!view.S.pinned);menu.dataset.edge=view.S.attached_edge||'top';
+  menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  menu.innerHTML=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
+  const html=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
+  // #1430: an unchanged refresh leaves the menu alone; a rebuild replaced the textarea being typed in and its edits
+  // landed on the detached node. Mounted cards still take the new rows and repaint only what changed.
+  if(!navigating&&html===view.html){mountAnswers();mountResources();return;}
+  menu.innerHTML=view.html=html;
   mountAnswers();mountResources();
   if(view.taskFilter){
     for(const button of menu.querySelectorAll('.tqp-counts [data-state]'))button.setAttribute('aria-pressed',String(view.taskFilter.includes(button.dataset.state)));
