@@ -301,7 +301,8 @@
         {
           "type": "check",
           "has": [
-            "<button type=\"submit\" disabled>Send"
+            "<button type=\"submit\" disabled>Send",
+            "Type an answer</span>"
           ]
         },
         {
@@ -316,7 +317,8 @@
           "status": "actionable",
           "sent": 0,
           "has": [
-            "<button type=\"submit\" disabled>Send"
+            "<button type=\"submit\" disabled>Send",
+            "At most 4 lines</span>"
           ]
         }
       ]
