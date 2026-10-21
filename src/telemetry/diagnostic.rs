@@ -117,7 +117,7 @@ pub(crate) fn health_at(now:Option<u64>)->Value {
 }
 
 #[derive(Default)]
-struct Stats {times:Vec<u64>,failed:u64,unknown:u64,refused:u64,errors:BTreeMap<String,u64>}
+struct Stats {times:Vec<u64>,slowest:Option<(u64,u64)>,failed:u64,unknown:u64,refused:u64,errors:BTreeMap<String,u64>}
 
 pub fn actions(install:&Path,since:Option<u64>)->Result<String,String> {
     // Never recursively instrument the telemetry reader's own decoding work.
@@ -139,8 +139,13 @@ pub fn actions(install:&Path,since:Option<u64>)->Result<String,String> {
                 let operation=(event["source"].as_str().ok_or("missing action source")?.to_owned(),event["operation"].as_str().ok_or("missing action operation")?.to_owned());
                 if event["kind"]=="method.start" {open.insert(key,operation);continue;}
                 open.remove(&key);
+                // CoreQ store spans (#1517) name their trigger and outcome, so a stall row says which election, scan or checkpoint waited.
+                let operation=match event["from"].as_str() {Some(from)=>(operation.0,format!("{} {from}->{}",operation.1,event["to"].as_str().unwrap_or("unknown"))),None=>operation};
                 let s=stats.entry(operation).or_default();
-                if let Some(time)=event["duration_us"].as_u64() {s.times.push(time);}
+                if let Some(time)=event["duration_us"].as_u64() {
+                    s.times.push(time);
+                    if s.slowest.is_none_or(|(us,_)|time>us) {s.slowest=Some((time,event["started_ms"].as_u64().unwrap_or(0)));}
+                }
                 match event["outcome"].as_str() {Some("failed")=>s.failed+=1,Some("unknown")=>s.unknown+=1,Some("refused")=>s.refused+=1,_=>{}}
                 if let Some(error)=event["error"].as_str().filter(|error|*error!="none") {*s.errors.entry(error.into()).or_default()+=1;}
             }
@@ -153,13 +158,14 @@ pub fn actions(install:&Path,since:Option<u64>)->Result<String,String> {
         let mut rows=stats.into_iter().collect::<Vec<_>>();
         for (_,s) in &mut rows {s.times.sort_unstable();}
         rows.sort_by(|a,b|(b.1.failed+b.1.unknown).cmp(&(a.1.failed+a.1.unknown)).then_with(||b.1.times.last().cmp(&a.1.times.last())).then(a.0.cmp(&b.0)));
-        out+="\n| Source | Operation | Timed | p95/max ms | Failed/refused/unknown | Errors | Budget |\n|---|---|---:|---|---|---|---|\n";
-        if rows.is_empty() {out+="| unknown | no retained actions | 0 | unknown | unknown | unknown | unknown |\n";}
+        out+="\n| Source | Operation | Timed | p95/max ms | Slowest at UTC ms | Failed/refused/unknown | Errors | Budget |\n|---|---|---:|---|---|---|---|---|\n";
+        if rows.is_empty() {out+="| unknown | no retained actions | 0 | unknown | unknown | unknown | unknown | unknown |\n";}
         for ((source,operation),s) in rows {
             let times=if s.times.is_empty() {"unknown".into()} else {format!("{:.3}/{:.3}",s.times[(s.times.len()*95).div_ceil(100)-1] as f64/1000.,*s.times.last().unwrap() as f64/1000.)};
             let budget=if operation=="taskq.service.Service.pass" {"native observations 20s; whole pass unknown"} else {"unknown (unassigned)"};
             let errors=if s.errors.is_empty() {"none".into()} else {s.errors.into_iter().map(|(k,v)|format!("{k}:{v}")).collect::<Vec<_>>().join(", ")};
-            out+=&format!("| {source} | {operation} | {} | {times} | {}/{}/{} | {errors} | {budget} |\n",s.times.len(),s.failed,s.refused,s.unknown);
+            let at=s.slowest.filter(|(_,at)|*at>0).map_or("unknown".into(),|(_,at)|at.to_string());
+            out+=&format!("| {source} | {operation} | {} | {times} | {at} | {}/{}/{} | {errors} | {budget} |\n",s.times.len(),s.failed,s.refused,s.unknown);
         }
         Ok(out)
     })
@@ -205,7 +211,11 @@ mod tests {
             let open=tracing::info_span!("owned-open-fixture");
             let failed=coreq::telemetry::capture::operation("diagnostic.fixture",||Err::<(),_>("private payload"),|_|"fixture-failure");assert!(failed.is_err());
             let local=health();assert_eq!(local["scope"],"this-process");assert_eq!(local["lost"],0);
+            drop(coreq::telemetry::Store::open(&dir.join("store-span-fixture.sqlite3")).unwrap());
             let report=actions(&dir,None).unwrap();
+            // #1517 A1: a store span row names its trigger and outcome and dates its slowest wait.
+            let span=report.lines().find(|row|row.contains("taskq.operation.telemetry.open first-open->scan")).unwrap_or_else(||panic!("{report}"));
+            assert!(span.split('|').nth(5).unwrap().trim().parse::<u64>().is_ok(),"{span}");
             assert!(report.contains("taskq.operation.diagnostic.fixture"),"{report}");assert!(report.contains("fixture-failure:1"));
             let row=report.lines().find(|row|row.contains("owned-open-fixture")).unwrap();assert!(row.contains("0/0/1"),"open span was not unknown: {row}");
             let exported=super::super::export(&dir,None).unwrap();assert!(!exported.contains("private payload"));
