@@ -33,7 +33,7 @@ The 17 Node component/IPC checks pass. The offline selftest passes 97 fold trace
 
 The native backend remains the existing qualified Claude owner-session path. Codex owner-session launch is unavailable here and is explicitly named; no runtime fallback or permission change was added. The any-runtime TW4 target remains unqualified. Messages here lists current questions only; message badge/archive/delete belongs to #1467.
 
-No live board answer, paid/native agent launch, service change or installation was performed by these fixtures. They substitute native delivery while testing the actual bundles. Exact binary/native renderer qualification and owner review remain open.
+No live board answer, paid/native agent launch, service change or installation was performed by these fixtures. They substitute native delivery while testing the actual bundles. The isolated WKWebView README capture completed with the frozen source; its menu/summary images and manifest are committed. Native workspace bridge/interaction qualification and owner review remain open.
 
 ## Actual-size review set
 
@@ -48,3 +48,5 @@ Chromium headless shell via `tests/browser.cjs`, actual bundled product HTML. In
 The builder inspected the rendered images individually. The first request image exposed the browser's default inline/monospace textarea; the workspace now inherits product type and spacing and keeps a compact Send target. These images are browser evidence, not WKWebView/WebView2 or owner acceptance.
 
 The two native README captures are [project menu](../../../shots/popover-dark-project-16.png) and [summary icon](../../../shots/icon-summary-run-dark.png). Their exact binary, source commit and UI blobs are recorded in [the native manifest](../../../shots/manifest.json). They do not qualify the workspace native bridge.
+
+Final-source verification: `docs/shots/update.sh` completed from `3d713ad0`; native manifest UI blobs, image checksums and browser evidence SHA-256 values match the files. `sh docs/shots/check.test.sh` passes the provenance refusal cases. Final Node rerun: 17/17 pass. Source/bundle inventories pass. Publication and native workspace qualification are still unknown.
