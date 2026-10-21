@@ -4,9 +4,9 @@ const fs=require('node:fs'),assert=require('node:assert/strict');
 const card=require('../src/answer-card.js');
 const sent=[],timers=new Map();let id=0;
 const board='https://github.com/o/r/issues',project={root:'project',issues:board,alive:true,complete:true};
-const context={S:{projects:[project],font:16},send:m=>sent.push(m),fit:()=>{},render:()=>{},menu:{scrollHeight:400},esc:String,
+const context={S:{projects:[project],font:16},send:m=>sent.push({...m,local:undefined}),fit:()=>{},render:()=>{},menu:{scrollHeight:400},esc:String,
   setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i)};
-require('./tray-harness.cjs').install(context);
+Object.assign(context,require('../src/workspace-answers.js').create(context,{menu:context.menu,document:context.document||{},send:m=>context.send(m),draw:()=>{},defer:(f,ms)=>context.setTimeout(f,ms),cancel:id=>context.clearTimeout(id)}));
 const call=(name,...args)=>context[name](...args);
 const plain=x=>JSON.parse(JSON.stringify(x));
 (async()=>{

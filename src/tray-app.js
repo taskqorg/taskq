@@ -4,13 +4,13 @@ const execution=ui.execution;
 const shell=require('./app-shell.js');
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {manualSize:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
 fit:function(){const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
-actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return (view.workspaceError?'<div class="body alert" role="alert">'+esc(view.workspaceError)+'</div>':'')+view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
+actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return (view.aiError?'<div class="body alert" role="alert">'+esc(view.aiError)+'</div>':'')+(view.workspaceError?'<div class="body alert" role="alert">'+esc(view.workspaceError)+'</div>':'')+view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
 lifecycleStart:function(root,action='restart',mode='drain'){
   if(view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed')return;
   const review=action==='uninstall'?view.S.projects.find(p=>p.root===root)?.uninstall_review:action==='stop'?(mode==='full'?view.S.full_stop_review:view.S.stop_review):view.S.restart_review;
@@ -143,60 +143,10 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return '<button class="project" data-route="'+route+'">'+esc(label)+'</button>';},
-answerCapability:function(board){const p=view.S&&view.S.projects.find(p=>p.issues===board);return {manage:true,answer:!!p&&p.alive&&p.complete!==false,reason:'Project status is unavailable or stale; check the board'};},
-
-answerReceipt:function(r){
-  const key=r.root+'#'+r.id,request=answerRequests.get(key);
-  const previous=answerFeedback.get(key);
-  if(!request&&previous?.state!=='unknown')return;
-  const item=request||previous;
-  answerFeedback.set(key,{board:item.board,op:item.op,state:r.state,reason:r.reason,next:r.next});
-  // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
-  if(r.state==='accepted'){
-    const answered=[...answerFeedback].filter(([,x])=>x.state==='accepted');
-    if(answered.length>20)answerFeedback.delete(answered[0][0]);
-    view.toast=key;defer(()=>{if(view.toast===key){view.toast=null;present();}},6000);
-  }
-  if(request){
-    cancel(request.timer);answerRequests.delete(key);
-    request.resolve({state:r.state,reason:r.reason,next:r.next});
-  }else answerCards.get(item.board+'/'+item.op.task)?.ui.receiveReceipt(item.board,r.id,r);
-  present();
-  defer(fit,0);
-},
-answerReadback:function(){
-  for(const [key,r] of answerRequests){
-    const p=view.S.projects.find(p=>p.issues===r.board),t=p&&p.complete!==false&&p.tasks.find(t=>t.n===r.op.task);
-    if(r.reconciled||r.op.action||!t||(t.state==='ask'&&t.revision===r.op.revision))continue;
-    r.reconciled=true;send({a:'answer',root:p.root,board:r.board,op:r.op});
-  }
-},
-answerSlot:function(t){return t.state==='ask'?'<div data-answer="'+esc(t.key)+'"></div>':'';},
-answerNotices:function(board){
-  // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
-  const {line}=execution.module("tray.create.answerNotices.helpers",{line:([key,r],role)=>'<div class="body'+(r.state==='accepted'?'':' alert')+'"'+role+'>#'+r.op.task+' · '+esc(r.state)+(r.reason?': '+esc(r.reason):'')+(r.next?' · '+esc(r.next):'')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a>'+(r.state==='unknown'?'<button data-a="answer-retry" data-key="'+esc(key)+'">Check delivery</button>':'')+(answerRequests.has(key)?'':'<button data-a="answer-dismiss" data-key="'+esc(key)+'" aria-label="Dismiss #'+r.op.task+' receipt" title="Dismiss">×</button>')+'</div>'});
-  const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
-  const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
-  return shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,' role="status"')).join('')+(answered.length?'<details class="group answered" data-view-key="answered"><summary>Answered'+counter(answered.length,'muted','Answered')+'</summary>'+answered.map(x=>line(x,'')).join('')+'</details>':'');
-},
-answerToast:function(){
-  const r=view.toast&&answerFeedback.get(view.toast);
-  return r?'<div class="toast" role="status">#'+r.op.task+' · '+(r.op.action==='start'?'started':'answer accepted')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a><button data-a="toast-dismiss" aria-label="Dismiss" title="Dismiss">×</button></div>':'';
-},
-mountAnswers:function(){
-  for(const slot of menu.querySelectorAll('[data-answer]')){
-    const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===slot.dataset.answer);
-    if(!t)continue;
-    let card=answerCards.get(t.key);
-    if(!card){const el=document.createElement('div');card={el,ui:TaskqAnswerCard.mount(el,{capability:answerCapability,send:answerSend})};answerCards.set(t.key,card);}
-    if(card.el.parentNode!==slot)slot.append(card.el);
-    const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);
-    card.ui.update([{board:p.issues,row:t}]);
-    for(const d of slot.querySelectorAll('details')){const key='answer:'+t.key+':'+d.className;if(d.dataset.viewKey!==key)d.dataset.viewKey=key;}
-  }
-  const keys=new Set(view.S.projects.flatMap(tasks).map(t=>t.key));
-  for(const key of answerCards.keys())if(!keys.has(key))answerCards.delete(key);
-},
+answerSlot:function(t){return t.state==='ask'?'<button data-a="workspace" data-page="answer" data-board="'+esc(t.key.slice(0,t.key.lastIndexOf('/'))) + '" data-task="'+t.n+'" data-revision="'+t.revision+'">Answer in workspace…</button>':'';},
+answerNotices:function(board){return startOperations.answerNotices(board);},
+answerToast:function(){return startOperations.answerToast();},
+mountAnswers:function(){},
 tasks:function(p){return p.tasks.map(t=>({...t,project:p.name,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
 blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
 unique:function(ts){return [...new Map(ts.map(t=>[t.key,t])).values()];},
@@ -267,21 +217,7 @@ update:function(){
   if(view.updating&&view.S.projects.some(p=>p.version===view.updating.v))return '<div class="row meta">Updated to '+esc(view.updating.v)+': read from status.json</div>';
   if(view.updating&&view.S.now-view.updating.at<300)return '<button class="project" disabled>Updating to '+esc(view.updating.v)+'…</button>';
   return (view.updating?'<div class="row alert">Update to '+esc(view.updating.v)+' not confirmed: see the log</div>':'')+(up?'<button class="project" data-a="update" data-root="'+esc(up.root)+'" data-v="'+esc(up.update)+'">Update now to '+esc(up.update)+'</button>':'');},
-ai:function(){
-  // menu.md M7: Send opens one new session in the chosen project; the newest request shows its state
-  const A=view.S.ai,r=A.request,ps=view.S.projects,root=ps.some(p=>p.root===view.aiRoot)?view.aiRoot:ps[0]&&ps[0].root;
-  let h='<div class="group"><div class="row meta">✦ Ask AI · new session</div>';
-  if(view.aiError)h+='<p role="alert">'+esc(view.aiError)+'</p>';
-  h+=ps.length?'<select id="ai-root" aria-label="Project">'+ps.map(p=>'<option value="'+esc(p.root)+'"'+(p.root===root?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select>':'<div class="body meta">No project: add one first</div>';
-  h+='<div class="askai"><textarea id="ai" rows="2" aria-label="Request to AI" placeholder="Ask, or request a change">'+esc(view.aiText)+'</textarea><button data-a="ai-menu" aria-label="History and commands" title="History and commands" aria-expanded="'+view.aiMenu+'">↶</button></div>';
-  if(view.aiMenu)h+='<div class="row meta">Recent</div>'+(A.history.length?A.history.map(t=>'<button class="project" data-a="ai-pick" data-v="'+esc(t)+'"><span>'+esc(t)+'</span></button>').join('')+'<button class="project" data-a="ai-clear">Clear history</button>':'<div class="body meta">No sent requests</div>')+
-    '<div class="row meta">Commands</div>'+aiCommands.map(t=>'<button class="project" data-a="ai-pick" data-v="'+esc(t)+'"><span>'+esc(t)+'</span></button>').join('');
-  h+='<div class="options"><button data-a="ai-send" data-root="'+esc(root||'')+'"'+(root&&!view.aiSending?'':' disabled')+'>Send</button></div>';
-  if(r){
-    const link=r.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.url)?' <a href="#" data-url="'+esc(r.url)+'">Open session</a>':'';
-    h+='<div class="row">Request · '+esc(r.kind)+link+'</div>'+(r.reason?'<div class="body meta">'+esc(r.reason)+'</div>':'')+'<div class="body">'+esc(r.next||'Request state unknown')+'</div>';
-  }
-  return h+'</div>';},
+ai:function(){return '<button class="project" data-a="workspace" data-page="request"'+(view.aiRoot?' data-root="'+esc(view.aiRoot)+'"':'')+'>Ask AI · new session…</button>';},
 addProject:function(){
   const A=view.S.add;
   if(!A)return '<button class="project" data-a="add">Add project…</button>';
@@ -554,23 +490,21 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
   if(s.workspaceError!==undefined){view.workspaceError=s.workspaceError;present();return;}
   if(s.viewStateError!==undefined){view.persistenceError=s.viewStateError;present();return;}
   if(s.diagnose){const d=s.diagnose,remaining=d.until_ms-Date.now();
     if(d.id!==view.diagnosticId&&remaining>0){execution.diagnose(d.selector,Math.min(60000,remaining),d.limit);view.diagnosticId=d.id;}
     return;
   }
-  if(s.aiSubmitted){view.aiText='';view.aiSending=false;view.aiError='';present();return;}
   if(s.aiError){view.aiSending=false;view.aiError=s.aiError;present();return;}
   if(s.action_error){actionReceipt(s.action_error);return;}
   if(s.focus_receipt){focusReceipt(s.focus_receipt);return;}
-  if(s.answerReceipt){answerReceipt(s.answerReceipt);return;}
-  if(s.resources_receipt){view.resourceNotice=s.resources_receipt;present();return;}
+    if(s.resources_receipt){view.resourceNotice=s.resources_receipt;present();return;}
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
-  viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();answerReadback();api.lifecycleReadback();
-  if(view.aiText===null)view.aiText=s.ai.draft||'';
+  viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;trail.length=0;view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
@@ -608,12 +542,12 @@ ui.listen(menu,'click',e=>{
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace'});return;}
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'messages',root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
-  if(d.a==='answer-dismiss'){answerFeedback.delete(d.key);if(view.toast===d.key)view.toast=null;present();return;}
+  if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
   if(d.a==='start'){for(const key of d.keys.split(' ')){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===key);if(t&&t.state==='held')ui.effect('task.start',()=>answerSend(t.key.slice(0,-String(t.n).length-1),{id:'tray.start.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action:'start'}),()=>{});}present();return;}
-  if(d.a==='answer-retry'){const r=answerFeedback.get(d.key);if(r)ui.effect('answer.reconcile',()=>answerSend(r.board,r.op),()=>{});present();return;}
+  if(d.a==='answer-retry'){startOperations.retry(d.key);present();return;}
   if(d.a==='notify'||d.a==='notify-test'){send({a:d.a,kind:d.kind,value:d.v,root:d.root});return;}
   if(d.a==='work'){navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
   if(d.a==='back'){back();return;}
@@ -626,11 +560,7 @@ const z=t(view.draft.end);
     view.draft.error=!(a<z)?'Refused: start must be before end.':'';
     if(!view.draft.error){view.S.period='custom';send({a:'set',period:'custom',start:a,end:z,tz:view.draft.tz});view.draft=null;}
     present();return;}
-  if(d.a==='ai-menu'){view.aiMenu=!view.aiMenu;present();return;}
   // picking fills the input, never sends (M-A13)
-  if(d.a==='ai-pick'){view.aiText=d.v;view.aiMenu=false;send({a:'ai-draft',text:view.aiText});present();const t=document.getElementById('ai');t.focus();t.setSelectionRange(t.value.length,t.value.length);return;}
-  if(d.a==='ai-send'){if(!view.aiText.trim()||view.aiSending)return;view.aiSending=true;send({a:'ai-send',text:view.aiText,root:d.root});present();return;}
-  if(d.a==='ai-clear'){send({a:'ai-clear'});return;}
   if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return;}
   if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;
   // the pressed button is replaced: focus Cancel in the question, or the command again after it (U-A8)
@@ -645,7 +575,7 @@ const z=t(view.draft.end);
   if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return;}
   if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return;}
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label});}present();});
-ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}if(e.target.id==='ai'){view.aiText=e.target.value;send({a:'ai-draft',text:view.aiText});return;}if(e.target.id==='ai-root'){view.aiRoot=e.target.value;present();return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'mousedown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))send({a:'drag'});});
 ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))return;view.resizing={x:e.screenX,y:e.screenY,w:window.innerWidth,h:window.innerHeight};e.target.setPointerCapture(e.pointerId);e.preventDefault();});
@@ -661,21 +591,8 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
-function answerSend(board,op){
-  const p=view.S&&view.S.projects.find(p=>p.issues===board);
-  if(!p)return Promise.resolve({state:'rejected',reason:'Project is no longer registered'});
-  const key=p.root+'#'+op.id;
-  if(answerRequests.has(key))return answerRequests.get(key).promise;
-  let resolve;
-  const promise=new Promise(r=>resolve=r);
-  const timer=defer(()=>{answerReceipt({root:p.root,id:op.id,state:'unknown',reason:'No bridge receipt received',next:'Check delivery with the same operation'});},30000);
-  answerRequests.set(key,{promise,resolve,timer,board,op});
-  answerFeedback.set(key,{board,op,state:'sending',reason:''});
-  send({a:'answer',root:p.root,board,op});
-  return promise;
-}
 function resourceSend(g,op){
   const capability=resourceCapability(g);
   if(!capability.edit)return Promise.resolve({state:'rejected',reason:capability.reason});
@@ -720,7 +637,7 @@ const viewState=require('./tray-view-state.js').create(view,{menu,document,send,
 
 
 // Task answers: the native bridge owns credentials and canonical dispatch/readback.
-const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map();
+
 
 
 
@@ -758,7 +675,7 @@ const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map();
 // `Update now` only for a newer version in status.json; success only once a status.json reads it back (M9)
 
 // AI requests (menu.md M7): one input, `↶` history and commands
-const aiCommands=['What needs my answer?','What is running now?','Why is nothing starting?','Pause all projects'];
+
 // every value the command gets is shown before confirm
 
 // R6 item 7 `Next: 1 <action> ★ · 2 <action>` as the last line: numbered 1..n in order, at most one ★; else null (raw text only)
@@ -815,7 +732,9 @@ const modes=[['off','Off'],['silent','Silent'],['banner','Banner'],['sound','Ban
 
 
 
-return {...api,answerSend,resourceSend};
+const startOperations=require('./workspace-answers.js').create(view,{menu,document,send,draw:present,defer,cancel});
+const {answerSend}=startOperations;
+return {...api,resourceSend};
 }
 });
 
