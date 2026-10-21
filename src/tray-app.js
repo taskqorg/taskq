@@ -379,7 +379,7 @@ home:function(){
   const faults=setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('');
   return api.runningAgents()+controls()+ai()+'<button class="project" data-a="workspace" data-page="messages">Messages…</button>'+
     (faults?'<section class="group" aria-label="Attention">'+faults+'</section>':'')+filteredTasks()+
-    '<div class="group">'+routeButton('projects')+routeButton('settings')+'</div>';
+    '<div class="group">'+routeButton('projects')+routeButton('appearance')+'</div>';
 },
 routeBody:function(){
   switch(view.page){

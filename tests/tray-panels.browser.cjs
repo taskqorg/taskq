@@ -19,7 +19,6 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'mac',now:1000,vers
   await shot('G05-project');
   check(await page.getByRole('button',{name:'Alpha',exact:true}).count()===0,'G05: project identity must appear only in navigation');
   check(await page.getByRole('link',{name:/Board/}).count()===1,'G05/V08: one independent Board destination');
-  if(process.env.PANEL_BEFORE){assert.equal(failures.length,0,failures.join('\n'));return;}
   assert.deepEqual(failures,[]);
   for(const font of [16,20])for(const theme of ['dark','light']){
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme,page:'home'});
