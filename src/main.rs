@@ -1240,13 +1240,17 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
         if coreq::process::identity(process.pid).map_err(|e|e.to_string())?.as_ref()!=Some(&process) { return Err("child identity changed during handover; reconcile before retry".into()); }
         kids.push(data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()});
     }
+    let mut kept=vec![];
     for old in kids_file(&s.cfg.install,root)? {
         if kids.contains(&old) { continue; }
         let log=board::entries(s.board,old.task)?;
         if !core::executions(old.task,&log).iter().any(|x|x.id==old.execution && x.attempt==old.attempt && x.host==s.cfg.me && x.runtime==old.runtime && x.release==Some(core::Release::Exit)) {
-            return Err("unresolved native recovery record cannot be discarded during handover".into());
+            // #1435: a Windows exit keeps the record for the next image instead of holding the update on it
+            if !cfg!(windows) { return Err("unresolved native recovery record cannot be discarded during handover".into()); }
+            kept.push(old);
         }
     }
+    kids.extend(kept);
     write_kids(&s.cfg.install,root,&kids)
 }
 
@@ -1794,7 +1798,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 fn lifecycle_waits(s: &Service, root: &Path, stopping:bool) -> Vec<String> {
     let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || k.rt=="codex-app" || k.rt=="claude"&&k.proc.native_identity().is_err()).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
-    w.extend(s.handoff_waits());
+    w.extend(s.handoff_waits(cfg!(windows) && !stopping));
     if let Some(reason)=operator::wait(root) {w.push(reason);}
     w
 }
@@ -1969,6 +1973,7 @@ fn service(args: &Args) -> Res<()> {
                 Err(_)=>{},
             }
         }
+        #[cfg(windows)] runtime::windows_process::exit_with_launcher(&install.join(platform::tool(&install).exe_name()));
         return host::run(&install);
     }
     let root = find_root()?;
