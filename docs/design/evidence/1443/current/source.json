@@ -1,0 +1,13 @@
+{
+  "source": "02d3383cc2fb595e3c93c09303aaed1fe0ecf93f",
+  "files": {
+    "src/tray-app.js": "8c4b6deade3ab3316f69f7a2a5b2bb17f32db913b1bc66dda3f221c078f72144",
+    "src/tray.html": "283f15c708f9791a2dedaa151e9f149462fb31aad508d2f5c8a177f76d182dd2",
+    "src/workspace.js": "449cc60275e0d170e8dd5938ec813ff3914167a0ecffc9e5a174130bc03870b0",
+    "src/workspace.html": "ee8aad66db0f7ee98b8e284fbfb77dbbb9b6bacc60a7b870722faf9010cd7826",
+    "src/project-blocks.js": "6a352008e1385af7a21f87b2ded8ea6c5b9a677a20371023b717af7d15c59191",
+    "build/web/tray.html": "4f870aeb2ed1c47aa3749cfecf4a73a9f70a855123c20ef8f3a08a241e514da7",
+    "build/web/workspace.html": "4a5fde08a44c6dffc3ec4412ccc5c20eeaa14d57a15e234c6cc12e048e52b13a",
+    "docs/design/evidence/1443/capture.cjs": "5d9f075f49ec8510b0642974c5bf2b15dc3112d521c4077e3b83472ff542ba6f"
+  }
+}
