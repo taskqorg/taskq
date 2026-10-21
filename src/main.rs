@@ -963,6 +963,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         // § 4: runtime probes at most every 5 minutes
         if !reduced && agents.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 300) {
             agents = Some((Instant::now(), json!({"at": at, "rows": runtime::agents()})));
+            // #1429: a logged-out runtime admits nothing until a probe reads it logged in
+            s.logged_out = agents.as_ref().and_then(|a| a.1["rows"].as_array().cloned()).unwrap_or_default().iter()
+                .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
         }
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
         if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
@@ -1860,6 +1863,7 @@ fn service_report(a:&Args)->Res<()> {
             let update=status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["update"].as_str()).unwrap_or("unknown");
             println!("Update: {update}");
             println!("Channel: {}",status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["channel"].as_str()).unwrap_or("unknown"));
+            for l in runtime::login_lines(&status.as_ref().ok().and_then(Option::as_ref).map_or(Value::Null,|s|s["agents"]["rows"].clone())) {println!("{l}");}
             if let Some(dev)=status.as_ref().ok().and_then(Option::as_ref).map(|s|&s["dev"]).filter(|d|d.is_object()) {println!("{}",dev_line(dev));}
             println!("{}\nProject owner: {owner}",service_project_fields(root,status));
             println!("{}",incident::line(&incident::status(root)));

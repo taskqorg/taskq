@@ -360,6 +360,9 @@ pub struct Service<'a> {
     /// ([usage limit](docs/design/capacity.md#usage-limit)): no claim, resume or reviewer until then.
     /// ponytail: in memory per project thread; a restart forgets it and the next limited attempt holds again
     pub limited: BTreeMap<String, (i64, bool)>,
+    /// Runtimes whose last probe read `not logged in` (§ 5 `agents`, #1429): no claim, resume or reviewer until a
+    /// probe reads them logged in again; unknown login admits as before.
+    pub logged_out: BTreeSet<String>,
     pub gui_checked: Option<std::time::Instant>,
     pub gui_probe: Result<(), String>,
     pub full: BTreeSet<String>,
@@ -606,7 +609,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -914,6 +917,7 @@ impl<'a> Service<'a> {
         }
         reasons.extend(self.refused_access.iter().map(|(rt, r)| ("access", format!("{rt}: {r}"))));
         reasons.extend(self.limited.keys().map(|rt| ("usage-limit", format!("{rt}: {}", self.limit_line(rt)))));
+        reasons.extend(self.logged_out.iter().map(|rt| ("login", format!("{rt}: not logged in; {}", crate::runtime::relogin(rt)))));
         let res = |r: &Res, state: &str| json!({"task": r.0, "attempt": r.1, "rt": r.2, "state": state});
         let reservations: Vec<Value> = self.kids.iter().map(|k| res(&(k.task, k.attempt, k.rt.clone()), "held"))
             .chain(self.reserved.iter().map(|r| res(r, "held"))).chain(self.requested.iter().map(|r| res(r, "requested"))).collect();
@@ -1074,6 +1078,7 @@ impl<'a> Service<'a> {
             lines.push("has gui".into());
         }
         lines.extend(self.limited.keys().map(|rt| format!("limit {rt} {}", self.limit_line(rt))));
+        lines.extend(self.logged_out.iter().map(|rt| format!("login {rt} off")));
         let kids: BTreeSet<_> = self.kids.iter().map(|k| (k.task, k.attempt)).chain(self.pending.iter().copied()).collect();
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
@@ -1494,7 +1499,7 @@ impl<'a> Service<'a> {
                 pending.insert((n,a));
                 continue;
             }
-            if self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
+            if self.refused_access.contains_key(&l.rt) || self.limited.contains_key(&l.rt) || self.logged_out.contains(&l.rt) || self.gui_refused(&v.issue, &l.rt) || !self.reserve(n, a, &l.rt) {
                 pending.insert((n, a)); // the inbox stays undelivered
                 continue;
             }
@@ -1699,7 +1704,7 @@ impl<'a> Service<'a> {
     /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
     fn free(&self, rt: &str, gui: bool) -> Option<String> {
         if rt == "codex-app" && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) { return None; }
-        if self.refused_access.contains_key(rt) || self.limited.contains_key(rt) || (gui && !self.full.contains(rt)) { return None; }
+        if self.refused_access.contains_key(rt) || self.limited.contains_key(rt) || self.logged_out.contains(rt) || (gui && !self.full.contains(rt)) { return None; }
         let c = self.cap.as_ref().ok()?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
         let n = if c.auto { RUNTIMES.contains(&rt).then(|| c.limits.get(rt).copied().unwrap_or(u32::MAX))? } else { *c.limits.get(rt)? };
@@ -4016,6 +4021,28 @@ mod tests {
         assert_eq!(task(&b, only).retries, 1, "A6: a limit after work started counts");
         assert!(s.limited.is_empty(), "a limit after work started holds nothing");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Chain: #1429 A2 runtime login. Risk: a logged-out runtime takes tasks that fail with 401, or its hold is silent.
+    #[test]
+    fn logged_out_runtime_admits_nothing_and_says_how_to_log_in() {
+        let b = Fake::default();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 1), ("codex".to_string(), 1)]);
+        let mut s = service(&b, &c, Default::default());
+        s.logged_out = BTreeSet::from(["claude".to_string()]);
+        let only = b.create("A", "", &["taskq".into(), "run-claude".into()]).unwrap();
+        let other = b.create("B", "", &["taskq".into(), "run-codex".into()]).unwrap();
+        s.pass().unwrap();
+        assert_eq!(task(&b, only).state, State::Ready, "a claude-only task waits for the login");
+        assert!(task(&b, other).session.unwrap().starts_with("codex:"), "a logged-in runtime keeps working");
+        let cap = s.capacity_json();
+        assert!(cap["reasons"].as_array().unwrap().iter().any(|r| r["code"] == "login" && r["text"].as_str().unwrap().contains("claude: not logged in; run `claude auth login`")), "{cap}");
+        assert!(s.heartbeat_body().contains("\nlogin claude off"));
+        s.logged_out.clear();
+        s.pass().unwrap();
+        assert_eq!(task(&b, only).state, State::Doing, "a probe that reads it logged in admits the task");
+        assert!(!s.heartbeat_body().contains("login claude"));
     }
 
     // A2/§4: a crash after release must not turn a quota refusal into a retry, locally or remotely.

@@ -178,3 +178,15 @@ A worker or reviewer whose runtime reports a usage or quota limit before any wor
 - A limit reported after work started keeps the plain `gone` or `failed` path and counts as a retry.
 
 Release evidence records `usage-limit until <epoch>` or `usage-limit probe <epoch>` before outcome publication. Recovery reuses that deadline; the owning host also classifies its local log if an older release lacks it. Another host preserves the outcome without holding its own runtime.
+
+## Runtime login
+
+The service probes each startable runtime's login at most every 5 minutes (taskq.md § 5 `taskq agents`):
+
+- Claude: `claude auth status` JSON gives login, account, and kind (`authMethod` and `subscriptionType`); Claude reports no refresh time that taskq reads. Codex: `codex login status` gives login and account; `auth_mode` and `last_refresh` come from `$CODEX_HOME/auth.json` (default `~/.codex`). `codex-app` shares Codex's login. A CLI missing from the service PATH reads `not installed`.
+- The probe is read-only: it never logs in and never reads or prints a token value. An unreadable field reads `unknown` (R12).
+- A runtime whose last probe reads `not logged in` is held on this host: no claim, resume or reviewer, so a task that allows another runtime starts there (taskq.md § 4 Filter). The next probe that reads it logged in ends the hold; no owner action on taskq is needed. An `unknown` login admits as before, so a failing probe never stops a host.
+- Capacity `reasons` include `login` (`<rt>: not logged in; <next step>`); the heartbeat lists `login <rt> off`; it carries no account. `taskq service status` prints one `Login:` line per runtime (login, account, kind, last refresh) and, for a logged-out runtime, a `Next:` line with the re-login step.
+- An expired login that the CLI still reports as logged in is not detected here; the attempt then fails on its own path.
+
+The re-login steps per runtime and OS are in the [re-login runbook](../relogin.md).
