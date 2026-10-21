@@ -49,7 +49,7 @@ const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:
   await page.evaluate(s=>taskq.receive({...s,projects:[]}),snapshot);
   assert.equal(await page.locator('h1').innerText(),'Projects','live project removal uses the same fallback');
   await page.evaluate(()=>taskq.receive({viewStateError:'tray.json: save failed; view state is not persisted'}));
-  assert.match(await page.locator('[role=alert]').innerText(),/Settings unknown.*save failed/);
+  assert.match(await page.locator('[role=alert]').innerText(),/Settings unknown.*save failed/);assert.doesNotMatch(await page.locator('[role=alert]').innerText(),/defaults shown/);
   await page.evaluate(s=>taskq.receive({...s,projects:[]}),snapshot);
   assert.match(await page.locator('[role=alert]').innerText(),/save failed/,'a poll cannot clear a failed save');
   await page.evaluate(()=>taskq.receive({viewStateError:null}));assert.equal(await page.locator('[role=alert]').count(),0);await page.close();
