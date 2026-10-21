@@ -21,6 +21,7 @@ jobs:
           # a release tag refreshes main, which the tag was cut from
           ref: ${{ github.ref_type == 'tag' && 'main' || github.ref }}
       - run: rustup default stable
+      - run: npm ci --ignore-scripts --no-audit --no-fund
       # Committed shots that are still fresh came from a Mac at 2x; the 1x runner capture must not replace them.
       - name: Check committed shots
         id: fresh
