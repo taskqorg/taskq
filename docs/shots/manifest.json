@@ -1,22 +1,24 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "2dfa352e6e433870a50fa7445936490aa62354f9",
-  "binarySha256": "31688d2f0a313792e4fdf2b84561200cf0eccd068696777d48bf63900c198982",
+  "sourceCommit": "72d76627d5ee68d56425d5d865f08d75d0fb9c9f",
+  "binarySha256": "be472bb28ed3dbd3fb26cb7c600608b3a11796f562602e2b17ca1e43f933992c",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "ec8c3eef551f28fe296060df0c3fe4350f8f9522",
+    "src/tray.rs": "23a28ea41a9f2f90083a30705763fd46c78a3717",
     "src/tray.html": "3b7485701179e494aec94bc72f779228886525e6",
-    "src/tray-app.js": "13c38b2f607deb1a3c1c09a1db41261be24c37e6",
-    "src/tray-view-state.js": "cc96a5a739a73faca16211c81f4620620ad25932",
+    "src/tray-app.js": "7dec922215c351052f5a63a0292b3834e028c26a",
+    "src/tray-view-state.js": "8f747c4e8e39d4cda1cd102e0c70b7ec4ee724e9",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
-    "src/app-shell.js": "2e422108880ca84d6bb31a3ea82d0096140b2a76",
-    "src/app-shell.css": "e577f9e41dda2b0ad05c06dde97904a7933eabdb",
-    "src/workspace.js": "9efd5742e6f27f29426d38bfa591f505765b58b1",
+    "src/app-shell.js": "712d93430c60bef597809d89b405b186490b5b5d",
+    "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
+    "src/workspace.js": "a5ca4121a616afe5665189d64b0748756b358c7d",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
+    "src/workspace-answers.js": "35934b89d89c49b9db22990d3133f23d8241ce6f",
+    "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
     "scripts/build-web.cjs": "e06b1382f951b07ad9c391dde50e199e27dfd927",
     "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
