@@ -2993,6 +2993,93 @@ mod tests {
         drop(after_exit);std::fs::remove_dir_all(root).unwrap();
     }
 
+    // Chain: live Claude background turn -> protected checkpoint -> image re-exec -> recovered observer -> native exit -> board exit (#1407).
+    // Risk: re-exec resubmits the original input, loses the native answer, or releases the board before the native process exits.
+    #[cfg(unix)]
+    #[test]
+    fn claude_turn_survives_image_reexec() {
+        use std::os::unix::fs::PermissionsExt;
+        let root=std::env::temp_dir().join(format!("taskq-claude-image-{}",uuid()));
+        std::fs::create_dir_all(root.join("bin")).unwrap();
+        let root=root.canonicalize().unwrap();
+        // Stand-in native CLI: answers job readback only and records every call, so any submission or stop shows up.
+        let fake=root.join("bin/claude");
+        std::fs::write(&fake,"#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TASKQ_IMAGE_ROOT/claude-calls\"\n[ \"$1\" = agents ] && exec cat \"$TASKQ_IMAGE_ROOT/agents.json\"\nexit 9\n").unwrap();
+        std::fs::set_permissions(&fake,std::fs::Permissions::from_mode(0o755)).unwrap();
+        let path=std::env::join_paths(std::iter::once(root.join("bin")).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()))).unwrap();
+        let result=coreq::process::output("qualification.claude-image-handover",Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","runtime::tests::claude_image_child","--ignored","--nocapture"])
+            .env("TASKQ_IMAGE_ROOT",&root).env("TASKQ_IMAGE_PHASE","before").env("PATH",path).env("CLAUDE_CONFIG_DIR",root.join("home")),std::time::Duration::from_secs(30));
+        assert!(result.is_ok(),"Claude image handover failed: {result:?}");
+        assert_eq!(std::fs::read_to_string(root.join("verified")).unwrap(),"no resubmission; kept answer; exit after native exit");
+        let calls=std::fs::read_to_string(root.join("claude-calls")).unwrap();
+        assert!(calls.lines().all(|c|c==format!("agents --json --all --cwd {}",root.display())),"handover may only read native jobs: {calls}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore="Claude image handover fixture"]
+    fn claude_image_child() {
+        use std::os::unix::process::CommandExt;
+        use crate::board::Board;
+        let root=PathBuf::from(std::env::var_os("TASKQ_IMAGE_ROOT").unwrap());
+        let home=root.join("home");
+        // The in-memory board is rebuilt identically in both images; only the native record crosses exec.
+        let b=crate::board::Fake::default();let n=b.create("T","",&[crate::service::TASK_LABEL.into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+        let c=crate::service::Config {root:root.clone(),install:root.join("install"),..crate::tests::cfg()};
+        let mut s=crate::service::Service::new(&b,&c,"fixture",Box::new(|_|panic!("handover must not submit new work")));
+        let session="0b6c3f4e-8f2a-4c1d-9e7b-5a2d1c3b4e6f";
+        let transcript=home.join("projects/p").join(format!("{session}.jsonl"));
+        let agents=|state:&str,pid:Option<u32>|std::fs::write(root.join("agents.json"),serde_json::json!([{"id":"c37eb75a","kind":"background","sessionId":session,"cwd":root,"state":state,"pid":pid}]).to_string()).unwrap();
+        if std::env::var("TASKQ_IMAGE_PHASE").unwrap()=="before" {
+            let l=Launch {execution:Some(a),task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"claude".into(),session:"session".into(),url:String::new(),resume:None};
+            let log=log_path(&root,&l);std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            let (input,lock,path)=claude_input(&root,"image handover fixture",Some(&l)).unwrap();
+            bind_input(&log,&l,&path,&input,serde_json::json!({"session":l.session})).unwrap();
+            std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();std::fs::create_dir_all(home.join("jobs/c37eb75a")).unwrap();
+            std::fs::write(&transcript,serde_json::json!({"type":"user","message":{"content":input}}).to_string()+"\n").unwrap();
+            std::fs::write(home.join("jobs/c37eb75a/state.json"),serde_json::json!({"cwd":root,"sessionId":session,"intent":input}).to_string()).unwrap();
+            // An orphaned sleep stands in for the native process: not this image's child, so its exit leaves no zombie.
+            let out=Command::new("sh").args(["-c","sleep 60 >/dev/null 2>&1 & echo $!"]).output().unwrap();
+            let pid:u32=String::from_utf8(out.stdout).unwrap().trim().parse().unwrap();
+            std::fs::write(root.join("native-pid"),pid.to_string()).unwrap();
+            agents("working",Some(pid));
+            let turn=ClaudeTurn {root:root.clone(),log,session:String::new(),id:"c37eb75a".into(),announced:false,accepted:false,history:ClaudeHistory::default(),before:0,mode:"dontAsk".into(),input,
+                _input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,launch_error:None};
+            s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
+            assert!(crate::lifecycle_waits(&s,&root,false).contains(&format!("#{n}")),"no native identity: re-exec defers");
+            s.kids[0].proc.checkpoint(&c,&l,a).unwrap();
+            assert!(!crate::lifecycle_waits(&s,&root,false).contains(&format!("#{n}")),"saved native identity: re-exec passes over the live turn");
+            crate::save_kids(&s,&root).unwrap();
+            coreq::telemetry::capture::before_exec();
+            let error=Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::claude_image_child","--ignored","--nocapture"])
+                .env("TASKQ_IMAGE_PHASE","after").exec();
+            panic!("exec failed: {error}");
+        }
+        let pid:u32=std::fs::read_to_string(root.join("native-pid")).unwrap().parse().unwrap();
+        crate::adopt(&mut s,&c.install,&root).unwrap();crate::adopt(&mut s,&c.install,&root).unwrap();
+        assert_eq!(s.kids.len(),1);assert_eq!(s.kids[0].execution,a);assert_eq!(s.kids[0].proc.id(),pid);
+        let accepted=|| crate::core::executions(n,&crate::board::entries(&b,n).unwrap()).into_iter().find(|x|x.id==a).unwrap();
+        let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
+        while !accepted().accepted { s.reap_owned(); assert!(std::time::Instant::now()<until,"acceptance not observed: {:?}",s.kids.iter().map(|k|&k.unknown).collect::<Vec<_>>()); }
+        let mut file=File::options().append(true).open(&transcript).unwrap();
+        writeln!(file,"{}\n{}",serde_json::json!({"type":"assistant","message":{"content":[{"type":"text","text":"owned final"}]}}),serde_json::json!({"type":"system","subtype":"turn_duration"})).unwrap();
+        s.reap_owned();
+        assert_eq!(s.kids.len(),1,"a finished answer is not native exit");assert_eq!(accepted().release,None);
+        Command::new("kill").arg(pid.to_string()).status().unwrap();
+        // An exiting orphan may briefly have no readable creation identity until init reaps it.
+        while !matches!(coreq::process::identity(pid),Ok(None)) { assert!(std::time::Instant::now()<until); std::thread::sleep(std::time::Duration::from_millis(10)); }
+        agents("done",None);
+        while !s.kids.is_empty() { s.reap_owned(); assert!(std::time::Instant::now()<until,"native exit not observed: {:?}",s.kids.iter().map(|k|&k.unknown).collect::<Vec<_>>()); }
+        assert_eq!(accepted().release,Some(crate::core::Release::Exit));
+        let log=std::fs::read_to_string(attempt_log(&root,"worker",n,a)).unwrap();
+        assert_eq!(log.matches("\"result\":\"owned final\"").count(),1,"answer kept once");
+        crate::save_kids(&s,&root).unwrap();assert!(crate::kids_file(&c.install,&root).unwrap().is_empty());
+        std::fs::write(root.join("verified"),"no resubmission; kept answer; exit after native exit").unwrap();
+    }
+
     // Chain: native job schema -> observation -> release fence.
     // Risk: missing optional fields or a new state fabricate exit or hide observation failures.
     #[test]
