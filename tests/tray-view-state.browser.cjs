@@ -36,7 +36,7 @@ const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:
    await page.evaluate(s=>taskq.receive(s),{...snapshot,service:{state:'exited'},navigation:null});
    assert.equal(await page.locator('[data-card]').count(),18);
    if(process.env.VIEW_EVIDENCE){fs.mkdirSync(process.env.VIEW_EVIDENCE,{recursive:true});await page.screenshot({path:process.env.VIEW_EVIDENCE+'/restored-'+version+'.png'});await page.locator('.content').evaluate(e=>e.scrollTop=0);await page.screenshot({path:process.env.VIEW_EVIDENCE+'/restored-'+version+'-top.png'});await page.locator('.content').evaluate((e,s)=>e.scrollTop=s,scroll);}
-   await page.locator('[data-route="settings"]').click();await page.locator('[data-a="back"]').click();
+   await page.locator('.shell-overflow > summary').click();await page.locator('[data-route="settings"]').click();await page.locator('[data-a="back"]').click();
    assert.equal(await page.locator('.content').evaluate(e=>e.scrollTop),scroll);
    await page.locator('[data-a=back]').click();assert.equal(await page.locator('.service').evaluate(d=>d.open),true);
    await page.close();

@@ -1,6 +1,7 @@
 'use strict';
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
+const shell=require('./app-shell.js');
 
 const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
@@ -9,7 +10,7 @@ const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
 fit:function(){const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
-actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
+actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return (view.workspaceError?'<div class="body alert" role="alert">'+esc(view.workspaceError)+'</div>':'')+view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
 lifecycleStart:function(root,action='restart',mode='drain'){
   if(view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed')return;
   const review=action==='uninstall'?view.S.projects.find(p=>p.root===root)?.uninstall_review:action==='stop'?(mode==='full'?view.S.full_stop_review:view.S.stop_review):view.S.restart_review;
@@ -131,14 +132,15 @@ focusReadback:function(){
 remember:function(){return {...viewState.capture(),workCard:view.workCard};},
 navigate:function(next,filter=null,work=null){
   trail.push(remember());if(trail.length>32)trail.shift();view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
+  view.unavailable=null;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
   menu.querySelector('h1')?.focus();
 },
 back:function(){
-  const prior=trail.pop()||{page:'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
+  const prior=trail.pop()||{page:['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'settings':view.S?.projects.some(p=>p.root===view.page)?view.taskFilter||view.working?view.page:'projects':'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
   ({page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard}=prior);view.noted=null;view.disclosures=prior.open;view.aiRoot=prior.aiRoot;view.restoreScroll=prior.scroll;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=prior.scroll;
-  menu.querySelector('h1')?.focus({preventScroll:true});
+  viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return '<button class="project" data-route="'+route+'">'+esc(label)+'</button>';},
 answerCapability:function(board){const p=view.S&&view.S.projects.find(p=>p.issues===board);return {manage:true,answer:!!p&&p.alive&&p.complete!==false,reason:'Project status is unavailable or stale; check the board'};},
@@ -430,7 +432,7 @@ mountResources:function(){
   const ws=menu.querySelector('[data-work]');
   if(ws){
     if(!view.workCard){const el=document.createElement('div');view.workCard={el,ui:TaskqResources.mountWork(el,{capability:resourceCapability,send:resourceSend,now:()=>view.S.now,host:view.S.host},view.working)};}
-    ws.append(view.workCard.el);
+    if(ws.firstElementChild!==view.workCard.el)ws.replaceChildren(view.workCard.el);
     view.workCard.ui.update(view.S.projects.filter(p=>p.resources).map(resourceGroup));
   }
   for(const slot of menu.querySelectorAll('[data-resources]')){
@@ -438,7 +440,7 @@ mountResources:function(){
     if(!p)continue;
     const scope=p.resources.targets?.[0]?.supported?.[0]?.policy_schema;
     let card=resourceCards.get(p.root);
-    if(!card||card.scope!==scope){const el=document.createElement('div');card={el,scope,ui:TaskqResources.mount(el,{capability:resourceCapability,send:resourceSend,now:()=>view.S.now})};resourceCards.set(p.root,card);}
+    if(!card||card.scope!==scope){card?.el.remove();const el=document.createElement('div');card={el,scope,ui:TaskqResources.mount(el,{capability:resourceCapability,send:resourceSend,now:()=>view.S.now})};resourceCards.set(p.root,card);}
     if(card.el.parentNode!==slot)slot.append(card.el);
     card.ui.update(resourceGroup(p));
   }
@@ -480,9 +482,16 @@ filteredTasks:function(p){
       return Object.values(counts).some(n=>n===null||n>0)?'<section class="all-tasks-project">'+TaskqProjectBlocks.summary(blockProject(p))+tasks(p).map(t=>taskRow(t)).join('')+'</section>':'';
     }).join(''):rows.map(t=>taskRow(t,!p)).join(''))||'<div class="body meta">'+(known(ps)?'No matching loaded tasks':'Tasks unknown')+' <button data-a="filter-reset">Reset</button></div>');
 },
-head:function(){const mode=view.S.size_anchor||(view.S.size?'fixed':'top'),label={fixed:'Fixed size',bottom:'Keep bottom edge',top:'Keep top edge'}[mode];return '<div class="row head"><nav aria-label="Menu"><button data-route="home" title="Home" aria-label="Home">⌂</button><button data-route="settings" title="Settings" aria-label="Settings">⚙</button></nav><span class="window-controls">'+(view.S.stop_modes?'<button data-a="stop-review" aria-label="Emergency stop" title="Emergency stop">■</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+({fixed:'▣',bottom:'⊥',top:'⊤'}[mode])+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">⧉</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'"><span class="pin-glyph" style="transform:rotate('+(view.S.pinned?'0':'45')+'deg)">📌&#xfe0e;</span></button><button data-a="hide" title="Close window" aria-label="Close window">×</button></span></div>';},
+head:function(){
+  const mode=view.S.size_anchor||(view.S.size?'fixed':'top'),label={fixed:'Fixed size',bottom:'Keep bottom edge',top:'Keep top edge'}[mode],p=view.S.projects?.find(p=>p.root===view.page);
+  const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page]||'Unavailable';
+  const crumbs=p?'<a href="#" data-route="projects">Projects</a> › <a href="#" data-route="'+esc(p.root)+'" title="'+esc(p.name)+'"'+(!view.taskFilter&&!view.working?' aria-current="page"':'')+'>'+esc(p.name)+'</a>':['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'<a href="#" data-route="settings">Settings</a> › <a href="#" data-route="'+view.page+'" aria-current="page">'+esc(title)+'</a>':'';
+  const actions='<details class="shell-overflow" data-view-key="navigation-actions"><summary title="Navigation and window options" aria-label="Navigation and window options">⋯</summary><nav class="overflow-actions" aria-label="Menu"><button data-route="home" title="Home">Home</button><button data-route="settings" title="Settings">Settings</button><button data-a="workspace" title="Open workspace">Workspace</button>'+(view.S.stop_modes?'<button data-a="stop-review" title="Emergency stop">Emergency stop…</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+label+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">Keep above other windows</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'">'+(view.S.pinned?'Unpin window':'Pin window')+'</button></nav></details>';
+  return shell.bar({title,crumbs,back:view.page!=='home'||!!view.taskFilter||!!view.working,actions,windows:'<button data-a="hide" title="Close window" aria-label="Close window">×</button>'});
+},
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
+  const firstRender=!view.html;
   const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
   const focusKey=!navigating&&active&&menu.contains(active)?JSON.stringify(active.dataset):null;
@@ -499,19 +508,23 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  const html=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(settingsError?'<div class="body alert" role="alert">Settings unknown: '+esc(settingsError)+(view.persistenceError?'':'; defaults shown')+'</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
+  const html=head()+'<div class="content"><div class="content-body">'+(view.unavailable?'<div class="body" role="status">'+esc(view.unavailable)+' The surviving destination is '+esc(title)+'.</div>':'')+actionNotices()+(settingsError?'<div class="body alert" role="alert">Settings unknown: '+esc(settingsError)+(view.persistenceError?'':'; defaults shown')+'</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" title="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
   // #1430: an unchanged refresh leaves the menu alone; a rebuild replaced the textarea being typed in and its edits
   // landed on the detached node. Mounted cards still take the new rows and repaint only what changed.
   if(!navigating&&html===view.html){mountAnswers();mountResources();viewState.restore(open);viewState.flush();return;}
-  menu.innerHTML=view.html=html;
+  renderer??=shell.create(menu);
+  renderer.draw(html,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
+  view.html=html;
+  if(navigating)menu.querySelector('.shell-overflow')?.removeAttribute('open');
   mountAnswers();mountResources();
-  menu.querySelectorAll('details[data-view-key]').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page));
+  menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page));
   viewState.restore(open);
-  if(view.S.page!==undefined)menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
+  if(view.S.page!==undefined&&(navigating||firstRender))menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
   const restored=answerFocus&&menu.querySelector('[data-answer="'+CSS.escape(answerFocus.dataset.answer)+'"] '+answerSelector);
   if(restored&&!navigating){restored.focus({preventScroll:true});if(caret)restored.setSelectionRange(...caret);}
   else if(!navigating){const target=focusedSummary>=0?menu.querySelectorAll('summary')[focusedSummary]:focusKey&&active.tagName==='H1'?menu.querySelector('h1'):focusKey&&focusKey!=='{}'?[...menu.querySelectorAll(active.tagName)].filter(same)[focusAt]:null;target?.focus({preventScroll:true});}
   (menu.querySelector('.content')||document.scrollingElement).scrollTop=view.restoreScroll??scroll;view.restoreScroll=null;
+  if(firstRender)viewState.focus(view.restoreFocus);
   fit();
   // after fit() sets the width: a new exchange or text size opens at the newest entry; a tick keeps the reader's place;
   // a block that drops a cut line asks for the smaller height
@@ -534,6 +547,7 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(s.workspaceError!==undefined){view.workspaceError=s.workspaceError;present();return;}
   if(s.viewStateError!==undefined){view.persistenceError=s.viewStateError;present();return;}
   if(s.diagnose){const d=s.diagnose,remaining=d.until_ms-Date.now();
     if(d.id!==view.diagnosticId&&remaining>0){execution.diagnose(d.selector,Math.min(60000,remaining),d.limit);view.diagnosticId=d.id;}
@@ -578,6 +592,7 @@ ui.listen(window,'blur',release);
 // Press end.
 
 ui.listen(menu,'click',e=>{
+  const crumb=e.target.closest('a[data-route]');if(crumb){e.preventDefault();if(crumb.dataset.route!==view.page||view.working||view.taskFilter)navigate(crumb.dataset.route);return;}
   const cardLink=e.target.closest('.qac a');if(cardLink){e.preventDefault();send({a:'open',url:cardLink.getAttribute('href')});return;}
   if(e.target.closest('.qac,.rsc'))return;
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{if(view.taskFilter&&view.page===(id||'home')){view.taskFilter=view.taskFilter.includes(state)?view.taskFilter.filter(s=>s!==state):[...view.taskFilter,state];present();}else navigate(id||'home',state);}}))return;
@@ -586,6 +601,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace'});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){answerFeedback.delete(d.key);if(view.toast===d.key)view.toast=null;present();return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
@@ -616,19 +632,19 @@ const z=t(view.draft.end);
   if(d.a==='pause-all'||d.a==='resume-all'){view.confirming=null;for(const p of view.S.projects.filter(p=>mode(p)===(d.a==='pause-all'?'run':'paused')))focusStart(d.a.slice(0,-4),p.root);present();menu.querySelector('[data-a="confirm"]')?.focus();return;}
   if(d.a==='recovery-pending'){const item=view.recovery[d.root],request=item?.review?.pending?.[Number(d.index)];if(request){item.request=request;api.recoveryStart(d.root,'recovery-reconcile');}return;}
   if(['recovery-read','recovery-apply','recovery-reconcile'].includes(d.a)){api.recoveryStart(d.root,d.a);return;}
-  if(d.a==='stop-review'){view.page='stop';present();return;}
+  if(d.a==='stop-review'){navigate('stop');return;}
   if(d.a==='stop-full'){api.lifecycleStart(d.root,'stop','full');return;}
   if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return;}
   if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return;}
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label});}present();});
 ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}if(e.target.id==='ai'){view.aiText=e.target.value;send({a:'ai-draft',text:view.aiText});return;}if(e.target.id==='ai-root'){view.aiRoot=e.target.value;present();return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
-ui.listen(menu,'mousedown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button'))send({a:'drag'});});
+ui.listen(menu,'mousedown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))send({a:'drag'});});
 ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))return;view.resizing={x:e.screenX,y:e.screenY,w:window.innerWidth,h:window.innerHeight};e.target.setPointerCapture(e.pointerId);e.preventDefault();});
 ui.listen(menu,'pointermove',e=>{if(!view.resizing)return;view.manualSize=[Math.max(240,view.resizing.w+e.screenX-view.resizing.x),Math.max(120,view.resizing.h+e.screenY-view.resizing.y)];menu.style.width='100%';send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])ui.listen(menu,event,()=>{if(view.resizing)send({a:'resize-end'});view.resizing=null;});
 ui.listen(menu,'keydown',e=>{if(!e.target.closest('.grip')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();view.manualSize=[Math.max(240,window.innerWidth+(e.key==='ArrowRight'?10:e.key==='ArrowLeft'?-10:0)),Math.max(120,window.innerHeight+(e.key==='ArrowDown'?10:e.key==='ArrowUp'?-10:0))];send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});send({a:'resize-end'});});
-ui.listen(document,'keydown',e=>{if(e.key==='Escape'){viewState.flush();send({a:'hide'});}});
+ui.listen(document,'keydown',e=>{if(e.key==='Escape'){const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}viewState.flush();send({a:'hide'});}if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(view.page!=='home'||view.taskFilter||view.working)back();}});
 ui.listen(menu,'toggle',()=>fit(),true);
 // § 4 Tray: row ages tick in place while the menu is open; a redraw would move the reading position
 const {ages}=execution.module("tray.create.mount.ages",{ages:()=>{if(view.S){const now=view.S.now+Math.round((performance.now()-view.receivedAt)/1000);for(const e of menu.querySelectorAll('[data-since]'))e.textContent=TaskqProjectBlocks.age(now-Number(e.dataset.since));}defer(ages,30000);}});
@@ -669,6 +685,7 @@ const TaskqAnswerCard=require('./answer-card.js'),TaskqResources=require('./reso
 const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
+let renderer=null;
 const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later'};
 const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'work',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
 const periods={'5m':'5 min','1h':'Hour','1d':'Day','1w':'7 days','1mo':'30 days',custom:'Custom'};

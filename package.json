@@ -9,6 +9,9 @@
     "esbuild": "0.28.2"
   },
   "dependencies": {
-    "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/372ff1292eb0c2eaab841df5724caaa76f8a249d"
+    "@preact/signals": "2.11.3",
+    "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/372ff1292eb0c2eaab841df5724caaa76f8a249d",
+    "preact": "11.0.1",
+    "wouter-preact": "3.13.0"
   }
 }

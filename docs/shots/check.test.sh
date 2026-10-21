@@ -7,15 +7,15 @@ t=$(mktemp -d)
 trap 'rm -rf "$t"' EXIT
 cd "$t"
 git init -q . && git config user.email t@t && git config user.name t && git config core.autocrlf false
-mkdir -p src docs/design docs/shots
+mkdir -p src scripts docs/design docs/shots
 cp "$src" docs/shots/check.sh
-for f in src/tray.rs src/tray.html src/tray-web.js src/icon.rs docs/design/icon-summary.config.json; do echo "$f" > "$f"; done
+for f in src/tray.rs src/tray.html src/tray-app.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/workspace.js src/workspace-entry.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json; do echo "$f" > "$f"; done
 echo '![](docs/shots/a.png)' > README.md
 git add -A && git commit -qm ui
 manifest() { # $1: blob recorded for src/tray.rs
   printf '{\n  "sourceCommit": "%s",\n  "uiSources": {\n' "$(git rev-parse HEAD)"
   sep=''
-  for f in src/tray.rs src/tray.html src/tray-web.js src/icon.rs docs/design/icon-summary.config.json; do
+  for f in src/tray.rs src/tray.html src/tray-app.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/workspace.js src/workspace-entry.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json; do
     b=$(git rev-parse "HEAD:$f"); [ "$f" = src/tray.rs ] && b=$1
     printf '%s    "%s": "%s"' "$sep" "$f" "$b"; sep=',
 '
@@ -29,6 +29,11 @@ case_() { # $1: name, $2: expected exit
 }
 manifest "$(git rev-parse HEAD:src/tray.rs)" > docs/shots/manifest.json
 case_ fresh 0
+echo 'changed shared shell' > src/app-shell.css
+git add src/app-shell.css && git commit -qm shell
+case_ 'changed shared shell' 2
+git checkout HEAD^ -- src/app-shell.css
+git commit -qm restore
 manifest 0000000000000000000000000000000000000000 > docs/shots/manifest.json
 case_ stale 2
 echo '{"garbage' >> docs/shots/manifest.json

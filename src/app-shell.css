@@ -1,0 +1,36 @@
+/* TW1/TW8, V09/V20–V26: per-surface tokens; icon calibration remains independent. */
+.menu{--outer:8px;--row:4px;--related:4px;--section:6px;--target:32px;--edge:light-dark(#727d89,#8896a4)}
+.menu.workspace{--outer:12px;--row:6px;--related:6px;--section:12px}
+.shell{display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden}
+.menu .content{padding:var(--outer);scroll-padding-block:var(--outer)}
+.menu .group{margin-top:var(--section);padding-top:var(--section);border-top-width:1px}
+.menu .head{display:grid;grid-template-columns:var(--target) minmax(0,1fr) auto auto;align-items:center;gap:var(--related);padding:4px var(--outer);flex:none;cursor:grab}
+.head .nav-back{min-width:var(--target);align-self:start}
+.head h1{font-size:1.1em;font-weight:600;line-height:1.25;margin:0;overflow-wrap:anywhere;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.head .nav-title{min-width:0}
+.head .nav-actions,.head .window-controls{display:flex;align-items:center;gap:var(--related);align-self:start}
+.head .window-controls{border-inline-start:1px solid var(--edge);padding-inline-start:var(--related)}
+.head button{display:inline-flex;align-items:center;justify-content:center;padding:4px;flex-shrink:0}
+.menu :is(button,summary,select,input:not([type=checkbox]),textarea,[role=button]),.menu a{min-width:var(--target);min-height:var(--target)}
+.menu a{display:inline-flex;align-items:center;justify-content:center;vertical-align:middle;overflow-wrap:anywhere}
+.menu :is(button,select,input,textarea){max-width:100%}
+.menu :is(button,a,summary,input,select,textarea,[role=button]):focus-visible{outline:2px solid var(--work);outline-offset:-2px}
+.menu button[aria-pressed=true],.menu [aria-current=page]{outline:2px solid currentColor;outline-offset:-2px;background:light-dark(#e9edf1,#37424c);border-color:transparent}
+.menu .breadcrumbs{display:flex;flex-wrap:wrap;gap:0 4px;color:var(--muted);font-size:max(12px,.85em);line-height:1.25}
+.menu .breadcrumbs a{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.25}
+.menu .grip{position:static;width:var(--target);height:var(--target);min-height:var(--target);flex:none;align-self:flex-end}
+.menu label:has(input[type=checkbox]){display:flex;align-items:center;gap:var(--related);min-width:var(--target);min-height:var(--target)}
+.menu .shell-overflow{position:relative}
+.menu .shell-overflow>summary{display:flex;justify-content:center;padding:4px;cursor:pointer;list-style:none}
+.menu .shell-overflow>summary::after{display:none}
+.menu .overflow-actions{position:absolute;inset-inline-end:0;top:100%;width:min(280px,calc(100vw - 16px));max-height:60vh;overflow:auto;display:grid;gap:4px;padding:8px;background:var(--surface);border:1px solid var(--edge);z-index:20;cursor:default}
+.menu .overflow-actions button{justify-content:start;text-align:start}
+.menu .nav-actions .quick-actions{display:none}
+.menu h2,.menu strong{font-size:1em;font-weight:600}
+.menu .row,.menu summary{padding-inline:var(--row)}
+.menu .range input,.menu .range select,.menu .views button{font-size:1em}
+.menu :is(input:not([type=checkbox]),select,textarea){border-color:var(--edge)}
+.menu .group>.row{font-size:1em;font-weight:600}
+@media(pointer:coarse){.menu{--target:44px}}
+@media(min-width:640px){.menu .nav-actions .quick-actions{display:flex;gap:4px}}
+@media(prefers-reduced-motion:reduce){.menu *{scroll-behavior:auto}}
