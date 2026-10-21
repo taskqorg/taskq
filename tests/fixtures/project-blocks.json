@@ -9,7 +9,6 @@
     "name": "project-with-a-long-name-that-remains-readable",
     "board": {"kind": "github", "url": "https://github.com/example/project/issues"},
     "complete": true,
-    "closed": 0,
     "tasks": []
   },
   "row": {

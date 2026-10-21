@@ -40,7 +40,7 @@ function look(sel) {
           return {gap: Math.round(r.getBoundingClientRect().right - parseFloat(getComputedStyle(r).paddingRight) - s.getBoundingClientRect().right),
             order: [...s.querySelectorAll('button')].map(c => c.dataset.state), overflow: document.documentElement.scrollWidth > innerWidth};
         });
-        assert.deepEqual(strip, {gap: 0, order: [...(n?['doing']:[]), 'ask', ...(n?['ready']:[]), 'closed'], overflow: false}, at);
+        assert.deepEqual(strip, {gap: 0, order: [...(n?['doing']:[]), 'ask', ...(n?['ready']:[])], overflow: false}, at);
         assert.deepEqual(errors, [], at);
         await page.close();
       }

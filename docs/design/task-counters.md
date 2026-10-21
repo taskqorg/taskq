@@ -1,18 +1,18 @@
 # Task counters
 
-Approved: aggregate above Projects; all queue states available; Closed visually quiet. Human = Ask: tasks waiting for a human answer (owner confirmed).
+Approved: aggregate above Projects; all queue states available; Held replaces Closed (owner, #1476). Human = Ask: tasks waiting for a human answer (owner confirmed).
 
 ## Semantics
 
 - Home: one compact aggregate strip immediately above Projects. Scope: all registered observed boards, not just pinned/recent or admitting projects. Click opens the corresponding task list.
 - Every visible project row (pinned, recent and All projects) includes its own nonzero counters beside its name; aggregate counters never replace them. A known all-zero project shows its name only, without an empty strip or `No tasks` caption.
 - Project: same order and symbols, only that board/project. Deduplicate by provider/server/repository/issue across registrations/hosts; conflicting or stale observations mark incomplete.
-- Order: Doing, Review, Ask, Failed, Ready, Blocked, Later, Closed. No Work total alongside Doing/Review; that would count twice. Exception: All tasks shows a separate deduplicated open-task total across all observed projects, excluding closed tasks (owner decision #1438); incomplete observations show `?`.
+- Order: Doing, Review, Ask, Failed, Ready, Blocked, Later, Held. No Work total alongside Doing/Review; that would count twice. Exception: All tasks shows a separate deduplicated open-task total across all observed projects, excluding closed tasks (owner decision #1438); incomplete observations show `?`.
 - Project summaries hide zero capsules. The tray's top task-list strip shows every state in the fixed order: zero shows its icon without a number; unknown ([never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy)) shows `?`. Empty accurate state says `No tasks`. Incomplete sum says `Partial` with affected sources.
 - The top strip is the only state filter: clicking toggles a state, several selected states combine with OR, and no selection removes the state restriction. Selected capsules have a visible outline and `aria-pressed`. No Filter checkbox group remains. All tasks sits in the same wrapping row, clears state/project restrictions and shows each observed project with nonzero counters and its tasks; incomplete projects remain labelled. Filters never write queue or admission focus.
 - `Ask` means a human answer is needed. It is not human execution. `assignee-only` is an admission constraint, not a human-owned task state. Add a separate Human execution counter only after a state/data contract exists.
-- Closed: current total of closed TaskQ-managed issues, independent of cadence period. Not all board issues, not sum of close events, not successful attempts. Reopening removes a task from Closed.
-- Service obtains authoritative paginated closed totals or maintains a verified board projection. Until available show unknown; never infer all-time totals from local event history. Tray stays token-free and reads status only.
+- Held: open drafts in `held` (taskq.md § 1), counted from snapshot rows like other states. Selecting Held lists the drafts with one Start per draft and one Start for the shown group; Start runs `taskq start` and reads back `ready` or `waiting`.
+- No Closed counter: the tray never lists closed tasks. Closed tasks get their own design if needed. Tray stays token-free and reads status only.
 - Breakdowns by task type are filters, not extra additive lifecycle counts. AI failures and service incidents remain separate.
 - Square tray summary stays Work = Doing + Review, Ask, Ready, cadence. These expanded counters are menu-only.
 
@@ -20,7 +20,7 @@ Approved: aggregate above Projects; all queue states available; Closed visually 
 
 - Compact wrapping capsules with stable order; symbol + number, accessible state name and tooltip. Align every strip to the right edge of its content region, including the aggregate and each wrapped line. Keep the existing compact gaps; do not distribute capsules across empty width.
 - Doing mint, Ask peach, Failed muted red. Review/Ready/Blocked/Later neutral; shape carries identity.
-- Closed last: pale gray background, quiet gray text, no colored fill. Retain readable contrast and a full accessible label; do not fade with opacity.
+- Held last: neutral, like Ready/Blocked/Later; shape carries identity.
 - At large type, wrap counters together beneath the project name. Never shrink numbers or squeeze project titles into a narrow column.
 - Counter clicks are separate targets from project navigation. One project name row, then its compact strip if needed; no nested controls.
 
@@ -28,10 +28,10 @@ Approved: aggregate above Projects; all queue states available; Closed visually 
 
 - K-A1: same task registered twice counts once; Doing and Review stay disjoint.
 - K-A2: the top task-list strip shows all eight states in order, including icon-only zeros and explicit unknown; project summaries retain nonzero counters.
-- K-A3: Closed unaffected by cadence period; reopen and incomplete pagination handled honestly.
+- K-A3: Held counts open `held` rows; Start per draft and per shown group reads back `ready` or `waiting`; no Closed capsule or totals.
 - K-A4: aggregate includes projects outside shortlist; scope and partial sources inspectable.
-- K-A5: 320 px and 20 px type wrap without horizontal overflow; Closed readable in both themes.
-- K-A6: counter clicks toggle OR selection with visible and accessible pressed state; All tasks shows the deduplicated open total (not Closed) and restores all projects and tasks; Back/refresh retain selection; no checkbox group or queue/focus write.
+- K-A5: 320 px and 20 px type wrap without horizontal overflow; Held readable in both themes.
+- K-A6: counter clicks toggle OR selection with visible and accessible pressed state; All tasks shows the deduplicated open total, Held included, and restores all projects and tasks; Back/refresh retain selection; no checkbox group or queue/focus write.
 
 - K-A7: pinned/recent/All projects preserve per-project nonzero counters; known all-zero rows show only project identity; each counter opens that project and state, without triggering the project-name action.
 

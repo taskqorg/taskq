@@ -181,7 +181,7 @@ answerNotices:function(board){
 },
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);
-  return r?'<div class="toast" role="status">#'+r.op.task+' · answer accepted <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a><button data-a="toast-dismiss" aria-label="Dismiss" title="Dismiss">×</button></div>':'';
+  return r?'<div class="toast" role="status">#'+r.op.task+' · '+(r.op.action==='start'?'started':'answer accepted')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a><button data-a="toast-dismiss" aria-label="Dismiss" title="Dismiss">×</button></div>':'';
 },
 mountAnswers:function(){
   for(const slot of menu.querySelectorAll('[data-answer]')){
@@ -198,13 +198,20 @@ mountAnswers:function(){
   for(const key of answerCards.keys())if(!keys.has(key))answerCards.delete(key);
 },
 tasks:function(p){return p.tasks.map(t=>({...t,project:p.name,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
-blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,closed:p.closed,tasks:tasks(p)};},
+blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
 unique:function(ts){return [...new Map(ts.map(t=>[t.key,t])).values()];},
 counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts",{n:f=>ts.filter(t=>f.includes(t.state)).length});return {work:n(['doing','review']),ask:n(['ask']),ready:n(['ready']),failed:n(['failed'])};},
 mode:function(p){return p.focus.length?'run':p.saved?'paused':'watch';},
 counter:function(v,kind,label){return '<span class="counter '+(v>0?kind+' filled':'zero')+'" aria-label="'+esc(label+': '+v)+'" title="'+esc(label)+'">'+v+'</span>';},
 known:function(ps){return ps.every(p=>p.complete!==false);},
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return '<div data-card="'+esc(t.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),t,global)+answerSlot(t)+'</div>';},
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return '<div data-card="'+esc(t.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),t,global)+answerSlot(t)+(t.state==='held'?startButton([t]):'')+'</div>';},
+// #1476: Start for held drafts, one per draft and one for the shown group; the bridge runs `taskq start` and reads back ready/waiting.
+startButton:function(rows){
+  const held=rows.filter(t=>t.state==='held');
+  if(!held.length)return '';
+  const label=held.length===1&&rows.length===1?'Start #'+held[0].n:'Start '+held.length+' held';
+  return '<button data-a="start" data-keys="'+esc(held.map(t=>t.key).join(' '))+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+esc(label)+'</button>';
+},
 globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?'<details class="group" data-view-key="state:'+st+'"><summary><span class="'+color(st)+'">'+names[st]+'</span>'+counter(ts.length,color(st),names[st])+'</summary>'+ts.map(t=>taskRow(t,true)).join('')+'</details>':'';},
 age:function(s){return s<120?s+' s':s<7200?Math.round(s/60)+' min':s<172800?Math.round(s/3600)+' h':Math.round(s/86400)+' d';},
 problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+age(p.age)+' old: service not running?'):p.error?'service error: '+p.error:'';return e?'<button class="project alert" data-a="log" data-root="'+esc(p.root)+'" title="'+esc(e)+'"'+(p.log?'':' disabled')+'><span>⚠ '+esc(p.name)+': '+esc(e)+'</span><span class="meta">'+(p.log?'Log':'')+'</span><span></span></button>':'';},
@@ -468,7 +475,7 @@ notedCard:function(p){return view.noted&&view.noted.root===p.root?'<div class="g
 project:function(p){
   const ts=tasks(p);
   return TaskqProjectBlocks.summary(blockProject(p))+'<div class="body meta">'+esc(modeText(p))+'</div>'+problem(p)+incident(p,true)+incidentNotice(p)+notedCard(p)+
-  (['ask','failed','doing','review','ready','waiting','later'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?'<div class="group"><div class="row meta"><span>'+names[st]+'</span>'+counter(r.length,color(st),names[st])+'</div>'+r.map(t=>taskRow(t)).join('')+'</div>':'';}).join('')||'<div class="body muted">No open tasks</div>')+answerNotices(p.issues)+
+  (['ask','failed','doing','review','ready','waiting','later','held'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?'<div class="group"><div class="row meta"><span>'+names[st]+'</span>'+counter(r.length,color(st),names[st])+(r.length>1?startButton(r):'')+'</div>'+r.map(t=>taskRow(t)).join('')+'</div>':'';}).join('')||'<div class="body muted">No open tasks</div>')+answerNotices(p.issues)+
   '<div class="group">'+(p.issues?'<a class="project" href="'+esc(p.issues)+'" data-url="'+esc(p.issues)+'"><span>Board ↗</span><span></span><span></span></a>':'')+admission(p)+'</div>'+capacity(p)+notifyGroup(p)+workEntry(p.root)+service(p);},
 filteredTasks:function(p){
   const ps=p?[p]:view.S.projects,selected=view.taskFilter,states=TaskqProjectBlocks.states;
@@ -476,7 +483,7 @@ filteredTasks:function(p){
   return '<header class="filter-header">'+(p?TaskqProjectBlocks.summary(blockProject(p),selected,TaskqProjectBlocks.observation(view.S.projects.map(blockProject)).open):TaskqProjectBlocks.aggregate(ps.map(blockProject),selected))+
     '<div class="body meta" role="status">'+esc(selected.length?states.filter(([s])=>selected.includes(s)).map(([,name])=>name).join(', '):'All states')+' · '+rows.length+' loaded'+(known(ps)?'':' · Partial')+'</div></header>'+
     (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
-    (!selected.length||selected.includes('closed')?'<div class="body meta">Closed total and task list unknown: open the Board for authoritative closed tasks.</div>':'')+
+    (rows.filter(t=>t.state==='held').length>1?'<div class="row">'+startButton(rows)+'</div>':'')+answerNotices(p?.issues)+
     ((!p&&!selected.length?ps.filter((p,i)=>ps.findIndex(q=>q.issues===p.issues)===i).map(p=>{
       const counts=TaskqProjectBlocks.observation([blockProject(p)]).counts;
       return Object.values(counts).some(n=>n===null||n>0)?'<section class="all-tasks-project">'+TaskqProjectBlocks.summary(blockProject(p))+tasks(p).map(t=>taskRow(t)).join('')+'</section>':'';
@@ -605,6 +612,7 @@ ui.listen(menu,'click',e=>{
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){answerFeedback.delete(d.key);if(view.toast===d.key)view.toast=null;present();return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
+  if(d.a==='start'){for(const key of d.keys.split(' ')){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===key);if(t&&t.state==='held')ui.effect('task.start',()=>answerSend(t.key.slice(0,-String(t.n).length-1),{id:'tray.start.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action:'start'}),()=>{});}present();return;}
   if(d.a==='answer-retry'){const r=answerFeedback.get(d.key);if(r)ui.effect('answer.reconcile',()=>answerSend(r.board,r.op),()=>{});present();return;}
   if(d.a==='notify'||d.a==='notify-test'){send({a:d.a,kind:d.kind,value:d.v,root:d.root});return;}
   if(d.a==='work'){navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
@@ -653,7 +661,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function answerSend(board,op){
   const p=view.S&&view.S.projects.find(p=>p.issues===board);
@@ -686,7 +694,7 @@ const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
 let renderer=null;
-const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later'};
+const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later',held:'Held'};
 const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'work',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
 const periods={'5m':'5 min','1h':'Hour','1d':'Day','1w':'7 days','1mo':'30 days',custom:'Custom'};
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;

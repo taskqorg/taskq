@@ -1,16 +1,16 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "2b63d5db00c1511e4e6e88f43cd2c7a360451d50",
-  "binarySha256": "17505ae0ea52fc2fe120b5329825fe3f94ca257264a01b6c0d3bb95b0c83324d",
+  "sourceCommit": "2dfa352e6e433870a50fa7445936490aa62354f9",
+  "binarySha256": "31688d2f0a313792e4fdf2b84561200cf0eccd068696777d48bf63900c198982",
   "environment": {
-    "os": "macOS 26.6.2",
+    "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "3284363e69316f89a264b3b927edb94040b41068",
+    "src/tray.rs": "ec8c3eef551f28fe296060df0c3fe4350f8f9522",
     "src/tray.html": "3b7485701179e494aec94bc72f779228886525e6",
-    "src/tray-app.js": "54b8285cb2951b625446d6efa8e7b0bd2055678a",
+    "src/tray-app.js": "13c38b2f607deb1a3c1c09a1db41261be24c37e6",
     "src/tray-view-state.js": "cc96a5a739a73faca16211c81f4620620ad25932",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "2e422108880ca84d6bb31a3ea82d0096140b2a76",
@@ -29,11 +29,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "cd7cfbdb134c6847f6985e1373508ffb6d46ba72352907b7b015d113f0a1109d"
+      "sha256": "e6efd9b07a33a1b42a3fe660cabde345afa455331e5e229ce6de719343cb14d9"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "07655cc132899c498e47a771169a2050add9442bd47cb58986b25e45630f480f"
+      "sha256": "d960d1bd224eded0cd01045f2525c2f4f0a7723e106cf7fdf975b2ad7858ce44"
     }
   ]
 }

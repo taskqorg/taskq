@@ -17,7 +17,6 @@
 .tqp-counts button{min-height:32px;padding:2px 6px;border-radius:20px;background:var(--hover);white-space:nowrap}
 .tqp-project .tqp-counts{gap:2px}
 .tqp-project .tqp-counts button{padding:2px 4px}
-.tqp-counts .quiet{background:light-dark(#eff1f3,#2b3138);color:light-dark(#59636e,#b9c3cd)}
 .tqp-partial{display:block;width:100%}
 .tqp-task-head .tqp-meta{white-space:normal}
 .tqp-task{display:block;width:100%;padding:5px 4px;overflow-wrap:anywhere}

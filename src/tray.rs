@@ -211,7 +211,10 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
     let n = op["task"].as_u64().filter(|n| *n > 0).ok_or("task number missing")?;
     let revision = op["revision"].as_u64().ok_or("question revision missing")?;
     let action = op.get("action").map(|v| v.as_str().ok_or("invalid action")).transpose()?;
-    let mut args: Vec<String> = if let Some(action) = action {
+    let mut args: Vec<String> = if action == Some("start") {
+        if op.get("choice").is_some() || op.get("text").is_some() { return Err("start takes no choice or text".into()); }
+        vec!["start".into(), n.to_string()]
+    } else if let Some(action) = action {
         if op.get("choice").is_some() { return Err("fallback actions cannot include a choice".into()); }
         let (command, text) = match action {
             "requeue" => {
@@ -257,6 +260,10 @@ fn answer_snapshot(s: &Value, m: &Value) -> Result<(), String> {
     let op = &m["op"];
     let row = s["tasks"].as_array().into_iter().flatten().find(|r| r["n"] == op["task"]);
     let row = row.ok_or("task is not in the current board snapshot; open it on the board")?;
+    // #1476: a started draft may already read ready/waiting; the CLI returns the op id's first receipt or refuses.
+    if op["action"] == "start" {
+        return if ["held", "ready", "waiting"].contains(&row["state"].as_str().unwrap_or("")) { Ok(()) } else { Err("task is not a held draft; check the board".into()) };
+    }
     if op.get("action").is_some() {
         if row["revision"] != op["revision"] { return Err("question changed; refresh before acting".into()); }
         if op["action"] == "close" && row["state"] == "later" { return Ok(()); } // only a matching later op can succeed again
@@ -285,7 +292,12 @@ fn answer_dispatch(m: &Value, args: &[String], mut run: impl FnMut(&[String]) ->
         else { json!({"outcome": "unknown", "reason": "No matching CLI receipt", "next": "Check the board; retry the same operation id."}) }
     };
     let id = args[args.len() - 3].as_str();
-    let r = checked(run(args), id);
+    let mut r = checked(run(args), id);
+    if m["op"]["action"] == "start" && r["outcome"] == "accepted" && !matches!(r["state"].as_str(), Some("ready" | "waiting")) {
+        r["outcome"] = json!("unknown");
+        r["reason"] = json!("Start did not read back ready or waiting");
+        r["next"] = json!("Check the board; retry the same start to reconcile delivery.");
+    }
     if m["op"]["action"] != "close" || r["outcome"] != "accepted" || r["state"] == "closed" { return r; }
     if r["state"] != "later" || !r["revision"].is_u64() {
         return json!({"outcome": "rejected", "reason": "Cancellation stopped: parking was not read back as later with a revision", "next": "Check the task on the board."});
@@ -407,7 +419,7 @@ fn project(install: &Path, root: &str) -> Value {
     let observed_at=s["at"].as_i64().filter(|at|*at<=now()&&now()-*at<=60).and(age.map(|a|now()-a as i64));
     let resources = resource_group(&s["capacity"], &cap_saved,&cap_revision, &project_limits, observed_at, installation, &id);
     json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(r)),
-        "issues": s["issues"].as_str().unwrap_or(""), "board_kind": board_kind, "closed": Value::Null,
+        "issues": s["issues"].as_str().unwrap_or(""), "board_kind": board_kind,
         "log": s["log"].is_string(), "alive": age.is_some_and(|a| a < 300), "age": age,
         "complete": crate::snapshot::complete(&s) && age.is_some_and(|a| a < 300),
         "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::status_labels(r),
@@ -2353,7 +2365,20 @@ mod tests {
             assert_eq!(answer_dispatch(&m, &a, |_| { seen += 1; json!({"task":n,"op_id":"action.1","outcome":"accepted","state":"ready"}) })["outcome"], "accepted");
             assert_eq!(seen, 1);
         }
-        m["op"]["action"] = json!("requeue");
+        // #1476 Start: held drafts only; accepted counts only when read back ready or waiting.
+        m["op"] = json!({"id":"start.1","task":n,"revision":rev,"action":"start"});
+        let a = answer_args(&install, &m).unwrap();
+        assert_eq!(a, ["start", &n.to_string(), "--json", "--op-id", "start.1", "--revision", &rev.to_string()]);
+        for (st, ok) in [("held", true), ("ready", true), ("waiting", true), ("ask", false), ("doing", false)] {
+            snapshot["tasks"] = json!([{"n":n,"state":st,"revision":rev}]);
+            assert_eq!(answer_snapshot(&snapshot, &m).is_ok(), ok, "{st}");
+        }
+        for (st, outcome) in [("ready", "accepted"), ("waiting", "accepted"), ("held", "unknown")] {
+            assert_eq!(answer_dispatch(&m, &a, |_| json!({"task":n,"op_id":"start.1","outcome":"accepted","state":st}))["outcome"], outcome, "{st}");
+        }
+        m["op"]["text"] = json!("x");
+        assert!(answer_args(&install, &m).is_err());
+        m["op"] = json!({"id":"action.1","task":n,"revision":rev,"action":"requeue"});
         m["op"]["text"] = json!("x".repeat(233));
         assert!(answer_args(&install, &m).is_err());
         m["op"]["text"] = json!("a\nb");
