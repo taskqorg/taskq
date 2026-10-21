@@ -941,7 +941,7 @@ mod tests {
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     #[test]
     fn github_queue_qualifies_the_merge_result_and_preserves_unknowns() {
-        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict"] {
+        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict", "merged-flag-lag"] {
             let admitted = std::rc::Rc::new(RefCell::new(false));
             let queued = admitted.clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
@@ -969,7 +969,7 @@ mod tests {
                             json!({"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": false}}}})
                         } else {
                             let entry = if scenario == "waiting" || *queued.borrow() && scenario != "readback" { json!({"id": "MQ_7"}) } else { Value::Null };
-                            let reason = match scenario { "conflict" => "merge conflict with base branch", "failed" => "required checks failed", "removed" => "removed by owner", _ => "" };
+                            let reason = match scenario { "conflict" => "merge conflict with base branch", "failed" => "required checks failed", "removed" => "removed by owner", "merged" | "merged-flag-lag" => "MERGED", _ => "" };
                             json!({"data": {"node": {"headRefOid": head, "merged": scenario == "merged" || scenario.starts_with("merge-"), "mergeCommit": {"oid": merge}, "mergeQueueEntry": entry,
                                 "timelineItems": {"nodes": if reason.is_empty() { json!([]) } else { json!([{"reason": reason}]) }}}}})
                         }
@@ -999,6 +999,7 @@ mod tests {
                 "merge-ci-failed" | "merge-check-failed" | "removed" => assert!(matches!(got, Publish::Blocked(_)), "{scenario}: {got:?}"),
                 "conflict" | "enqueue-conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{scenario}: {got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
+                // #1489: reason merged before the merged flag rereads next pass instead of asking
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),
             }
             if scenario == "waiting" {

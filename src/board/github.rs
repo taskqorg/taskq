@@ -206,6 +206,8 @@ impl GitHub {
         if enqueued {
             let reason = p["timelineItems"]["nodes"][0]["reason"].as_str().ok_or("queue entry missing; removal reason unknown")?;
             let lower = reason.to_lowercase();
+            // #1489: GitHub records the merge removal before the merged flag; reread next pass, never ask.
+            if lower.contains("merged") { return Err(format!("merge queue removed PR as {reason}; merged state not read back yet")); }
             return Ok(if ["conflict", "base branch", "out of date"].iter().any(|s| lower.contains(s)) {
                 Publish::MainMoved(format!("merge queue removed PR: {reason}"))
             } else if lower.contains("failed") || lower.contains("failure") {
