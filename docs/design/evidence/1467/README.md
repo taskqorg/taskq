@@ -2,6 +2,8 @@
 
 This candidate implements TW5–TW7 under the [owner's message-only answer](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6320097999). Native chats remain native, pending/launching requests refuse deletion, and #1464's attachment handoff deferral remains. No board write, worker cancellation, runtime fallback or permission change is added (R1/R9/R11/R12/R13, § 7).
 
+The owner [accepted M's seven-image layout and message-only scope](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821), reviewed at `bf2a6f2324cd4e6476ecc87ef38760b8cdeac7e1`. Combined #1465/#1466 and native workspace qualification remain separately gated work. Refreshed captures after rebasing retain that message scope; inherited operation-review changes are not qualified by this acceptance.
+
 ## Acceptance and retained protections
 
 | Item | Evidence and limits |
@@ -12,7 +14,7 @@ This candidate implements TW5–TW7 under the [owner's message-only answer](http
 | A4/A5 | Native deletion removes only an archived owner's request record, temporary write copy and owned setup folder. Questions lose local metadata and keep only a content-free suppression digest; the board stays authoritative. Request-ID digests prevent stale clients from launching deleted work again. Tests preserve source/native markers, refuse Windows junctions and prelaunch states, and verify owned-path absence. This is model/filesystem evidence, not a live Claude turn qualification. |
 | A6 | Real filesystem tests cover failed/partial deletion, fresh-store readback, archive aliases, metadata corruption, interrupted launch recovery and a late callback. The same setup lock serializes launch and deletion. Each Delete all item receives its request's verified outcome. Unix symlink coverage is retained in the same module but is not run by this Windows host. |
 | A7 | Archive, permanent delete, Close workspace and command history are separate controls. The browser checks keyboard Enter/Back/Escape, no resend/cancel/history-clear effects, unknown feedback and a narrow 20 px view. Request/answer receipts and drafts keep their existing adapter. |
-| A8 | The four browser images below show before/after, archive consent and narrow unknown/partial states. The instrument also checks the reachable last action and fixed navigation in a 360×640 window; the narrow review image uses 360×880 to frame all feedback. Native captures are separate; neither substitutes for native workspace qualification or owner visual acceptance. The combined seven-point review below records unfinished owning tasks explicitly. |
+| A8 | The four browser images below show before/after, archive consent and narrow unknown/partial states. The instrument also checks the reachable last action and fixed navigation in a 360×640 window; the narrow review image uses 360×880 to frame all feedback. Native captures are separate; the owner accepted this seven-image layout, while native workspace qualification remains separate. The combined seven-point review below records unfinished owning tasks explicitly. |
 
 ## Before and after
 
@@ -34,11 +36,11 @@ The local metadata writer refuses a `messages.tmp` left by a crash; it does not 
 | Owner point | Current result and owning task |
 |---|---|
 | 1 — navigation | #1463's shared fixed bar remains in both windows. Messages is a root with no cross-window Back. Message details use Back and restore the list's filter/focus. |
-| 2 — dialogue placement | #1464 supplies workspace requests and task answers. Consequential operation reviews remain unfinished in #1465, observed doing during this review; this candidate does not move that task's controls. |
-| 3 — panels before tasks | #1466 owns the remaining compact panel/order work and was observed parked (`later`). Messages is added to the current Home surface; this is not acceptance of the final panel composition. |
+| 2 — dialogue placement | #1464 supplies workspace requests and task answers. Operation reviews now arrive from #1465 on main; their combined acceptance remains separately gated by the owner answer. This candidate retains those routes alongside messages. |
+| 3 — panels before tasks | #1466 owns the remaining compact panel/order work. Messages is added to the current Home surface; this is not acceptance of the final panel composition. |
 | 4 — other content | Messages and archive live in the workspace; native replies remain in Claude/Codex by the accepted scope. Existing Work sessions/Agent settings fallback screens still name the tray destination; this task does not implement those separate screens. |
 | 5 — messages/archive/delete | Implemented with stable identities, explicit unread/unknown handling, archive-any, archived list, permanent one/all deletion and the prelaunch refusal. |
-| 6 — whole-surface review | Source/route review completed; final combined visual/interaction acceptance remains open until #1465/#1466 integrate and the owner reviews the resulting surface. No synthetic fixture qualifies native workspace behavior. |
+| 6 — whole-surface review | Source/route review completed; M's seven-image layout is accepted; the owner explicitly kept combined #1465/#1466 visual/interaction acceptance separately gated. No synthetic fixture qualifies native workspace behavior. |
 | 7 — interaction consistency | Existing source option IDs and direct-answer semantics stay in the shared answer card. Message list selection is a labelled select; actions use ordinary buttons, with no selected-action styling. Keyboard and receipt behavior are covered by the bundled browser instruments. |
 
 ## Visual review set

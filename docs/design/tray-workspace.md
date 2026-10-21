@@ -43,3 +43,8 @@ Delete all reports each refused or incomplete item separately. Command history
 and composer drafts remain separate from these message records.
 The request's temporary write file is an owned record copy and is removed too;
 linked or unreadable paths refuse deletion rather than touching their targets.
+
+#1467's [visual and scope acceptance](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821)
+accepts M's seven-image layout and message-only outcome. Combined #1465/#1466
+acceptance and native workspace qualification remain separately gated work;
+this acceptance does not qualify those flows or remove #1464's attachment deferral.
