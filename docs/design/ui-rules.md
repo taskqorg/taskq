@@ -53,6 +53,10 @@ target height. CSS px, native pt and physical device pixels are not interchangea
 native scaling needs separate evidence. A square 32/44 target for every control
 below is an approved target clarification; implementation remains separate.
 
+The approved [app UI v2 profile](ui-rules-v2.md) extends these checks with shared
+navigation, interaction and state rules. This checklist keeps its IDs and the
+source-pinned baseline below; the v2 preservation map records every mapping.
+
 ## Checklist: 28 rules
 
 E = existing project/shared reference, used here as a check without redefining it.
