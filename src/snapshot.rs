@@ -26,12 +26,13 @@ pub struct ExecutionStatus {
 }
 
 /// Board identity and terminal evidence fence every advisory heartbeat observation.
+/// A host row counts within the project ttl (§ 3 lease); older reads unknown.
 fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[board::Issue], now:i64, ttl:i64)->Value {
     let mut status=ExecutionStatus {task,attempt:x.attempt,id:x.id,through:x.through,state:"unknown".into(),reason:"termination unconfirmed; status missing or stale; restore owning service".into()};
     let owners:Vec<_>=hosts.iter().filter(|h|h.trusted && h.title==format!("taskq host {}",x.host)).collect();
     let mut observed=None;
     if let [host]=owners[..] {
-        if (0..=ttl.min(60)).contains(&(now-host.updated)) {
+        if (0..=ttl).contains(&(now-host.updated)) {
             let rows=host.body.lines().filter_map(|l|l.strip_prefix("execution ")).map(|text| {
                 if text.len()>4096 {return Err("oversized execution status".to_string());}
                 serde_json::from_str::<ExecutionStatus>(text).map_err(|e|e.to_string())
@@ -368,4 +369,32 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
         },
     };
     (rt.to_string(), link)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exec() -> crate::core::Execution {
+        crate::core::Execution { id: 7, attempt: 5, through: 7, host: "win".into(), runtime: "codex".into(), accepted: true, release: None, usage_hold: None }
+    }
+
+    fn host(age: i64) -> board::Issue {
+        let row = r#"execution {"task":1,"attempt":5,"id":7,"through":7,"state":"running","reason":"turn running"}"#;
+        board::Issue { number: 9, title: "taskq host win".into(), body: format!("version 4\n{row}"), updated: 1000 - age, trusted: true, ..Default::default() }
+    }
+
+    #[test]
+    fn execution_row_within_ttl_reads_running() {
+        let v = execution_status(1, &exec(), &[host(90)], 1000, 300);
+        assert_eq!((v["state"].as_str(), v["observed"].as_i64()), (Some("running"), Some(910)));
+    }
+
+    #[test]
+    fn execution_row_older_than_ttl_reads_unknown() {
+        let v = execution_status(1, &exec(), &[host(301)], 1000, 300);
+        assert_eq!(v["state"], "unknown");
+        assert_eq!(v["reason"], "termination unconfirmed; status missing or stale; restore owning service");
+        assert!(v["observed"].is_null());
+    }
 }
