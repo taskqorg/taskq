@@ -4,7 +4,7 @@ Scope: measurement/calibration evidence is retained. Its legacy capacity_hosts/a
 
 Research for [#893](https://github.com/taskqorg/taskq/issues/893), plan batch 2 D03; input for WS5 host admission.
 Target: [dynamic resources](dynamic-resources.md) R2. Authority: [taskq.md](../../taskq.md) § 3, § 4, § 9 until WS5 ships.
-Budget rules: [specq performance](https://github.com/taskqorg/specq/blob/main/engineering/performance.md#budget).
+Budget rules: [specq performance](https://github.com/taskqorg/specq/blob/main/engineering/performance.md#budget). Every ceiling and budget below is a telemetry reference value ([observe, do not gate](https://github.com/taskqorg/specq/blob/main/engineering/performance.md#observe-do-not-gate)): never task acceptance, a merge gate or an owner ask. The § 3 load gate is host admission policy, not a performance gate.
 No code or contract change here; numbers are one host, one day, under real owner load.
 
 ## Environment
@@ -80,7 +80,7 @@ Memory, not CPU, blocks the default: with `memory_min` 15 the reopen level 20% w
 
 Measured per project service (`taskq service run`), six running on this host.
 
-| Resource | Measured | Ceiling | Behavior at the ceiling |
+| Resource | Measured | Reference value | Behavior at the reference value |
 |---|---|---|---|
 | CPU | 12–14 s CPU over 15 h (< 0.1% of one core); a board pass 0.2–1.5 s wall | 1% of one core, sustained | Pass rate is fixed by `poll` (60 s) and pokes; no extra work at load. Above it: lengthen `poll`, never skip heartbeats |
 | Memory | 4.3 MiB footprint, 8–10 MiB RSS; one board pass peak 2–3 MiB footprint | 64 MiB footprint | Not enforced today. Target: log it and re-exec (§ 8 restart path); children survive through `.taskq/kids` |
@@ -101,7 +101,7 @@ needs a named limit: attempt logs and `cli-errors.log` have none today. WS5 or a
 | Sampling | Read every 10 s, decide every 30 s, over 60 s old holds | Ten more reads per minute per service; six services read the same host, the shared WS5 authority should read once |
 | Launch spacing | One launch per 30 s host-wide, post-launch sample required | Ten queued tasks need at least 5 min to start; a worker's later build spike (to 1.24 GiB) is not predicted |
 | Startup | Held until three valid samples (90 s) | Service restart delays all launches by 90 s |
-| Service budget | CPU 1%, memory 64 MiB, descriptors 256, disk 1 GiB per project | Not enforced in 4.2; disk is the only resource near a real limit today |
+| Service budget | Reference values: CPU 1%, memory 64 MiB, descriptors 256, disk 1 GiB per project | Telemetry reference, not a gate; disk is the only resource near a real limit today |
 
 ## Limits of this study
 
