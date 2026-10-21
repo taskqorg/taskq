@@ -52,6 +52,7 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
     value["host"]=json!(x.host);value["runtime"]=json!(x.runtime);value["observed"]=json!(observed);value
 }
 
+#[derive(Default)]
 pub struct Row {
     pub n: u64,
     pub title: String,
@@ -93,9 +94,12 @@ pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, host
     }.then_some(age)
 }
 
+#[derive(Default)]
 pub struct Host {
     pub diagnostics: Value,
     pub name: String,
+    /// Heartbeat `service <id>` line (§ 4 step 3): the service that claims this host name.
+    pub service: Option<String>,
     pub version: String,
     pub updated: i64,
     /// `off` or `unknown` when the host admits nothing by focus (§ 4).
@@ -156,6 +160,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     let hosts = hosts.iter().map(|h| Host {
         diagnostics: crate::service_versions::read(&h.body,h.updated,observed,cfg.ttl as i64,false),
         name: h.title.trim_start_matches("taskq host ").to_string(),
+        service: h.body.lines().find_map(|l| l.strip_prefix("service ")).map(str::to_string),
         version: h.body.lines().find_map(|l| l.strip_prefix("version ")).unwrap_or("?").to_string(),
         updated: h.updated,
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),

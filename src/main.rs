@@ -1029,7 +1029,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
         }
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
-        if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()) };
+        if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), &local, at) { log!("{l}"); } }
         // docs/design/standalone-telemetry.md#remote-sync-1353: only under the telemetry grant, on its own thread
         if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
@@ -2739,7 +2740,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let telemetry = a.flags.contains_key("telemetry");
             if telemetry { println!("telemetry: {} (local telemetry rows; revoke with taskq enroll without --telemetry or taskq disconnect)", telemetry_sync::SCHEMA); }
             let conn = enrollment::pair(&cfg.install, url, &cfg.me, &board, !a.flags.contains_key("headless"), telemetry).map_err(|e| format!("pairing: {e}\nNext: rerun taskq enroll {url} and approve the new code"))?;
-            let (_, rec) = enrollment::record(&cfg.install, &snapshot::read(b, cfg, &c.raw, &[]), &conn)?;
+            // the CLI runs no runtime probe: login reads unknown until the service's next send
+            let local = enrollment::Local { host: cfg.me.clone(), service: enrollment::installation_id(&cfg.install).ok().map(|i| service_id(&i)), ttl: cfg.ttl.max(0) as u64, agents: Value::Null };
+            let (_, rec) = enrollment::record(&cfg.install, &snapshot::read(b, cfg, &c.raw, &[]), &conn, &local)?;
             match enrollment::first_receipt(&cfg.install, &rec, 15)? {
                 "projected" => println!("connected: {dest} workspace {} generation {}; first snapshot projected", conn["workspace"].as_str().unwrap_or("?"), conn["generation"]),
                 s => return Err(format!("approved, first snapshot {s}, not yet projected\nNext: taskq connection status")),
@@ -4412,8 +4415,9 @@ mod tests {
         snap.board["url"] = json!("https://user:forge-secret@github.com/o/r");
         let scope = BoardScope::new("github", "GITHUB.COM", "o/r").unwrap();
         let approved = [scope.clone()];
-        let a = project(&snap, &"a".repeat(64), &approved).unwrap();
-        let b = project(&snap, &"b".repeat(64), &approved).unwrap();
+        let local = enrollment::Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null };
+        let a = project(&snap, &"a".repeat(64), &approved, &local).unwrap();
+        let b = project(&snap, &"b".repeat(64), &approved, &local).unwrap();
         let got = serde_json::to_value(&a).unwrap();
         let want: Value = serde_json::from_str(include_str!("../tests/fixtures/enrollment-projection.json")).unwrap();
         assert_eq!(got, want);
@@ -4421,7 +4425,7 @@ mod tests {
         for omitted in ["forge-secret", "session", "labels", "title", "Which way?", "no login", "url", "hosts"] {
             assert!(!text.contains(omitted), "{omitted}");
         }
-        assert!(project(&snap, &"a".repeat(64), &[]).is_err());
+        assert!(project(&snap, &"a".repeat(64), &[], &local).is_err());
         assert_eq!(scope, BoardScope::new("github", "github.com", "O/R").unwrap());
         for (host, repo) in [("user:secret@github.com", "o/r"), ("github.com", "o/../r"), ("github.com", "o/r?token=x")] {
             assert!(BoardScope::new("github", host, repo).is_err());
@@ -4437,7 +4441,7 @@ mod tests {
         }
         assert_eq!(coalesce(&[], &approved, 100, 10)[0]["freshness"], "missing");
         snap.reason = Some("forge-secret and private path".into());
-        let incomplete = project(&snap, &"a".repeat(64), &approved).unwrap();
+        let incomplete = project(&snap, &"a".repeat(64), &approved, &local).unwrap();
         let rows = coalesce(&[incomplete.clone()], &approved, 100, 10);
         assert_eq!(rows[0]["complete"], false);
         assert_eq!(rows[0]["reason"], "source incomplete");
@@ -4446,10 +4450,10 @@ mod tests {
         assert_eq!(rows[0]["reason"], "conflicting observations");
         assert!(rows[0]["observation"].is_null());
         snap.observed = 90;
-        let old = project(&snap, &"a".repeat(64), &approved).unwrap();
+        let old = project(&snap, &"a".repeat(64), &approved, &local).unwrap();
         assert_eq!(coalesce(&[a, old], &approved, 100, 10)[0]["totals"], got["totals"]);
         let other = BoardScope::new("gitlab", "gitlab.com", "o/r").unwrap();
-        assert!(project(&snap, &"a".repeat(64), &[other.clone()]).is_err());
+        assert!(project(&snap, &"a".repeat(64), &[other.clone()], &local).is_err());
         assert_eq!(coalesce(&[], &[scope, other], 100, 10).len(), 2);
     }
 

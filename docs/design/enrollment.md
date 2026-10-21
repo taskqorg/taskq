@@ -44,3 +44,15 @@ Prove an independently installed product can enroll, show a real matching snapsh
 | E10 UI | DashQ page; not TaskQ | — |
 
 A worker cannot write `<install>` under the § 8 Access profile, so live enrollment runs from the owner's shell, a Full grant or a disposable `TASKQ_INSTALL`.
+
+## Contract detail
+
+Host observations (#1507) for the DashQ host-first view: every `taskq-board/1` snapshot carries `observations`, one object per `(host, kind)` with kind `online`, `login` or `queue`. Scope is the approved board plus the host name; a host is any host with a § 4 heartbeat plus the sending host. DashQ reads these objects and never infers a host state from activity, silence, missing rows or board totals. Each object names `producer` (the 12-hex service id of the heartbeat for `online`, else the sender's; null when unknown), `observed` (Unix seconds of the board read for `online`/`queue`, of the runtime probe for `login`), `valid_until`, `state`, `complete` and a fixed `reason` (null when complete).
+
+| Kind | Producer, time, validity | States and cases |
+|---|---|---|
+| `online` | heartbeat service; board read time; `observed + ttl`; also `heartbeat` (its update time) | `online`: heartbeat age ≤ ttl. `offline`: older. `unknown`: no heartbeat or unknown time. Partial: heartbeat without a `service` line, `complete` false, reason `no service identity` |
+| `queue` | sender service; board read time; `observed + ttl`; counts `running` (doing/review attempts whose session names the host) and `queued` (ready/waiting tasks labelled `host-<name>`) | `busy`: running > 0. `idle`: none running (`queued` may be > 0). `unknown`: incomplete board read, counts null. Partial: over 256 tasks, `complete` false, reason `task limit` |
+| `login` | sending host only; probe time; `observed + 600`; one key per runtime with `logged in`, `not logged in`, `not installed` or `unknown` | `logged in`: no runtime is logged out. `not logged in`: one is logged out, or none is installed. `unknown`: no probe yet. Partial: a runtime reads unknown, `complete` false, reason `runtime login unknown` |
+
+Other hosts' logins come from their own installations. The reader (`enrollment::current`, used by `coalesce`) keeps the latest object per `(host, kind)` across installations of the board. A kind missing for a known host reads `unknown`, reason `no observation`. An object past `valid_until`, or without one, reads `unknown`, reason `expired`, counts null and runtime logins `unknown`. Missing or expired is never `online`, `logged in` or `idle`. Fixture: `tests/fixtures/host-observations.json` (test `host_observations_match_the_fixture`).
