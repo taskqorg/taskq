@@ -802,7 +802,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut native_checked:Option<Instant>=None;
     let mut native_requested:Option<Instant>=None;
     let mut native_legacy:Res<Vec<String>>=Err("native legacy inventory pending; host admission held".into());
-    let mut maintenance_result=String::new();
+    let mut maintenance_result:[String;2]=Default::default();
     let mut upgrade_report:Option<bool>=None;
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
@@ -947,7 +947,7 @@ pub fn run(install: &Path) -> Res<()> {
             let updated=h.updating.take().unwrap().join().unwrap_or_else(|_|Err("host maintenance panicked; partial effects unknown".into()));
             if let Ok(Maintenance::Inventory(result))=&updated {native_legacy=result.clone();native_checked=Some(Instant::now());}
             let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Ok(Maintenance::Inventory(Ok(names)))=>format!("native legacy inventory: {} unit(s)",names.len()),Ok(Maintenance::Inventory(Err(e)))=>format!("native legacy inventory unknown: {e}"),Err(e)=>format!("maintenance: {e}")};
-            if maintenance_result!=text {log_all(install,&roots,&text);maintenance_result=text;}
+            if maintenance_once(&mut maintenance_result,matches!(updated,Ok(Maintenance::Inventory(_))),&text) {log_all(install,&roots,&text);}
             if crate::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
@@ -1216,6 +1216,16 @@ impl Registry {
     }
 }
 
+/// #1419: inventory and update results alternate, so each kind keeps its own last line; a failed candidate
+/// selftest logs once per version, not again for each pass's varying flush counts.
+fn maintenance_once(last:&mut [String;2],inventory:bool,text:&str)->bool {
+    let last=&mut last[usize::from(inventory)];
+    let key=|t:&str|t.find(" selftest failed").unwrap_or(t.len());
+    let changed=last[..key(last)]!=text[..key(text)];
+    if changed {text.clone_into(last);}
+    changed
+}
+
 /// Compare all copies before any write. The durable plan is a configuration backup, never task state (R1).
 #[cfg(test)]
 pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {migrate_for_hostname(install,roots,&crate::hostname())}
@@ -1418,6 +1428,17 @@ mod tests {
         mirror(&install,&roots,"next",None);
         assert_eq!(fs::read_to_string(&stderr).unwrap().matches("next").count(),1);
         fs::remove_dir_all(&install).unwrap();
+    }
+
+    // Defect #1419: the failed 4.6.26 selftest line, alternating with inventory, was logged every pass.
+    #[test]
+    fn failed_selftest_logs_once_per_version() {
+        let mut last=Default::default();
+        let fail=|v:&str,n:u8|format!("maintenance: {v} selftest failed: Error: telemetry: FAIL telemetry flush unacknowledged (accepted {n} inflight {n})");
+        let passes=[(false,fail("4.6.26",3)),(true,"native legacy inventory: 0 unit(s)".into()),(false,fail("4.6.26",4)),
+            (true,"native legacy inventory: 0 unit(s)".into()),(false,fail("4.6.27",3)),(false,"update: up to date".into()),(false,"update: up to date".into())];
+        let logged:Vec<_>=passes.iter().filter(|(inventory,text)|maintenance_once(&mut last,*inventory,text)).map(|(_,t)|t.as_str()).collect();
+        assert_eq!(logged,[fail("4.6.26",3).as_str(),"native legacy inventory: 0 unit(s)",&fail("4.6.27",3),"update: up to date"]);
     }
 
     // A stable owner identity must not cache policy changes or hide an interrupted write.

@@ -16,9 +16,26 @@ fn main() {
         return;
     }
     let install = platform::default_install();
-    let maintenance=Args::parse(&std::env::args().skip(1).collect::<Vec<_>>()).is_ok_and(|a|a.pos==["profile","migrate"]);
-    let _telemetry = (!maintenance).then(||telemetry::install_capture(&install)).transpose()
+    let args=Args::parse(&std::env::args().skip(1).collect::<Vec<_>>());
+    let maintenance=args.as_ref().is_ok_and(|a|a.pos==["profile","migrate"]);
+    // #1419: the release updater runs a staged candidate's offline selftest beside the old release's live writer;
+    // a slow old writer must not refuse the candidate that replaces it, so the candidate qualifies a private store.
+    let staged=std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some()&&args.as_ref().is_ok_and(|a|a.pos==["selftest"]);
+    let private=staged.then(||std::env::temp_dir().join(format!("taskq-selftest-{}",std::process::id())));
+    // The process-global writer keeps the store open until exit, and Windows cannot remove an open file:
+    // each staged selftest sweeps the stores of earlier ones whose process has exited.
+    if staged && let Ok(entries)=std::fs::read_dir(std::env::temp_dir()) {
+        for entry in entries.flatten() {
+            let name=entry.file_name();
+            let Some(pid)=name.to_str().and_then(|n|n.strip_prefix("taskq-selftest-")).and_then(|p|p.parse::<u32>().ok()) else {continue};
+            if pid!=std::process::id()&&matches!(coreq::process::identity(pid),Ok(None)) {let _=std::fs::remove_dir_all(entry.path());}
+        }
+    }
+    let _telemetry = (!maintenance).then(||telemetry::install_capture(private.as_deref().unwrap_or(&install))).transpose()
         .map_err(|e| {let _=writeln!(std::io::stderr(),"Telemetry: unknown ({e})");}).ok();
     if let Some(reason)=telemetry::handover() {let _=writeln!(std::io::stderr(),"Telemetry: same-store compatibility budget ({reason})");}
     application();
+    // ponytail: a failed selftest exits inside application() and keeps its private store for diagnosis;
+    // on Windows this removal fails while the writer is open, and the next staged selftest sweeps it.
+    if let Some(private)=private {drop(_telemetry);let _=std::fs::remove_dir_all(private);}
 }

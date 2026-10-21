@@ -173,7 +173,7 @@ Historical import uses coreq's deterministic source-position identities and atom
 
 The shared store now bounds database/WAL/SHM files independently of retained JSON bytes. It rejects a new mutation behind a pinned WAL reader and reports allocation through storage(). This qualifies the shared store only: the v4.5.0 archive plus the draft store still need consolidation and a total transition-budget check before release.
 
-The local-capture selftest requires the installed collector to flush committed observations with no collection loss. An absent, empty or failed collector makes selftest fail. Ordinary commands keep their outcomes. This local barrier does not prove UI coverage, global ingestion, other hosts or queue readiness.
+The local-capture selftest requires the installed collector to flush committed observations with no collection loss. An absent, empty or failed collector makes selftest fail. Ordinary commands keep their outcomes. The offline selftest (`TASKQ_SELFTEST_OFFLINE`, which the release updater runs on a staged candidate) qualifies the candidate's collector in a private temporary store removed on success: the running writer belongs to the release being replaced, and its latency must not refuse its own replacement (#1419). That run neither reads nor writes the installation store; the host status reports the running writer. This local barrier does not prove UI coverage, global ingestion, other hosts or queue readiness.
 
 ### Native render regression gate
 
