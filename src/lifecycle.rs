@@ -115,7 +115,8 @@ fn active(state:&resources::State)->Res<Option<Pending>> {
 pub fn pending(install:&Path)->Res<Option<Pending>> {resources::try_with(install,|state|active(state))}
 
 pub fn registry_guard(install:&Path)->Res<()> {
-    if let Some(p)=pending(install)? {return Err(format!("host lifecycle {} pending; project registry unchanged",p.id()));}
+    // #1415: install takes this guard once; a brief holder must not fail it.
+    if let Some(p)=resources::within(install,resources::WAIT,|state|active(state))? {return Err(format!("host lifecycle {} pending; project registry unchanged",p.id()));}
     Ok(())
 }
 

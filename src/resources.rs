@@ -138,9 +138,47 @@ pub(crate) fn save(install: &Path, s: &State) -> Res<()> {
 }
 
 /// The host lock, held until the file drops: resource writes and changes of the DashQ connection take turns under it.
-fn lock(install: &Path) -> Res<coreq::file_lock::Lock> {
+fn lock(install: &Path) -> Res<Held> {
     fs::create_dir_all(dir(install)).map_err(|e| format!("resources: {e}"))?;
-    coreq::file_lock::lock(&dir(install).join("lock")).map_err(|e|format!("resources lock: {e}"))
+    coreq::file_lock::lock(&dir(install).join("lock")).map(|l|Held::new(l,install)).map_err(|e|format!("resources lock: {e}"))
+}
+
+/// The host lock with its holder's pid in `lock.holder`, removed before release, so a waiter can name it (#1415).
+/// A sibling file: Windows locks are mandatory, so no other process can read the lock file itself.
+pub(crate) struct Held(coreq::file_lock::Lock, PathBuf);
+impl Held {
+    fn new(lock: coreq::file_lock::Lock, install: &Path) -> Self {
+        let holder = dir(install).join("lock.holder");
+        let _ = fs::write(&holder, std::process::id().to_string());
+        Held(lock, holder)
+    }
+}
+impl Drop for Held {
+    fn drop(&mut self) { let _ = fs::remove_file(&self.1); }
+}
+
+/// Install receipts and the DashQ resources send wait this long for a brief holder (#1415).
+#[cfg(not(test))] pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(test)] pub(crate) const WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The host lock within `wait` (zero: one try); a timeout names the holder pid when `lock.holder` records one.
+fn acquire(install: &Path, wait: std::time::Duration) -> Res<Held> {
+    poll(install, wait).map_err(|e| {
+        let holder = fs::read_to_string(dir(install).join("lock.holder")).ok().and_then(|s| s.trim().parse::<u32>().ok()).map_or("holder unknown".into(), |pid| format!("held by pid {pid}"));
+        format!("resources lock unavailable: {e}; waited {} ms, {holder}", wait.as_millis())
+    })
+}
+fn poll(install: &Path, wait: std::time::Duration) -> Result<Held, fs::TryLockError> {
+    fs::create_dir_all(dir(install)).map_err(fs::TryLockError::Error)?;
+    let until = std::time::Instant::now() + wait;
+    // ponytail: 50 ms polling of a non-blocking lock; a blocking lock with OS timeout if contention ever matters
+    loop {
+        match coreq::file_lock::try_lock(&dir(install).join("lock")) {
+            Ok(lock) => return Ok(Held::new(lock, install)),
+            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(50)),
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 /// `f` changes the DashQ connection under the host lock (`taskq disconnect`), so it never lands between an
@@ -155,7 +193,7 @@ pub fn locked<T>(install: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
 pub struct Fenced<W> {
     wire: W,
     install: PathBuf,
-    held: Option<coreq::file_lock::Lock>,
+    held: Option<Held>,
 }
 
 impl<W: Wire> Fenced<W> {
@@ -191,16 +229,10 @@ pub(crate) fn with<T>(install: &Path, f: impl FnOnce(&mut State) -> Res<T>) -> R
 
 /// `with`, but waits at most `wait` for the host lock; `Ok(None)`: another writer held it, nothing read or written.
 pub(crate) fn with_within<T>(install:&Path,wait:std::time::Duration,f:impl FnOnce(&mut State)->Res<T>)->Res<Option<T>> {
-    fs::create_dir_all(dir(install)).map_err(|e|format!("resources: {e}"))?;
-    let until=std::time::Instant::now()+wait;
-    // ponytail: 50 ms polling of a non-blocking lock; a blocking lock with OS timeout if contention ever matters
-    let _lock=loop {
-        match coreq::file_lock::try_lock(&dir(install).join("lock")) {
-            Ok(lock)=>break lock,
-            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now()<until=>std::thread::sleep(std::time::Duration::from_millis(50)),
-            Err(fs::TryLockError::WouldBlock)=>return Ok(None),
-            Err(fs::TryLockError::Error(e))=>return Err(format!("resources lock: {e}")),
-        }
+    let _lock=match poll(install,wait) {
+        Ok(lock)=>lock,
+        Err(fs::TryLockError::WouldBlock)=>return Ok(None),
+        Err(fs::TryLockError::Error(e))=>return Err(format!("resources lock: {e}")),
     };
     let mut s=read(install)?;let before=s.clone();let r=f(&mut s);
     if s!=before {save(install,&s)?;}
@@ -208,15 +240,15 @@ pub(crate) fn with_within<T>(install:&Path,wait:std::time::Duration,f:impl FnOnc
 }
 
 /// Host/UI observers retry on a later tick; they must not wait behind a policy writer.
-pub(crate) fn try_with<T>(install:&Path,f:impl FnOnce(&mut State)->Res<T>)->Res<T> {
-    try_locked(install,|| {
-        let mut state=read(install)?;let before=state.clone();let result=f(&mut state);
-        if state!=before {save(install,&state)?;}result
-    })
+pub(crate) fn try_with<T>(install:&Path,f:impl FnOnce(&mut State)->Res<T>)->Res<T> {within(install,std::time::Duration::ZERO,f)}
+/// `try_with` for commands that cannot retry on a later tick: waits at most `wait` (#1415).
+pub(crate) fn within<T>(install:&Path,wait:std::time::Duration,f:impl FnOnce(&mut State)->Res<T>)->Res<T> {
+    let _lock=acquire(install,wait)?;
+    let mut state=read(install)?;let before=state.clone();let result=f(&mut state);
+    if state!=before {save(install,&state)?;}result
 }
 pub(crate) fn try_locked<T>(install:&Path,f:impl FnOnce()->Res<T>)->Res<T> {
-    fs::create_dir_all(dir(install)).map_err(|e|format!("resources: {e}"))?;
-    let _lock=coreq::file_lock::try_lock(&dir(install).join("lock")).map_err(|e|format!("resources lock unavailable: {e}"))?;
+    let _lock=acquire(install,std::time::Duration::ZERO)?;
     f()
 }
 
@@ -855,7 +887,7 @@ pub fn projection(install: &Path, now: u64, wait: bool) -> Res<Value> {
         }
         Ok(())
     };
-    if wait { with(install, body) } else { try_with(install, body) }?;
+    if wait { with(install, body) } else { within(install, WAIT, body) }?;
     Ok(json!({"schema": SCHEMA, "observed_at": observed.flatten(), "targets": targets}))
 }
 
@@ -1685,7 +1717,7 @@ mod tests {
         fs::write(crate::dot(&t.root).join("status.json"), json!({"at": 110, "host": crate::host::Policy::read(&t.install).unwrap().me, "capacity": {"project_revision": rev, "project_limits": {"codex": 1}}}).to_string()).unwrap();
         let codex = |r: &Value| r["payload"]["targets"].as_array().unwrap().iter().find(|x| x["target"]["runtime_id"] == "codex").unwrap().clone();
         let deliver = |recs: &[Value], wire: &mut Ingest| coreq::enroll::deliver(&enrollment::dir(&t.install), recs, &mut Default::default(), wire);
-        locked(&t.install, || Ok(assert!(enrollment::resources_record(&t.install, &a, 111).unwrap_err().contains("lock unavailable"), "the service pass never waits behind a writer"))).unwrap();
+        locked(&t.install, || Ok(assert!(enrollment::resources_record(&t.install, &a, 111).unwrap_err().contains("lock unavailable"), "the sender waits only a bounded time behind a writer"))).unwrap();
         // fresh: the effective revision and limit come from this host's status
         let (_, fresh) = enrollment::resources_record(&t.install, &a, 111).unwrap();
         assert_eq!((&codex(&fresh)["effective_revision"], &codex(&fresh)["effective_policy"]), (&rev, &json!({"runtime_limit": 1})));

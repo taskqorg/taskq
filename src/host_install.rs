@@ -80,7 +80,7 @@ fn binding(p:&Pending)->Value {
     bound
 }
 fn retained(install:&Path,p:&Pending)->Res<Value> {
-    crate::resources::try_with(install,|state| {
+    crate::resources::within(install,crate::resources::WAIT,|state| {
         let op=state.ops.get(&p.id).ok_or("original installation receipt missing; transition held")?;
         if op.bound!=binding(p) {return Err("original installation receipt binding changed; transition held".into());}
         Ok(checked_receipt(op)?.clone())
@@ -89,7 +89,7 @@ fn retained(install:&Path,p:&Pending)->Res<Value> {
 fn record(install:&Path,p:&Pending,phase:&str)->Res<()> {
     let command=CommandReceipt::decode(&p.command)?;
     let bound=binding(p);
-    crate::resources::try_with(install,|state| {
+    crate::resources::within(install,crate::resources::WAIT,|state| {
         let mut receipt=match state.ops.get(&p.id) {
             Some(op) if op.bound==bound=>{
                 let receipt=checked_receipt(op)?;
@@ -115,7 +115,7 @@ fn record(install:&Path,p:&Pending,phase:&str)->Res<()> {
     Ok(())
 }
 fn retain_reason(install:&Path,p:&Pending,reason:&str)->Res<()> {
-    crate::resources::try_with(install,|state| {
+    crate::resources::within(install,crate::resources::WAIT,|state| {
         let op=state.ops.get_mut(&p.id).ok_or("installation receipt unavailable")?;
         if op.bound!=binding(p) {return Err("installation reason belongs to another command".into());}
         checked_receipt(op)?;
@@ -125,7 +125,7 @@ fn retain_reason(install:&Path,p:&Pending,reason:&str)->Res<()> {
 
 fn record_legacy(install:&Path,p:&Pending,phase:&str)->Res<()> {
     let owner=&p.legacy.as_ref().ok_or("installation has no legacy scope")?.owner;
-    crate::resources::try_with(install,|state| {
+    crate::resources::within(install,crate::resources::WAIT,|state| {
         let op=state.ops.get_mut(&p.id).ok_or("legacy installation receipt missing")?;
         if op.bound!=binding(p) {return Err("legacy receipt belongs to another command".into());}
         let receipt=checked_receipt(op)?;
@@ -136,7 +136,7 @@ fn record_legacy(install:&Path,p:&Pending,phase:&str)->Res<()> {
 
 fn legacy_proven(install:&Path,p:&Pending,phase:&str)->Res<bool> {
     let owner=&p.legacy.as_ref().ok_or("installation has no legacy scope")?.owner;
-    crate::resources::try_with(install,|state| {
+    crate::resources::within(install,crate::resources::WAIT,|state| {
         let op=state.ops.get(&p.id).ok_or("legacy installation receipt missing")?;
         if op.bound!=binding(p) {return Err("legacy receipt belongs to another command".into());}
         let receipt=checked_receipt(op)?;
@@ -168,7 +168,7 @@ for phase in ["received","applied","observed","failed"] {
 }
 
 pub fn installation_status(install:&Path,id:Option<&str>)->Value {
-    crate::resources::try_with(install,|state| {
+    crate::resources::within(install,crate::resources::WAIT,|state| {
         let op=if let Some(id)=id {state.ops.get(id).filter(|op|op.bound.get("local_install").is_some())}
             else {
                 let latest=state.ops.values().filter(|op|op.bound.get("local_install").is_some()).max_by_key(|op|op.saved_at);
@@ -590,7 +590,7 @@ fn receive_initial(install:&Path,p:&mut Pending)->Res<()> {
     if saved.phase!="initial"||saved.id!=p.id||saved.command!=p.command||binding(&saved)!=binding(p) {
         return Err("original initial installation intent not committed; held".into());
     }
-    let exists=crate::resources::try_with(install,|state|Ok(state.ops.contains_key(&p.id)))?;
+    let exists=crate::resources::within(install,crate::resources::WAIT,|state|Ok(state.ops.contains_key(&p.id)))?;
     if !exists {record(install,p,"received")?;}
     if retained(install,p)?["state"]!="queued" {return Err("initial installation intent has an incompatible receipt; held".into());}
     p.phase=if p.attach {"owned"}else{"prepared"}.into();save(install,p)
@@ -644,7 +644,7 @@ fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,own
         p
     };
     if service["fresh"]==true&&service["version"]==p.version {return Ok(None);}
-    if !crate::resources::try_with(install,|state|Ok(state.ops.contains_key(&p.id)))? {record(install,&p,"received")?;}
+    if !crate::resources::within(install,crate::resources::WAIT,|state|Ok(state.ops.contains_key(&p.id)))? {record(install,&p,"received")?;}
     if retained(install,&p)?["state"]!="queued" {return Err("upgrade intent has an incompatible receipt; held".into());}
     if tool.version!=p.version {return Err(format!("an upgrade to {} is pending; repeat service install with that build",p.version));}
     if tool.current().as_deref()!=Some(tool.version) {crate::platform::activate_install(tool)?;}
@@ -1146,7 +1146,19 @@ mod tests {
         let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
         assert!(!reason.contains("live work hands over")&&reason.contains(&p.id),"{reason}");
         assert!(stale_upgrade(&install,true).unwrap().contains("repeat service install"));
+        // #1415: another host writer holding the resources lock delays the re-exec'd host's receipt instead of failing it;
+        // one held past the bound is refused with the holder named.
+        let hold=|release:std::sync::mpsc::Receiver<()>| {
+            let (held,ready)=std::sync::mpsc::channel();let install=install.clone();
+            let writer=std::thread::spawn(move ||crate::resources::locked(&install,|| {held.send(()).unwrap();release.recv().unwrap();Ok(())}).unwrap());
+            ready.recv().unwrap();writer
+        };
+        let (release,receive)=std::sync::mpsc::channel();let writer=hold(receive);
+        let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
+        assert!(reason.starts_with("resources lock unavailable:")&&reason.contains(&format!("held by pid {}",std::process::id())),"{reason}");
+        let late=std::thread::spawn(move ||{std::thread::sleep(std::time::Duration::from_millis(300));release.send(()).unwrap();});
         let adopted=adopt_upgrade(&install,&root,crate::platform::VERSION).unwrap().unwrap();
+        late.join().unwrap();writer.join().unwrap();
         assert_eq!((adopted.id.as_str(),adopted.command.as_str()),(p.id.as_str(),p.command.as_str()),"the attach continues the same command");
         fs::remove_file(install.join(UPGRADE_INTENT)).unwrap();
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None,"attach-only: an equal host is not upgraded");
