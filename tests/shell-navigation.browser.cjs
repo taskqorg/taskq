@@ -33,6 +33,17 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   await page.locator('.breadcrumbs [data-route=fixture-alpha]').click();
   assert.equal(await page.locator('h1').innerText(),'Alpha');
   assert.equal(await page.locator('.breadcrumbs').innerText(),'Projects');
+  // V23/V26: notification labels must fit in both host and project toggle groups.
+  await page.evaluate(s=>taskq.receive({...s,notify:{...s.notify,projects:{[s.projects[0].root]:Object.fromEntries(['ask','close','failed','gone'].map(k=>[k,[null,'off']]))}}}),snapshot);
+  await page.locator('details[data-view-key^="notifications:"]').evaluate(e=>e.open=true);
+  for(const route of [project.root,'notifications']){
+   if(route==='notifications')await page.evaluate(s=>taskq.receive({...s,page:'notifications'}),snapshot);
+   for(const font of [14,16,18,20,40]){
+    await page.locator('.menu').evaluate((e,font)=>e.style.fontSize=font+'px',font);
+    const clipped=await page.locator('[data-a=notify]').evaluateAll(es=>es.filter(e=>e.checkVisibility()&&e.scrollWidth>e.clientWidth+1).map(e=>({text:e.textContent,overflow:e.scrollWidth-e.clientWidth})));
+    assert.deepEqual(clipped,[],`V23/V26: ${route} notification labels clip at ${font}px`);
+   }
+  }
   assert.deepEqual(errors,[]);
   await page.close();
   console.log('PASS G01/G02: fixed Back and reachable Back/Close at 320px / 200% text');
