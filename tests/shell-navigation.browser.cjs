@@ -57,7 +57,7 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   await tray.evaluate(()=>taskq.receive({workspaceError:null}));assert.equal(await tray.locator('[role=alert]').count(),0,'successful workspace retry clears its construction error');
   await tray.locator('[data-route=projects]').first().focus();await tray.locator('[data-route=projects]').first().click();
   await tray.locator('[data-a=back]').click();assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
-  await tray.locator('.shell-overflow > summary').click();await tray.locator('[data-route=settings]').click();
+  await tray.locator('.shell-overflow > summary').click();await tray.locator('.shell-overflow [data-route=settings]').click();
   await tray.locator('[data-route=appearance]').click();assert.equal(await tray.locator('.breadcrumbs').innerText(),'Settings','TW1: omit the current settings page from breadcrumbs');
   assert.equal(await tray.locator('.breadcrumbs a').count(),1,'TW1: each ancestor segment stays linked');
   await tray.locator('[data-a=back]').click();assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'appearance');

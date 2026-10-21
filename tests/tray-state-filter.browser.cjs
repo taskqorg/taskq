@@ -38,7 +38,7 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   await counter('held').click();assert.equal(await rows(),0,'Held is its own filter');
   assert.doesNotMatch(await page.locator('.content').innerText(),/Closed/,'#1476: no Closed counter or text');
   await counter('held').click();await counter('doing').click();await counter('review').click();
-  await page.locator('.filter-header [data-tqp="project"]').click();await page.locator('[data-a="back"]').click();assert.equal(await rows(),2);
+  await page.locator('.breadcrumbs [data-route="/fixture/alpha"]').click();await page.locator('[data-a="back"]').click();assert.equal(await rows(),2);
   const shot=async name=>{if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/'+name+'.png'});}};
   for(const width of [320,360])for(const font of [16,20])for(const theme of ['light','dark']){
     await page.setViewportSize({width,height:760});await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
