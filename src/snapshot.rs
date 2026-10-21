@@ -63,6 +63,8 @@ pub struct Row {
     /// An unresolved external execution blocks the next submission even after a task state change.
     pub execution_wait: Option<String>,
     pub executions: Vec<Value>,
+    /// The runtime accepted input of the current attempt (`accepted` entry): a codex id `-` then reads running, not starting.
+    pub accepted: bool,
     /// `Depends on` issues that keep it waiting (§ 1).
     pub deps: Vec<service::Blocker>,
     /// Text of the last trusted `failed` entry.
@@ -122,6 +124,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
                 && x.release == Some(crate::core::Release::Exit) && !x.accepted)
                 .map(|x| format!("execution {} on {}: input acceptance unknown; reconcile native input", x.id, x.host))),
         executions,
+        accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| s.starts_with("claude:")))
@@ -364,6 +367,7 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
     }
     let host = cell(host);
     let link = match rt {
+        _ if id == "-" && r.accepted => format!("{host}: running"),
         _ if id == "-" => format!("{host}: starting"),
         "claude" => runtime::claude_remote(&id).filter(|_| host == cell(&cfg.me)).or_else(|| r.session_url.clone()).map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
         _ if std::env::var("TASKQ_CLIENT").as_deref() == Ok("codex") => format!("[{host}](codex://threads/{id})"),
@@ -386,6 +390,17 @@ mod tests {
     fn host(age: i64) -> board::Issue {
         let row = r#"execution {"task":1,"attempt":5,"id":7,"through":7,"state":"running","reason":"turn running"}"#;
         board::Issue { number: 9, title: "taskq host win".into(), body: format!("version 4\n{row}"), updated: 1000 - age, trusted: true, ..Default::default() }
+    }
+
+    #[test]
+    fn remote_codex_reads_starting_until_accepted() {
+        let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
+        let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, execution_wait: None,
+            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None };
+        let cfg = crate::tests::cfg();
+        assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
+        r.accepted = true;
+        assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: running");
     }
 
     #[test]
