@@ -79,7 +79,7 @@ The source column points to the canonical rule or the rationale for a proposal.
 | UI11 | E | No repeated identity, destination or counter group unless it adds distinct context; count duplicates on each route. | [D4/D9](https://github.com/taskqorg/specq/blob/d496acf9365edfe1c11132f363ae5aaa7573e1f6/design/operator-ui.md#principles) |
 | UI12 | E | Empty groups occupy zero rows; decisions and faults precede ordinary project lists. Check empty and failed fixtures. | [D-A7](operator-ui.md#acceptance), [D13](https://github.com/taskqorg/specq/blob/d496acf9365edfe1c11132f363ae5aaa7573e1f6/design/operator-ui.md#principles) |
 | UI13 | E | Task titles wrap from the block's full left edge; identifiers remain legible at 320/360 px with 180-character titles. | [D-A1/D-A4](operator-ui.md#acceptance), [native matrix](ui-acceptance.md#native-matrix) |
-| UI14 | E | Counter order stays stable; zero leaves no capsule; unknown remains labelled. Check 0/1/12/100/1000 and partial data. | [Counter acceptance](operator-ui.md#acceptance), [R6](../../taskq.md#r6-human-report) |
+| UI14 | E | Counter order stays stable; project summaries hide zero, task-list filter strips keep zero icons; unknown remains labelled. Check 0/1/12/100/1000 and partial data. | [Counter acceptance](task-counters.md#acceptance), [R6](../../taskq.md#r6-human-report) |
 | UI15 | E | Outer inset 8 px, row horizontal inset 4 px, related gaps 4–6 px; sections use 6 px separation and one 1 px divider. | [Geometry](visual-style.md#geometry-and-type) |
 | UI16 | E | Names and compact counter groups reuse aligned edges; 1/12/100 counts neither overlap nor stretch into unrelated whitespace. | [D2/D10](https://github.com/taskqorg/specq/blob/d496acf9365edfe1c11132f363ae5aaa7573e1f6/design/operator-ui.md#principles) |
 | UI17 | E | Text settings 14/16/18/20 apply throughout; secondary text ≥max(12 px, 0.85×base); icon size remains independent. | [Geometry](visual-style.md#geometry-and-type), [D-A3](operator-ui.md#acceptance) |
@@ -90,15 +90,14 @@ The source column points to the canonical rule or the rationale for a proposal.
 | UI22 | E | Missing, stale, failed and empty data remain distinguishable; unknown never renders as zero or healthy. | [R12](../../taskq.md#r12-unverified-means-unknown), [R6](../../taskq.md#r6-human-report) |
 | UI23 | E | Every effect shows pending, success by readback, failure and uncertain outcome; retry never silently duplicates it. | [M5](menu.md#m5-admission-and-lifecycle), [R4](../../taskq.md#r4-comments-move-the-queue) |
 | UI24 | P | Non-focus status updates are programmatically announced without moving focus. | [WCAG 4.1.3](https://www.w3.org/TR/WCAG22/#status-messages) |
-| UI25 | P | A Filter disclosure defaults closed; its summary shows selected states or All, including zero selections. The task list follows the header; opening reveals independent checkboxes; Space toggles one option without closing the group. No usage hint is shown. | [Checkbox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/checkbox/) |
-| UI26 | P | Select-all exposes unchecked/checked/mixed for zero/all/some selections; accessible and visual states agree. | [Checkbox pattern](https://www.w3.org/WAI/ARIA/apg/patterns/checkbox/) |
-| UI27 | P | Within state filters use OR; selected projects AND selected states. Zero selected states means no state restriction; Reset restores all. Fixture results equal those set operations. | [Predictable input](https://www.w3.org/TR/WCAG22/#on-input), [TaskQ filter scope](../../taskq.md#5-commands) |
+| UI25 | P | The top counter strip is the only state filter; no Filter disclosure or checkbox group. All eight states stay in order, zero is icon-only, unknown is `?`. Enter/Space toggles the focused capsule. | [K-A2/K-A6](task-counters.md#acceptance) |
+| UI26 | P | Selected capsules have a visible outline and `aria-pressed=true`; cleared capsules have `aria-pressed=false`. All tasks in the same wrapping row shows the deduplicated open total across projects, excluding closed tasks, and clears project/state restrictions to show each project with nonzero counters and its tasks. | [K-A6](task-counters.md#acceptance) |
+| UI27 | P | State capsule clicks set or clear selection; several states use OR within the current project scope. Zero selected states means no state restriction; Reset clears selection. Fixture results equal those set operations. | [TaskQ filter scope](../../taskq.md#5-commands) |
 | UI28 | P | Filters are view-only; show selected states and matching count; Back preserves selection; zero matches offers Reset. No queue/focus write occurs. | [M4](menu.md#m4-request-interpretation-and-applied-state), [R9](../../taskq.md#r9-no-silent-changes-to-model-effort-or-permissions) |
 
-UI27's set operations and empty-selection meaning are approved product targets, not
-prescriptions from WCAG. Existing counter clicks remain single-state shortcuts;
-multi-select will use a separate explicit control. No hidden change to admission
-focus, host capacity or board labels is proposed.
+UI25–UI28 use the owner decision in [#1438](https://github.com/taskqorg/taskq/issues/1438):
+counter toggles replace the separate checkbox group. Empty selection removes the
+state restriction. Admission focus, host capacity and board labels are unchanged.
 
 ## Observed menu findings
 
@@ -157,7 +156,7 @@ R13/Product adopts this checklist; [Menu](menu.md), [visual dimensions](visual-s
 and [UI acceptance](operator-ui.md) link to its TaskQ checks. Shared principles remain
 canonical in specq; the E rows are a review index, not replacement rules.
 
-This deliverable changes specifications only. Implementation must preserve existing
-counter shortcuts, queue policy and admission scope. Re-run the affected checks against
+The original #1348 deliverable changed specifications only. Later implementation follows
+the #1438 counter-toggle decision, preserving queue policy and admission scope. Re-run the affected checks against
 the implementation candidate and retain these failing baseline observations beside the
 new evidence. Native and accessibility acceptance remain separate under R12.

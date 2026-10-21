@@ -28,23 +28,24 @@ observation:function(projects){
       else if(counts.closed!==null)counts.closed+=values[0];
     }
     if(partial.size)for(const s of Object.keys(counts))counts[s]=null;
-    return {counts,partial:[...partial]};
+    return {counts,partial:[...partial],open:partial.size?null:[...rows.values()].filter(row=>row.state!=='closed').length};
   },
-counters:function(counts,project='',label='All projects',partial=[]){
+counters:function(counts,project='',label='All projects',partial=[],selected=null,open=null){
+    const total=Number.isSafeInteger(open)&&open>=0?open:'?';
     const items=states.map(([state,name,mark,kind])=>{
       const n=counts[state];
-      if(n===0)return '';
+      if(n===0&&selected===null)return '';
       const value=Number.isSafeInteger(n)&&n>=0?n:'?';
       const title=label+' · '+name+': '+(value==='?'?'unknown':value);
-      return '<button type="button" class="'+kind+'" data-tqp="tasks" data-project="'+esc(project)+'" data-state="'+state+'" aria-label="'+esc(title)+'" title="'+esc(title)+'">'+icon(mark)+' '+value+'</button>';
+      return '<button type="button" class="'+kind+'" data-tqp="tasks" data-project="'+esc(project)+'" data-state="'+state+'"'+(selected===null?'':' aria-pressed="'+selected.includes(state)+'"')+' aria-label="'+esc(title)+'" title="'+esc(title)+'">'+icon(mark)+(n===0?'':' '+value)+'</button>';
     }).join('');
-    return (partial.length?'<small class="tqp-partial" title="'+esc(partial.join(', '))+'">Partial: '+esc(partial.join(', '))+'</small>':'')+(items?'<div class="tqp-counts" aria-label="'+esc(label)+' counters">'+items+'</div>':'');
+    return (partial.length?'<small class="tqp-partial" title="'+esc(partial.join(', '))+'">Partial: '+esc(partial.join(', '))+'</small>':'')+(items?'<div class="tqp-counts" aria-label="'+esc(label)+' counters">'+items+(selected===null?'':'<button type="button" data-a="all-tasks" aria-label="All tasks: '+(total==='?'?'unknown':total)+' open" title="All projects · open tasks">All tasks '+total+'</button>')+'</div>':'');
   },
-summary:function(p){
+summary:function(p,selected=null,open=null){
     const o=observation([p]);
-    return '<section class="tqp tqp-project" aria-label="'+esc(p.name)+'"><div class="tqp-identity"><button type="button" data-tqp="project" data-project="'+esc(p.id)+'">'+icon(p.pinned?'pin':'folder')+' '+esc(p.name)+'</button>'+link(p.board.url,icon(p.board.kind)+' Board','Open '+p.name+' Board')+'</div>'+counters(o.counts,p.id,p.name,o.partial)+'</section>';
+    return '<section class="tqp tqp-project" aria-label="'+esc(p.name)+'"><div class="tqp-identity"><button type="button" data-tqp="project" data-project="'+esc(p.id)+'">'+icon(p.pinned?'pin':'folder')+' '+esc(p.name)+'</button>'+link(p.board.url,icon(p.board.kind)+' Board','Open '+p.name+' Board')+'</div>'+counters(o.counts,p.id,p.name,o.partial,selected,open)+'</section>';
   },
-aggregate:function(projects){const o=observation(projects);return '<section class="tqp" aria-label="All projects">'+counters(o.counts,'','All projects',o.partial)+'</section>';},
+aggregate:function(projects,selected=null){const o=observation(projects);return '<section class="tqp" aria-label="All projects">'+counters(o.counts,'','All projects',o.partial,selected,o.open)+'</section>';},
 // Short age since the last logged state change (taskq.md § 4 Tray): 5m, 2h, 3d.
 age:function(s){s=Math.max(0,s);return s<60?'<1m':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d';},
 task:function(p,row,global=false){

@@ -25,7 +25,7 @@
   "files": {
     "tests/fixtures/project-blocks.json": "48b22ee923e8acf8bd4620aef9696db7a0e3a8ee520335cf3a8a71f50617c760",
     "docs/design/visual-style.md": "a170804629cb87efa5f03c4a7029b8d77ef9fbb0cc7e80d019a4be9e9cf69e4c",
-    "src/project-blocks.js": "6db9a508474c5bc216dddb9b10d92d6d54fedf712cc1fbf10df6cac83d6b32d7",
+    "src/project-blocks.js": "0dda5821ff2af84e83502ba3c5a9f53d4a10d14e4ff55f0a679a197c1d314239",
     "docs/design/menu-next-variants.html": "2205510067e4d906e5d4fd9cf3c981575813e9a48cc0a6134682a3e9df928dfa",
     "src/project-blocks.LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
     "src/project-blocks.css": "1a2471d13a850a66eb3f8ea9f5745ad2fa3bad1ce67305173d17ba1ae2f0ca64"
