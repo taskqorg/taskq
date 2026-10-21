@@ -3,9 +3,11 @@
   "base": "0128d46faeb25b6c49cd7418582b25755f4f9f1a",
   "before": "2f6a2d2c9ac427f9687b64714bd2cfd21805773c",
   "native": {
-    "sourceCommit": "04c62745d5020b05703d7cf01552dc94bfce45f6",
-    "binarySha256": "18ed035d1d4ddb8616ecfc7712c44214995e1d72e57b974f9b06d548dad63b72",
-    "renderer": "macOS 27.0.1 arm64 WKWebView; project/icon and isolated Home fixtures"
+    "sourceCommit": "e9fcd8d17215c4ec1deaefbae72c2dfd849d5e11",
+    "binarySha256": "ccd42baf34e129a9833d1c30d142ccc20cbc5f6068e6ebcfe97cc9cb10e78193",
+    "renderer": "macOS 27.0.1 arm64 WKWebView; project/icon and isolated Home fixtures",
+    "homeSourceCommit": "04c62745d5020b05703d7cf01552dc94bfce45f6",
+    "captureNote": "README capture refreshed after Mac signing; Home uses the unchanged compiled UI source from codeCommit."
   },
   "files": {
     "Cargo.toml": "1dc80d9330cbeaafd3531b51dff607cc6e3940dfff17b4d0f88e2c2de978e8c6",
