@@ -1,26 +1,22 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "adbc33a530be41f3fe71547480bfdab706ac4da2",
-  "binarySha256": "9d0043e8b38fe8627680a0aee2bc63a8a93df49f0e68f3764f0480e50a3fcabb",
+  "sourceCommit": "bf6bcecd1c6d329afac94d398d9488a7249fca7d",
+  "binarySha256": "9610c802c61e1e50a0449ddd2730aa7643653ef78d9034f516262073975cbc3a",
   "environment": {
-    "os": "Windows-11-10.0.26300-SP0",
-    "arch": "AMD64",
-    "renderer": "WebView2 snapshot",
-    "profile": "cargo dev"
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "9edfc5d3980d7784a9354400200c3101a8b862a4",
-    "src/tray.html": "ff51188238994f862e91191b031d9c8f398638c3",
-    "src/tray-app.js": "c966c3ee6a0c557cf24fbd64d633f7031b43b239",
+    "src/tray.rs": "fa004a398a0346d94ea63553daf3354505011f7d",
+    "src/tray.html": "393c9f6da2dcf835deaa39822859a1e1c9c9d66d",
+    "src/tray-app.js": "3e2aa1035d20052949c9d407d5c2542015926c44",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
-    "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
-    "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
-    "src/workspace-entry.js": "4a0dc64f9d25fb8d9c4e945c1d74c2563a3a9e67",
-    "scripts/build-web.cjs": "1cdc726f88e8ed3ddaa50efb3550a5f48a0f0318",
+    "scripts/build-web.cjs": "d63c53206879c7a20163c2061f20a34ecb8a5e88",
     "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
-  "capture": "Isolated TASKQ_INSTALL from docs/shots/fixture.sh with Windows paths and fresh fixture mtimes; cargo dev artifact; dark images only; no service.",
+  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
     {
       "file": "../header.webp",
@@ -28,15 +24,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "a2eb05e5d60f02f6d5276ec7bae84f8eb9c18f1c6c785db45d92169c17521a1b"
+      "sha256": "ecefe976c428df5fc3c9738432cf7d1e7cd2d438fe9adc654e6cbe798d60acac"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "9807cc93603620effae86d32637179693305f6c3c3c4995abaadac2cd9f9d936"
-    },
-    {
-      "file": "popover-dark-workspace-16.png",
-      "sha256": "d24d9c69582ce2152c8be88a07702f60c55e1f7d80862a3140e47ef3817a2dc9"
+      "sha256": "97753e496f2926613548bd09cb81965fc3e4854bef77c81f946e36260070c19e"
     }
   ]
 }
