@@ -39,6 +39,10 @@
       "card": null,
       "question": null,
       "failed": null,
+      "controls": [
+        "stop",
+        "later"
+      ],
       "since": null,
       "stuck": false
     },
@@ -83,6 +87,10 @@
         }
       },
       "failed": null,
+      "controls": [
+        "stop",
+        "later"
+      ],
       "executions": [
         {
           "task": 2,
@@ -126,6 +134,10 @@
       "card": null,
       "question": null,
       "failed": null,
+      "controls": [
+        "stop",
+        "later"
+      ],
       "since": null,
       "stuck": false
     },
@@ -146,6 +158,9 @@
       "card": null,
       "question": null,
       "failed": "Reason: no login",
+      "controls": [
+        "retry"
+      ],
       "since": 8,
       "stuck": false
     }
