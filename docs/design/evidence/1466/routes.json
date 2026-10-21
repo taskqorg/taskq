@@ -1,0 +1,236 @@
+[
+  {
+    "route": "home",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Running agents\nHosts unknown: no observation\nReconcile counts\nAsk AI · new session…\nMessages…\n 45\nAll tasks 45\nAll states · 45 loaded\n Alpha\nBoard\n 45\n #1\nKeep navigation reachable while reading the full task title 0\n #2\nKeep navigation reachable while reading the full task title 1\n #3\nKeep navigation reachable while reading the full task title 2\n #4\nKeep navigation reachable while reading the full task title 3\n #5\nKeep navigation reachable while reading the full task title 4\n #6\nKeep navigation reachable while reading the full task title 5\n #7\nKeep navigation reachable while reading the full task title 6\n #8\nKeep navigation reachable while reading the full task title 7\n #9\nKeep navigation reachable while reading the full task title 8\n #10\nKeep navigation reachable while reading the full task title 9\n #11\nKeep navigation reachable while reading the full task title 10\n #12\nKeep navigation reachable while reading the full task title 11\n #13\nKeep navigation reachable while reading the full task title 12\n #14\nKeep navigation reachable while reading the full task title 13\n #15\nKeep navigation reachable while reading the full task title 14\n #16\nKeep navigation reachable while reading the full task title 15\n #17\nKeep navigation reachable while reading the full task title 16\n #18\nKeep navigation reachable while reading the full task title 17\n #19\nKeep navigation reachable while reading the full task title 18\n #20\nKeep navigation reachable while reading the full task title 19\n #21\nKeep navigation reachable while reading the full task title 20\n #22\nKeep navigation reachable while reading the full task title 21\n #23\nKeep navigation reachable while reading the full task title 22\n #24\nKeep navigation reachable while reading the full task title 23\n #25\nKeep navigation reachable while reading the full task title 24\n #26\nKeep navigation reachable while reading the full task title 25\n #27\nKeep navigation reachable while reading the full task title 26\n #28\nKeep navigation reachable while reading the full task title 27\n #29\nKeep navigation reachable while reading the full task title 28\n #30\nKeep navigation reachable while reading the full task title 29\n #31\nKeep navigation reachable while reading the full task title 30\n #32\nKeep navigation reachable while reading the full task title 31\n #33\nKeep navigation reachable while reading the full task title 32\n #34\nKeep navigation reachable while reading the full task title 33\n #35\nKeep navigation reachable while reading the full task title 34\n #36\nKeep navigation reachable while reading the full task title 35\n #37\nKeep navigation reachable while reading the full task title 36\n #38\nKeep navigation reachable while reading the full task title 37\n #39\nKeep navigation reachable while reading the full task title 38\n #40\nKeep navigation reachable while reading the full task title 39\n #41\nKeep navigation reachable while reading the full task title 40\n #42\nKeep navigation reachable while reading the full task title 41\n #43\nKeep navigation reachable while reading the full task title 42\n #44\nKeep navigation reachable while reading the full task title 43\n #45\nKeep navigation reachable while reading the full task title 44\nProjects\nAppearance"
+  },
+  {
+    "route": "projects",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": " 45\nAll tasks 45\n Alpha\nBoard\n 45\nObservation only: focus off\nYou asked: not recorded\nAdd project in workspace…"
+  },
+  {
+    "route": "fixture-alpha",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": " 45\nObservation only: focus off\nReady\n45\n #1\nKeep navigation reachable while reading the full task title 0\n #2\nKeep navigation reachable while reading the full task title 1\n #3\nKeep navigation reachable while reading the full task title 2\n #4\nKeep navigation reachable while reading the full task title 3\n #5\nKeep navigation reachable while reading the full task title 4\n #6\nKeep navigation reachable while reading the full task title 5\n #7\nKeep navigation reachable while reading the full task title 6\n #8\nKeep navigation reachable while reading the full task title 7\n #9\nKeep navigation reachable while reading the full task title 8\n #10\nKeep navigation reachable while reading the full task title 9\n #11\nKeep navigation reachable while reading the full task title 10\n #12\nKeep navigation reachable while reading the full task title 11\n #13\nKeep navigation reachable while reading the full task title 12\n #14\nKeep navigation reachable while reading the full task title 13\n #15\nKeep navigation reachable while reading the full task title 14\n #16\nKeep navigation reachable while reading the full task title 15\n #17\nKeep navigation reachable while reading the full task title 16\n #18\nKeep navigation reachable while reading the full task title 17\n #19\nKeep navigation reachable while reading the full task title 18\n #20\nKeep navigation reachable while reading the full task title 19\n #21\nKeep navigation reachable while reading the full task title 20\n #22\nKeep navigation reachable while reading the full task title 21\n #23\nKeep navigation reachable while reading the full task title 22\n #24\nKeep navigation reachable while reading the full task title 23\n #25\nKeep navigation reachable while reading the full task title 24\n #26\nKeep navigation reachable while reading the full task title 25\n #27\nKeep navigation reachable while reading the full task title 26\n #28\nKeep navigation reachable while reading the full task title 27\n #29\nKeep navigation reachable while reading the full task title 28\n #30\nKeep navigation reachable while reading the full task title 29\n #31\nKeep navigation reachable while reading the full task title 30\n #32\nKeep navigation reachable while reading the full task title 31\n #33\nKeep navigation reachable while reading the full task title 32\n #34\nKeep navigation reachable while reading the full task title 33\n #35\nKeep navigation reachable while reading the full task title 34\n #36\nKeep navigation reachable while reading the full task title 35\n #37\nKeep navigation reachable while reading the full task title 36\n #38\nKeep navigation reachable while reading the full task title 37\n #39\nKeep navigation reachable while reading the full task title 38\n #40\nKeep navigation reachable while reading the full task title 39\n #41\nKeep navigation reachable while reading the full task title 40\n #42\nKeep navigation reachable while reading the full task title 41\n #43\nKeep navigation reachable while reading the full task title 42\n #44\nKeep navigation reachable while reading the full task title 43\n #45\nKeep navigation reachable while reading the full task title 44\nReview admission in Alpha…\n⚙ Service\nAlpha"
+  },
+  {
+    "route": "attention",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "No reported questions or failures"
+  },
+  {
+    "route": "settings",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Display and notices\nAppearance\nActivity history\nNotifications\nHost and maintenance\nAgents\nServices\nAbout"
+  },
+  {
+    "route": "appearance",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Theme follows system appearance.\nText size · 20 px\n14\n16\n18\n20"
+  },
+  {
+    "route": "cadence",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "▥ History\nDay · closed — · failed — · ask — · waiting —\n5 min\nHour\nDay\n7 days\n30 days\nCustom\n[1/1/70, 12:00 AM UTC, 1/1/70, 12:16 AM UTC) · peak 1\nNo history yet: unknown, not zero."
+  },
+  {
+    "route": "notifications",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "OS permission unknown\nQuestions\nOff\nSilent\nBanner\nBanner with sound\nSend test\nClosed\nOff\nSilent\nBanner\nBanner with sound\nSend test\nFailed\nOff\nSilent\nBanner\nBanner with sound\nSend test\nAttempt gone\nOff\nSilent\nBanner\nBanner with sound\nSend test"
+  },
+  {
+    "route": "agents",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "fixture · unknown: no service probe yet\nUnknown: no status.json has agents"
+  },
+  {
+    "route": "services",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Host maintenance in workspace…\nAlpha · host unknown · 1 s old\n⚙ Service\nAlpha\nHost service: unknown\nIncidents: unknown (no incident status)\nLog path unknown\nOpen folder\nReview service operations…"
+  },
+  {
+    "route": "about",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Tray fixture · fixture\nAlpha: version unknown · 1 s old\nReview updates…"
+  },
+  {
+    "route": "stop",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Review Stop and hold…"
+  },
+  {
+    "route": "recovery",
+    "pointer": "fine",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Review recovery…"
+  },
+  {
+    "route": "home",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Running agents\nHosts unknown: no observation\nReconcile counts\nAsk AI · new session…\nMessages…\n 45\nAll tasks 45\nAll states · 45 loaded\n Alpha\nBoard\n 45\n #1\nKeep navigation reachable while reading the full task title 0\n #2\nKeep navigation reachable while reading the full task title 1\n #3\nKeep navigation reachable while reading the full task title 2\n #4\nKeep navigation reachable while reading the full task title 3\n #5\nKeep navigation reachable while reading the full task title 4\n #6\nKeep navigation reachable while reading the full task title 5\n #7\nKeep navigation reachable while reading the full task title 6\n #8\nKeep navigation reachable while reading the full task title 7\n #9\nKeep navigation reachable while reading the full task title 8\n #10\nKeep navigation reachable while reading the full task title 9\n #11\nKeep navigation reachable while reading the full task title 10\n #12\nKeep navigation reachable while reading the full task title 11\n #13\nKeep navigation reachable while reading the full task title 12\n #14\nKeep navigation reachable while reading the full task title 13\n #15\nKeep navigation reachable while reading the full task title 14\n #16\nKeep navigation reachable while reading the full task title 15\n #17\nKeep navigation reachable while reading the full task title 16\n #18\nKeep navigation reachable while reading the full task title 17\n #19\nKeep navigation reachable while reading the full task title 18\n #20\nKeep navigation reachable while reading the full task title 19\n #21\nKeep navigation reachable while reading the full task title 20\n #22\nKeep navigation reachable while reading the full task title 21\n #23\nKeep navigation reachable while reading the full task title 22\n #24\nKeep navigation reachable while reading the full task title 23\n #25\nKeep navigation reachable while reading the full task title 24\n #26\nKeep navigation reachable while reading the full task title 25\n #27\nKeep navigation reachable while reading the full task title 26\n #28\nKeep navigation reachable while reading the full task title 27\n #29\nKeep navigation reachable while reading the full task title 28\n #30\nKeep navigation reachable while reading the full task title 29\n #31\nKeep navigation reachable while reading the full task title 30\n #32\nKeep navigation reachable while reading the full task title 31\n #33\nKeep navigation reachable while reading the full task title 32\n #34\nKeep navigation reachable while reading the full task title 33\n #35\nKeep navigation reachable while reading the full task title 34\n #36\nKeep navigation reachable while reading the full task title 35\n #37\nKeep navigation reachable while reading the full task title 36\n #38\nKeep navigation reachable while reading the full task title 37\n #39\nKeep navigation reachable while reading the full task title 38\n #40\nKeep navigation reachable while reading the full task title 39\n #41\nKeep navigation reachable while reading the full task title 40\n #42\nKeep navigation reachable while reading the full task title 41\n #43\nKeep navigation reachable while reading the full task title 42\n #44\nKeep navigation reachable while reading the full task title 43\n #45\nKeep navigation reachable while reading the full task title 44\nProjects\nAppearance"
+  },
+  {
+    "route": "projects",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": " 45\nAll tasks 45\n Alpha\nBoard\n 45\nObservation only: focus off\nYou asked: not recorded\nAdd project in workspace…"
+  },
+  {
+    "route": "fixture-alpha",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": " 45\nObservation only: focus off\nReady\n45\n #1\nKeep navigation reachable while reading the full task title 0\n #2\nKeep navigation reachable while reading the full task title 1\n #3\nKeep navigation reachable while reading the full task title 2\n #4\nKeep navigation reachable while reading the full task title 3\n #5\nKeep navigation reachable while reading the full task title 4\n #6\nKeep navigation reachable while reading the full task title 5\n #7\nKeep navigation reachable while reading the full task title 6\n #8\nKeep navigation reachable while reading the full task title 7\n #9\nKeep navigation reachable while reading the full task title 8\n #10\nKeep navigation reachable while reading the full task title 9\n #11\nKeep navigation reachable while reading the full task title 10\n #12\nKeep navigation reachable while reading the full task title 11\n #13\nKeep navigation reachable while reading the full task title 12\n #14\nKeep navigation reachable while reading the full task title 13\n #15\nKeep navigation reachable while reading the full task title 14\n #16\nKeep navigation reachable while reading the full task title 15\n #17\nKeep navigation reachable while reading the full task title 16\n #18\nKeep navigation reachable while reading the full task title 17\n #19\nKeep navigation reachable while reading the full task title 18\n #20\nKeep navigation reachable while reading the full task title 19\n #21\nKeep navigation reachable while reading the full task title 20\n #22\nKeep navigation reachable while reading the full task title 21\n #23\nKeep navigation reachable while reading the full task title 22\n #24\nKeep navigation reachable while reading the full task title 23\n #25\nKeep navigation reachable while reading the full task title 24\n #26\nKeep navigation reachable while reading the full task title 25\n #27\nKeep navigation reachable while reading the full task title 26\n #28\nKeep navigation reachable while reading the full task title 27\n #29\nKeep navigation reachable while reading the full task title 28\n #30\nKeep navigation reachable while reading the full task title 29\n #31\nKeep navigation reachable while reading the full task title 30\n #32\nKeep navigation reachable while reading the full task title 31\n #33\nKeep navigation reachable while reading the full task title 32\n #34\nKeep navigation reachable while reading the full task title 33\n #35\nKeep navigation reachable while reading the full task title 34\n #36\nKeep navigation reachable while reading the full task title 35\n #37\nKeep navigation reachable while reading the full task title 36\n #38\nKeep navigation reachable while reading the full task title 37\n #39\nKeep navigation reachable while reading the full task title 38\n #40\nKeep navigation reachable while reading the full task title 39\n #41\nKeep navigation reachable while reading the full task title 40\n #42\nKeep navigation reachable while reading the full task title 41\n #43\nKeep navigation reachable while reading the full task title 42\n #44\nKeep navigation reachable while reading the full task title 43\n #45\nKeep navigation reachable while reading the full task title 44\nReview admission in Alpha…\n⚙ Service\nAlpha"
+  },
+  {
+    "route": "attention",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "No reported questions or failures"
+  },
+  {
+    "route": "settings",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Display and notices\nAppearance\nActivity history\nNotifications\nHost and maintenance\nAgents\nServices\nAbout"
+  },
+  {
+    "route": "appearance",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Theme follows system appearance.\nText size · 20 px\n14\n16\n18\n20"
+  },
+  {
+    "route": "cadence",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "▥ History\nDay · closed — · failed — · ask — · waiting —\n5 min\nHour\nDay\n7 days\n30 days\nCustom\n[1/1/70, 12:00 AM UTC, 1/1/70, 12:16 AM UTC) · peak 1\nNo history yet: unknown, not zero."
+  },
+  {
+    "route": "notifications",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "OS permission unknown\nQuestions\nOff\nSilent\nBanner\nBanner with sound\nSend test\nClosed\nOff\nSilent\nBanner\nBanner with sound\nSend test\nFailed\nOff\nSilent\nBanner\nBanner with sound\nSend test\nAttempt gone\nOff\nSilent\nBanner\nBanner with sound\nSend test"
+  },
+  {
+    "route": "agents",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "fixture · unknown: no service probe yet\nUnknown: no status.json has agents"
+  },
+  {
+    "route": "services",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Host maintenance in workspace…\nAlpha · host unknown · 1 s old\n⚙ Service\nAlpha\nHost service: unknown\nIncidents: unknown (no incident status)\nLog path unknown\nOpen folder\nReview service operations…"
+  },
+  {
+    "route": "about",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Tray fixture · fixture\nAlpha: version unknown · 1 s old\nReview updates…"
+  },
+  {
+    "route": "stop",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Review Stop and hold…"
+  },
+  {
+    "route": "recovery",
+    "pointer": "coarse",
+    "small": [],
+    "unnamed": [],
+    "focus": [],
+    "overlaps": [],
+    "text": "Review recovery…"
+  }
+]
