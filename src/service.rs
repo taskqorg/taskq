@@ -1405,6 +1405,12 @@ impl<'a> Service<'a> {
             if touched.contains(&n) {
                 continue;
             }
+            // § 1: a person who adds `taskq` to a held issue starts it; the next pass folds `ready`
+            if is_task(&v.issue) && v.projection.task.state == State::Held {
+                self.board.comment(n, "taskq: start")?;
+                touched.insert(n);
+                continue;
+            }
             let want = self.board.state_label(v.projection.task.state.name())?;
             let mut stale: Vec<_> = v.issue.labels.iter().filter(|l| l.starts_with("q-") && **l != want).cloned().collect();
             stale.sort();
@@ -2515,6 +2521,25 @@ mod tests {
 
     fn task(b: &Fake, n: u64) -> Task {
         core::fold(n, &entries(b, n).unwrap(), false)
+    }
+
+    // Chain: § 1 held, a person adds `taskq` on the board. Risk: the label path leaves a held log under a `taskq` label,
+    // so the task never starts, or a plain labelled issue gets a stray `start`.
+    #[test]
+    fn a_person_adding_taskq_to_a_held_issue_starts_it() {
+        let b = Fake::default(); let mut c = cfg("mac"); c.limits.clear();
+        let held = b.create("H", "", &["q-held".into()]).unwrap();
+        b.comment(held, "taskq: hold").unwrap();
+        let plain = b.create("P", "", &[TASK_LABEL.into()]).unwrap();
+        b.labels(held, &[TASK_LABEL.into()], &[]).unwrap();
+        assert_eq!(task(&b, held).state, State::Held);
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap(); s.pass().unwrap();
+        assert_eq!(task(&b, held).state, State::Ready);
+        assert_eq!(entries(&b, held).unwrap().iter().filter(|e| e.body.starts_with("taskq: start")).count(), 1, "one start over two passes");
+        assert!(!b.issue(held).unwrap().labels.contains(&"q-held".into()));
+        assert!(entries(&b, plain).unwrap().iter().all(|e| !e.body.starts_with("taskq: start")));
+        assert_eq!(task(&b, plain).state, State::Ready);
     }
 
     // #1435: a stale childless execution held the Windows image exit forever. Risk kept: handover and stop still wait on it.

@@ -87,7 +87,6 @@ pub fn load(raw: &Value, name: &str, run: &str, goal: Option<&str>) -> Res<(Stri
             runtime: t.runtime,
             priority,
             host: t.host,
-            hold: true,
             labels: if t.gate { vec!["needs-gate".into()] } else { vec![] },
             ..NewTask::default()
         };
@@ -115,7 +114,7 @@ mod tests {
         let (v, items) = load(&cfg(), "feature", "r1", Some("login")).unwrap();
         assert_eq!(v, "2");
         assert_eq!(items[0].task.title, "Spec login");
-        assert!(items[0].gate && items[0].task.hold && items[0].task.labels == ["needs-gate"]);
+        assert!(items[0].gate && items[0].task.labels == ["needs-gate"]);
         assert_eq!((items[1].deps.clone(), items[1].task.priority.clone()), (vec![1], Some("1".into())));
         assert_eq!(load(&cfg(), "feature", "r1", None).unwrap_err(), "recipe `feature` needs --goal");
         assert!(load(&cfg(), "nope", "r1", None).unwrap_err().starts_with("no recipe"));
