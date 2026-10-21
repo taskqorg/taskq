@@ -39,9 +39,18 @@ instrument previously rejected every settings write; it now permits only the
 shared navigation-only Settings message and still refuses every queue/focus write.
 No assertions about queue authority, receipts or native sizing were removed.
 
+## Native snapshot check
+
+`sh docs/shots/update.sh` completed using the locally signed release binary at
+source `3df748bc`. The isolated WKWebView Project and Icon captures were inspected;
+the README Project image is byte-identical to the prior image. The manifest records
+the new shared state module and current source blobs. This checks rendered native
+regression only, not installed service/update restoration.
+
 ## Remaining qualification
 
-Local full Rust gate: 430 passed, 18 failed, 34 ignored under the worker context.
+`python3 scripts/check.py --base dc3b9a8c` ran the full Rust gate in 34.691 s:
+430 passed, 18 failed, 34 ignored under the worker context.
 Host operations report `a worker cannot change host policy`, `a worker cannot
 install the host service` or `a worker cannot restart the host service or request
 Stop`; downstream fixtures fail their expected saved/receipt assertions. These
