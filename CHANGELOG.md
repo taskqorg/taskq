@@ -5,6 +5,14 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.27
+
+Windows update fix (#1419): the update selftest of a staged release runs in a private telemetry store, so a running service that owns the telemetry writer no longer fails every install with `telemetry flush unacknowledged`; Windows hosts stuck on 4.6.25 install this release. No board change.
+
+Linux sandbox: Codex workers keep `~/.codex/auth.json` writable, so a refreshed login persists and later turns no longer fail with 401 (#1424). A Codex login burned before this release needs one re-login. No board change.
+
+Host log: each host line reaches `taskq.log` once (#1416). Idle heartbeats are not rewritten when only observation times change (#1358). The tray app uses the centered tray Q as its native app icon (#1347). No board change.
+
 ## v4.6.26
 
 Mac dev channel (#1388, #1406): the Mac service of the `taskqorg/taskq` project builds and installs each new `main` SHA with green `merge_group` CI, using `scripts/dev-install.sh` of that fetched SHA, never the root working tree. Re-exec into a new build no longer waits for Claude background turns that have a saved native identity; the new image adopts them without resubmitting (#1407). A pending host restart re-execs once overlapping project passes drain (#1402). Install, dev install and the DashQ resources send wait a bounded time for the resources lock instead of failing on the first miss, so a dev install completes its upgrade without a manual `service install` (#1415). No board change.
