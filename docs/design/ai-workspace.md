@@ -6,7 +6,7 @@ Owner decision (#1427): a tray AI request opens a new visible session, like setu
 
 Approved target (#1462, not shipped): the composer moves to the workspace and a request opens a session in any available runtime, Claude or Codex, named in the request UI ([TW4](tray-workspace.md#contract-detail)). Messages, archive and permanent delete act on TaskQ message records only ([TW5–TW7](tray-workspace.md#contract-detail)); no TaskQ conversation storage returns.
 
-Owner-approved #1464 scope: move requests and task answers to the workspace. Full replies stay in the native runtime. Attachment handoff is deferred to a separately approved task; no conversation store or proposal protocol returns.
+Owner-approved #1464 scope ([answer 6319522673](https://github.com/taskqorg/taskq/issues/1464#issuecomment-6319522673)) accepts the seven-image layout and the Claude-only handoff; native workspace/Codex qualification remains release work. The scope is to move requests and task answers to the workspace. Full replies stay in the native runtime. Attachment handoff is deferred to a separately approved task; no conversation store or proposal protocol returns.
 
 ## Contract detail
 
