@@ -2336,6 +2336,8 @@ fn run(argv: &[String]) -> Res<()> {
             }
             let capture=coreq::telemetry::capture::qualify().map_err(|e|format!("telemetry: FAIL {e}"))?;
             match telemetry::handover() {
+                // #1419: entry.rs gave the offline (staged release) selftest a private store.
+                _ if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some()=>println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]),
                 Some(reason)=>println!("telemetry: compatibility capture committed {} observations (running writer incompatible: {reason})",capture["committed"]),
                 None=>println!("telemetry: local capture committed {} observations",capture["committed"]),
             }

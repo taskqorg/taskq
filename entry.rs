@@ -16,9 +16,16 @@ fn main() {
         return;
     }
     let install = platform::default_install();
-    let maintenance=Args::parse(&std::env::args().skip(1).collect::<Vec<_>>()).is_ok_and(|a|a.pos==["profile","migrate"]);
-    let _telemetry = (!maintenance).then(||telemetry::install_capture(&install)).transpose()
+    let args=Args::parse(&std::env::args().skip(1).collect::<Vec<_>>());
+    let maintenance=args.as_ref().is_ok_and(|a|a.pos==["profile","migrate"]);
+    // #1419: the release updater runs a staged candidate's offline selftest beside the old release's live writer;
+    // a slow old writer must not refuse the candidate that replaces it, so the candidate qualifies a private store.
+    let staged=std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some()&&args.as_ref().is_ok_and(|a|a.pos==["selftest"]);
+    let private=staged.then(||std::env::temp_dir().join(format!("taskq-selftest-{}",std::process::id())));
+    let _telemetry = (!maintenance).then(||telemetry::install_capture(private.as_deref().unwrap_or(&install))).transpose()
         .map_err(|e| {let _=writeln!(std::io::stderr(),"Telemetry: unknown ({e})");}).ok();
     if let Some(reason)=telemetry::handover() {let _=writeln!(std::io::stderr(),"Telemetry: same-store compatibility budget ({reason})");}
     application();
+    // ponytail: a failed selftest exits inside application() and keeps its private store for diagnosis.
+    if let Some(private)=private {drop(_telemetry);let _=std::fs::remove_dir_all(private);}
 }

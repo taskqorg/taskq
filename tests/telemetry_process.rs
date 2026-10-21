@@ -259,19 +259,25 @@ fn selftest_requires_committed_local_capture() {
     if root.exists() {fs::remove_dir_all(&root).unwrap();}
     fs::create_dir_all(&root).unwrap();
     let blocked=root.join("blocked");fs::write(&blocked,"fixture").unwrap();
+    // #1419: the offline (staged release) selftest qualifies a private store under the temp directory.
     let invoke=|install: &std::path::Path,command: &str| Command::new(env!("CARGO_BIN_EXE_taskq"))
         .arg(command).current_dir(&root).env("TASKQ_INSTALL",install).env("TASKQ_ROOT",&root)
+        .env("TMPDIR",install).env("TMP",install).env("TEMP",install)
         .env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").env("COREQ_TELEMETRY_STORE_TRACE","1").output().unwrap();
     let help=invoke(&blocked,"help");assert!(help.status.success(),"ordinary help outcome changed");
     let failed=invoke(&blocked,"selftest");
     assert!(!failed.status.success(),"selftest accepted unavailable capture: {}",String::from_utf8_lossy(&failed.stdout));
     assert!(String::from_utf8_lossy(&failed.stderr).contains("telemetry: FAIL telemetry collector unavailable"));
-    assert!(!String::from_utf8_lossy(&failed.stdout).contains("telemetry: local capture committed"));
+    assert!(!String::from_utf8_lossy(&failed.stdout).contains("capture committed"));
     assert_eq!(fs::read_to_string(&blocked).unwrap(),"fixture");
-    let good=root.join("good");let success=invoke(&good,"selftest");
+    let good=root.join("good");fs::create_dir_all(&good).unwrap();let success=invoke(&good,"selftest");
     let detail=fs::read_to_string(root.join(".taskq/cli-errors.log")).unwrap_or_default();
     assert!(success.status.success(),"{}\n{}",String::from_utf8_lossy(&success.stderr),detail.chars().take(4096).collect::<String>());
-    assert!(String::from_utf8_lossy(&success.stdout).contains("telemetry: local capture committed"));
+    assert!(String::from_utf8_lossy(&success.stdout).contains("telemetry: staged capture committed"));
+    assert!(fs::read_dir(&good).unwrap().all(|e|!e.unwrap().file_name().to_string_lossy().starts_with("taskq-selftest-")),"private store left behind");
+    assert!(!good.join("telemetry.log/universal.sqlite3").exists(),"staged selftest wrote the installation store");
+    // An ordinary command still commits into the installation store.
+    assert!(invoke(&good,"help").status.success());
     let store=coreq::telemetry::Store::open(&good.join("telemetry.log/universal.sqlite3")).unwrap();
     assert!(!store.export(0,0,1024).unwrap()["events"].as_array().unwrap().is_empty());
     drop(store);
@@ -297,6 +303,39 @@ fn selftest_requires_committed_local_capture() {
         }
         assert_eq!(fs::read_to_string(good.join("telemetry.log/diagnostic.json")).unwrap(),"{broken control");
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+// Chain (#1419): the old release's resident writer stops acknowledging (Windows 4.6.25: 1.7 s appends,
+// half its events lost) -> the staged candidate's offline selftest still qualifies its own capture,
+// and adds nothing to, and takes nothing from, the shared store.
+#[cfg(unix)]
+#[test]
+fn staged_selftest_passes_behind_unresponsive_writer() {
+    use std::io::BufRead;
+    let root=std::env::temp_dir().join(format!("qs-{}",std::process::id()));
+    if root.exists() {fs::remove_dir_all(&root).unwrap();}
+    let install=root.join("i");fs::create_dir_all(&install).unwrap();
+    let path=install.join("telemetry.log/universal.sqlite3");
+    struct Owner(std::process::Child);
+    impl Drop for Owner {fn drop(&mut self){unsafe {libc::kill(self.0.id() as i32,libc::SIGCONT);}let _=self.0.kill();let _=self.0.wait();}}
+    let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
+        .args(["--exact","telemetry_process::resident_analysis_owner","--ignored","--nocapture"])
+        .env("TASKQ_ANALYSIS_OWNER",&path).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
+    let mut ready=std::io::BufReader::new(owner.0.stdout.take().unwrap());
+    loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
+    assert_eq!(unsafe {libc::kill(owner.0.id() as i32,libc::SIGSTOP)},0);
+    // The release updater's exact invocation (platform::channel_update).
+    let out=coreq::process::output("test.staged-selftest",Command::new(env!("CARGO_BIN_EXE_taskq")).arg("selftest").current_dir(&root)
+        .env("TASKQ_INSTALL",&install).env("TASKQ_SELFTEST_OFFLINE","1").env_remove("TASKQ_ROOT").env("TASKQ_INCIDENT_REPORTS","off").env_remove("COREQ_TRACE_CONTEXT"),
+        std::time::Duration::from_secs(30));
+    let out=match out {Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,Err(e)=>panic!("staged selftest: {e}")};
+    assert!(out.status.success(),"staged selftest failed behind an unresponsive writer: {}",String::from_utf8_lossy(&out.stderr));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("telemetry: staged capture committed"));
+    assert_eq!(unsafe {libc::kill(owner.0.id() as i32,libc::SIGCONT)},0);
+    drop(owner.0.stdin.take());assert!(owner.0.wait().unwrap().success());
+    let events=coreq::telemetry::Reader::open(&path).unwrap().export(0,0,1024).unwrap()["events"].to_string();
+    assert!(!events.contains("taskq.selftest")&&!events.contains("\"taskq\""),"staged selftest wrote the running writer's store: {events}");
     fs::remove_dir_all(root).unwrap();
 }
 
