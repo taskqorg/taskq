@@ -14,8 +14,9 @@ still omit zeros. Filters remain view-only.
 The local [v2 profile](../../../ui-rules-v2.md) was not updated by #1449 and still
 describes the old disclosure, mixed checkbox, old shortcuts and zero omission.
 That is a documentation gap under R8/R13; R6 and its linked counter contract win.
-Draft L in the main report includes mapping those clauses to the already approved
-behavior, not asking for a new filter policy or restoring the old UI.
+D in the [revised owner plan](../owner-plan.md) maps those clauses to the already
+approved behavior, without restoring the old UI. The custom owner answer
+supersedes the old H/T/S/L/U briefs; this delta retains measured-source identity.
 
 ## Current observations
 
@@ -45,7 +46,7 @@ The unchanged header/Back, target-size, repeated identity, spacing/type, contras
 workspace focus and announcement findings remain applicable after source-diff
 review; no upstream repair to those paths was found. The retained gap images and
 text measurements show Back/title in content, 20 px bold titles, repeated Alpha
-identity and small targets. New zero buttons also need T's effective-width checks.
+identity and small targets. New zero buttons also need N's effective-width checks.
 
 ## Before and after from upstream
 
@@ -56,5 +57,5 @@ identity and small targets. New zero buttons also need T's effective-width check
 - The full local canonical gate failed on the original exact source; [its 21 failures](../checks.md) remain recorded. It was not rerun after these upstream merges; no full-current-source gate or merge-result CI pass is claimed. The affected browser checks were rerun because their source changed; unchanged workspace/answer results remain explicitly tied to the original source.
 
 The before/after repair belongs to upstream #1449. This task neither fixes that
-assertion nor changes a production rule. The final proposed briefs preserve the
-new R6 behavior and no longer include repairing an assertion already fixed.
+assertion nor changes a production rule. The revised owner plan preserves the
+new R6 behavior and no longer includes repairing an assertion already fixed.

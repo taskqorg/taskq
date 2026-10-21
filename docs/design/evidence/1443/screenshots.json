@@ -6,7 +6,7 @@
       "id": "G01",
       "file": "gaps/G01-back-scroll.png",
       "gap": "Back scrolls away",
-      "brief": "H",
+      "brief": "N",
       "source": "8bf66914f03560c8c3f979523dce7d6781fe5420",
       "sha256": "f30ab0218634b82373d00aaac025a23162791bf06057cf0a13e9d3a966620ceb"
     },
@@ -14,7 +14,7 @@
       "id": "G02",
       "file": "gaps/G02-clipped-close.png",
       "gap": "Close clips at 200% text",
-      "brief": "H/T",
+      "brief": "N",
       "source": "8bf66914f03560c8c3f979523dce7d6781fe5420",
       "sha256": "76afc4b8a9a6a0eb474aadfe839bb8fd15d73bf6e2f68a859bb750608199997f"
     },
@@ -22,7 +22,7 @@
       "id": "G03",
       "file": "gaps/G03-small-targets.png",
       "gap": "Undersized hit targets",
-      "brief": "T",
+      "brief": "N",
       "source": "8669a08ec2435e830301bf7307fb37f477c87e6d",
       "sha256": "5bc5d2fb459ff83225b77e78f27b1a5494f4f9daf5a6764557adb1800b58ad35"
     },
@@ -30,7 +30,7 @@
       "id": "G04",
       "file": "gaps/G04-type-hierarchy.png",
       "gap": "Route title hierarchy and slot",
-      "brief": "H/S",
+      "brief": "N",
       "source": "8bf66914f03560c8c3f979523dce7d6781fe5420",
       "sha256": "434f4c37fa2fefa6e8c3c7cf55b71578b4ee672a202269a7137c2f24bc374648"
     },
@@ -38,7 +38,7 @@
       "id": "G05",
       "file": "gaps/G05-repeated-identity.png",
       "gap": "Repeated project/task identity",
-      "brief": "L",
+      "brief": "W/P",
       "source": "8669a08ec2435e830301bf7307fb37f477c87e6d",
       "sha256": "ddc9b7fbe1d03d994439e785ff379835b89637e2ee19d1193c244b30bca39b58"
     },
@@ -46,7 +46,7 @@
       "id": "G06",
       "file": "gaps/G06-empty-attention.png",
       "gap": "Empty Attention summary row",
-      "brief": "L",
+      "brief": "W/P",
       "source": "8669a08ec2435e830301bf7307fb37f477c87e6d",
       "sha256": "a24999785c1ed13ae6329cb7264f00e827470027797a259912b869003824c845"
     },
@@ -54,7 +54,7 @@
       "id": "G07",
       "file": "gaps/G07-text-contrast.png",
       "gap": "Quiet text contrast below target",
-      "brief": "S",
+      "brief": "N",
       "source": "8669a08ec2435e830301bf7307fb37f477c87e6d",
       "sha256": "474d8d1f51bd38473a706f7277c4128873c3c0225c4cc0f435aefb8f3f723728"
     },
@@ -62,7 +62,7 @@
       "id": "G08",
       "file": "gaps/G08-workspace-update.png",
       "gap": "Workspace update loses focus and lacks status announcement",
-      "brief": "U",
+      "brief": "W",
       "source": "8669a08ec2435e830301bf7307fb37f477c87e6d",
       "sha256": "fde3a725b5f8695a2e849cd6d39458f439b4141e87e7e751b1ad0c810c5beca8"
     }
