@@ -37,9 +37,9 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 | [Menu UI rules](ui-rules.md) | Approved 28-check menu target and source-pinned baseline review |
 | [Remote manager](remote-manager.md) | Universal remote PM flow, project routing, observation, answers/media and RM-A1–A9 |
 | [FRA/Hermes audit](remote-manager-audit.md) | Inspected integration baseline and unqualified capabilities |
-| [Integrated workspace](workspace-prototype.html) | Current Workspace review: menu, agent settings and AI conversations |
+| [Integrated workspace](workspace-prototype.html) | Earlier Workspace review; its stored AI conversations are superseded by TW4/TW5 |
 | [AI component](ai-conversations.html) | Conversation list, drafts, files, request states and recovery fixtures |
-| [Task decisions and plans](plans-and-decisions.md) | Inline ask-card answers, AI-led plans and explicit multi-repository gaps |
+| [Task decisions and plans](plans-and-decisions.md) | Ask-card answers (workspace placement: TW2), AI-led plans and explicit multi-repository gaps |
 | [Dynamic resources](dynamic-resources.md) | Accepted Auto default, optional caps, proposed tuning and migration |
 | [Shared resource controls](shared-resource-controls.md) | Accepted DashQ reuse of TaskQ resource UI and policy authority; v1 protocol fixtures; remote apply needs an authorized host adapter and fresh readback |
 | [Profiling detail](profiling.md) | Implemented stage token sources, board operation kinds, `taskq profile` export columns and report views |
@@ -52,7 +52,8 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 | [Standalone candidate](final-menu.html) | Inspect menu, AI conversations/sessions, settings, icons and scenario states |
 | [Editable fragment](final-prototype.html) | Earlier full candidate; integrated workspace takes precedence |
 | [Menu](menu.md) | M1–M12 behavior and M-A1–M-A21 acceptance |
-| [AI workspace](ai-workspace.md) | Conversation/session/history separation, windows, attachments, recovery and C checks |
+| [Tray and workspace placement](tray-workspace.md) | Approved TW1–TW8: one nav bar, panels then tasks in the menu, dialogue/reviews in the workspace, any-runtime AI requests, messages count, archive and permanent delete |
+| [AI requests](ai-workspace.md) | Visible-session AI requests (#1427), retro, add project and C7 boundary |
 | [Task counters](task-counters.md) | All-state totals, Closed and partial-data semantics |
 | [Worker permissions](worker-permissions.md) | Host authority, runtime mapping, settings, #865, migration and acceptance |
 | [Visual system](visual-style.md) | Typography, geometry, palette, icon inventory and asset sources |

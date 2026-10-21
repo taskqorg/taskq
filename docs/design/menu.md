@@ -1,7 +1,7 @@
 # TaskQ operator menu
 
 Approved layout; unimplemented capabilities remain design targets. Runtime follows [taskq.md](../../taskq.md).
-[Shared principles](https://github.com/taskqorg/specq/blob/main/design/operator-ui.md) · [Visual style](visual-style.md) · [TaskQ checks](operator-ui.md) · [AI requests](ai-workspace.md).
+[Shared principles](https://github.com/taskqorg/specq/blob/main/design/operator-ui.md) · [Visual style](visual-style.md) · [TaskQ checks](operator-ui.md) · [AI requests](ai-workspace.md) · [Tray and workspace placement](tray-workspace.md): approved target TW1–TW8; where it differs, the clauses below describe current behavior until N/W/O/P/M ship.
 
 ## M1 Appearance
 
@@ -35,14 +35,14 @@ Approved navigation/header and view-only multi-select targets: [UI01–UI04 and 
 
 - Header outside the scrolling content: Home icon then Settings gear at left; size anchor, Top, pin and close × at right. No bottom Home or Settings navigation. Its slightly contrasting strip never moves during scroll bounce.
 - Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.
-- Home: fixed controls, Work mode, Attention, short Ask AI composer, project shortcuts and Settings.
+- Home: fixed controls, Work mode, Attention, short Ask AI composer, project shortcuts and Settings. Target (TW2/TW3): panels with live figures, then tasks, then setting links; the composer moves to the workspace.
 - Attention contains decisions, failed tasks and actionable service/admission problems under [A2](adaptive-menu.md#a2-explain-the-queue). Ordinary waits remain neutral.
-- Project header: Back, name, Board link and compact nonzero counters. Add is a plus in the Projects header.
+- Project header: Back, name, Board link and compact nonzero counters. Target (TW1): one fixed bar with Back, title and actions, breadcrumbs `Projects › <project>`. Add is a plus in the Projects header.
 - Task row: the first row holds state, board-provider mark, linked issue number, age, known host/runtime, session and other available links; global rows also identify project. The full title starts on the second row and wraps across the block width, never truncated. Age counts from the board time of the entry behind the last logged state change (`since` in the status row; Waiting and Held derive outside the log and keep it) in short units (`<1m`, `5m`, `2h`, `3d`); without a logged change it shows `age ?` with the reason. Open menus update ages in place every 30 s, without a redraw. Metadata may wrap when space is exhausted; links remain separate controls.
 - Main task target opens the issue. Agent session and known PR links are separate controls; no nested links or double navigation.
 - Codex/Claude marks identify the recorded runtime; codex-app uses Codex identity. Missing permalink: unavailable with reason. A Claude session link is account-scoped and shows on every host; a Codex thread link opens only on its owning host, elsewhere unavailable with a reason (Codex Remote cannot attach to live CLI threads). A non-local row shows the host name and a remote mark before the runtime mark, no remote text.
 - Task detail preserves question, failure, work, ready, dependency and later access. Board links remain near the project name.
-- Answer cards mount only for `ask`, never for stored cards on doing/review/ready/later/blocked rows. An ask with no parsed choices shows its original text, a requeue reason field, Later and Close. Close requires confirmation naming cancellation without publication, then canonical `later` and `close` with readback after each; no second step after failed/unknown parking. When the task leaves ask, its operation receipt leaves the card: accepted shows a 6 s overlay toast (×) that never moves rows and joins a collapsed Attention group `Answered` (newest 20, × each); unknown, rejected and stale stay as Attention rows, also after their project's task rows, with ×, unknown with the same-ID delivery check. Nothing stacks above Home; partial close names the parked task and board recovery.
+- Answer cards mount only for `ask`, never for stored cards on doing/review/ready/later/blocked rows. An ask with no parsed choices shows its original text, a requeue reason field, Later and Close. Close requires confirmation naming cancellation without publication, then canonical `later` and `close` with readback after each; no second step after failed/unknown parking. When the task leaves ask, its operation receipt leaves the card: accepted shows a 6 s overlay toast (×) that never moves rows and joins a collapsed Attention group `Answered` (newest 20, × each); unknown, rejected and stale stay as Attention rows, also after their project's task rows, with ×, unknown with the same-ID delivery check. Nothing stacks above Home; partial close names the parked task and board recovery. Target (TW2): the card opens in the workspace task-answer context, not in the menu; the same rules apply there.
 - Back restores list/scroll position. Service, log, folder and admission controls always identify project/host.
 - Current Agents is host-level, read-only: version/account or not installed/not logged in/unknown, plus probe age. Include disabled runtimes such as codex-app where reported.
 - Agents row (shipped): one per § 5 `agents` runtime, `<runtime> <version> · <account>` or `· not logged in` / `· not installed` / `· login unknown`, with the age of the freshest `status.json` probe; none: unknown.
@@ -87,7 +87,7 @@ Local capacity remains a separate observation: show occupied slots and held/requ
 
 ## M7 AI entry
 
-- Ask AI composer: project picker (registered projects), input, History/commands and Send. Send opens one new visible session in that project with the text as brief ([AI requests](ai-workspace.md#contract-detail)); no operator turn, conversation or confirm step.
+- Target (TW4): the composer lives in the workspace and names the runtime (Claude or Codex, owner's pick when both exist). Current: Ask AI composer: project picker (registered projects), input, History/commands and Send. Send opens one new visible session in that project with the text as brief ([AI requests](ai-workspace.md#contract-detail)); no operator turn, conversation or confirm step.
 - Under the composer the newest request shows `starting`, `launched` with `Open session`, or its no-start reason and next step. Closing the menu cancels nothing.
 - History: last 20 distinct sent nonempty texts, newest first; selecting fills only. Clear affects history only. Suggested commands share the history control.
 - An AI request is no task: its failure is not a failed-task count.
@@ -198,7 +198,7 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 - The tray posts native OS notifications (macOS Notification Center, Windows toast) for new board events read from each project's `events` (§ 4 Tray). A closed task keeps its title in its banner and card.
 - Event kinds: `ask` (a question waits for the owner), `close`, `failed` and `gone`. Settings > Notifications sets each kind to Off, Silent (menu badge only), Banner or Banner with sound. Defaults: `ask` Banner with sound, `failed` and `gone` Banner, `close` Off.
 - A project may override the host setting per kind (Inherit by default); the project page shows the effective value.
-- A notification names the project, the task title and the kind; a click opens the menu (or the pinned window) on that task's card, for `ask` the answer card.
+- A notification names the project, the task title and the kind; a click opens the menu (or the pinned window) on that task's card, for `ask` the answer card (target TW2: the workspace task-answer context).
 - Once per event (§ 4 Tray): events at or before a project's cursor (the last notified event id), or older than the first tray start with notifications on, never notify. More than 3 events within 10 s become one summary notification per project.
 - The first enable asks the OS for permission on macOS; Windows reads the OS notification setting without a consent prompt. While the prompt is open Settings shows `Asked`; a failed request shows its OS error, never `Not asked`. Denied or revoked: Settings shows `Blocked by the OS` with a link to the OS setting, and nothing falls back to another channel. `Send test` posts one sample of the selected kind.
 - An unknown `tray.json` value reads as the default and keeps the file.

@@ -8,7 +8,7 @@ The prototype uses invented fixtures. It demonstrates navigation and prioritizat
 
 - Keep view selection, host admission and pause in a fixed top strip (M1). Add a fixed Controls entry beside pause.
 - Keep Work mode directly below: a short applied-scope phrase; open the single M12 editor.
-- Follow with Attention, AI input, pinned/recent projects and Settings. Do not reorder these sections by frequency.
+- Follow with compact live panels, then tasks and setting links ([TW2/TW3](tray-workspace.md#contract-detail)); AI input moves to the workspace. Do not reorder these sections by frequency.
 - Adapt Attention to unresolved decisions, failed tasks and admission problems. Empty Attention collapses without placeholder cards.
 - Pinned projects stay in owner order. Show up to three unpinned recent projects as an initial proposal; All opens the searchable list.
 - Define recent by explicit interaction: opening a project/task or sending a project-scoped request. Background activity does not make a project personally frequent.
@@ -23,14 +23,14 @@ Show the effect, cause and direct next action together.
 | Situation | Home treatment | Detail/action |
 |---|---|---|
 | Healthy work | Host admission state and nonzero project counters | Project shows active and next eligible tasks |
-| Owner decision | Linked task and short question | Open the answer context |
+| Owner decision | Linked task and short question | Open the workspace task-answer context (TW2) |
 | Failed task | Linked task and failure reason | Inspect result/log before retry |
 | Capacity full | Neutral waiting reason, not failure | Per-project/runtime used and limit |
 | Dependency wait | Neutral blocked count in project | Link the unmet prerequisites |
 | Scope mismatch | Show when work was requested but nothing qualifies | Matching/excluded preview in Work mode |
 | Load gate | Admission held; current work continues | Measurements, freshness and reopen condition |
 | Stale/unreachable service | Unknown state, affected project/host and age | Service details and known log path |
-| AI confirmation | Pending change and target scope | Raise its conversation window |
+| Operation review | Pending change and target scope | Open its workspace review (TW2); the menu never confirms |
 
 Proposed Attention order: service failures that prevent reliable control, owner questions/confirmations, failed tasks, then actionable admission blockers. Ordinary capacity/dependency waits stay in project detail unless they explain stalled requested work.
 Show one representative item per cause group, up to two items plus All N initially; counts include hidden items. A critical service fault cannot disappear because its project is not recent.
@@ -51,8 +51,8 @@ Multiple blockers remain available in detail; do not pretend one cause explains 
 | Case | Existing design entry | Missing design work |
 |---|---|---|
 | UC-01 Setup | Projects +, M10 | Connect/setup review, explicit switch from planning to admission |
-| UC-02 PM | AI input, attachments, conversation window | Task references, decision context, direct-action boundary Q1 |
-| UC-03 Plan to build | AI conversation | Specification/plan review and explicit implementation authorization |
+| UC-02 PM | Workspace AI request, attachments, visible session | Task references, decision context, direct-action boundary Q1 |
+| UC-03 Plan to build | AI request session | Specification/plan review and explicit implementation authorization |
 | UC-04 Urgent | AI request, task/project detail | Visible p0, next eligible slot, truthful wait reason; no implied shared pool |
 | UC-05 Natural-language focus | Work mode, M12 | Matched/excluded tasks, unsupported intent, future arrivals, confirmation/readback |
 | UC-06 Five repositories | Project detail | Environment preparation/build/cleanup status; contract Q5 first |
@@ -66,7 +66,7 @@ Prioritize UC-05 next, then questions/failures and service controls; resolve UC-
 - Stable controls plus adaptive Attention are approved; exact ordering and initial two-item limit remain proposed.
 - Confirm pinned plus three recent projects and the definition of recent.
 - Define emergency stop separately from pause; keep current behavior until approved.
-- AI windows: one main workspace plus explicit detached conversations approved; see ai-workspace.md for attachments, retention and recovery.
+- AI windows: one workspace window holds messages, task answers, AI requests and reviews ([TW2](tray-workspace.md#contract-detail)); sessions open in their runtime, no stored conversations (#1427).
 - Finish scope semantics (Q3), per-project limits, plan review and cross-repository workflow (Q5/Q6).
 - Settings categories were selected in the earlier design review; exact contents and service drill-down still need design.
 - Icon overflow, graph bin count and Windows native legibility remain open in I5.

@@ -25,7 +25,7 @@ Home (root)
 ├─ Attention
 ├─ Projects
 │  └─ Project {board, project-id}
-│     └─ Tasks {selected states} (counter shortcut or Filter)
+│     └─ Tasks {selected states} (counter strip)
 ├─ Settings
 │  ├─ Appearance
 │  ├─ Activity history (existing cadence route)
@@ -38,7 +38,10 @@ Home (root)
 ├─ Stop and hold (review before apply)
 └─ Reviewed recovery (review before apply)
 Workspace window (own root, existing window policy)
-├─ AI conversations → Conversation {id}
+├─ Messages (root) → Archived
+├─ Task answer {board, task, revision}
+├─ AI request {project, runtime}
+├─ Operation review {target}
 ├─ Work sessions → Session {id}
 └─ Agent settings {host, optional project}
 External destinations: Board, Issue, native Session, PR; open directly.
@@ -51,7 +54,7 @@ root has no synthetic Back to a different window; its own child routes do.
 A shared Activity destination keeps the actual caller as Back, not a fixed parent.
 Switching windows does not destroy either window’s route or drafts.
 
-Header slots: leading Back (reserved at root), one route title next, trailing
+[TW1](tray-workspace.md#contract-detail) places these slots in one fixed bar per screen, with breadcrumbs on nested project/settings routes; dialogue and reviews live only in the workspace ([TW2](tray-workspace.md#contract-detail)). Header slots: leading Back (reserved at root), one route title next, trailing
 context actions followed by a separate window-control group. Native title-bar
 controls remain OS-owned; browser surfaces do not invent native window controls.
 At narrow widths, secondary actions move to an accessible overflow; Back and
@@ -101,8 +104,8 @@ pixels are different units; native scaling needs separate qualification.
 | V22 | System font; base b = 14/16/18/20 CSS px, default 16; body/action b, secondary ≥max(12 px, 0.85b), section heading b semibold, route title 1.1b semibold. Header/section roles are approved v2 additions; other values come from UI17. Font persists throughout; summary-icon calibration stays independent and in-content symbols remain legible. |
 | V23–V26 | Retain UI18–UI21: text contrast ≥4.5:1 even where WCAG allows 3:1 for large text; essential graphics ≥3:1 with documented exceptions. Keep 200% text resize, 320 CSS px ordinary-text reflow, natural native content-fit and one intended scroller with reachable final control. |
 | V27–V29 | Retain UI22–UI24: missing/stale/failed/empty never become zero or healthy; loading/no-match/partial remain distinguishable. Effects use pending/readback success/failure/uncertainty with safe retry; announce non-focus updates without moving focus. R12/M5 own truth and receipts. |
-| V30 | Filter disclosure starts closed; summary shows selected states or All, including zero selections. Task list follows header; independent checkboxes toggle with Space without closing. No usage hint. |
-| V31 | Select-all is unchecked/checked/mixed for zero/all/some selections; visual and accessible state agree. |
+| V30 | The task-list counter strip is the state filter (M3, [TW8](tray-workspace.md#contract-detail)): capsules toggle with Enter/Space and expose `aria-pressed` with the selected outline; the strip shows selected states or All tasks. No Filter checkbox group, no usage hint. |
+| V31 | All tasks is pressed exactly when no state/project restriction applies; visual and accessible state agree. |
 | V32 | Selected states use OR; selected projects AND selected states. Zero selected states means no state restriction; Reset restores all. |
 | V33 | Filters are view-only: selection/match count visible, Back preserves it, zero matches offers Reset, old single-state counter shortcuts stay. No queue/focus/capacity/label write. |
 | V34–V38 | Apply existing D review and inline-action rules. Reduced motion removes nonessential spatial animation; no expressive bounce default. Keep essential controls stable and inspect normal/blocked/critical/frequent-use fixtures. The composed checklist stays 38 checks (target ≤40), not an extra set of local rules. |
@@ -146,8 +149,8 @@ not waived on any existing tray child route. The owner approved the added detail
 | UI22 | Kept → V27 | Added loading/no-match fixtures, no state conflation. |
 | UI23 | Kept → V28 | Full effect outcomes and retry protection. |
 | UI24 | Kept → V29 | Non-disruptive announcements retained. |
-| UI25 | Kept → V30 | All disclosure, summary, keyboard and no-hint clauses retained. |
-| UI26 | Kept → V31 | All three aggregate states. |
+| UI25 | Merged → V30 | Summary, keyboard and no-hint clauses retained on the counter strip; disclosure replaced by M3. |
+| UI26 | Merged → V31 | Aggregate state carried by the All tasks capsule. |
 | UI27 | Kept → V32 | Exact set operations and empty-selection default. |
 | UI28 | Kept → V33 | View-only, count, restoration, Reset and old shortcuts. |
 | D1 | Merged → V18 | One entity block. |
