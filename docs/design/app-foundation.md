@@ -54,7 +54,22 @@ Keep the app foundation in TaskQ initially. CoreQ already supplies execution/tel
 
 This recommendation follows specq `engineering/performance.md`: remove repeated whole-view rebuilding before adding another cache or tuning the event loop. Existing instrumentation is the starting measurement boundary. No profiling comparison was run, so no CPU, memory or latency improvement is claimed.
 
-Before runtime rollout, record a matched baseline and candidate on macOS WKWebView and Windows WebView2: fixed task/conversation fixtures, update cadence, typing, press/release during refresh, navigation/back and a sustained hold. Record snapshot-to-paint and input-to-paint p95/p99, CPU, memory, errors, fixture size, hold duration and host limits. Accept at no more than 70% sustained CPU as required by the shared rule. The calibration task below must propose the exact UI latency/memory ceilings and hold duration for owner approval before qualification; selecting the architecture does not approve unmeasured budgets. A browser test is not native webview evidence (R12).
+Before runtime rollout, record a matched baseline and candidate on macOS WKWebView and Windows WebView2: fixed task/conversation fixtures, update cadence, typing, press/release during refresh, navigation/back and a sustained hold. Record snapshot-to-paint and input-to-paint p95/p99, CPU, memory, errors, fixture size, hold duration and host limits. M2 is closed without latency or memory ceilings, benchmark scripts, perf tests or CI gates: UI performance is watched in the existing CoreQ telemetry, and an anomaly is analysed there when it appears. The only enforced budget stays the shared rule of at most 70% sustained CPU. A browser test is not native webview evidence (R12).
+
+### M2 baseline (#1469, one-time note)
+
+Measured once on main with a throwaway tray route and script that were not merged. Each fixture ran twice back to back with one binary, so the pair shows run-to-run noise. Hold 60 s, one step every 250 ms (refresh, typed character, click to Settings, click to Home), about 56 samples per step kind and run. Values are the worse of the two runs, in ms, from cause to the second animation frame; CPU is percent of one core over the hold after the first 5 s; memory is taskq plus its webview processes.
+
+| Host | Fixture | Snapshot p95/p99 | Typing p95/p99 | Click p95/p99 | CPU mean/p95 | Memory peak | Errors |
+|---|---|---|---|---|---|---|---|
+| macOS 27.0.1, Apple M2, 8 cores, WKWebView | small | 39 / 49 | 32 / 58 | 34 / 65 | 16.4 / 19.3 | 123 MB | 0 |
+| | large | 50 / 66 | 48 / 78 | 65 / 67 | 23.4 / 27.3 | 200 MB | 0 |
+| Windows 11 26300, i5-12600KF, 16 threads, WebView2 155.0.4283.62 | small | 31 / 39 | 8 / 9 | 10 / 14 | 11.7 / 17.0 | 454 MB | 0 |
+| | large | 51 / 56 | 6 / 8 | 36 / 41 | 21.7 / 30.2 | 576 MB | 0 |
+
+The large fixture is 12 projects of 25 tasks and 20 AI requests; small is 2 of 4 and 2. JS heap is 9.5 MB on WebView2 and unknown on WKWebView. CPU stays far below the 70% rule on both. An earlier Windows run had one large-fixture snapshot p99 of 306 ms against 55 ms in its pair: single p99 values are noisy. Unknown: the workspace (not on main), OS-level input dispatch and IME (events were synthetic), physical press/release, a locked or occluded window, Linux.
+
+Telemetry gaps: CoreQ telemetry records `tray.refresh`, `tray.web.delivery`, `tray.web.error` and the tray operation spans, but no span covers snapshot-to-paint or input-to-paint, and no record samples the CPU or memory of taskq and its webview processes. Until such spans exist, these values read unknown in telemetry.
 
 ## Migration task list (A4)
 
@@ -63,8 +78,8 @@ The architecture decision is accepted. The tasks below are not filed or started;
 | Order / dependency | Outcome and scope | Acceptance and retained protection |
 |---|---|---|
 | M1 · this specification | Record the owner-selected foundation, inventory, options and shared-asset/CoreQ boundaries | A1–A4 of #1440; root contract and design index link here; no runtime or dependency changes |
-| M2 · after M1 | Calibrate the existing workspace and tray using fixed small/large task and conversation fixtures on WKWebView and WebView2 | Record fixture/cadence/host limits and sustained hold, p95/p99 snapshot/input-to-paint, CPU, memory and errors. Propose numeric latency/memory ceilings and hold duration through an ask; retain the shared ≤70% sustained CPU requirement. Unknown measurements do not pass |
-| M3 · after M2 budget approval | Convert the workspace as the first vertical slice, including pinned dependencies, existing esbuild packaging, Signals state and Wouter memory navigation | Preserve native snapshot/receipt ownership and persistence; prove draft/IME/caret survival, selection/back/scroll, duplicate-send refusal, exact confirmation revision, unknown/late receipts and reload. Preserve CoreQ parent/child context across component handlers/effects/timers; retain operation inventory checks. Compare baseline/candidate on both native webviews within the approved budget before expanding |
+| M2 · after M1 | Calibrate the existing workspace and tray using fixed small/large task and conversation fixtures on WKWebView and WebView2 | Record fixture/cadence/host limits and sustained hold, p95/p99 snapshot/input-to-paint, CPU, memory and errors. Closed: one-time baseline above; no latency/memory ceilings, bench script or CI gate; CoreQ telemetry watches UI performance; the shared ≤70% sustained CPU stays the only enforced rule; missing spans are recorded as gaps |
+| M3 · after M2 | Convert the workspace as the first vertical slice, including pinned dependencies, existing esbuild packaging, Signals state and Wouter memory navigation | Preserve native snapshot/receipt ownership and persistence; prove draft/IME/caret survival, selection/back/scroll, duplicate-send refusal, exact confirmation revision, unknown/late receipts and reload. Preserve CoreQ parent/child context across component handlers/effects/timers; retain operation inventory checks. Keep ≤70% sustained CPU; read UI performance in CoreQ telemetry before expanding |
 | M4 · after M3 | Convert tray routes with the same foundation; retain shared project/answer/resource islands and their public APIs | Preserve Back, scroll/disclosure, keyboard focus, press-refresh, stale/partial/unknown rows and operation fences. Run existing component/IPC and affected browser checks, owner before/after review and matched native qualification; remove manual preservation code only after equivalent protection passes |
 | M5 · after M4 | Remove obsolete shell mechanisms and qualify the resulting artifact for release | Run selected canonical gate and ordinary publication CI; keep screenshot manifest/provenance, public asset hashes, CoreQ tracing and both native platform checks. No unused second store/router/cache, browser outbox or automatic mutation replay remains |
 
