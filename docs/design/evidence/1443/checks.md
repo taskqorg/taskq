@@ -42,3 +42,19 @@ Failed tests (verbatim identifiers):
 - `windows_sandbox::preparation::tests::native_preparation_and_restore_preserve_controls_and_data`
 
 These failures are recorded, not fixed or waived. No after-pass, full-gate success, native qualification or merge-result CI success is claimed.
+
+## Approved-plan continuation gate
+
+After filing #1462–#1467 and rebasing onto `e9d0c69` from origin/main,
+`python3 scripts/check.py --base origin/main` selected full on candidate
+`b9d18530dc005627140ac958ee769f86fd1e151c` because the research diff includes
+JSON, PNG and a CJS instrument. It exited **1**, observed from the owned gate
+process handle. `git diff --check`, selector self-checks, npm ci and the web build
+completed; Cargo test started. The final test output was not retained, so the
+failing stage/count/causes in this run are **unknown**. The earlier failure
+inventory above does not substitute for this run's missing diagnostics (R12).
+No full-gate retry, permission change or PASS claim was made. CI on the final
+merge result still gates publication; native acceptance remains separate.
+
+The following commit only records this gate observation; product, dependency,
+fixture and regression-test code are unchanged from the candidate named above.

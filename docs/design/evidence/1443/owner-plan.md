@@ -167,10 +167,12 @@ matrices, local links/anchors, eight unchanged PNG hashes and evidence-only scop
 `git diff --check` passes. These checks validate the plan, not the future UI.
 
 This continuation records the approval/archive override and six read-back TaskQ creates; repository edits remain documentation only. It does
-not rerun unchanged browser/native code or weaken an assertion. The earlier full
+not rerun the unchanged browser instrument or weaken an assertion. The earlier full
 canonical gate failure (427 passed, 21 failed, 36 ignored) remains in
 [checks.md](checks.md); sandbox-blocked host-policy checks and other unqualified
-failures remain distinct. D must amend the specification before any implementation
+failures remain distinct. The rebased full-gate attempt also exited 1; its final
+diagnostics were not retained and its failure cause remains unknown (checks.md).
+D must amend the specification before any implementation
 changes those accepted placements; this evidence report does not amend running policy.
 
 The owner answer is the § 7.5 approval; no second plan approval is required.
