@@ -866,6 +866,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // a snapshot renders off the visible screen (taskq.md R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(-20000.0, -20000.0)).with_always_on_top(false).with_focused(false) } else { b };
+                // the bench needs a visible page: WKWebView suspends timers and frames of an off-screen window; it still takes no focus
+                let b = if routes.iter().any(|r| r == "bench") { b.with_position(tao::dpi::LogicalPosition::new(40.0, 40.0)).with_always_on_top(true) } else { b };
                 #[cfg(windows)]
                 let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, !settings.pin.pinned);
                 let p = proxy.clone();
@@ -1024,6 +1026,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if let Err(error)=answer_actions.submit(&request) {
                             push(&mut web,&ui,&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));
                         }
+                    }
+                    "bench-push" if snapshot.is_some() => push(&mut web,&ui,&state(&install,&settings,dark,None,&Value::Null)),
+                    "bench" if snapshot.is_some() => {
+                        let dir = snapshot.clone().unwrap_or_default();
+                        let r = json!({"platform": if cfg!(windows) {"windows"} else {"macos"}, "version": crate::platform::VERSION, "web_failed": web.failed, "page": m["result"]});
+                        if let Err(e) = fs::write(dir.join("bench.json"), r.to_string()) {eprintln!("bench.json: {e}");std::process::exit(1);}
+                        let _ = proxy.send_event(Ev::Shot2);
                     }
                     "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
                     "ready" => {
@@ -1248,6 +1257,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let mut s = settings.clone();
                 s.font = font;
                 push(&mut web,&ui, &state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null));
+                if let (Some((_, wv)), true) = (&ui, script == BENCH) {
+                    let env = |k: &str, d: u64| std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d);
+                    web_eval(wv,&format!("{BENCH}taskqBench({},{})",env("TASKQ_BENCH_HOLD",60),env("TASKQ_BENCH_GAP",250)),"tray.web.fixture",&proxy,&mut web);
+                    return;
+                }
                 if let (Some((_, wv)), false) = (&ui, script.is_empty()) {
                     web_eval(wv,script,"tray.web.fixture",&proxy,&mut web);
                 }
@@ -1314,30 +1328,34 @@ const ANSWERS: [(&str, &str); 4] = [
     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
 ];
-const ROUTES: [&str; 16] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery"];
+/// The `bench` step (docs/testing.md, UI bench): Home held for `TASKQ_BENCH_HOLD` s (60) with a step every `TASKQ_BENCH_GAP`
+/// ms (250); dark theme only, only when named. It writes its samples to `bench.json` instead of waiting 800 ms.
+const BENCH: &str = include_str!("../tests/fixtures/ui-bench.js");
+const ROUTES: [&str; 17] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "bench"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
     let first = roots(install).into_iter().next();
     ["dark", "light"].iter().flat_map(|t| {
         let mut v = vec![(*t, "home".to_string(), 16, ""), (*t, "home".to_string(), 20, ""), (*t, "home".to_string(), 16, ACTIONS)];
+        if *t == "dark" { v.push((*t, "home".to_string(), 16, BENCH)); }
         for font in [16, 20] { v.extend(SCROLLS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
         for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "attention".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
-        for route in &ROUTES[5..] {
+        for route in &ROUTES[5..16] {
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
-    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"answers") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
+    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"answers"|"bench") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
-    if script == RECOVERY { "recovery" } else if script == ACTIONS { "actions" } else if ANSWERS.iter().any(|(_, s)| *s == script) { "answers" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
+    if script == RECOVERY { "recovery" } else if script == BENCH { "bench" } else if script == ACTIONS { "actions" } else if ANSWERS.iter().any(|(_, s)| *s == script) { "answers" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
 }
 
 fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
     shots(install, routes).get(step).map_or(step.to_string(), |(t, p, f, js)| {
-        let suffix = if js.is_empty() || *js==RECOVERY { String::new() } else { format!("-{}", SCROLLS.iter().chain(&ANSWERS).find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
+        let suffix = if js.is_empty() || *js==RECOVERY { String::new() } else if *js==BENCH { "-bench".into() } else { format!("-{}", SCROLLS.iter().chain(&ANSWERS).find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
         let scroll = match route_of(p, js) { "scroll" => "-scroll", "answers" => "-answers", _ => "" };
         format!("{t}-{}{scroll}{suffix}-{f}", if Path::new(p).is_absolute() { "project" } else { p })
     })
@@ -2152,7 +2170,8 @@ mod tests {
         assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert_eq!(names(&["bench"]), ["dark-home-bench-16"], "bench holds one dark Home page");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 6)), "no filter keeps the menu matrix without scroll, answers or bench");
         for route in ROUTES {
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
         }
