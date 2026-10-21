@@ -92,6 +92,8 @@ pub enum Publish {
     Rebased(String),
     /// Main/queue conflict: requeue without consuming the worker retry budget.
     MainMoved(String),
+    /// Only the owner can unblock it (merged with failed CI, removed from the queue): ask (§ 7, #1413).
+    Blocked(String),
 }
 
 /// The trusted log of issue `n` (§ 2).
@@ -138,7 +140,7 @@ impl Board for Profiled {
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
         let began = std::time::Instant::now();
         let p = self.0.publish(n, sha, mode, title, task_line);
-        let failed = match &p { Publish::Done(_) | Publish::Enqueued(_) | Publish::Rebased(_) => None, Publish::Pending(e) | Publish::Failed(e) | Publish::MainMoved(e) => Some(e.as_str()) };
+        let failed = match &p { Publish::Done(_) | Publish::Enqueued(_) | Publish::Rebased(_) => None, Publish::Pending(e) | Publish::Failed(e) | Publish::MainMoved(e) | Publish::Blocked(e) => Some(e.as_str()) };
         crate::profile::board("publish", began.elapsed(), failed, self.0.requests().remaining);
         p
     }
@@ -148,7 +150,7 @@ impl Board for Profiled {
     fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         let began = std::time::Instant::now();
         let p = self.0.resume_publication(n, sha, title, task_line, root, enqueued);
-        crate::profile::board("publish", began.elapsed(), match &p { Publish::Failed(e) | Publish::MainMoved(e) | Publish::Pending(e) => Some(e.as_str()), _ => None }, self.0.requests().remaining);
+        crate::profile::board("publish", began.elapsed(), match &p { Publish::Failed(e) | Publish::MainMoved(e) | Publish::Pending(e) | Publish::Blocked(e) => Some(e.as_str()), _ => None }, self.0.requests().remaining);
         p
     }
     fn url(&self, n: u64) -> String { self.0.url(n) }
@@ -746,6 +748,7 @@ impl Board for Fake {
             "queue-admitted" => Publish::Enqueued("MQ_1".into()),
             "queue-waiting" => Publish::Pending("merge_group CI pending".into()),
             "queue-conflict" => Publish::MainMoved("queue merge conflict".into()),
+            "queue-blocked" => Publish::Blocked("PR #7 merged, merge_group CI tests failure".into()),
             _ => Publish::Done(format!("merged {sha}")),
         }
     }
@@ -943,7 +946,7 @@ mod tests {
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     #[test]
     fn github_queue_qualifies_the_merge_result_and_preserves_unknowns() {
-        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-check-failed", "enqueue-conflict"] {
+        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict"] {
             let admitted = std::rc::Rc::new(RefCell::new(false));
             let queued = admitted.clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
@@ -983,7 +986,9 @@ mod tests {
                         // #1343: the main push run retests the merged tree and is still running when the queue merges.
                         let gate = if scenario == "merge-check-failed" { "failure" } else { "success" };
                         json!({"check_runs": [{"status": "completed", "conclusion": gate, "app": {"slug": "github-actions"}, "check_suite": {"id": 1}},
-                            {"status": "in_progress", "conclusion": null, "app": {"slug": "github-actions"}, "check_suite": {"id": 2}}]})
+                            // #1413: a failed push run (a flaky retest) never holds close
+                            if scenario == "merge-push-failed" { json!({"name": "tests", "status": "completed", "conclusion": "failure", "app": {"slug": "github-actions"}, "check_suite": {"id": 2}}) }
+                            else { json!({"status": "in_progress", "conclusion": null, "app": {"slug": "github-actions"}, "check_suite": {"id": 2}}) }]})
                     }
                     else if url.ends_with("/status") { assert!(url.contains(&merge)); json!({"total_count": 0}) }
                     else { panic!("unexpected {method} {url}") };
@@ -993,7 +998,10 @@ mod tests {
             let got = h.resume_publication(1, &"a".repeat(40), "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
             match scenario {
                 "new" | "draft" | "waiting" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
-                "merged" | "merge-push-pending" => assert!(matches!(got, Publish::Done(_)), "{scenario}: {got:?}"),
+                "merged" | "merge-push-pending" => assert!(matches!(&got, Publish::Done(m) if !m.contains("push CI")), "{scenario}: {got:?}"),
+                "merge-push-failed" => assert!(matches!(&got, Publish::Done(m) if m.ends_with("merge-result CI green; push CI tests failure ignored")), "{got:?}"),
+                // #1413: merged with failed merge-result CI or removed from the queue: only the owner can unblock it
+                "merge-ci-failed" | "merge-check-failed" | "removed" => assert!(matches!(got, Publish::Blocked(_)), "{scenario}: {got:?}"),
                 "conflict" | "enqueue-conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{scenario}: {got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),

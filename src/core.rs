@@ -549,6 +549,11 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
                 t.publication = None;
             }
         }
+        (Review, "publication-blocked", false) if t.publication.is_some() && !l.text.is_empty() => {
+            t.card = text(l.text);
+            *resume = Some(Review);
+            t.state = Ask;
+        }
         (Review, "publication-failed", false) if t.publication.is_some() => {
             if !limit(t, resume, REQUEUE_MAX) { ready(t) }
         }
