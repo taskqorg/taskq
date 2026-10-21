@@ -2353,15 +2353,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         // § 5: read-only probes on this host, no board
         "agents" => {
-            for r in runtime::agents().as_array().into_iter().flatten() {
-                let s = |k: &str, none: &str| r[k].as_str().unwrap_or(none).to_string();
-                let login = match (s("login", "unknown").as_str(), r["account"].as_str()) {
-                    ("logged in", Some(a)) => format!("logged in as {a}"),
-                    ("logged in", None) => "logged in, account unknown".into(),
-                    (l, _) => l.to_string(),
-                };
-                println!("{}  {}  {}  {login}", s("runtime", "?"), s("path", "not installed"), if r["path"].is_null() { "-".into() } else { s("version", "unknown") });
-            }
+            for r in runtime::agents().as_array().into_iter().flatten() { println!("{}", runtime::agents_line(r)); }
             Ok(())
         }
         "service" => service(&a),

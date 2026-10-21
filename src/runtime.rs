@@ -2011,6 +2011,18 @@ pub fn agent_text(r: &serde_json::Value) -> String {
     format!("{rt} {} · {tail}", r["version"].as_str().unwrap_or("unknown"))
 }
 
+/// One `taskq agents` line (§ 5): runtime, path, version, login, kind and last refresh; unread values read unknown (R12).
+pub fn agents_line(r: &serde_json::Value) -> String {
+    let s = |k: &str, none: &str| r[k].as_str().unwrap_or(none).to_string();
+    let login = match (s("login", "unknown").as_str(), r["account"].as_str()) {
+        ("logged in", Some(a)) => format!("logged in as {a}"),
+        ("logged in", None) => "logged in, account unknown".into(),
+        (l, _) => l.to_string(),
+    };
+    let version = if r["path"].is_null() { "-".into() } else { s("version", "unknown") };
+    format!("{}  {}  {version}  {login}  kind {}  refreshed {}", s("runtime", "?"), s("path", "not installed"), s("kind", "unknown"), s("refreshed", "unknown"))
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::Stdio;
@@ -2509,6 +2521,10 @@ mod tests {
             "Login: codex 0.1 · not logged in · kind chatgpt · refreshed 2026-10-19T18:14:41Z",
             "Next: codex admits no task; run `codex login --device-auth` with the PM (docs/relogin.md)"]);
         assert_eq!(login_lines(&serde_json::Value::Null), ["Login: unknown (no runtime probe yet)"]);
+        // `taskq agents` prints kind and refresh too; a missing value reads unknown
+        assert_eq!(agents_line(&serde_json::json!({"runtime": "codex", "path": "/bin/codex", "version": "0.1", "login": "logged in", "account": "a@b.c", "kind": "chatgpt", "refreshed": "2026-10-19T18:14:41Z"})),
+            "codex  /bin/codex  0.1  logged in as a@b.c  kind chatgpt  refreshed 2026-10-19T18:14:41Z");
+        assert_eq!(agents_line(&serde_json::json!({"runtime": "claude", "path": null, "login": "not installed"})), "claude  not installed  -  not installed  kind unknown  refreshed unknown");
     }
 
     // Chain: CLI input boundary -> native stream -> acceptance. Risk: an old turn or a process exit consumes new input.
