@@ -64,4 +64,3 @@ Archived records and permanent deletion boundary:
 Narrow unknown source and a refused prelaunch deletion; the content has one intended vertical scroll area:
 
 ![Partial deletion, light, 20 px, 360 wide](partial-light-20-360.png)
-
