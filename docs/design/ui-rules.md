@@ -67,7 +67,7 @@ The source column points to the canonical rule or the rationale for a proposal.
 | ID | Basis | Check | Source |
 |---|---|---|---|
 | UI01 | P | Back occupies the leading header slot on every non-root route; its position changes by ≤1 CSS px while scrolling. | [Microsoft Back](https://learn.microsoft.com/en-us/windows/apps/develop/ui/navigation/navigation-history-and-backwards-navigation) |
-| UI02 | E | List → detail → Back restores route, expanded groups and scroll position; refresh preserves the route. | [M8](menu.md#m8-implementation-boundary) |
+| UI02 | E | One shared M8 module restores route, state filters, selected project, expanded groups and scroll after Back, service/tray restart and update; invalid values use the nearest valid route. | [M8](menu.md#m8-implementation-boundary) |
 | UI03 | P | One header contains Back, current route identity and window actions; at 320/360 px and 14/16/18/20 px, no overlapping hit rectangles. | [D2, stable adaptation](https://github.com/taskqorg/specq/blob/d496acf9365edfe1c11132f363ae5aaa7573e1f6/design/operator-ui.md#stable-adaptation) |
 | UI04 | E | Board sits beside project identity; task, session and PR targets open directly and independently. Inspect every destination. | [D-A2](operator-ui.md#acceptance), [M3](menu.md#m3-navigation-and-tasks) |
 | UI05 | P | Fine-pointer controls have ≥32×32 CSS px hit rectangles; coarse-pointer controls ≥44×44. Measure actual hit boxes, not glyphs. | [TaskQ dimensions](visual-style.md#geometry-and-type), [target guidance](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum) |

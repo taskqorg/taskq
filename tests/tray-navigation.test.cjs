@@ -2,13 +2,13 @@
 // or moving maintenance hides existing actions. DOM/native rendering is qualified separately by snapshots.
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const context={page:'home',taskFilter:null,working:null,workCard:null,ask:null,esc:s=>String(s),render:()=>{},
-  document:{scrollingElement:{scrollTop:120}},menu:{querySelector:()=>null,querySelectorAll:()=>[{open:true},{open:false}]} };
+  document:{scrollingElement:{scrollTop:120}},menu:{querySelector:()=>null,querySelectorAll:()=>[{dataset:{viewKey:'scope'},open:true},{dataset:{viewKey:'counts'},open:false}]} };
 require('./tray-harness.cjs').install(context);
 (context.navigate('settings'),context.navigate('appearance'));
 assert.equal(context.page,'appearance');assert.equal(context.document.scrollingElement.scrollTop,0);
 (context.back());assert.equal(context.page,'settings');
 (context.back());assert.equal(context.page,'home');assert.equal(context.document.scrollingElement.scrollTop,120);
-assert.equal((JSON.stringify(context.disclosures)),'[true,false]');
+assert.equal((JSON.stringify(context.disclosures)),'{"scope":true,"counts":false}');
 (context.navigate('project'),context.navigate('project','review'),context.navigate('project',null,{project:true}));
 assert.equal(context.working.project,true);
 (context.back());assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['review']);

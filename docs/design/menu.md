@@ -96,6 +96,35 @@ Local capacity remains a separate observation: show occupied slots and held/requ
 
 WS11 first slice (#976, accepted split): native Home / Projects / Attention / Settings and its five categories reuse the existing snapshot and action bridge. Back restores the calling route, disclosure state and scroll; refresh keeps the current route. Existing Work mode and Ask AI remain accessible; no new backend authority. Appearance exposes the currently supported view/font controls and reports the system theme.
 
+### Shared view state (#1439)
+
+`src/tray-view-state.js` owns navigation state for every tray route. Routes declare
+valid identities and parents; common keys apply automatically. Views never access
+storage. The module captures route (`page`), selected state filters (`taskFilter`,
+OR; an empty array means all tasks), selected project (`aiRoot`), Work mode scope
+(`working`), expanded groups keyed by stable `data-view-key`, and content scroll.
+It keeps up to 32 Back entries with the same keys. It never persists task truth,
+confirmation, pending operations, recovery selections, answer text or command drafts.
+
+The native Settings adapter stores this as `navigation: {schema: 1, current, trail}`
+in `<install>/tray.json`, through the existing atomic save and corrupt-file backup.
+The native adapter refuses navigation payloads over 64 KiB.
+Navigation/filter/project changes save immediately; scroll and disclosure changes
+coalesce for 100 ms. Closing the popover flushes before Hide. All settings use this
+one document and adapter; existing top-level keys and values need no migration.
+The schema is independent of the release version. Service stop/restart leaves the
+tray state intact; a restarted or updated tray hydrates once from its first native
+snapshot. Later snapshots reconcile validity without overwriting live navigation.
+
+Restore only registered projects, declared routes, known task states, finite
+nonnegative scroll and boolean disclosure values. Drop invalid keys and obsolete
+Back entries. A missing settings child falls back to Settings; a removed project
+to Projects; an unknown route to Home. Drop a removed selected project or Work mode
+scope. Missing groups keep their default; scroll clamps to the available content.
+A bad/unsupported navigation schema defaults to Home without resetting other
+settings. Snapshot capture explicitly overrides navigation and does not save it.
+Save failure is shown as Settings unknown; it never reports persistence as applied.
+
 Deferred follow-up contracts (not acceptance claims for this slice):
 - Selective recovery: E-A1–E-A9, including durable hold, owned-process identity, unknown-liveness refusal and selected fenced restart with readback. Keep ordinary pause distinct.
 
@@ -120,7 +149,7 @@ Native sizing, scroll ownership and cadence rendering follow [R-UI1–R-UI6](ren
 - Stale status does not prove a dead process. Known logs remain accessible during failure; unknown log paths are explained.
 - About shows tray/service versions and host. Update now appears only for a verified newer version; preserve progress, readback, failure and rollback visibility.
 - Update writes the existing service request and follows §8. Do not claim completion from a button click.
-- `<install>/tray.json` holds view, text size 14–20, period, the Custom icon, notification modes, cursors and open-task titles, Pin, Top, the chosen logical window size and its last position per display (off-screen: at the icon).
+- `<install>/tray.json` holds shared navigation state (M8), view, text size 14–20, period, the Custom icon, notification modes, cursors and open-task titles, Pin, Top, the chosen logical window size and its last position per display (off-screen: at the icon).
 - Resources opens btop in its own OS terminal window (Terminal.app; Windows: conhost), movable, resizable and closable; missing btop is installed with `brew install btop` or winget `aristocratos.btop4win`, its output shown in that window; no package manager: one line saying so.
 
 ## M10 Add project
