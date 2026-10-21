@@ -38,9 +38,9 @@ Use the same fixtures in TaskQ and DashQ: choice and free text; long question; m
 - Conformance: [tests/fixtures/answer-card.json](../../tests/fixtures/answer-card.json); `cargo test` checks its `question` fields against TaskQ's parse, and each consumer runs `replay(case, capability)` over it (`node tests/answer-card.test.cjs`). `tests/answer-card.browser.cjs` checks 16/20 px, both themes, 280/480 px, refresh and keyboard with Playwright.
 - Release: `taskq-<version>-answer-card.js`, `.css` and `-fixtures.json` ship in each release, listed in `SHA256SUMS` with build provenance. DashQ pin (no v* release carries the assets yet, latest v4.1.11): vendor these three files from TaskQ commit `8715e1d2a63f725a290549234c720204d8234413` (#942, last change to all three) with that commit and these checksums as provenance; `git show <commit>:<file> | shasum -a 256` reproduces them. The historical pin above does not include the tray-only #1021 fallback. Checksums of the current source, checked by the node test:
 
-`src/answer-card.js` SHA-256: `a7c4fba8105018fae34b00b45e8713e6d49e2fcbdb19c3e2fb4086dc4dddec02`
-`src/answer-card.css` SHA-256: `927a18346bebec980db94e163a9282513a66cfdb7573c91e1d05dd14c75bbe40`
-`tests/fixtures/answer-card.json` SHA-256: `621548ea7d4fb5f80550789e1ef92e080faf7697fd224f0efe006f1b4b0c76b6`
+`src/answer-card.js` SHA-256: `90dadec6f13ef4c063d8d13ad79f71b3ec44a992ee41435954ba7a80338ccfd9`
+`src/answer-card.css` SHA-256: `8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc`
+`tests/fixtures/answer-card.json` SHA-256: `0913dda8e1ba589f4417e666c11d576479a574fee268009071821c6a1763ff94`
 
 Parent source: TaskQ `531f68e2c6f971eb56c392e623e90721e674f346` supplies the JS/CSS/fixtures; design inheritance is pinned to `cf46e637d45f971dc83f1c1ea5f1e9a119a74256` (#943, K-A8 right alignment). The tray places the shared card beside its existing row without restyling it. This adapter fixes same-ID reconciliation when refresh removes an answered question; the updated JS/fixture hashes above identify that shared fix.
 

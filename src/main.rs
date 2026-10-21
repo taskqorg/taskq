@@ -406,8 +406,8 @@ fn limit(what: &str, lines: &[String], min: usize, max: usize, chars: usize) -> 
     match lines.len() {
         n if n > 0 && max == 0 => Err(format!("{what}: not allowed here (only with --option)")),
         n if n < min || n > max => Err(format!("{what}: {n} lines, allowed {min}-{max}; shorten or split")),
-        _ => match lines.iter().map(|l| width(l)).find(|w| *w > chars) {
-            Some(w) => Err(format!("{what}: a line has {w} characters, limit {chars}; shorten it")),
+        _ => match lines.iter().map(|l| width(l)).enumerate().find(|(_, w)| *w > chars) {
+            Some((i, w)) => Err(format!("{what} line {}: {w} characters, limit {chars}; shorten it", i + 1)),
             None => Ok(()),
         },
     }
@@ -463,9 +463,26 @@ fn evidence(l: &str) -> String {
     format!("[{}]({l})", if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) { format!("#{tail}") } else { "link".into() })
 }
 
+/// § 2 ask card: a Problem or option line holds at most one `[label](url)` with a label of at most 40 characters, no bare URL.
+fn card_links(what: &str, lines: &[String]) -> Res<()> {
+    all(lines.iter().enumerate().map(|(i, l)| {
+        let n = l.matches("](").count();
+        let long = l.split("](").take(n).any(|a| a.rsplit('[').next().is_none_or(|t| t.chars().count() > 40));
+        let bare = l.split_whitespace().any(|w| w.starts_with("http://") || w.starts_with("https://"));
+        match () {
+            _ if n > 1 => Err(format!("{what} line {}: {n} links, at most one [label](url)", i + 1)),
+            _ if long => Err(format!("{what} line {}: link label at most 40 characters", i + 1)),
+            _ if bare => Err(format!("{what} line {}: bare URL; write [label](url)", i + 1)),
+            _ => Ok(()),
+        }
+    }))
+}
+
 /// § 2 ask card: Done, Problem, optional Evidence, 2-4 options with one ★ or none (an owner action), the answer line.
 fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
-    let mut lines = fields(text, &[("Done", 1, 1, 160), ("Problem", 1, 2, 240)])?.concat();
+    let f = fields(text, &[("Done", 1, 1, 160), ("Problem", 1, 2, 240)])?;
+    all([card_links("Problem", &f[1]), card_links("option", opts)])?;
+    let mut lines = f.concat();
     one_line("--option", opts)?;
     let action = opts.is_empty() && recommend.is_none();
     if !action && !(2..=4).contains(&opts.len()) || opts.iter().any(|o| o.contains('★')) {
@@ -3489,6 +3506,13 @@ mod tests {
         assert!(ask_card(7, "Done: d\nProblem: p", &o(2), Some("1"), &vec!["u".to_string(); 3]).is_err());
         assert_eq!(ask_card(7, "Done: d\nProblem: add the token", &[], None, &[]).unwrap(), "Done: d\nProblem: add the token\nTo answer: `taskq answer 7 --text <done>`.");
         assert!(ask_card(7, "Done: d\nProblem: p", &[], Some("1"), &[]).is_err(), "--recommend needs options");
+        // #1457: one short labelled link per Problem/option line; the URL is not visible text; the error names the line
+        let url = format!("https://github.com/o/r/issues/1443#{}", "x".repeat(200));
+        assert!(ask_card(7, "Done: d\nProblem: p", &[format!("merge after [#1443]({url}) {}", "w".repeat(130)), "b".into()], Some("1"), &[]).is_ok());
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &["a".into(), format!("see {url}")], Some("1"), &[]).unwrap_err(), "option line 2: bare URL; write [label](url)");
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &["[a](https://x) [b](https://y)".into(), "b".into()], Some("1"), &[]).unwrap_err(), "option line 1: 2 links, at most one [label](url)");
+        assert_eq!(ask_card(7, &format!("Done: d\nProblem: p\n[{}](https://x)", "l".repeat(41)), &o(2), Some("1"), &[]).unwrap_err(), "Problem line 2: link label at most 40 characters");
+        assert!(ask_card(7, "Done: d\nProblem: p", &["a".into(), "c".repeat(158)], Some("1"), &[]).unwrap_err().contains("option line 2: 161 characters, limit 160"));
         assert_eq!(width("see [#12](https://very/long/url) and `cargo test --locked` https://x/y"), 15, "link targets and code are exempt; outside whitespace counts");
     }
 
@@ -4341,7 +4365,7 @@ mod tests {
         assert!(task_text("requeue", "unlabelled reason").is_err());
         assert!(task_text("requeue", &format!("Reason: ok{}", " ".repeat(240))).is_err());
         let e = task_text("requeue", &format!("Reason: {}\nNext: a\nb", "r".repeat(240))).unwrap_err();
-        assert!(e.contains("requeue: 3 lines, allowed 1-2") && e.contains("Reason: a line has 248 characters, limit 240") && e.contains("Next: 2 lines, allowed 0-1"), "{e}");
+        assert!(e.contains("requeue: 3 lines, allowed 1-2") && e.contains("Reason line 1: 248 characters, limit 240") && e.contains("Next: 2 lines, allowed 0-1"), "{e}");
         assert!(task_text("failed", "Reason: blocked\nNext: repair").is_ok());
         assert!(task_text("steer", "1\n2\n3\n4\n5").is_err());
         let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };

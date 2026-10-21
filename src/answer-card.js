@@ -85,12 +85,14 @@ render:function(board, row, local, cap) {
     }
     if (!q.parsed) return h + '<pre class="qac-text">' + esc(q.text) + '</pre>' + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id) +
       (st === 'unknown' ? '<button type="button" data-qac="retry">Check delivery</button>' : '') + '</section>';
-    h += '<p class="qac-problem">' + esc(q.problem) + '</p>';
+    h += '<p class="qac-problem">' + linked(q.problem) + '</p>';
     h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
       const off = !live || c.consequential, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task' : '';
-      h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (why ? ' aria-describedby="' + id + '-c' + c.id + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(c.text) +
+      h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (why ? ' aria-describedby="' + id + '-c' + c.id + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(label(c.text)) +
         (c.recommended ? ' <span class="qac-star" role="img" aria-label="Recommended">★</span>' : '') + '</span></button>';
+      // § 2: a button cannot hold an anchor; the option's one link opens beside it
+      for (const m of c.text.matchAll(LINK)) h += '<a class="qac-link" href="' + href(m[2]) + '" target="_blank" rel="noopener">' + esc(m[1]) + ' ↗</a>';
       if (why) h += '<span class="qac-why" id="' + id + '-c' + c.id + '">' + esc(why) + ' <a href="' + href(row.url) + '" target="_blank" rel="noopener">board ↗</a></span>';
     }
     h += '</div>';
@@ -203,6 +205,15 @@ const root=globalThis;
   const {key}=execution.module("answer-card",{key:(board, row) => board + '#' + row.n});
   // only web links: card text is worker-written
   const {href}=execution.module("answer-card",{href:u => /^https?:\/\//i.test(u || '') ? esc(u) : '#'});
+  // § 2 card links `[label](url)`: anchors show only the label
+  const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
+  const {label}=execution.module("answer-card",{label:s => String(s == null ? '' : s).replace(LINK, '$1')});
+  const {linked}=execution.module("answer-card",{linked:s => {
+    const p = String(s == null ? '' : s).split(LINK);
+    let h = esc(p[0]);
+    for (let i = 1; i < p.length; i += 3) h += '<a href="' + href(p[i + 1]) + '" target="_blank" rel="noopener">' + esc(p[i]) + '</a>' + esc(p[i + 2]);
+    return h;
+  }});
 
   // Local state of one card: draft and the revision it was written against, the one operation in flight and its receipt.
 
