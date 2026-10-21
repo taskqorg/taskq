@@ -791,7 +791,7 @@ impl<'a> Service<'a> {
 
     /// Recovery monitoring reads ownership only; it cannot resume ordinary task effects.
     pub fn reconcile_ownership(&mut self) -> Result<(),String> {
-        if self.ownership_known && (self.handoff_waits().is_empty()
+        if self.ownership_known && (self.handoff_waits(false).is_empty()
             || self.tasks_read.is_some_and(|at|at.elapsed().as_secs()<self.cfg.poll.max(1))) {return Ok(());}
         self.ownership_known=false;
         let (views,hosts)=views(self.board,&mut self.cache,&mut self.deps)?;
@@ -802,23 +802,26 @@ impl<'a> Service<'a> {
         Ok(())
     }
 
-    /// Handles may cross a qualified image switch; childless uncertainty cannot.
-    pub fn handoff_waits(&self) -> Vec<String> {
+    /// Handles may cross a qualified image switch; childless uncertainty cannot. `exit` (#1435): a Windows image exit
+    /// hands over no handle and the next image reads the same unresolved executions from the board, so childless board
+    /// observations and their reservations pass; held launches and release state still wait.
+    pub fn handoff_waits(&self, exit:bool) -> Vec<String> {
         let owns=|task,attempt|self.kids.iter().any(|k|k.task==task && k.attempt==attempt);
+        let observed=|task,attempt|exit && self.observations.iter().any(|((n,_),x)|*n==task && x.attempt==attempt);
         let mut waits=BTreeSet::new();
         if !self.ownership_known {waits.insert("ownership unknown".into());}
-        for (task,attempt) in self.reserved.iter().map(|(n,a,_)|(*n,*a))
-            .chain(self.pending.iter().copied()).chain(self.held.iter().map(|l|(l.task,l.attempt))) {
+        for (task,attempt) in self.reserved.iter().map(|(n,a,_)|(*n,*a)).chain(self.pending.iter().copied()).filter(|(n,a)|!observed(*n,*a))
+            .chain(self.held.iter().map(|l|(l.task,l.attempt))) {
             if !owns(task,attempt) {waits.insert(format!("#{task} unresolved ownership"));}
         }
-        for ((task,id),_) in &self.observations {
+        for ((task,id),_) in self.observations.iter().filter(|_|!exit) {
             if !self.kids.iter().any(|k|k.task==*task && k.execution==*id) {waits.insert(format!("#{task} unresolved execution {id}"));}
         }
         for (task,_,_) in &self.pending_releases {waits.insert(format!("#{task} release unconfirmed"));}
         waits.into_iter().collect()
     }
 
-    pub fn idle(&self) -> bool {self.kids.is_empty() && self.handoff_waits().is_empty()}
+    pub fn idle(&self) -> bool {self.kids.is_empty() && self.handoff_waits(false).is_empty()}
 
     /// Admission of one launch (§ 3): the load gate, then under Auto a reservation from the host authority, which
     /// refuses with a reason; the request stays `requested`. Fixed admits as before.
@@ -869,7 +872,7 @@ impl<'a> Service<'a> {
     /// counts their children; a failed write only matters to Auto, whose next request refuses.
     pub fn sync_host(&mut self) {
         if let Some(host) = &self.host {
-            let recovered=self.handoff_waits().is_empty();
+            let recovered=self.handoff_waits(false).is_empty();
             let held=self.entry().held;
             match host.lock() {
                 Ok(mut h) => {
@@ -2510,6 +2513,27 @@ mod tests {
 
     fn task(b: &Fake, n: u64) -> Task {
         core::fold(n, &entries(b, n).unwrap(), false)
+    }
+
+    // #1435: a stale childless execution held the Windows image exit forever. Risk kept: handover and stop still wait on it.
+    #[test]
+    fn windows_exit_passes_childless_unresolved_execution() {
+        let b=Fake::default();
+        let c=cfg("mac");
+        let n=b.create("T","## Goal\ng",&[TASK_LABEL.into()]).unwrap();
+        let mut old=service(&b,&c,Default::default()); old.pass().unwrap();
+        assert_eq!(old.kids.len(),1);
+        drop(old);
+        let mut s=service(&b,&c,Default::default()); s.pass().unwrap();
+        assert!(s.kids.is_empty());
+        assert!(s.execution_waits[&n].contains("termination unconfirmed"));
+        assert!(s.handoff_waits(false).iter().any(|w|w.contains("unresolved execution")),"handover keeps waiting");
+        assert!(s.handoff_waits(true).is_empty(),"image exit leaves the record to the next image: {:?}",s.handoff_waits(true));
+        s.pending.insert((n,1));
+        assert!(!s.handoff_waits(true).is_empty(),"an attempt without a board execution still waits");
+        s.pending.remove(&(n,1));
+        if cfg!(windows) {assert!(crate::lifecycle_waits(&s,&c.root,false).is_empty());}
+        assert!(!crate::lifecycle_waits(&s,&c.root,true).is_empty(),"stop still waits");
     }
 
     // Chain: #1359 § 3 claim -> launch -> acceptance, one pass. Risk: a claim rereads the task log the pass just read.

@@ -20,7 +20,13 @@ unsafe extern "system" {
     fn OpenThread(access:u32,inherit:i32,tid:u32)->Handle;
     fn GetProcessIdOfThread(thread:Handle)->u32;
     fn ResumeThread(thread:Handle)->u32;
+    fn GetCurrentProcessId()->u32;
+    fn Process32FirstW(snapshot:Handle,entry:*mut ProcessEntry)->i32;
+    fn Process32NextW(snapshot:Handle,entry:*mut ProcessEntry)->i32;
+    fn QueryFullProcessImageNameW(process:Handle,flags:u32,name:*mut u16,size:*mut u32)->i32;
 }
+#[repr(C)]
+struct ProcessEntry {size:u32,usage:u32,id:u32,heap:usize,module:u32,threads:u32,parent:u32,priority:i32,flags:u32,exe:[u16;260]}
 #[repr(C)]
 #[derive(Default)]
 struct Thread {size:u32,usage:u32,id:u32,process:u32,priority:i32,delta:i32,flags:u32}
@@ -98,6 +104,40 @@ fn resume(child:&Child)->Result<u32,String> {
     if unsafe {GetProcessIdOfThread(thread.as_raw_handle())}!=child.id() {return Err("native thread ownership changed".into());}
     let count=unsafe {ResumeThread(thread.as_raw_handle())};
     if count==u32::MAX {Err(io::Error::last_os_error().to_string())} else {Ok(count)}
+}
+
+fn parent(pid:u32)->Result<u32,String> {
+    let snapshot=owned(unsafe {CreateToolhelp32Snapshot(2,0)},io::Error::last_os_error())?;
+    let mut entry=ProcessEntry {size:std::mem::size_of::<ProcessEntry>() as u32,usage:0,id:0,heap:0,module:0,threads:0,parent:0,priority:0,flags:0,exe:[0;260]};
+    let mut more=unsafe {Process32FirstW(snapshot.as_raw_handle(),&mut entry)};
+    while more!=0 {
+        if entry.id==pid {return Ok(entry.parent);}
+        more=unsafe {Process32NextW(snapshot.as_raw_handle(),&mut entry)};
+    }
+    Err("process not in snapshot".into())
+}
+fn image(process:&OwnedHandle)->Result<std::path::PathBuf,String> {
+    let mut buffer=vec![0u16;32768];let mut size=buffer.len() as u32;
+    if unsafe {QueryFullProcessImageNameW(process.as_raw_handle(),0,buffer.as_mut_ptr(),&mut size)}==0 {return Err(io::Error::last_os_error().to_string());}
+    use std::os::windows::ffi::OsStringExt;
+    Ok(std::ffi::OsString::from_wide(&buffer[..size as usize]).into())
+}
+/// The parent process when its image is `launcher`; a parent pid can be reused, so the image proves the parent.
+fn launched_by(launcher:&std::path::Path)->Result<Option<OwnedHandle>,String> {
+    let pid=parent(unsafe {GetCurrentProcessId()})?;
+    let raw=unsafe {OpenProcess(0x1000|0x00100000,0,pid)};
+    let handle=owned(raw,io::Error::last_os_error())?;
+    let same=|p:&std::path::Path|p.canonicalize().ok().map(|p|p.to_string_lossy().to_lowercase());
+    let path=same(&image(&handle)?);
+    Ok((path.is_some() && path==same(launcher)).then_some(handle))
+}
+/// #1435 A2: ending the Scheduled Task ends only the launcher; `service run` then exits too, so no old release keeps
+/// running. Workers stay in their own jobs and the next service rebuilds from the board (§ 4).
+pub fn exit_with_launcher(launcher:&std::path::Path) {
+    let handle=match launched_by(launcher) {Ok(Some(h))=>h,Ok(None)=>return,Err(e)=>{log!("launcher watch unavailable: {e}");return;}};
+    std::thread::spawn(move || {
+        if unsafe {WaitForSingleObject(handle.as_raw_handle(),u32::MAX)}==0 {log!("launcher ended; service exits");std::process::exit(0);}
+    });
 }
 
 pub struct Execution {
@@ -202,6 +242,16 @@ mod tests {
         }
     }}
     native_callback!();
+    // #1435 A2: the watch must recognize its launcher and nothing else. Risk: a reused parent pid ends the service.
+    #[test]
+    fn launcher_watch_matches_parent_image_only() {
+        let mut child=Command::new("cmd").args(["/c","ping -n 3 127.0.0.1 >nul"]).spawn().unwrap();
+        assert_eq!(parent(child.id()).unwrap(),unsafe {GetCurrentProcessId()});
+        let own=owned(unsafe {OpenProcess(0x1000,0,GetCurrentProcessId())},io::Error::last_os_error()).unwrap();
+        assert_eq!(image(&own).unwrap().canonicalize().unwrap(),std::env::current_exe().unwrap().canonicalize().unwrap());
+        assert!(launched_by(&std::env::current_exe().unwrap()).unwrap().is_none(),"the test runner is not its own parent");
+        child.kill().ok();child.wait().ok();
+    }
     // Chain: native failure -> automatically captured adapter -> original diagnostic.
     #[test]
     fn native_error_survives_method_instrumentation() {
