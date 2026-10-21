@@ -115,3 +115,33 @@ and unchanged-file assertion. R9, R11, R12 and § 6 are unchanged; no rule is am
 destruction open and checks that settlement cannot finish until it is released.
 This is a worker/collector teardown check, not native installation qualification.
 The accepted four-image layout and owner answer remain unchanged.
+
+Repair source: `a3ea38893f6d14086ba7359c6f8596267a2cfc4c`, rebased on
+`ab52a687db2a69d4c4c7f20accd67be5a4430298` (the CoreQ writer-promotion pin).
+Local tools: Rust 1.99.0 (Windows GNU), Node 24.5.0 and Python 3.12.10.
+
+- Before the fix, `cargo +stable test --locked --bin taskq telemetry::tests::receipt_settlement_waits_for_dispatch_release -- --exact --nocapture`
+  failed: `receipt settled while its dispatcher still owned the collector`.
+  The check runs in its own process so unrelated queued receipts cannot hide it.
+- After the fix, the same regression passed inside the selected full gate:
+  `python3 scripts/check.py --base ab52a687db2a69d4c4c7f20accd67be5a4430298`.
+  The gate itself failed: 437 passed, 20 failed, 35 ignored; 271.687 s / 900 s,
+  no retries, Windows GNU with warm dependencies. Explicit worker refusals for
+  host installation/policy, lifecycle and Windows security restoration are
+  sandbox-blocked. Other assertion failures, including publication call counts,
+  remain unqualified. Rust integration checks were not reached; this is not a
+  green gate. The original installer check is sandbox-blocked here, so its
+  post-repair Windows MSVC cleanup outcome still needs merge-group CI.
+- `npm run build` and all 17 `tests/*.test.cjs` component checks passed.
+- All six browser instruments passed on Windows Chromium headless:
+  `workspace-operations`, `tray-stop`, `tray-recovery`, `tray-resources`,
+  `workspace-communication` and `tray-view-state` (`tests/*.browser.cjs`).
+  V15/V28 protections remain; effects are substituted, not native-qualified.
+- `cargo +stable run --locked -- selftest` passed in an isolated temporary
+  installation with `TASKQ_SELFTEST_OFFLINE=1`: 97 traces, formats and staged
+  capture. Board status stayed explicitly unknown; no running writer was used.
+- `bash docs/shots/check.sh` (Git Bash) and `git diff --check` passed.
+
+No authority environment was relaxed, no production operation was applied and
+no new review images were added. Publication still requires green `merge_group`
+CI on the merge result (R12/§ 7).
