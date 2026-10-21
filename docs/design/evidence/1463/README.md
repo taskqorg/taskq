@@ -2,10 +2,25 @@
 
 Implemented source. The owner accepted the seven-image set, including the four
 heading-focus and breadcrumb corrections in [answer 6315388620](https://github.com/taskqorg/taskq/issues/1463#issuecomment-6315388620).
-Not merged, released or deployed. Native qualification and the merge gate remain incomplete (R12).
+Not merged, released or deployed. Green merge-result CI remains the task gate;
+remaining native qualification belongs to the pre-release owner batch (§ 7.8/R12).
 Source blobs are pinned in the artifact receipts; UI before evidence: `0804397`.
 Candidate rebased on `a4605ba`; the M2 note, publication fix and new-task intake change are retained.
 [Seven actual-size images](screenshots.md) · [source/artifact receipts](artifacts.json).
+
+## Current delivery decision (§ 7.8/R12)
+
+[Owner answer 6318183337](https://github.com/taskqorg/taskq/issues/1463#issuecomment-6318183337)
+moves the macOS WKWebView workspace capture to the pre-release owner batch.
+It supersedes the earlier per-task native gate in this evidence and task log.
+Deliver PR #1480 through review and green `merge_group` CI; the blocked capture
+is not a passing native check and does not block this self-fix handoff.
+
+Open item for the version PR: capture and inspect the actual WKWebView workspace
+Messages, Work sessions and Agent settings routes in the owner batch before
+release. Retain separate Windows evidence, the accepted actual-size review set,
+the blocked Mac receipt and local gate failures. This decision changes no
+application code, assertions, permissions or native qualification claim.
 
 ## Native workspace follow-up (A8, R12)
 
@@ -341,9 +356,11 @@ and browser results stay separate under R12.
 ## Remaining acceptance
 
 Owner A8/V38 actual-size review of the seven-image set is recorded in answer
-6315388620. The captured README manifest now passes with exact UI blob and image
-hash matches. Windows native workspace evidence is recorded above; WKWebView
-workspace rendering remains unknown. Native click/raise stays owner-observed
-under the UI acceptance contract. Full local gate failures
-remain disclosed; host sandbox blocks are not PASS. Green merge-result CI is
-required for publication (§ 7/R12). Not merged, released or deployed.
+6315388620. The captured README manifest passes with exact UI blob and image
+hash matches. Windows native workspace evidence is recorded above. Per owner
+answer 6318183337 and § 7.8, the unknown macOS WKWebView workspace capture is an
+open item for the pre-release owner batch and version PR, not a per-task gate.
+Native click/raise remains owner-observed under the UI acceptance contract.
+Local gate failures remain disclosed; sandbox-blocked checks are not PASS.
+Publication requires the merged PR and green merge-result CI (§ 7.8/R12).
+Not merged, released or deployed.
