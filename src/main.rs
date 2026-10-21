@@ -739,7 +739,33 @@ fn kids_file(install:&Path,root: &Path) -> Res<Vec<data::KidLine>> {
     Ok(kids)
 }
 
+/// A process that started before this boot cannot still run; its board attempt recovers like any lost heartbeat.
+fn pre_boot(k:&data::KidLine)->bool {
+    platform::started_before_boot(&k.process.started).unwrap_or(false)
+        && matches!(coreq::process::identity(k.process.pid), Ok(x) if x.as_ref()!=Some(&k.process))
+}
+
+/// Power loss (#1445): drop a torn `.pending` and retire kids from a previous boot before adoption.
+fn retire_pre_boot(install:&Path,root:&Path)->Res<usize> {
+    // kids_file first: it refuses while a previous service still owns the record.
+    let mut kids=kids_file(install,root)?;
+    let path=kids_path(install,root)?;
+    let mut name=path.file_name().unwrap_or_default().to_os_string();
+    name.push(".pending");
+    match fs::remove_file(path.with_file_name(name)) {
+        Err(e) if e.kind()!=std::io::ErrorKind::NotFound=>return Err(format!("kids: stale pending file kept ({e})")),
+        _=>{},
+    }
+    let before=kids.len();
+    kids.retain(|k|!pre_boot(k));
+    let retired=before-kids.len();
+    if retired>0 { write_kids(install,root,&kids)?; }
+    Ok(retired)
+}
+
 fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
+    let retired=retire_pre_boot(install,root)?;
+    if retired>0 { platform::log(&format!("{}: retired {retired} kid(s) started before this boot", root.display())); }
     let kids = kids_file(install,root)?;
     for k in kids {
         if let Some(owned)=s.kids.iter().find(|owned|owned.task==k.task||owned.execution==k.execution) {
@@ -1195,7 +1221,7 @@ fn publish_status(tool: &coreq::Tool, root: &Path, status: &Value, host: Option<
         status["host_instance"]=host.lock().map(|h|json!(h.instance)).unwrap_or(Value::Null);
         status["host_install"]=status["host_instance"].as_str().and_then(|instance|host::install_acknowledgement(&tool.install,root,instance)).map_or(Value::Null,|id|json!(id));
     }
-    let written = coreq::status::write(tool, root, &status);
+    let written = platform::write_status(tool, root, &status);
     if let Err(e) = &written { log!("status publication failed: {e}; observed state unknown"); }
     let qualified = written.is_ok() && snapshot::complete(&status) && status["error"].is_null() && status["focus_error"].is_null();
     if let Some(host) = host { if let Ok(mut h) = host.lock() { h.publication(root, qualified); } }
@@ -2842,6 +2868,31 @@ mod tests {
     use super::*;
     use board::Fake;
     use dispatch::close_one;
+
+    // Defect #1445: kids from before a reboot held startup (Windows job recovery fails). Risk: a live kid retired.
+    #[test]
+    fn kids_from_a_previous_boot_are_retired_and_live_kids_kept() {
+        let root = std::env::temp_dir().join(format!("taskq-preboot-{}", runtime::uuid()));
+        let install = root.join("install");
+        fs::create_dir_all(&install).unwrap();
+        let mut gone = if cfg!(windows) { std::process::Command::new("cmd").args(["/c", "exit"]).spawn() } else { std::process::Command::new("true").spawn() }.unwrap();
+        let pid = gone.id(); gone.wait().unwrap();
+        let old = if cfg!(target_os = "linux") { "00000000-0000-0000-0000-000000000000-1" } else if cfg!(windows) { "1" } else { "1-0" };
+        let mut live = if cfg!(windows) { std::process::Command::new("ping").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn() } else { std::process::Command::new("sleep").arg("30").spawn() }.unwrap();
+        let me = coreq::process::identity(live.id()).unwrap().unwrap();
+        let kid = |task, process| data::KidLine { task, attempt: 1, runtime: "codex".into(), process, execution: task, offset: 0, job: None };
+        let stale = kid(1, coreq::process::Identity { pid, started: old.into() });
+        assert!(pre_boot(&stale));
+        assert!(!pre_boot(&kid(2, me.clone())), "a process of this boot is kept");
+        write_kids(&install, &root, &[stale, kid(2, me.clone())]).unwrap();
+        let mut pending = kids_path(&install, &root).unwrap().into_os_string(); pending.push(".pending");
+        fs::write(&pending, [0u8; 8]).unwrap();
+        assert_eq!(retire_pre_boot(&install, &root).unwrap(), 1);
+        assert_eq!(kids_file(&install, &root).unwrap(), vec![kid(2, me)]);
+        assert!(!Path::new(&pending).exists(), "a torn pending file cannot block later checkpoints");
+        live.kill().unwrap(); live.wait().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
     #[cfg(target_os = "macos")]

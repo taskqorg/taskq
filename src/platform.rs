@@ -9,6 +9,69 @@ pub use coreq::{Tool, quiet, write_atomic};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// #1445: temp file, flush, rename, then the folder entry; a power loss leaves the old or the new record.
+/// ponytail: a temp torn by a power cut stays beside the record (one name per pid); sweep them if they pile up.
+pub fn write_synced(p: &Path, text: &str) -> Result<(), String> {
+    use std::io::Write;
+    let name = p.file_name().ok_or("record has no file name")?.to_string_lossy();
+    let tmp = p.with_file_name(format!("{name}.{}.tmp", std::process::id()));
+    let written = fs::File::create(&tmp).and_then(|mut f| f.write_all(text.as_bytes()).and_then(|_| f.sync_all()))
+        .and_then(|_| fs::rename(&tmp, p));
+    if written.is_err() { let _ = fs::remove_file(&tmp); }
+    written.map_err(|e| format!("{}: {e}", p.display()))?;
+    #[cfg(unix)]
+    if let Some(dir) = p.parent().filter(|d| !d.as_os_str().is_empty()) {
+        fs::File::open(dir).and_then(|d| d.sync_all()).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    Ok(())
+}
+
+/// coreq's status.json path and text, written through `write_synced` (#1445).
+pub fn write_status(t: &Tool, root: &Path, status: &serde_json::Value) -> Result<(), String> {
+    use std::hash::BuildHasher;
+    let subject = std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default().hash_one(root);
+    coreq::telemetry::capture::poll("status.write", subject, || {
+        let p = coreq::status::path(t, root);
+        fs::create_dir_all(p.parent().ok_or("status.json has no folder")?).map_err(|e| e.to_string())?;
+        write_synced(&p, &serde_json::to_string_pretty(status).map_err(|e| e.to_string())?)
+    }, |result| if result.is_ok() { "written" } else { "status-write" })
+}
+
+/// #1445: whether a recorded process start (coreq native identity) lies before the current boot; Err: unknown.
+#[cfg(target_os = "linux")]
+pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
+    let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id")?;
+    Ok(started.get(..36) != Some(boot.trim()))
+}
+
+#[cfg(target_os = "macos")]
+pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
+    let secs: i64 = started.split('-').next().and_then(|s| s.parse().ok()).ok_or_else(|| std::io::Error::other("invalid process start"))?;
+    let mut boot = libc::timeval { tv_sec: 0, tv_usec: 0 };
+    let mut size = std::mem::size_of::<libc::timeval>();
+    // SAFETY: kern.boottime fills one timeval of the given size.
+    if unsafe { libc::sysctlbyname(c"kern.boottime".as_ptr(), (&mut boot as *mut libc::timeval).cast(), &mut size, std::ptr::null_mut(), 0) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if boot.tv_sec <= 0 { return Err(std::io::Error::other("boot time unknown")); }
+    Ok(secs < boot.tv_sec)
+}
+
+#[cfg(windows)]
+pub fn started_before_boot(started: &str) -> std::io::Result<bool> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" { fn GetTickCount64() -> u64; fn GetSystemTimeAsFileTime(time: *mut u64); }
+    let created: u64 = started.parse().map_err(|_| std::io::Error::other("invalid process start"))?;
+    let mut now = 0u64;
+    // SAFETY: FILETIME is two u32 words; a u64 holds it with stricter alignment.
+    let up = unsafe { GetSystemTimeAsFileTime(&mut now); GetTickCount64() };
+    // FILETIME counts 100 ns; uptime includes sleep, so this is the boot instant up to clock changes.
+    Ok(created < now.saturating_sub(up.saturating_mul(10_000)))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub fn started_before_boot(_started: &str) -> std::io::Result<bool> { Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "boot time unsupported")) }
+
 /// Built in, never from config: project files are written by workers, so config must not choose the code hosts run.
 pub const RELEASE_REPO: &str = "taskqorg/taskq";
 
@@ -748,6 +811,21 @@ pub fn host_memory() -> Option<(f64, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Defect #1445: service and status.json were written in place without a flush; a power cut left zeros.
+    #[test]
+    fn synced_write_replaces_whole_record_and_leaves_no_temp() {
+        let dir = std::env::temp_dir().join(format!("taskq-synced-{}", crate::runtime::uuid()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("service");
+        write_synced(&p, "old").unwrap();
+        write_synced(&p, "new").unwrap();
+        assert_eq!(fs::read_to_string(&p).unwrap(), "new");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "temp file removed");
+        let me = coreq::process::identity(std::process::id()).unwrap().unwrap();
+        assert!(!started_before_boot(&me.started).unwrap(), "this process started in this boot");
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     // #1381: project taskq's log is the host unit's stderr file; a line written to both landed twice.
     #[test]

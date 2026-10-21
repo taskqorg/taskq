@@ -652,13 +652,13 @@ fn service_record(install:&Path)->Res<Option<OwnerRecord>> {
 
 fn publish_service(install:&Path,native:&coreq::process::Identity,instance:&str)->Res<()> {
     let record=ServiceRecord {schema:1,pid:native.pid,started:native.started.clone(),instance:instance.into(),at:wall()?,version:crate::platform::VERSION.into(),restart_protocol:Some(1),stop_protocol:Some(2),full_stop_protocol:cfg!(target_os="macos").then_some(1),uninstall_protocol:Some(1),install_protocol:Some(1)};
-    crate::platform::write_atomic(&install.join("service"),&(serde_json::to_string(&record).map_err(|e|e.to_string())?+"\n"))
+    crate::platform::write_synced(&install.join("service"),&(serde_json::to_string(&record).map_err(|e|e.to_string())?+"\n"))
 }
 
 /// A prior recorded owner must have exited; age never proves that. The native lock still owns admission.
 pub fn other(install: &Path) -> Res<Option<u32>> {
     let record=match service_record(install) {
-        Err(e)=>return if unreadable_exited(install)? {Ok(None)} else {Err(e)},
+        Err(e)=>return if unreadable_exited(install)?||zeroed_unowned(install)? {Ok(None)} else {Err(e)},
         Ok(record)=>record,
     };
     match record {
@@ -669,6 +669,14 @@ pub fn other(install: &Path) -> Res<Option<u32>> {
             Ok((r.pid!=std::process::id()&&live.as_ref().is_some_and(|p|p.started==r.started)&&!installation::legacy_projection(install,r.pid,Some(&r.started))?).then_some(r.pid))
         }
     }
+}
+
+/// #1445: a power loss can zero the record; the free native owner lock proves no live owner, so keep it aside.
+fn zeroed_unowned(install:&Path)->Res<bool> {
+    let Ok(_lock)=coreq::file_lock::try_lock(&install.join("service.lock")) else {return Ok(false)};
+    let moved=crate::data::set_aside_zeroed(&install.join("service"))?;
+    if moved {crate::platform::log("host service record zeroed by a power loss; kept as service.zeroed-*, startup continues");}
+    Ok(moved)
 }
 
 /// A record this version cannot read (a newer release's protocol or field) is stale once its recorded process
@@ -725,6 +733,8 @@ pub fn project_service(root: &Path) -> Res<Option<u32>> {
 fn legacy(install:&Path,roots: &[PathBuf]) -> Res<()> {
     if !installation::legacy_definitions(install)?.is_empty() {return Err("handoff: legacy native definitions remain; host admission held".into());}
     for root in roots {
+        // #1445: the host owner lock is held and no legacy unit remains, so a zeroed status.json has no live owner.
+        if crate::data::set_aside_zeroed(&crate::dot(root).join("status.json"))? {append_project(install,root,"status.json zeroed by a power loss; kept as status.json.zeroed-*");}
         if project_service(root)?.is_some() { return Err("handoff: legacy service still running".into()); }
     }
     Ok(())
@@ -736,7 +746,7 @@ fn startup_status(install: &Path, root: &Path, error: &str,instance:&str) -> Res
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), Some(error.into()), None);
     fs::create_dir_all(crate::dot(root)).map_err(|e| e.to_string())?;
     status["host_instance"]=json!(instance);
-    coreq::status::write(&crate::platform::tool(install), root, &status)
+    crate::platform::write_status(&crate::platform::tool(install), root, &status)
 }
 
 fn owner(install:&Path)->Res<Option<coreq::file_lock::Lock>> {
@@ -908,6 +918,7 @@ pub fn run(install: &Path) -> Res<()> {
             if drained { h.busy.remove(&root); h.prepared.remove(&root);h.recovered.remove(&root);drained_roots.insert(root.clone()); }
             else {
                 // A reduced loop failed: its attempts expire on other hosts, and local launches hold for inspection.
+                log_all(install,std::slice::from_ref(&root),&thread_error(&outcome));
                 stopped.insert(root.clone());
                 h.prepared.remove(&root);
                 h.recovered.remove(&root);
@@ -1051,6 +1062,16 @@ pub fn run(install: &Path) -> Res<()> {
 fn log_all(install: &Path, roots: &[PathBuf], text: &str) {
     crate::platform::log(text);
     mirror(install, roots, text, crate::platform::stderr_file(install).as_deref());
+}
+
+/// #1445: the reason a project thread ended, for the host and project logs.
+fn thread_error(outcome:&std::thread::Result<Res<()>>)->String {
+    let reason=match outcome {
+        Ok(Ok(()))=>"ended without error".to_string(),
+        Ok(Err(e))=>e.clone(),
+        Err(panic)=>panic.downcast_ref::<String>().cloned().or_else(||panic.downcast_ref::<&str>().map(|s|s.to_string())).map_or("panic".into(),|p|format!("panic: {p}")),
+    };
+    format!("project thread error: {}",crate::compact(&reason,136))
 }
 
 fn mirror(install: &Path, roots: &[PathBuf], text: &str, stderr: Option<&Path>) {
@@ -2331,6 +2352,44 @@ mod tests {
     }
 
     // Chain A5: host pid ownership and registry poke -> exact-root reload. Risk: duplicate host or discovery.
+    #[test]
+    fn power_loss_zeroed_records_are_set_aside_only_without_an_owner() {
+        // Defect #1445: a zeroed service or status.json held startup forever after a power cut.
+        let install = temp("zeroed");
+        let zeroed = |p: &Path| fs::write(p, [0u8; 64]).unwrap();
+        let aside = |dir: &Path, prefix: &str| fs::read_dir(dir).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().starts_with(prefix)).count();
+        zeroed(&install.join("service"));
+        {
+            let _owner = coreq::file_lock::try_lock(&install.join("service.lock")).unwrap();
+            assert!(other(&install).is_err(), "a live native owner keeps the zeroed record");
+            assert_eq!(fs::read(install.join("service")).unwrap(), [0u8; 64]);
+        }
+        assert_eq!(other(&install).unwrap(), None);
+        assert!(!install.join("service").exists());
+        assert_eq!(aside(&install, "service.zeroed-"), 1);
+        fs::create_dir_all(crate::dot(&install)).unwrap();
+        zeroed(&crate::dot(&install).join("status.json"));
+        assert!(project_service(&install).is_err());
+        assert!(crate::data::set_aside_zeroed(&crate::dot(&install).join("status.json")).unwrap());
+        assert_eq!(project_service(&install).unwrap(), None);
+        assert_eq!(aside(&crate::dot(&install), "status.json.zeroed-"), 1);
+        fs::write(install.join("service"), "bad").unwrap();
+        assert!(other(&install).is_err(), "a nonzero unreadable record is never moved");
+    }
+
+    #[test]
+    fn ended_project_thread_logs_its_error() {
+        // Defect #1445: an ended project thread logged no reason.
+        assert_eq!(thread_error(&Ok(Err("kids: unreadable".into()))), "project thread error: kids: unreadable");
+        let panic = std::thread::spawn(|| -> Res<()> { panic!("boom") }).join();
+        assert_eq!(thread_error(&panic), "project thread error: panic: boom");
+        let install = temp("thread-error");
+        let root = install.join("proj");
+        fs::create_dir_all(&root).unwrap();
+        log_all(&install, std::slice::from_ref(&root), &thread_error(&Ok(Err("adopt failed".into()))));
+        assert!(fs::read_to_string(project_log(&install, &root)).unwrap().contains("project thread error: adopt failed"));
+    }
+
     #[test]
     fn pid_check_and_poke_use_host_paths_and_unknown_is_held() {
         let install = temp("pid");
