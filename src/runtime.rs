@@ -1719,10 +1719,15 @@ fn app_presence(text: &str, windows: bool) -> Result<bool, String> {
     }
 }
 
+/// `$CODEX_HOME`, default `~/.codex`; a Windows service has no `HOME`.
+fn codex_home() -> Option<PathBuf> {
+    std::env::var_os("CODEX_HOME").map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| Path::new(&h).join(".codex")))
+}
+
 /// The thread's rollout file under `$CODEX_HOME/sessions` (default `~/.codex`; a Windows service has no `HOME`).
 pub(crate) fn rollout(thread: &str) -> Option<PathBuf> {
-    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| Path::new(&h).join(".codex")))?;
+    let home = codex_home()?;
     fn find(dir: &Path, end: &str) -> Option<PathBuf> {
         std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
             let p = e.path();
@@ -1930,6 +1935,35 @@ fn login(rt: &str, out: Option<(bool, String)>) -> (&'static str, Option<String>
     }
 }
 
+/// Login kind and last refresh (taskq.md § 5 `agents`): Claude `authMethod subscriptionType` from `auth status`, no
+/// readable refresh time; Codex `auth_mode` and `last_refresh` of `auth.json`. Never a token value; unreadable: None.
+fn kind_refresh(rt: &str, status: Option<&str>, auth: Option<&str>) -> (Option<String>, Option<String>) {
+    let json = |t: Option<&str>| t.and_then(|t| serde_json::from_str::<serde_json::Value>(t).ok()).unwrap_or_default();
+    if rt == "claude" {
+        let v = json(status);
+        let kind = [&v["authMethod"], &v["subscriptionType"]].iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(" ");
+        return ((!kind.is_empty()).then_some(kind), None);
+    }
+    let v = json(auth);
+    (v["auth_mode"].as_str().map(String::from), v["last_refresh"].as_str().map(String::from))
+}
+
+/// The re-login step for a logged-out runtime: the longest-lived option first ([runbook](../docs/relogin.md)).
+pub fn relogin(rt: &str) -> &'static str {
+    if rt == "claude" { "run `claude auth login` with the PM (docs/relogin.md)" } else { "run `codex login --device-auth` with the PM (docs/relogin.md)" }
+}
+
+/// `Login:` lines of `service status` from status.json `agents` rows; a logged-out runtime adds its `Next:` step.
+pub fn login_lines(rows: &serde_json::Value) -> Vec<String> {
+    let Some(rows) = rows.as_array() else { return vec!["Login: unknown (no runtime probe yet)".into()] };
+    rows.iter().flat_map(|r| {
+        let s = |k: &str| r[k].as_str().unwrap_or("unknown").to_string();
+        let mut l = vec![format!("Login: {} · kind {} · refreshed {}", agent_text(r), s("kind"), s("refreshed"))];
+        if r["login"] == "not logged in" { l.push(format!("Next: {} admits no task; {}", s("runtime"), relogin(&s("runtime")))); }
+        l
+    }).collect()
+}
+
 /// `logged in`, `not logged in` or `unknown` for an installed runtime binary.
 pub fn login_state(rt: &str, bin: &Path) -> &'static str {
     login(rt, probe("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] })).0
@@ -1940,7 +1974,8 @@ pub fn agent_runtimes() -> &'static [&'static str] {
     if cfg!(any(target_os = "macos", windows)) { &["claude", "codex", "codex-app"] } else { &["claude", "codex"] }
 }
 
-/// One row per runtime: `runtime`, `path` (null: not installed), `version`, `login`, `account` (null: unknown or none).
+/// One row per runtime: `runtime`, `path` (null: not installed), `version`, `login`, `account`, `kind`, `refreshed`
+/// (null: unknown or none).
 pub fn agents() -> serde_json::Value {
     let mut seen: std::collections::HashMap<&str, serde_json::Value> = std::collections::HashMap::new();
     let rows = agent_runtimes().iter().map(|rt| {
@@ -1951,8 +1986,11 @@ pub fn agents() -> serde_json::Value {
                 return serde_json::json!({"path": null, "version": null, "login": "not installed", "account": null});
             }
             let ver = probe("runtime.version", &p, &["--version"]).and_then(|(_, o)| version(&o));
-            let (state, account) = login(bin, probe("runtime.login", &p, if bin == "claude" { &["auth", "status"] } else { &["login", "status"] }));
-            serde_json::json!({"path": p.display().to_string(), "version": ver, "login": state, "account": account})
+            let out = probe("runtime.login", &p, if bin == "claude" { &["auth", "status"] } else { &["login", "status"] });
+            let auth = (bin == "codex").then(|| codex_home().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
+            let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
+            let (state, account) = login(bin, out);
+            serde_json::json!({"path": p.display().to_string(), "version": ver, "login": state, "account": account, "kind": kind, "refreshed": refreshed})
         }).clone();
         row["runtime"] = serde_json::json!(rt);
         row
@@ -1971,6 +2009,18 @@ pub fn agent_text(r: &serde_json::Value) -> String {
         _ => "login unknown".into(),
     };
     format!("{rt} {} · {tail}", r["version"].as_str().unwrap_or("unknown"))
+}
+
+/// One `taskq agents` line (§ 5): runtime, path, version, login, kind and last refresh; unread values read unknown (R12).
+pub fn agents_line(r: &serde_json::Value) -> String {
+    let s = |k: &str, none: &str| r[k].as_str().unwrap_or(none).to_string();
+    let login = match (s("login", "unknown").as_str(), r["account"].as_str()) {
+        ("logged in", Some(a)) => format!("logged in as {a}"),
+        ("logged in", None) => "logged in, account unknown".into(),
+        (l, _) => l.to_string(),
+    };
+    let version = if r["path"].is_null() { "-".into() } else { s("version", "unknown") };
+    format!("{}  {}  {version}  {login}  kind {}  refreshed {}", s("runtime", "?"), s("path", "not installed"), s("kind", "unknown"), s("refreshed", "unknown"))
 }
 
 #[cfg(test)]
@@ -2460,6 +2510,21 @@ mod tests {
         assert_eq!(agent_text(&row("logged in", "ChatGPT".into())), "codex 0.1 · ChatGPT");
         assert_eq!(agent_text(&row("not installed", serde_json::Value::Null)), "codex · not installed");
         assert_eq!(agent_text(&row("unknown", serde_json::Value::Null)), "codex 0.1 · login unknown");
+        // #1429: kind and last refresh, never a token value; unreadable reads unknown
+        assert_eq!(kind_refresh("claude", Some(r#"{"loggedIn": true, "authMethod": "claude.ai", "subscriptionType": "max"}"#), None), (Some("claude.ai max".into()), None));
+        assert_eq!(kind_refresh("codex", None, Some(r#"{"auth_mode": "chatgpt", "tokens": {"refresh_token": "invented"}, "last_refresh": "2026-10-19T18:14:41Z"}"#)), (Some("chatgpt".into()), Some("2026-10-19T18:14:41Z".into())));
+        assert_eq!(kind_refresh("codex", None, Some("{")), (None, None));
+        let rows = serde_json::json!([{"runtime": "claude", "version": "2.1", "login": "logged in", "account": "a@b.c", "kind": "claude.ai max", "refreshed": null},
+            {"runtime": "codex", "version": "0.1", "login": "not logged in", "account": null, "kind": "chatgpt", "refreshed": "2026-10-19T18:14:41Z"}]);
+        assert_eq!(login_lines(&rows), [
+            "Login: claude 2.1 · a@b.c · kind claude.ai max · refreshed unknown",
+            "Login: codex 0.1 · not logged in · kind chatgpt · refreshed 2026-10-19T18:14:41Z",
+            "Next: codex admits no task; run `codex login --device-auth` with the PM (docs/relogin.md)"]);
+        assert_eq!(login_lines(&serde_json::Value::Null), ["Login: unknown (no runtime probe yet)"]);
+        // `taskq agents` prints kind and refresh too; a missing value reads unknown
+        assert_eq!(agents_line(&serde_json::json!({"runtime": "codex", "path": "/bin/codex", "version": "0.1", "login": "logged in", "account": "a@b.c", "kind": "chatgpt", "refreshed": "2026-10-19T18:14:41Z"})),
+            "codex  /bin/codex  0.1  logged in as a@b.c  kind chatgpt  refreshed 2026-10-19T18:14:41Z");
+        assert_eq!(agents_line(&serde_json::json!({"runtime": "claude", "path": null, "login": "not installed"})), "claude  not installed  -  not installed  kind unknown  refreshed unknown");
     }
 
     // Chain: CLI input boundary -> native stream -> acceptance. Risk: an old turn or a process exit consumes new input.
