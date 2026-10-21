@@ -57,6 +57,44 @@ workspace`). This Windows worker has no macOS execution surface. A continuation
 with WKWebView access must capture the same actual workspace routes and record
 its separate native receipt. No native gate is waived and no R-number amended.
 
+## Mac native workspace continuation (A8, R12)
+
+The Mac continuation rebased the existing PR branch on the current main. No
+application source, test assertion, native permission or accepted review image
+changed. [Probe receipt](macos-workspace-blocked.json) records the exact source,
+base, executable hashes, failures and verified fixture cleanup.
+
+A signed Cargo development build completed and launched against a dedicated
+fixture installation. Computer Use rejected the exact Cargo executable as
+`Invalid app`. A temporary `.app` wrapper used the same compiled application,
+launched through Cargo and the existing signing runner, without changing its
+UI sources or installing it. Attachment first timed out, then returned
+`Running application not found: org.taskq.qualification1463`; lookup by the
+signing identifier also returned `Invalid app`. The native log additionally
+records WebKit WebsiteData creation refusals (`NSCocoaErrorDomain Code=513`,
+`NSPOSIXErrorDomain Code=1`, `Operation not permitted`). The process inventory
+command was also refused by the worker sandbox. These observations do not
+establish the cause of the Computer Use attachment failure.
+
+No workspace UI or screenshot was observed: this check is **sandbox-blocked**,
+never PASS. `docs/shots/check.sh`, receipt JSON parsing and `git diff --check`
+pass. `python3 scripts/check.py --base f5076834927b1fe82003b3948643fd1d0e3da382`
+selected the full gate because the new receipt is JSON; Cargo tests failed
+(exit 101), so the canonical gate is not green. The host capacity/lifecycle
+failures and any other assertions remain unqualified; no test was changed or
+retried into a passing claim. Isolated offline `cargo +stable run --locked --
+selftest` passes 97 golden traces, formats and staged capture; board remains
+unknown (not read). Both owned fixture groups were stopped only after their dedicated
+heartbeat PID matched the recorded process-group identity, and all three
+launched groups were subsequently verified absent. Installed tray/service
+processes and active task attempts were untouched. No permission was relaxed,
+TCC prompt clicked, or alternate runtime used.
+
+A8 still needs Messages, Work sessions and Agent settings captured and inspected
+in an owner-accessible WKWebView session. Windows evidence remains separate;
+its captures and the accepted seven-image visual set are unchanged. Native
+qualification and green merge-result CI remain required; no gate is waived.
+
 ## Resumed capture and notification repair
 
 The branch incorporates `00a8a4f`, including #1488's npm setup for README shots.
