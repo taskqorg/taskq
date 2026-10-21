@@ -273,7 +273,7 @@ impl Snapshot {
         let mut out = vec![format!("{project} · [board]({base})"), counts_line(&self.totals())];
         let link = |r: &Row| format!("[#{} {}]({})", r.n, cell(&compact(&r.title, 60)), r.url);
         let rows: Vec<String> = self.tasks.iter()
-            .filter(|r| !matches!(r.task.state, State::Ask | State::Later | State::Failed))
+            .filter(|r| !matches!(r.task.state, State::Held | State::Ask | State::Later | State::Failed))
             .map(|r| {
                 let state = if let Some(reason) = &r.execution_wait {
                     format!("{} · {}", r.task.state.name(), cell(&compact(reason, 160)))
@@ -313,10 +313,14 @@ impl Snapshot {
             out.push("Questions (answer N.M):\n| Question | Brief reason | Options |\n|---|---|---|".into());
             out.extend(qs);
         }
-        let later: Vec<String> = self.tasks.iter().filter(|r| r.task.state == State::Later).map(link).collect();
-        if !later.is_empty() {
+        let mut parked = vec![];
+        for (name, state) in [("Held", State::Held), ("Later", State::Later)] {
+            let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(link).collect();
+            if !rows.is_empty() { parked.push(format!("{name}: {}", rows.join(", "))); }
+        }
+        if !parked.is_empty() {
             out.push(String::new());
-            out.push(format!("Later: {}", later.join(", ")));
+            out.extend(parked);
         }
         let failed: Vec<String> = self.tasks.iter().filter(|r| r.task.state == State::Failed)
             .map(|r| format!("| {} | [{}]({}) |", link(r), cell(&compact(r.failed.as_deref().unwrap_or(""), 160)), r.url))
