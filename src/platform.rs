@@ -51,15 +51,18 @@ pub fn log(text: &str) {
         let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         let line = log_line(at, text);
         PROJECT_LOG.with_borrow(|p| {
-            use std::io::IsTerminal;
-            // The host unit sends stderr to <install>/taskq.log on macOS and Windows (coreq `unit(.., "")`); Linux uses the journal.
-            let stderr_file = (cfg!(any(target_os = "macos", windows)) && !std::io::stderr().is_terminal())
-                .then(|| p.as_ref().map(|p| p.with_file_name("taskq.log"))).flatten();
+            let stderr_file = p.as_ref().and_then(|p| p.parent()).and_then(stderr_file);
             emit(&line, p.as_deref(), &mut std::io::stderr(), stderr_file.as_deref());
         });
     } else {
         eprintln!("{text}");
     }
+}
+
+/// The file the service's stderr lands in: the host unit sends it to <install>/taskq.log on macOS and Windows (coreq `unit(.., "")`); Linux uses the journal.
+pub fn stderr_file(install: &Path) -> Option<PathBuf> {
+    use std::io::IsTerminal;
+    (cfg!(any(target_os = "macos", windows)) && !std::io::stderr().is_terminal()).then(|| install.join("taskq.log"))
 }
 
 /// One line to the project log and to stderr, once when both are the same file; stderr keeps a line the project log refused.
