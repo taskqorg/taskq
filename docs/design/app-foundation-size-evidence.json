@@ -1,0 +1,41 @@
+{
+  "method": "exported API probe, minified ESM, browser es2022, gzip level 9; not application bundles",
+  "dependencies": {
+    "@preact/signals": "2.11.3",
+    "@solidjs/router": "1.0.0",
+    "@tanstack/solid-query": "5.104.5",
+    "esbuild": "0.28.2",
+    "nanostores": "1.5.5",
+    "preact": "11.0.1",
+    "solid-js": "1.9.17",
+    "wouter-preact": "3.13.0"
+  },
+  "cases": {
+    "vanilla": "export {atom,computed} from 'nanostores'",
+    "preact": "export {h,render} from 'preact'; export {signal,computed,batch} from '@preact/signals'; export {Router,Route,Switch,useLocation} from 'wouter-preact'; export {memoryLocation} from 'wouter-preact/memory-location'",
+    "solid": "export {createSignal,createMemo,batch} from 'solid-js'; export {render} from 'solid-js/web'; export {Router,Route,MemoryRouter} from '@solidjs/router'",
+    "query": "export {createSignal,createMemo,batch} from 'solid-js'; export {render} from 'solid-js/web'; export {Router,Route,MemoryRouter} from '@solidjs/router'; export {QueryClient,QueryClientProvider,createQuery} from '@tanstack/solid-query'"
+  },
+  "rows": [
+    {
+      "name": "vanilla",
+      "bytes": 1902,
+      "gzip": 980
+    },
+    {
+      "name": "preact",
+      "bytes": 27092,
+      "gzip": 10822
+    },
+    {
+      "name": "solid",
+      "bytes": 33006,
+      "gzip": 12884
+    },
+    {
+      "name": "query",
+      "bytes": 75183,
+      "gzip": 25474
+    }
+  ]
+}

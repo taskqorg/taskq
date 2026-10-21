@@ -7,6 +7,8 @@ Working process: [shared product design workflow](https://github.com/taskqorg/sp
 
 Feature selection: [TaskQ product principles](../product-principles.md). Preserve board ownership, interchangeable clients and the complete menu-only operator path.
 
+App architecture: [selected foundation and migration](app-foundation.md) records Preact + Signals + Wouter, native data ownership and framework-free shared assets. Adoption is not runtime qualification.
+
 ## Start here: implementation handoff
 
 Give the next agent this directory and [implementation brief](implementation-brief.md). Read the root contract first, then plan system and application work using the [ordered backlog](refactoring-backlog.md); the current batch order, development loop and owner decisions are in the [implementation plan](implementation-plan.md). No chat transcript or temporary visualization folder is required.

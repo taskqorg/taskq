@@ -64,8 +64,9 @@ Follow [shared verification][sq-verify]. Gate `python3 scripts/check.py` ([selec
 ### R13. Spec first
 Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and its [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ decisions here override shared rules (§8); conflicting tasks use `ask` with options. `AGENTS.md` and `CLAUDE.md` point here. Shared rules belong upstream; TaskQ scenarios/gaps stay in [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); the [implementation brief](docs/design/implementation-brief.md) maps the accepted product to code. Security: [SECURITY.md](SECURITY.md) (private GitHub reporting, 7 calendar days); [baseline](https://github.com/taskqorg/specq/blob/main/engineering/security.md).
 ## Product
-Looks/sound decisions: one line each; changes require R13.
+Looks/sound: one line each (R13).
 - Design targets: [index](docs/design/README.md), [menu checks](docs/design/ui-rules.md), [app UI v2](docs/design/ui-rules-v2.md) and view-only Filter disclosure approved. Runtime rules, defaults, lifecycle and policy stay unchanged until implemented and verified (R8/R12/R13).
+- UI: Preact/Signals/Wouter.
 - Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days; sent async only under revocable `taskq-telemetry/1`. `profile export` feeds analysis, `guide` guides agents. Migration keeps legacy rows; board is task truth (R1).
 - README is the whole page: header, setup phrase, one sentence, what you get, screenshots, use cases, one link to taskq.md, release checksum and provenance verification, license, donate.
 - Header: `docs/header.webp` with the caption `Agents working.` stays at the top, verbatim.
