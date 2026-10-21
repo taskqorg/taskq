@@ -1,8 +1,7 @@
-//! Host setup session (taskq.md § 4, [detail](../docs/design/standalone-onboarding.md#contract-detail)): one request in
-//! `<install>/setup/request.json`, written by `service setup`, launched only by the host service through the § 3 grant.
-//! A crash between `launching` and the native answer reads `interrupted`; nothing relaunches without `--new`.
+//! Host setup sessions (taskq.md § 4, [detail](../docs/design/standalone-onboarding.md#contract-detail)): each `service setup`
+//! writes a new `<install>/setup/<id>.json`; the host service launches each once, then the Claude session manager owns it.
+//! A crash between `launching` and the native answer reads `interrupted`; nothing relaunches.
 
-use crate::host::Policy;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,6 +13,7 @@ type Res<T> = Result<T, String>;
 pub struct Request {
     pub schema: u8,
     pub id: String,
+    pub created: u128,
     pub host: String,
     pub platform: String,
     pub client: String,
@@ -27,31 +27,39 @@ pub struct Request {
     #[serde(default)] pub reason: Option<String>,
 }
 
-const STATES: [&str; 6] = ["pending", "launching", "running", "ended", "failed", "interrupted"];
-/// Setup belongs to no project: only host limits apply.
-fn no_project_limits() -> crate::service::Capacity {
-    crate::service::Capacity { limits: Default::default(), gate: crate::service::GATE_DEFAULT, auto: true, max: None }
-}
-fn terminal(state: &str) -> bool { matches!(state, "ended" | "failed" | "interrupted") }
+const STATES: [&str; 5] = ["pending", "launching", "launched", "failed", "interrupted"];
 
 pub fn dir(install: &Path) -> PathBuf { install.join("setup") }
+fn file(install: &Path, id: &str) -> PathBuf { dir(install).join(format!("{id}.json")) }
 
-/// The occupancy key: one setup session per host, so task and attempt are constant.
-fn slot(rt: &str) -> Vec<crate::admission::Res> { vec![(1, 1, rt.into())] }
+fn read(path: &Path) -> Res<Request> {
+    let text = fs::read_to_string(path).map_err(|e| format!("setup request unknown: {e}"))?;
+    let r: Request = serde_json::from_str(&text).map_err(|e| format!("setup request {} unknown: {e}", path.display()))?;
+    if r.schema != 2 || !STATES.contains(&r.state.as_str()) || !crate::resources::id(&r.id) || path.file_stem() != Some(r.id.as_ref()) {
+        return Err(format!("setup request {} unknown: unsupported record; kept", path.display()));
+    }
+    Ok(r)
+}
 
-pub fn read(install: &Path) -> Res<Option<Request>> {
-    let text = match fs::read_to_string(dir(install).join("request.json")) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        r => r.map_err(|e| format!("setup request unknown: {e}"))?,
+/// Every request, oldest first, and the records that read unknown (R12). `request.json` is the pre-#1426 single slot: kept, unread.
+pub fn all(install: &Path) -> Res<(Vec<Request>, Vec<String>)> {
+    let entries = match fs::read_dir(dir(install)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok((vec![], vec![])),
+        r => r.map_err(|e| format!("setup requests unknown: {e}"))?,
     };
-    let r: Request = serde_json::from_str(&text).map_err(|e| format!("setup request unknown: {e}"))?;
-    if r.schema != 1 || !STATES.contains(&r.state.as_str()) || !crate::resources::id(&r.id) { return Err("setup request unknown: unsupported record; kept".into()); }
-    Ok(Some(r))
+    let (mut ok, mut bad) = (vec![], vec![]);
+    for entry in entries {
+        let path = entry.map_err(|e| format!("setup requests unknown: {e}"))?.path();
+        if path.extension().is_none_or(|x| x != "json") || path.file_name().is_some_and(|n| n == "request.json") { continue; }
+        match read(&path) { Ok(r) => ok.push(r), Err(e) => bad.push(e) }
+    }
+    ok.sort_by(|a: &Request, b| (a.created, &a.id).cmp(&(b.created, &b.id)));
+    Ok((ok, bad))
 }
 
 fn write(install: &Path, r: &Request) -> Res<()> {
     let text = serde_json::to_string_pretty(r).map_err(|e| e.to_string())?;
-    crate::platform::write_atomic(&dir(install).join("request.json"), &(text + "\n")).map_err(|e| format!("setup request write uncertain: {e}"))
+    crate::platform::write_atomic(&file(install, &r.id), &(text + "\n")).map_err(|e| format!("setup request write uncertain: {e}"))
 }
 
 fn locked<T>(install: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
@@ -91,138 +99,70 @@ installation or savings; TaskQ independently rereads status.
 ", host = r.host, platform = r.platform, client = r.client, runtime = r.runtime, workdir = workdir.display())
 }
 
-/// `service setup`: the current request, or a new `pending` one. Only a terminal request is replaced, and only with `new`.
-pub fn submit(install: &Path, runtime: &str, client: Option<&str>, targets: &[String], new: bool) -> Res<Request> {
+/// `service setup`: a new `pending` request every call.
+pub fn submit(install: &Path, runtime: &str, client: Option<&str>, targets: &[String]) -> Res<Request> {
     if runtime != "claude" { return Err(format!("setup runtime {runtime}: only claude has a qualified visible session")); }
     let targets = targets.iter().map(|t| {
         let p = Path::new(t);
         if !p.is_absolute() { return Err(format!("setup target {t}: expected an absolute path")); }
         p.canonicalize().map(|p| p.display().to_string()).map_err(|e| format!("setup target {t}: {e}"))
     }).collect::<Res<Vec<_>>>()?;
-    let r = locked(install, || {
-        if let Some(r) = read(install)? {
-            if !new { return Ok(r); }
-            if !terminal(&r.state) { return Err(format!("setup request {} is {}; --new replaces only ended, failed or interrupted", r.id, r.state)); }
-        }
-        let id = crate::runtime::uuid();
-        let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
-        let mut r = Request { schema: 1, id: id.clone(), host: crate::hostname(), platform, client: client.unwrap_or("Claude Code").into(), runtime: runtime.into(),
-            targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None };
-        r.brief = brief(&r, &dir(install).join(&id));
-        write(install, &r)?;
-        Ok(r)
+    let id = crate::runtime::uuid();
+    let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
+    let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
+    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or("Claude Code").into(), runtime: runtime.into(),
+        targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None };
+    r.brief = brief(&r, &dir(install).join(&id));
+    locked(install, || {
+        // Same-millisecond calls keep call order: created is strictly after the newest request.
+        r.created = all(install)?.0.last().map_or(r.created, |n| r.created.max(n.created + 1));
+        write(install, &r)
     })?;
-    if r.state == "pending" {
-        crate::platform::write_atomic(&install.join("poke"), "").map_err(|e| format!("setup request saved; host notification unknown: {e}"))?;
-    }
+    crate::platform::write_atomic(&install.join("poke"), "").map_err(|e| format!("setup request saved; host notification unknown: {e}"))?;
     Ok(r)
 }
 
-/// Service start: a launch without a recorded native answer has an unknown outcome and is never replayed (A5).
+/// Service start: a launch without a recorded native answer has an unknown outcome and is never replayed.
 pub fn recover(install: &Path) -> Res<()> {
     locked(install, || {
-        let Some(mut r) = read(install)? else { return Ok(()) };
-        if r.state != "launching" { return Ok(()); }
-        r.state = "interrupted".into();
-        r.reason = Some("service stopped during launch; outcome unknown, inspect native sessions before --new".into());
-        write(install, &r)
+        for mut r in all(install)?.0.into_iter().filter(|r| r.state == "launching") {
+            r.state = "interrupted".into();
+            r.reason = Some("service stopped during launch; outcome unknown, inspect native sessions before a new setup".into());
+            write(install, &r)?;
+        }
+        Ok(())
     })
 }
 
-pub enum Launched { Job(String), NoStart(String), Unknown(String) }
+pub enum Launched { Job { job: String, session: Option<String>, url: Option<String> }, NoStart(String), Unknown(String) }
 
 /// The native call, replaceable in tests.
 pub type Launcher = fn(&Path, &Request) -> Launched;
-/// The native job state (`claude agents`), replaceable in tests.
-pub type Observer = fn(&Path, &str) -> Res<(String, Option<String>)>;
 
-/// One host pass. `fresh`: no host.json and no registered project, so host.json defaults serve this grant only.
-pub fn step(install: &Path, host: &crate::host::Shared, fresh: bool, observe: bool, launch: Launcher, native: Observer) -> Res<()> {
-    let project = dir(install);
-    let r = match read(install) {
-        Ok(r) => r,
-        // Unknown state keeps whatever occupancy was synced last (R12).
-        Err(e) => return Err(e),
-    };
-    let mut h = host.lock().unwrap_or_else(|e| e.into_inner());
-    h.prepared.insert(project.clone());
-    let Some(mut r) = r else { h.sync(&project, vec![]); return Ok(()) };
-    match r.state.as_str() {
-        // Stop waits for children, not for a native background chat; nothing new launches while it runs.
-        "launching" | "running" if !h.stopping => { h.sync(&project, slot(&r.runtime)); }
-        "pending" => {}
-        _ => { h.sync(&project, vec![]); }
-    }
-    if r.state == "running" && observe {
-        drop(h);
-        let Some(job) = r.job.clone() else { return Ok(()) };
-        let (state, session) = match native(&project.join(&r.id), &job) {
-            Ok(v) => v,
-            Err(e) => { return note(install, &r.id, Some(format!("native state unknown: {e}"))); }
-        };
-        let next = match state.as_str() {
-            "working" | "idle" | "blocked" => "running",
-            "done" | "stopped" => "ended",
-            "failed" | "crashed" => "failed",
-            _ => return note(install, &r.id, Some(format!("native state {state:?} unknown"))),
-        };
-        let url = match (&r.url, &session) { (None, Some(s)) => crate::runtime::claude_remote(s), (u, _) => u.clone() };
-        return locked(install, || {
-            let mut cur = read(install)?.ok_or("setup request vanished")?;
-            if cur.id != r.id || cur.state != "running" { return Ok(()); }
-            let changed = cur.state != next || cur.session != session || cur.url != url || cur.reason.is_some();
-            cur.state = next.into(); cur.session = session.clone(); cur.url = url.clone(); cur.reason = None;
-            if changed { write(install, &cur)?; }
-            if terminal(next) { host.lock().unwrap_or_else(|e| e.into_inner()).sync(&project, vec![]); }
-            Ok(())
-        });
-    }
-    if r.state != "pending" { return Ok(()); }
-    let now = h.elapsed();
-    let policy = match &h.policy {
-        Ok(p) => Ok(p.clone()),
-        Err(e) if fresh => Policy::parse(serde_json::json!({}), &crate::hostname()).map_err(|_| e.clone()).inspect(|p| h.gate.configure(p.cap.gate)),
-        Err(e) => Err(e.clone()),
-    };
-    let granted = policy.and_then(|p| h.grant(&p, &project, 1, 1, &r.runtime, &no_project_limits(), false, now));
-    if let Err(reason) = granted {
-        drop(h);
-        let reason = format!("waiting: {reason}");
-        return if r.reason.as_deref() == Some(reason.as_str()) { Ok(()) } else { note(install, &r.id, Some(reason)) };
-    }
-    drop(h);
+/// One host pass: launch the oldest `pending` request. Setup is a session for the human (owner, #1426):
+/// no § 3 grant and no hold, Stop or restart waits for it.
+pub fn step(install: &Path, launch: Launcher) -> Res<()> {
+    let (requests, bad) = all(install)?;
+    let Some(mut r) = requests.into_iter().find(|r| r.state == "pending") else { return bad.into_iter().next().map_or(Ok(()), Err) };
     let id = r.id.clone();
-    let release = || host.lock().unwrap_or_else(|e| e.into_inner()).sync(&project, vec![]);
-    let marked = locked(install, || {
-        let cur = read(install)?.ok_or("setup request vanished")?;
-        if cur.id != id || cur.state != "pending" { return Err("setup request changed before launch".into()); }
+    locked(install, || {
+        let cur = read(&file(install, &id))?;
+        if cur.state != "pending" { return Err("setup request changed before launch".into()); }
         r.state = "launching".into(); r.reason = None;
         write(install, &r)
-    });
-    if let Err(e) = marked { release(); return Err(e); }
-    let workdir = project.join(&id);
+    })?;
+    let workdir = dir(install).join(&id);
     let outcome = match fs::create_dir_all(&workdir) {
         Ok(()) => launch(&workdir, &r),
         Err(e) => Launched::NoStart(format!("setup directory: {e}")),
     };
-    let (state, job, reason) = match outcome {
-        Launched::Job(job) => ("running", Some(job), None),
-        Launched::NoStart(e) => ("failed", None, Some(e)),
-        Launched::Unknown(e) => ("interrupted", None, Some(e)),
-    };
-    r.state = state.into(); r.job = job; r.reason = reason;
-    if state != "running" { release(); }
+    match outcome {
+        Launched::Job { job, session, url } => { r.state = "launched".into(); r.job = Some(job); r.session = session; r.url = url; }
+        Launched::NoStart(e) => { r.state = "failed".into(); r.reason = Some(e); }
+        Launched::Unknown(e) => { r.state = "interrupted".into(); r.reason = Some(e); }
+    }
     // A lost write leaves `launching`; the next service start turns it into `interrupted`, never a second launch.
     locked(install, || write(install, &r))
-}
-
-fn note(install: &Path, id: &str, reason: Option<String>) -> Res<()> {
-    locked(install, || {
-        let Some(mut r) = read(install)? else { return Ok(()) };
-        if r.id != id || r.reason == reason { return Ok(()); }
-        r.reason = reason;
-        write(install, &r)
-    })
 }
 
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
@@ -231,7 +171,7 @@ pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
     if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} claude is not on the host service PATH")); }
     if crate::runtime::login_state("claude", &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} Claude Code is not logged in on this host")); }
     let install = workdir.parent().and_then(Path::parent).unwrap_or(workdir);
-    let policy = Policy::read_for_hostname(install, crate::hostname).ok();
+    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
     let env = crate::runtime::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[] };
@@ -256,7 +196,13 @@ pub fn claude_launch(workdir: &Path, r: &Request) -> Launched {
     if !out.status.success() && stderr.contains("Workspace not trusted") { return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())); }
     if !out.status.success() && (stderr.contains("/login") || stderr.contains("Not logged in")) { return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")); }
     match stdout.lines().find_map(|l| l.strip_prefix("backgrounded · ").and_then(|s| s.split_whitespace().next())) {
-        Some(id) if out.status.success() && crate::runtime::native_job_id(id) => Launched::Job(id.into()),
+        // One link read at launch, never after: the Claude session manager owns the session from here.
+        Some(id) if out.status.success() && crate::runtime::native_job_id(id) => {
+            let session = crate::runtime::claude_agents(workdir).ok()
+                .and_then(|rows| rows.iter().find(|v| v["id"] == id).and_then(|v| v["sessionId"].as_str().map(String::from)));
+            let url = session.as_deref().and_then(crate::runtime::claude_remote);
+            Launched::Job { job: id.into(), session, url }
+        }
         _ => Launched::Unknown("Claude returned no background job; outcome unknown, inspect native sessions".into()),
     }
 }
@@ -269,150 +215,109 @@ const ACCESS: &str = "access refused:";
 pub fn view(r: &Request) -> serde_json::Value {
     let reason = r.reason.as_deref().unwrap_or("");
     let (kind, next) = match r.state.as_str() {
-        "pending" if reason.starts_with("waiting:") => ("waiting", "Waits for host capacity; nothing to do unless the hold is yours"),
         "pending" | "launching" => ("starting", "The host service is starting the session"),
-        "running" if r.url.is_some() => ("running", "Open the session to read and answer"),
-        "running" => ("running", "Session runs; its link appears once Claude reports it"),
-        "ended" => ("ended", "Done; run `taskq service setup --new` for another session"),
-        "failed" if reason.starts_with(MISSING) => ("runtime", "Install Claude Code for the service user, then run `taskq service setup --new`"),
-        "failed" if reason.starts_with(LOGIN) => ("login", "Run `claude auth login` as the service user, then `taskq service setup --new`"),
-        "failed" if reason.starts_with(ACCESS) => ("access", "Grant the access named here yourself (taskq never widens it), then `taskq service setup --new`"),
-        "failed" => ("failed", "Read the reason, fix it, then run `taskq service setup --new`"),
-        _ => ("interrupted", "Check `claude agents` for a live session first; only then run `taskq service setup --new`"),
+        "launched" if r.url.is_some() => ("launched", "Open the session to read and answer; archive it in Claude when done"),
+        "launched" => ("launched", "Session started; find it in Claude (`claude agents`), archive it when done"),
+        "failed" if reason.starts_with(MISSING) => ("runtime", "Install Claude Code for the service user, then run `taskq service setup`"),
+        "failed" if reason.starts_with(LOGIN) => ("login", "Run `claude auth login` as the service user, then `taskq service setup`"),
+        "failed" if reason.starts_with(ACCESS) => ("access", "Grant the access named here yourself (taskq never widens it), then `taskq service setup`"),
+        "failed" => ("failed", "Read the reason, fix it, then run `taskq service setup`"),
+        _ => ("interrupted", "Check `claude agents` for a live session first; only then run `taskq service setup`"),
     };
     serde_json::json!({"id": r.id, "state": r.state, "kind": kind, "next": next, "reason": r.reason, "url": r.url, "host": r.host, "runtime": r.runtime, "session": r.session})
 }
 
-pub fn claude_state(workdir: &Path, job: &str) -> Res<(String, Option<String>)> {
-    let rows = crate::runtime::claude_agents(workdir)?;
-    let row = rows.iter().find(|v| v["id"] == job).ok_or("setup job not listed")?;
-    Ok((row["state"].as_str().ok_or("setup job state missing")?.into(), row["sessionId"].as_str().map(String::from)))
+/// The tray row: the newest request, or unknown when no request reads and some record is unreadable (R12).
+pub fn last(install: &Path) -> serde_json::Value {
+    match all(install) {
+        Ok((ok, bad)) => ok.last().map(view).or_else(|| bad.first().map(|e| serde_json::json!({"kind": "unknown", "reason": e}))).unwrap_or(serde_json::Value::Null),
+        Err(e) => serde_json::json!({"kind": "unknown", "reason": e}),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::Host;
-    use std::sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}};
 
-    static LAUNCHES: AtomicUsize = AtomicUsize::new(0);
-    fn ok(_: &Path, _: &Request) -> Launched { LAUNCHES.fetch_add(1, Ordering::SeqCst); Launched::Job("abcd1234".into()) }
+    fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
     fn never(_: &Path, _: &Request) -> Launched { panic!("setup launched again") }
-    fn live(_: &Path, _: &str) -> Res<(String, Option<String>)> { Ok(("idle".into(), None)) }
-    fn done(_: &Path, _: &str) -> Res<(String, Option<String>)> { Ok(("done".into(), None)) }
-    fn gone(_: &Path, _: &str) -> Res<(String, Option<String>)> { Err("setup job not listed".into()) }
 
-    // An unconfigured gate is open: these hosts test the grant, not CPU sampling.
-    fn host(json: serde_json::Value) -> crate::host::Shared { Arc::new(Mutex::new(Host::new(Policy::parse(json, "h")))) }
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
-    fn state(i: &Path) -> String { read(i).unwrap().unwrap().state }
+    fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }
 
-    // Chain: service setup to host launch to recovery (A2, A5). Risk: a repeat or restart launches a second installation.
+    // Chain: service setup to host launch (A2). Risk: a repeat returns an old session or a request launches twice.
     #[test]
-    fn repeat_and_restart_never_relaunch() {
+    fn each_request_launches_once() {
         let t = tmp();
         let i = t.as_path();
-        let first = submit(i, "claude", None, &[], false).unwrap();
-        assert_eq!(submit(i, "claude", Some("Codex"), &[], false).unwrap(), first, "repeat returns the same request");
-        assert!(submit(i, "codex", None, &[], false).is_err(), "unqualified runtime refused");
-        assert!(submit(i, "claude", None, &[], true).is_err(), "--new refused while pending");
+        let first = submit(i, "claude", None, &[]).unwrap();
+        let second = submit(i, "claude", None, &[]).unwrap();
+        assert_ne!(first.id, second.id, "every call writes a new request");
+        assert!(submit(i, "codex", None, &[]).is_err(), "unqualified runtime refused");
         assert!(first.brief.contains("full PM chat") && first.brief.contains(&first.host));
-        let h = host(serde_json::json!({}));
-        h.lock().unwrap().rebuilding = false;
-        let before = LAUNCHES.load(Ordering::SeqCst);
-        step(i, &h, false, false, ok, live).unwrap();
-        assert_eq!(LAUNCHES.load(Ordering::SeqCst), before + 1);
-        let r = read(i).unwrap().unwrap();
-        assert_eq!((r.state.as_str(), r.job.as_deref()), ("running", Some("abcd1234")));
-        assert_eq!(h.lock().unwrap().used().get("claude"), Some(&1));
-        // A restarted service re-syncs the running slot from the request and observes; it never launches.
-        let h = host(serde_json::json!({}));
+        step(i, ok).unwrap();
+        assert_eq!(all(i).unwrap().0[0].id, first.id, "oldest first");
+        assert_eq!(states(i), ["launched", "pending"]);
+        step(i, ok).unwrap();
+        assert_eq!(states(i), ["launched", "launched"]);
+        // A restarted service never relaunches a launched request.
         recover(i).unwrap();
-        step(i, &h, false, true, never, live).unwrap();
-        assert_eq!(state(i), "running");
-        assert_eq!(h.lock().unwrap().used().get("claude"), Some(&1));
-        step(i, &h, false, true, never, gone).unwrap();
-        assert_eq!(state(i), "running", "unreadable native state stays running (R12)");
-        assert_eq!(h.lock().unwrap().used().get("claude"), Some(&1), "unknown keeps the slot");
-        step(i, &h, false, true, never, done).unwrap();
-        assert_eq!(state(i), "ended");
-        assert_eq!(h.lock().unwrap().used().get("claude"), None, "ended releases the slot");
-        assert_eq!(submit(i, "claude", None, &[], false).unwrap().state, "ended", "a repeat after the end still returns it");
-        assert_ne!(submit(i, "claude", None, &[], true).unwrap().id, first.id, "--new after a terminal state");
+        step(i, never).unwrap();
+        assert_eq!(last(i)["kind"], "launched");
     }
 
-    // Chain: crash boundary between `launching` and the native answer (A5). Risk: an uncertain launch is replayed.
+    // Chain: crash boundary between `launching` and the native answer (A2). Risk: an uncertain launch is replayed.
     #[test]
     fn uncertain_launch_is_interrupted() {
         let t = tmp();
         let i = t.as_path();
-        submit(i, "claude", None, &[], false).unwrap();
-        let h = host(serde_json::json!({}));
-        h.lock().unwrap().rebuilding = false;
-        step(i, &h, false, false, unknown, live).unwrap();
-        assert_eq!(state(i), "interrupted");
-        assert!(h.lock().unwrap().used().is_empty());
+        submit(i, "claude", None, &[]).unwrap();
+        step(i, unknown).unwrap();
+        assert_eq!(states(i), ["interrupted"]);
         // Crash after `launching` was written: recovery reads interrupted, the next pass launches nothing.
-        let mut r = read(i).unwrap().unwrap();
+        let mut r = all(i).unwrap().0.remove(0);
         r.state = "launching".into();
         write(i, &r).unwrap();
         recover(i).unwrap();
-        assert_eq!(state(i), "interrupted");
-        step(i, &h, false, false, never, live).unwrap();
-        // Stale identity: a record for another schema or id is unknown and kept, never replaced.
-        fs::write(dir(i).join("request.json"), r#"{"schema":2}"#).unwrap();
-        assert!(read(i).is_err() && submit(i, "claude", None, &[], true).is_err());
-        assert!(step(i, &h, false, false, never, live).is_err());
+        assert_eq!(states(i), ["interrupted"]);
+        step(i, never).unwrap();
+        // The pre-#1426 slot is kept unread; another unreadable record is unknown, kept and reported.
+        fs::write(dir(i).join("request.json"), r#"{"schema":1}"#).unwrap();
+        step(i, never).unwrap();
+        fs::write(dir(i).join("x.json"), r#"{"schema":3}"#).unwrap();
+        assert!(step(i, never).is_err());
+        assert_eq!(last(i)["kind"], "interrupted", "the newest readable request still shows");
+        fs::remove_file(file(i, &r.id)).unwrap();
+        assert_eq!(last(i)["kind"], "unknown");
     }
 
-    // Chain: launch outcome to tray view (A1). Risk: missing runtime, login and access read as one generic failure.
+    // Chain: host policy and holds to launch (A5, owner answer 2). Risk: a session the owner opened waits on queue limits or holds.
+    // `step` takes no host state, so Claude capacity 0, the emergency hold, Stop and restart cannot reach it.
+    #[test]
+    fn limits_and_holds_do_not_wait() {
+        let t = tmp();
+        let i = t.as_path();
+        fs::write(i.join("host.json"), r#"{"limits":{"claude":0},"admission":{"max":0}}"#).unwrap();
+        fs::write(i.join("hold"), "emergency").unwrap();
+        fs::write(i.join("restart"), "").unwrap();
+        submit(i, "claude", None, &[]).unwrap();
+        step(i, ok).unwrap();
+        assert_eq!(states(i), ["launched"]);
+    }
+
+    // Chain: launch outcome to tray view (A4). Risk: missing runtime, login and access read as one generic failure.
     #[test]
     fn view_names_each_actionable_state() {
-        let mut r = Request { schema: 1, id: "a".into(), host: "h".into(), platform: "p".into(), client: "c".into(), runtime: "claude".into(),
+        let mut r = Request { schema: 2, id: "a".into(), created: 0, host: "h".into(), platform: "p".into(), client: "c".into(), runtime: "claude".into(),
             targets: vec![], brief: String::new(), state: "failed".into(), job: None, session: None, url: None, reason: None };
         let kind = |r: &Request| view(r)["kind"].as_str().unwrap().to_string();
         let mut kinds = vec![];
         for reason in [format!("{MISSING} x"), format!("{LOGIN} x"), format!("{ACCESS} x"), "spawn".into()] { r.reason = Some(reason); kinds.push(kind(&r)); }
         r.state = "interrupted".into(); kinds.push(kind(&r));
         assert_eq!(kinds, ["runtime", "login", "access", "failed", "interrupted"]);
-        r.state = "running".into(); r.reason = None; r.url = Some("https://claude.ai/code/session_x".into());
-        assert_eq!((kind(&r).as_str(), view(&r)["url"].as_str()), ("running", Some("https://claude.ai/code/session_x")));
-        r.state = "pending".into(); r.reason = Some("waiting: capacity full".into());
-        assert_eq!(kind(&r), "waiting");
-    }
-
-    // Chain: setup and project work share one host grant (A3). Risk: setup bypasses hold, limits or spacing, or counts twice.
-    #[test]
-    fn shared_admission() {
-        let t = tmp();
-        let i = t.as_path();
-        submit(i, "claude", None, &[], false).unwrap();
-        // Unknown policy holds unless the host is fresh.
-        let h = Arc::new(Mutex::new(Host::new(Err("host.json unknown".into()))));
-        step(i, &h, false, false, never, live).unwrap();
-        assert!(read(i).unwrap().unwrap().reason.unwrap().contains("host.json unknown"));
-        let h = host(serde_json::json!({"admission": {"max": 1}}));
-        {let mut x = h.lock().unwrap(); x.rebuilding = false; x.held = Some("emergency hold".into());}
-        step(i, &h, false, false, never, live).unwrap();
-        assert_eq!(state(i), "pending");
-        assert!(read(i).unwrap().unwrap().reason.unwrap().contains("emergency hold"));
-        {let mut x = h.lock().unwrap(); x.held = None; x.sync(Path::new("/p"), vec![(7, 1, "codex".into())]);}
-        step(i, &h, false, false, never, live).unwrap();
-        assert!(read(i).unwrap().unwrap().reason.unwrap().contains("capacity full"), "admission.max counts project work");
-        {let mut x = h.lock().unwrap(); x.sync(Path::new("/p"), vec![]); let now = x.elapsed();
-         x.reserve(Path::new("/p"), 8, 0, "codex", &no_project_limits(), true, now).unwrap(); x.sync(Path::new("/p"), vec![]);}
-        step(i, &h, false, false, never, live).unwrap();
-        assert!(read(i).unwrap().unwrap().reason.unwrap().contains("30 s"), "launch spacing after the project grant");
-        let h = host(serde_json::json!({"limits": {"claude": 0}}));
-        h.lock().unwrap().rebuilding = false;
-        step(i, &h, false, false, never, live).unwrap();
-        assert!(read(i).unwrap().unwrap().reason.unwrap().contains("capacity full"), "runtime limit 0 holds setup");
-        // A fresh host grants under host.json defaults, load gate included; they never become project policy.
-        let h = Arc::new(Mutex::new(Host::new(Err("host.json unknown: no registered policy inputs".into()))));
-        h.lock().unwrap().rebuilding = false;
-        step(i, &h, true, false, never, live).unwrap();
-        assert!(read(i).unwrap().unwrap().reason.unwrap().contains("load gate"), "defaults keep the load gate");
-        assert!(h.lock().unwrap().policy.is_err());
+        r.state = "launched".into(); r.reason = None; r.url = Some("https://claude.ai/code/session_x".into());
+        assert_eq!((kind(&r).as_str(), view(&r)["url"].as_str()), ("launched", Some("https://claude.ai/code/session_x")));
+        assert!(view(&r)["next"].as_str().unwrap().contains("Open the session"));
     }
 }

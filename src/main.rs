@@ -77,7 +77,7 @@ const USAGE: &str = "taskq agents
  taskq cleanup [--force] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
- taskq service setup [--runtime claude] [--client C] [--target PATH..] [--new] [--json]
+ taskq service setup [--runtime claude] [--client C] [--target PATH..] [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P]
@@ -102,7 +102,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits") || k=="host"&&a.pos==["service","uninstall"] || k=="new"&&a.pos==["service","setup"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -1903,10 +1903,10 @@ fn service(args: &Args) -> Res<()> {
     if sub == "capacity" {return capacity_cmd(args);}
     if sub == "setup" {
         if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot request the host setup session".into());}
-        if args.pos.len()!=2||args.all("runtime").len()>1||args.all("client").len()>1||args.flags.keys().any(|key|!["runtime","client","target","new","json"].contains(&key.as_str())) {
-            return Err("usage: taskq service setup [--runtime claude] [--client C] [--target PATH..] [--new] [--json]".into());
+        if args.pos.len()!=2||args.all("runtime").len()>1||args.all("client").len()>1||args.flags.keys().any(|key|!["runtime","client","target","json"].contains(&key.as_str())) {
+            return Err("usage: taskq service setup [--runtime claude] [--client C] [--target PATH..] [--json]".into());
         }
-        let r=setup::submit(&platform::default_install(),args.one("runtime").unwrap_or("claude"),args.one("client"),&args.all("target"),args.flags.contains_key("new"))?;
+        let r=setup::submit(&platform::default_install(),args.one("runtime").unwrap_or("claude"),args.one("client"),&args.all("target"))?;
         if args.flags.contains_key("json") {println!("{}",serde_json::to_string(&r).map_err(|e|e.to_string())?);}
         else {println!("Setup: {} {}{}",r.id,r.state,r.url.as_deref().map(|u|format!(" {u}")).unwrap_or_default());if let Some(reason)=&r.reason {println!("Reason: {reason}");}}
         return Ok(());
