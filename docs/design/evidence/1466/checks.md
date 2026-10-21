@@ -107,3 +107,31 @@ adds no distinct-gap image to that set.
   passed in an isolated temporary installation: 97 golden traces, formats and
   staged capture (3 committed observations). Board state remained explicitly
   unknown; the running installation/writer was not used.
+
+## Owner acceptance and continuation
+
+[Answer 6328514474](https://github.com/taskqorg/taskq/issues/1466#issuecomment-6328514474)
+accepts the G05/G06 layout and directs result/review, leaving native limits and
+merge_group CI open. Under R12/§ 7 the branch was rebased without conflicts onto
+`4dfa99625f1c6f821e834c20762a48a66eb95f08`. UI blob IDs are unchanged; the accepted
+images and before/after observations remain applicable. No new image or product
+change was introduced by this continuation.
+
+Dependencies changed on main, so the candidate checks were repeated:
+
+- `python3 scripts/check.py --base 4dfa99625f1c6f821e834c20762a48a66eb95f08`:
+  **failed**, 446 passed, 18 failed, 34 ignored; 58.499 s / 900 s on macOS arm64
+  with warm dependencies, no retries. The explicit worker host installation,
+  policy and lifecycle refusals remain **sandbox-blocked**, never PASS. Other
+  host/resource assertions remain unqualified. Integration tests were not reached.
+- All 18 Node component scripts and the seven browser instruments listed above
+  passed against the rebased bundle, including the execution regression,
+  G05/G06, filters, shell routes and workspace protections. Effects are substituted.
+- `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest` passed in an
+  isolated temporary installation: 97 traces, formats and staged capture with
+  9 committed observations. Board read stayed explicitly unknown.
+- `sh docs/shots/check.sh` passed with the unchanged UI blob IDs.
+
+PR #1515 remains the single delivery PR. No merge, deployment, native-limit
+qualification or merge_group CI success is claimed. The recorded owner layout
+acceptance does not waive those limits or the publication gate.
