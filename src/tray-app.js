@@ -3,7 +3,7 @@ const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
@@ -497,8 +497,9 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
+  const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  const html=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
+  const html=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(settingsError?'<div class="body alert" role="alert">Settings unknown: '+esc(settingsError)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
   // #1430: an unchanged refresh leaves the menu alone; a rebuild replaced the textarea being typed in and its edits
   // landed on the detached node. Mounted cards still take the new rows and repaint only what changed.
   if(!navigating&&html===view.html){mountAnswers();mountResources();viewState.restore(open);viewState.flush();return;}
@@ -533,7 +534,7 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
-  if(s.viewStateError!==undefined){view.S.settings_error=s.viewStateError;present();return;}
+  if(s.viewStateError!==undefined){view.persistenceError=s.viewStateError;present();return;}
   if(s.diagnose){const d=s.diagnose,remaining=d.until_ms-Date.now();
     if(d.id!==view.diagnosticId&&remaining>0){execution.diagnose(d.selector,Math.min(60000,remaining),d.limit);view.diagnosticId=d.id;}
     return;
