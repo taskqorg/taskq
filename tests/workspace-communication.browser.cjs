@@ -30,6 +30,7 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   await text.fill('Keep my native request');await text.press('Enter');
   const sent=await page.evaluate(()=>messages.filter(m=>m.a==='ai-send'));assert.equal(sent.length,1);assert.equal(sent[0].root,'fixture-alpha');assert.equal(sent[0].text,'Keep my native request');
   await text.press('Enter');assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').length),1,'one in flight');
+  await page.evaluate(()=>taskq.receive({open:{page:'request',root:'another-project'}}));assert.equal(await page.locator('[data-field=project]').inputValue(),'fixture-alpha','a pending request retains its original project');assert.match(await page.locator('[data-status=workspace]').innerText(),/original project/);
   await page.evaluate(()=>taskq.receive({aiReceipt:{id:'foreign',state:'accepted'}}));assert.equal(await text.inputValue(),'Keep my native request','foreign receipt cannot clear draft');
   await page.evaluate(id=>taskq.receive({aiReceipt:{id,state:'unknown',reason:'fixture: receipt lost'}}),sent[0].id);
   if(evidence)await page.screenshot({path:evidence+'/request-unknown-dark-16.png'});
