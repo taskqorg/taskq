@@ -56,6 +56,19 @@ This recommendation follows specq `engineering/performance.md`: remove repeated 
 
 Before runtime rollout, record a matched baseline and candidate on macOS WKWebView and Windows WebView2: fixed task/conversation fixtures, update cadence, typing, press/release during refresh, navigation/back and a sustained hold. Record snapshot-to-paint and input-to-paint p95/p99, CPU, memory, errors, fixture size, hold duration and host limits. Accept at no more than 70% sustained CPU as required by the shared rule. The calibration task below must propose the exact UI latency/memory ceilings and hold duration for owner approval before qualification; selecting the architecture does not approve unmeasured budgets. A browser test is not native webview evidence (R12).
 
+### M2 baseline (#1469)
+
+`python3 scripts/ui-bench.py` ([UI bench](../testing.md#ui-bench)) on main plus the bench route (`1de616e5`), each fixture run twice back to back with one binary, so the pair shows run-to-run noise. Hold 60 s, one step every 250 ms (refresh, typed character, click to Settings, click to Home), about 56 samples per step kind and run. Samples are the worse of the two runs, in ms; CPU is percent of one core, sustained over the hold after the first 5 s; memory is taskq plus its webview processes.
+
+| Host | Fixture | Snapshot p95/p99 | Typing p95/p99 | Click p95/p99 | CPU mean/p95 | Memory peak | Errors |
+|---|---|---|---|---|---|---|---|
+| macOS 27.0.1, Apple M2, 8 cores, WKWebView | small | 39 / 49 | 32 / 58 | 34 / 65 | 16.4 / 19.3 | 123 MB | 0 |
+| | large | 50 / 66 | 48 / 78 | 65 / 67 | 23.4 / 27.3 | 200 MB | 0 |
+| Windows 11 26300, i5-12600KF, 16 threads, WebView2 155.0.4283.62 | small | 31 / 39 | 8 / 9 | 10 / 14 | 11.7 / 17.0 | 454 MB | 0 |
+| | large | 51 / 56 | 6 / 8 | 36 / 41 | 21.7 / 30.2 | 576 MB | 0 |
+
+The large fixture is 12 projects of 25 tasks and 20 AI requests; small is 2 of 4 and 2. JS heap is 9.5 MB on WebView2 and unknown on WKWebView. CPU stays far below the 70% rule on both. An earlier Windows run had one large-fixture snapshot p99 of 306 ms against 55 ms in its pair, so a single p99 over a ceiling needs a rerun before it counts. Unknown: the workspace (not on main), OS-level input dispatch and IME (events are synthetic), physical press/release, a locked or occluded window, Linux.
+
 ## Migration task list (A4)
 
 The architecture decision is accepted. The tasks below are not filed or started; each is one reviewable outcome. Runtime rollout remains gated on evidence (R8, R12). Keep existing durable formats so each shell slice can roll back independently; rollback cannot undo operations already sent to the service.
