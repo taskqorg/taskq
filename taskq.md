@@ -26,7 +26,7 @@ Each command that changes a task appends one `taskq:` comment, sets the projecte
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][sq-verify].
 
 ### R6. Human report
-Tray task-list state capsules toggle view-only OR filters; zero states keep their icon, unknown keeps `?`, and All tasks counts deduplicated open tasks across all projects and opens each with nonzero counters and its tasks ([K-A2/K-A6](docs/design/task-counters.md)). Project-summary counters still hide zero.
+Tray filters: [K-A2/K-A6](docs/design/task-counters.md).
 `taskq status`, service status, `status.json` and tray share one board [snapshot](docs/design/refactoring-backlog.md) (§ 5 `--json`); order below, empty parts omitted. Tray/browser project summaries and task rows (metadata/links first, full wrapped title second under M3) reuse [shared project blocks](docs/design/project-blocks.md), with separate Doing/Review, nonzero K counters and unknown Closed until authoritative totals exist:
 1. `<project> · [board](<url>)`, preceded while a local `status.json` under 60 s old reports a board rate-limit pause (§ 4) by `Rate limit: board requests paused until <time> (<host>)`, else a low board budget by its § 4 line, also when this read fails.
 2. `In work N · Waiting for answer N · Ready N`. In work: `doing` + `review`. Waiting: `ask`. Ready: `ready`.
