@@ -1,0 +1,40 @@
+{
+  "codeCommit": "0ea816a6277ec58d82801867b207e5d190bfd0c6",
+  "base": "ab52a687db2a69d4c4c7f20accd67be5a4430298",
+  "before": "2f6a2d2c9ac427f9687b64714bd2cfd21805773c",
+  "native": {
+    "sourceCommit": "0ea816a6277ec58d82801867b207e5d190bfd0c6",
+    "binarySha256": "a222194e798eb8912f80e8d0cb898536034e46cb2d5ecb6b3c309e3c249d5ac4",
+    "renderer": "Windows WebView2; project/icon and isolated Home fixtures"
+  },
+  "files": {
+    "Cargo.toml": "0c510d0fbbef7cc7aa71bdc3f55343db3e9c2b571cd1e00d6f25d8cbac301c5e",
+    "Cargo.lock": "156e4dbcbeb2c1a9fc5f291d6753c088c0878415581be1a896e3733461bcae3a",
+    "package.json": "dc2670bad74387351a726e1ea39ba9484b13adedc805b1b855a228809882aa06",
+    "package-lock.json": "3e4685f18168b6e56a1aa1502be0b88f9d6def88812e093eceb05c8fc6f5f791",
+    "src/main.rs": "8f95f47b0f190bf8a4b3045a1edcceb2f2de70b65cbc2034758e871e22a403f6",
+    "src/messages.rs": "fec919a18e01c1e5ed1fc94a4d5d1189cd9c47a71c80b248f603911e92dc4e0b",
+    "src/setup.rs": "03076ec5ea23d0f8f09636accb16bfd0ffd3ebf0ffccc7981ebca2e25bb6a49c",
+    "src/platform.rs": "fa379e9c05c324ce7c05acb1750e8172f61a6ebd123e7c1bb3bd8e45b2e50ec7",
+    "src/service.rs": "cccac74f24cd717291b4493fd7c8a323c9c10d23230fd12b8236984ee26979b2",
+    "src/tray.rs": "361647dd14c319b82f965f300a51b9069d953f9c9f61b92f54b831f87f7af7c8",
+    "src/tray-app.js": "59433447d26ec8b6fdcee6592be4c267d987d6ad4874108fe37963e8b1a2585f",
+    "src/tray-view-state.js": "9d5107adfc1693df9850b24bb4db1a0eb274fd61e176cf71df02c805ae5d87da",
+    "src/workspace.js": "e22c3640d4d7d3b3a1cf2fff687153f73f0cf7181d84a513b765f02fa3e21f4a",
+    "src/app-shell.js": "9d468507d47fc0d26dcc07bf9c655621df161cc3c43791be32ba5c9bdc53ac08",
+    "src/app-shell.css": "d28822c67b236b0183d30ca1aae76ea096edca4665a17898f283029ebe75617b",
+    "tests/messages.browser.cjs": "4f3c5a8a3b75b44f5faca5017658a0ed17a6145d8cf1121f05e25cc7fca1f281",
+    "tests/tray-home-ai.test.cjs": "5e5f11ab1e3931e3aa579286437c4636a6780d47b458dd7304a18f9c8fe4bfa1",
+    "docs/shots/update.sh": "fc76ab1ab992d04bbdce4a6c5678c286f306d8d3c635855041df3063f3410ad5",
+    "docs/shots/fixture.sh": "c5769c4851111341afc1426af9ba618888d180127fc71150f6d7963a609f1b2f"
+  },
+  "images": {
+    "docs/design/evidence/1467/archived-dark-16.png": "d1b2510bdf09e7905ca5000135639ff376fc8ac97266248f15761415954d46a1",
+    "docs/design/evidence/1467/messages-before-dark-16.png": "84f83d8f711e90b22e05da6f3713dfd39d0fe2f1712b778e3e9aefdfa5fe8ef6",
+    "docs/design/evidence/1467/messages-dark-16.png": "74cb5cd0e306cb6390b9b304ee689bc219feab42db0121c2e75a2cd4c5019e7a",
+    "docs/design/evidence/1467/native-home-dark-16.png": "eabbaf9d0bd84d9ed02e95dfd22e67b3308e2a6880f1381645fcf268197a3273",
+    "docs/design/evidence/1467/partial-light-20-360.png": "e6f1f994d1fa8793cd0b98e09c7c5209562c2ba562b7a5eea9672b00d9a19447",
+    "docs/shots/icon-summary-run-dark.png": "bfb2b15036ca03ffe6ff5f6b9fdeb39c52ffeef4c3a8a6d4b508ec057f6d77e8",
+    "docs/shots/popover-dark-project-16.png": "bce076eb5d7824b7ee0806efa6ab5ae5694be14042f13f92c11fa80b1d68f697"
+  }
+}

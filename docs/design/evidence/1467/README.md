@@ -12,16 +12,18 @@ This candidate implements TW5–TW7 under the [owner's message-only answer](http
 | A4/A5 | Native deletion removes only an archived owner's request record, temporary write copy and owned setup folder. Questions lose local metadata and keep only a content-free suppression digest; the board stays authoritative. Request-ID digests prevent stale clients from launching deleted work again. Tests preserve source/native markers, refuse Windows junctions and prelaunch states, and verify owned-path absence. This is model/filesystem evidence, not a live Claude turn qualification. |
 | A6 | Real filesystem tests cover failed/partial deletion, fresh-store readback, archive aliases, metadata corruption, interrupted launch recovery and a late callback. The same setup lock serializes launch and deletion. Each Delete all item receives its request's verified outcome. Unix symlink coverage is retained in the same module but is not run by this Windows host. |
 | A7 | Archive, permanent delete, Close workspace and command history are separate controls. The browser checks keyboard Enter/Back/Escape, no resend/cancel/history-clear effects, unknown feedback and a narrow 20 px view. Request/answer receipts and drafts keep their existing adapter. |
-| A8 | The four browser images below show before/after, archive consent and narrow unknown/partial states. README native captures are separate; neither substitutes for native workspace qualification or owner visual acceptance. The combined seven-point review below records unfinished owning tasks explicitly. |
+| A8 | The four browser images below show before/after, archive consent and narrow unknown/partial states. The instrument also checks the reachable last action and fixed navigation in a 360×640 window; the narrow review image uses 360×880 to frame all feedback. Native captures are separate; neither substitutes for native workspace qualification or owner visual acceptance. The combined seven-point review below records unfinished owning tasks explicitly. |
 
 ## Before and after
 
 - Before `node tests/tray-home-ai.test.cjs`: failed because the Messages badge renderer was absent. After: the same check passes with count, destination and unknown reason assertions.
 - The first browser implementation could not dispatch Read because `crypto.randomUUID()` was unavailable in the renderer context. The existing `getRandomValues` pattern fixes it; the message browser instrument passes opening without resend, Back/filter restoration and archive/delete feedback.
 - Both safety-review regressions failed before their fixes: an existing `messages.tmp` hard link was accepted, and two archived states of one request produced a false unknown receipt. After: all eight message tests pass. Exclusive temporary-file creation preserves linked targets; one deletion result covers each selected alias.
+- The staged-history assertion also failed before deletion removed `setup/<id>.tmp`. After: the same test verifies the temporary brief copy is absent as well as the main record and folder.
 - The publication budget test failed with two extra issue reads on the other host. Its shared `/nonexistent` installation allowed unrelated profile rows into the test. A unique temporary installation fixes the failure while retaining every exact read-count assertion. The focused test passes.
-- The full selected Windows gate at the corrected candidate reports **sandbox-blocked**: 444 passed, 19 worker-authority failures, 35 ignored. No worker identity or authority guard was removed to obtain green tests. Merge-result CI remains required (R12, § 7).
-- All Node component/IPC checks, screenshot/release-script checks and isolated offline selftest pass. Offline selftest reads no board: 97 fold traces, formats and staged telemetry commit only. It does not establish live board health.
+- Before rebasing, the corrected full gate reported **sandbox-blocked**: 444 passed, 19 worker-authority failures, 35 ignored. After rebasing onto `ab52a687db2a69d4c4c7f20accd67be5a4430298` and its CoreQ dependency fix, `python3 scripts/check.py --base ab52a687db2a69d4c4c7f20accd67be5a4430298` took 325.094 s on this Windows GNU host: 444 passed, 20 failed, 35 ignored. Nineteen failures remain worker-authority refusals; the additional native pipe fixture timed out in the full run and passed alone on the same candidate. That full-run failure remains open. No worker identity or authority guard was removed. Merge-result CI remains required (R12, § 7).
+- After rebase: all Node component/IPC checks, both affected browser instruments and screenshot/release-script checks pass. Integration: 18 passed, 1 ignored. Isolated offline selftest passes: 97 fold traces, formats and staged telemetry commit only; it reads no board and does not establish live board health.
+- Native Windows capture: the direct GNU executable invocation exited 127; running the same release through Cargo passes and preserves its build loader environment. `docs/shots/update.sh` now supports Windows paths/metadata and keeps Cargo's configured macOS signing runner. Rebased native captures passed on Windows; macOS was not rerun here. The separate Home capture uses invented source files, shows `Messages · 2`, and launches no session.
 
 The local metadata writer refuses a `messages.tmp` left by a crash; it does not overwrite or interpret that file as recovery data. An operator must resolve the stale temporary path before further metadata writes. Unknown remains visible. Deleted message history has no undo, trash or retained content copy; command history and drafts remain distinct under the approved boundary.
 
@@ -39,7 +41,13 @@ The local metadata writer refuses a `messages.tmp` left by a crash; it does not 
 
 ## Visual review set
 
-Invented fixtures; Chromium headless shell on Windows. Images use actual CSS sizes without resizing. Native README captures, when refreshed, are recorded separately in `docs/shots/manifest.json`. Source and image hashes are recorded in `sources.json`.
+Seven-image set: four browser images, one native Home image and two native README images. Fixtures are invented; browser images use Chromium headless shell on Windows at actual CSS sizes without resizing. WebView2 images retain their captured physical pixels. The native binary and source blobs are recorded in `docs/shots/manifest.json`; source and image hashes are recorded in `sources.json`.
+
+Native Home, including the Messages badge (the unfinished panel order remains #1466's gap):
+
+![Windows WebView2 Home](native-home-dark-16.png)
+
+Native README [project capture](../../../shots/popover-dark-project-16.png) and [icon capture](../../../shots/icon-summary-run-dark.png). Before: [project](https://github.com/taskqorg/taskq/blob/2f6a2d2c9ac427f9687b64714bd2cfd21805773c/docs/shots/popover-dark-project-16.png), [icon](https://github.com/taskqorg/taskq/blob/2f6a2d2c9ac427f9687b64714bd2cfd21805773c/docs/shots/icon-summary-run-dark.png). Including those two earlier images keeps the review set at nine, below V38's cap.
 
 Before, baseline `2f6a2d2c9ac427f9687b64714bd2cfd21805773c`:
 
@@ -56,3 +64,4 @@ Archived records and permanent deletion boundary:
 Narrow unknown source and a refused prelaunch deletion; the content has one intended vertical scroll area:
 
 ![Partial deletion, light, 20 px, 360 wide](partial-light-20-360.png)
+

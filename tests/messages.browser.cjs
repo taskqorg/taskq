@@ -63,11 +63,13 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.evaluate(s=>taskq.receive({...s,theme:'light',font:20,messages:{...s.messages,complete:false,count:null,reason:'Fixture: board source stale'}}),partial);
   assert.match(await page.locator('.content').innerText(),/Messages unknown: Fixture: board source stale/);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'narrow view has no horizontal clipping');
-  if(evidence)await page.screenshot({path:evidence+'/partial-light-20-360.png'});
   await page.locator('.content').evaluate(e=>{e.scrollTop=e.scrollHeight;});
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   const last=await page.locator('[data-a=message-delete]').boundingBox(),content=await page.locator('.content').boundingBox();
   assert(last.y>=content.y&&last.y+last.height<=content.y+content.height+1,'last action is reachable in the intended scroll area');
-  if(evidence)await page.screenshot({path:evidence+'/partial-bottom-light-20-360.png'});
+  const head=await page.locator('.head').boundingBox();assert(head.y>=0,'fixed navigation stays visible while the message list scrolls: '+head.y);
+  assert((await page.locator('h1').boundingBox()).y>=0,'navigation title remains visible');
+  if(evidence){await page.setViewportSize({width:360,height:880});await page.locator('.content').evaluate(e=>{e.scrollTop=0;});await page.screenshot({path:evidence+'/partial-light-20-360.png'});}
   await page.keyboard.press('Escape');assert(await page.evaluate(()=>sent.some(m=>m.a==='hide')));
   assert(!await page.evaluate(()=>sent.some(m=>['cancel','ai-clear','ai-send','answer'].includes(m.a))),'close/archive/delete never cancel work or clear command history');
   assert.deepEqual(errors,[]);
