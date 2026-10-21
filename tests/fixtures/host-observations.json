@@ -1,0 +1,496 @@
+{
+  "online offline unknown partial; queue busy idle; login logged in": [
+    {
+      "host": "fra",
+      "kind": "online",
+      "state": "online",
+      "producer": null,
+      "observed": 1000,
+      "heartbeat": 980,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "no service identity"
+    },
+    {
+      "host": "fra",
+      "kind": "queue",
+      "state": "idle",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 0,
+      "queued": 0
+    },
+    {
+      "host": "mac",
+      "kind": "online",
+      "state": "online",
+      "producer": "aaaaaaaaaaaa",
+      "observed": 1000,
+      "heartbeat": 950,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null
+    },
+    {
+      "host": "mac",
+      "kind": "queue",
+      "state": "busy",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 1,
+      "queued": 1
+    },
+    {
+      "host": "win",
+      "kind": "online",
+      "state": "offline",
+      "producer": "bbbbbbbbbbbb",
+      "observed": 1000,
+      "heartbeat": 600,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null
+    },
+    {
+      "host": "win",
+      "kind": "queue",
+      "state": "busy",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 1,
+      "queued": 1
+    },
+    {
+      "host": "wsl",
+      "kind": "online",
+      "state": "unknown",
+      "producer": null,
+      "observed": 1000,
+      "heartbeat": null,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "no heartbeat"
+    },
+    {
+      "host": "wsl",
+      "kind": "queue",
+      "state": "idle",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 0,
+      "queued": 0
+    },
+    {
+      "host": "wsl",
+      "kind": "login",
+      "producer": "cccccccccccc",
+      "observed": 990,
+      "valid_until": 1590,
+      "claude": "logged in",
+      "codex": "logged in",
+      "state": "logged in",
+      "complete": true,
+      "reason": null
+    }
+  ],
+  "login not logged in": {
+    "host": "wsl",
+    "kind": "login",
+    "producer": "cccccccccccc",
+    "observed": 990,
+    "valid_until": 1590,
+    "claude": "logged in",
+    "codex": "not logged in",
+    "state": "not logged in",
+    "complete": true,
+    "reason": null
+  },
+  "login unknown: no probe": {
+    "host": "wsl",
+    "kind": "login",
+    "producer": "cccccccccccc",
+    "observed": null,
+    "valid_until": null,
+    "state": "unknown",
+    "complete": false,
+    "reason": "no probe yet"
+  },
+  "login partial: codex unknown": {
+    "host": "wsl",
+    "kind": "login",
+    "producer": "cccccccccccc",
+    "observed": 990,
+    "valid_until": 1590,
+    "claude": "logged in",
+    "codex": "unknown",
+    "state": "logged in",
+    "complete": false,
+    "reason": "runtime login unknown"
+  },
+  "queue unknown: incomplete read": [
+    {
+      "host": "fra",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "source incomplete",
+      "running": null,
+      "queued": null
+    },
+    {
+      "host": "mac",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "source incomplete",
+      "running": null,
+      "queued": null
+    },
+    {
+      "host": "win",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "source incomplete",
+      "running": null,
+      "queued": null
+    },
+    {
+      "host": "wsl",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "source incomplete",
+      "running": null,
+      "queued": null
+    }
+  ],
+  "queue partial: task limit": [
+    {
+      "host": "fra",
+      "kind": "queue",
+      "state": "idle",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "task limit",
+      "running": 0,
+      "queued": 0
+    },
+    {
+      "host": "mac",
+      "kind": "queue",
+      "state": "busy",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "task limit",
+      "running": 1,
+      "queued": 1
+    },
+    {
+      "host": "win",
+      "kind": "queue",
+      "state": "busy",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "task limit",
+      "running": 1,
+      "queued": 1
+    },
+    {
+      "host": "wsl",
+      "kind": "queue",
+      "state": "idle",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "task limit",
+      "running": 0,
+      "queued": 0
+    }
+  ],
+  "read fresh": [
+    {
+      "host": "fra",
+      "kind": "login",
+      "state": "unknown",
+      "complete": false,
+      "reason": "no observation"
+    },
+    {
+      "host": "fra",
+      "kind": "online",
+      "state": "online",
+      "producer": null,
+      "observed": 1000,
+      "heartbeat": 980,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "no service identity"
+    },
+    {
+      "host": "fra",
+      "kind": "queue",
+      "state": "idle",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 0,
+      "queued": 0
+    },
+    {
+      "host": "mac",
+      "kind": "login",
+      "state": "unknown",
+      "complete": false,
+      "reason": "no observation"
+    },
+    {
+      "host": "mac",
+      "kind": "online",
+      "state": "online",
+      "producer": "aaaaaaaaaaaa",
+      "observed": 1000,
+      "heartbeat": 950,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null
+    },
+    {
+      "host": "mac",
+      "kind": "queue",
+      "state": "busy",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 1,
+      "queued": 1
+    },
+    {
+      "host": "win",
+      "kind": "login",
+      "state": "unknown",
+      "complete": false,
+      "reason": "no observation"
+    },
+    {
+      "host": "win",
+      "kind": "online",
+      "state": "offline",
+      "producer": "bbbbbbbbbbbb",
+      "observed": 1000,
+      "heartbeat": 600,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null
+    },
+    {
+      "host": "win",
+      "kind": "queue",
+      "state": "busy",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 1,
+      "queued": 1
+    },
+    {
+      "host": "wsl",
+      "kind": "login",
+      "producer": "cccccccccccc",
+      "observed": 990,
+      "valid_until": 1590,
+      "claude": "logged in",
+      "codex": "logged in",
+      "state": "logged in",
+      "complete": true,
+      "reason": null
+    },
+    {
+      "host": "wsl",
+      "kind": "online",
+      "state": "unknown",
+      "producer": null,
+      "observed": 1000,
+      "heartbeat": null,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "no heartbeat"
+    },
+    {
+      "host": "wsl",
+      "kind": "queue",
+      "state": "idle",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": true,
+      "reason": null,
+      "running": 0,
+      "queued": 0
+    }
+  ],
+  "read expired": [
+    {
+      "host": "fra",
+      "kind": "login",
+      "state": "unknown",
+      "complete": false,
+      "reason": "no observation"
+    },
+    {
+      "host": "fra",
+      "kind": "online",
+      "state": "unknown",
+      "producer": null,
+      "observed": 1000,
+      "heartbeat": 980,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired"
+    },
+    {
+      "host": "fra",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired",
+      "running": null,
+      "queued": null
+    },
+    {
+      "host": "mac",
+      "kind": "login",
+      "state": "unknown",
+      "complete": false,
+      "reason": "no observation"
+    },
+    {
+      "host": "mac",
+      "kind": "online",
+      "state": "unknown",
+      "producer": "aaaaaaaaaaaa",
+      "observed": 1000,
+      "heartbeat": 950,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired"
+    },
+    {
+      "host": "mac",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired",
+      "running": null,
+      "queued": null
+    },
+    {
+      "host": "win",
+      "kind": "login",
+      "state": "unknown",
+      "complete": false,
+      "reason": "no observation"
+    },
+    {
+      "host": "win",
+      "kind": "online",
+      "state": "unknown",
+      "producer": "bbbbbbbbbbbb",
+      "observed": 1000,
+      "heartbeat": 600,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired"
+    },
+    {
+      "host": "win",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired",
+      "running": null,
+      "queued": null
+    },
+    {
+      "host": "wsl",
+      "kind": "login",
+      "producer": "cccccccccccc",
+      "observed": 990,
+      "valid_until": 1590,
+      "claude": "unknown",
+      "codex": "unknown",
+      "state": "unknown",
+      "complete": false,
+      "reason": "expired"
+    },
+    {
+      "host": "wsl",
+      "kind": "online",
+      "state": "unknown",
+      "producer": null,
+      "observed": 1000,
+      "heartbeat": null,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired"
+    },
+    {
+      "host": "wsl",
+      "kind": "queue",
+      "state": "unknown",
+      "producer": "cccccccccccc",
+      "observed": 1000,
+      "valid_until": 1300,
+      "complete": false,
+      "reason": "expired",
+      "running": null,
+      "queued": null
+    }
+  ]
+}

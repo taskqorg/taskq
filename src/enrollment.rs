@@ -134,16 +134,16 @@ pub fn speaks(active: &Value, snap: Option<&Snapshot>) -> bool {
 }
 
 /// The record of one snapshot: payload without `observed` names its content, so equal content dedupes by digest.
-pub fn record(install: &Path, s: &Snapshot, active: &Value) -> Res<(String, Value)> {
-    let (digest, at, payload) = payload(s, active)?;
+pub fn record(install: &Path, s: &Snapshot, active: &Value, local: &Local) -> Res<(String, Value)> {
+    let (digest, at, payload) = payload(s, active, local)?;
     Ok((digest.clone(), stamp(install, &digest, at, payload)?))
 }
 
 /// The board payload of [`record`]: pure, so a service pass builds it without touching connection storage.
-fn payload(s: &Snapshot, active: &Value) -> Res<(String, u64, Value)> {
+fn payload(s: &Snapshot, active: &Value, local: &Local) -> Res<(String, u64, Value)> {
     let board = approved(active).ok_or("connection has no readable board scope")?;
     let id = active["installation"].as_str().unwrap_or_default();
-    let mut payload = serde_json::to_value(project(s, id, &[board])?).map_err(|e| e.to_string())?;
+    let mut payload = serde_json::to_value(project(s, id, &[board], local)?).map_err(|e| e.to_string())?;
     let observed = payload.as_object_mut().unwrap().remove("observed");
     let digest = enroll::digest(&payload);
     payload["observed"] = observed.unwrap_or_default();
@@ -191,7 +191,7 @@ pub struct Sender {
 
 impl Sender {
     /// One step per service pass; returns a log line when the outcome changes.
-    pub fn tick(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64) -> Option<String> {
+    pub fn tick(&mut self, install: &Path, snap: Option<&Snapshot>, local: &Local, now: u64) -> Option<String> {
         let before = self.outcome.clone();
         if self.job.as_ref().is_some_and(|j| j.1.is_finished()) {
             let (started, job) = self.job.take().unwrap();
@@ -207,7 +207,7 @@ impl Sender {
             }
         }
         if self.job.is_none() && now >= self.wait_until {
-            if let Err(e) = self.start(install, snap, now) {
+            if let Err(e) = self.start(install, snap, local, now) {
                 self.outcome = Some(e);
                 self.wait_until = now + RESEND;
             }
@@ -215,7 +215,7 @@ impl Sender {
         (self.outcome != before).then(|| format!("dashq connection: {}", self.outcome.as_deref().unwrap_or("none")))
     }
 
-    fn start(&mut self, install: &Path, snap: Option<&Snapshot>, now: u64) -> Result<(), String> {
+    fn start(&mut self, install: &Path, snap: Option<&Snapshot>, local: &Local, now: u64) -> Result<(), String> {
         let d = dir(install);
         // #1328: the pass reads the state file only; every coreq load (Windows: `whoami` and `icacls` per load)
         // runs on the delivery thread
@@ -235,7 +235,7 @@ impl Sender {
         };
         // another project's board, or no board read yet: nothing to send from here
         let Some(s) = snap.filter(|s| speaks(&a, Some(s))) else { return Ok(()) };
-        let (board, at, payload) = payload(s, &a).map_err(|e| format!("not sent: {e}"))?;
+        let (board, at, payload) = payload(s, &a, local).map_err(|e| format!("not sent: {e}"))?;
         let mut backoff = std::mem::take(&mut self.backoff);
         let (install, sent) = (install.to_path_buf(), self.sent.clone());
         self.job = Some((now, std::thread::spawn(move || {
@@ -358,10 +358,80 @@ pub struct Observation {
     reason: Option<&'static str>,
     totals: Option<BTreeMap<&'static str, usize>>,
     tasks: Vec<TaskObservation>,
+    /// Host `online`, `login` and `queue` observations (docs/design/enrollment.md#contract-detail).
+    observations: Vec<Value>,
+}
+
+/// What the sending service knows beyond the board: its host name, the board `ttl` and its last runtime probe
+/// (`status.json` `agents`: `{at, rows}`; `Null`: none yet).
+pub struct Local {
+    pub host: String,
+    pub service: Option<String>,
+    pub ttl: u64,
+    pub agents: Value,
+}
+
+/// A login probe answers for two probe intervals (§ 4: at most every 5 minutes).
+const LOGIN_VALID: u64 = 600;
+
+/// One observation per host and kind; every one names producer, host scope, time, `valid_until` and `complete`.
+/// `online` and `queue` come from the board read and cover every heartbeat host; `login` only this host's probe.
+fn observations(s: &Snapshot, l: &Local) -> Vec<Value> {
+    let until = s.observed.saturating_add(l.ttl as i64);
+    let mut names: Vec<&str> = s.hosts.iter().map(|h| h.name.as_str()).chain([l.host.as_str()]).collect();
+    names.sort();
+    names.dedup();
+    let mut out = Vec::new();
+    for name in names {
+        let beat = s.hosts.iter().filter(|h| h.name == name).max_by_key(|h| h.updated);
+        let age = beat.map(|h| s.observed - h.updated);
+        let service = beat.and_then(|h| h.service.clone());
+        let (state, reason) = match age {
+            None => ("unknown", Some("no heartbeat")),
+            Some(a) if a < 0 || s.observed <= 0 => ("unknown", Some("heartbeat time unknown")),
+            Some(a) if a > l.ttl as i64 => ("offline", None),
+            _ if service.is_none() => ("online", Some("no service identity")),
+            _ => ("online", None),
+        };
+        out.push(json!({"host": name, "kind": "online", "state": state, "producer": service, "observed": s.observed,
+            "heartbeat": beat.map(|h| h.updated), "valid_until": until, "complete": state != "unknown" && reason.is_none(), "reason": reason}));
+        // Assigned queue: live attempts whose session names this host, and ready or waiting tasks labelled for it.
+        let rows = || s.tasks.iter().take(MAX_TASKS);
+        let running = rows().filter(|r| r.task.attempt.is_some() && matches!(r.task.state.name(), "doing" | "review")
+            && r.task.session.as_deref().and_then(|x| x.rsplit(' ').next()) == Some(name)).count();
+        let queued = rows().filter(|r| matches!(r.task.state.name(), "ready" | "waiting")
+            && r.labels.iter().any(|x| x.strip_prefix("host-") == Some(name))).count();
+        let (state, reason) = match (&s.reason, s.tasks.len() > MAX_TASKS) {
+            (Some(_), _) => ("unknown", Some("source incomplete")),
+            (None, true) => (if running > 0 { "busy" } else { "idle" }, Some("task limit")),
+            _ => (if running > 0 { "busy" } else { "idle" }, None),
+        };
+        let known = state != "unknown";
+        out.push(json!({"host": name, "kind": "queue", "state": state, "producer": l.service, "observed": s.observed,
+            "valid_until": until, "complete": known && reason.is_none(), "reason": reason,
+            "running": known.then_some(running), "queued": known.then_some(queued)}));
+    }
+    let at = l.agents["at"].as_u64();
+    let mut o = json!({"host": l.host, "kind": "login", "producer": l.service, "observed": at, "valid_until": at.map(|t| t + LOGIN_VALID)});
+    let mut seen = Vec::new();
+    for r in l.agents["rows"].as_array().into_iter().flatten() {
+        let Some(rt) = r["runtime"].as_str() else { continue };
+        let v = match r["login"].as_str() { Some(x @ ("logged in" | "not logged in" | "not installed")) => x, _ => "unknown" };
+        o[rt] = json!(v);
+        seen.push(v);
+    }
+    let unknown = at.is_none() || seen.is_empty() || seen.contains(&"unknown");
+    let known: Vec<_> = seen.iter().filter(|v| **v != "unknown" && **v != "not installed").collect();
+    o["state"] = json!(if at.is_none() || known.is_empty() && unknown { "unknown" }
+        else if known.iter().any(|v| **v == "not logged in") || known.is_empty() { "not logged in" } else { "logged in" });
+    o["complete"] = json!(!unknown);
+    o["reason"] = json!(if at.is_none() { Some("no probe yet") } else if unknown { Some("runtime login unknown") } else { None });
+    out.push(o);
+    out
 }
 
 /// The scope is the approved board list, never inferred from host names or projects on disk.
-pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope]) -> Res<Observation> {
+pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope], local: &Local) -> Res<Observation> {
     let board = BoardScope::snapshot(s)?;
     if !approved.contains(&board) { return Err("board outside approved scope".into()) }
     if installation.len() != 64 || !installation.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)) {
@@ -378,7 +448,36 @@ pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope]) -> Res
             choices: core::options(r.task.card.as_deref().unwrap_or_default()).into_iter()
                 .map(|(number, label, recommended)| Choice { number, label, recommended }).collect(),
         }).collect(),
+        observations: observations(s, local),
     })
+}
+
+/// The reader side of host observations: per host and kind the latest across installations; one past its
+/// `valid_until`, or a kind no installation reported for a known host, reads unknown, never online, logged in or idle.
+fn current<'a>(obs: impl Iterator<Item = &'a Observation>, now: i64) -> Vec<Value> {
+    let mut latest: BTreeMap<(String, String), Value> = BTreeMap::new();
+    for o in obs.flat_map(|o| &o.observations) {
+        let key = (o["host"].as_str().unwrap_or_default().to_string(), o["kind"].as_str().unwrap_or_default().to_string());
+        if latest.get(&key).is_none_or(|v| v["observed"].as_i64() < o["observed"].as_i64()) { latest.insert(key, o.clone()); }
+    }
+    let hosts: std::collections::BTreeSet<String> = latest.keys().map(|k| k.0.clone()).collect();
+    for h in hosts {
+        for kind in ["login", "online", "queue"] {
+            latest.entry((h.clone(), kind.into())).or_insert_with(|| json!({"host": h, "kind": kind, "state": "unknown", "complete": false, "reason": "no observation"}));
+        }
+    }
+    latest.into_values().map(|mut o| {
+        if o["valid_until"].as_i64().is_none_or(|t| now > t) && o["reason"] != "no observation" {
+            for (k, v) in o.as_object_mut().unwrap().iter_mut() {
+                if k == "running" || k == "queued" { *v = Value::Null }
+                else if matches!(v.as_str(), Some("logged in" | "not logged in")) { *v = json!("unknown") }
+            }
+            o["state"] = json!("unknown");
+            o["complete"] = json!(false);
+            o["reason"] = json!("expired");
+        }
+        o
+    }).collect()
 }
 
 /// One row per approved board, never the sum of host snapshots. Delivery time cannot refresh data.
@@ -401,6 +500,8 @@ pub fn coalesce(observations: &[Observation], approved: &[BoardScope], now: i64,
                     "observation": if conflict { Value::Null } else { json!(o) }})
             }
         };
+        let mut row = row;
+        row["observations"] = json!(current(observations.iter().filter(|o| &o.board == board), now));
         boards.insert(board.clone(), row);
     }
     boards.into_values().collect()
@@ -514,12 +615,55 @@ mod tests {
             unknown(active(&install).map(|_| String::new()));
             unknown(disconnect_with(&install, &mut Dash { online: true, revoked: vec![] }).map(|_| String::new()));
             let mut s = Sender::default();
-            assert!(s.tick(&install, Some(&snap("o/a")), 1).unwrap().contains("unknown"), "{b}");
+            assert!(s.tick(&install, Some(&snap("o/a")), &local(), 1).unwrap().contains("unknown"), "{b}");
             assert!(s.job.is_none());
             assert_eq!(fs::read_to_string(&path).unwrap(), b.to_string(), "file kept");
         }
         fs::remove_dir_all(install).unwrap();
     }
+
+    // Chain: board heartbeats, task rows and the local runtime probe -> host observations -> DashQ reader expiry.
+    // Risk: DashQ infers online, logged in or an empty queue from silence, an old record or an incomplete read.
+    #[test]
+    fn host_observations_match_the_fixture() {
+        use crate::{core::{State, Task}, snapshot::{Host, Row}};
+        let beat = |name: &str, updated, service: Option<&str>| Host { name: name.into(), updated, service: service.map(String::from), ..Default::default() };
+        let row = |n, state, session: Option<&str>, labels: &[&str]| Row { n, labels: labels.iter().map(|l| l.to_string()).collect(),
+            task: Task { state, attempt: session.map(|_| n), session: session.map(String::from), ..Default::default() }, ..Default::default() };
+        let base = || Snapshot { source: "host", observed: 1000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": "o/r"}),
+            tasks: vec![row(1, State::Doing, Some("claude:x mac"), &[]), row(2, State::Ready, None, &["host-mac"]),
+                row(3, State::Waiting, None, &["host-win"]), row(4, State::Review, Some("codex:y win"), &[]), row(5, State::Ready, None, &[])],
+            // mac online, win offline (heartbeat older than ttl), fra partial (no service line), wsl unknown (no heartbeat)
+            hosts: vec![beat("mac", 950, Some("aaaaaaaaaaaa")), beat("win", 600, Some("bbbbbbbbbbbb")), beat("fra", 980, None)] };
+        let probe = |codex: &str| json!({"at": 990, "rows": [{"runtime": "claude", "login": "logged in"}, {"runtime": "codex", "login": codex}]});
+        let local = |agents| Local { host: "wsl".into(), service: Some("cccccccccccc".into()), ttl: 300, agents };
+        let scope = [BoardScope::new("github", "github.com", "o/r").unwrap()];
+        let obs = |s: &Snapshot, agents| project(s, &"a".repeat(64), &scope, &local(agents)).unwrap();
+        let mut incomplete = base();
+        incomplete.reason = Some("board read failed".into());
+        let mut over = base();
+        over.tasks.extend((10..10 + MAX_TASKS as u64).map(|n| row(n, State::Ready, None, &[])));
+        let mac = obs(&base(), probe("logged in"));
+        let got = json!({
+            "online offline unknown partial; queue busy idle; login logged in": mac.observations,
+            "login not logged in": obs(&base(), probe("not logged in")).observations.last(),
+            "login unknown: no probe": obs(&base(), Value::Null).observations.last(),
+            "login partial: codex unknown": obs(&base(), probe("unknown")).observations.last(),
+            "queue unknown: incomplete read": obs(&incomplete, Value::Null).observations.iter().filter(|o| o["kind"] == "queue").collect::<Vec<_>>(),
+            "queue partial: task limit": obs(&over, Value::Null).observations.iter().filter(|o| o["kind"] == "queue").collect::<Vec<_>>(),
+            "read fresh": coalesce(&[mac.clone()], &scope, 1000, 300)[0]["observations"],
+            "read expired": coalesce(&[mac], &scope, 2000, 300)[0]["observations"],
+        });
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/host-observations.json");
+        if std::env::var_os("TASKQ_BLESS").is_some() { fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap(); }
+        let want: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(got, want, "TASKQ_BLESS=1 rewrites {}", path.display());
+        let expired = &got["read expired"];
+        assert!(expired.as_array().unwrap().iter().all(|o| o["state"] == "unknown" && o["complete"] == false), "expired reads unknown");
+        assert!(!got.to_string().contains("x mac") && !got.to_string().contains("codex:y"), "no session ids");
+    }
+
+    fn local() -> Local { Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null } }
 
     fn snap(repo: &str) -> Snapshot {
         Snapshot { source: "host", observed: 1_700_000_000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": repo}), tasks: vec![], hosts: vec![] }
@@ -531,7 +675,7 @@ mod tests {
     fn sender_sends_only_the_approved_board_and_never_blocks() {
         let install = std::env::temp_dir().join(format!("taskq-sender-{}", std::process::id()));
         let _ = fs::remove_dir_all(&install);
-        assert_eq!(Sender::default().tick(&install, Some(&snap("o/a")), 1), None, "no connection: nothing sent");
+        assert_eq!(Sender::default().tick(&install, Some(&snap("o/a")), &local(), 1), None, "no connection: nothing sent");
         assert!(!dir(&install).exists(), "a status read creates no connection state");
         let board = BoardScope::new("github", "GitHub.com", "O/A").unwrap();
         assert_eq!(board.value(), "github:github.com/o/a");
@@ -542,23 +686,23 @@ mod tests {
         assert_eq!(approved(&conn), Some(board));
         assert_eq!(approved(&json!({"scope": {"name": SCHEMA, "value": "github:github.com/O/A"}})), None, "non-canonical scope");
         let mut s = Sender::default();
-        assert_eq!(s.tick(&install, Some(&snap("o/b")), 1), None, "another board: nothing sent");
+        assert_eq!(s.tick(&install, Some(&snap("o/b")), &local(), 1), None, "another board: nothing sent");
         assert!(s.job.is_none());
-        let (_, rec) = record(&install, &snap("o/a"), &conn).unwrap();
+        let (_, rec) = record(&install, &snap("o/a"), &conn, &local()).unwrap();
         assert_eq!((rec["schema"].as_str(), rec["payload"]["board"]["repo"].as_str()), (Some(SCHEMA), Some("o/a")));
         // #1328: each step's cost on this OS, printed on success and failure; only the state read and the payload
         // stay on the pass
         let timed = |f: &dyn Fn()| { let t = std::time::Instant::now(); f(); t.elapsed() };
         let steps = format!("state read {:?}, coreq active read {:?}, record build {:?}, resources read {:?}",
             timed(&|| { state(&install).unwrap(); }), timed(&|| { active(&install).unwrap(); }),
-            timed(&|| { record(&install, &snap("o/a"), &conn).unwrap(); }), timed(&|| { let _ = resources_record(&install, &conn, 1); }));
+            timed(&|| { record(&install, &snap("o/a"), &conn, &local()).unwrap(); }), timed(&|| { let _ = resources_record(&install, &conn, 1); }));
         let t = std::time::Instant::now();
-        assert_eq!(s.tick(&install, Some(&snap("o/a")), 1), None);
+        assert_eq!(s.tick(&install, Some(&snap("o/a")), &local(), 1), None);
         let steps = format!("{steps}, tick with thread spawn {:?}", t.elapsed());
         eprintln!("sender steps: {steps}");
         assert!(s.job.is_some() && t.elapsed().as_secs() < 2, "delivery runs on its own thread: {steps}");
         while !s.job.as_ref().unwrap().1.is_finished() { std::thread::sleep(std::time::Duration::from_millis(50)) }
-        assert_eq!(s.tick(&install, Some(&snap("o/a")), 2).as_deref(), Some("dashq connection: retry in 1 s"), "outage only waits");
+        assert_eq!(s.tick(&install, Some(&snap("o/a")), &local(), 2).as_deref(), Some("dashq connection: retry in 1 s"), "outage only waits");
         fs::remove_dir_all(install).unwrap();
     }
 }

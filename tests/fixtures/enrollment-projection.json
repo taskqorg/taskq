@@ -55,5 +55,40 @@
       "revision": 8,
       "choices": []
     }
+  ],
+  "observations": [
+    {
+      "host": "mac",
+      "kind": "online",
+      "state": "online",
+      "producer": null,
+      "observed": 99,
+      "heartbeat": 9,
+      "valid_until": 399,
+      "complete": false,
+      "reason": "no service identity"
+    },
+    {
+      "host": "mac",
+      "kind": "queue",
+      "state": "idle",
+      "producer": null,
+      "observed": 99,
+      "valid_until": 399,
+      "complete": true,
+      "reason": null,
+      "running": 0,
+      "queued": 0
+    },
+    {
+      "host": "mac",
+      "kind": "login",
+      "producer": null,
+      "observed": null,
+      "valid_until": null,
+      "state": "unknown",
+      "complete": false,
+      "reason": "no probe yet"
+    }
   ]
 }
