@@ -139,20 +139,11 @@ pub enum Launched { Job { job: String, session: Option<String>, url: Option<Stri
 /// The native call, replaceable in tests.
 pub type Launcher = fn(&Path, &Request) -> Launched;
 
-/// One host pass: launch the oldest `pending` request. Setup takes no § 3 grant (owner, #1426): only a hold, Stop or restart waits.
-pub fn step(install: &Path, host: &crate::host::Shared, launch: Launcher) -> Res<()> {
+/// One host pass: launch the oldest `pending` request. Setup is a session for the human (owner, #1426):
+/// no § 3 grant and no hold, Stop or restart waits for it.
+pub fn step(install: &Path, launch: Launcher) -> Res<()> {
     let (requests, bad) = all(install)?;
     let Some(mut r) = requests.into_iter().find(|r| r.state == "pending") else { return bad.into_iter().next().map_or(Ok(()), Err) };
-    let waiting = {
-        let h = host.lock().unwrap_or_else(|e| e.into_inner());
-        h.held.clone().or_else(|| h.stopping.then(|| "host Stop pending".into())).or_else(|| h.restart.then(|| "host restart pending".into()))
-    };
-    if let Some(reason) = waiting {
-        let reason = format!("waiting: {reason}");
-        if r.reason.as_deref() == Some(reason.as_str()) { return Ok(()); }
-        r.reason = Some(reason);
-        return locked(install, || write(install, &r));
-    }
     let id = r.id.clone();
     locked(install, || {
         let cur = read(&file(install, &id))?;
@@ -224,7 +215,6 @@ const ACCESS: &str = "access refused:";
 pub fn view(r: &Request) -> serde_json::Value {
     let reason = r.reason.as_deref().unwrap_or("");
     let (kind, next) = match r.state.as_str() {
-        "pending" if reason.starts_with("waiting:") => ("waiting", "Waits for the hold, Stop or restart named here"),
         "pending" | "launching" => ("starting", "The host service is starting the session"),
         "launched" if r.url.is_some() => ("launched", "Open the session to read and answer; archive it in Claude when done"),
         "launched" => ("launched", "Session started; find it in Claude (`claude agents`), archive it when done"),
@@ -248,21 +238,17 @@ pub fn last(install: &Path) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host::{Host, Policy};
-    use std::sync::{Arc, Mutex};
 
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }
     fn never(_: &Path, _: &Request) -> Launched { panic!("setup launched again") }
 
-    fn host(json: serde_json::Value) -> crate::host::Shared { Arc::new(Mutex::new(Host::new(Policy::parse(json, "h")))) }
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
     fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }
 
-    // Chain: service setup to host launch (A2, A5). Risk: a repeat returns an old session, a request launches twice,
-    // or setup waits on (or takes) a queue slot.
+    // Chain: service setup to host launch (A2). Risk: a repeat returns an old session or a request launches twice.
     #[test]
-    fn each_request_launches_once_outside_capacity() {
+    fn each_request_launches_once() {
         let t = tmp();
         let i = t.as_path();
         let first = submit(i, "claude", None, &[]).unwrap();
@@ -270,17 +256,14 @@ mod tests {
         assert_ne!(first.id, second.id, "every call writes a new request");
         assert!(submit(i, "codex", None, &[]).is_err(), "unqualified runtime refused");
         assert!(first.brief.contains("full PM chat") && first.brief.contains(&first.host));
-        // Claude capacity 0, admission.max 0 and an unbuilt occupancy count only queue work.
-        let h = host(serde_json::json!({"limits": {"claude": 0}, "admission": {"max": 0}}));
-        step(i, &h, ok).unwrap();
+        step(i, ok).unwrap();
         assert_eq!(all(i).unwrap().0[0].id, first.id, "oldest first");
         assert_eq!(states(i), ["launched", "pending"]);
-        step(i, &h, ok).unwrap();
+        step(i, ok).unwrap();
         assert_eq!(states(i), ["launched", "launched"]);
-        assert!(h.lock().unwrap().used().is_empty(), "setup holds no slot");
         // A restarted service never relaunches a launched request.
         recover(i).unwrap();
-        step(i, &h, never).unwrap();
+        step(i, never).unwrap();
         assert_eq!(last(i)["kind"], "launched");
     }
 
@@ -290,8 +273,7 @@ mod tests {
         let t = tmp();
         let i = t.as_path();
         submit(i, "claude", None, &[]).unwrap();
-        let h = host(serde_json::json!({}));
-        step(i, &h, unknown).unwrap();
+        step(i, unknown).unwrap();
         assert_eq!(states(i), ["interrupted"]);
         // Crash after `launching` was written: recovery reads interrupted, the next pass launches nothing.
         let mut r = all(i).unwrap().0.remove(0);
@@ -299,29 +281,28 @@ mod tests {
         write(i, &r).unwrap();
         recover(i).unwrap();
         assert_eq!(states(i), ["interrupted"]);
-        step(i, &h, never).unwrap();
+        step(i, never).unwrap();
         // The pre-#1426 slot is kept unread; another unreadable record is unknown, kept and reported.
         fs::write(dir(i).join("request.json"), r#"{"schema":1}"#).unwrap();
-        step(i, &h, never).unwrap();
+        step(i, never).unwrap();
         fs::write(dir(i).join("x.json"), r#"{"schema":3}"#).unwrap();
-        assert!(step(i, &h, never).is_err());
+        assert!(step(i, never).is_err());
         assert_eq!(last(i)["kind"], "interrupted", "the newest readable request still shows");
         fs::remove_file(file(i, &r.id)).unwrap();
         assert_eq!(last(i)["kind"], "unknown");
     }
 
-    // Chain: hold, Stop or restart to launch (A2). Risk: setup launches through an emergency hold.
+    // Chain: host policy and holds to launch (A5, owner answer 2). Risk: a session the owner opened waits on queue limits or holds.
+    // `step` takes no host state, so Claude capacity 0, the emergency hold, Stop and restart cannot reach it.
     #[test]
-    fn hold_waits() {
+    fn limits_and_holds_do_not_wait() {
         let t = tmp();
         let i = t.as_path();
+        fs::write(i.join("host.json"), r#"{"limits":{"claude":0},"admission":{"max":0}}"#).unwrap();
+        fs::write(i.join("hold"), "emergency").unwrap();
+        fs::write(i.join("restart"), "").unwrap();
         submit(i, "claude", None, &[]).unwrap();
-        let h = host(serde_json::json!({}));
-        h.lock().unwrap().held = Some("emergency hold".into());
-        step(i, &h, never).unwrap();
-        assert_eq!((last(i)["kind"].as_str(), last(i)["reason"].as_str()), (Some("waiting"), Some("waiting: emergency hold")));
-        h.lock().unwrap().held = None;
-        step(i, &h, ok).unwrap();
+        step(i, ok).unwrap();
         assert_eq!(states(i), ["launched"]);
     }
 

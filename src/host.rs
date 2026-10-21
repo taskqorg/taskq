@@ -883,7 +883,7 @@ pub fn run(install: &Path) -> Res<()> {
         }
         {let mut h=shared.lock().unwrap_or_else(|e|e.into_inner());if roots.is_empty()&&h.busy.is_empty()&&h.held.is_none() {h.rebuilding=false;}}
         // § 4 setup sessions: only this loop launches them. ponytail: a launch blocks this pass up to 30 s; a thread if that matters.
-        if let Err(e)=crate::setup::step(install,&shared,crate::setup::claude_launch) {
+        if let Err(e)=crate::setup::step(install,crate::setup::claude_launch) {
             if reported!=e {crate::platform::log(&e);reported=e;}
         }
         let loaded={let h=shared.lock().unwrap_or_else(|e|e.into_inner());
