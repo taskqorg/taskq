@@ -39,7 +39,12 @@ fn read_only_entry(p: &Path) -> bool {
 /// Workspace: the project's git common dir (`<root>/.git`), so fetch, commit and push work from linked worktrees (#1490).
 // ponytail: a directory `.git` only; a root whose `.git` is a pointer file keeps Codex's read-only default.
 fn git_dir(mode: &str, root: &Path) -> Option<PathBuf> {
-    Some(root.join(".git")).filter(|g| mode == "workspace" && g.is_dir())
+    Some(root.join(".git")).filter(|g| mode == "workspace" && git_read_only(g).iter().all(|p| p.exists()))
+}
+
+/// Host-side git runs hooks and config outside the sandbox: both stay read-only, and must exist to be masked.
+fn git_read_only(git: &Path) -> [PathBuf; 2] {
+    [git.join("hooks"), git.join("config")]
 }
 
 /// Write mounts, in order; read-only mounts follow them.
@@ -86,6 +91,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     // Read-only mounts follow every write mount; no caller supplies mount arguments.
     let mut protected = vec![install, root.join(".codex")];
+    protected.extend(git_dir(mode, &root).iter().flat_map(|g| git_read_only(g)));
     protected.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).filter(|p| p.is_absolute() && p.is_dir()));
     if let Some(d) = bin.parent() { protected.push(if d.ends_with("bin") { d.parent().unwrap_or(d) } else { d }.to_path_buf()); }
     for e in std::fs::read_dir(&ch).map_err(|e| e.to_string())? {
@@ -118,9 +124,12 @@ mod tests {
     #[test]
     fn workspace_git_common_dir_stays_writable() {
         let root = std::env::temp_dir().join(format!("taskq-1490-{}", std::process::id()));
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        let (ch, home) = (Path::new("/home/me/.codex"), Path::new("/home/me"));
         let git = root.join(".git");
+        std::fs::create_dir_all(git.join("hooks")).unwrap();
+        let (ch, home) = (Path::new("/home/me/.codex"), Path::new("/home/me"));
+        assert!(!write_mounts("workspace", &root, ch, home).contains(&git), "unmaskable config: git dir stays read-only");
+        std::fs::write(git.join("config"), "").unwrap();
+        assert_eq!(git_read_only(&git), [git.join("hooks"), git.join("config")], "host-side git must not run sandbox-written hooks or config");
         let ws = write_mounts("workspace", &root, ch, home);
         assert_eq!(ws[..3], [root.clone(), git.clone(), ch.to_path_buf()]);
         assert!(!write_mounts("restricted", &root, ch, home).contains(&git), "restricted keeps only .taskq");
