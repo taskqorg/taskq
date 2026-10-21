@@ -15,6 +15,9 @@ This file contains TaskQ-specific checks, not a second definition of the shared 
 
 ## Acceptance
 
+Apply the approved [app UI v2 profile](ui-rules-v2.md) and its pinned shared V checks.
+Keep the historical acceptance identifiers below.
+
 Apply the approved [UI01–UI28 menu checklist](ui-rules.md#checklist-28-rules) alongside the existing D acceptance IDs. The [baseline review](ui-rules.md#observed-menu-findings) is browser evidence, not native acceptance.
 
 | ID | TaskQ evidence |
