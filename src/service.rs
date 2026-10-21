@@ -1394,6 +1394,11 @@ impl<'a> Service<'a> {
                 self.host_issue = Some(self.board.create(&title, &body, &[HOST_LABEL.to_string()])?);
             }
         }
+        // § 4 renamed host: another open heartbeat of this service is a retired name (#1483)
+        for h in hosts.iter().filter(|h| h.title != title && !self.instance.is_empty() && h.body.lines().any(|l| l.strip_prefix("service ") == Some(&self.instance))) {
+            self.board.comment(h.number, &format!("Retired: this service now runs as host {me}."))?;
+            self.board.close(h.number)?;
+        }
 
         let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
         crate::profile::repair_ended(&self.cfg.install, &self.cfg.root, &self.cfg.repo, &me, self.board, &open, &mut self.unowned);
@@ -3485,6 +3490,33 @@ mod tests {
         let mut d: Value = serde_json::from_str(&line["diagnostics ".len()..]).unwrap();
         d["running"]["value"] = json!("9.9.9");
         assert_ne!(stable(&body), stable(&body.replace(line, &format!("diagnostics {d}"))), "a changed diagnostics value is written at once");
+    }
+
+    // Chain: § 4 heartbeat, host rename (#1483). Risk: a renamed host leaves its old-name heartbeat open in every
+    // Hosts line, closes another service's heartbeat, or never replaces its own closed one.
+    #[test]
+    fn renamed_host_closes_only_its_own_old_heartbeat() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let old = b.create("taskq host macbook-m2.local", "version 4.0.0\nservice abcdef012345", &[HOST_LABEL.into()]).unwrap();
+        let other = b.create("taskq host win", "version 4.0.0\nservice 999999999999", &[HOST_LABEL.into()]).unwrap();
+        b.advance(10 * c.ttl);
+        let mut s = service(&b, &c, Default::default());
+        s.instance = "abcdef012345".into();
+        s.pass().unwrap();
+        let old_issue = b.issue(old).unwrap();
+        assert!(!old_issue.open, "A1: the old-name heartbeat of this service closes");
+        assert!(b.comments(old).unwrap().iter().any(|c| c.body.contains("host mac")), "A1: the close names the new host");
+        assert!(b.issue(other).unwrap().open, "A3: a stale heartbeat of another service stays open");
+        assert!(b.comments(other).unwrap().is_empty());
+        // A2: the host's own closed heartbeat is replaced on the next pass; the old name stays closed
+        let mine = s.host_issue.unwrap();
+        b.close(mine).unwrap();
+        b.advance(c.ttl);
+        s.pass().unwrap();
+        let open: Vec<_> = b.issues(None).unwrap().into_iter().filter(is_host).map(|i| i.title).collect();
+        assert_eq!(open, ["taskq host win", "taskq host mac"]);
+        assert!(!b.issue(old).unwrap().open && s.host_issue != Some(mine));
     }
 
     // Chain: R2 two hosts -> lost heartbeat -> still-live executor -> confirmed exit -> replacement.
