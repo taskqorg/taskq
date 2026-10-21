@@ -1,0 +1,68 @@
+# Workspace operation reviews — #1465
+
+Implements the approved O placement from the #1443 owner plan. R9, R11, R12,
+§ 6 and § 7 remain unchanged. No rule is amended.
+
+Menu launchers open the W workspace with an operation and optional exact root.
+The existing tray controller renders the reviews there; its resource editor,
+immutable capacity request, recovery selection and lifecycle receipt validators
+remain the executors. The workspace native bridge forwards only the named
+operation actions to the existing dispatcher and ActionQueues. Replies and picker
+results return to the workspace. Native folder selection, grants, registration
+and setup exact-effects approval remain native-owned.
+
+## Failure and retained protection
+
+Base: `2f6a2d2c9ac427f9687b64714bd2cfd21805773c`.
+`node tests/workspace-operations.browser.cjs` failed before the change:
+`A1: no emergency confirmation remains in menu`, actual 1, expected 0.
+The same check passes after the change. A lifecycle unknown previously permitted
+a new operation ID; it now remains fenced until the exact native readback.
+Setup application also names the native picker's generation and is single-use.
+Update success requires fresh readback from the original project, not an equal
+version from another project. No timeout retries an effect.
+
+The existing Stop, recovery and resource browser instruments now run the same
+assertions in the workspace. They retain exact scope, original instance/expiry,
+Drain versus Full stop, unknown release, mixed receipts, unchanged selection on
+reconciliation, revision conflicts, input focus, exact saved/effective revision,
+foreign receipts and legacy refusal. Component tests use the same controller in
+workspace mode; the menu navigation test instead verifies a launcher with no
+local Work mode or effect. Notification, scroll/filter/Back and simple setting
+checks remain.
+
+## Checks
+
+- `npm run build`: passed, including the module/effect inventory.
+- `node tests/workspace-operations.browser.cjs`: passed. Opening/Back/cancel,
+  unavailable target, exact Full stop, single-use/unknown fencing, update target
+  and freshness, native-picker generation, admission and keyboard exits.
+- `node tests/tray-stop.browser.cjs`: passed in dark 16 px and light 20 px.
+- `node tests/tray-recovery.browser.cjs`: passed in dark 16 px and light 20 px.
+- `node tests/tray-resources.browser.cjs`: passed in both themes, 16/20 px and
+  280/320/360 px widths; native effects are substituted.
+- `node tests/workspace-communication.browser.cjs`: passed; W drafts, caret,
+  IME, Send/Enter, unknown same-ID reconciliation and answer identity retained.
+- `node tests/tray-view-state.browser.cjs`: passed; menu restart, Back,
+  filters, scroll and unavailable destinations retained.
+- Initial full `python3 scripts/check.py --base 2f6a2d2c9ac427f9687b64714bd2cfd21805773c`:
+  failed after 234.881 s; Rust 444 passed, 18 failed, 34 ignored.
+  Explicit worker refusals (`a worker cannot change host policy`, install,
+  restart/Stop) are sandbox-blocked. Other host/recovery assertion failures
+  remain unqualified. No authority environment or protection was relaxed.
+  This is not a green gate. Final-candidate checks are recorded below.
+
+## Visual evidence and limits
+
+- [Before: Stop review in menu](stop-menu-before.png): Chromium baseline bundle,
+  320 × 900, dark 16 px, invented fixture.
+- [After: Stop review in workspace](stop-workspace.png): product workspace bundle,
+  800 × 600, dark 16 px, the same invented operation and project.
+
+Both images were opened and inspected individually at their actual pixel size:
+review text and essential buttons are visible without horizontal clipping.
+This is browser evidence, not owner acceptance or native effect qualification.
+No production Stop, recovery, policy change, update or project registration was
+performed. WKWebView/WebView2 operation dispatch, native picker window ownership
+and owner actual-size review remain unverified. GitHub publication still needs
+green merge-result `merge_group` CI (§ 7); this worker does not wait for CI.

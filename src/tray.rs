@@ -1074,7 +1074,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             }
             Event::UserEvent(Ev::Answer(receipt)) => {
                 push(&mut web,&ui,&receipt);
-                if receipt["answerReceipt"].is_object() && let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
+                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
             },
             // a notification click opens the menu (or raises the pinned window) on that card (M14)
             Event::UserEvent(Ev::Note(id)) => {
@@ -1131,6 +1131,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);
                         if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
                     }
+                    // Workspace reviews use the same queues, native picker and receipt adapters as the tray.
+                    Some(a) if workspace_operation(a) => {let _=proxy.send_event(Ev::Ipc(message));}
                     _ => calls.fault("unsupported-workspace-action"),
                 }
             }
@@ -1147,6 +1149,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{web.fault("invalid-web-context");return;}},None=>None};
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if web.failed {return;}
+                macro_rules! reply {
+                    ($value:expr) => {{
+                        let value=$value;
+                        push(&mut web,&ui,value);
+                        if (value["projects"].is_array() || ["capmsg","focus_receipt","action_error","resources_receipt","aiError","answerReceipt"].iter().any(|key|value.get(*key).is_some())) && let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
+                    }};
+                }
                 match m["a"].as_str().unwrap_or("") {
                     "workspace" if snapshot.is_none() => {
                         workspace_open=m["open"].clone();
@@ -1157,7 +1166,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             });
                             match built {
                                 Ok(window)=>{workspace=Some(window);let mut calls=WebCalls::new();calls.workspace=true;workspace_web=Some(calls);}
-                                Err(error)=>{push(&mut web,&ui,&json!({"workspaceError":format!("Workspace unavailable: {error}")}));return;}
+                                Err(error)=>{reply!(&json!({"workspaceError":format!("Workspace unavailable: {error}")}));return;}
                             }
                         }
                         if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
@@ -1165,11 +1174,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         }
                         workspace_handoff=w.is_visible() && !settings.pin.pinned;
                         if let Some((window,_))=&workspace {window.set_visible(true);window.set_focus();}
-                        push(&mut web,&ui,&json!({"workspaceError":Value::Null}));
+                        reply!(&json!({"workspaceError":Value::Null}));
                     }
                     "answer" if snapshot.is_none() && crate::snapshot::CONTROLS.iter().any(|c| m["op"]["action"]==c.0) => {
                         let mut request=m.clone();request["id"]=m["op"]["id"].clone();
-                        if let Err(error)=answer_actions.submit(&request){push(&mut web,&ui,&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));}
+                        if let Err(error)=answer_actions.submit(&request){reply!(&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));}
                     }
                     "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
                     "ready" => {
@@ -1178,7 +1187,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             let _ = proxy.send_event(Ev::Shot);
                             return;
                         }
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
                     "size" | "resize" => {
                         let Some((width, height)) = m["w"].as_f64().zip(m["h"].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite()) else { return };
@@ -1212,7 +1221,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         settings.pin.size_anchor = match settings.pin.size_anchor.as_str() { "fixed" => "bottom", "bottom" => "top", _ => "fixed" }.into();
                         if settings.pin.size_anchor == "fixed" { let size=w.inner_size().to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
                         settings.save(&install);
-                        push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
+                        reply!(&state(&install,&settings,dark,None,&adding));
                     }
                     "resize-end" => { settings.save(&install); }
                     "hide" => w.set_visible(false),
@@ -1220,7 +1229,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         settings.pin.top = !settings.pin.top;
                         w.set_always_on_top(settings.pin.top);
                         settings.save(&install);
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
                     "pin" => {
                         settings.pin.pinned = !settings.pin.pinned;
@@ -1238,7 +1247,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         }
                         settings.save(&install);
                         w.set_focus();
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
                     "drag" => {
                         let _ = w.drag_window();
@@ -1246,7 +1255,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     "resources" => {
                         let id=format!("resources-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()));
                         let request=json!({"a":"resources","root":install,"id":id});
-                        if let Err(error)=resources_actions.submit(&request) {push(&mut web,&ui,&json!({"resources_receipt":{"state":"rejected","reason":error}}));}
+                        if let Err(error)=resources_actions.submit(&request) {reply!(&json!({"resources_receipt":{"state":"rejected","reason":error}}));}
                     }
                     "open" => {
                         if let Some(u) = m["url"].as_str().filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
@@ -1258,7 +1267,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             settings.save(&install);
                             notes(&install, &mut settings, &Value::Null, &mut asked, &mut bursts);
                         }
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
                     "notify-test" if snapshot.is_none() => {
                         if let Some(k) = m["kind"].as_str().filter(|k| notify::KINDS.contains(k)) {
@@ -1275,7 +1284,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         }
                 let st = state(&install, &settings, dark, None, &adding);
                         refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));
-                        push(&mut web,&ui, &st);
+                        reply!(&st);
                     }
                     // `Edit limits` after the page's confirm: the same write as `service capacity` (§ 5), this host only
                     "capacity" | "restart" | "stop" | "uninstall" | "recovery-read" | "recovery-apply" => {
@@ -1283,9 +1292,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if snapshot.is_some() && m["a"]=="recovery-read" {
                             let mut reply:Value=serde_json::from_str(include_str!("../tests/fixtures/recovery-review.json")).expect("invented recovery fixture");
                             reply["root"]=m["root"].clone();reply["id"]=m["id"].clone();
-                            push(&mut web,&ui,&json!({"capmsg":reply}));
+                            reply!(&json!({"capmsg":reply}));
                         } else if let Err(error)=capacity_actions.submit(&m) {
-                            push(&mut web,&ui, &json!({"capmsg": {"root": root, "id": m["id"], "state":"rejected","reason":error}}));
+                            reply!(&json!({"capmsg": {"root": root, "id": m["id"], "state":"rejected","reason":error}}));
                         }
                     }
                     // Add project (§ 4): the folder comes only from the OS picker, never from the page
@@ -1293,31 +1302,32 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         add_generation=add_generation.wrapping_add(1);
                         let generation=add_generation;
                         adding = json!({"state": "picking", "generation":generation});
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
-                        if let Err(error)=add_actions.submit(generation,None) {adding=json!({"state":"add failed","reason":error});push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));}
+                        reply!(&state(&install, &settings, dark, None, &adding));
+                        if let Err(error)=add_actions.submit(generation,None) {adding=json!({"state":"add failed","reason":error});reply!(&state(&install,&settings,dark,None,&adding));}
                     }
                     "add-cancel" if adding["state"]=="picking" => {
                         add_generation=add_generation.wrapping_add(1);
                         adding = json!({"state":"picking dismissed","generation":add_generation});
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
                     "add-cancel" if adding["state"]=="installing" => {
                         add_generation=add_generation.wrapping_add(1);
                         adding = json!({"state":"installing dismissed","generation":add_generation});
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
-                    "add-cancel" => {adding=Value::Null;push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));}
-                    "add-install" if adding["kind"] == "taskq" && adding["state"] == "picked" => {
+                    "add-cancel" => {adding=Value::Null;reply!(&state(&install,&settings,dark,None,&adding));}
+                    "add-install" if m["generation"].is_u64() && m["generation"]==adding["generation"] && adding["kind"] == "taskq" && adding["state"] == "picked" => {
                         adding["state"] = json!("installing");
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                         let generation=adding["generation"].as_u64().unwrap_or(0);
-                        if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));}
+                        if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);reply!(&state(&install,&settings,dark,None,&adding));}
                     }
-                    "add-setup" if matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
-                        if let Err(reason) = crate::setup::submit(&install, "claude", None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {push(&mut web,&ui,&json!({"aiError":reason}));}
+                    "add-setup" if m["generation"].is_u64() && m["generation"]==adding["generation"] && matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
+                        if let Err(reason) = crate::setup::submit(&install, "claude", None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {reply!(&json!({"aiError":reason}));}
                         adding = Value::Null;
-                        push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding));
                     }
+                    "add-install" | "add-setup" => reply!(&json!({"aiError":"Setup selection changed or was already submitted; read the current selection before confirming."})),
                     a => {
                         // only a registered project (§ 4): the page never names a path of its own
                         let root = m["root"].as_str().unwrap_or("");
@@ -1327,10 +1337,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             } else {act(a,Path::new(root),m["label"].as_str()).map(|_|())};
                             if let Err(error) = result {
                                 let key=if matches!(a,"pause"|"resume"|"focus") {"focus_receipt"} else {"action_error"};
-                                push(&mut web,&ui, &json!({key:{"root":root,"id":m["id"],"text":error}}));
+                                reply!(&json!({key:{"root":root,"id":m["id"],"text":error}}));
                             }
                         } else if matches!(a,"pause"|"resume"|"focus") {
-                            push(&mut web,&ui,&json!({"focus_receipt":{"root":root,"id":m["id"],"text":"Project is no longer registered; command not submitted"}}));
+                            reply!(&json!({"focus_receipt":{"root":root,"id":m["id"],"text":"Project is no longer registered; command not submitted"}}));
                         }
                     }
                 }
@@ -1339,7 +1349,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if matches!(adding["state"].as_str(),Some("picking dismissed"|"installing dismissed"))&&add_generation==generation.wrapping_add(1) {adding=Value::Null;push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));return;}
                 if !apply_added(&mut adding,add_generation,generation,v) {return;}
                 push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
-                if let (Some((w, _)), false) = (&ui, adding.is_null()) {
+                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
+                if !adding.is_null() && let Some((w,_))=&workspace {
                     w.set_visible(true);
                     w.set_focus();
                 }
@@ -1623,8 +1634,11 @@ fn app_window(pinned: bool) {
     }
 }
 
-/// A blur this soon after the icon opened the popover takes the focus back instead of closing it:
-/// on Windows 11 the hidden-icons flyout retakes the foreground right after its icon is clicked.
+fn workspace_operation(action:&str)->bool {
+    matches!(action,"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
+}
+
+/// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
 fn blur_refocuses(shown_for: Duration, workspace_handoff: bool) -> bool {
     !workspace_handoff && shown_for < Duration::from_millis(300)
 }

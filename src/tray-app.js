@@ -7,12 +7,50 @@ const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {manualSize:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
+
+operationLauncher:function(operation,root,label){return '<button class="project" data-a="workspace" data-page="operations" data-operation="'+esc(operation)+'"'+(root?' data-root="'+esc(root)+'"':'')+'>'+esc(label)+'</button>';},
+operationTarget:function(d){return ({work:'resources',confirm:'admission','pause-all':'admission','resume-all':'admission',pause:'admission',resume:'admission',focus:'admission',pick:'admission',add:'setup','add-ask':'setup','add-install':'setup','add-setup':'setup','add-cancel':'setup','stop-review':'stop',stop:'stop','stop-full':'stop',restart:'service',uninstall:'service',update:'update','recovery-read':'recovery','recovery-apply':'recovery','recovery-reconcile':'recovery','recovery-pending':'recovery'})[d.a];},
+operationBody:function(context){
+  const c=context||{},ps=view.S.projects,p=ps.find(p=>p.root===c.root),host=esc(view.S.host||'unknown');
+  if(c.root&&!p)return actionNotices()+'<p role="status">Project unavailable; no operation can be applied. Return to Messages or Refresh.</p>';
+  const heading='<p class="meta">Host '+host+' · '+(p?esc(p.name)+' · '+esc(p.root):'all registered projects: '+ps.map(p=>esc(p.name)+' ('+esc(p.root)+')').join(', '))+'</p>';
+  let body;
+  switch(c.operation){
+   case 'service':body='<button class="project" data-a="resources">Open resource monitor</button>'+(view.resourceNotice?'<p role="status">'+esc(view.resourceNotice.reason)+'</p>':'')+(p?service(p)+capacity(p)+workEntry(p.root):ps.map(service).join(''));break;
+   case 'resources':{const target=p||ps.find(p=>p.resources);body=target?'<p>Host limits affect every registered project; project ceilings remain read-only.</p>'+workPageFor(target):'<p role="status">Capacity unavailable: no supported host projection.</p>';break;}
+   case 'stop':body=view.S.stop_modes?api.stopPanel():'<p role="status">Emergency stop unavailable on this host. Normal stop is under Services.</p>';break;
+   case 'recovery':body=view.S.stop_modes?api.recoveryPanel():'<p role="status">Reviewed recovery unavailable on this host.</p>';break;
+   case 'admission':{const selected=p?[p]:ps;body='<p>Pause holds new admission; current tasks finish. Resume restores saved focus and cannot clear an emergency hold.</p>'+selected.map(p=>'<section><p>'+esc(p.name)+' · '+esc(modeText(p))+'</p>'+admission(p)+'</section>').join('')+(p?'':bulk(selected.filter(p=>mode(p)==='run'),selected.filter(p=>mode(p)==='paused')));break;}
+   case 'update':body='<p>Request the advertised update on this host. Running work is preserved; success requires the version read back from service status.</p>'+update();break;
+   case 'setup':body='<p>Choose a folder using the native picker. Opening or leaving this review registers nothing. Setup must confirm account, repository, visibility and exact external effects under § 6 before applying them.</p>'+addProject()+setup();break;
+   default:body='<p role="status">Operation unavailable; no effect was submitted.</p>';
+  }
+  return heading+actionNotices()+body;
+},
+operationAction:function(d){
+  if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return true;}
+  if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;
+  // the pressed button is replaced: focus Cancel in the question, or the command again after it (U-A8)
+  if(d.a==='confirm'||d.a==='cancel'){view.confirming=d.a==='confirm';present();menu.querySelector(view.confirming?'[data-a="cancel"]':'[data-a="confirm"]')?.focus();return true;}
+  if(d.a==='update'){if(view.updating)return true;view.updating={v:d.v,root:d.root,at:view.S.now};send({a:'update',root:d.root});present();return true;}
+  if(d.a==='pause-all'||d.a==='resume-all'){view.confirming=null;for(const p of view.S.projects.filter(p=>mode(p)===(d.a==='pause-all'?'run':'paused')))focusStart(d.a.slice(0,-4),p.root);present();menu.querySelector('[data-a="confirm"]')?.focus();return true;}
+  if(d.a==='recovery-pending'){const item=view.recovery[d.root],request=item?.review?.pending?.[Number(d.index)];if(request){item.request=request;api.recoveryStart(d.root,'recovery-reconcile');}return true;}
+  if(['recovery-read','recovery-apply','recovery-reconcile'].includes(d.a)){api.recoveryStart(d.root,d.a);return true;}
+  if(d.a==='stop-full'){api.lifecycleStart(d.root,'stop','full');return true;}
+  if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return true;}
+  if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return true;}
+
+  if(d.a==='pick'){view.ask=d.root;present();return true;}
+  if(['add','add-install','add-cancel','add-setup','resources','log','folder'].includes(d.a)){if(['add-install','add-setup'].includes(d.a)){const A=view.S.add;if(!A||view.setupPending===A.generation)return true;view.setupPending=A.generation;send({a:d.a,generation:A.generation});}else send({a:d.a,root:d.root});present();return true;}
+  return false;
+},
+operationInput:function(e){const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';}},
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
-fit:function(){const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
+fit:function(){if(ports.workspace)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
-actionNotices:function(){const r=view.hostCommand||view.S?.lifecycle;return (view.aiError?'<div class="body alert" role="alert">'+esc(view.aiError)+'</div>':'')+(view.workspaceError?'<div class="body alert" role="alert">'+esc(view.workspaceError)+'</div>':'')+view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
+actionNotices:function(){if(!ports.workspace)return view.workspaceError?'<p role="alert">'+esc(view.workspaceError)+'</p>':'';const r=view.hostCommand||view.S?.lifecycle;return (view.aiError?'<div class="body alert" role="alert">'+esc(view.aiError)+'</div>':'')+(view.workspaceError?'<div class="body alert" role="alert">'+esc(view.workspaceError)+'</div>':'')+view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
 lifecycleStart:function(root,action='restart',mode='drain'){
-  if(view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed')return;
+  if(view.hostCommand&&view.hostCommand.state!=='observed')return;
   const review=action==='uninstall'?view.S.projects.find(p=>p.root===root)?.uninstall_review:action==='stop'?(mode==='full'?view.S.full_stop_review:view.S.stop_review):view.S.restart_review;
   if(!review||typeof review.instance!=='string'||!Array.isArray(review.roots)){actionErrors.set(root,{text:review?.reason||'Lifecycle review unavailable; check host service status.'});present();return;}
   const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
@@ -50,19 +88,19 @@ lifecycleWaits:function(){
     return '<div class="body meta">'+esc(p.name)+': '+esc(text)+'</div>';
   }).join('');
 },
-lifecycleControl:function(p,action='restart'){
+lifecycleControl:function(p,action='restart'){if(!ports.workspace)return api.operationLauncher('service',p.root,'Review '+p.name+' service…');
   const title={stop:'Stop',uninstall:'Uninstall'}[action]||'Restart',review=action==='uninstall'?p.uninstall_review:action==='stop'?view.S?.stop_review:view.S?.restart_review;
   const all=view.hostCommand||view.S?.lifecycle,r=(all?.action||'restart')===action&&(action!=='uninstall'||(all.root||all.project)===p.root)?all:null;
-  const pending=view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S?.lifecycle?.state);
+  const pending=view.hostCommand&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S?.lifecycle?.state);
   const projects=Array.isArray(view.S?.projects)?view.S.projects:[];
-  const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>projects.find(p=>p.root===root)?.name||root):null;
+  const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>(projects.find(p=>p.root===root)?.name||'Project')+' ('+root+')'):null;
   const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Use reviewed recovery to resume selected tasks.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
   const scope=action==='uninstall'?esc(p.name):'all registered projects: '+(targets?targets.length?targets.map(esc).join(', '):'none registered':'unknown');
   return '<details class="host-'+action+'" data-view-key="'+esc(p.root)+':'+action+'"><summary>'+title+' '+(action==='uninstall'?esc(p.name):'host service')+'</summary><div class="body meta">Affects '+scope+'. '+effect+'</div>'+(!review?.instance?'<div class="body alert">'+esc(review?.reason||title+' protocol unavailable')+'</div>':'')+'<button class="project" data-a="'+action+'" data-root="'+esc(p.root)+'"'+(pending||!review?.instance||!targets?' disabled':'')+'>Confirm '+(action==='uninstall'?'uninstall '+esc(p.name):'host '+action)+'</button>'+(pending&&r?api.lifecycleWaits():'')+(r?.id||r?.reason?'<div class="body meta" role="status">'+title+' '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'')+'</details>';
 },
-stopPanel:function(){
+stopPanel:function(){if(!ports.workspace)return api.operationLauncher('stop',null,'Review Stop and hold…');
   const projects=view.S.projects||[],root=projects[0]?.root,held=view.S.stop_hold;
-  const pending=!!held&&!held.selected_count||view.hostCommand&&!view.hostCommand.unknown&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
+  const pending=!!held&&!held.selected_count||view.hostCommand&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
   const names=projects.map(p=>esc(p.name)).join(', ')||'no registered projects';
   const host=projects[0]?.host||'unknown host',command=view.hostCommand||view.S.lifecycle;
   const rows=projects.map(p=>'<div class="body"><strong>'+esc(p.name)+'</strong><div class="meta">'+(view.S.service?.state!=='running'||typeof p.age!=='number'||p.age<0||p.age>60||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?p.stop_progress.map(k=>'#'+esc(k.task)+' '+esc(k.rt)+': '+esc(k.state)+(k.reason?' · '+esc(k.reason):'')).join('<br>'):'No stop acknowledgement; running or unknown work may remain.')+'</div></div>').join('');
@@ -72,7 +110,7 @@ stopPanel:function(){
     (!view.S.full_stop_review?.instance?'<div class="body alert">'+esc(view.S.full_stop_review?.reason||'Full stop capability unknown')+'</div>':'')+
     (held?'<div class="body alert" role="status">Admission held: '+esc(held.mode||'unknown')+'; ordinary Play cannot clear this hold.</div>':'')+(held?'<button class="project" data-route="recovery">Review recovery</button>':'')+(command?.action==='stop'?'<div class="body meta" role="status">Stop '+esc(command.id||'')+': '+esc(command.state||'unknown')+(command.reason?' · '+esc(command.reason):'')+'</div>':'')+rows+api.lifecycleWaits();
 },
-recoveryPanel:function(){
+recoveryPanel:function(){if(!ports.workspace)return api.operationLauncher('recovery',null,'Review recovery…');
   return '<div class="body">Only selected local tasks resume. Keep held is the default. Paused projects, other tasks and operators stay held.</div><div class="body meta">Inspect native release, work and external effects before confirming. Unknown effects must remain held. Restart discards the old result and starts from preserved files.</div>'+view.S.projects.map(p=>{
     const item=view.recovery[p.root],review=item?.review;
     return '<section class="group" data-recovery-project="'+esc(p.root)+'"><div class="body"><strong>'+esc(p.name)+'</strong></div><button data-a="recovery-read" data-root="'+esc(p.root)+'"'+(item?.pending?' disabled':'')+'>Read current recovery</button>'+(item?.notice?'<div class="body alert" role="status">'+esc(item.notice)+'</div>':'')+(review?'<div class="body meta">'+esc(review.mode)+' · focus '+esc((review.focus||[]).join(', ')||'off')+'</div>'+'<div class="body meta">Limits: '+esc(review.limits?.unknown||Object.entries(review.limits?.limits||{}).map(([k,v])=>k+' '+v).join(', ')||'unknown')+'<br>Access: '+esc((review.access||[]).map(a=>a.runtime+': '+(a.refused||a.effective||'unknown')).join('; ')||'unknown')+'</div>'+review.rows.map(r=>{
@@ -131,6 +169,7 @@ focusReadback:function(){
 },
 remember:function(){return {...viewState.capture(),workCard:view.workCard};},
 navigate:function(next,filter=null,work=null){
+  if(!ports.workspace&&(work||['stop','recovery'].includes(next))){send({a:'workspace',open:{page:'operations',operation:work?'resources':next,root:work?Object.keys(work)[0]||null:null}});return;}
   trail.push(remember());if(trail.length>32)trail.shift();view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
   view.unavailable=null;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
@@ -166,7 +205,7 @@ globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?'<det
 age:function(s){return s<120?s+' s':s<7200?Math.round(s/60)+' min':s<172800?Math.round(s/3600)+' h':Math.round(s/86400)+' d';},
 problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+age(p.age)+' old: service not running?'):p.error?'service error: '+p.error:'';return e?'<button class="project alert" data-a="log" data-root="'+esc(p.root)+'" title="'+esc(e)+'"'+(p.log?'':' disabled')+'><span>⚠ '+esc(p.name)+': '+esc(e)+'</span><span class="meta">'+(p.log?'Log':'')+'</span><span></span></button>':'';},
 modeText:function(p){return {run:'Admitting: '+p.focus.join(' '),paused:'Paused: running tasks finish, no new ones',watch:'Observation only: focus off'}[mode(p)];},
-admission:function(p){
+admission:function(p){if(!ports.workspace)return api.operationLauncher('admission',p.root,'Review admission in '+p.name+'…');
   if(view.pending[p.root]&&!view.pending[p.root].unknown)return '<button class="project" disabled>'+esc(view.pending[p.root].text)+'…</button>';
   if(mode(p)==='run')return '<button class="project" data-a="pause" data-root="'+esc(p.root)+'">Pause admission in '+esc(p.name)+'</button>';
   if(p.saved)return '<button class="project" data-a="resume" data-root="'+esc(p.root)+'">Resume admission in '+esc(p.name)+'</button>';
@@ -188,9 +227,7 @@ incidentNotice:function(p){return p.incident_notice?'<details class="group incid
 service:function(p){const s=view.S?.service;return '<details class="group service" data-view-key="service:'+esc(p.root)+'"><summary>⚙ Service <span class="meta">'+esc(p.name)+'</span></summary><div class="body meta" role="status">Host service: '+esc(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+esc(s.reason):'')+'</div>'+incident(p)+
   (p.log?'<button class="project" data-a="log" data-root="'+esc(p.root)+'">Open log</button>':'<div class="body meta">Log path unknown</div>')+
   '<button class="project" data-a="folder" data-root="'+esc(p.root)+'">Open folder</button>'+
-  api.lifecycleControl(p)+
-  api.lifecycleControl(p,'stop')+
-  api.lifecycleControl(p,'uninstall')+'</details>';},
+  (ports.workspace?api.lifecycleControl(p)+api.lifecycleControl(p,'stop')+api.lifecycleControl(p,'uninstall'):api.operationLauncher('service',p.root,'Review service operations…'))+'</details>';},
 when:function(t,tz){return new Date(t*1000).toLocaleString([],{timeZone:tz==='UTC'?'UTC':undefined,dateStyle:'short',timeStyle:'short'})+' '+(tz==='UTC'?'UTC':zone);},
 local:function(t,tz){const d=new Date(t*1000);return (tz==='UTC'?d.toISOString():new Date(d-d.getTimezoneOffset()*60000).toISOString()).slice(0,16);},
 custom:function(){
@@ -212,13 +249,13 @@ const part=none.length>0||H.since>H.start;
   (view.draft?custom():'')+'<div class="body meta">['+esc(when(H.start,H.tz))+', '+esc(when(H.end,H.tz))+')'+(view.S.now<H.end?' · last bin partial':'')+' · peak '+peak+'</div>'+
   '<div class="bars" role="img" aria-label="'+esc(named(tot,', ')+'; '+n+' equal bins, oldest left'+(note?'; '+note:''))+'">'+H.bins.map((b,i)=>{const t=H.start+i*w,u=H.since==null||t+w<=H.since;
     return '<span'+(u?' class="unknown" title="unknown"':' title="'+esc(when(t,H.tz)+(view.S.now<t+w?' (partial)':'')+': '+named(b,', '))+'"')+'>'+[3,2,1,0].map(k=>'<i class="k'+k+'" style="height:'+b[k]/peak*100+'%"></i>').join('')+'</span>';}).join('')+'</div>'+(note?'<div class="body meta">'+esc(note)+'</div>':'')+'</details>';},
-update:function(){
+update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
   const up=view.S.projects.find(p=>p.update&&p.update!==p.version);
-  if(view.updating&&view.S.projects.some(p=>p.version===view.updating.v))return '<div class="row meta">Updated to '+esc(view.updating.v)+': read from status.json</div>';
+  if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&p.version===view.updating.v))return '<div class="row meta">Updated to '+esc(view.updating.v)+': read from status.json</div>';
   if(view.updating&&view.S.now-view.updating.at<300)return '<button class="project" disabled>Updating to '+esc(view.updating.v)+'…</button>';
-  return (view.updating?'<div class="row alert">Update to '+esc(view.updating.v)+' not confirmed: see the log</div>':'')+(up?'<button class="project" data-a="update" data-root="'+esc(up.root)+'" data-v="'+esc(up.update)+'">Update now to '+esc(up.update)+'</button>':'');},
+  return (view.updating?'<div class="row alert">Update to '+esc(view.updating.v)+' not confirmed: see the log</div>':'')+(!view.updating&&up?'<button class="project" data-a="update" data-root="'+esc(up.root)+'" data-v="'+esc(up.update)+'">Update now to '+esc(up.update)+'</button>':'');},
 ai:function(){return '<button class="project" data-a="workspace" data-page="request"'+(view.aiRoot?' data-root="'+esc(view.aiRoot)+'"':'')+'>Ask AI · new session…</button>';},
-addProject:function(){
+addProject:function(){if(!ports.workspace)return api.operationLauncher('setup',null,'Add project in workspace…');
   const A=view.S.add;
   if(!A)return '<button class="project" data-a="add">Add project…</button>';
   if(A.state==='picking')return '<div class="row meta">Choose a folder…</div><button class="project" data-a="add-cancel">Hide picker result</button>';
@@ -237,7 +274,7 @@ addProject:function(){
   }
   if(A.kind==='new'||A.kind==='plain')h+='<button class="project" data-a="add-setup">Set up with AI…</button>';
   return h+(A.state==='installing'?'<button class="project" data-a="add-cancel">Hide result; install continues</button>':'<button class="project" data-a="add-cancel">'+(A.state==='installed'?'Done':'Cancel')+'</button>');},
-bulk:function(run,held){
+bulk:function(run,held){if(!ports.workspace)return run.length||held.length?api.operationLauncher('admission',null,'Review admission…'):'';
   const pausing=run.length>0;
 const {state}=execution.module("tray.create.bulk.helpers",{state:p=>({run:pausing?'pause':'admitting, unchanged',paused:pausing?'paused, unchanged':'resume',watch:'observation, unchanged'}[mode(p)])});
   if(view.confirming)return '<div class="body" role="alert">'+(pausing?'Pause admission? Running tasks finish.':'Resume admission?')+'<br>'+view.S.projects.map(p=>esc(p.name)+': '+state(p)).join('<br>')+'</div><div class="options"><button data-a="'+(pausing?'pause-all':'resume-all')+'">Confirm</button><button data-a="cancel">Cancel</button></div>';
@@ -255,6 +292,7 @@ about:function(){
 },
 setup:function(){
   const s=view.S.setup;if(!s)return '';
+  if(!ports.workspace)return '<div class="body meta">Setup · '+esc(s.kind||'unknown')+'</div>'+api.operationLauncher('setup',null,'Review setup status…');
   const link=s.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(s.url)?' <a href="#" data-url="'+esc(s.url)+'">Open session</a>':'';
   return '<div class="group"><div class="row">Setup · '+esc(s.kind)+link+'</div>'+(s.reason?'<div class="body meta">'+esc(s.reason)+'</div>':'')+'<div class="body">'+esc(s.next||'Setup state unknown; run `taskq service setup`')+'</div></div>';
 },
@@ -351,7 +389,7 @@ routeBody:function(){
     case 'agents':return agents();
     case 'stop':return api.stopPanel();
     case 'recovery':return api.recoveryPanel();
-    case 'services':return '<button class="project" data-a="resources" title="btop in its own terminal window">◔ Resources</button>'+(view.resourceNotice?'<div class="body '+(view.resourceNotice.state==='submitted'?'meta':'alert')+'" role="status">Resources: '+esc(view.resourceNotice.reason)+'</div>':'')+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+' · '+esc(p.host||'host unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>'+problem(p)+incidentNotice(p)+service(p)).join('');
+    case 'services':return api.operationLauncher('service',null,'Host maintenance in workspace…')+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+' · '+esc(p.host||'host unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>'+problem(p)+incidentNotice(p)+service(p)).join('');
     case 'about':return about();
     default:return home();
   }
@@ -366,11 +404,11 @@ resourceReceipt:function(m){
   const receipt=['saved','rejected','unknown'].includes(m.state)&&(m.state!=='saved'||typeof m.saved_revision==='string'&&/^[a-f0-9]{32}$/.test(m.saved_revision))?{state:m.state,reason:m.reason,saved_revision:m.saved_revision}:{state:'unknown',reason:'Invalid capacity receipt'};
   r.resolve(receipt);
   defer(fit,0);},
-capacity:function(p){
+capacity:function(p){if(!ports.workspace)return p.resources?api.operationLauncher('resources',p.root,'Review capacity…'):'';
   if(!p.resources)return '';
   return '<details class="group" data-view-key="capacity:'+esc(p.root)+'"><summary>▤ Capacity <span class="meta">'+esc((p.cap_host||'this host')+' · '+TaskqResources.headline(resourceGroup(p),view.S.now))+'</span></summary><div data-resources="'+esc(p.root)+'"></div></details>';},
 workEntry:function(root){return view.S.projects.some(p=>p.resources)?'<button class="project" data-a="work"'+(root?' data-root="'+esc(root)+'"':'')+'>◎ Work mode…</button>':'';},
-workPage:function(){const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0];return p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?'<div data-resources="'+esc(p.root)+'"></div>':'<div data-work></div>';},
+workPage:function(){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0];return p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?'<div data-resources="'+esc(p.root)+'"></div>':'<div data-work></div>';},
 mountResources:function(){
   const ws=menu.querySelector('[data-work]');
   if(ws){
@@ -490,6 +528,7 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(ports.workspace&&s.projects){view.S=s;focusReadback();api.lifecycleReadback();present();return;}
   if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
   if(s.workspaceError!==undefined){view.workspaceError=s.workspaceError;present();return;}
   if(s.viewStateError!==undefined){view.persistenceError=s.viewStateError;present();return;}
@@ -498,6 +537,7 @@ receive:function(s){
     return;
   }
   if(s.aiError){view.aiSending=false;view.aiError=s.aiError;present();return;}
+  if(!ports.workspace&&['action_error','focus_receipt','resources_receipt','capmsg','aiError'].some(k=>s[k]))return;
   if(s.action_error){actionReceipt(s.action_error);return;}
   if(s.focus_receipt){focusReceipt(s.focus_receipt);return;}
     if(s.resources_receipt){view.resourceNotice=s.resources_receipt;present();return;}
@@ -539,10 +579,11 @@ ui.listen(menu,'click',e=>{
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{if(view.taskFilter&&view.page===(id||'home')){view.taskFilter=view.taskFilter.includes(state)?view.taskFilter.filter(s=>s!==state):[...view.taskFilter,state];present();}else navigate(id||'home',state);}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null}});return;}
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'messages',root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null}});return;}
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'messages',operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
@@ -561,22 +602,9 @@ const z=t(view.draft.end);
     view.draft.error=!(a<z)?'Refused: start must be before end.':'';
     if(!view.draft.error){view.S.period='custom';send({a:'set',period:'custom',start:a,end:z,tz:view.draft.tz});view.draft=null;}
     present();return;}
-  // picking fills the input, never sends (M-A13)
-  if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return;}
-  if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;
-  // the pressed button is replaced: focus Cancel in the question, or the command again after it (U-A8)
-  if(d.a==='confirm'||d.a==='cancel'){view.confirming=d.a==='confirm';present();menu.querySelector(view.confirming?'[data-a="cancel"]':'[data-a="confirm"]')?.focus();return;}
-  if(d.a==='update'){view.updating={v:d.v,at:view.S.now};}
-  if(d.a==='pick'){view.ask=d.root;present();return;}
-  if(d.a==='pause-all'||d.a==='resume-all'){view.confirming=null;for(const p of view.S.projects.filter(p=>mode(p)===(d.a==='pause-all'?'run':'paused')))focusStart(d.a.slice(0,-4),p.root);present();menu.querySelector('[data-a="confirm"]')?.focus();return;}
-  if(d.a==='recovery-pending'){const item=view.recovery[d.root],request=item?.review?.pending?.[Number(d.index)];if(request){item.request=request;api.recoveryStart(d.root,'recovery-reconcile');}return;}
-  if(['recovery-read','recovery-apply','recovery-reconcile'].includes(d.a)){api.recoveryStart(d.root,d.a);return;}
-  if(d.a==='stop-review'){navigate('stop');return;}
-  if(d.a==='stop-full'){api.lifecycleStart(d.root,'stop','full');return;}
-  if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return;}
-  if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return;}
+  if(api.operationAction(d))return;
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label});}present();});
-ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'input',e=>{api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'mousedown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))send({a:'drag'});});
 ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))return;view.resizing={x:e.screenX,y:e.screenY,w:window.innerWidth,h:window.innerHeight};e.target.setPointerCapture(e.pointerId);e.preventDefault();});
@@ -699,6 +727,7 @@ const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and
 
 // Capacity (taskq.md § 4): the shared resource controls (docs/design/shared-resource-controls.md) over the tray's
 // taskq.resources/1 projection; this adapter only maps an operation onto `service capacity` and its receipt
+const {workPageFor}=execution.module('tray.operations',{workPageFor:p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?'<div data-resources="'+esc(p.root)+'"></div>':'<p role="status">Legacy capacity editor unavailable; refresh host status.</p>'});
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
 

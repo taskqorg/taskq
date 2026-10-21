@@ -1,6 +1,6 @@
 // Chain: bundled tray -> qualified host editor -> typed IPC -> exact observed revision. Browser, not installed proof.
 const fs=require('node:fs'),assert=require('node:assert/strict'),path=require('node:path'),{chromium}=require('playwright');
-const html=fs.readFileSync('build/web/tray.html','utf8');
+const html=fs.readFileSync('build/web/workspace.html','utf8');
 const fx=JSON.parse(fs.readFileSync('tests/fixtures/resource-controls.json','utf8'));
 const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
 (async()=>{
@@ -17,6 +17,7 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
       const shot=async name=>{if(process.env.TASKQ_TEST_ARTIFACTS&&font===20){fs.mkdirSync(process.env.TASKQ_TEST_ARTIFACTS,{recursive:true});await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:path.join(process.env.TASKQ_TEST_ARTIFACTS,'host-capacity-'+theme+'-'+name+'-'+font+'-'+width+'.png'),fullPage:true});}};
       const over=structuredClone(modern.groups[0]);over.targets[0].runtime_usage=[{runtime_id:'codex',used:3,limit:1,limit_kind:'ceiling'}];
       await page.evaluate(s=>taskq.receive(s),state(over));
+      await page.evaluate(root=>taskq.receive({open:{page:'operations',operation:'service',root}}),root);
       await page.locator('summary',{hasText:'Capacity'}).click();
       const service=page.locator('details.service');
       if(!await service.evaluate(e=>e.open))await service.locator('summary').first().click();
@@ -71,7 +72,7 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
       restarting.page='services';restarting.projects=[];
       restarting.lifecycle={...restarting.lifecycle,id:uninstall.id,action:'uninstall',project:root,unit_removed:true,unregistered:true};
       await page.evaluate(s=>taskq.receive(s),restarting);
-      assert.match(await page.locator('[role=status]').innerText(),/Host unit removal and exact exit observed/);await fits();await shot('uninstall-observed');
+      assert.match(await page.locator('.content').innerText(),/Host unit removal and exact exit observed/);await fits();await shot('uninstall-observed');
       await page.evaluate(s=>taskq.receive(s),state(modern.groups[0]));
       if(!await page.locator('details').filter({has:page.locator('[data-rsc=open]')}).first().evaluate(e=>e.open))await page.locator('summary',{hasText:'Capacity'}).click();
       await page.locator('[data-rsc=open]').click();
@@ -106,7 +107,7 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
       for(const t of pending.targets)t.effective_revision=t.current_revision;
       await page.evaluate(s=>taskq.receive(s),state(pending));
       await page.waitForFunction(()=>document.querySelector('.rsc').dataset.rscState==='applied');await fits();
-      await page.locator('[data-a=work]').click();
+      await page.evaluate(root=>taskq.receive({open:{page:'operations',operation:'resources',root}}),root);
       assert.equal(await page.locator('[data-rsc-select]').count(),0,'project checkboxes cannot narrow a host edit');
       assert.match(await page.locator('.rsc').getAttribute('aria-label'),/all registered projects/);await fits();
       await page.locator('[data-a=back]').click();

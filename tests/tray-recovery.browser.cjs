@@ -7,11 +7,11 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    const page=await browser.newPage({viewport:{width:720,height:1000},colorScheme:theme});
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>window.messages.push(JSON.parse(s))};});
-   await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
+   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
    const root='/fixture/project';
    const state={page:'recovery',theme,font,now:1000,stop_modes:true,projects:[{root,name:'Fixture project',host:'mac',age:0,tasks:[],focus:['all'],labels:[]}],ai:{draft:''},notify:{projects:{}}};
    await page.evaluate(s=>taskq.receive({...s,page:'stop',stop_hold:{state:'held',mode:'full'}}),state);
-   await page.getByRole('button',{name:'Review recovery',exact:true}).click();
+   await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'recovery'}}));
    await page.getByRole('button',{name:'Read current recovery'}).click();
    const read=await page.evaluate(()=>messages.find(m=>m.a==='recovery-read'));assert(read);
    const review={state:'review',root,id:read.id,stop:'invented-stop',board:'https://example.invalid/issues/0',focus:['all'],mode:'Mixed: unselected work stays held',limits:{limits:{codex:2,claude:1}},access:[{runtime:'codex',effective:'Workspace'},{runtime:'claude',effective:'Full'}],rows:[

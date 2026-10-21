@@ -4,10 +4,12 @@ const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null),esc=shell.escape;
   const view={page:'messages',taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0},trail=[];
-  const routes={messages:{title:'Messages'},request:{title:'New AI request',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},agents:{title:'Agent settings',parent:'messages'}};
+  const routes={messages:{title:'Messages'},request:{title:'New AI request',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},agents:{title:'Agent settings',parent:'messages'},operations:{title:'Operation review',parent:'messages'}};
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail,root:'messages',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   const local=signal({text:'',caret:[0,0],op:null,receipt:null});let hydrated=false,timer=null,composing=false;
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw()});
+  const operationView=require('./tray-app.js').createState();
+  const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const api=execution.module('workspace.instance',{
    persist:function(){ui.send({a:'ai-draft',text:local.value.text,root:view.aiRoot,local:local.value});},
    requestProblem:function(){
@@ -32,6 +34,7 @@ const {create}=execution.module('workspace',{
      (r?'<section aria-label="Latest native request"><p>Request · '+esc(r.kind||'unknown')+'</p><p>'+esc(r.reason||r.next||'Request state unknown; inspect the native runtime before retrying.')+'</p>'+(r.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.url)?'<a data-url="'+esc(r.url)+'" href="'+esc(r.url)+'">Open session</a>':'')+'</section>':'');
    },
    body:function(){
+    if(view.page==='operations')return operations.operationBody(view.operation);
     if(view.page==='request')return api.request();
     if(view.page==='answer'){
      const c=view.answer,p=view.S.projects.find(p=>p.issues===c?.board&&(!c.root||p.root===c.root)),t=p?.tasks?.find(t=>t.n===c.task);
@@ -54,7 +57,7 @@ const {create}=execution.module('workspace',{
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
     const actions='<button data-a="refresh" title="Refresh workspace status" aria-label="Refresh workspace status">Refresh</button><details class="shell-overflow" data-view-key="navigation-actions"><summary title="Workspace navigation" aria-label="Workspace navigation">⋯</summary><nav class="overflow-actions" aria-label="Workspace"><button data-route="messages">Messages</button><button data-route="request">New AI request</button><button data-route="sessions">Work sessions</button><button data-route="agents">Agent settings</button></nav></details>';
     renderer.draw(shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:'<button data-a="hide" title="Close workspace" aria-label="Close workspace">×</button>'})+'<main class="content"><div class="content-body">'+(view.unavailable?'<p role="status">'+esc(view.unavailable)+' The surviving destination is Messages.</p>':'')+(s?api.body():'<p>Loading workspace. Refresh if status does not arrive.</p>')+[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>'<p role="alert">'+esc(error)+'</p>').join('')+'<p class="meta" role="status" aria-live="polite" aria-atomic="true" data-status="workspace">'+esc(view.notice||'')+'</p></div></main>'+answers.answerToast(),'/'+view.page);
-    answers.mountAnswers();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
+    answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     state.flush();
    },
@@ -63,6 +66,7 @@ const {create}=execution.module('workspace',{
     else {view.unavailable='Requested destination is not available.';page='messages';}
     trail.push(state.capture());if(trail.length>32)trail.shift();view.page=page;
     if(page==='answer')view.answer=context;
+    if(page==='operations')view.operation={operation:context?.operation,root:context?.root||null};
     if(page==='request'&&context?.root){
      if(local.value.op&&['sending','unknown'].includes(local.value.receipt?.state)){view.aiRoot=local.value.op.root;view.notice='A request is awaiting readback in its original project. Check delivery before changing project.';}
      else view.aiRoot=context.root;
@@ -82,6 +86,7 @@ const {create}=execution.module('workspace',{
    },
    receive:function(s){
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
+    if(['capmsg','focus_receipt','action_error','resources_receipt','aiError'].some(k=>s[k])){operations.receive(s);return;}
     if(s.answerReceipt){answers.answerReceipt(s.answerReceipt);return;}
     if(s.aiReceipt){
      const r=s.aiReceipt,l=local.value;if(r.id!==l.op?.id)return;
@@ -91,7 +96,7 @@ const {create}=execution.module('workspace',{
     }
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
-    const first=snapshot.value===null;snapshot.value=s;view.S=s;
+    const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     if(!hydrated){hydrated=true;const l=s.ai?.local;local.value=l&&typeof l.text==='string'?{...l,caret:l.caret||[0,0]}:{text:s.ai?.draft||'',caret:[0,0],op:null,receipt:null};if(local.value.op&&local.value.receipt?.state==='sending')local.value={...local.value,receipt:{state:'unknown',reason:'Workspace reopened; inspect delivery with the same request ID.'}};}
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
@@ -104,6 +109,10 @@ const {create}=execution.module('workspace',{
     ui.listen(menu,'click',e=>{
      const link=e.target.closest('a');if(link){e.preventDefault();ui.send({a:'open',url:link.dataset.url||link.href});return;}
      const b=e.target.closest('button');if(!b||b.disabled)return;
+     if(view.page==='operations'){
+      if(b.dataset.route==='recovery'){api.navigate('operations',{operation:'recovery'});return;}
+      if(operations.operationAction(b.dataset))return;
+     }
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route);
      else if(b.dataset.a==='open-answer')api.navigate('answer',{root:b.dataset.root,board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
@@ -116,7 +125,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
     ui.listen(menu,'submit',e=>{if(e.target.dataset.form==='request'){e.preventDefault();api.submit();}});
-    ui.listen(menu,'input',e=>{if(e.target.dataset.field==='request'){local.value={...local.value,text:e.target.value,caret:[e.target.selectionStart,e.target.selectionEnd]};api.persist();api.draw();}});
+    ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.field==='request'){local.value={...local.value,text:e.target.value,caret:[e.target.selectionStart,e.target.selectionEnd]};api.persist();api.draw();}});
     ui.listen(menu,'change',e=>{if(e.target.dataset.field==='project'){view.aiRoot=e.target.value;api.persist();api.draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.field==='request'){local.value={...local.value,caret:[e.target.selectionStart,e.target.selectionEnd]};api.persist();}});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});

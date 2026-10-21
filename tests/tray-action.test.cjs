@@ -2,7 +2,7 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const timers=[],sent=[];
 let renders=0;
-const context={S:{projects:[{root:'one',name:'<project>',focus:[],saved:true,age:0},{root:'two',name:'second',focus:[],age:0}]},pending:{},
+const context={operationController:true,S:{projects:[{root:'one',name:'<project>',focus:[],saved:true,age:0},{root:'two',name:'second',focus:[],age:0}]},pending:{},
   render:()=>renders++,send:m=>sent.push(m),setTimeout:(f,ms)=>{assert.equal(ms,30000);timers.push(f);},crypto:require('node:crypto').webcrypto,
   esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),window:{},settle(){},answerReadback(){},aiText:''};
 require('./tray-harness.cjs').install(context);
@@ -75,7 +75,8 @@ context.lifecycleStart('/canonical/one');const nextRestart=sent.at(-1);assert.no
 context.lifecycleReceipt({...context.S.lifecycle,id:restart.id});assert.equal(context.hostCommand.id,nextRestart.id);assert.equal(context.hostCommand.state,'sending');
 context.lifecycleReceipt({id:nextRestart.id,state:'observed'});assert.equal(context.hostCommand.state,'unknown','incomplete native result stays unknown');
 context.S.restart_review={state:'unknown',reason:'host <unknown>'};const beforeRestart=sent.length;context.lifecycleStart('/canonical/one');assert.equal(sent.length,beforeRestart);
-assert.match(context.actionNotices(),/host &lt;unknown&gt;/);
+assert.equal(context.hostCommand.id,nextRestart.id,'unknown lifecycle retains its operation identity');
+assert.match(context.hostCommand.reason,/incomplete/,'unknown receipt cannot be replaced by another review');
 console.log('PASS host restart scope, immutable request, different-generation exact receipt, late/error isolation and no deadline replay');
 context.S.service={state:'running',pid:731,instance:'origin'};
 Object.assign(context.S.projects[0],{service_pid:731,host_instance:'origin',age:0,restart_waits:['#7','operator']});

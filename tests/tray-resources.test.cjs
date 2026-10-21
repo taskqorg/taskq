@@ -6,7 +6,7 @@ const modern=fx.cases.find(c=>c.name.startsWith('host commands'));
 const sent=[],timers=new Map();let id=0;
 const saved={limits:{claude:2,codex:3},load_gate:{enabled:true,cpu_max:90,memory_min:10}};
 const project={root:'p',name:'taskq',cap_host:'mac',cap_saved:saved,resources:structuredClone(modern.groups[0])};
-const context={S:{projects:[project],font:16,now:1000},TaskqResources:rc,esc:String,send:m=>sent.push(m),fit:()=>{},menu:{scrollHeight:400},
+const context={operationController:true,S:{projects:[project],font:16,now:1000},TaskqResources:rc,esc:String,send:m=>sent.push(m),fit:()=>{},menu:{scrollHeight:400},
   setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i)};
 require('./tray-harness.cjs').install(context);
 const call=(name,...args)=>context[name](...args),plain=x=>JSON.parse(JSON.stringify(x));
