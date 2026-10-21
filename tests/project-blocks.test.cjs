@@ -11,6 +11,8 @@ assert.equal(q.observation([{...p,closed:100,tasks:[row,{...row,n:2,state:'held'
 assert.equal(q.observation([{...p,complete:false,tasks:[row]}]).open,null);
 assert.match(q.aggregate([{...p,complete:false,tasks:[row]}],[]),/All tasks \?<\/button>/);
 assert(!q.summary(p,[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
+assert.match(q.aggregate([{...p,tasks:[row]}],[]),/data-a="all-tasks" aria-pressed="true"/,'All tasks is selected without a state filter');
+assert.match(q.aggregate([{...p,tasks:[row]}],['doing']),/data-a="all-tasks" aria-pressed="false"/,'All tasks clears its selection under a state filter');
 assert.match(q.aggregate([{...p,closed:100,tasks:[row]},{...p,id:'duplicate',tasks:[row],closed:100}],[]),/All tasks 1<\/button>/);
 assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,state:'review'}]}]).counts.doing,null);
 assert.equal(q.observation([{...p,complete:false}]).counts.ready,null);
