@@ -381,7 +381,6 @@ home:function(){
   return api.runningAgents()+controls()+ai()+api.messagesBadge()+
     (faults?'<section class="group" aria-label="Attention">'+faults+'</section>':'')+filteredTasks()+
     '<div class="group">'+routeButton('projects')+routeButton('appearance')+'</div>';
-
 },
 routeBody:function(){
   switch(view.page){

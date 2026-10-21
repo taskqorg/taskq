@@ -59,7 +59,9 @@ fn write(install: &Path, store: &Store) -> Res<()> {
     use std::io::Write;
     let path=install.join("messages.json");let stage=path.with_extension("tmp");plain(&path)?;
     let bytes=serde_json::to_vec(store).map_err(|e|e.to_string())?;
-    // Exclusive creation refuses stale files, links and hard links before any target bytes are written.
+    // The setup lock excludes writers; unlink an interrupted stage without applying it or following its target.
+    if plain(&stage)? {fs::remove_file(&stage).map_err(|e|format!("Message marks temporary cleanup unknown: {e}"))?;}
+    // Exclusive creation never writes through an existing link.
     let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&stage).map_err(|e|format!("Message marks temporary file refused; kept: {e}"))?;
     let result=(|| {
         file.write_all(&bytes).and_then(|_|file.sync_all()).map_err(|e|e.to_string())?;
@@ -268,14 +270,36 @@ mod tests {
         assert_eq!(f.action("delete",&key)["outcomes"][0]["state"],"accepted");assert!(snapshot(&f.0,&[])["entries"].as_array().unwrap().is_empty());
     }
 
-    // TW7: an interrupted or linked temporary metadata file must never overwrite its target.
+    // A6: restart discards an interrupted stage without applying it over committed marks.
+    #[test]
+    fn interrupted_metadata_stage_does_not_block_the_next_write() {
+        let f=Fixture::new();f.request("stale-stage","launched");let key=f.key("stale-stage");
+        assert_eq!(f.action("read",&key)["outcomes"][0]["state"],"accepted");
+        let committed=fs::read(f.0.join("messages.json")).unwrap();
+        for stale in [b"partial write".as_slice(), committed.as_slice()] {
+            fs::write(f.0.join("messages.tmp"),stale).unwrap();
+            assert_eq!(snapshot(&f.0,&[])["entries"][0]["read"],true);
+            assert_eq!(f.action("archive",&key)["outcomes"][0]["state"],"accepted");
+            assert!(!f.0.join("messages.tmp").exists());
+            assert_eq!(snapshot(&f.0,&[])["entries"][0]["archived"],true);
+        }
+    }
+
+    // TW7: stale-stage cleanup never writes through a hard link or follows a symbolic link.
     #[test]
     fn existing_temporary_path_cannot_overwrite_source_data() {
         let f=Fixture::new();f.request("temp-path","launched");let key=f.key("temp-path");
         let source=f.0.join("source.txt");fs::write(&source,"source bytes kept").unwrap();
         fs::hard_link(&source,f.0.join("messages.tmp")).unwrap();
-        assert_eq!(f.action("archive",&key)["outcomes"][0]["state"],"unknown");
-        assert_eq!(fs::read_to_string(source).unwrap(),"source bytes kept");
+        assert_eq!(f.action("archive",&key)["outcomes"][0]["state"],"accepted");
+        assert_eq!(fs::read_to_string(&source).unwrap(),"source bytes kept");
+        assert!(!f.0.join("messages.tmp").exists());
+        #[cfg(unix)] {
+            std::os::unix::fs::symlink(&source,f.0.join("messages.tmp")).unwrap();
+            assert_eq!(f.action("read",&key)["outcomes"][0]["state"],"unknown");
+            assert_eq!(fs::read_to_string(&source).unwrap(),"source bytes kept");
+            assert!(f.0.join("messages.tmp").is_symlink());
+        }
     }
 
     // Delete all returns verified success for every selected state identity of the same request.

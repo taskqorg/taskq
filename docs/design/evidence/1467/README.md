@@ -34,7 +34,7 @@ The owner [accepted M's seven-image layout and message-only scope](https://githu
 
 Refreshed Windows WebView2 Home/project/icon captures come from `072b43204eccc99e5246b82e6998dec0d0dab11d`; their source blobs, binary and image hashes read back correctly. The four message browser images remain identical to the accepted `bf2a6f2324cd4e6476ecc87ef38760b8cdeac7e1` set. Inherited #1465 launchers are visible in the new native captures, while their combined acceptance remains separate. The final evidence commit changes only prose, hashes and native images; code, tests and dependencies remain the tested source above.
 
-The local metadata writer refuses a `messages.tmp` left by a crash; it does not overwrite or interpret that file as recovery data. An operator must resolve the stale temporary path before further metadata writes. Unknown remains visible. Deleted message history has no undo, trash or retained content copy; command history and drafts remain distinct under the approved boundary.
+The local metadata writer discards an interrupted regular `messages.tmp` under the setup lock, then creates a fresh exclusive staging file. It never applies staged bytes over committed marks or writes through a linked target. A symbolic link, directory or failed cleanup remains unknown. The restart regression fails before this repair and passes after it; the linked-source byte-preservation assertion remains, while a hard-linked stage is now safely unlinked rather than blocking every later write. Deleted message history has no undo, trash or retained content copy; command history and drafts remain distinct under the approved boundary.
 
 ## Combined seven-point review
 
