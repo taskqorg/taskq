@@ -417,6 +417,10 @@ pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Op
     ci(sha).ok().map(|_|sha.to_string())
 }
 
+/// § 8 item 1 dev install gate: repo and channel only; the script comes from the fetched SHA (`dev_spawn`), so a
+/// root checked out before the script existed still installs (#1406).
+pub fn dev_enabled(repo:&str,install:&Path)->bool { repo==RELEASE_REPO&&channel(install)==Ok("dev") }
+
 /// One project pass of the dev install ([detail](docs/design/host-service.md#dev-install)): fold the script's
 /// report, start the next SHA, return the `status.json` `dev` value. State lives in `<install>/dev/`.
 #[cfg(unix)]
@@ -881,6 +885,52 @@ mod tests {
         assert_eq!((v["installed"].as_str(),v["failed"].as_str()),(Some(b.as_str()),None),"success clears the failed SHA");
         fs::remove_dir_all(&install).unwrap();
         }
+    }
+
+    // Chain: § 8 item 1 dev install gate (#1406). Risk: a root checked out before scripts/dev-install.sh existed never
+    // installs a green main merge, or the install runs the root's own copy or touches its working tree.
+    #[cfg(unix)]
+    #[test]
+    fn dev_install_runs_the_fetched_script_from_a_root_without_one() {
+        let base=std::env::temp_dir().join(format!("taskq-dev-gate-{}",std::process::id()));
+        let _=fs::remove_dir_all(&base);
+        let (origin,root,w,install)=(base.join("origin.git"),base.join("root"),base.join("w"),base.join("install"));
+        fs::create_dir_all(install.join("dev")).unwrap();
+        let git=|dir:&Path,args:&[&str]|{
+            let o=std::process::Command::new("git").arg("-C").arg(dir).args(["-c","user.name=t","-c","user.email=t@example.invalid"]).args(args).output().unwrap();
+            assert!(o.status.success(),"git {args:?}: {}",String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        git(&base,&["init","-q","--bare","-b","main",origin.to_str().unwrap()]);
+        git(&base,&["clone","-q",origin.to_str().unwrap(),w.to_str().unwrap()]);
+        git(&w,&["checkout","-q","-b","main"]);
+        fs::write(w.join("README"),"old main\n").unwrap();
+        git(&w,&["add","README"]);git(&w,&["commit","-qm","old"]);git(&w,&["push","-q","origin","main"]);
+        git(&base,&["clone","-q",origin.to_str().unwrap(),root.to_str().unwrap()]);
+        // the new main adds the script; the root stays at the old commit without it
+        let script="touch \"$0.done\"\n";
+        fs::create_dir_all(w.join("scripts")).unwrap();
+        fs::write(w.join("scripts/dev-install.sh"),script).unwrap();
+        git(&w,&["add","scripts"]);git(&w,&["commit","-qm","new"]);git(&w,&["push","-q","origin","main"]);
+        let sha=git(&w,&["rev-parse","HEAD"]);
+        assert!(!root.join("scripts/dev-install.sh").exists());
+        fs::write(install.join("host.json"),r#"{"channel":"dev"}"#).unwrap();
+        assert!(dev_enabled(RELEASE_REPO,&install),"gate needs no script in the root");
+        assert!(!dev_enabled("other/repo",&install)&&!dev_enabled(RELEASE_REPO,&base),"other repo or channel live: off");
+        // the start line goes to this thread's project log
+        service_log();
+        project_log(base.join("project.log"));
+        let mut read=None;
+        dev_tick(&install,&root,&mut |s|{read=Some(s.to_string());Ok(())});
+        assert_eq!(read.as_deref(),Some(sha.as_str()),"CI read for the new main SHA");
+        assert_eq!(fs::read_to_string(install.join("dev/started")).unwrap().trim(),sha);
+        assert!(fs::read_to_string(base.join("project.log")).unwrap().contains(&format!("dev install: start {sha}")));
+        let done=install.join("dev/install.sh.done");
+        for _ in 0..100 { if done.exists() {break;} std::thread::sleep(std::time::Duration::from_millis(100)); }
+        assert!(done.exists(),"fetched script ran: {}",fs::read_to_string(install.join("dev/install.log")).unwrap_or_default());
+        assert_eq!(fs::read_to_string(install.join("dev/install.sh")).unwrap(),script,"script taken from the fetched SHA");
+        assert!(!root.join("scripts/dev-install.sh").exists()&&git(&root,&["status","--porcelain"]).is_empty(),"root working tree untouched");
+        fs::remove_dir_all(&base).unwrap();
     }
 
     // Chain: § 8 item 1 host channel dev -> live. Risk: a dev host installs a release, a live host stays on a -dev

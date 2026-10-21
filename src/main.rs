@@ -973,7 +973,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
-        if !reduced && legacy.is_none() && is_installed && cfg.repo == platform::RELEASE_REPO && cfg.root.join("scripts/dev-install.sh").is_file() && platform::channel(&cfg.install) == Ok("dev") {
+        if !reduced && legacy.is_none() && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
             dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));

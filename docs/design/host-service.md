@@ -333,7 +333,7 @@ The § 4 exception applies only to Stop on an upgraded service advertising proto
 
 ## Dev install
 
-Detail for taskq.md section 8 item 1 (#1388). Applies only on macOS, only with host.json `channel` `dev`, only in the project thread of a root that holds `scripts/dev-install.sh` and whose `repo` is `taskqorg/taskq`. Channel `live`, Windows and Linux hosts do nothing new; a `dev` host still logs `channel dev: release <v> not applied` once per skipped release.
+Detail for taskq.md section 8 item 1 (#1388). Applies only on macOS, only with host.json `channel` `dev`, only in the project thread whose `repo` is `taskqorg/taskq` (#1406). The root's working tree needs no `scripts/dev-install.sh` and stays untouched: a root checked out before the script existed installs too. Channel `live`, Windows and Linux hosts do nothing new; a `dev` host still logs `channel dev: release <v> not applied` once per skipped release.
 
 - Trigger: each project pass reads the `origin` `main` SHA with `git ls-remote` (no board request). A SHA that is neither the installed one nor already started reads `pending`; its `merge_group` CI is read through the board at most every 5 minutes, with the same check that close uses (§ 7). Red, pending or missing CI waits.
 - Run: on green CI the service writes the SHA to `<install>/dev/started`, logs `dev install: start <sha>` and starts, in its own process group, the `scripts/dev-install.sh` of that SHA (taken from the fetched commit) with output in `<install>/dev/install.log`. The script holds `<install>/dev/lock` (its pid), so one install runs at a time, manual runs included; a newer merge during a build is picked up by the next pass after the lock frees.
