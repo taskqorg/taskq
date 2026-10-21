@@ -52,6 +52,7 @@ fn receipt_worker()->std::sync::mpsc::Sender<Receipt> {
         tracing::dispatcher::with_default(&dispatch,||if let Err(error)=command.checkpoint(&phase) {
             crate::platform::log(&format!("command receipt {phase} unknown: {error}"));
         });
+        drop(dispatch); // Settlement also releases the collector's SQLite handles.
         settled(1);
     }).expect("receipt worker");
     send
@@ -446,6 +447,45 @@ mod tests {
     fn dir() -> std::path::PathBuf {
         let d = std::env::temp_dir().join(format!("taskq-sqlite-{}-{}", std::process::id(), crate::runtime::uuid()));
         std::fs::create_dir(&d).unwrap(); d
+    }
+    // R12/#1465: settled receipts must release their collector before its installation can be removed.
+    #[test]
+    fn receipt_settlement_waits_for_dispatch_release() {
+        if std::env::var_os("TASKQ_RECEIPT_TEARDOWN_TEST").is_none() {
+            let output=std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact","telemetry::tests::receipt_settlement_waits_for_dispatch_release","--nocapture"])
+                .env("TASKQ_RECEIPT_TEARDOWN_TEST","1").output().unwrap();
+            assert!(output.status.success(),"{}{}",String::from_utf8_lossy(&output.stdout),String::from_utf8_lossy(&output.stderr));return;
+        }
+        use std::sync::{Arc,Mutex,mpsc};
+        use std::time::Duration;
+        use tracing_subscriber::prelude::*;
+        struct Release {entered:mpsc::Sender<()>,resume:Mutex<mpsc::Receiver<()>>}
+        impl<S:tracing::Subscriber> tracing_subscriber::Layer<S> for Release {}
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.entered.send(()).unwrap();
+                self.resume.get_mut().unwrap().recv_timeout(Duration::from_secs(30)).unwrap();
+            }
+        }
+        let d=dir();
+        let store=Arc::new(coreq::telemetry::Store::open(&d.join("universal.sqlite3")).unwrap());
+        let capture=coreq::telemetry::capture::Capture::new(store,"taskq","test").unwrap();
+        let (entered,dropping)=mpsc::channel();let (resume,wait)=mpsc::channel();
+        let subscriber=tracing_subscriber::registry().with(capture).with(Release {entered,resume:Mutex::new(wait)});
+        let (command,dispatch)=tracing::subscriber::with_default(subscriber,|| {
+            let _span=tracing::info_span!("host.install").entered();
+            (coreq::telemetry::capture::CommandReceipt::current().unwrap(),tracing::dispatcher::get_default(Clone::clone))
+        });
+        let worker=receipt_worker();
+        *RECEIPTS.0.lock().unwrap()+=1;
+        worker.send((command,"observed".into(),dispatch)).unwrap();drop(worker);
+        dropping.recv_timeout(Duration::from_secs(30)).unwrap();
+        let premature=settle(Duration::from_millis(25));
+        resume.send(()).unwrap();
+        assert!(settle(Duration::from_secs(30)),"receipt worker did not finish dispatcher teardown");
+        assert!(!premature,"receipt settled while its dispatcher still owned the collector");
+        std::fs::remove_dir_all(d).unwrap();
     }
     // A2/#1309: an older tray owns an incompatible IPC writer when the new host starts.
     // The heartbeat is the existing tray exit protocol; history and a new durable receipt must survive.

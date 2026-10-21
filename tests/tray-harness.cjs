@@ -9,7 +9,7 @@ function install(context){
  context.document??={scrollingElement:{scrollTop:0},activeElement:null,fonts:{ready:Promise.resolve()},addEventListener(){}};
  context.CSS??={escape:String};
  context.menu??={querySelector:()=>null,querySelectorAll:()=>[]};
- const app=tray.create(state,{window:context,document:context.document,menu:context.menu,send:m=>context.send?.(m),
+ const app=tray.create(state,{workspace:context.operationController===true,window:context,document:context.document,menu:context.menu,send:m=>context.send?.(m),
   render:(...args)=>context.render?.(...args),measureScrollbar:context.gutter,
   timers:{defer:(f,ms)=>context.setTimeout?.(f,ms),cancel:t=>context.clearTimeout?.(t)}});
  Object.assign(context,app);return app;

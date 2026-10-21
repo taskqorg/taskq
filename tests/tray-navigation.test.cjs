@@ -1,7 +1,8 @@
 // Chain: WS11 menu -> settings/project/task routes -> Back. Risk: a refresh changes route, Back loses context,
 // or moving maintenance hides existing actions. DOM/native rendering is qualified separately by snapshots.
 const fs=require('node:fs'),assert=require('node:assert/strict');
-const context={page:'home',taskFilter:null,working:null,workCard:null,ask:null,esc:s=>String(s),render:()=>{},
+const launches=[];
+const context={send:m=>launches.push(m),page:'home',taskFilter:null,working:null,workCard:null,ask:null,esc:s=>String(s),render:()=>{},
   document:{scrollingElement:{scrollTop:120}},menu:{querySelector:()=>null,querySelectorAll:()=>[{dataset:{viewKey:'scope'},open:true},{dataset:{viewKey:'counts'},open:false}]} };
 require('./tray-harness.cjs').install(context);
 (context.navigate('settings'),context.navigate('appearance'));
@@ -10,8 +11,9 @@ assert.equal(context.page,'appearance');assert.equal(context.document.scrollingE
 (context.back());assert.equal(context.page,'home');assert.equal(context.document.scrollingElement.scrollTop,120);
 assert.equal((JSON.stringify(context.disclosures)),'{"scope":true,"counts":false}');
 (context.navigate('project'),context.navigate('project','review'),context.navigate('project',null,{project:true}));
-assert.equal(context.working.project,true);
-(context.back());assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['review']);
+assert.equal(context.working,null,'Work mode no longer opens inside the menu');
+assert.deepEqual(launches.at(-1),{a:'workspace',open:{page:'operations',operation:'resources',root:'project'}});
+assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['review']);
 (context.back());assert.equal(context.page,'project');assert.equal(context.taskFilter,null);
 (context.back(),context.back());assert.equal(context.page,'home');
 // Render all five categories from the same snapshot, including empty and unknown states.
@@ -22,7 +24,7 @@ context.page='appearance';assert((context.routeBody()).includes('Text size · 20
 context.page='cadence';context.S.period='1d';context.S.history={bins:[],tz:'UTC',start:1,end:2,cap:1,since:null};assert((context.routeBody()).includes('hist'));
 context.page='agents';assert((context.routeBody()).includes('Unknown: no status.json'));
 context.S.projects=[{root:'/p',name:'alpha',host:'mac',version:null,age:null,focus:[],tasks:[]}];
-context.page='services';h=(context.routeBody());assert(h.includes('Resources'));assert(h.includes('status unknown'));assert(h.includes('Service'));
+context.page='services';h=(context.routeBody());assert(h.includes('Host maintenance in workspace'));assert(!h.includes('data-a="restart"'));assert(h.includes('status unknown'));assert(h.includes('Service'));
 context.page='about';h=(context.routeBody());assert(h.includes('version unknown'));assert(h.includes('status unknown'));
 // M14: OS denial reads Blocked with the OS setting and no test post; a project shows its override and effective mode
 const kinds={ask:'sound',close:'off',failed:'banner',gone:'banner'};

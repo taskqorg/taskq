@@ -1,6 +1,6 @@
 // Chain: #1400, #1426 newest setup request view in src/tray-app.js. Risk: the owner cannot open the setup session or tell runtime, login and access failures apart.
 const assert=require('node:assert/strict');
-const context={S:{projects:[],setup:null},esc:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;')};
+const context={operationController:true,S:{projects:[],setup:null},esc:s=>String(s).replaceAll('<','&lt;').replaceAll('"','&quot;')};
 require('./tray-harness.cjs').install(context);
 assert.equal(context.setup(),'','no request, no block');
 context.S.setup={kind:'launched',next:'Open the session to read and answer',url:'https://claude.ai/code/session_01Ab'};

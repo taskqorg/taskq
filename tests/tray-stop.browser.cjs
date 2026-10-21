@@ -7,10 +7,11 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    const page=await browser.newPage({viewport:{width,height:1000},colorScheme:theme});
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>window.messages.push(JSON.parse(s))};});
-   await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
+   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
    const root='/fixture/project',review={id:'review',action:'stop',instance:'original',roots:[root],issued_at:1000,expires_at:1300};
    const state={stop_modes:true,page:'stop',theme,font,now:1000,service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',host:'mac',age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:''},notify:{projects:{}}};
    await page.evaluate(s=>taskq.receive(s),state);
+   await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'stop'}}));
    await page.getByRole('button',{name:'Confirm Drain',exact:true}).waitFor();
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Stop review must fit');
    if(process.env.TASKQ_STOP_SHOTS)await page.screenshot({path:process.env.TASKQ_STOP_SHOTS+'/'+theme+'-review.png',fullPage:true});
