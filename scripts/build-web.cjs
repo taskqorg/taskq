@@ -10,7 +10,7 @@ if(revisions.length!==2||revisions[0]!==revisions[1]||dependency!=='https://code
 
 fs.mkdirSync(out,{recursive:true});
 require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-web.cjs'),out],{stdio:'inherit'});
-const components={'answer-card':'TaskqAnswerCard','resource-controls':'TaskqResources','project-blocks':'TaskqProjectBlocks','finding-composer':'TaskqFindingComposer'};
+const components={'answer-card':'TaskqAnswerCard','resource-controls':'TaskqResources','project-blocks':'TaskqProjectBlocks','finding-composer':'TaskqFindingComposer','task-controls':'TaskqTaskControls'};
 for(const [name,globalName] of Object.entries(components))esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',globalName,outfile:path.join(out,name+'.js'),target:'es2022'});
 for(const name of ['tray-guard','tray-entry','workspace-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
 let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8');

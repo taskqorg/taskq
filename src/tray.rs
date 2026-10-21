@@ -248,9 +248,12 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
     let n = op["task"].as_u64().filter(|n| *n > 0).ok_or("task number missing")?;
     let revision = op["revision"].as_u64().ok_or("question revision missing")?;
     let action = op.get("action").map(|v| v.as_str().ok_or("invalid action")).transpose()?;
-    let mut args: Vec<String> = if action == Some("start") {
-        if op.get("choice").is_some() || op.get("text").is_some() { return Err("start takes no choice or text".into()); }
-        vec!["start".into(), n.to_string()]
+    let control = crate::snapshot::CONTROLS.iter().find(|c| Some(c.0) == action);
+    let mut args: Vec<String> = if let Some((name, command, text, _)) = control {
+        if op.get("choice").is_some() || op.get("text").is_some() { return Err(format!("{name} takes no choice or text")); }
+        let mut args = vec![command.to_string(), n.to_string()];
+        if !text.is_empty() { args.extend(["--text".into(), text.to_string()]); }
+        args
     } else if let Some(action) = action {
         if op.get("choice").is_some() { return Err("fallback actions cannot include a choice".into()); }
         let (command, text) = match action {
@@ -258,7 +261,6 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
                 let reason = op["text"].as_str().filter(|s| !s.trim().is_empty() && !s.contains(['\r', '\n'])).ok_or("supply one requeue reason line")?;
                 ("requeue", format!("Reason: {reason}"))
             }
-            "later" if op.get("text").is_none() => ("later", "Reason: Parked by the owner from the tray.".into()),
             "close" if op["confirmed"] == true && op.get("text").is_none() => ("later", "Reason: Owner confirmed cancellation without publication from the tray.".into()),
             _ => return Err("unsupported or unconfirmed tray action".into()),
         };
@@ -300,6 +302,11 @@ fn answer_snapshot(s: &Value, m: &Value) -> Result<(), String> {
     // #1476: a started draft may already read ready/waiting; the CLI returns the op id's first receipt or refuses.
     if op["action"] == "start" {
         return if ["held", "ready", "waiting"].contains(&row["state"].as_str().unwrap_or("")) { Ok(()) } else { Err("task is not a held draft; check the board".into()) };
+    }
+    if let Some(action) = op["action"].as_str().filter(|a| crate::snapshot::CONTROLS.iter().any(|c| c.0 == *a)) {
+        // An old revision still reaches dispatch: the CLI replays the op id's first receipt or refuses it as stale.
+        if row["revision"] != op["revision"] || crate::snapshot::controls(row["state"].as_str().unwrap_or("")).contains(&action) { return Ok(()); }
+        return Err(format!("{action} is not offered in this state; check the board"));
     }
     if op.get("action").is_some() {
         if row["revision"] != op["revision"] { return Err("question changed; refresh before acting".into()); }
@@ -1160,7 +1167,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if let Some((window,_))=&workspace {window.set_visible(true);window.set_focus();}
                         push(&mut web,&ui,&json!({"workspaceError":Value::Null}));
                     }
-                    "answer" if snapshot.is_none() && m["op"]["action"]=="start" => {
+                    "answer" if snapshot.is_none() && crate::snapshot::CONTROLS.iter().any(|c| m["op"]["action"]==c.0) => {
                         let mut request=m.clone();request["id"]=m["op"]["id"].clone();
                         if let Err(error)=answer_actions.submit(&request){push(&mut web,&ui,&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));}
                     }
@@ -2468,6 +2475,26 @@ mod tests {
         m["op"]["text"] = json!("x".repeat(233));
         assert!(answer_args(&install, &m).is_err());
         m["op"]["text"] = json!("a\nb");
+        assert!(answer_args(&install, &m).is_err());
+        // #1506 published controls: the DashQ fixture argv and state table are what the tray dispatches and offers.
+        let f: Value = serde_json::from_str(include_str!("../tests/fixtures/task-controls.json")).unwrap();
+        assert_eq!(f["version"], crate::snapshot::CONTROLS_VERSION);
+        let table: Vec<Value> = crate::snapshot::CONTROLS.iter().map(|(a, c, t, s)| json!([a, c, t, s])).collect();
+        let fixture: Vec<Value> = f["controls"].as_array().unwrap().iter().map(|c| json!([c["action"], c["command"], c["text"], c["states"]])).collect();
+        assert_eq!(table, fixture);
+        for (st, offered) in f["states"].as_object().unwrap() { assert_eq!(json!(crate::snapshot::controls(st)), *offered, "{st}"); }
+        for c in f["cases"].as_array().unwrap() {
+            m["op"] = c["op"].clone();
+            assert_eq!(json!(answer_args(&install, &m).unwrap()), c["argv"]);
+            snapshot["tasks"] = json!([c["row"]]);
+            assert!(answer_snapshot(&snapshot, &m).is_ok());
+            snapshot["tasks"][0]["state"] = json!("closed");
+            assert!(answer_snapshot(&snapshot, &m).is_err(), "closed offers no control");
+            snapshot["tasks"][0]["revision"] = json!(99);
+            // start reconciles by state (#1476); the others let an old revision reach the CLI, which replays or refuses stale
+            assert_eq!(answer_snapshot(&snapshot, &m).is_ok(), c["op"]["action"] != "start");
+        }
+        m["op"] = json!({"id":"x.1","task":n,"revision":rev,"action":"stop","text":"x"});
         assert!(answer_args(&install, &m).is_err());
         fs::remove_dir_all(install).unwrap();
     }

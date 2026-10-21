@@ -46,7 +46,7 @@ answerNotices:function(board){
 },
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);
-  return r?'<div class="toast" role="status">#'+r.op.task+' · '+(r.op.action==='start'?'started':'answer accepted')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a><button data-a="toast-dismiss" aria-label="Dismiss" title="Dismiss">×</button></div>':'';
+  return r?'<div class="toast" role="status">#'+r.op.task+' · '+({start:'started',stop:'stopped',later:'parked',retry:'requeued'}[r.op.action]||'answer accepted')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a><button data-a="toast-dismiss" aria-label="Dismiss" title="Dismiss">×</button></div>':'';
 },
 mountAnswers:function(){
   for(const slot of menu.querySelectorAll('[data-answer]')){

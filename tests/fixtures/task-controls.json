@@ -1,0 +1,222 @@
+{
+ "version": "taskq.task-controls/1",
+ "close": "board",
+ "controls": [
+  {
+   "action": "start",
+   "label": "Start",
+   "command": "start",
+   "text": "",
+   "states": [
+    "held"
+   ]
+  },
+  {
+   "action": "stop",
+   "label": "Stop",
+   "command": "failed",
+   "text": "Reason: Stopped by the owner.",
+   "states": [
+    "ready",
+    "waiting",
+    "doing",
+    "review",
+    "ask"
+   ]
+  },
+  {
+   "action": "later",
+   "label": "Later",
+   "command": "later",
+   "text": "Reason: Parked by the owner.",
+   "states": [
+    "ready",
+    "waiting",
+    "doing",
+    "review",
+    "ask"
+   ]
+  },
+  {
+   "action": "retry",
+   "label": "Retry",
+   "command": "requeue",
+   "text": "Reason: Retried by the owner.",
+   "states": [
+    "later",
+    "failed"
+   ]
+  }
+ ],
+ "states": {
+  "held": [
+   "start"
+  ],
+  "ready": [
+   "stop",
+   "later"
+  ],
+  "waiting": [
+   "stop",
+   "later"
+  ],
+  "doing": [
+   "stop",
+   "later"
+  ],
+  "review": [
+   "stop",
+   "later"
+  ],
+  "ask": [
+   "stop",
+   "later"
+  ],
+  "later": [
+   "retry"
+  ],
+  "failed": [
+   "retry"
+  ],
+  "closed": []
+ },
+ "cases": [
+  {
+   "row": {
+    "n": 7,
+    "state": "held",
+    "revision": 20
+   },
+   "op": {
+    "id": "dash.start.7.20",
+    "task": 7,
+    "revision": 20,
+    "action": "start"
+   },
+   "argv": [
+    "start",
+    "7",
+    "--json",
+    "--op-id",
+    "dash.start.7.20",
+    "--revision",
+    "20"
+   ]
+  },
+  {
+   "row": {
+    "n": 7,
+    "state": "doing",
+    "revision": 20
+   },
+   "op": {
+    "id": "dash.stop.7.20",
+    "task": 7,
+    "revision": 20,
+    "action": "stop"
+   },
+   "argv": [
+    "failed",
+    "7",
+    "--text",
+    "Reason: Stopped by the owner.",
+    "--json",
+    "--op-id",
+    "dash.stop.7.20",
+    "--revision",
+    "20"
+   ]
+  },
+  {
+   "row": {
+    "n": 7,
+    "state": "ask",
+    "revision": 20
+   },
+   "op": {
+    "id": "dash.later.7.20",
+    "task": 7,
+    "revision": 20,
+    "action": "later"
+   },
+   "argv": [
+    "later",
+    "7",
+    "--text",
+    "Reason: Parked by the owner.",
+    "--json",
+    "--op-id",
+    "dash.later.7.20",
+    "--revision",
+    "20"
+   ]
+  },
+  {
+   "row": {
+    "n": 7,
+    "state": "failed",
+    "revision": 20
+   },
+   "op": {
+    "id": "dash.retry.7.20",
+    "task": 7,
+    "revision": 20,
+    "action": "retry"
+   },
+   "argv": [
+    "requeue",
+    "7",
+    "--text",
+    "Reason: Retried by the owner.",
+    "--json",
+    "--op-id",
+    "dash.retry.7.20",
+    "--revision",
+    "20"
+   ]
+  }
+ ],
+ "receipts": [
+  {
+   "name": "accepted",
+   "receipt": {
+    "task": 7,
+    "op_id": "dash.stop.7.20",
+    "outcome": "accepted",
+    "state": "failed",
+    "revision": 21
+   },
+   "shows": "accepted"
+  },
+  {
+   "name": "stale revision",
+   "receipt": {
+    "task": 7,
+    "op_id": "dash.stop.7.20",
+    "outcome": "stale",
+    "state": "doing",
+    "revision": 22,
+    "reason": "task changed"
+   },
+   "shows": "stale"
+  },
+  {
+   "name": "same op id retry",
+   "receipt": {
+    "task": 7,
+    "op_id": "dash.stop.7.20",
+    "outcome": "accepted",
+    "state": "failed",
+    "revision": 21
+   },
+   "shows": "accepted",
+   "note": "retry with the same op id returns the first receipt"
+  },
+  {
+   "name": "lost response",
+   "receipt": null,
+   "shows": "unknown",
+   "note": "retry only with the same op id"
+  }
+ ]
+}

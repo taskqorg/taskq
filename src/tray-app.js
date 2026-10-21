@@ -154,7 +154,7 @@ counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts
 mode:function(p){return p.focus.length?'run':p.saved?'paused':'watch';},
 counter:function(v,kind,label){return '<span class="counter '+(v>0?kind+' filled':'zero')+'" aria-label="'+esc(label+': '+v)+'" title="'+esc(label)+'">'+v+'</span>';},
 known:function(ps){return ps.every(p=>p.complete!==false);},
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return '<div data-card="'+esc(t.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),t,global)+answerSlot(t)+(t.state==='held'?startButton([t]):'')+'</div>';},
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return '<div data-card="'+esc(t.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),t,global)+answerSlot(t)+(t.state==='held'?startButton([t]):'')+TaskqTaskControls.render(t,{key:t.key,except:['start']})+'</div>';},
 // #1476: Start for held drafts, one per draft and one for the shown group; the bridge runs `taskq start` and reads back ready/waiting.
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
@@ -546,6 +546,7 @@ ui.listen(menu,'click',e=>{
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
+  if(d.a==='control'){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===d.key);if(t&&(t.controls||[]).includes(d.control))ui.effect('task.control',()=>answerSend(t.key.slice(0,-String(t.n).length-1),TaskqTaskControls.op(t,d.control,'tray')),()=>{});present();return;}
   if(d.a==='start'){for(const key of d.keys.split(' ')){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===key);if(t&&t.state==='held')ui.effect('task.start',()=>answerSend(t.key.slice(0,-String(t.n).length-1),{id:'tray.start.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action:'start'}),()=>{});}present();return;}
   if(d.a==='answer-retry'){startOperations.retry(d.key);present();return;}
   if(d.a==='notify'||d.a==='notify-test'){send({a:d.a,kind:d.kind,value:d.v,root:d.root});return;}
@@ -606,7 +607,7 @@ function resourceSend(g,op){
     send(resourcePayloads.get(g.key));});}
 const window=ports.window||globalThis,document=ports.document||window.document,menu=ports.menu||document?.querySelector('.menu');
 const {defer,cancel}=ports.timers||ui;
-const TaskqAnswerCard=require('./answer-card.js'),TaskqResources=require('./resource-controls.js'),TaskqProjectBlocks=require('./project-blocks.js');
+const TaskqAnswerCard=require('./answer-card.js'),TaskqResources=require('./resource-controls.js'),TaskqProjectBlocks=require('./project-blocks.js'),TaskqTaskControls=require('./task-controls.js');
 const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));

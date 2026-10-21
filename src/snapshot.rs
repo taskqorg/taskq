@@ -239,7 +239,8 @@ impl Row {
             "session": self.task.session, "attempt": self.task.attempt, "role": self.task.role,
             "deps": self.deps.iter().filter(|b| b.dep.repo.is_none() && b.reason == "open").map(|b| b.dep.n).collect::<Vec<_>>(),
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
-            "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed});
+            "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed,
+            "controls": controls(self.task.state.name())});
         // § 2: the PM's pick sits beside the worker's star; it is never an answer
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
@@ -250,6 +251,22 @@ impl Row {
         if let Some(a) = self.stuck { row["age_s"] = json!(a); }
         row
     }
+}
+
+/// Published task controls `taskq.task-controls/1` (docs/design/task-controls.md): action, CLI command, fixed reason,
+/// states that offer it. Close is never a control: it stays a board operation.
+pub const CONTROLS_VERSION: &str = "taskq.task-controls/1";
+const LIVE: &[&str] = &["ready", "waiting", "doing", "review", "ask"];
+pub const CONTROLS: [(&str, &str, &str, &[&str]); 4] = [
+    ("start", "start", "", &["held"]),
+    ("stop", "failed", "Reason: Stopped by the owner.", LIVE),
+    ("later", "later", "Reason: Parked by the owner.", LIVE),
+    ("retry", "requeue", "Reason: Retried by the owner.", &["later", "failed"]),
+];
+
+/// Control actions a row in `state` offers, in [`CONTROLS`] order.
+pub fn controls(state: &str) -> Vec<&'static str> {
+    CONTROLS.iter().filter(|c| c.3.contains(&state)).map(|c| c.0).collect()
 }
 
 /// Free-text answer limits (`answer N --text`, § 2): nonblank lines, characters per line.
