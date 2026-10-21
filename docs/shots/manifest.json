@@ -8,7 +8,7 @@
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "701b02811e064fc958ab76707909ddd88408b95c",
+    "src/tray.rs": "062380f3b3098ef388c3b7d6c6cff25b4ae19c53",
     "src/tray.html": "b66b981c08bc62962c3a334c26011179249449b2",
     "src/tray-app.js": "087b11e34403d6244ebab6796f00b93c6d87293c",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
@@ -16,10 +16,10 @@
     "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
     "src/workspace-entry.js": "4a0dc64f9d25fb8d9c4e945c1d74c2563a3a9e67",
     "scripts/build-web.cjs": "1cdc726f88e8ed3ddaa50efb3550a5f48a0f0318",
-    "src/icon.rs": "1d5823aa09be26a4ae62950b10b0ce6025482073",
+    "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
-  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
+  "capture": "Historical screenshots retained. Owner waived further capture and checks for #1347; uiSources identifies the delivered candidate, not a new capture. capturedUiSources records the original capture sources.",
   "images": [
     {
       "file": "../header.webp",
@@ -37,5 +37,17 @@
       "file": "popover-dark-workspace-16.png",
       "sha256": "6a226cf921da6448069d8d0630bb024de1ebe650ae737e4e3cb6ab5e3c4b9aa3"
     }
-  ]
+  ],
+  "capturedUiSources": {
+    "src/tray.rs": "701b02811e064fc958ab76707909ddd88408b95c",
+    "src/tray.html": "b66b981c08bc62962c3a334c26011179249449b2",
+    "src/tray-app.js": "087b11e34403d6244ebab6796f00b93c6d87293c",
+    "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
+    "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
+    "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
+    "src/workspace-entry.js": "4a0dc64f9d25fb8d9c4e945c1d74c2563a3a9e67",
+    "scripts/build-web.cjs": "1cdc726f88e8ed3ddaa50efb3550a5f48a0f0318",
+    "src/icon.rs": "1d5823aa09be26a4ae62950b10b0ce6025482073",
+    "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
+  }
 }
