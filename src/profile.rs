@@ -251,7 +251,8 @@ pub fn repair(install: &Path, project: &str, host: &str, task: u64, attempt: u64
 /// so no reread each pass (#1359). ponytail: in-process; a restart checks each once again.
 pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, board: &dyn crate::board::Board,
     open: &std::collections::HashSet<u64>, unowned: &mut std::collections::HashSet<(u64, u64)>) {
-    let Ok(rows) = crate::telemetry::report_samples(install,&["stage"]).and_then(|t| unresolved_samples(&t)) else { return };
+    let Ok(rows) = ended_rows(install, false) else { return };
+    let mut fresh = None;
     for mut r in rows.into_iter().filter(|r| r.project.as_deref() == Some(project)
         && r.host.as_deref().is_none_or(|h| h == host) && !open.contains(&r.task)) {
         if unowned.contains(&(r.task, r.attempt)) { continue; }
@@ -272,6 +273,9 @@ pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, boar
             r.host = Some(host.into());
             r.stage = if role == "reviewer" { "review" } else { "build" }.into();
         }
+        // A cached row may have ended normally since the read; only a fresh snapshot may justify the repair.
+        if fresh.is_none() { let Ok(rows) = ended_rows(install, true) else { return }; fresh = Some(rows); }
+        if !fresh.as_ref().is_some_and(|rows| rows.iter().any(|f| same(f, &r))) { continue; }
         let (outcome, error) = crate::core::stage_outcome(r.task, Ok((&log, Some(false))), r.attempt, r.attempt);
         r.stage = if r.stage == "review" { "review" } else { "build" }.into();
         r.open = false;
@@ -283,8 +287,27 @@ pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, boar
         r.tokens = None;
         r.unknown = Some("adopted".into());
         write_stage(&install.join("taskq.log"), &r);
+        if let Some((_, rows)) = UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner()).get_mut(install) { rows.retain(|f| !same(f, &r)); }
     }
 }
+
+/// One full-store read serves every project thread for `REPAIR_READ`: a full read scans the whole store and, before
+/// coreq v0.14.5, pinned the WAL and failed the writer's checkpoint (#1341). `fresh` bypasses the cache.
+const REPAIR_READ: std::time::Duration = std::time::Duration::from_secs(300);
+static UNRESOLVED: std::sync::Mutex<BTreeMap<PathBuf, (Instant, Vec<Stage>)>> = std::sync::Mutex::new(BTreeMap::new());
+#[cfg(test)]
+thread_local!(pub(crate) static STORE_READS: Cell<usize> = const { Cell::new(0) });
+
+fn ended_rows(install: &Path, fresh: bool) -> Result<Vec<Stage>, String> {
+    let mut cache = UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner());
+    if !fresh && let Some((at, rows)) = cache.get(install) && at.elapsed() < REPAIR_READ { return Ok(rows.clone()); }
+    #[cfg(test)] STORE_READS.with(|n| n.set(n.get() + 1));
+    let rows = crate::telemetry::report_samples(install,&["stage"]).and_then(|t| unresolved_samples(&t))?;
+    cache.insert(install.to_owned(), (Instant::now(), rows.clone()));
+    Ok(rows)
+}
+
+fn same(a: &Stage, b: &Stage) -> bool { (&a.project, a.task, a.attempt) == (&b.project, b.task, b.attempt) }
 
 type Live = Vec<(String, u64)>;
 

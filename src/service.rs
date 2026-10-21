@@ -3483,6 +3483,38 @@ mod tests {
         }
     }
 
+    // Chain: #1341 per-pass repair -> full-store Reader snapshot -> pinned WAL -> failed telemetry checkpoint.
+    // Risk: every project pass reopens the store, appends wait seconds and lose batches; a stale cache fabricates a repair.
+    #[test]
+    fn ended_attempt_repair_reads_store_once_per_interval() {
+        let dir = std::env::temp_dir().join(format!("taskq-repair-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (_capture,_guard)=crate::profile::tests::collecting(&dir);
+        let b = Fake::default();
+        let n = b.create("T", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w mac").unwrap();
+        let mut c = cfg("mac");
+        c.install = dir.clone();
+        c.root = dir.clone();
+        crate::profile::open(&dir, &c.repo, "mac", n, a, "codex", false);
+        let reads = || crate::profile::STORE_READS.with(|n| n.get());
+        let before = reads();
+        let mut s = service(&b, &c, Default::default());
+        s.focus.clear();
+        for _ in 0..3 { s.pass().unwrap(); }
+        assert_eq!(reads() - before, 1, "open attempt passes reuse one store read");
+        b.comment(n, "taskq: close").unwrap();
+        b.close(n).unwrap();
+        s.pass().unwrap();
+        assert_eq!(reads() - before, 2, "a repair confirms the cached row with a fresh read");
+        crate::profile::selftest(&dir, &c.repo, &vec![], 300).expect("closed attempt repaired");
+        let repaired = crate::profile::read_log(&dir).unwrap();
+        s.pass().unwrap();
+        assert_eq!(reads() - before, 2);
+        assert_eq!(crate::profile::read_log(&dir).unwrap(), repaired, "repair is not repeated from the cache");
+        drop(_guard);drop(_capture);std::fs::remove_dir_all(dir).unwrap();
+    }
+
     // Chain: §4 historical no-host review -> fresh ended-board proof -> one-pass repair -> selftest.
     // Risk: #1252 stays blocked, or another project/host receives fabricated terminal evidence.
     #[test]
