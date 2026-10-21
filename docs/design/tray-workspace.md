@@ -41,3 +41,5 @@ question reappearing or a deleted request ID launching again. An incomplete
 deletion keeps only its request identity and retry status, never a history copy;
 Delete all reports each refused or incomplete item separately. Command history
 and composer drafts remain separate from these message records.
+The request's temporary write file is an owned record copy and is removed too;
+linked or unreadable paths refuse deletion rather than touching their targets.

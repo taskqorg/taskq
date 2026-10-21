@@ -20,7 +20,7 @@ TASKQ_VERSION=$version docs/shots/fixture.sh "$tmp"
 # The compact billing queue fits with all lower controls visible.
 printf '%s\n' "$tmp/billing-api" "$tmp/storefront" > "$tmp/install/projects"
 # only the routes the README shows (taskq.md R12)
-TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/shots" --route project,icon
+TASKQ_INSTALL=$tmp/install cargo run --release --locked -- tray --snapshot "$tmp/shots" --route project,icon
 rm -f docs/shots/*.png
 cp "$tmp/shots/popover-dark-project-16.png" docs/shots/
 # Menu-bar size and scale differ between the owner's Mac and CI; keep the README link stable.

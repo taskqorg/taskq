@@ -146,12 +146,13 @@ fn check_request(install: &Path, r: &Identity, deleting: bool) -> Res<()> {
 fn delete_request(install: &Path, r: &Identity) -> Res<()> {
     check_request(install,r,true)?;
     let base=crate::setup::dir(install).canonicalize().map_err(|e|e.to_string())?;
-    let file=base.join(format!("{}.json",r.id));let folder=base.join(&r.id);
-    validate_tree(&base,&file)?;validate_tree(&base,&folder)?;
+    let file=base.join(format!("{}.json",r.id));let folder=base.join(&r.id);let stage=file.with_extension("tmp");
+    validate_tree(&base,&file)?;validate_tree(&base,&folder)?;validate_tree(&base,&stage)?;
     // Keep the request until its owned directory is gone, so a failed delete remains inspectable.
     if plain(&folder)? {fs::remove_dir_all(&folder).map_err(|e|format!("Request {} folder remains: {e}",r.id))?;}
+    if plain(&stage)? {fs::remove_file(&stage).map_err(|e|format!("Request {} temporary record remains: {e}",r.id))?;}
     if plain(&file)? {fs::remove_file(&file).map_err(|e|format!("Request {} record remains: {e}",r.id))?;}
-    if plain(&file)?||plain(&folder)? {return Err(format!("Request {} deletion readback unknown",r.id));}
+    if plain(&file)?||plain(&folder)?||plain(&stage)? {return Err(format!("Request {} deletion readback unknown",r.id));}
     Ok(())
 }
 
@@ -237,7 +238,8 @@ mod tests {
     // A3–A6: real deletion/readback; no board writes, native execution control or recovery copy.
     #[test]
     fn archive_any_delete_only_archived_and_keep_live_work_and_same_id_fence() {
-        let f=Fixture::new();f.request("live","launched");f.request("waiting","pending");
+        let f=Fixture::new();let live_record=f.request("live","launched");f.request("waiting","pending");
+        fs::write(f.0.join("setup/live.tmp"),serde_json::to_vec(&live_record).unwrap()).unwrap();
         fs::write(f.0.join("native-session"),"live work").unwrap();fs::write(f.0.join("source.txt"),"source original").unwrap();
         let live=f.key("live");let pending=f.key("waiting");
         assert_eq!(f.action("delete",&live)["outcomes"][0]["state"],"unknown");
@@ -245,6 +247,7 @@ mod tests {
         let result=act(&f.0,&[],"delete",&[pending.clone(),live.clone()]);
         assert_eq!(result["outcomes"].as_array().unwrap().iter().filter(|r|r["state"]=="accepted").count(),1);
         assert!(!f.0.join("setup/live.json").exists());assert!(!f.0.join("setup/live").exists());
+        assert!(!f.0.join("setup/live.tmp").exists(),"no staged history copy remains");
         assert!(f.0.join("setup/waiting.json").exists());assert!(f.0.join("setup/waiting").exists());
         assert_eq!(fs::read_to_string(f.0.join("native-session")).unwrap(),"live work");assert_eq!(fs::read_to_string(f.0.join("source.txt")).unwrap(),"source original");
         let store=fs::read_to_string(f.0.join("messages.json")).unwrap();assert!(!store.contains("invented private request"));assert!(!store.contains("live"));
