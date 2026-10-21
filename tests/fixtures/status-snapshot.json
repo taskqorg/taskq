@@ -39,7 +39,8 @@
       "card": null,
       "question": null,
       "failed": null,
-      "since": null
+      "since": null,
+      "stuck": false
     },
     {
       "n": 2,
@@ -91,13 +92,14 @@
           "state": "unknown",
           "reason": "termination unconfirmed; status missing or stale; restore owning service",
           "host": "mac",
-          "observed": null,
           "runtime": "claude",
+          "observed": null,
           "role": "worker"
         }
       ],
       "execution_wait": "execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",
-      "since": 4
+      "since": 4,
+      "stuck": false
     },
     {
       "n": 4,
@@ -124,7 +126,8 @@
       "card": null,
       "question": null,
       "failed": null,
-      "since": null
+      "since": null,
+      "stuck": false
     },
     {
       "n": 5,
@@ -143,7 +146,8 @@
       "card": null,
       "question": null,
       "failed": "Reason: no login",
-      "since": 8
+      "since": 8,
+      "stuck": false
     }
   ],
   "hosts": [

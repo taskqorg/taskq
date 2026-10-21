@@ -325,6 +325,8 @@ pub struct Service<'a> {
     /// Owner comments of the last pass (§ 4): task, comment id, text, card.
     /// State of each open task in the previous pass, for `events`.
     seen: HashMap<u64, State>,
+    /// R6 stuck tasks already logged, by the board time of their newest log entry: one line until the task moves.
+    stuck: HashMap<u64, i64>,
     /// The newest comment id an events pass saw; `gone` events come only from newer comments (§ 4)
     gone_after: Option<u64>,
     /// Newest comment id of the previous pass, for queue transitions; None before the first (§ 4 Profiling).
@@ -608,7 +610,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1171,6 +1173,7 @@ impl<'a> Service<'a> {
         self.observe_ownership(&views)?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
         self.tasks_read = Some(std::time::Instant::now());
+        self.log_stuck(now);
         // Local eligibility only: another host's heartbeat cannot qualify this runtime or hide its refusal.
         self.waits.clear();
         for v in &views {
@@ -1698,6 +1701,18 @@ impl<'a> Service<'a> {
             self.log.push(format!("#{n} event {kind} {a}"));
         }
         Ok(())
+    }
+
+    /// R6 stuck: one `#N event stuck <state> <age>` line per task, again only after it moves; observe only.
+    fn log_stuck(&mut self, now: i64) {
+        let Some(snapshot) = &self.snapshot else { return };
+        let stuck: HashMap<u64, (i64, &str, i64)> = snapshot.tasks.iter().filter_map(|r| r.stuck.map(|a| (r.n, (now - a, r.task.state.name(), a)))).collect();
+        for (n, (last, state, a)) in &stuck {
+            if self.stuck.insert(*n, *last) != Some(*last) {
+                self.log.push(format!("#{n} event stuck {state} {}", crate::age(*a)));
+            }
+        }
+        self.stuck.retain(|n, _| stuck.contains_key(n));
     }
 
     fn prune(&mut self, open: &HashMap<u64, &View>) {
@@ -5145,6 +5160,29 @@ mod tests {
         let ev = std::fs::read_to_string(root.join(".taskq/events")).unwrap();
         assert_eq!(ev.lines().filter(|l| l.ends_with(&format!("#{v} gone {av}"))).count(), 1, "{ev}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Chain: R6 stuck -> service log. Risk: a stuck task logs every pass, or never again after it moves.
+    #[test]
+    fn stuck_task_logs_once_until_it_moves() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let n = b.create("Parked", "", &["taskq".into()]).unwrap();
+        b.comment(n, &core::entry("later", &[], None, "parked")).unwrap();
+        let mut s = service(&b, &c, Default::default());
+        let lines = |s: &Service| s.log.iter().filter(|l| l.starts_with(&format!("#{n} event stuck later "))).count();
+        s.pass().unwrap();
+        assert_eq!(lines(&s), 0, "a fresh park is not stuck");
+        b.advance(crate::snapshot::STUCK_AFTER);
+        s.pass().unwrap();
+        s.pass().unwrap();
+        assert_eq!(lines(&s), 1, "{:?}", s.log);
+        assert_eq!(task(&b, n).state, State::Later, "observe only");
+        b.comment(n, &core::entry("later", &[], None, "still parked")).unwrap();
+        s.pass().unwrap();
+        b.advance(crate::snapshot::STUCK_AFTER);
+        s.pass().unwrap();
+        assert_eq!(lines(&s), 2, "a move rearms the line");
     }
 
     // Chain: closed task -> execution release -> worktree cleanup. Risk: deleting dirty or still-owned work.

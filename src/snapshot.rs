@@ -73,6 +73,24 @@ pub struct Row {
     pub session_url: Option<String>,
     /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
     pub since: Option<i64>,
+    /// R6 stuck: seconds since the newest log entry; `None`: not stuck.
+    pub stuck: Option<i64>,
+}
+
+/// R6: no movement for this long marks a task stuck.
+pub const STUCK_AFTER: i64 = 2 * 3600;
+
+/// R6 stuck age of task `n` whose newest log entry is at `last`: observe only, never a gate.
+pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, hosts: &[board::Issue], now: i64, ttl: i64) -> Option<i64> {
+    let age = now - last;
+    // § 3 lease: a fresh heartbeat lists `#<N> <attempt>`
+    let leased = || t.attempt.is_some_and(|a| hosts.iter().any(|h| h.trusted && now - h.updated < ttl && h.body.lines().any(|l| l == format!("#{n} {a}"))));
+    match t.state {
+        State::Waiting => deps.iter().all(|b| b.reason.starts_with("unknown: closed")),
+        State::Held | State::Ask | State::Later => age >= STUCK_AFTER,
+        State::Doing => age >= STUCK_AFTER && !leased(),
+        _ => false,
+    }.then_some(age)
 }
 
 pub struct Host {
@@ -129,6 +147,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| s.starts_with("claude:")))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
+        stuck: stuck(v.issue.number, &v.projection.task, &v.blockers,
+            v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),
+            hosts, observed, cfg.ttl),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
@@ -220,6 +241,8 @@ impl Row {
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
+        row["stuck"] = json!(self.stuck.is_some());
+        if let Some(a) = self.stuck { row["age_s"] = json!(a); }
         row
     }
 }
@@ -333,6 +356,11 @@ impl Snapshot {
             out.push("Failed:\n| Task | Reason |\n|---|---|".into());
             out.extend(failed);
         }
+        let stuck: Vec<String> = self.tasks.iter().filter_map(|r| r.stuck.map(|a| format!("{} ({}, {})", link(r), r.task.state.name(), age(a)))).collect();
+        if !stuck.is_empty() {
+            out.push(String::new());
+            out.push(format!("Stuck: {}", stuck.join(", ")));
+        }
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version, age(self.observed - h.updated), h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>())).collect();
         if !hs.is_empty() {
@@ -396,11 +424,49 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, stuck: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: running");
+    }
+
+    // Chain: R6 stuck. Risk: a silent task never shows, or a moving or leased one is flagged.
+    #[test]
+    fn stuck_flags_each_state_from_two_hours_and_never_a_moving_task() {
+        let t = |state, attempt| Task { state, attempt, ..Default::default() };
+        let dep = |reason: &str| service::Blocker { dep: crate::core::depends("Depends on #2").remove(0), url: String::new(), reason: reason.into() };
+        let beat = |age: i64| board::Issue { title: "taskq host mac".into(), body: "version 4\n#1 5".into(), updated: 10_000 - age, trusted: true, ..Default::default() };
+        let at = |task: &Task, deps: &[service::Blocker], age: i64, hosts: &[board::Issue]| stuck(1, task, deps, 10_000 - age, hosts, 10_000, 300);
+        for s in [State::Held, State::Ask, State::Later, State::Doing] {
+            assert_eq!(at(&t(s, Some(5)), &[], STUCK_AFTER - 1, &[]), None, "{s:?} under 2 h");
+            assert_eq!(at(&t(s, Some(5)), &[], STUCK_AFTER, &[]), Some(STUCK_AFTER), "{s:?} at 2 h");
+            assert_eq!(at(&t(s, Some(5)), &[], 60, &[]), None, "{s:?} moving");
+        }
+        // a doing attempt its fresh heartbeat lists is leased; a stale heartbeat or another attempt is not
+        assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(10)]), None);
+        assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(300)]), Some(3 * STUCK_AFTER));
+        assert_eq!(at(&t(State::Doing, Some(6)), &[], 3 * STUCK_AFTER, &[beat(10)]), Some(3 * STUCK_AFTER));
+        for s in [State::Ready, State::Review, State::Failed] {
+            assert_eq!(at(&t(s, None), &[], 3 * STUCK_AFTER, &[]), None, "{s:?} never");
+        }
+        // waiting: at once when every blocker is closed, never while one is open or unreadable
+        let w = t(State::Waiting, None);
+        assert_eq!(at(&w, &[dep("unknown: closed not planned")], 0, &[]), Some(0));
+        assert_eq!(at(&w, &[dep("unknown: closed not planned"), dep("open")], 3 * STUCK_AFTER, &[]), None);
+        assert_eq!(at(&w, &[dep("unknown: 502")], 3 * STUCK_AFTER, &[]), None);
+    }
+
+    #[test]
+    fn stuck_row_prints_one_line_and_json_age() {
+        let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0,
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, stuck };
+        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");
+        let rows = snap.json()["tasks"].clone();
+        assert_eq!((rows[0]["stuck"].clone(), rows[0]["age_s"].clone()), (json!(true), json!(9000)));
+        assert_eq!((rows[1]["stuck"].clone(), rows[1].get("age_s")), (json!(false), None));
     }
 
     #[test]
