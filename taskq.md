@@ -101,7 +101,7 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | `doing` | `ask attempt` | `ask` | text: ask card below |
 | `doing`, `review` | `requeue [main-moved] attempt` | `ready` | reason/fixes; `main-moved` keeps retries, else +1; 3rd: `ask` with the limit card |
 | `doing`, `review` | `gone attempt` | `ready` / `review` | service: child exited or lease expired; emergency recovery (§ 4); `retries += 1`; 2nd: `ask` with the limit card |
-| `doing`, `review` | `usage-limit attempt` | `ready` / `review` | quota before work; keep retries/review result |
+| `doing`, `review` | `usage-limit attempt` | `ready` / `review` | pre-work quota/dead login; keep retries/review result |
 | `doing` | `steer` | `doing` | text for the worker |
 | `review` | `spawn reviewer <rt>:<session> <host>` | `review` | no live reviewer/pending publication; attempt = this id |
 | `review` | `ask attempt` | `ask` | reviewer's card; result kept |
@@ -151,7 +151,7 @@ TaskQ sources: the §2 transition table, `tests/golden/*.json` traces (`fold.jso
 `taskq service run`: one host process for `<install>/projects`, one loop thread per root; `service install` registers a project and persists the process (§ 8). A project panic restarts only its thread, reattaching running children; three panics in 10 min quarantine it (reap, heartbeat, `status.json` only) until `service restart`.
 One loop:
 
-1. Reap exact executions per the [adapter matrix](docs/runtime-qualification.md#adapter-recovery-matrix). Missing/unsupported reads stay unknown. Terminal turns request owned-tree stop where needed; confirm termination before release. On current-attempt exit without `ask`/`result`/`requeue` since start, post `gone` with exit code and bounded last worker line (§7 rule 6); a [usage limit](docs/design/capacity.md#usage-limit) before work posts `usage-limit` and holds the runtime. Release saves quota reason/deadline for recovery. Hand-ins keep outcomes; step 6 handles input.
+1. Reap exact executions per the [adapter matrix](docs/runtime-qualification.md#adapter-recovery-matrix). Missing/unsupported reads stay unknown. Terminal turns request owned-tree stop where needed; confirm termination before release. On current-attempt exit without `ask`/`result`/`requeue` since start, post `gone` with exit code and bounded last worker line (§7 rule 6); a [usage limit](docs/design/capacity.md#usage-limit) before work or dead login posts `usage-limit` and holds the runtime. Release saves quota reason/deadline for recovery. Hand-ins keep outcomes; step 6 handles input.
 2. Stop children whose attempt is no longer current (R11). Remove worktrees of closed tasks (§ 7).
 3. Write heartbeat issue `taskq host <name>` (label `taskq-host`) every `ttl / 3` (60 s with `execution` rows) or on change, `at`/diagnostics times aside (rate-limit failure: stale, no exit): lines `version <v>`, `service <id>`
    (12 hex of SHA-256 of `<install>/installation-id`), `machine <hostname>[ wsl]` (`hostname`, as agentq `host.name`; `wsl` under WSL; DashQ joins Hosts by it, [H2](https://github.com/taskqorg/dashq/blob/main/docs/design/hosts.md)), `#<N> <id>` per live child or gate-held launch, `session #<N> <id> <url>` per live Claude child with a Remote Control URL, `focus off|unknown` when the focus admits nothing, `limit <rt> until|probe <time>` or `login <rt> off` per held runtime, plus `at <board time>` (same-body edits keep `updated_at`). Freshness: board `updated_at` and response `Date`, never local clocks.

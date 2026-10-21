@@ -255,6 +255,44 @@ pub fn usage_limit(log: &Path) -> Option<Option<i64>> {
     None
 }
 
+/// A Codex login the auth server rejected (#1446): Codex's own stderr `ERROR codex_…` line or a top-level
+/// `error`/`turn.failed` event naming a rejected refresh token or a 401; worker output (`item.*`) never matches.
+/// Returns the reason; None when unreadable or absent.
+pub fn auth_rejected(log: &Path) -> Option<String> {
+    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
+    text.lines().find_map(|l| {
+        let m = match serde_json::from_str::<serde_json::Value>(l) {
+            Ok(v) if matches!(v["type"].as_str(), Some("error" | "turn.failed")) => v["message"].as_str().or(v["error"]["message"].as_str()).unwrap_or_default().to_lowercase(),
+            Err(_) if l.contains("ERROR codex_") => l.to_lowercase(),
+            _ => return None,
+        };
+        if m.contains("refresh token") && (m.contains("already used") || m.contains("expired") || m.contains("revoked") || m.contains("invalid")) || m.contains("refresh_token_") {
+            Some("refresh token rejected".into())
+        } else if m.contains("401 unauthorized") || m.contains("auth error: 401") {
+            Some("401 Unauthorized".into())
+        } else { None }
+    })
+}
+
+/// `<install>/login-off/<bin>` (#1446): line 1 the `last_refresh` of `auth.json` when the login was rejected, line 2
+/// the reason. It reads not logged in until a re-login changes `last_refresh`.
+pub fn mark_login_off(install: &Path, bin: &str, reason: &str) -> std::io::Result<()> {
+    let dir = install.join("login-off");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join(bin), format!("{}\n{reason}\n", codex_refreshed().unwrap_or_default()))
+}
+
+fn codex_refreshed() -> Option<String> {
+    kind_refresh("codex", None, std::fs::read_to_string(codex_home()?.join("auth.json")).ok().as_deref()).1
+}
+
+/// The reason of a rejected login still current at `refreshed` (#1446).
+fn login_off(install: &Path, bin: &str, refreshed: Option<&str>) -> Option<String> {
+    let text = std::fs::read_to_string(install.join("login-off").join(bin)).ok()?;
+    let (at, reason) = text.split_once('\n')?;
+    (at == refreshed.unwrap_or_default()).then(|| reason.trim().to_string()).filter(|r| !r.is_empty())
+}
+
 /// The final text of a turn: Claude's last `result`, else Codex's last `agent_message`.
 pub fn final_text(events: &[serde_json::Value]) -> Option<String> {
     events.iter().rev().find_map(|v| {
@@ -1975,8 +2013,8 @@ pub fn agent_runtimes() -> &'static [&'static str] {
 }
 
 /// One row per runtime: `runtime`, `path` (null: not installed), `version`, `login`, `account`, `kind`, `refreshed`
-/// (null: unknown or none).
-pub fn agents() -> serde_json::Value {
+/// (null: unknown or none), `reason` of a rejected login (#1446).
+pub fn agents(install: &Path) -> serde_json::Value {
     let mut seen: std::collections::HashMap<&str, serde_json::Value> = std::collections::HashMap::new();
     let rows = agent_runtimes().iter().map(|rt| {
         let bin = if *rt == "claude" { "claude" } else { "codex" };
@@ -1990,7 +2028,10 @@ pub fn agents() -> serde_json::Value {
             let auth = (bin == "codex").then(|| codex_home().and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())).flatten();
             let (kind, refreshed) = kind_refresh(bin, out.as_ref().map(|o| o.1.as_str()), auth.as_deref());
             let (state, account) = login(bin, out);
-            serde_json::json!({"path": p.display().to_string(), "version": ver, "login": state, "account": account, "kind": kind, "refreshed": refreshed})
+            // Codex's `login status` reads logged in with a dead refresh token: the last rejection wins until re-login
+            let reason = (state == "logged in").then(|| login_off(install, bin, refreshed.as_deref())).flatten();
+            let state = if reason.is_some() { "not logged in" } else { state };
+            serde_json::json!({"path": p.display().to_string(), "version": ver, "login": state, "account": account, "kind": kind, "refreshed": refreshed, "reason": reason})
         }).clone();
         row["runtime"] = serde_json::json!(rt);
         row
@@ -2005,7 +2046,7 @@ pub fn agent_text(r: &serde_json::Value) -> String {
         (Some("not installed"), _) => return format!("{rt} · not installed"),
         (Some("logged in"), Some(a)) => a.to_string(),
         (Some("logged in"), None) => "logged in, account unknown".into(),
-        (Some("not logged in"), _) => "not logged in".into(),
+        (Some("not logged in"), _) => r["reason"].as_str().map_or("not logged in".into(), |x| format!("not logged in ({x})")),
         _ => "login unknown".into(),
     };
     format!("{rt} {} · {tail}", r["version"].as_str().unwrap_or("unknown"))
@@ -2017,6 +2058,7 @@ pub fn agents_line(r: &serde_json::Value) -> String {
     let login = match (s("login", "unknown").as_str(), r["account"].as_str()) {
         ("logged in", Some(a)) => format!("logged in as {a}"),
         ("logged in", None) => "logged in, account unknown".into(),
+        ("not logged in", _) if r["reason"].is_string() => format!("not logged in ({})", s("reason", "")),
         (l, _) => l.to_string(),
     };
     let version = if r["path"].is_null() { "-".into() } else { s("version", "unknown") };
@@ -2525,6 +2567,37 @@ mod tests {
         assert_eq!(agents_line(&serde_json::json!({"runtime": "codex", "path": "/bin/codex", "version": "0.1", "login": "logged in", "account": "a@b.c", "kind": "chatgpt", "refreshed": "2026-10-19T18:14:41Z"})),
             "codex  /bin/codex  0.1  logged in as a@b.c  kind chatgpt  refreshed 2026-10-19T18:14:41Z");
         assert_eq!(agents_line(&serde_json::json!({"runtime": "claude", "path": null, "login": "not installed"})), "claude  not installed  -  not installed  kind unknown  refreshed unknown");
+        // #1446 A2: a rejected login shows its reason
+        let off = serde_json::json!({"runtime": "codex", "path": "/bin/codex", "version": "0.1", "login": "not logged in", "account": "a@b.c", "reason": "refresh token rejected"});
+        assert_eq!(agent_text(&off), "codex 0.1 · not logged in (refresh token rejected)");
+        assert!(agents_line(&off).contains("  not logged in (refresh token rejected)  "), "{}", agents_line(&off));
+    }
+
+    // Chain: #1446 A1/A3. Risk: Codex's dead refresh token reads logged in and burns retries, worker output that
+    // quotes the error marks the login off, or the mark survives a re-login.
+    #[test]
+    fn rejected_codex_login_is_read_from_recorded_lines_until_relogin() {
+        let dir = std::env::temp_dir().join(format!("taskq-auth-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("T1-1.log");
+        let check = |text: &str| { std::fs::write(&log, text).unwrap(); auth_rejected(&log) };
+        // recorded on hermes-fra1, T1420-6308286799.log (#1424)
+        assert_eq!(check("2026-10-21T08:00:00.000000Z ERROR codex_login::auth::manager: Failed to refresh token: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.\n").as_deref(), Some("refresh token rejected"));
+        assert_eq!(check("2026-10-21T08:00:00.000000Z ERROR codex_login::auth::manager: Failed to refresh token status=401 Unauthorized detail=TokenErrorDetail { error_code: Some(\"refresh_token_reused\") }\n").as_deref(), Some("refresh token rejected"));
+        assert_eq!(check("2026-10-21T08:00:01.000000Z ERROR codex_models_manager::manager: failed to refresh available models: unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again.\n").as_deref(), Some("401 Unauthorized"));
+        assert_eq!(check("{\"type\":\"turn.failed\",\"error\":{\"message\":\"unexpected status 401 Unauthorized: Provided authentication token is expired. Please try signing in again., auth error: 401, auth error code: token_expired\"}}\n").as_deref(), Some("401 Unauthorized"));
+        // worker output quoting the same text is not Codex's own error
+        assert_eq!(check("{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ERROR codex_login::auth::manager: Failed to refresh token: refresh token was already used\"}}\n"), None);
+        assert_eq!(check("{\"type\":\"error\",\"message\":\"stream disconnected\"}\nworker said 401 Unauthorized\n"), None);
+        assert_eq!(auth_rejected(&dir.join("missing.log")), None);
+        // the mark holds until auth.json's last_refresh changes (a re-login)
+        mark_login_off(&dir, "codex", "refresh token rejected").unwrap();
+        let at = codex_refreshed();
+        assert_eq!(login_off(&dir, "codex", at.as_deref()).as_deref(), Some("refresh token rejected"));
+        assert_eq!(login_off(&dir, "codex", Some("2099-01-01T00:00:00Z")), None);
+        assert_eq!(login_off(&dir, "claude", None), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Chain: CLI input boundary -> native stream -> acceptance. Risk: an old turn or a process exit consumes new input.
