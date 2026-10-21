@@ -66,3 +66,29 @@ No production Stop, recovery, policy change, update or project registration was
 performed. WKWebView/WebView2 operation dispatch, native picker window ownership
 and owner actual-size review remain unverified. GitHub publication still needs
 green merge-result `merge_group` CI (§ 7); this worker does not wait for CI.
+
+## Final candidate
+
+Frozen implementation: `a6a69fa9a8603da70533f4aa747fc40a1eb6194f`; rebased on
+`origin/main` at `2f6a2d2c9ac427f9687b64714bd2cfd21805773c`.
+The final canonical gate again failed: Rust 444 passed, 18 failed, 34 ignored;
+163.168 s including setup/build. The 18 failing names match the initial run.
+Worker host-authority refusals remain sandbox-blocked; other assertions are
+unqualified. The gate stopped at Rust, so downstream checks are separate evidence.
+
+All 17 `tests/*.test.cjs` component checks passed separately. The isolated
+`TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest` passed
+97 fold traces, formats and staged private telemetry capture. Board state was
+intentionally not read; neither the offline selftest nor these fixtures perform
+a production operation.
+
+`docs/shots/update.sh` completed from the frozen implementation in an isolated
+installation. Its WKWebView project-menu and summary-icon captures were opened
+and inspected; the menu has launchers rather than confirmation controls.
+The committed native manifest records the exact source, binary, UI blobs and
+image hashes. These two README images plus the two placement images above make
+four images in this review set (V38). They qualify native menu rendering only;
+workspace dispatch, native picker ownership and actual effects remain unverified.
+`sh docs/shots/check.test.sh` passed the fresh/stale/malformed/missing provenance
+cases. Owner actual-size acceptance is requested through TaskQ; no acceptance is
+inferred from an exported image or a passing test.
