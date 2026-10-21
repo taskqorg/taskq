@@ -67,5 +67,11 @@
     "src/task-controls.js": "a838c39718876baf5b82fa67b8b02fe6c02e91b4",
     "tests/task-controls.test.cjs": "1e0a958221e9050529d0b8470ecf5424382b4bd4",
     "docs/design/task-controls.md": "060b538219c1377297df6d7a0f120ea74fc60a03"
+  },
+  "validation": {
+    "fullRustIntegrationSelftestCommit": "8f91dcb6c6209ced681bc3d3239f3c735d99f0c5",
+    "receiptWordingBrowserAndNativeCommit": "a0c1db68d5dd35ddaced64b8fbfe60507677a2e4",
+    "fullRustOutcome": "444 passed; 20 failed (19 worker-authority refusals, 1 native cancellation-pipe failure); 35 ignored",
+    "publication": "final-SHA and merge_group CI remain required"
   }
 }
