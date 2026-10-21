@@ -39,7 +39,12 @@ fn read_only_entry(p: &Path) -> bool {
 /// Workspace: the project's git common dir (`<root>/.git`), so fetch, commit and push work from linked worktrees (#1490).
 // ponytail: a directory `.git` only; a root whose `.git` is a pointer file keeps Codex's read-only default.
 fn git_dir(mode: &str, root: &Path) -> Option<PathBuf> {
-    Some(root.join(".git")).filter(|g| mode == "workspace" && git_read_only(g).iter().all(|p| p.exists()))
+    // The worker writes `<root>` itself: a symlink planted in an earlier turn would redirect these mounts.
+    // ponytail: check-then-mount races a concurrent worker of this project; open-by-fd mounts if that matters.
+    let real = |p: &Path, dir: bool| std::fs::symlink_metadata(p).is_ok_and(|m| if dir { m.is_dir() } else { m.is_file() });
+    let g = root.join(".git");
+    let [hooks, config] = git_read_only(&g);
+    (mode == "workspace" && real(&g, true) && real(&hooks, true) && real(&config, false)).then_some(g)
 }
 
 /// Host-side git runs hooks and config outside the sandbox: both stay read-only, and must exist to be masked.
@@ -137,6 +142,9 @@ mod tests {
         let roots = format!("sandbox_workspace_write.writable_roots=[{:?}]", git.to_str().unwrap());
         assert_eq!(codex_args("workspace", &root, &req)[4], roots, "native Codex keeps <cwd>/.git read-only without it");
         assert_eq!(codex_args("restricted", &root, &req), req);
+        std::fs::remove_file(git.join("config")).unwrap();
+        std::os::unix::fs::symlink(home, git.join("config")).unwrap();
+        assert!(!write_mounts("workspace", &root, ch, home).contains(&git), "a planted symlink never redirects a mount");
         std::fs::remove_dir_all(&root).ok();
     }
 
