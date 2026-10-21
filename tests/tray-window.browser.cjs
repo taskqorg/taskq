@@ -18,6 +18,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
     assert.deepEqual(await header.boundingBox(),box,'header moved during scroll');
    }
    assert.equal(await page.locator('[data-route=home]').count(),1,'bottom Home remains');
+   await page.locator('.shell-overflow > summary').click();
    for(const [selector,action] of [['[data-a=pin]','pin'],['[data-a=top]','top'],['[data-a=size-anchor]','size-anchor'],['[data-a=hide]','hide']]){
     const button=page.locator(selector);assert(await button.getAttribute('aria-label'));assert(await button.getAttribute('title'));
     await button.click();assert(await page.evaluate(a=>messages.some(m=>m.a===a),action));
@@ -27,6 +28,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
     assert.equal(await page.locator('[data-a=size-anchor]').getAttribute('title'),label);
    }
    await page.setViewportSize({width:320,height:800});
+   if(!await page.locator('.shell-overflow').evaluate(e=>e.open))await page.locator('.shell-overflow > summary').click();
    await page.locator('[data-route=settings]').click();
    assert(await page.evaluate(()=>messages.filter(m=>m.a==='size').at(-1).h<800),'content-fit cannot shrink after navigating to shorter content');
    await page.close();

@@ -1,0 +1,257 @@
+{
+    "os":  "10.0.26300",
+    "renderer":  {
+                     "protocolVersion":  "1.3",
+                     "product":  "Edg/155.0.4283.62",
+                     "revision":  "@aa3a7406ba8c53a83536df539f07124d73c899bd",
+                     "userAgent":  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+                     "jsVersion":  "15.5.9.7"
+                 },
+    "executableSha256":  "191efccc55de654fa83cb2d1afa65f660ed7924a04e91c65c192e7ec3dd83e8d",
+    "frames":  [
+                   {
+                       "title":  "Messages",
+                       "text":  "Messages\n⋯\n×\n\nThe workspace shell is ready. Messages and task answers are not available in this version. Open the task’s Board from the tray to answer it.\n\nWork sessions\nAgent settings",
+                       "viewport":  {
+                                        "width":  572,
+                                        "height":  429,
+                                        "dpr":  1.399999976158142
+                                    },
+                       "font":  "16px",
+                       "focus":  "\u003ch1 tabindex=\"-1\" title=\"Messages\"\u003eMessages\u003c/h1\u003e",
+                       "controls":  [
+                                        {
+                                            "name":  "Workspace navigation",
+                                            "box":  {
+                                                        "x":  483.44866943359375,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Messages",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  44.69866180419922,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Work sessions",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  80.69196319580078,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Agent settings",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  116.68527221679688,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Close workspace",
+                                            "box":  {
+                                                        "x":  528.1473388671875,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Work sessions",
+                                            "box":  {
+                                                        "x":  15.993304252624512,
+                                                        "y":  130.82589721679688,
+                                                        "width":  267.578125,
+                                                        "height":  32.85714340209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Agent settings",
+                                            "box":  {
+                                                        "x":  288.5714416503906,
+                                                        "y":  130.82589721679688,
+                                                        "width":  267.578125,
+                                                        "height":  32.85714340209961
+                                                    }
+                                        }
+                                    ],
+                       "overflow":  false,
+                       "error":  false,
+                       "file":  "webview2-workspace-messages.png",
+                       "sha256":  "985ce43d80c563375e4bed1ede9329a0d0e0745d8d19fec1fdbf6d24df8c6013"
+                   },
+                   {
+                       "title":  "Work sessions",
+                       "text":  "‹\nWork sessions\n⋯\n×\n\nWork sessions are not available here. Use the tray’s Agents view and the recorded native session links.",
+                       "viewport":  {
+                                        "width":  572,
+                                        "height":  429,
+                                        "dpr":  1.399999976158142
+                                    },
+                       "font":  "16px",
+                       "focus":  "\u003ch1 tabindex=\"-1\" title=\"Work sessions\"\u003eWork sessions\u003c/h1\u003e",
+                       "controls":  [
+                                        {
+                                            "name":  "Back",
+                                            "box":  {
+                                                        "x":  11.99776840209961,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Workspace navigation",
+                                            "box":  {
+                                                        "x":  483.44866943359375,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Messages",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  44.69866180419922,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Work sessions",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  80.69196319580078,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Agent settings",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  116.68527221679688,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Close workspace",
+                                            "box":  {
+                                                        "x":  528.1473388671875,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        }
+                                    ],
+                       "overflow":  false,
+                       "error":  false,
+                       "file":  "webview2-workspace-sessions.png",
+                       "sha256":  "4b3b624706f2e64e876d62ab06a004e2f98506d79c91c5f805724a5b53985464"
+                   },
+                   {
+                       "title":  "Agent settings",
+                       "text":  "‹\nAgent settings\n⋯\n×\n\nAgent settings are not available here. Use Settings → Agents in the tray. Opening this screen changes no runtime or permissions.",
+                       "viewport":  {
+                                        "width":  572,
+                                        "height":  429,
+                                        "dpr":  1.399999976158142
+                                    },
+                       "font":  "16px",
+                       "focus":  "\u003ch1 tabindex=\"-1\" title=\"Agent settings\"\u003eAgent settings\u003c/h1\u003e",
+                       "controls":  [
+                                        {
+                                            "name":  "Back",
+                                            "box":  {
+                                                        "x":  11.99776840209961,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Workspace navigation",
+                                            "box":  {
+                                                        "x":  483.44866943359375,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Messages",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  44.69866180419922,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Work sessions",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  80.69196319580078,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Agent settings",
+                                            "box":  {
+                                                        "x":  244.15179443359375,
+                                                        "y":  116.68527221679688,
+                                                        "width":  262.58929443359375,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        },
+                                        {
+                                            "name":  "Close workspace",
+                                            "box":  {
+                                                        "x":  528.1473388671875,
+                                                        "y":  3.9955358505249023,
+                                                        "width":  31.99776840209961,
+                                                        "height":  31.99776840209961
+                                                    }
+                                        }
+                                    ],
+                       "overflow":  false,
+                       "error":  false,
+                       "file":  "webview2-workspace-agents.png",
+                       "sha256":  "9e84e3a4f3e15f753754ffdae05d1509ac531cda9610cea086cbedb0afa30873"
+                   }
+               ],
+    "reload":  {
+                   "title":  "Agent settings",
+                   "error":  false
+               },
+    "back":  {
+                 "title":  "Messages",
+                 "focus":  "\u003cbutton data-route=\"agents\"\u003eAgent settings\u003c/button\u003e"
+             },
+    "boundary":  "Native TaskQ workspace window; local WebView2 DevTools input and unmodified renderer PNGs. Cargo development binary, isolated fixture, not installed layout or owner click/raise proof.",
+    "sourceCommit":  "253bda5a5ae10b702b86d4c0db6c1b5b1d8324e7",
+    "uiSources":  {
+                      "src/tray.rs":  "3284363e69316f89a264b3b927edb94040b41068",
+                      "src/tray.html":  "3b7485701179e494aec94bc72f779228886525e6",
+                      "src/tray-app.js":  "54b8285cb2951b625446d6efa8e7b0bd2055678a",
+                      "src/tray-view-state.js":  "cc96a5a739a73faca16211c81f4620620ad25932",
+                      "src/workspace.js":  "9efd5742e6f27f29426d38bfa591f505765b58b1",
+                      "src/workspace-entry.js":  "7fea56a57028549bc431f4c2bb223251410c597c",
+                      "src/app-shell.js":  "2e422108880ca84d6bb31a3ea82d0096140b2a76",
+                      "src/app-shell.css":  "e577f9e41dda2b0ad05c06dde97904a7933eabdb",
+                      "scripts/build-web.cjs":  "e06b1382f951b07ad9c391dde50e199e27dfd927"
+                  },
+    "targetGeometryQualification":  "Raw rectangles only: observed DPR 1.399999976158142 quantizes nominal 32 CSS px controls to 31.99776840209961; no strict A4 target-size PASS is claimed."
+}

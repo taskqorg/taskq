@@ -18,6 +18,7 @@ use crate::icon::{self, Rgba, compact};
 use crate::notify;
 
 const HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/tray.html"));
+const WORKSPACE_HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/workspace.html"));
 const FONTS: [u64; 4] = [14, 16, 18, 20];
 const PERIODS: [(&str, i64); 5] = [("5m", 300), ("1h", 3600), ("1d", 86400), ("1w", 604800), ("1mo", 2592000)];
 
@@ -32,6 +33,8 @@ fn alone(install: &Path) -> bool {
 enum Ev {
     Tick,
     Ipc(String),
+    Workspace(String),
+    WorkspaceEvaluated(u64, &'static str),
     Evaluated(u64, &'static str),
     Click(Rect),
     Shot,
@@ -59,6 +62,7 @@ struct Settings {
     /// Notification modes and cursors (`notify.rs`), kept as saved
     notify: Value,
     navigation: Value,
+    workspace_navigation: Value,
 }
 
 /// Pinned window (menu.md M13): pinned or not, the last display and the last top-left per display, physical pixels.
@@ -91,7 +95,7 @@ impl Settings {
         let size_anchor = v["size_anchor"].as_str().filter(|v| ["fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"top"}).to_string();
         let pin = Pin { size_anchor, attached_edge: "top".into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
         let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin,
-            navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
+            navigation: Value::Null, workspace_navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
         // an invalid or corrupt saved icon falls back to Summary (CI4)
         if icon::validate(&v["icon"]).is_empty() {
             s.icon = v["icon"].clone();
@@ -104,6 +108,9 @@ impl Settings {
         // M8: the web module validates route keys against the current registered snapshot.
         if v["navigation"].is_object() && v["navigation"]["schema"] == 1 && v["navigation"].to_string().len() <= 65536 {
             self.navigation = v["navigation"].clone();
+        }
+        if v["workspace_navigation"].is_object() && v["workspace_navigation"]["schema"] == 1 && v["workspace_navigation"].to_string().len() <= 65536 {
+            self.workspace_navigation = v["workspace_navigation"].clone();
         }
         if let Some(x) = v["view"].as_str().filter(|x| ["icon", "full"].contains(x) || (*x == "custom" && !self.icon.is_null())) {
             self.view = x.into();
@@ -133,7 +140,7 @@ impl Settings {
 
     fn save(&self, install: &Path) -> bool {
         let v = json!({"view": self.view, "font": self.font, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz, "icon": self.icon,
-            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation});
+            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation});
         let p = install.join("tray.json");
         if crate::data::json(&p).is_err() && fs::copy(&p, install.join("tray.json.corrupt")).is_err() {
             return false;
@@ -617,6 +624,7 @@ fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!(
 
 // The page owns asynchronous work; a submission result cannot acknowledge its execution.
 struct WebCalls {
+    workspace: bool,
     next: u64,
     pending: std::collections::BTreeMap<u64, (Instant, tracing::Span)>,
     counts: [u64; 4],
@@ -627,7 +635,7 @@ struct WebCalls {
 }
 impl WebCalls {
     fn new() -> Self {
-        let mut calls=Self{next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false};
+        let mut calls=Self{workspace:false,next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -739,7 +747,8 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     if calls.pending.contains_key(&0) {calls.fault("page-not-ready");return;}
     let Some(id)=calls.begin(name,Instant::now()) else {return};
     let p=proxy.clone();
-    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(Ev::Evaluated(id,web_result(&value)));}).is_err() {
+    let workspace=calls.workspace;
+    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
         calls.finish(id,"submit-error");
     }
 }
@@ -816,8 +825,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     })?;
     let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
     let mut ui: Option<(Window, WebView)> = None;
+    let mut workspace: Option<(Window, WebView)> = None;
+    let mut workspace_web: Option<WebCalls> = None;
+    let mut workspace_handoff=false;
     let mut tray: Option<TrayIcon> = None;
     let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
+    let mut workspace_shown=String::new();
     let mut hidden_at = Instant::now() - Duration::from_secs(1);
     let mut shown_at = hidden_at;
     let mut anchor: Option<Rect> = None;
@@ -846,6 +859,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
         if let Some(name)=native {let _=coreq::telemetry::capture::operation(name,||Ok::<_,&str>(()),|error|*error);}
 
         web.expire(Instant::now());
+        if let Some(calls)=&mut workspace_web {
+            calls.expire(Instant::now());
+            if calls.failed && !calls.notified {
+                calls.notified=true;
+                if let Some((_,wv))=&workspace {web_eval(wv,"window.taskqWebFault('native')","tray.web.notice",&proxy,calls);}
+            }
+        }
         if !web.pending.contains_key(&0)&&let Some((_,wv))=&ui&&let Some(selection)=crate::telemetry::diagnostic::take_web_selection(){
             web_eval(wv,&format!("taskq.receive({})",json!({"diagnose":selection})),"tray.web.diagnose",&proxy,&mut web);
         }
@@ -861,6 +881,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             }
         };
         match event {
+            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
+                if let Some((w,_))=&workspace {w.set_visible(false);}
+            }
+            Event::WindowEvent {window_id,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
@@ -930,7 +954,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => { if let Some((w,_))=&ui { w.set_visible(false); } }
             Event::WindowEvent { event: WindowEvent::Focused(false), .. } if snapshot.is_none() && !settings.pin.pinned => {
                 if let Some((w, _)) = &ui {
-                    if blur_refocuses(shown_at.elapsed()) {
+                    if blur_refocuses(shown_at.elapsed(),std::mem::take(&mut workspace_handoff)) {
                         w.set_focus();
                         return;
                     }
@@ -963,12 +987,16 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 notes(&install, &mut settings, &st, &mut asked, &mut bursts);
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
+                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
+                    if sig!=workspace_shown && !calls.failed && !calls.pending.contains_key(&0) {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,calls);}
+                }
                 if sig != shown && !web.pending.contains_key(&0) {
                     shown = sig;
                     push(&mut web,&ui, &st);
                 }
             }
             Event::UserEvent(Ev::Click(rect)) => {
+                workspace_handoff=false;
                 let Some((w, _)) = &ui else { return };
                 anchor = Some(rect);
                 // pinned: the click raises the window, never closes it (M13)
@@ -1005,6 +1033,26 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 web.finish(id,result);
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
+            Event::UserEvent(Ev::WorkspaceEvaluated(id,result)) => {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}
+            Event::UserEvent(Ev::Workspace(message)) => {
+                let (Some((w,wv)),Some(calls))=(&workspace,&mut workspace_web) else {return};
+                let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
+                if m["a"]=="web-error" {calls.errors(&m);return;}
+                if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
+                let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{calls.fault("invalid-web-context");return;}},None=>None};
+                let _continuation=context.as_ref().map(|context|context.span().entered());
+                if calls.failed {return;}
+                match m["a"].as_str() {
+                    Some("ready") => {calls.finish(0,"ok");web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
+                    Some("hide") => w.set_visible(false),
+                    Some("workspace-set") => {
+                        settings.set(&json!({"workspace_navigation":m["navigation"]}));
+                        let saved=m["navigation"].is_object() && m["navigation"]["schema"]==1 && settings.workspace_navigation==m["navigation"] && settings.save(&install);
+                        web_eval(wv,&format!("taskq.receive({})",json!({"viewStateError":if saved {Value::Null}else{json!("Workspace view state was not saved; close and reopen may lose navigation")}})),"tray.web.receive",&proxy,calls);
+                    }
+                    _ => calls.fault("unsupported-workspace-action"),
+                }
+            }
             Event::UserEvent(Ev::Ipc(m)) => {
                 let Ok(m) = serde_json::from_str::<Value>(&m) else {web.fault("invalid-ipc");return;};
                 let Some((w, _)) = &ui else { return };
@@ -1019,6 +1067,21 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if web.failed {return;}
                 match m["a"].as_str().unwrap_or("") {
+                    "workspace" if snapshot.is_none() => {
+                        if workspace.is_none() {
+                            let p=proxy.clone();
+                            let built=WindowBuilder::new().with_title("TaskQ Workspace").with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                                WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                            });
+                            match built {
+                                Ok(window)=>{workspace=Some(window);let mut calls=WebCalls::new();calls.workspace=true;workspace_web=Some(calls);}
+                                Err(error)=>{push(&mut web,&ui,&json!({"workspaceError":format!("Workspace unavailable: {error}")}));return;}
+                            }
+                        }
+                        workspace_handoff=w.is_visible() && !settings.pin.pinned;
+                        if let Some((window,_))=&workspace {window.set_visible(true);window.set_focus();}
+                        push(&mut web,&ui,&json!({"workspaceError":Value::Null}));
+                    }
                     "answer" if snapshot.is_none() => {
                         let mut request=m.clone();request["id"]=m["op"]["id"].clone();
                         if let Err(error)=answer_actions.submit(&request) {
@@ -1349,7 +1412,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
-        "navigation": s.navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
+        "navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
         "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "ai": {"request": crate::setup::last(install, true), "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
@@ -1483,8 +1546,8 @@ fn app_window(pinned: bool) {
 
 /// A blur this soon after the icon opened the popover takes the focus back instead of closing it:
 /// on Windows 11 the hidden-icons flyout retakes the foreground right after its icon is clicked.
-fn blur_refocuses(shown_for: Duration) -> bool {
-    shown_for < Duration::from_millis(300)
+fn blur_refocuses(shown_for: Duration, workspace_handoff: bool) -> bool {
+    !workspace_handoff && shown_for < Duration::from_millis(300)
 }
 
 /// Put the popover under a menu-bar icon or above a taskbar icon, inside the icon's monitor.
@@ -2317,8 +2380,9 @@ mod tests {
     // closes 15 ms later because the flyout retakes the foreground; or a later blur no longer closes it.
     #[test]
     fn blur_right_after_opening_keeps_the_popover() {
-        assert!(blur_refocuses(Duration::from_millis(15)));
-        assert!(!blur_refocuses(Duration::from_millis(300)) && !blur_refocuses(Duration::from_secs(5)));
+        assert!(blur_refocuses(Duration::from_millis(15),false));
+        assert!(!blur_refocuses(Duration::from_millis(300),false) && !blur_refocuses(Duration::from_secs(5),false));
+        assert!(!blur_refocuses(Duration::from_millis(15),true), "an intentional workspace handoff must not pull focus back to the tray");
     }
 
     // H-A2: host policy/readback cannot be confused with a project's lower ceiling or legacy writable scope.
@@ -2510,11 +2574,11 @@ mod tests {
     // Chain: § 4 tray settings input. Risk: webview input stores unknown values.
     #[test]
     fn settings_keep_only_known_values() {
-        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null };
+        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null };
         s.set(&json!({"view": "full", "font": 18, "period": "1w"}));
         s.set(&json!({"view": "x", "font": 15, "period": "2y"}));
         s.set(&json!({"period": "custom", "start": 50, "end": 50, "tz": "UTC"}));
-        assert!(s == Settings { view: "full".into(), font: 18, period: "1w".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null });
+        assert!(s == Settings { view: "full".into(), font: 18, period: "1w".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null });
         assert_eq!(s.range(1000), (50400 - 604800, 50400), "whole 14 h bins, the newest holds now");
         s.set(&json!({"period": "custom", "start": 40, "end": 160, "tz": "UTC"}));
         assert_eq!((s.range(1000), s.tz.as_str()), ((40, 160), "UTC"));
@@ -2544,16 +2608,22 @@ mod tests {
         s.pin = Pin { size_anchor: "bottom".into(), attached_edge: "top".into(), top: false, size: Some((480.0, 600.0)), pinned: true, display: "B".into(), pos: [("A".into(), (10, 20)), ("B".into(), (-1500, 300))].into() };
         // M8/UI02: navigation shares the existing settings save, independent of release version.
         s.set(&json!({"view":"full","period":"custom","start":40,"end":160,"tz":"UTC",
-            "navigation":{"schema":1,"current":{"page":"projects","taskFilter":["doing"],"scroll":120,"open":{"scope":true}},"trail":[]}}));
+            "navigation":{"schema":1,"current":{"page":"projects","taskFilter":["doing"],"scroll":120,"open":{"scope":true}},"trail":[]},
+            "workspace_navigation":{"schema":1,"current":{"page":"sessions","scroll":32},"trail":[{"page":"messages"}]}}));
         assert!(s.save(&install));
         let r = Settings::load(&install);
         assert!(r == s, "restart must retain navigation and every existing appearance/window setting");
         assert_eq!(r.navigation["current"]["scroll"], 120);
+        assert_eq!(r.workspace_navigation["current"]["page"], "sessions", "workspace and tray keep independent roots");
         let mut invalid_navigation = r.clone();
         invalid_navigation.set(&json!({"navigation":{"schema":2}}));
         assert!(invalid_navigation == r, "unsupported navigation cannot overwrite known settings");
         invalid_navigation.set(&json!({"navigation":{"schema":1,"current":{"page":"x".repeat(65536)}}}));
         assert!(invalid_navigation == r, "oversized IPC data cannot replace saved settings");
+        invalid_navigation.set(&json!({"workspace_navigation":{"schema":2}}));
+        assert!(invalid_navigation == r, "unsupported workspace state cannot overwrite either window");
+        invalid_navigation.set(&json!({"workspace_navigation":{"schema":1,"current":{"page":"x".repeat(65536)}}}));
+        assert!(invalid_navigation == r, "oversized workspace data cannot replace saved settings");
         assert!(r.pin == s.pin && r.font == 18);
         // M14: modes and cursors survive a restart as saved, unknown values included
         let mut s = r;

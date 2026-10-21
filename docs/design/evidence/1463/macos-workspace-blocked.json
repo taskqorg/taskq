@@ -1,0 +1,22 @@
+{
+  "sourceCommit": "f5076834927b1fe82003b3948643fd1d0e3da382",
+  "base": "06ee894cb68dbc68b98fca274ebb8b4eeb416157",
+  "renderer": "WKWebView",
+  "outcome": "sandbox-blocked; actual native workspace not observed",
+  "binarySha256": "f41956ad52c8da66c4fc72cb94a2437406edef20436d191b03d35a24a96b3fa6",
+  "appBinarySha256": "467bcfcfb312d113c344bda56b16b596556cf96fcf9ddf8c6a79d65c21565057",
+  "errors": [
+    "Computer Use: Invalid app (exact Cargo executable)",
+    "Computer Use: timeoutReached (first bundle attachment)",
+    "Computer Use: Running application not found: org.taskq.qualification1463",
+    "Computer Use: Invalid app: org.taskq.taskq",
+    "Native WKWebView: NSCocoaErrorDomain Code=513; NSPOSIXErrorDomain Code=1 Operation not permitted creating WebsiteData directories",
+    "Shell process inventory: operation not permitted: ps"
+  ],
+  "processCleanup": {
+    "identity": "dedicated fixture heartbeat PID equals the process group started by this probe",
+    "signal": "SIGTERM",
+    "verifiedAbsent": true
+  },
+  "scope": "Dedicated fixture installation only. No application code, assertions, permissions, installed services, task attempts or accepted review images changed."
+}

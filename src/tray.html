@@ -26,11 +26,11 @@ details[open]>summary:after{transform:rotate(90deg)}
 .project{width:100%;border:0;display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:6px;align-items:center;text-align:left;min-height:33px;padding:5px 4px}
 .project>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .counter{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:999px;font-size:max(12px,.8em);font-variant-numeric:tabular-nums;font-weight:500;line-height:1}
-.counter.filled{background:color-mix(in srgb,currentColor 23%,var(--surface))}
+.counter.filled{background:color-mix(in srgb,currentColor 12%,var(--surface))}
 .counter.zero{color:var(--muted);background:light-dark(#eff1f3,#2b3138)}
 .work{color:var(--work)}.ask{color:var(--ask)}.ready{color:var(--ready)}.failed{color:var(--failed)}
 .options{display:flex;gap:5px;flex-wrap:wrap;padding:4px}
-.options button{flex:1 0 38px}.options [data-a^=notify]{padding-inline:4px}
+.options button{flex:1 0 38px}.options [data-a^=notify]{flex-basis:auto;padding-inline:4px}
 .options button.rec{border-color:var(--work);font-weight:600}
 button[aria-pressed=true]{background:light-dark(#dce7e1,#354a40);border-color:var(--work)}
 .periods button{flex:1 0 auto;padding:4px 6px}

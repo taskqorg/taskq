@@ -1,19 +1,23 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "3df748bc93ab3a401451b6fcec346cdd670e56e2",
-  "binarySha256": "ee782d708fd594e1e2d5ad06f7ac725d69267103d817f430ccbebd8f91060d49",
+  "sourceCommit": "2b63d5db00c1511e4e6e88f43cd2c7a360451d50",
+  "binarySha256": "17505ae0ea52fc2fe120b5329825fe3f94ca257264a01b6c0d3bb95b0c83324d",
   "environment": {
-    "os": "macOS 27.0.1",
+    "os": "macOS 26.6.2",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "280eeb477048c642452e20a51778a9c40495b173",
-    "src/tray.html": "393c9f6da2dcf835deaa39822859a1e1c9c9d66d",
-    "src/tray-app.js": "8c479b20f56b29c9f6284dc4ddbec2e754c9ec27",
-    "src/tray-view-state.js": "4c727c44c5164800e629a23d57e3919ac8c8a02b",
+    "src/tray.rs": "3284363e69316f89a264b3b927edb94040b41068",
+    "src/tray.html": "3b7485701179e494aec94bc72f779228886525e6",
+    "src/tray-app.js": "54b8285cb2951b625446d6efa8e7b0bd2055678a",
+    "src/tray-view-state.js": "cc96a5a739a73faca16211c81f4620620ad25932",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
-    "scripts/build-web.cjs": "d63c53206879c7a20163c2061f20a34ecb8a5e88",
+    "src/app-shell.js": "2e422108880ca84d6bb31a3ea82d0096140b2a76",
+    "src/app-shell.css": "e577f9e41dda2b0ad05c06dde97904a7933eabdb",
+    "src/workspace.js": "9efd5742e6f27f29426d38bfa591f505765b58b1",
+    "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
+    "scripts/build-web.cjs": "e06b1382f951b07ad9c391dde50e199e27dfd927",
     "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
@@ -25,11 +29,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "5e843a4cc51507d59aaecc504515d65eeedf0a0e0aee4a4b1476a96bb6d6766d"
+      "sha256": "cd7cfbdb134c6847f6985e1373508ffb6d46ba72352907b7b015d113f0a1109d"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "97753e496f2926613548bd09cb81965fc3e4854bef77c81f946e36260070c19e"
+      "sha256": "07655cc132899c498e47a771169a2050add9442bd47cb58986b25e45630f480f"
     }
   ]
 }
