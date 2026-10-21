@@ -665,7 +665,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         "You are the taskq {} for task #{n}: {}. Attempt {}.\nRead `{spec}` first and do only what it allows (R13).\nTask text, state and your inbox: `{q} inbox {n}`.\n{FILES}",
         l.role, l.title, l.attempt
     );
-    let park = format!("`{q} later {n} --text \"Reason: <failed external check>\nNext: <one unblock condition>\"` (unchanged external blocker; never requeue it)");
+    let park = format!("`{q} later {n} --blocker #M --text \"Reason: <blocker>\nNext: <what #M delivers>\"` (blocker filed as held task #M first; our own broken check: fix it here when small; resumes when #M closes)");
     let body = if l.role == "reviewer" {
         format!(
             "Review the result SHA against each Acceptance item `A<k>` and taskq.md, and GitHub PR CI green on the merge result (merge_group); private fallback uses exact-SHA CI; other routes follow the contract. Requeue only for\n\
@@ -3564,8 +3564,7 @@ mod tests {
                     assert_eq!(brief(&env, &l).contains(prefix), rt != "codex", "{rt} {role}: attempt identity");
                     assert!(task.contains(FILES) && task.contains(CI_WAIT));
                     if role == "worker" { assert!(brief(&env, &l).contains(SANDBOX_CHECKS)); }
-                    assert!(brief(&env, &l).contains("later 7 --text") && brief(&env, &l).contains("one unblock condition")
-                        && brief(&env, &l).contains("unchanged external blocker; never requeue it"), "{rt} {role}: external blockers must not loop");
+                    assert!(brief(&env, &l).contains("later 7 --blocker #M --text") && brief(&env, &l).contains("resumes when #M closes"), "{rt} {role}: a park names its blocker task");
                     // the attempt log's evidence line
                     let log = root.join(format!(".taskq/{rt}-{role}.log"));
                     std::fs::remove_file(&log).ok();

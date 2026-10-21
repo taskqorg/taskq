@@ -217,7 +217,7 @@ pub fn views(board: &dyn Board, cache: &mut HashMap<u64, (i64, Vec<Comment>)>, d
         // only a task that would be ready reads its dependencies (§ 4 budget)
         let mut projection = core::project(issue.number, &log, false);
         let ready = !is_held(&issue) && projection.task.state == State::Ready;
-        let blockers = if ready { blockers(board, &issue.body, Some(&open), deps) } else { vec![] };
+        let blockers = if ready { blockers(board, &core::dep_body(&issue.body, &projection.task), Some(&open), deps) } else { vec![] };
         if !blockers.is_empty() { projection.task.state = State::Waiting; }
         if is_held(&issue) {
             projection.task.state = State::Held;
@@ -4410,6 +4410,35 @@ mod tests {
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Doing);
         assert!(b.comments(user).unwrap().is_empty() && b.issue(user).unwrap().labels.is_empty(), "no taskq label: never a task");
+    }
+
+    // Chain: § 2 worker park (#1486). Risk: a parked task starts while its blocker (a held draft too) is open, never
+    // resumes after the close, or hides the blocker link in status.
+    #[test]
+    fn worker_park_waits_on_its_blocker_until_it_closes() {
+        let b = Fake::default();
+        let blocker = b.create("fix shots", "", &["q-held".into()]).unwrap();
+        let n = b.create("T", "", &["taskq".into()]).unwrap();
+        let mut c = cfg("mac");
+        c.root = std::env::temp_dir().join(format!("taskq-park-{}", crate::runtime::uuid()));
+        c.install = c.root.clone();
+        std::fs::create_dir_all(&c.root).unwrap();
+        let raw = json!({});
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        b.comment(n, &core::entry("later", &[&format!("#{blocker}")], Some(a), "Reason: r")).unwrap();
+        *e.borrow()[0].1.borrow_mut() = Some(0);
+        s.pass().unwrap();
+        assert_eq!((task(&b, n).attempt, e.borrow().len()), (None, 1), "parked, no new spawn");
+        assert!(b.issue(n).unwrap().labels.contains(&"q-blocked".to_string()));
+        let report = crate::snapshot::read(&b, &c, &raw, &[]).text(&c, &raw).unwrap();
+        assert!(report.contains(&format!("blocked ([#{blocker}](https://board/{blocker}) open)")), "{report}");
+        b.close(blocker).unwrap();
+        s.pass().unwrap();
+        assert_eq!(task(&b, n).state, State::Doing);
+        std::fs::remove_dir_all(&c.root).ok();
     }
 
     // Chain: § 1 `Depends on <repo>#N` (#1126). Risk: a task blocked by another repository never starts, starts on a
