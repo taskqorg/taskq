@@ -106,7 +106,7 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | `review` | `spawn reviewer <rt>:<session> <host>` | `review` | no live reviewer/pending publication; attempt = this id |
 | `review` | `ask attempt` | `ask` | reviewer's card; result kept |
 | `review` | `publish [attempt]` | `review` | save `publication` verdict, end reviewer; service publishes; ignore duplicate |
-| `review` | `publication-failed` | `ready` / `ask` | CI failure: +1 retry; 3rd asks |
+| `review` | `publication-failed` / `publication-blocked` | `ready` / `ask` | CI failure: +1 retry, 3rd asks / owner-only blocker; answer resumes |
 | `review` | `enqueued <id>` | `review` | queue receipt; ignore duplicate |
 | `review` | `rebased <sha>` | `review` | private fallback: update result, stale gate, clear publication; review |
 | `review` | `close attempt` or `close` | closed | verdict text; written after publication (§ 7); ignored while a gate is not `approved` |
@@ -234,21 +234,20 @@ Worker brief: task, attempt, branch, commands, contract path (release URL if abs
 7. CI wait (worker, reviewer): at most one poll a minute (`gh pr checks <PR> --watch --interval 60`); never `gh run watch` (3 s polls) or `gh run view` without `--json`.
 8. Self-fix (taskq itself): done on merged PR + green `merge_group` CI; no per-task live install proof. Before release, one owner batch of live host checks, results in the version PR (§ 8); release waits for owner go; its defects `later` unless `p0`.
 ### Result and close verdicts
-`result` body: `Changed: <user effect>` (1-2 lines), `Checks: <command -- outcome>` (one line per check, 1-8 lines), then `Open: <remaining item|none>` (1-2 lines); at most 12 lines, at most 240 characters per line. Keep exact commands and platform qualifications (R12).
+`result` body: `Changed: <user effect>` (1-2 lines), `Checks: <command -- outcome>` (one line per check, 1-8 lines), then `Open: <remaining item|none>` (1-2 lines); 12 lines max, 240 characters each. Keep exact commands and platform qualifications (R12).
 `--text`: literal Changed/Open, optional Done/Problem (§ 2), `--option`/`--recommend`/`--link`; absent: no card. `--checks` prefixes Checks. SHA: log header. Changed may link one PR/evidence with [risk](https://github.com/taskqorg/specq/blob/main/caveman/rules/changes.md#merge-request-description-markdown), either route.
 `close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA).
-Review Acceptance/contract. Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). No research/proposal ask and owner answer before result/close: task-fit gap. Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim with links.
+Review Acceptance/contract. Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). No research/proposal ask and owner answer before result/close: task-fit gap. Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim, linked.
 
 `close`: board API, except private fallback rebase/push:
-- `direct`: branch `taskq-<N>` equals the result SHA, `main` is its ancestor, CI green on that SHA; move `main` to it
-  without force, read back, close. GitLab has no fast-forward ref API: `direct` there merges a fast-forward MR.
-- GitHub `pr`: one PR at result SHA; no rebase check. `close` records `publish`, ends review. Service readies drafts, enqueues at expected SHA; the attempt host polls, others once its heartbeat is stale. Close needs merge + green `merge_group` CI. Conflict: `main-moved`; unknown: pending. Cancel dequeues, hand-typed too. Closed unmerged: dequeue, close open `taskq-<N>` PRs; one comment (task link, reason), keep branch; skip merged/closed; log unknown; requeue/later/failed keep PRs.
-- Private GitHub without queue: service fetches/rebases a clean owned task worktree at result SHA, leased-pushes, records `rebased`, waits exact-SHA CI, merges under strict main protection, reads back. Conflict: `main-moved`; dirty/missing/unknown: untouched. Rebase stales approval for review. Public: queue required, Git-free.
+- `direct`: branch `taskq-<N>` = result SHA, `main` its ancestor, CI green on it; move `main` to it without force, read back, close. GitLab (no fast-forward ref API): `direct` merges a fast-forward MR.
+- GitHub `pr`: one PR at result SHA; no rebase check. `close` records `publish`, ends review. Service readies drafts, enqueues at expected SHA; attempt host polls, others once its heartbeat is stale. Close: merge + green `merge_group` CI; failed push CI: noted. Conflict: `main-moved`; unknown: pending; merged on failed CI or dequeued: `publication-blocked` at once. Cancel dequeues, hand-typed too. Closed unmerged: dequeue, close open `taskq-<N>` PRs; one comment (task link, reason), keep branch; skip merged/closed; log unknown; requeue/later/failed keep PRs.
+- Private GitHub without queue: service rebases a clean owned task worktree at result SHA, leased-pushes, records `rebased`, waits exact-SHA CI, merges under strict main protection, reads back. Conflict: `main-moved`; dirty/missing/unknown: untouched. Rebase stales approval for review. Public: queue required, Git-free.
 - GitLab `pr`: main ancestor, green exact-SHA CI, fast-forward/semi-linear protection; squash-merge/readback. Incident ancestry: squash merge SHA, direct result SHA.
-- No commit (research, or SHA already on `main`): verify ancestry, close.
-- Pending/missing CI: refuse, state unchanged; pending GitHub publication stays in review. Failed CI/conflict: requeue as above.
-- On the attempt host: remove a clean `.worktrees/taskq-<N>` and its local branch; dirty ones stay.
-- Merged but open: with no open task PR/MR into main, reconcile one merged task PR/MR into any base at the result SHA; receipt `merged #P [into <base>] as SHA`, no second merge/requeue; includes partial publication and release-branch merges, which close no issue. Reviewer's `ask` keeps its result, so an owner close option works; `doing`/worker ask has no result: `later`, then `close`.
+- No commit (research, SHA on `main`): check ancestry, close.
+- Pending/missing CI: refuse, state unchanged; pending GitHub publication stays in review. Failed CI/conflict: requeue.
+- Attempt host: remove a clean `.worktrees/taskq-<N>` and local branch; dirty stay.
+- Merged but open: with no open task PR/MR into main, reconcile one merged task PR/MR into any base at the result SHA; receipt `merged #P [into <base>] as SHA`, no second merge/requeue; includes partial publication and release-branch merges (close no issue). Reviewer `ask` keeps its result, so an owner close option works; `doing`/worker ask has no result: `later`, then `close`.
 
 **Delivery presets** are § 9 `delivery` `{preset, revision}`, the owner's (R9; revision +1 per owner edit): `auto-merge` (the `pr` route), `direct`, `review-pr` (`pr` after the owner gate). `local` and `push-branch` are refused. Without `delivery`: `publish` preset, revision 0. `close` ends its verdict with `delivery <preset> r<revision>: <receipt>`. Detail: [agent behavior](docs/design/agent-behavior.md#contract-detail).
 ### Recipes and owner gates

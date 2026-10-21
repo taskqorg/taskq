@@ -264,7 +264,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                 Publish::Done(_) => ("ok", "none"),
                 Publish::Pending(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("retried", "none"),
                 Publish::MainMoved(m) => ("failed", crate::profile::class(m)),
-                Publish::Failed(m) => ("failed", crate::profile::class(m)),
+                Publish::Failed(m) | Publish::Blocked(m) => ("failed", crate::profile::class(m)),
             };
             crate::profile::stage("checks", n, seen.0, &seen.1, Some(began.elapsed()), outcome, err, crate::profile::Usage::NoModel);
             if outcome == "retried" { seen.2 = Some((outcome, err)); }
@@ -276,7 +276,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                     r.extra = m;
                     r
                 }
-                Publish::Pending(m) => Receipt::rejected(n, op, format!("not closed: {m}")),
+                Publish::Pending(m) | Publish::Blocked(m) => Receipt::rejected(n, op, format!("not closed: {m}")),
                 Publish::Enqueued(_) | Publish::Rebased(_) => Receipt::rejected(n, op, "publication needs the service"),
                 Publish::MainMoved(m) => {
                     act(b, &cfg.root, n, "requeue", &["main-moved"], &m, &Op::default())
@@ -309,8 +309,21 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
         Publish::Rebased(sha) => write("rebased", &[&sha], ""),
         Publish::MainMoved(m) => write("requeue", &["main-moved"], &m),
         Publish::Failed(m) => write("publication-failed", &[], &core::limit_text(n, &t, "requeue", &format!("publication failed: {m}"))),
+        Publish::Blocked(m) => write("publication-blocked", &[], &blocked_card(n, &m)),
         Publish::Pending(m) => Receipt::rejected(n, &op, m),
     }
+}
+
+/// § 2 ask card of a publication only the owner can unblock (#1413); its answer resumes publication.
+fn blocked_card(n: u64, reason: &str) -> String {
+    let reason: String = reason.chars().take(200).collect();
+    [
+        "Done: the reviewed result is in publication; the service cannot finish it.".to_string(),
+        format!("Problem: {reason}"),
+        "1. retry: fix it on the board (rerun CI or re-enqueue the PR), then publish again ★".into(),
+        "2. later: park the task until the owner requeues it".into(),
+        format!("To answer: `taskq answer {n}.K` or comment `K`; `later` needs the CLI form."),
+    ].join("\n")
 }
 
 /// § 7: a gated task or a `review-pr` project publishes only the owner's approved result.

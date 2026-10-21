@@ -161,18 +161,32 @@ impl GitHub {
     }
 
     /// § 7: qualify the merge result, never substitute green checks on the original head.
-    fn merge_ci(&self, sha: &str) -> Result<()> {
+    /// Err: pending or unknown; `Ok(Err)`: the merge result's CI failed; `Ok(Ok)`: green, plus a note on ignored push failures.
+    fn merge_ci(&self, sha: &str) -> Result<Result<String>> {
         if !hex40(sha) { return Err("merge result SHA unknown".into()); }
         let v = self.api.call("GET", &format!("/actions/runs?event=merge_group&head_sha={sha}&per_page=100"), None)?.json()?;
         let runs = v["workflow_runs"].as_array().ok_or("merge_group CI unknown")?;
-        if !runs.iter().any(|r| r["head_sha"] == sha && r["event"] == "merge_group" && r["status"] == "completed" && r["conclusion"] == "success") {
+        let group: Vec<&Value> = runs.iter().filter(|r| r["head_sha"] == sha && r["event"] == "merge_group").collect();
+        if !group.iter().any(|r| r["status"] == "completed" && r["conclusion"] == "success") {
+            if let Some(r) = group.iter().find(|r| r["status"] == "completed") {
+                return Ok(Err(format!("merge_group CI {} {} on merge result {sha}", s(r, "name"), s(r, "conclusion"))));
+            }
             return Err(format!("merge_group CI not green on merge result {sha}"));
         }
         // #1343: the post-merge push runs on main retest the same tree and held close ~7 minutes; only merge_group Actions suites count.
-        let suites: Vec<&Value> = runs.iter().filter(|r| r["event"] == "merge_group").map(|r| &r["check_suite_id"]).collect();
-        let keep = |c: &Value| c["app"]["slug"] != "github-actions" || suites.contains(&&c["check_suite"]["id"]);
-        if let Some(fail) = self.ci_where(sha, &keep)? { return Err(fail); }
-        Ok(())
+        // #1413: a failed push run never holds close; the close receipt names it.
+        let suites: Vec<&Value> = group.iter().map(|r| &r["check_suite_id"]).collect();
+        let ignored = std::cell::RefCell::new(vec![]);
+        let keep = |c: &Value| {
+            let kept = c["app"]["slug"] != "github-actions" || suites.contains(&&c["check_suite"]["id"]);
+            if !kept && c["status"] == "completed" && !matches!(c["conclusion"].as_str(), Some("success" | "neutral" | "skipped")) {
+                ignored.borrow_mut().push(format!("{} {}", s(c, "name"), s(c, "conclusion")));
+            }
+            kept
+        };
+        if let Some(fail) = self.ci_where(sha, &keep)? { return Ok(Err(fail)); }
+        let ignored = ignored.into_inner();
+        Ok(Ok(if ignored.is_empty() { String::new() } else { format!("; push CI {} ignored", ignored.join(", ")) }))
     }
 
     fn queue(&self, pr: &Value, sha: &str, enqueued: bool) -> Result<Publish> {
@@ -183,9 +197,12 @@ impl GitHub {
         if p.get("mergeQueueEntry").is_none() { return Err("queue entry state unknown".into()); }
         if p["merged"] == true {
             let merged = p["mergeCommit"]["oid"].as_str().ok_or("merge result unknown")?;
-            self.merge_ci(merged)?;
+            let note = match self.merge_ci(merged)? {
+                Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
+                Ok(note) => note,
+            };
             self.publication_ancestry(merged, "pr");
-            return Ok(Publish::Done(format!("merged #{} as {merged}; merge-result CI green", pr["number"])));
+            return Ok(Publish::Done(format!("merged #{} as {merged}; merge-result CI green{note}", pr["number"])));
         }
         if p["merged"] != false { return Err("queue merge state unknown".into()); }
         if let Some(id) = p["mergeQueueEntry"]["id"].as_str() { return Ok(Publish::Enqueued(id.into())); }
@@ -196,7 +213,7 @@ impl GitHub {
                 Publish::MainMoved(format!("merge queue removed PR: {reason}"))
             } else if lower.contains("failed") || lower.contains("failure") {
                 Publish::Failed(format!("merge queue removed PR: {reason}"))
-            } else { Publish::Pending(format!("merge queue removed PR; owner action needed: {reason}")) });
+            } else { Publish::Blocked(format!("merge queue removed PR: {reason}")) });
         }
         if pr["draft"] == true {
             let v = self.graphql("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }", json!({"id": id}))?;
@@ -297,9 +314,12 @@ impl GitHub {
             let closed = self.api.call("GET", &format!("/pulls?head={owner}:{branch}&state=closed"), None)?.json()?;
             if let Some(pr) = closed.as_array().into_iter().flatten().find(|p| p["head"]["sha"] == sha && !p["merged_at"].is_null()) {
                 let merged = s(pr, "merge_commit_sha");
-                if queue || enqueued { self.merge_ci(&merged)?; }
-                else if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); }
-                let ci = if queue || enqueued { "merge-result CI green".to_string() } else { format!("exact-SHA CI green on {sha}") };
+                let ci = if queue || enqueued {
+                    match self.merge_ci(&merged)? {
+                        Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
+                        Ok(note) => format!("merge-result CI green{note}"),
+                    }
+                } else if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {sha}") };
                 return Ok(Publish::Done(format!("merged #{}{} as {}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
             }
         }
@@ -354,7 +374,7 @@ impl GitHub {
 }
 
 impl Board for GitHub {
-    fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha) }
+    fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }

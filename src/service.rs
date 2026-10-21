@@ -1419,7 +1419,7 @@ impl<'a> Service<'a> {
         // § 7 publication intent is board state; every host can reconcile the queue after a restart, even with focus off.
         // The attempt host polls while its heartbeat is fresh; others take over only when it is stale or gone (#1359).
         let live = |h: &str| h != me && hosts.iter().any(|i| i.title == format!("taskq host {h}") && now - i.updated <= ttl);
-        for v in views.iter().filter(|v| v.projection.task.publication.is_some() && !touched.contains(&v.issue.number)) {
+        for v in views.iter().filter(|v| v.projection.task.publication.is_some() && v.projection.task.state == State::Review && !touched.contains(&v.issue.number)) {
             // the publish verdict ends the attempt, so its last execution names the attempt host
             if v.projection.executions.last().is_some_and(|x| live(&x.host)) { continue; }
             // written since `views` read it: the next pass resumes from a fresh read
@@ -2373,6 +2373,32 @@ mod tests {
         let close = comments.iter().find(|e| e.body.starts_with("taskq: close")).unwrap();
         assert!(close.body.contains(verdict));
         assert_eq!(comments.iter().filter(|e| e.body.starts_with("taskq: close")).count(), 1);
+    }
+
+    // Chain: section 7 publication -> blocked outcome -> ask in one pass -> answer -> retry -> close (#1413).
+    // Risk: a publication only the owner can unblock polls for hours with no board signal.
+    #[test]
+    fn blocked_publication_asks_the_owner_in_one_pass() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented blocked publication", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "queue-blocked".into();
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a blocked publication")));
+        s.pass().unwrap();
+        let t = task(&b, n);
+        assert_eq!(t.state, State::Ask);
+        let card = t.card.unwrap();
+        assert!(card.contains("Problem: PR #7 merged, merge_group CI tests failure") && card.contains("1. retry:"), "{card}");
+        let calls = b.state.borrow().publications;
+        s.pass().unwrap();
+        assert_eq!(b.state.borrow().publications, calls, "no publication polls while the owner decides");
+        b.comment(n, "taskq: answer 1").unwrap();
+        b.state.borrow_mut().publish = String::new();
+        s.pass().unwrap();
+        assert_eq!(task(&b, n).state, State::Closed);
     }
 
     // Chain: R1 hand-typed cancellation -> queue readback -> allow replacement; unknown never starts a new worker.
