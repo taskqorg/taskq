@@ -54,14 +54,50 @@ no frames and does not count. Development binary SHA-256:
 `b8953f11eec8e6131c2b20d86a5a6793d1e54dc03df78d4503e7d98c71662abb`.
 This is project rendering only, not native workspace or installed qualification.
 
-Replacement macOS [capture 39603193860](https://github.com/taskqorg/taskq/actions/runs/39603193860)
-was dispatched on `a200eca` after the repair and remains queued. No matching
-`readme-shots` artifact exists yet; the committed manifest still exits 2. Resume
-only after reading the successful artifact's actual `sourceCommit` and matching
-its UI blob IDs to the candidate, then applying the captured images and manifest.
-Do not substitute browser output or rewrite old hashes. The original seven
-review images remain unchanged and accepted. Native workspace and merge-result
-CI gates remain open (R12; §7).
+## Mac continuation: captured manifest applied
+
+macOS [capture 39603193860](https://github.com/taskqorg/taskq/actions/runs/39603193860)
+completed successfully. Artifact `readme-shots` (ID `12347228997`, ZIP SHA-256
+`234939a24caea187d65df10537d60bd199e1e06526cca8dbbcb7113451ff4e0c`)
+records actual source `2b63d5db00c1511e4e6e88f43cd2c7a360451d50`, not the
+workflow dispatch's earlier head. Its environment is macOS 26.6.2 arm64,
+WKWebView snapshot; binary SHA-256 is in `docs/shots/manifest.json`.
+
+The continuation rebased the task branch onto `c34717e0319fd850929ed31ec0c8934af3a04782`.
+Every captured `uiSources` blob matches the rebased candidate. Each captured PNG's
+SHA-256 matches the manifest before applying the two PNGs and original manifest;
+no old hashes were rewritten. `docs/shots/check.sh` reproduced exit 2 before
+application and exits 0 afterward. `docs/shots/check.test.sh` passes all six
+fresh/stale/malformed/missing-image cases, retaining source and manifest protection.
+The captured dark project image was visually inspected at its native size:
+Back, parent breadcrumb, single title, Close, independent Board link and task
+rows are present. Lower content remains in the bounded scroller.
+
+The accepted seven-image review set is unchanged. This adds WKWebView tray
+rendering evidence; it does not qualify the actual native workspace path,
+installed layout, native interaction or merge-result CI (A8/R12).
+
+
+Fresh Mac checks after rebase:
+
+- `python3 scripts/check.py --base c34717e0319fd850929ed31ec0c8934af3a04782`
+  failed: 434 passed, 18 failed, 34 ignored, 694.177 s / 900 s with a cold
+  worktree Cargo cache. Explicit worker host-policy/lifecycle refusals are
+  sandbox-blocked; the other assertions remain unqualified. The runner stopped
+  before integration, offline selftest and Node stages. No retry or authority
+  environment change was made. [Current failure inventory](checks.md).
+- All `tests/*.test.cjs` checks pass separately. Manifest and release-script
+  protection pass. `node tests/shell-navigation.browser.cjs` and
+  `node tests/tray-view-state.browser.cjs` pass. The unchanged whole-route text
+  instrument again reports 304 cells and zero measured gap cells.
+- `cargo +stable run --locked -- selftest` with an isolated install and
+  `TASKQ_SELFTEST_OFFLINE=1` passes 92 traces, formats and staged capture.
+  Board remains unknown; the running host store was not used.
+- Native workspace probe: the signed Cargo development tray emitted its isolated
+  fixture heartbeat. Computer Use rejected the exact executable as `Invalid app`
+  and reported multiple apps for the bundle identifier. No native workspace UI
+  was observed or accepted. The owned process group was terminated and verified
+  absent; no installed tray/service or active attempt was stopped.
 
 ## Owner correction: heading focus and breadcrumbs
 
@@ -217,8 +253,8 @@ and browser results stay separate under R12.
 ## Remaining acceptance
 
 Owner A8/V38 actual-size review of the seven-image set is recorded in answer
-6315388620. Refresh `docs/shots/manifest.json` through the qualified screenshot path;
-the expanded watcher includes the new shell/workspace sources. Do not hand-edit
-old image hashes to imply a fresh capture. Green merge-result CI and the missing
-native evidence remain required; neither source delivery nor visual approval
-authorizes rollout (§ 7, R12).
+6315388620. The captured README manifest now passes with exact UI blob and image
+hash matches. Native workspace rendering remains unknown; native click/raise
+stays owner-observed under the UI acceptance contract. Full local gate failures
+remain disclosed; host sandbox blocks are not PASS. Green merge-result CI is
+required for publication (§ 7/R12). Not merged, released or deployed.

@@ -136,5 +136,14 @@
     "G02-after.png",
     "workspace-root-after.png",
     "webview2-project-after.png"
-  ]
+  ],
+  "macContinuation": {
+    "base": "c34717e0319fd850929ed31ec0c8934af3a04782",
+    "captureRun": 39603193860,
+    "artifactId": 12347228997,
+    "archiveSha256": "234939a24caea187d65df10537d60bd199e1e06526cca8dbbcb7113451ff4e0c",
+    "sourceCommit": "2b63d5db00c1511e4e6e88f43cd2c7a360451d50",
+    "manifest": "../../../shots/manifest.json",
+    "boundary": "WKWebView tray snapshot only; actual native workspace remains unknown; exact UI blobs and PNG hashes verified"
+  }
 }
