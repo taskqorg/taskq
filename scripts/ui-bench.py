@@ -98,10 +98,13 @@ def run(binary, install, hold, gap, out):
     samples, last, deadline = [], None, time.time() + hold + 90
     while child.poll() is None and time.time() < deadline:
         t, procs = time.time(), tree(processes(), child.pid, before)
-        cpu, mem = sum(v[1] for v in procs.values()), sum(v[2] for v in procs.values())
+        if child.pid not in procs:  # exiting: its webview processes are already going
+            break
+        # per process, so a process that ends between samples does not subtract its CPU time
         if last:
-            samples.append({"cpu": 100 * (cpu - last[1]) / (t - last[0]), "mem": mem})
-        last = (t, cpu)
+            cpu = sum(v[1] - last[1].get(p, 0) for p, v in procs.items())
+            samples.append({"cpu": 100 * cpu / (t - last[0]), "mem": sum(v[2] for v in procs.values())})
+        last = (t, {p: v[1] for p, v in procs.items()})
         time.sleep(1)
     if child.poll() is None:
         child.kill()
@@ -183,7 +186,7 @@ def main():
     (out / "results.json").write_text(json.dumps(results, indent=1))
     keys = [k for k in next(iter(results["runs"].values()))["summary"] if k not in ("ok", "cores")]
     runs = list(results["runs"])
-    print(f"UI bench · {results['host']} · {results['cores']} cores · hold {o.hold} s · gap {o.gap} ms\n")
+    print(f"UI bench, {results['host']}, {results['cores']} cores, hold {o.hold} s, gap {o.gap} ms\n")
     print("| Measure | " + " | ".join(runs) + " |\n|---|" + "---|" * len(runs))
     for k in keys:
         print(f"| {k} | " + " | ".join(fmt(results["runs"][r]["summary"][k]) for r in runs) + " |")
