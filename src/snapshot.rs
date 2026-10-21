@@ -27,7 +27,7 @@ pub struct ExecutionStatus {
 
 /// Board identity and terminal evidence fence every advisory heartbeat observation.
 /// A host row counts within the project ttl (§ 3 lease); older reads unknown.
-fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[board::Issue], now:i64, ttl:i64)->Value {
+pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[board::Issue], now:i64, ttl:i64)->Value {
     let mut status=ExecutionStatus {task,attempt:x.attempt,id:x.id,through:x.through,state:"unknown".into(),reason:"termination unconfirmed; status missing or stale; restore owning service".into()};
     let owners:Vec<_>=hosts.iter().filter(|h|h.trusted && h.title==format!("taskq host {}",x.host)).collect();
     let mut observed=None;

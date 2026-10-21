@@ -1367,8 +1367,11 @@ impl<'a> Service<'a> {
                     }
                 }
             }
+            // #1491: the current attempt that its owner's fresh heartbeat lists as running is observed, not a wait
+            let remote_running = |x: &core::Execution| x.host != me && Some(x.attempt) == v.projection.task.attempt
+                && crate::snapshot::execution_status(v.issue.number, x, &hosts, now, ttl)["state"] == "running";
             let unresolved: Vec<_> = v.projection.executions.iter()
-                .filter(|x| x.release.is_none() && !released.contains(&x.id)).collect();
+                .filter(|x| x.release.is_none() && !released.contains(&x.id) && !remote_running(x)).collect();
             if let Some(x) = unresolved.first().filter(|x| !self.held.iter().any(|l| l.execution.unwrap_or(l.attempt) == x.id)) {
                 self.execution_waits.entry(v.issue.number).or_insert_with(|| format!("execution {} on {}: termination unconfirmed", x.id, x.host));
             } else if let Some(x) = v.projection.executions.iter()
@@ -3542,6 +3545,16 @@ mod tests {
             w.pass().unwrap();
         }
         assert_eq!(host_of(&task(&b, n)), Some("mac"));
+        // #1491: a fresh owner heartbeat listing the execution as running is no wait on the other host
+        assert!(!w.execution_waits.contains_key(&n), "{:?}", w.execution_waits);
+        let row = w.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        assert!(row["execution_wait"].is_null(), "{row}");
+        assert_eq!((row["executions"][0]["state"].as_str(), row["executions"][0]["host"].as_str()), (Some("running"), Some("mac")));
+        // a fresh owner heartbeat without the execution row still waits
+        let hb = b.issues(None).unwrap().into_iter().find(|i| i.title == "taskq host mac").unwrap();
+        b.edit(hb.number, &hb.body.lines().filter(|l| !l.starts_with("execution ")).collect::<Vec<_>>().join("\n")).unwrap();
+        w.pass().unwrap();
+        assert!(w.execution_waits[&n].contains("termination unconfirmed"));
         // A missing heartbeat does not kill the old executor.
         b.advance(301);
         w.pass().unwrap();
