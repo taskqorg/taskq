@@ -14,8 +14,9 @@ navigation, W [#1464](https://github.com/taskqorg/taskq/issues/1464) answers and
 requests, O [#1465](https://github.com/taskqorg/taskq/issues/1465) reviews,
 P [#1466](https://github.com/taskqorg/taskq/issues/1466) panels,
 M [#1467](https://github.com/taskqorg/taskq/issues/1467) messages and archive.
-They build on the [foundation](app-foundation.md) M3 (workspace) and M4 (tray)
-handoffs; N waits for them. Toggle selection reuses #1455.
+They build their own screens directly on the [foundation](app-foundation.md):
+M3/M4 are folded into #1463–#1467, #1463 supplies the shared shell, and M2
+calibration runs in parallel. Toggle selection reuses #1455.
 
 ## Contract detail
 
