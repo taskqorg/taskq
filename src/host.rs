@@ -10,7 +10,7 @@ pub fn active() -> bool { ACTIVE.get() }
 pub fn enter(root: &Path, install: &Path) {
     ACTIVE.set(true);
     crate::PROJECT_ROOT.set(Some(root.into()));
-    crate::platform::project_log(install.join(format!("{}.log", crate::project_name(root))));
+    crate::platform::project_log(project_log(install, root));
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -947,7 +947,7 @@ pub fn run(install: &Path) -> Res<()> {
             let updated=h.updating.take().unwrap().join().unwrap_or_else(|_|Err("host maintenance panicked; partial effects unknown".into()));
             if let Ok(Maintenance::Inventory(result))=&updated {native_legacy=result.clone();native_checked=Some(Instant::now());}
             let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Ok(Maintenance::Inventory(Ok(names)))=>format!("native legacy inventory: {} unit(s)",names.len()),Ok(Maintenance::Inventory(Err(e)))=>format!("native legacy inventory unknown: {e}"),Err(e)=>format!("maintenance: {e}")};
-            if maintenance_result!=text {crate::platform::log(&text);for root in &roots {append_project(install,root,&text);}maintenance_result=text;}
+            if maintenance_result!=text {log_all(install,&roots,&text);maintenance_result=text;}
             if crate::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
@@ -992,7 +992,7 @@ pub fn run(install: &Path) -> Res<()> {
         // The installer's 300 s wait began before this generation started; a reason not retained retries next tick.
         let late=began.elapsed().as_secs()>=300;
         if upgrade_report!=Some(late) {if let Some(reason)=installation::stale_upgrade(install,late) {
-            if late {crate::platform::log(&reason);for root in &roots {append_project(install,root,&reason);}}
+            if late {log_all(install,&roots,&reason);}
             upgrade_report=Some(late);
         }}
         if h.restart {
@@ -1055,10 +1055,22 @@ pub fn run(install: &Path) -> Res<()> {
     }
 }
 
+/// #1416: a host line goes to the service log and every project log; project `taskq`'s log is the service's stderr file, so it gets the line once.
+fn log_all(install: &Path, roots: &[PathBuf], text: &str) {
+    crate::platform::log(text);
+    mirror(install, roots, text, crate::platform::stderr_file(install).as_deref());
+}
+
+fn mirror(install: &Path, roots: &[PathBuf], text: &str, stderr: Option<&Path>) {
+    for root in roots.iter().filter(|r| stderr != Some(project_log(install, r).as_path())) { append_project(install, root, text); }
+}
+
+fn project_log(install: &Path, root: &Path) -> PathBuf { install.join(format!("{}.log", crate::project_name(root))) }
+
 fn append_project(install: &Path, root: &Path, text: &str) {
     use std::io::Write;
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let _ = fs::OpenOptions::new().create(true).append(true).open(install.join(format!("{}.log", crate::project_name(root))))
+    let _ = fs::OpenOptions::new().create(true).append(true).open(project_log(install, root))
         .and_then(|mut f| writeln!(f, "{}", crate::platform::log_line(now, text)));
 }
 
@@ -1393,6 +1405,20 @@ impl Panics {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // #1416: project `taskq` logs into the service's stderr file; a host line reaches every log once.
+    #[test]
+    fn host_line_written_once_per_log() {
+        let install=std::env::temp_dir().join(format!("taskq-log-once-{}",crate::runtime::uuid()));fs::create_dir(&install).unwrap();
+        let roots=[install.join("p/taskq"),install.join("p/other")];
+        let stderr=install.join("taskq.log");
+        fs::write(&stderr,"x update: up to date\n").unwrap();
+        mirror(&install,&roots,"update: up to date",Some(&stderr));
+        for f in ["taskq.log","other.log"] {assert_eq!(fs::read_to_string(install.join(f)).unwrap().matches("update: up to date").count(),1,"{f}");}
+        mirror(&install,&roots,"next",None);
+        assert_eq!(fs::read_to_string(&stderr).unwrap().matches("next").count(),1);
+        fs::remove_dir_all(&install).unwrap();
+    }
 
     // A stable owner identity must not cache policy changes or hide an interrupted write.
     #[test]
