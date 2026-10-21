@@ -2,6 +2,8 @@
 
 Implementation of [B1–B4](shared-blocks.md), [K-A1–K-A8](task-counters.md) and Menu M2/M3, under R6. TaskQ owns `src/project-blocks.js` and `.css`; the tray and standalone browser bundles use this same source. No network client, credentials, parser, framework or task operation is added.
 
+The [selected app foundation](app-foundation.md) applies to TaskQ shells, not these exported assets. A Preact shell consumes the existing API through an isolated DOM island; only the island owns its descendants. No framework enters the released project-blocks bundle.
+
 ## Interface and delivery
 
 `TaskqProjectBlocks` (browser global or CommonJS) exposes `summary(project)`, `aggregate(projects)`, `task(project,row,global)` and `handle(event,adapter)`. Insert returned HTML; bind the click handler once. Adapter functions `project(id)`, `tasks(id,state)` and `open(url)` own navigation. Project and counter controls are siblings, never nested. Consumers arrange blocks and set the inherited font/available width; they do not override internals.
