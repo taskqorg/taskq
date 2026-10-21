@@ -143,7 +143,7 @@ impl GitHub {
         let v = read()?;
         if v["node"]["merged"] != false { return Err("PR already merged or unknown; verify close before cancelling".into()); }
         if v["node"]["mergeQueueEntry"].is_object() {
-            self.graphql("mutation($id: ID!) { dequeuePullRequest(input: {pullRequestId: $id}) { clientMutationId } }", json!({"id": id}))?;
+            self.graphql("mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { clientMutationId } }", json!({"id": id}))?;
             let back = read()?;
             if back["node"]["merged"] != false || back["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation not read back; task unchanged".into()); }
         } else if v["node"].get("mergeQueueEntry") != Some(&Value::Null) { return Err("queue cancellation state unknown".into()); }
