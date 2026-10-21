@@ -5,6 +5,22 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.26
+
+Mac dev channel (#1388, #1406): the Mac service of the `taskqorg/taskq` project builds and installs each new `main` SHA with green `merge_group` CI, using `scripts/dev-install.sh` of that fetched SHA, never the root working tree. Re-exec into a new build no longer waits for Claude background turns that have a saved native identity; the new image adopts them without resubmitting (#1407). A pending host restart re-execs once overlapping project passes drain (#1402). Install, dev install and the DashQ resources send wait a bounded time for the resources lock instead of failing on the first miss, so a dev install completes its upgrade without a manual `service install` (#1415). No board change.
+
+Done rule for taskq self-fixes (taskq.md section 7 rule 8, #1408): a task closes on merged PR and green `merge_group` CI; live host checks run as one owner batch before each release, recorded in the version PR. Publication closes on green `merge_group` CI even when the later `main` push run fails and names the ignored failure; a merged-on-failed-CI or dequeued PR asks the owner in one pass (`publication-blocked`, #1413). Older services ignore that ask and keep polling. No board change.
+
+macOS: `<install>` stays a plain folder and the owning service retires a `resources` folder an older host recreated, so the Screen Recording grant matches the launcher (#1395). No board change.
+
+Host setup session runs without registered projects (#1399); the tray shows one setup row with its kind, reason, next step and Open session (#1400). The ask card shows the PM pick and reason beside the worker's star (#1390). The tray shows running agents by host and runtime (#1349) and selects several task states with checkboxes (#1350). No board change.
+
+Telemetry: the service reads the telemetry store once per repair interval (#1341); receipts never block or fail commands (#1351); `taskq profile health` shows service telemetry health (#1345); selftest warns on historical terminal-record gaps instead of failing (#1389); local telemetry syncs to DashQ under an opt-in grant (#1353). No board change.
+
+Board and publication: pause on GraphQL `RATE_LIMIT` replies (#1356); fewer repeated reads for publications and claims (#1359); enqueue merge conflicts count as main moved (#1372); queued publication qualifies on `merge_group` CI only (#1343); pending reviews are admitted before ready tasks (#1365); executions are released when the owning host booted after their intent (#1386); `taskq add` reports every text limit violation in one error (#1346); `profile tasks` shows ready entry time and merge queue state (#1344). No board change.
+
+Runtime CLIs are found under `~/.local/bin` on Linux and unresolved runtimes are refused (#1393). CI runs Linux only on PRs and the full matrix in `merge_group`. No board change.
+
 A task that closes without merging its PR (cancelled, superseded, delivered elsewhere) no longer leaves the PR open: each GitHub service that sees the close dequeues it, comments once with the task link and close reason, and closes it unmerged; the `taskq-<N>` branch stays (#1374). `requeue`, `later` and `failed` keep the PR open. No board change.
 
 ## v4.6.25
