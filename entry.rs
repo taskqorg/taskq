@@ -37,5 +37,10 @@ fn main() {
     application();
     // ponytail: a failed selftest exits inside application() and keeps its private store for diagnosis;
     // on Windows this removal fails while the writer is open, and the next staged selftest sweeps it.
-    if let Some(private)=private {drop(_telemetry);let _=std::fs::remove_dir_all(private);}
+    // #1519: the drop seals the store; a seal observed by the still-global collector queues its own checkpoint span,
+    // and the writer thread then re-elects itself and recreates the store after this removal.
+    if let Some(private)=private {
+        tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(),||drop(_telemetry));
+        let _=std::fs::remove_dir_all(private);
+    }
 }
