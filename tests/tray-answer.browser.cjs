@@ -22,6 +22,16 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       for(const ch of 'yes'){await page.keyboard.type(ch);await page.evaluate(s=>taskq.receive(s),state);}
       assert(await typed.evaluate(t=>t.isConnected&&document.activeElement===t&&t.value==='yes'),'refreshes keep the node being typed in');
       assert.equal(await page.locator('.qac button[type=submit]').isDisabled(),false,'Send enables for a valid answer');
+      // #1456: a custom answer over the § 5 answer limits (4 lines, 240 characters) disabled Send with an empty card,
+      // so the owner could not tell why. Risk kept: Send disabled while the card shows no reason.
+      const why=()=>page.locator('.qac-hint').textContent(),send=page.locator('.qac button[type=submit]');
+      await text.fill('');await typed.focus();
+      for(const line of ['1. one','2. two','3. three','4. four','5. five']){await page.keyboard.type(line);await page.keyboard.press('Shift+Enter');await page.evaluate(s=>taskq.receive(s),state);}
+      assert(await send.isDisabled());assert.match(await why(),/At most 4 lines/,'a disabled Send states why');
+      await text.fill('x'.repeat(241));await page.evaluate(s=>taskq.receive(s),state);
+      assert(await send.isDisabled());assert.match(await why(),/At most 240 characters/);
+      await text.fill('a valid answer');await page.evaluate(s=>taskq.receive(s),state);
+      assert.equal(await send.isDisabled(),false);assert.equal(await why(),'');
       await text.fill('keep draft');await text.focus();
       await text.evaluate(t=>t.setSelectionRange(2,4));
       const scroll=()=>page.locator('.content').evaluate(c=>c.scrollTop),top=await scroll();
@@ -36,6 +46,7 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'stale');
       assert.equal(await text.inputValue(),'keep draft');
       assert(await page.locator('.qac button[type=submit]').isDisabled());
+      assert.match(await page.locator('.qac-receipt').textContent(),/question changed/,'a stale card states why Send is off');
       await page.locator('[data-qac=review]').click();await text.fill('2');
       await page.locator('.qac button[type=submit]').click();
       await page.waitForFunction(()=>messages.some(m=>m.a==='answer'));

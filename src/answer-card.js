@@ -75,7 +75,7 @@ render:function(board, row, local, cap) {
     h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">#' + esc(row.n) + '</a> ' + esc(row.title) + '</p>';
     if (manageable(row, cap)) {
       h += '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
-      h += '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(draftQuestion(row, cap), local.draft) ? '' : ' disabled') + '>Requeue</button></form>';
+      h += '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(draftQuestion(row, cap), local.draft) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(draftQuestion(row, cap), local.draft)) + '</form>';
       h += '<div class="qac-choices"><button type="button" data-qac="later"' + (live ? '' : ' disabled') + '>Later</button><button type="button" data-qac="close"' + (live ? '' : ' disabled') + '>Close…</button></div>';
       if (local.confirmClose && live) h += '<p>Cancel #' + esc(row.n) + ' without publication? Running work will stop. The task is parked before closing.</p><div class="qac-choices"><button type="button" data-qac="confirm-close">Close without publishing</button><button type="button" data-qac="cancel-close">Keep task</button></div>';
       h += receipt(st, local.receipt && local.receipt.reason, row.url, id, local.receipt && local.receipt.next, true);
@@ -100,7 +100,7 @@ render:function(board, row, local, cap) {
       const bad = textProblem(q, local.draft);
       // Q1: Other answer opens a compact field; a kept draft keeps it open
       h += '<details class="qac-other"' + (local.draft ? ' open' : '') + '><summary>Other answer</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="Or type an answer"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
-        '<button type="submit"' + (live && !bad ? '' : ' disabled') + '>Send</button></form></details>';
+        '<button type="submit"' + (live && !bad ? '' : ' disabled') + '>Send</button>' + hint(id, live && bad) + '</form></details>';
     }
     const reason = st === 'read-only' ? (cap && cap.reason) || 'Answering is not available here' : local.receipt && local.receipt.reason;
     h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next);
@@ -129,7 +129,11 @@ apply:function(k, ev) {
       if (r.send) ui.effect('answer.send',()=>adapter.send(board,r.send),x=>{if(cards.has(k))apply(k,{type:'receipt',opId:r.send.id,...x});});
       else if (ev.type === 'input') {
         const s = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] button[type=submit]'), cap2 = adapter.capability(board, row);
-        if (s) s.disabled = !!textProblem(draftQuestion(row, cap2), r.local.draft) || !['actionable', 'rejected'].includes(status(row, r.local, cap2));
+        const live = ['actionable', 'rejected'].includes(status(row, r.local, cap2)), bad = textProblem(draftQuestion(row, cap2), r.local.draft);
+        if (s) s.disabled = !!bad || !live;
+        // #1456: a disabled button states why; a state other than live already says so in the receipt
+        const h = s && s.parentNode.querySelector('.qac-hint');
+        if (h) h.textContent = live && bad || '';
         // the live textarea already shows this draft: a refresh with the same rows must not rebuild it
         painted = markup();
       }
@@ -207,6 +211,8 @@ const root=globalThis;
 
 
   const {manageable}=execution.module("answer-card",{manageable:(row, cap) => row.state === 'ask' && cap && cap.answer && cap.manage && !(row.question && row.question.choices && row.question.choices.length)});
+  // Why the text button is off while the card is live; an empty node otherwise, so typing updates it in place.
+  const {hint}=execution.module("answer-card",{hint:(id, why) => '<span class="qac-hint" id="' + id + '-h" aria-live="polite">' + esc(why || '') + '</span>'});
   const {draftQuestion}=execution.module("answer-card",{draftQuestion:(row, cap) => manageable(row, cap) ? {limits: {lines: 1, chars: 232}} : row.question});
 
   // One of STATES for a row, its local state and the adapter's capability {answer, reason}.
