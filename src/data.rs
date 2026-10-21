@@ -148,6 +148,23 @@ pub fn comment_ids(text: &str, pending: &[u64]) -> Option<String> {
     Some(kept.join("\n") + "\n")
 }
 
+/// #1445: a power loss can leave a record of zero length or only NUL bytes. The caller proves no live owner; the
+/// record is kept as `<name>.zeroed-<ns>` beside it. Ok(true) when moved; missing or nonzero records stay.
+pub fn set_aside_zeroed(p: &Path) -> Result<bool, String> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    match fs::File::open(p).and_then(|f| f.take(KIDS_MAX + 1).read_to_end(&mut bytes)) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(format!("{}: unreadable ({e}); file kept", p.display())),
+        Ok(_) => {}
+    }
+    if bytes.iter().any(|b| *b != 0) { return Ok(false); }
+    let ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    fs::rename(p, p.with_file_name(format!("{name}.zeroed-{ns}"))).map_err(|e| format!("{name}: zeroed record not moved ({e}); file kept"))?;
+    Ok(true)
+}
+
 /// A JSON state file: Ok(None) when missing; Err with the reason when it is unreadable or not a JSON object (unknown;
 /// the file stays as it is).
 pub fn json(p: &Path) -> Result<Option<Value>, String> {
