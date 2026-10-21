@@ -1,7 +1,7 @@
 # Tray and workspace v2 review — #1443
 
-Proposal for owner review under R13 and § 7.5. No UI implementation, rule amendment,
-task filing, installation or production effect is included. This is **before**
+Review and owner-approved follow-up plan under R13 and § 7.5. No UI implementation, rule amendment,
+installation or production effect is included. Six approved dependent tasks are filed. This is **before**
 evidence; no fix or after-pass is claimed.
 
 Review source: `8bf66914f03560c8c3f979523dce7d6781fe5420`, the merged #1442 profile.
@@ -21,7 +21,8 @@ The shared revision is a review input, not proof of upstream merge or deployment
 The owner updated A1/A2 to cap the review at ten screenshots, one per distinct gap.
 [Eight gap screenshots](screenshots.md) are retained; the other 394 PNG files were
 removed. Passing matrix cells commit no screenshot. The owner's custom answer replaces
-the old options; the [revised six-task plan](owner-plan.md) awaits approval.
+the old options; [answer 6311797833](https://github.com/taskqorg/taskq/issues/1443#issuecomment-6311797833)
+approves the [six-task plan](owner-plan.md), with archive-any and permanent one/all deletion.
 
 The [instrument](capture.cjs) extends #1348's real-bundle Playwright check using
 `tests/browser.cjs`, invented answer/resource fixtures and an in-memory IPC sink.
@@ -124,8 +125,8 @@ applicable docs/design; UI tasks follow the corresponding #1440 foundation
 migration handoffs. W/O move dialogue and confirmation to the workspace; P puts
 actual executing-agent panels before tasks; M supplies messages/archive. N owns
 shared navigation, consistent interactions and the former target/type/contrast fixes.
-#1455 retains the existing toggle-selection repair. No task is filed before the
-new ask is answered (§ 7.5). [Eight gap images](screenshots.md) stay the entire set.
+#1455 retains the existing toggle-selection repair. The ask was answered before filing (§ 7.5); see the approved plan
+for task receipts and the archive override. [Eight gap images](screenshots.md) stay the entire set.
 
 ## Checks and remaining work
 
@@ -145,6 +146,8 @@ complete run. Those harness failures do not establish a product defect.
 All original regression assertions are retained. No new production logic or CI
 gate was added; the capture is a research instrument under R12.
 
-Owner decision: the [new plan and Clear archived choice](owner-plan.md) need an
-answer before task filing (§ 7.5, A4). UI fixes, after-pass evidence, native
-qualification and actual foundation readiness remain open.
+Owner decision: [six briefs approved with an archive override](owner-plan.md).
+Any conversation may be archived; one/all archived conversations and their owned
+attachments may be permanently deleted, without recovery. Board tasks, source
+files and live work remain. D amends the owning contract first; UI fixes and
+native/foundation qualification remain future work (R12/R13, § 7.5).

@@ -18,9 +18,9 @@ none is an after-fix or native acceptance image (R12).
 
 ## Revised plan links
 
-- [D — specification first](owner-plan.md#six-proposed-follow-up-tasks): owner requirements and source review; no invented UI image.
-- [N — navigation and controls](owner-plan.md#six-proposed-follow-up-tasks): [G01](gaps/G01-back-scroll.png), [G02](gaps/G02-clipped-close.png), [G03](gaps/G03-small-targets.png), [G04](gaps/G04-type-hierarchy.png), [G07](gaps/G07-text-contrast.png).
-- [W — workspace communication](owner-plan.md#six-proposed-follow-up-tasks): [G05 inline answer](gaps/G05-repeated-identity.png), [G06 menu composer](gaps/G06-empty-attention.png), [G08 focus/status context](gaps/G08-workspace-update.png).
-- [O — workspace operation reviews](owner-plan.md#six-proposed-follow-up-tasks): source/owner requirement, not an image of a future view.
-- [P — panels and task list](owner-plan.md#six-proposed-follow-up-tasks): [G05](gaps/G05-repeated-identity.png), [G06](gaps/G06-empty-attention.png).
-- [M — messages/archive](owner-plan.md#six-proposed-follow-up-tasks): owner requirement; current archive UI/backend is absent, so no fabricated screenshot.
+- [D — specification first](owner-plan.md#six-approved-follow-up-tasks): owner requirements and source review; no invented UI image.
+- [N — navigation and controls](owner-plan.md#six-approved-follow-up-tasks): [G01](gaps/G01-back-scroll.png), [G02](gaps/G02-clipped-close.png), [G03](gaps/G03-small-targets.png), [G04](gaps/G04-type-hierarchy.png), [G07](gaps/G07-text-contrast.png).
+- [W — workspace communication](owner-plan.md#six-approved-follow-up-tasks): [G05 inline answer](gaps/G05-repeated-identity.png), [G06 menu composer](gaps/G06-empty-attention.png), [G08 focus/status context](gaps/G08-workspace-update.png).
+- [O — workspace operation reviews](owner-plan.md#six-approved-follow-up-tasks): source/owner requirement, not an image of a future view.
+- [P — panels and task list](owner-plan.md#six-approved-follow-up-tasks): [G05](gaps/G05-repeated-identity.png), [G06](gaps/G06-empty-attention.png).
+- [M — messages/archive](owner-plan.md#six-approved-follow-up-tasks): owner requirement; current archive UI/backend is absent, so no fabricated screenshot.
