@@ -28,7 +28,7 @@ A compact summary may defer detail to the same full component. Record that route
 ## B3 Consumer conformance
 
 - Use the parent's provider Board/issue assets. `panels-top-left` retains its detach meaning; an icon chosen for an earlier dashboard mock is not a new TaskQ definition.
-- Reuse K counters: Doing and Review remain distinct, zero capsules disappear, unknown remains explicit, Later and quiet Closed remain available, and counter targets stay separate from project navigation. No independently authored Work/Ask/Failed/Ready strip.
+- Reuse K counters: Doing and Review remain distinct, zero capsules disappear, unknown remains explicit, Later and Held remain available, and counter targets stay separate from project navigation. No independently authored Work/Ask/Failed/Ready strip.
 - Use the canonical palette, subtle capsule fills, type and geometry. Do not copy approximate colors or space counters across empty width. Aggregate and project counter strips inherit K-A8 right alignment, including wrapped lines. Large type wraps without losing identity or actions.
 - Preserve Work mode's explicit target selection and full review; missing grant or capability has a reason. A summary's used/limit is not a new admission model. Current policies and untouched fields survive opening and cancellation.
 - One answer editor per board/task/revision; Attention and Boards reach that instance. Refresh preserves draft/focus and never substitutes a new question silently.

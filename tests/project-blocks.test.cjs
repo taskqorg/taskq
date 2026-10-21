@@ -5,25 +5,23 @@ const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-block
 const p=fx.project,row=fx.row;
 let got=q.observation([{...p,tasks:[row]},{...p,id:'second-registration',tasks:[row]}]);
 assert.equal(got.counts.doing,1);assert.equal(got.counts.review,0);assert.deepEqual(got.partial,[]);
-// K-A1/K-A6: All tasks counts open rows once, includes held, excludes Closed totals and rows.
+// K-A1/K-A3/K-A6: All tasks counts open rows once, includes held, excludes closed rows; Held is its own counter and Closed is gone.
 assert.equal(got.open,1);
-assert.equal(q.observation([{...p,closed:100,tasks:[row,{...row,n:2,state:'held'},{...row,n:3,state:'closed'}]}]).open,2);
+got=q.observation([{...p,tasks:[row,{...row,n:2,state:'held'},{...row,n:3,state:'closed'}]}]);
+assert.equal(got.open,2);assert.equal(got.counts.held,1);assert(!('closed' in got.counts),'no Closed counter (#1476)');
 assert.equal(q.observation([{...p,complete:false,tasks:[row]}]).open,null);
 assert.match(q.aggregate([{...p,complete:false,tasks:[row]}],[]),/All tasks \?<\/button>/);
 assert(!q.summary(p,[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
 assert.match(q.aggregate([{...p,tasks:[row]}],[]),/data-a="all-tasks" aria-pressed="true"/,'All tasks is selected without a state filter');
 assert.match(q.aggregate([{...p,tasks:[row]}],['doing']),/data-a="all-tasks" aria-pressed="false"/,'All tasks clears its selection under a state filter');
-assert.match(q.aggregate([{...p,closed:100,tasks:[row]},{...p,id:'duplicate',tasks:[row],closed:100}],[]),/All tasks 1<\/button>/);
+assert.match(q.aggregate([{...p,tasks:[row]},{...p,id:'duplicate',tasks:[row]}],[]),/All tasks 1<\/button>/);
 assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,state:'review'}]}]).counts.doing,null);
 assert.equal(q.observation([{...p,complete:false}]).counts.ready,null);
-assert.equal(q.observation([{...p,closed:undefined}]).counts.closed,null,'open snapshots never invent Closed');
-assert.equal(q.observation([{...p,closed:12},{...p,closed:12}]).counts.closed,12);
-assert.equal(q.observation([{...p,closed:12},{...p,closed:11}]).counts.closed,null);
-assert.equal(q.observation([{...p,closed:12},{...p,board:{...p.board,url:'https://gitlab.example/o/r/-/issues'},closed:100}]).counts.closed,112);
-assert.equal(q.observation([{...p,closed:1},{...p,closed:0}]).counts.closed,null,'conflicting reopen observations are unknown');
+assert.equal(q.observation([{...p,complete:false}]).counts.held,null,'partial snapshots show Held as unknown');
+assert.match(q.summary({...p,tasks:[{...row,state:'held'}]}),/data-state="held"[^>]*aria-label="[^"]* · Held: 1"/);
 assert(!q.summary(p).includes('tqp-counts'),'known zero shows identity only');
 assert(q.summary({...p,complete:false}).includes('Partial:'));
-assert(q.summary({...p,closed:undefined}).includes('Closed: unknown'));
+assert(!q.summary({...p,tasks:[row]}).includes('Closed'),'no Closed capsule');
 assert(q.task(p,{...row,title:'<script>alert(1)</script>',url:'javascript:alert(1)'}).includes('&lt;script&gt;'));
 assert(!q.task(p,{...row,url:'javascript:alert(1)'}).includes('href="javascript:'));
 assert(!q.task(p,{...row,local_session:false}).includes('codex://'));
@@ -63,4 +61,4 @@ const tray=fs.readFileSync('build/web/tray.html','utf8');
 const sandbox={setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto};require('node:vm').createContext(sandbox);
 require('node:vm').runInContext(fs.readFileSync('build/web/project-blocks.js','utf8'),sandbox);
 assert.deepEqual(JSON.parse(JSON.stringify(sandbox.TaskqProjectBlocks.observation([p]))),JSON.parse(JSON.stringify(q.observation([p]))));
-console.log('PASS shared counts, dedup/conflict/partial/Closed, safe links, local/remote sessions, independent navigation, provider assets, provenance and native/release wiring');
+console.log('PASS shared counts, dedup/conflict/partial/Held, safe links, local/remote sessions, independent navigation, provider assets, provenance and native/release wiring');

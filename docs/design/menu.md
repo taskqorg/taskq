@@ -27,11 +27,11 @@ The app icon reuses the tray renderer and its existing state logic, including th
 - Preserve pin order. Do not reorder under pointer or keyboard focus. Pause/empty state does not remove registration or pins.
 - Attention includes every observed project, including those outside the shortlist. Missing/stale data remains unknown.
 
-Counter scope, all states and quiet Closed totals: [K-A1–K-A6](task-counters.md). Aggregate strip sits immediately above Projects; project strips use the same order.
+Counter scope, all states and Held drafts with Start: [K-A1–K-A6](task-counters.md). Aggregate strip sits immediately above Projects; project strips use the same order.
 
 ## M3 Navigation and tasks
 
-Approved navigation/header and view-only multi-select targets: [UI01–UI04 and UI25–UI28](ui-rules.md#checklist-28-rules). The task-list counter strip alone toggles states with OR; all eight states show, zero as icon-only and unknown as `?`. Selected capsules expose `aria-pressed` and a visible outline. No Filter checkbox group. All tasks in that row counts deduplicated open tasks across all projects (not closed tasks), clears state/project restrictions and shows each observed project with nonzero counters and its tasks; partial/unknown stays explicit. This control alone is exempt from the no-Work-total rule. Project-summary strips still hide zero. Filters never change admission focus or write the queue.
+Approved navigation/header and view-only multi-select targets: [UI01–UI04 and UI25–UI28](ui-rules.md#checklist-28-rules). The task-list counter strip alone toggles states with OR; all eight states show, zero as icon-only and unknown as `?`. Selected capsules expose `aria-pressed` and a visible outline. No Filter checkbox group. All tasks in that row counts deduplicated open tasks across all projects (Held included), clears state/project restrictions and shows each observed project with nonzero counters and its tasks; partial/unknown stays explicit. This control alone is exempt from the no-Work-total rule. Project-summary strips still hide zero. Filters never change admission focus or write the queue.
 
 - Header outside the scrolling content: Home icon then Settings gear at left; size anchor, Top, pin and close × at right. No bottom Home or Settings navigation. Its slightly contrasting strip never moves during scroll bounce.
 - Moderate rounded corners on every side except the edge attached to the menu bar or taskbar in popover mode; pinned windows round every corner.
@@ -227,7 +227,7 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 | M-A21 | Attention precedes ordinary lists and includes projects outside the shortlist. |
 | M-A16 | View/admission/pause together; mixed and target scope explicit. |
 | M-A17 | Flowing title, header Board, separate session link: Claude on every host, Codex only on its owning host; remote mark before the runtime mark. |
-| M-A18 | Pinned/recent, searchable All, header plus; all-state aggregate/project counters and quiet Closed follow K-A1–K-A6. |
+| M-A18 | Pinned/recent, searchable All, header plus; all-state aggregate/project counters and Held with Start follow K-A1–K-A6. |
 | M-A20 | Shared editor preserves Mixed, untouched fields/targets and per-project readback. |
 | M-A21 | Pin keeps a normal app window open; Top independently controls above-normal placement; bounce-proof icon header, close ×, three size-anchor modes, first-click controls and a bottom-right resize grip; size, position and toggles survive a tray restart; unpin returns to the popover; Windows edge snap, macOS work-area clamp. |
 

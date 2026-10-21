@@ -6,11 +6,11 @@ const parentCSS=[...source.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m=>m[1])
 const parentFunctions=source.split('\n').filter(l=>/^(const (esc|icon|button|ib)=|function (counts|projectRow|task)\()/.test(l)).join('\n');
 const tray=fs.readFileSync('build/web/tray.html','utf8');
 const base='<style>:root{color-scheme:light dark}body{margin:0;padding:8px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}</style>';
-function fixture(n){return {...fx.project,name:'project',closed:n,tasks:q.states.filter(s=>s[0]!=='closed').flatMap(([state],i)=>Array.from({length:n},(_,j)=>({...fx.row,n:i*1000+j+1,state,revision:4}))) };}
+function fixture(n){return {...fx.project,name:'project',tasks:q.states.flatMap(([state],i)=>Array.from({length:n},(_,j)=>({...fx.row,n:i*1000+j+1,state,revision:4}))) };}
 function look(sel){
   const root=document.querySelector(sel),strip=root.querySelector('.tqp-counts,.counts'),b=strip&&strip.querySelector('button'),g=(el,k)=>getComputedStyle(el)[k];
   if(!b)return null;
-  return {color:g(root,'color'),fill:g(b,'backgroundColor'),radius:g(b,'borderTopLeftRadius'),padding:g(b,'padding'),height:g(b,'minHeight'),gap:g(strip,'gap'),wrap:g(strip,'flexWrap'),align:g(strip,'justifyContent'),closedFill:g(strip.lastElementChild,'backgroundColor'),closedText:g(strip.lastElementChild,'color')};
+  return {color:g(root,'color'),fill:g(b,'backgroundColor'),radius:g(b,'borderTopLeftRadius'),padding:g(b,'padding'),height:g(b,'minHeight'),gap:g(strip,'gap'),wrap:g(strip,'flexWrap'),align:g(strip,'justifyContent'),heldFill:g(strip.lastElementChild,'backgroundColor'),heldText:g(strip.lastElementChild,'color')};
 }
 function geometry(sel){
   const groups=[...document.querySelectorAll(sel)],results=[];
@@ -31,7 +31,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
       try{
         const parent=await browser.newPage({viewport:{width,height:1800},colorScheme:theme});pages.push(parent);
         await parent.setContent(base+'<style>'+parentCSS+'</style><div id="tqnext" style="font-size:'+font+'px"><div id="parent-project"></div><div id="parent-aggregate"></div><div id="parent-task"></div></div>');
-        await parent.addScriptTag({content:'const preview={platform:"Windows"};const projectCounts='+JSON.stringify({[p.name]:q.states.map(([s])=>s==='closed'?n:n)})+';'+parentFunctions+';document.querySelector("#parent-project").innerHTML=projectRow('+JSON.stringify(p.name)+');document.querySelector("#parent-aggregate").innerHTML=counts('+JSON.stringify(p.name)+');document.querySelector("#parent-task").innerHTML=task({},938,'+JSON.stringify(fx.row.title)+');'});
+        await parent.addScriptTag({content:'const preview={platform:"Windows"};const projectCounts='+JSON.stringify({[p.name]:q.states.map(()=>n)})+';'+parentFunctions+';document.querySelector("#parent-project").innerHTML=projectRow('+JSON.stringify(p.name)+');document.querySelector("#parent-aggregate").innerHTML=counts('+JSON.stringify(p.name)+');document.querySelector("#parent-task").innerHTML=task({},938,'+JSON.stringify(fx.row.title)+');'});
         await parent.evaluate(assets=>{for(const i of document.querySelectorAll('[data-lucide]'))i.outerHTML=(assets[i.dataset.lucide]||'').replace('<svg','<svg aria-hidden="true"');},q.assets);
         const want=await parent.evaluate(look,'#parent-project');
         const wantTask=await parent.evaluate(taskLook,'#parent-task .task');
@@ -61,7 +61,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
     for(const mode of ['browser','tray'])for(const width of fx.widths){
       const page=await browser.newPage({viewport:{width,height:1800},colorScheme:'dark'});
       try{
-        const p={...fixture(1),name:fx.project.name,closed:null},row={...fx.row,state:'review',execution_wait:require('./fixtures/status-snapshot.json').tasks.find(t=>t.n===2).execution_wait};
+        const p={...fixture(1),name:fx.project.name},row={...fx.row,state:'review',execution_wait:require('./fixtures/status-snapshot.json').tasks.find(t=>t.n===2).execution_wait};
         await page.setContent(mode==='tray'?tray:base+'<style>'+css+'</style><div id="consumer" style="font-size:20px"></div><script>'+js+'</script>');
         await page.evaluate(()=>{window.navigation=[];window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
         if(mode==='browser')await page.evaluate(({p,row})=>{const el=document.querySelector('#consumer');el.innerHTML=TaskqProjectBlocks.summary(p)+TaskqProjectBlocks.task(p,row);el.addEventListener('click',e=>TaskqProjectBlocks.handle(e,{project:id=>navigation.push(['project',id]),tasks:(id,s)=>navigation.push(['tasks',id,s]),open:u=>navigation.push(['open',u])}));},{p,row});
@@ -89,7 +89,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         await page.setContent(mode==='tray'?tray:base+'<style>'+css+'</style><script>'+js+'</script>');
         if(mode==='tray')await page.evaluate(theme=>taskq.receive({page:'none',font:20,theme,projects:[],ai:{draft:''},notify:{projects:{}}}),theme);
         const marks=await page.evaluate(()=>{
-          const q=TaskqProjectBlocks,p=k=>({id:k,name:k,board:{kind:k,url:'https://'+k+'.example/o/r/issues'},complete:true,closed:0,tasks:[]});
+          const q=TaskqProjectBlocks,p=k=>({id:k,name:k,board:{kind:k,url:'https://'+k+'.example/o/r/issues'},complete:true,tasks:[]});
           const el=document.createElement('div');el.id='providers';el.style.cssText='font-size:20px;padding:8px;background:'+getComputedStyle(document.body).backgroundColor;document.body.prepend(el);
           el.innerHTML=q.summary(p('github'))+q.summary(p('gitlab'))+['claude','codex'].map((runtime,i)=>q.task(p('github'),{n:i+1,state:'doing',revision:1,title:runtime,url:'https://github.example/o/r/issues/'+(i+1),runtime})).join('');
           const color=svg=>getComputedStyle(svg).color;

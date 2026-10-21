@@ -24,7 +24,7 @@ Builder completes the ledger per [F6](https://github.com/taskqorg/specq/blob/mai
 | Home top / Controls | named host, admission, pause review; urgent controls stable | M1/M5, M-A4/16 |
 | Work mode | originals, interpretation, applied state; Mixed; explicit targets; CPU/memory and all runtimes | M4/M12, M-A9/20 |
 | Attention / task | questions, failures, permission requests, service faults distinct | M-A7/10/21, P5 |
-| Aggregate / projects | all states, Human=Ask, quiet Closed; dedup/partial | K-A1–K-A7 |
+| Aggregate / projects | all states, Human=Ask, Held; dedup/partial | K-A1–K-A7 |
 | Pinned/recent / All | stable order, search, complete registered list, add beside header | M-A2/18 |
 | Project / tasks | Board at top, full flowing titles, issue/PR/local-session targets, remote host no-link | D-A1/2, M-A3/17 |
 | Cadence detail | four series, totals, period/custom timezone, unavailable history | M-A5/6, R-UI4/5 |
