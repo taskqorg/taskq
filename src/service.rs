@@ -1020,6 +1020,12 @@ impl<'a> Service<'a> {
             let (at, reported) = hold;
             let reason = format!("Usage limit: {rt} {} {}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
             self.gone(n, t, a, &["usage-limit"], &reason)
+        } else if let Some(reason) = local.then(|| rt_of(t).filter(|(rt, _)| rt.starts_with("codex"))
+            .and_then(|_| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a)))).flatten() {
+            // #1446: a rejected login holds Codex here at once and releases the attempt like a usage limit, retries kept
+            if let Err(e) = crate::runtime::mark_login_off(&self.cfg.install, "codex", &reason) { eprintln!("login-off not saved: {e}"); }
+            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| r.starts_with("codex")).map(|r| r.to_string()));
+            self.gone(n, t, a, &["usage-limit"], &format!("Login off: codex {reason}; {}", crate::runtime::relogin("codex")))
         } else {
             self.gone(n, t, a, &[], text)
         }
@@ -1890,7 +1896,7 @@ impl<'a> Service<'a> {
                 self.sync_host();
                 if e.reportable {
                     #[cfg(not(test))]
-                    let agents = crate::runtime::agents();
+                    let agents = crate::runtime::agents(&self.cfg.install);
                     #[cfg(test)]
                     let agents = self.agent_status.clone();
                     if agents.as_array().is_some_and(|rows| rows.iter().any(|r| r["runtime"] == l.rt && r["path"].is_string() && r["login"] == "logged in")) {
@@ -4063,6 +4069,43 @@ mod tests {
         assert!(gone.starts_with("taskq: gone attempt ") && gone.contains("\nexit 1"), "A6: {gone}");
         assert_eq!(task(&b, only).retries, 1, "A6: a limit after work started counts");
         assert!(s.limited.is_empty(), "a limit after work started holds nothing");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Chain: #1446 A1/A2 Codex exit with a rejected refresh token -> `usage-limit` release -> login off at once.
+    // Risk: a dead login reads logged in, each admitted task burns its gone budget, or claude is held too.
+    #[test]
+    fn rejected_codex_login_releases_without_retry_and_holds_codex() {
+        let root = std::env::temp_dir().join(format!("taskq-login-off-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let b = Fake::default();
+        let mut c = Config { root: root.clone(), install: root.join("install"), ..cfg("mac") };
+        c.limits = BTreeMap::from([("claude".to_string(), 1), ("codex".to_string(), 1)]);
+        let e: Exits = Default::default();
+        let (seen, r) = (e.clone(), root.clone());
+        let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |l: &Launch| {
+            let flag = Rc::new(RefCell::new(None));
+            seen.borrow_mut().push((l.task, flag.clone()));
+            let log = crate::runtime::log_path(&r, l);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(&log, "{\"type\":\"thread.started\",\"thread_id\":\"t\"}\n2026-10-21T08:00:00.000000Z ERROR codex_login::auth::manager: Failed to refresh token: Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.\n").unwrap();
+            Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
+        }));
+        s.focus = vec!["all".into()];
+        let n = b.create("A", "", &["taskq".into(), "run-codex".into()]).unwrap();
+        s.pass().unwrap();
+        assert!(task(&b, n).session.unwrap().starts_with("codex:"));
+        *e.borrow()[0].1.borrow_mut() = Some(1);
+        s.pass().unwrap();
+        let gone = b.comments(n).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: usage-limit")).unwrap().body;
+        assert!(gone.contains("\nLogin off: codex refresh token rejected; run `codex login --device-auth`"), "{gone}");
+        assert_eq!((task(&b, n).state, task(&b, n).retries, e.borrow().len()), (State::Ready, 0, 1), "A2: released, no retry, not readmitted");
+        assert!(s.logged_out.contains("codex") && !s.logged_out.contains("claude"), "{:?}", s.logged_out);
+        assert!(s.heartbeat_body().contains("\nlogin codex off"), "A1: at once, not at the next probe");
+        let rows = crate::runtime::agents(&c.install);
+        if let Some(r) = rows.as_array().unwrap().iter().find(|r| r["runtime"] == "codex" && r["path"].is_string() && r["reason"].is_string()) {
+            assert_eq!(r["login"], "not logged in", "A2: taskq agents reads the mark");
+        }
         let _ = std::fs::remove_dir_all(&root);
     }
 
