@@ -1,0 +1,133 @@
+{
+  "sourceCommit": "79c3d6b55af141f7e1f6815cc338838c885f77ee",
+  "baseline": "0804397",
+  "native": {
+    "boundary": "Windows WebView2, tray project only, Cargo development executable; not installed/native workspace or WKWebView qualification",
+    "binarySha256": "69bc047ffed0290b57bcd9bf1de4d2dbda1edb0a54854a4a0bd7b2e684937899"
+  },
+  "uiSources": {
+    "src/tray.rs": "3284363e69316f89a264b3b927edb94040b41068",
+    "src/tray.html": "6d0bf9048928b201f5aa57614e1e76dbb673542d",
+    "src/tray-app.js": "7ceae674855a299d837e13add160c70752003cc3",
+    "src/tray-view-state.js": "cc96a5a739a73faca16211c81f4620620ad25932",
+    "src/app-shell.js": "2e422108880ca84d6bb31a3ea82d0096140b2a76",
+    "src/app-shell.css": "98dd41448c1bae024a5d99296ceeabab904605c3",
+    "src/workspace.js": "9efd5742e6f27f29426d38bfa591f505765b58b1",
+    "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
+    "src/project-blocks.css": "816f6a11bacd8d139fd202df21ae079298b4dacb",
+    "scripts/build-web.cjs": "e06b1382f951b07ad9c391dde50e199e27dfd927"
+  },
+  "images": [
+    {
+      "file": "G01-after.png",
+      "sha256": "28d32355210d933e7451f96509e0a32fb9a168351901aa19bcd607f8059619a0",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    {
+      "file": "G01-before.png",
+      "sha256": "e81e9db9ad05246183e33d75b9021a591644b5841ae904dd39c142ca3cc21997",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    {
+      "file": "G02-after.png",
+      "sha256": "f3c76d645445f3c1c8478680d40d82ef638f6df20cb5db1c600a99c62dcb84e1",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    {
+      "file": "G02-before.png",
+      "sha256": "930219db93570cea1dc5f515a74e348f7dd9672ccda03d53d449691e6282318c",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    {
+      "file": "webview2-project-after.png",
+      "sha256": "61801308c812e4d93b6b5f9b80b07fdb0cc2b07842c13596c385770e28a9e302",
+      "pixels": [
+        462,
+        1393
+      ]
+    },
+    {
+      "file": "workspace-root-after.png",
+      "sha256": "79a2757a6a2ac03f10383388aa23104f9a0281eedcfc503f267e3c781f02bc17",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    {
+      "file": "workspace-root-before.png",
+      "sha256": "3e645beadb400fda720b2223480df4371009a2daa69f109921fab355d97e3410",
+      "pixels": [
+        320,
+        600
+      ]
+    }
+  ],
+  "geometry": {
+    "before": {
+      "before": {
+        "x": 8,
+        "y": 45,
+        "width": 68.625,
+        "height": 39
+      },
+      "scrolled": {
+        "x": 8,
+        "y": -4328,
+        "width": 68.625,
+        "height": 39
+      },
+      "large": {
+        "x": 329.3125,
+        "y": 3,
+        "width": 43.375,
+        "height": 60
+      },
+      "backLarge": {
+        "x": 8,
+        "y": -12408,
+        "width": 121.234375,
+        "height": 65
+      }
+    },
+    "after": {
+      "before": {
+        "x": 8,
+        "y": 4,
+        "width": 32,
+        "height": 37
+      },
+      "scrolled": {
+        "x": 8,
+        "y": 4,
+        "width": 32,
+        "height": 37
+      },
+      "large": {
+        "x": 274.625,
+        "y": 4,
+        "width": 37.375,
+        "height": 63
+      },
+      "backLarge": {
+        "x": 8,
+        "y": 4,
+        "width": 32,
+        "height": 63
+      }
+    }
+  },
+  "rebaseOnto": "58744e1ac23f731757803113271021c159af75b4"
+}
