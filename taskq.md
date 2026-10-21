@@ -26,7 +26,7 @@ Each command that changes a task appends one `taskq:` comment, sets the projecte
 Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `requeue` or `later`; evidence follows [specq verification][sq-verify].
 
 ### R6. Human report
-`taskq status`, service status, `status.json` and tray share one board [snapshot](docs/design/refactoring-backlog.md) (§ 5 `--json`); omit empty parts. Tray/browser project summaries and task rows (metadata/links first, full wrapped title second under M3) reuse [shared project blocks](docs/design/project-blocks.md), with separate Doing/Review, [counters/filters](docs/design/task-counters.md) with Held and no Closed counter:
+`taskq status`, service status, `status.json` and tray share one board [snapshot](docs/design/refactoring-backlog.md) (§ 5 `--json`); omit empty parts. Tray/browser project summaries and task rows (M3) reuse [shared project blocks](docs/design/project-blocks.md), with separate Doing/Review, [counters/filters](docs/design/task-counters.md) with Held and no Closed counter:
 1. `<project> · [board](<url>)`, preceded while a local `status.json` under 60 s old reports a board rate-limit pause (§ 4) by `Rate limit: board requests paused until <time> (<host>)`, else a low board budget by its § 4 line, also when this read fails.
 2. `In work N · Waiting for answer N · Ready N`. In work: `doing` + `review`. Waiting: `ask`. Ready: `ready`.
 3. `| Task | State | Runtime | Session |`, one row per open task except `held`, `ask`, `later`, `failed`, by priority then number; task and session cells are links; `waiting` rows say `blocked ([#M](url) open)`: each blocking dependency (§ 1) linked, then `open` or `unknown: <reason>`; `status --json` rows add `blocked` (`ref`, `url`, `reason`).
@@ -131,7 +131,7 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 3. Optional `Evidence: [<label>](<url>)` -- one line, ≤ 2 screenshot/video/issue/PR links, labels ≤ 40 characters each.
 4. 2-4 options, `1. <action and trade-off>` etc.; one line each, ≤ 160 characters, exactly one ends in `★`. A Problem or option line holds ≤ 1 `[label](url)` link (label ≤ 40 characters), no bare URL; limits count visible text, not the URL; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
 5. To answer: `taskq answer N.K` or comment `K` or the option text; an owner action: `taskq answer N --text <done>`. Last line; substitute this task's number for N.
-Presentation and tray card rules: [answer card](docs/design/answer-card.md#contract-detail). A pick shows `PM N.K: <reason>` beside the ★.
+Presentation and tray card rules: [answer card](docs/design/answer-card.md#contract-detail).
 `--text` supplies literal Done and Problem lines; `--link` supplies Evidence; `--option` and `--recommend` supply the options/star.
 
 ### Executable behavioral model
@@ -214,8 +214,8 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 - Help keeps full command syntax; `inbox`, raw service logs/status JSON and original issue/log text are exempt from display caps ([verbatim diagnostics][sq-sink]).
 - Unused positional arguments are refused before any action: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
 - Commands add `attempt $TASKQ_ATTEMPT` when it is set. A command refused by `fold` prints the current state. `TASKQ_ROOT` must contain the current directory when that directory lies in a taskq project (a folder with `taskq.json` here or above), else every command is refused `TASKQ_ROOT <root> is not the project of the current directory <dir>`: a reused session's stale environment never writes into another project.
-- `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, § 1) write the § 2 fields: a seen op id returns the first receipt, writes nothing; another revision is refused `stale` naming the current one, board unchanged. An entry that a concurrent write beat on readback (other revision, raced op id, ignored) is edited by its writer: `stale`.
-- Receipt: `--json` prints one object `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the same op id); else the lines above. Browser [task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start, stop, later, retry; close board-only.
+- `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, §1) write the §2 fields: a seen op id returns the first receipt, writes nothing; another revision is refused `stale` naming the current one, board unchanged. An entry that a concurrent write beat on readback (other revision, raced op id, ignored) is edited by its writer: `stale`.
+- Receipt: `--json` prints one object `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the same op id); else the lines above. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
 - `wait` reads issues updated since the local cursor `<root>/.taskq/pm-cursor` (a cache, R1) and folds those that changed.
 - Untrusted text (issue bodies by others, worker output) follows [shared agent security](https://github.com/taskqorg/specq/blob/main/engineering/security.md#agents).
 
