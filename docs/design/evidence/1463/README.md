@@ -7,6 +7,56 @@ Source blobs are pinned in the artifact receipts; UI before evidence: `0804397`.
 Candidate rebased on `a4605ba`; the M2 note, publication fix and new-task intake change are retained.
 [Seven actual-size images](screenshots.md) · [source/artifact receipts](artifacts.json).
 
+## Native workspace follow-up (A8, R12)
+
+The review of `3b0277875fc3b5f2166b8f34000565c3f0275b8c` accepted A1–A7
+and requeued only the missing native workspace qualification. This continuation
+rebased onto `532ca31`; the workspace, shell and tray UI sources are unchanged
+from that reviewed candidate. No application code or assertion changed here.
+
+Windows now has actual workspace evidence, separate from the earlier tray
+project capture. [Native receipts](windows-workspace-receipt.json) pin source
+commit `253bda5a5ae10b702b86d4c0db6c1b5b1d8324e7`, UI blobs, development
+binary SHA-256, renderer version, raw geometry, text and image hashes.
+
+The Cargo-launched binary used a dedicated fixture installation and the native
+Workspace action to create the real second window. A loopback WebView2 DevTools
+connection sent input to that window and captured its unmodified renderer PNGs;
+no browser page, replacement HTML, injected snapshot or viewport emulation was
+used. The three routes were inspected at their captured size:
+
+- [Messages](webview2-workspace-messages.png): root title, Close, navigation and
+  both destinations remain visible; unavailable functionality is explicit.
+- [Work sessions](webview2-workspace-sessions.png): Back and Close remain visible;
+  the route explains its unavailable state and the surviving tray destination.
+- [Agent settings](webview2-workspace-agents.png): the title, controls and
+  permission-preservation explanation remain visible.
+
+All three rendered without horizontal overflow or an alert. Native page reload
+restored Agent settings through the saved workspace state. Alt+Left returned
+to Messages and restored focus to its Agent settings button; the root has no
+Back control to cross into the tray. The fixture process and its children were
+stopped after its fixture heartbeat PID and executable path matched; installed
+processes and active task attempts were untouched.
+
+These are WebView2 renderer observations at the host's observed DPR 1.4
+(572×429 CSS viewport, 801×601 PNG), 16 px text and dark theme. They do not
+qualify installed layout, other fonts/themes/DPI, owner click/raise behavior or
+WKWebView. Raw nominal 32 px control rectangles measure 31.997768 CSS px at
+this scale; this receipt does not claim a strict A4 target-size pass. That
+subpixel observation is retained for review rather than hidden by rounding.
+
+The seven accepted owner-review images remain unchanged. These three native
+qualification images bring the recorded set to ten. Do not expand the owner
+review set or replace the accepted images without a distinct visual gap.
+
+macOS workspace evidence remains missing. The available README capture
+workflow captures only `project,icon`; the existing `tray --snapshot --route
+workspace` path is unsupported (local invocation exits 1, `unknown route
+workspace`). This Windows worker has no macOS execution surface. A continuation
+with WKWebView access must capture the same actual workspace routes and record
+its separate native receipt. No native gate is waived and no R-number amended.
+
 ## Resumed capture and notification repair
 
 The branch incorporates `00a8a4f`, including #1488's npm setup for README shots.
@@ -254,7 +304,8 @@ and browser results stay separate under R12.
 
 Owner A8/V38 actual-size review of the seven-image set is recorded in answer
 6315388620. The captured README manifest now passes with exact UI blob and image
-hash matches. Native workspace rendering remains unknown; native click/raise
-stays owner-observed under the UI acceptance contract. Full local gate failures
+hash matches. Windows native workspace evidence is recorded above; WKWebView
+workspace rendering remains unknown. Native click/raise stays owner-observed
+under the UI acceptance contract. Full local gate failures
 remain disclosed; host sandbox blocks are not PASS. Green merge-result CI is
 required for publication (§ 7/R12). Not merged, released or deployed.

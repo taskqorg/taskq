@@ -1,5 +1,29 @@
 # Canonical gate failure inventory
 
+## Windows native-workspace continuation
+
+Candidate source `253bda5a5ae10b702b86d4c0db6c1b5b1d8324e7`, based on
+`532ca31cc4c65bd36f6fed7a067f4d473f5b231e`:
+
+- `python scripts/check.py --base origin/main`: FAIL, 427 passed, 20 failed,
+  35 ignored; 79.891 s / 900 s, no retry. The failure names match the earlier
+  Windows inventory below. Explicit worker/host-policy refusals are
+  sandbox-blocked; the other assertions remain unqualified. No authority or
+  assertion changed. Integration, component and browser stages were not reached.
+- `cargo +stable run --locked -- selftest`: isolated offline PASS, 97 golden
+  traces, formats and three committed staged observations; board unknown.
+- `docs/shots/check.sh`, `git diff --check` and the three native PNG SHA-256
+  comparisons: PASS. The captured UI blobs still match the candidate.
+- Actual WebView2 workspace: Messages, Work sessions and Agent settings captured
+  and inspected; no horizontal overflow or alert. Native reload and keyboard
+  Back/invoker restoration pass. Raw target rectangles are observations, not a
+  strict A4 pass; see [receipt](windows-workspace-receipt.json).
+- `cargo +stable run --locked -- tray --snapshot <output> --route workspace`:
+  exits 1, unknown route. No WKWebView workspace execution is available here.
+
+R12: Windows workspace evidence does not qualify macOS, installed layout,
+the full native matrix or the local failed gate. Merge-result CI stays required.
+
 ## Mac continuation on current main
 
 `python3 scripts/check.py --base c34717e0319fd850929ed31ec0c8934af3a04782`

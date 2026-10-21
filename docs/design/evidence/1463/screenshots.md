@@ -37,3 +37,23 @@ Development capture through Cargo, not installed or new-workspace qualification.
 Source/binary hashes: [receipts](artifacts.json). WKWebView is not tested.
 
 ![Native WebView2 project](webview2-project-after.png)
+
+## Supplement: native Windows workspace qualification
+
+The seven accepted images above are unchanged. These three additional native
+renderer frames bring the set to ten; they qualify the missing window path,
+not a new design revision. Captured physical pixels, no viewport emulation.
+[Source, binary, renderer and route receipts](windows-workspace-receipt.json).
+WKWebView workspace remains untested (A8/R12).
+
+### Messages
+
+![Native WebView2 Messages](webview2-workspace-messages.png)
+
+### Work sessions
+
+![Native WebView2 Work sessions](webview2-workspace-sessions.png)
+
+### Agent settings
+
+![Native WebView2 Agent settings](webview2-workspace-agents.png)
