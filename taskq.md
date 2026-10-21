@@ -3,11 +3,11 @@ taskq queues agents on GitHub/GitLab. Contract includes linked `Contract detail`
 **v4**: Rust in `src/`.
 ## Principles (R1–R13)
 ### Change rule
-A task that changes a rule names its R-number, edits this file with the code and lists amended R-numbers in its result. A changed rule keeps its number. A new rule gets the next one. A rule elsewhere that disagrees with this file is a defect. No history here: no dates, no decision logs; line bound: R8.
+A task that changes a rule names its R-number, edits this file with the code and lists amended R-numbers in its result. A changed rule keeps its number. A new rule gets the next one. A rule elsewhere that disagrees with this file is a defect. No history here: no dates, no decision logs.
 ### R1. The board's own objects are the only state
 Trusted comments are truth; labels project them. People see labels, issue text, `taskq:` comments (§ 2), and heartbeats (§ 4); no issue machine block. Restart rebuilds caches; no local task DB or queue. Exceptions without task truth: minimal native recovery identity (§3); [DashQ connection state](docs/design/enrollment.md); owner session requests and tray AI history (§ 4); incidents/profiles; host policy/migration backup; emergency hold; operator [resource grants/receipts](docs/design/shared-resource-controls.md#host-adapter). Fresh `status.json` checks the per-root pid; `<install>/service` checks native host identity/generation (§ 4).
 ### R2. One task, one attempt
-A task has at most one live attempt: one worker or one reviewer process. Work bigger than one reviewable diff follows [shared task preparation][sq-prepare], using tasks linked by `Depends on #N`. A live attempt is never moved to another host or session; a new attempt replaces it (§ 4).
+A task has ≤ 1 live attempt: one worker or one reviewer process. Work bigger than one reviewable diff follows [shared task preparation][sq-prepare], using tasks linked by `Depends on #N`. A live attempt is never moved to another host or session; a new attempt replaces it (§ 4).
 
 ### R3. Roles
 - **Owner**: decides product questions, answers `ask`, accepts or rejects results through the PM.
@@ -17,7 +17,7 @@ A task has at most one live attempt: one worker or one reviewer process. Work bi
 - **Reviewer** `R<N>`: a child of the service, spawned on demand for a result. Checks the exact candidate, then `close`, `requeue` with fixes, or `ask`. No resident supervisor session.
 - **Owner session**: a new visible session the service opens for a person (setup, tray AI request, `retro`; § 4); after launch Claude owns it and it may act as PM. Authority per [shared approval boundaries][sq-approval]; task-state writes use TaskQ commands.
 
-Session names: `T<N> <title[:40]> (<host>)` and `R<N> <title[:40]> (<host>)`.
+Session names: `<T|R><N> <title[:40]> (<host>)`.
 
 ### R4. Comments move the queue
 Each command that changes a task appends one `taskq:` comment, sets the projected labels and pokes the local service. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
@@ -76,7 +76,7 @@ Looks/sound: one line each (R13).
 - Formatting: a few unicode icons where they help scanning; no emoji clutter, no badges.
 - Last README line: `If taskq saves you time, [buy me a coffee](…).`
 ## 1. Tasks
-A task is an open issue by a trusted author (GitHub `OWNER|MEMBER|COLLABORATOR`, GitLab Reporter+) labelled `taskq` (`taskq start` sets it; on the board a person adds it). Other issues never start: a PM files a task from one with `taskq add` and comments on it at close. A closed issue is done, unless the board records that it closed without completing (GitHub `state_reason` not `completed`, e.g. `not_planned`): such a dependency reads unknown, never done (R12; GitLab records no reason). The issue text is for people and may be
+A task is an open issue by a trusted author (GitHub `OWNER|MEMBER|COLLABORATOR`, GitLab Reporter+) labelled `taskq` (`taskq start` sets it; on the board a person adds it). Other issues never start: a PM files a task from one with `taskq add` and comments on it at close. A closed issue is done, unless the board records that it closed without completing (GitHub `state_reason` not `completed`): such a dependency reads unknown, never done (R12; GitLab records no reason). The issue text is for people and may be
 edited by hand: `## Goal`, `## Acceptance`, optional `## Scope`, one line `Depends on #N` per dependency; `Depends on <repo>#N` names an issue of another repository on the board's host, read with the board's token (`<repo>`: `name` under the board's owner, or `owner/name`). An unreadable dependency reads unknown. Acceptance items `A1.`, `A2.` are never renumbered; each is an observable result a reviewer checks without code.
 `add` writes these sections in that order, then dependencies: Goal 1-2 lines; Acceptance 1-8 items, one line each;
 Scope optional, 1-4 bullet lines; dependencies one `Depends on #N` line each; with `--op-id`, a last line `op-id: <id>` identifies the create for read-only recovery below. Title ≤ 80 characters; body lines ≤ 240. Short imperative sentences: Goal names the user outcome; each Acceptance a visible check; Scope a boundary. Headings on their own lines; one blank line between sections. More than eight checks: split before filing (R2).
@@ -114,21 +114,22 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | `ask` | `answer [K]` | state before `ask`, else `ready` | `retries = 0`; delivered: text, else option K, else first line |
 | `ask` | `pick K` | `ask` | PM view: option K, reason in text; no `attempt`; cleared by a card change or leaving `ask` |
 | any open | `requeue` | `ready` | by PM/owner: result, card and attempt cleared; `retries = 0` |
+| `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next ready; N-1: `later` |
 | any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended |
 | `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits |
 
-- `waiting` becomes `ready` when every `Depends on` issue is done (§ 1); an open or unknown one keeps it waiting.
+- `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1); an open or unknown one keeps it waiting.
 - `gone` in `review` replaces only the reviewer; keeps result. ([E1–E5](docs/design/emergency-recovery.md)): § 3 hold forbids host `spawn` except E3 selected recovery; unknown liveness forbids `gone`; `service recover --apply` fences each `gone attempt` with `--op-id`/`--revision` (§ 4).
 - One retry counter: attempt `requeue` at 3 or `gone` at 2 ends in `ask`; answer goes to ready. Unless already a card, append `Problem:` with the limit, recommended `1. requeue: ...`, `2. later: ...`, and `To answer:` with `taskq answer N.K` only; reason `K. ` lines become `K) ` (N-1 folds the same card). Ready clears attempt, card, result, publication. `requeue main-moved` and `usage-limit` keep retries and add no limit card.
 - `answer K` whose option starts with `close` or `later` runs `close` (§ 7) or `later` instead, only through `taskq answer N.K`: a bare board comment `K` folds as a plain answer; an owner pick of `approve <sha7|sha> ...` approves a gated task only when that SHA matches its current result, including a bare board comment in `ask`. An attempt-bound answer cannot approve.
 - Gate states: none, `required`, `approved`, `stale`. An approval binds to the result it names: the next `result` or a move to `ready` makes it `stale`, which blocks like `required` until an `approve` of the new result. The gate blocks only `close` in `review` (its publication and the closed issue that frees `Depends on` tasks); a fold from the board after any restart keeps it (R1). Closing a `later`/`failed` task stays the owner's own act.
 - After an entry is accepted, the writer sets the `q-<state>` label; every service pass fixes labels that differ from the fold. A hand-moved label is overwritten: people change state with an entry.
 ### Ask card
-`ask` writes, in order, at most nine nonblank lines, without headings or blank lines inside the card:
-1. `Done: <what was checked or attempted>` -- one line, at most 160 characters; say `not started` when true.
-2. `Problem: <decision needed and user effect>` -- one or two lines, at most 240 characters per line.
-3. Optional `Evidence: [<label>](<url>)` -- one line, at most two screenshot/video/issue/PR links, labels at most 40 characters each.
-4. Two to four options, `1. <action and trade-off>` etc.; one line each, at most 160 characters, exactly one ends in `★`. A Problem or option line holds at most one `[label](url)` link (label at most 40 characters), no bare URL; limits count visible text, not the URL; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
+`ask` writes, in order, ≤ 9 nonblank lines, without headings or blank lines:
+1. `Done: <what was checked or attempted>` -- one line, ≤ 160 characters; say `not started` when true.
+2. `Problem: <decision needed and user effect>` -- 1-2 lines, ≤ 240 characters each.
+3. Optional `Evidence: [<label>](<url>)` -- one line, ≤ 2 screenshot/video/issue/PR links, labels ≤ 40 characters each.
+4. 2-4 options, `1. <action and trade-off>` etc.; one line each, ≤ 160 characters, exactly one ends in `★`. A Problem or option line holds ≤ 1 `[label](url)` link (label ≤ 40 characters), no bare URL; limits count visible text, not the URL; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
 5. To answer: `taskq answer N.K` or comment `K` or the option text; an owner action: `taskq answer N --text <done>`. Last line; substitute this task's number for N.
 Presentation and tray card rules: [answer card](docs/design/answer-card.md#contract-detail). A pick shows `PM N.K: <reason>` beside the ★.
 `--text` supplies literal Done and Problem lines; `--link` supplies Evidence; `--option` and `--recommend` supply the options/star.
@@ -144,7 +145,7 @@ TaskQ sources: the §2 transition table, `tests/golden/*.json` traces (`fold.jso
 - **App lease.** [Detail](docs/runtime-qualification.md#contract-detail).
 - **Recovery.** Missing heartbeat or restart is unknown, never exit. Replacement, reviewer and continuation need prior execution release. Delivery needs exact-input acceptance, not intent or exit; confirmed no-start permits retry. Reuse board/native identity; persist only missing recovery data. [Execution ownership](docs/runtime-qualification.md#execution-ownership) defines status, proof, qualification; owner-host boot after intent proves exit; age, task state, closure, legacy `gone`, owner acceptance never do.
 - **Capacity** is host-wide: `<install>/host.json` runtime limits minus occupied slots in all registered projects, reviewers/resumes included. Key: project identity + attempt. Pending grant and running child occupy one slot, counted once for runtime limits, admission.max and project caps; pending-to-running adds none. Optional project `limits` only lowers its share: remaining = min(host remaining, project remaining). Missing runtime limit: no ceiling; 0 disables. Lowering never stops children (R11). Validate host.json/pass; invalid/unreadable policy holds new launches as unknown, keeping children and leases.
-- **Load gate** (host policy, § 9) holds every new child (claim, reviewer, resume) while CPU busy >= `cpu_max` % or available physical memory <= `memory_min` %; running children continue. A missing, invalid or stale reading holds; reopening needs 3 consecutive valid samples below the band; at most one launch per 30 s. A held resume keeps its inbox; a held won claim stays leased. No battery or thermal gating, no forced retirement. Serialize slot grants and transitions; release only after verified failed launch/exit. Choose ready projects round-robin; resumes/reviewers keep precedence. Count legacy work during drain; migration admits nothing new.
+- **Load gate** (host policy, § 9) holds every new child (claim, reviewer, resume) while CPU busy >= `cpu_max` % or available physical memory <= `memory_min` %; running children continue. A missing, invalid or stale reading holds; reopening needs 3 consecutive valid samples below the band; ≤ 1 launch per 30 s. A held resume keeps its inbox; a held won claim stays leased. No battery or thermal gating, no forced retirement. Serialize slot grants and transitions; release only after verified failed launch/exit. Choose ready projects round-robin; resumes/reviewers keep precedence. Count legacy work during drain; migration admits nothing new.
 - **Host admission.** In-process grants follow the host load gate, admission.max, runtime limits and 30 s spacing. No Fixed mode. Hold new admission host-wide until all legacy services drain and exit; existing attempts keep leases and may resume to finish. Unknown legacy liveness holds admission. Setup (§ 4) skips limits, holds, Stop and restart.
 - **Emergency hold.** `<install>/hold` blocks worker and reviewer launches (not owner sessions) before the load gate; unreadable holds. `service release` clears ordinary holds only; Mac Stop survives restart/install; selected recovery requires owner evidence and native release ([E3](docs/design/emergency-recovery.md#e3-recovery)). Children continue unless owner-confirmed Full stop (R11); older services ignore it. [Capacity](docs/design/capacity.md#contract-detail).
 - **Cancellation** = `requeue`, `later`, `failed` or `gone`; the owner stops the child (R11). These task transitions never release execution; unknown termination stays fenced.
@@ -188,7 +189,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |
 | `taskq result N --sha SHA [--checks C] [--text T] [--option O..] [--recommend K] [--link URL..]` | hand in; full 40-hex SHA |
 | `taskq requeue N [--text T]` / `taskq steer N --text T` | back to `ready` / text to the live worker |
-| `taskq later N [--text T]` / `taskq failed N --text R` | park / hold |
+| `taskq later N [--text T] [--blocker #M]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | owner gate approval of the current result (§ 7; refused with `TASKQ_ATTEMPT`) / recipe run (§ 7) |
 | `taskq status [--only L,..] [--json]` | R6 report of tasks with one of the labels (none: all); no write. `--json`: the snapshot: `schema` 1, `source` board, `observed` board time, `complete` and `reason`, `board` identity, `totals` per open state (null when incomplete: [unknown][sq-unknown]), `tasks` (labels, session, `session_url`, deps, card), `hosts`, `capabilities` |
@@ -204,11 +205,11 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq selftest` | load config, fold `tests/golden` fixtures built into the binary, read the board; no writes |
 
 - Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
-- Errors/refusals: `Error: <problem>` then `Next: <action>`; at most 2 lines, at most 160 characters each. A compact error links its complete diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
-- Other command acknowledgements: one line naming action and project/version; at most 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
-- `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; at most 2 lines, at most 240 characters each.
-- `answer --text` and `steer`: at most 4 lines, at most 240 characters each; one decision/instruction per line, no invented context.
-- `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, at most 160 characters.
+- Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its complete diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
+- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
+- `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
+- `answer --text` and `steer`: ≤ 4 lines, ≤ 240 characters each; one decision/instruction per line, no invented context.
+- `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, ≤ 160 characters.
 - `update`, `cleanup`, setup and `selftest`: one outcome per version/path/check ([Core Write][sq-write]).
 - Help keeps full command syntax; `inbox`, raw service logs/status JSON and original issue/log text are exempt from display caps ([verbatim diagnostics][sq-sink]).
 - Unused positional arguments are refused before any action: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
@@ -227,11 +228,11 @@ Setup is one agent conversation per project. Resolve the project name and exact 
 Worker brief: task, attempt, branch, commands, contract path (release URL if absent), folders (§ 8), CI wait (rule 7). Task grants only these commit/publication steps ([approval][sq-approval]). Rules:
 1. Read contract/issue; [prepare][sq-prepare]. Conflict (R13), ambiguous/untestable Acceptance or split (R2): ask with options before code.
 2. Workspace: `git worktree add -b taskq-<N> .worktrees/taskq-<N> origin/main` (existing: continue it); `workspace: external`: path from the project's `AGENTS.md`.
-3. Owner: `ask`. External blocker: `later` with failed check + one unblock condition; resume only after proof. Code fix: `requeue`. Then stop.
+3. Owner: `ask`. Blocker: file it held, `later N --blocker #M` (owner/PM only park without); fix own broken checks here if small. Code fix: `requeue`. Then stop.
 4. Before `result`: commit to `taskq-<N>` with `Task: <issue url>`; rebase on `origin/main`; run checks; list outcomes in `--checks`. `result` names and refuses changed `uiSources` files whose SHA blobs `docs/shots/manifest.json` omits (fix: `docs/shots/update.sh`); Readable SHA, no manifest: skip; other Git/manifest errors: unknown, refuse. Test changes follow [specq testing](https://github.com/taskqorg/specq/blob/main/engineering/testing.md): `--text` names the defect and kept protection; a rule changes only with accepted behavior or protection. Fix `--checks`: [before/after evidence][sq-verify] or its limitation. Sandbox-blocked host tests: Checks `sandbox-blocked`, never PASS. Do not requeue; gate: § 7 publication CI (R12).
 5. Delivery `direct`: push `taskq-<N>`. `auto-merge`, `review-pr`: push and open one PR/MR into `main`. Then `result --sha <sha>`; do not wait for CI, `close` checks it. Research/proposal tasks (type `research`, docs proposals) end with `ask`: options and one recommendation. Then deliver the approved outcome or file approved dependents; review still closes. No commit: `--sha` = current `origin/main`.
 6. Everything written through taskq is public: no secrets, tokens or local paths.
-7. CI wait (worker, reviewer): at most one poll a minute (`gh pr checks <PR> --watch --interval 60`); never `gh run watch` (3 s polls) or `gh run view` without `--json`.
+7. CI wait (worker, reviewer): ≤ 1 poll a minute (`gh pr checks <PR> --watch --interval 60`); never `gh run watch` (3 s polls) or `gh run view` without `--json`.
 8. Self-fix (taskq itself): done on merged PR + green `merge_group` CI; no per-task live install proof. Before release, one owner batch of live host checks, results in the version PR (§ 8); release waits for owner go; its defects `later` unless `p0`.
 ### Result and close verdicts
 `result` body: `Changed: <user effect>` (1-2 lines), `Checks: <command -- outcome>` (one line per check, 1-8 lines), then `Open: <remaining item|none>` (1-2 lines); 12 lines max, 240 characters each. Keep exact commands and platform qualifications (R12).
@@ -278,7 +279,7 @@ The child's environment drops `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` and
 - `label_schema` `canonical|legacy` (absent: legacy if the board has `priority-1|2` or `q-waiting` objects, else canonical). Both names work in priority and focus/status filters; `p0` has no legacy name; logs keep `waiting`. Canonical writes on existing boards need all-host compatible release/idle approval; legacy objects and closed issues stay, only open issues are reassigned.
 - `publish` `direct|pr`, `delivery` (§ 7); `workspace` `external` keeps host-owned worktrees.
 - Host-owned `<install>/host.json`: `hosts` (hostname → name; TASKQ_HOST override), `has` (name → capabilities), runtime `limits`, `admission` {"max": n}, `load_gate`, `codex` args, `permission_mode` (R9), `channel` (§ 8), `projects` {root: {limits}}, lower-only ([remote](docs/design/shared-resource-controls.md#project-overlay)). No capacity_hosts/mode. Keep Auto/D03 defaults; migration never enables a gate or changes permissions.
-- Design, UI, visual and image work goes to codex with `add --runtime codex` ([specq runtime rule][sq-rt]); `add --prefer` is refused with a hint to `--runtime`. Opt-in `codex-app` (macOS, Windows): only on hosts whose `has` lists it, only for `run-codex-app` tasks (`add --runtime codex-app`); reviewer chain checks keep app-worker cases on macOS and Windows and none elsewhere. A screen task adds `needs-screen` (`has` `screen`). macOS evidence tasks: [runtime qualification](docs/runtime-qualification.md#macos-evidence-tasks). Answering a real ask stays the owner's act.
+- Design, UI, visual and image work goes to codex with `add --runtime codex` ([specq runtime rule][sq-rt]); `add --prefer` is refused, hinting `--runtime`. Opt-in `codex-app` (macOS, Windows): only on hosts whose `has` lists it, only for `run-codex-app` tasks (`add --runtime codex-app`); reviewer chain checks keep app-worker cases on macOS and Windows and none elsewhere. A screen task adds `needs-screen` (`has` `screen`). macOS evidence tasks: [runtime qualification](docs/runtime-qualification.md#macos-evidence-tasks). Answering a real ask stays the owner's act.
 - Project taskq.json keeps board/repo/board host, publish/delivery, workspace, labels, recipes, incident_reports, pages, assignee and other project keys; `limits` per § 3. No host identity, capability, model/permission or admission copies. Token lookup and worker-policy grants (§ 8 Access) stay unchanged; host flags never grant access.
 - `recipes` `{name: {"version": V, "tasks": [{"title", "goal", "acceptance": [..], "scope", "deps": [earlier 1-based index..], "gate", "type", "runtime", "priority", "host"}]}}` (§ 7).
 - `<install>/projects` is the explicit owner-approved list of exact roots (R10). Drain a removed root before retiring its thread; keep status until verified exit. [Six-copy migration](docs/design/host-service.md#six-copy-configuration-migration) compares inputs before writes; conflicts/unknowns hold launches. Keep originals, unknown keys and ownership; replacement resumes idempotently.

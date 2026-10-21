@@ -64,7 +64,7 @@ const USAGE: &str = "taskq agents
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
- taskq requeue N [--text T] | taskq later N [--text T]
+ taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M]
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
@@ -423,6 +423,18 @@ fn one_line(what: &str, items: &[String]) -> Res<()> {
     if items.iter().any(|s| s.contains(['\r', '\n']) || s.trim().is_empty()) { Err(format!("{what}: one nonempty line each")) } else { Ok(()) }
 }
 
+/// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue; only the owner or PM parks without one.
+fn park(n: u64, blocker: Option<&str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&str>> {
+    let worker = attempt.is_some() && task.is_some_and(|t| t.parse() == Ok(n));
+    match blocker {
+        None if worker => Err("a worker park needs --blocker #M: file the blocker as a held task first (§ 7)".into()),
+        None => Ok(vec![]),
+        Some(_) if !worker => Err("--blocker is for a worker park; the owner or PM adds `Depends on #M` or parks with later".into()),
+        Some(r) if !core::blocker_ref(r) || r == format!("#{n}") => Err(format!("bad --blocker {r}: one #M or <repo>#M, not this task")),
+        Some(r) => Ok(vec![r]),
+    }
+}
+
 fn task_text(cmd: &str, text: &str) -> Res<()> {
     if matches!(cmd, "requeue" | "later" | "failed") {
         if text.is_empty() && cmd != "failed" { return Ok(()); }
@@ -623,7 +635,7 @@ fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<Stri
 fn inbox(b: &dyn Board, n: u64) -> Res<String> {
     let issue = b.issue(n)?;
     let log = entries(b, n)?;
-    let projection = core::project(n, &log, deps_open(b, &issue.body));
+    let projection = core::project(n, &log, deps_open(b, n, &issue.body, &log));
     let t = &projection.task;
     let mut out = vec![format!("#{n} {}\n{}", issue.title, b.url(n)), issue.body.trim().to_string(), format!("Folded: {}", serde_json::to_string(&t).unwrap_or_default())];
     out.push(format!("Revision: {}", projection.revision));
@@ -2452,7 +2464,7 @@ fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &
             return Err(unknown(i.number, "created issue conflicts with the immutable request".into()));
         }
         let log = entries(b, i.number).map_err(read)?;
-        let projection = core::project(i.number, &log, deps_open(b, &i.body));
+        let projection = core::project(i.number, &log, deps_open(b, i.number, &i.body, &log));
         let state = if !i.open { State::Closed } else if service::is_held(&i) { State::Held } else { projection.task.state };
         Ok(Receipt::accepted(i.number, op, state, projection.revision))
     };
@@ -2676,7 +2688,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "later" => {
             let n = a.num(1)?;
-            emit(&[act(b, root, n, cmd, &[], text, &op)], json)
+            emit(&[act(b, root, n, cmd, &park(n, a.one("blocker"), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?, text, &op)], json)
         }
         "steer" | "failed" => {
             let n = a.num(1)?;
@@ -2863,6 +2875,21 @@ fn telemetry_line(active: &Value, report: Option<&Value>) -> String {
 
 #[cfg(test)]
 mod tests {
+    // Chain: § 7 rule 3 worker park (#1486). Risk: a worker parks without a blocker (no automatic exit), or an owner park
+    // starts needing one.
+    #[test]
+    fn worker_park_needs_one_blocker() {
+        let w = || (Some("7".to_string()), Some("42".to_string()));
+        let (t, a) = w();
+        assert!(super::park(7, None, t, a).unwrap_err().contains("--blocker"));
+        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), t, a).is_err(), "{bad}"); }
+        let (t, a) = w();
+        assert_eq!(super::park(7, Some("dashq#36"), t, a).unwrap(), ["dashq#36"]);
+        assert!(super::park(7, None, None, None).unwrap().is_empty());
+        assert!(super::park(7, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
+        assert!(super::park(7, Some("#12"), None, None).is_err());
+    }
+
     use super::*;
     use board::Fake;
     use dispatch::close_one;

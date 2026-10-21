@@ -77,7 +77,7 @@ fn row(b:&dyn Board,c:&Config,n:u64)->Res<Value> {
     let issue=b.issue(n)?;
     if !issue.open||!crate::service::is_task(&issue) {return Err("task closed or no longer managed".into());}
     let log=entries(b,n)?;
-    let p=core::project(n,&log,dispatch::deps_open(b,&issue.body));
+    let p=core::project(n,&log,dispatch::deps_open(b,n,&issue.body,&log));
     let last=p.executions.last().ok_or("no execution evidence")?;
     let work=workspace(&c.root,n);
     let focus=crate::data::focus(&c.root);

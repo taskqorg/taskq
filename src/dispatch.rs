@@ -8,9 +8,10 @@ use crate::{Res, join, poke};
 use serde::Serialize;
 use std::path::Path;
 
-/// Whether a `Depends on` issue of `body` is not done (§ 1); an unreadable one counts as not done.
-pub fn deps_open(b: &dyn Board, body: &str) -> bool {
-    !service::blockers(b, body, None, &mut Default::default()).is_empty()
+/// Whether a `Depends on` issue of `body` or the worker park's blocker in `log` is not done (§ 1, § 2); an unreadable
+/// one counts as not done.
+pub fn deps_open(b: &dyn Board, n: u64, body: &str, log: &[Entry]) -> bool {
+    !service::blockers(b, &core::dep_body(body, &fold(n, log, false)), None, &mut Default::default()).is_empty()
 }
 
 /// This process's `TASKQ_TASK` and `TASKQ_ATTEMPT`.
@@ -38,9 +39,9 @@ fn stale_child(n: u64, kind: &str, live: Option<u64>, (task, attempt): &ChildEnv
 
 pub fn current(b: &dyn Board, n: u64) -> Res<(board::Issue, Task, bool)> {
     let issue = b.issue(n)?;
-    let deps = deps_open(b, &issue.body);
-    let t = fold(n, &entries(b, n)?, deps);
-    Ok((issue, t, deps))
+    let log = entries(b, n)?;
+    let deps = deps_open(b, n, &issue.body, &log);
+    Ok((issue, fold(n, &log, deps), deps))
 }
 
 /// `--op-id` and `--revision` of one command (§ 5).
@@ -125,8 +126,9 @@ fn act_child(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text
 fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &str, op: &Op, attempt: Option<u64>, child: Option<&ChildEnv>) -> Receipt {
     let read = || -> Res<(board::Issue, bool, Vec<Entry>)> {
         let issue = b.issue(n)?;
-        let deps = deps_open(b, &issue.body);
-        Ok((issue, deps, entries(b, n)?))
+        let log = entries(b, n)?;
+        let deps = deps_open(b, n, &issue.body, &log);
+        Ok((issue, deps, log))
     };
     let (issue, deps, mut log) = match read() {
         Ok(x) => x,

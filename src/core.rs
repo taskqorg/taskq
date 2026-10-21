@@ -175,6 +175,19 @@ pub struct Task {
     /// The PM's pick of an open `ask` card (§ 2): option K and its one-line reason; never an answer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pick: Option<(usize, String)>,
+    /// A worker park's blocker issue (§ 2 `later <ref> attempt`): read like a `Depends on` line until the next ready.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+}
+
+/// The issue text whose `Depends on` lines keep `t` waiting (§ 1): `body` plus a worker park's blocker (§ 2).
+pub fn dep_body(body: &str, t: &Task) -> String {
+    t.blocker.as_ref().map_or_else(|| body.to_string(), |r| format!("{body}\nDepends on {r}\n"))
+}
+
+/// Whether `r` is one `#N` or `<repo>#N` blocker reference (§ 2 worker park).
+pub fn blocker_ref(r: &str) -> bool {
+    !r.contains(char::is_whitespace) && depends(&format!("Depends on {r}")).len() == 1
 }
 
 /// A comment by a trusted author; the board adapter drops everyone else's.
@@ -366,6 +379,7 @@ fn end(t: &mut Task) {
 
 fn ready(t: &mut Task) {
     end(t);
+    t.blocker = None;
     t.card = None;
     t.result = None;
     t.state = State::Ready;
@@ -481,6 +495,7 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         t.role = Some(role.to_string());
         t.session = Some(format!("{} {}", l.args[1], l.args[2]));
         t.inbox.clear();
+        t.blocker = None;
     };
     let limit = |t: &mut Task, resume: &mut Option<State>, max: u32| {
         t.retries += 1;
@@ -596,6 +611,11 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         (Ready | Waiting | Doing | Review | Ask | Later | Failed, "requeue", false) => {
             t.retries = 0;
             ready(t);
+        }
+        // § 2 worker park: the attempt ends and the blocker keeps the task waiting until it is done
+        (Doing | Review, "later", true) if l.args.len() == 1 && blocker_ref(l.args[0]) => {
+            ready(t);
+            t.blocker = Some(l.args[0].to_string());
         }
         (Ready | Waiting | Doing | Review | Ask, "later" | "failed", _) => {
             end(t);
