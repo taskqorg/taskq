@@ -7,6 +7,7 @@
 .menu .head{display:grid;grid-template-columns:var(--target) minmax(0,1fr) auto auto;align-items:center;gap:var(--related);padding:4px var(--outer);flex:none;cursor:grab}
 .head .nav-back{min-width:var(--target);align-self:start}
 .head h1{font-size:1.1em;font-weight:600;line-height:1.25;margin:0;overflow-wrap:anywhere;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.head h1:focus{outline:none}
 .head .nav-title{min-width:0}
 .head .nav-actions,.head .window-controls{display:flex;align-items:center;gap:var(--related);align-self:start}
 .head .window-controls{border-inline-start:1px solid var(--edge);padding-inline-start:var(--related)}
