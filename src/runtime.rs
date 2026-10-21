@@ -604,6 +604,34 @@ fn command_contract() -> String {
 }
 
 fn project_contract(root: &Path) -> Result<Option<PathBuf>, StartError> {
+    let (path, fallback) = contract_path(root)?;
+    Ok((!fallback || path.try_exists().map_err(|e| refused("project contract", e))?).then_some(path))
+}
+
+/// #1479: the contract at the fetched `origin/main` commit the worker branch starts from (§ 7 rule 2), never the root's
+/// working tree or HEAD. `None`: the root has no Git or no `origin/main`, so the working tree applies as before;
+/// `Some((_, None))`: the file is absent at that commit and this release's contract applies.
+fn base_contract(root: &Path) -> Result<Option<(String, Option<Vec<u8>>)>, StartError> {
+    if !root.join(".git").try_exists().map_err(|e| refused("project contract", e))? { return Ok(None); }
+    let git = |args: &[&str]| coreq::process::output("rules.contract", Command::new("git").arg("-C").arg(root)
+        .args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(30))
+        .ok().filter(|o| o.status.success()).map(|o| o.stdout);
+    // ponytail: a failed fetch keeps the last fetched commit; the header names it and the worker branches from the same ref
+    git(&["fetch", "-q", "origin", "main"]);
+    let Some(sha) = git(&["rev-parse", "--verify", "-q", "origin/main^{commit}"]) else { return Ok(None) };
+    let sha = String::from_utf8_lossy(&sha).trim().to_string();
+    let (path, fallback) = contract_path(root)?;
+    let name = path.file_name().and_then(|n| n.to_str()).ok_or_else(|| refused("project contract", "invalid name"))?;
+    let object = format!("{sha}:{name}");
+    if git(&["cat-file", "-e", &object]).is_none() {
+        return if fallback { Ok(Some((String::new(), None))) } else { Err(refused("project contract", format!("{name} absent at origin/main {sha}"))) };
+    }
+    let body = git(&["cat-file", "blob", &object]).ok_or_else(|| refused("project contract", format!("{name} unreadable at origin/main {sha}")))?;
+    Ok(Some((format!("{} at origin/main {sha}", path.display()), Some(body))))
+}
+
+/// The registered contract file, and whether this release's contract replaces it when absent.
+fn contract_path(root: &Path) -> Result<(PathBuf, bool), StartError> {
     let config = match std::fs::read(root.join("taskq.json")) {
         Ok(bytes) => Some(serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| refused("project registration", e))?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
@@ -614,12 +642,9 @@ fn project_contract(root: &Path) -> Result<Option<PathBuf>, StartError> {
         let name = repo.rsplit('/').next().filter(|name| !name.is_empty() && !matches!(*name,"."|"..")
             && name.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
             .ok_or_else(|| refused("project registration", "invalid repository name"))?;
-        let path = root.join(format!("{name}.md"));
-        if repo == crate::platform::RELEASE_REPO && !path.try_exists().map_err(|e| refused("project contract", e))? { return Ok(None); }
-        Ok(Some(path))
+        Ok((root.join(format!("{name}.md")), repo == crate::platform::RELEASE_REPO))
     } else {
-        let path = root.join("taskq.md");
-        Ok(path.try_exists().map_err(|e| refused("project contract", e))?.then_some(path))
+        Ok((root.join("taskq.md"), true))
     }
 }
 
@@ -903,11 +928,18 @@ fn rules(root: &Path, resume: bool, mut fetch: impl FnMut(&str) -> Result<String
     let revision=shared_revision(root,&mut fetch)?;
     let _snapshot=tracing::info_span!("taskq.rules.snapshot",shared_spec=revision.as_str()).entered();
     let dir = specq_dir(root,&revision);
-    let selected = project_contract(root)?;
-    let spec = selected.as_ref().map_or_else(command_contract, |p|p.display().to_string());
-    let contract = match selected {
-        Some(path) => String::from_utf8(std::fs::read(&path).map_err(|e| refused("project contract", e))?).map_err(|_| refused("contract", "invalid UTF-8"))?,
-        None => CONTRACT.into(),
+    let (spec, contract) = match base_contract(root)? {
+        Some((spec, Some(bytes))) => (spec, String::from_utf8(bytes).map_err(|_| refused("contract", "invalid UTF-8"))?),
+        Some((_, None)) => (command_contract(), CONTRACT.into()),
+        None => {
+            let selected = project_contract(root)?;
+            let spec = selected.as_ref().map_or_else(command_contract, |p|p.display().to_string());
+            let contract = match selected {
+                Some(path) => String::from_utf8(std::fs::read(&path).map_err(|e| refused("project contract", e))?).map_err(|_| refused("contract", "invalid UTF-8"))?,
+                None => CONTRACT.into(),
+            };
+            (spec, contract)
+        }
     };
     if contract.trim().is_empty() { return Err(refused("contract", "empty")); }
     // the header names the cache: every pinned file is there, at start and at resume
@@ -3659,6 +3691,47 @@ mod tests {
         std::fs::remove_file(root.join("taskq.md")).unwrap();
         assert!(rule_text(&root,"task",false,rule).unwrap().contains(CONTRACT));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Chain: § 7 rule 2 worker base -> § 8 rule delivery, #1479. Risk: a root behind origin or with a local edit hands the
+    // worker a contract other than the one its branch starts from.
+    #[test]
+    fn contract_comes_from_fetched_origin_main_not_the_root_tree() {
+        let root = rules_root("base-commit");
+        let up = root.with_file_name(format!("{}-up", root.file_name().unwrap().to_str().unwrap()));
+        std::fs::remove_dir_all(&up).ok();
+        let git = |dir: &Path, args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        std::fs::write(root.join("taskq.json"), r#"{"repo":"group/serverq"}"#).unwrap();
+        std::fs::write(root.join("serverq.md"), "# Stale root contract\n").unwrap();
+        std::fs::write(root.join("taskq.md"), "# Wrong root taskq contract\n").unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["add", "-A"]);
+        git(&root, &["commit", "-q", "-m", "old"]);
+        std::fs::create_dir_all(&up).unwrap();
+        git(&up, &["clone", "-q", root.to_str().unwrap(), "."]);
+        std::fs::write(up.join("serverq.md"), "# Fresh origin contract\n").unwrap();
+        git(&up, &["commit", "-q", "-am", "new"]);
+        let fresh = git(&up, &["rev-parse", "HEAD"]);
+        git(&root, &["remote", "add", "origin", up.to_str().unwrap()]);
+        std::fs::write(root.join("serverq.md"), "# Local root edit\n").unwrap();
+        for resume in [false, true] {
+            let text = rule_text(&root, "task", resume, rule).unwrap();
+            assert!(text.contains(&format!("--- contract {} at origin/main {fresh} ---\n# Fresh origin contract", root.join("serverq.md").display())), "{resume}");
+            assert!(text.contains(&format!("contract `{} at origin/main {fresh}`", root.join("serverq.md").display())));
+            assert!(!text.contains("Stale root contract") && !text.contains("Local root edit"));
+        }
+        git(&up, &["rm", "-q", "serverq.md", "taskq.md"]);
+        git(&up, &["commit", "-q", "-m", "drop"]);
+        assert!(rule_text(&root, "task", false, rule).is_err(), "a registered contract absent at the base refuses");
+        std::fs::write(root.join("taskq.json"), r#"{"repo":"taskqorg/taskq"}"#).unwrap();
+        let text = rule_text(&root, "task", false, rule).unwrap();
+        assert!(text.contains(CONTRACT) && !text.contains("Wrong root taskq contract"), "absent at the base: this release's contract");
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(up).unwrap();
     }
     #[test]
     fn pinned_cache_rejects_changed_utf8_wrong_identity_and_partial_pairs() {
