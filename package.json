@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@preact/signals": "2.11.3",
-    "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/4ad96c721dafb281504a5a415fe7fcab8ae6e685",
+    "@taskq/coreq": "https://codeload.github.com/taskqorg/coreq/tar.gz/d04c6020bb4024209179637dd11efe9f5e274b69",
     "preact": "11.0.1",
     "wouter-preact": "3.13.0"
   }
