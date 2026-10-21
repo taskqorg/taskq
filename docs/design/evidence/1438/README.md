@@ -59,7 +59,7 @@ in `sources.json`; the containing PR identifies the candidate commit.
 - `python3 -m unittest discover -s tests`: no tests ran; no legacy qualification.
 
 The README images were refreshed separately by Windows WebView2 snapshots from
-source `59b321a6343439e9b442bc1eb3ef2bb071abc57d`, using `docs/shots/fixture.sh`
+source `adbc33a530be41f3fe71547480bfdab706ac4da2`, using `docs/shots/fixture.sh`
 with Windows paths and freshly touched fixture status files, plus the existing
 workspace fixture. `cargo +stable run --locked -- tray --snapshot DIR --route
 project,icon` and the separate `workspace` route both exit successfully; the
@@ -68,3 +68,7 @@ manifest records the dev artifact, native renderer, source blobs and image hashe
 These images were inspected; owner visual acceptance and merge-group CI remain
 pending. No installed service, live board, native filter interaction or release
 deployment is qualified by these captures (R12, § 7.4).
+
+The final rebase onto `8bf6691` changes documentation only. The focused R8 check
+passes after integrating the filter link into R6: 298 lines and 61,430 bytes.
+Runtime code, filter sources and their browser observations are unchanged.
