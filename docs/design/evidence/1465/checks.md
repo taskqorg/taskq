@@ -145,3 +145,38 @@ Local tools: Rust 1.99.0 (Windows GNU), Node 24.5.0 and Python 3.12.10.
 No authority environment was relaxed, no production operation was applied and
 no new review images were added. Publication still requires green `merge_group`
 CI on the merge result (R12/§ 7).
+
+## Publication conflict repair
+
+R12/§ 7: PR #1508 at `d38cae5179a63799c28311bab763abff3c4750dc`
+reported `CONFLICTING`. Rebase onto `7cc123790fd1fd5612a112fb05abe3c777840f09`
+reproduced conflicts in the screenshot manifest and summary icon. The workspace
+implementation, owner acceptance and Windows receipt regression were retained.
+No rule or test assertion changed.
+
+Rebased implementation: `5ce2f440448a23f21d339d49212dfd877d758208`.
+Before regeneration, `sh docs/shots/check.sh` exited 2 for four stale UI blobs.
+After `sh docs/shots/update.sh`, that same check passed, as did
+`sh docs/shots/check.test.sh` and `git diff --check`. The regenerated WKWebView
+project menu and summary icon were opened individually and inspected: labels,
+launchers and icon counts remain visible without clipping. These replace the
+two native images in the existing four-image review set; no distinct-gap image
+was added. Workspace layout and its recorded owner acceptance are unchanged.
+
+- `python3 scripts/check.py --base 7cc123790fd1fd5612a112fb05abe3c777840f09`:
+  **not green**, macOS arm64, warm dependencies; 446 passed, 18 failed,
+  34 ignored; 155.017 s / 900 s, no retries. Explicit worker host installation,
+  policy and lifecycle refusals are sandbox-blocked. Other assertion failures
+  remain unqualified. Rust integration checks were not reached.
+- `telemetry::tests::receipt_settlement_waits_for_dispatch_release` passed in
+  that gate; the Windows teardown fix and all its assertions remain unchanged.
+- `npm run build`, all 17 Node component scripts and all six affected browser
+  instruments passed. V15/V28 scope, identity, unknown receipt and live-work
+  protection remain; browser effects are substituted.
+- `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest` passed in an
+  isolated temporary installation: 97 traces, formats and staged capture.
+  Board observation remained unknown by design.
+
+Native workspace dispatch, picker ownership and actual effects remain release
+work under owner answer 6320399983. Publication still requires green merge-result
+`merge_group` CI; this repair does not claim a green local gate or deployment.
