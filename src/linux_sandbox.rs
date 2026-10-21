@@ -31,6 +31,11 @@ fn codex_home() -> Result<PathBuf, String> {
         .ok_or("linux sandbox: Codex home unknown")?.canonicalize().map_err(|e| e.to_string())
 }
 
+// auth.json stays writable: Codex rotates its single-use refresh token and must persist the new one (#1424).
+fn read_only_entry(p: &Path) -> bool {
+    p.extension().is_some_and(|e| e == "toml") || ["hooks.json", "AGENTS.md", "plugins", "skills", "packages", "app-server-control", "app-server-daemon"].iter().any(|n| p.ends_with(n))
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
     if args.len() < 6 { return Err("linux sandbox: expected root, install, mode, Codex executable and exec arguments".into()); }
     let root = Path::new(&args[0]).canonicalize().map_err(|e| e.to_string())?;
@@ -63,7 +68,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     if let Some(d) = bin.parent() { protected.push(if d.ends_with("bin") { d.parent().unwrap_or(d) } else { d }.to_path_buf()); }
     for e in std::fs::read_dir(&ch).map_err(|e| e.to_string())? {
         let p = e.map_err(|e| e.to_string())?.path();
-        if p.extension().is_some_and(|e| e == "toml") || ["auth.json", "hooks.json", "AGENTS.md", "plugins", "skills", "packages", "app-server-control", "app-server-daemon"].iter().any(|n| p.ends_with(n)) { protected.push(p); }
+        if read_only_entry(&p) { protected.push(p); }
     }
     for p in protected {
         let p = p.canonicalize().map_err(|e| e.to_string())?;
@@ -79,6 +84,14 @@ pub fn run(args: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_login_state_stays_writable() {
+        let ch = Path::new("/home/me/.codex");
+        assert!(!read_only_entry(&ch.join("auth.json")), "a read-only auth.json burns the rotated refresh token (#1424)");
+        for n in ["config.toml", "hooks.json", "AGENTS.md", "plugins", "skills", "packages"] { assert!(read_only_entry(&ch.join(n)), "{n}"); }
+    }
+
     // Paid chain: role start/resume, denied writes/network and nested-launcher bypass; not per-commit CI.
     #[test]
     #[ignore = "requires installed root-owned Linux helper and an explicit disposable project grant"]
