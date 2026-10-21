@@ -3359,7 +3359,7 @@ mod tests {
             if fault=="malformed" {body=running.lines().filter(|l|!l.starts_with("execution ")).collect::<Vec<_>>().join("\n")+"\nexecution {";}
             b.edit(host.number,&body).unwrap();
             {let mut st=b.state.borrow_mut();let now=st.clock;let h=st.issues.iter_mut().find(|i|i.number==host.number).unwrap();
-                h.trusted=fault!="untrusted";if fault=="stale" {h.updated=now-61;}if fault=="future" {h.updated=now+60;}}
+                h.trusted=fault!="untrusted";if fault=="stale" {h.updated=now-remote.ttl as i64-1;}if fault=="future" {h.updated=now+60;}}
             let row=read();assert_eq!(row["executions"][0]["state"],"unknown","{fault}: {row}");
             assert!(row["execution_wait"].is_string(),"{fault}");
             b.state.borrow_mut().issues.iter_mut().find(|i|i.number==host.number).unwrap().trusted=true;
