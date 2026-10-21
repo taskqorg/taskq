@@ -2,7 +2,9 @@
 
 Design under [R3/R9](../../taskq.md). [Menu M7](menu.md#m7-ai-entry) · [Use cases](../use-cases/README.md).
 
-Owner decision (#1427): a tray AI request opens a new visible session, like setup ([#1426](standalone-onboarding.md#contract-detail)). There is no operator turn, no conversation storage, no proposal or `rev` confirmation and no request log. The session does the work itself and may act as PM; the owner reads, answers and archives it in Claude.
+Owner decision (#1427): a tray AI request opens a new visible session, like setup ([#1426](standalone-onboarding.md#contract-detail)). There is no operator turn, no conversation storage, no proposal or `rev` confirmation and no request log. The session does the work itself and may act as PM; the owner reads and answers it in its runtime.
+
+Approved target (#1462, not shipped): the composer moves to the workspace and a request opens a session in any available runtime, Claude or Codex, named in the request UI ([TW4](tray-workspace.md#contract-detail)). Messages, archive and permanent delete act on TaskQ message records only ([TW5–TW7](tray-workspace.md#contract-detail)); no TaskQ conversation storage returns.
 
 ## Contract detail
 
@@ -12,5 +14,6 @@ Owner decision (#1427): a tray AI request opens a new visible session, like setu
 - Tray: under the composer the newest AI request shows its kind, reason and next step; `Open session` opens its Remote Control link. Draft and the last 20 distinct sent texts live in `<install>/tray-requests.json`; picking one fills the input only.
 - Retro: `taskq retro` writes the same request for the current project with the retro template: read the use-case Proposals and the board's `ask`/`answer`/`requeue` history, give numbered recommendations, and file the ones the owner accepts with `taskq add`.
 - Add project (M10): `Set up with AI…` for a new or plain folder writes a setup request (`service setup`) with that folder as its only target.
+- C7 (target, TW6/TW7): archive any message entry; delete one or all archived ones permanently. Delete removes only TaskQ message records and owned attachment copies, refuses a request not yet launched, and never stops a session, changes a task or touches source files or native chats.
 - Owner comments on `ask` tasks are plain comments; `fold` ignores them (§ 2).
 - Leftover `<root>/.taskq/requests/`, `requests.log` and `retro.json` from older versions stay on disk, unread.
