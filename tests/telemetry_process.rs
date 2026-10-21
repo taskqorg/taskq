@@ -275,9 +275,10 @@ fn selftest_requires_committed_local_capture() {
     assert!(success.status.success(),"{}\n{}",String::from_utf8_lossy(&success.stderr),detail.chars().take(4096).collect::<String>());
     assert!(String::from_utf8_lossy(&success.stdout).contains("telemetry: staged capture committed"));
     let private=||fs::read_dir(&good).unwrap().filter(|e|e.as_ref().unwrap().file_name().to_string_lossy().starts_with("taskq-selftest-")).count();
-    // Windows cannot remove the still-open store at exit; the next staged selftest sweeps it, so stores never accumulate.
-    if cfg!(windows) {assert_eq!(private(),1,"private store missing");assert!(invoke(&good,"selftest").status.success());}
-    assert_eq!(private(),usize::from(cfg!(windows)),"private store left behind");
+    // Windows may fail to remove a still-open store at exit (#1514: coreq d04c6020 seals and often frees it);
+    // the next staged selftest sweeps it, so at most one store remains.
+    if cfg!(windows) {assert!(private()<=1,"private stores accumulated");assert!(invoke(&good,"selftest").status.success());}
+    assert!(private()<=usize::from(cfg!(windows)),"private store left behind");
     assert!(!good.join("telemetry.log/universal.sqlite3").exists(),"staged selftest wrote the installation store");
     // An ordinary command still commits into the installation store.
     assert!(invoke(&good,"help").status.success());
