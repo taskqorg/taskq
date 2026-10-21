@@ -323,7 +323,6 @@ pub struct Service<'a> {
     /// Rebuilt from board ownership; heartbeat projection only, never a launch/release authority.
     observations: BTreeMap<(u64,u64),core::Execution>,
     /// Owner comments of the last pass (§ 4): task, comment id, text, card.
-    pub owner_comments: Vec<(u64, u64, String, String)>,
     /// State of each open task in the previous pass, for `events`.
     seen: HashMap<u64, State>,
     /// The newest comment id an events pass saw; `gone` events come only from newer comments (§ 4)
@@ -609,7 +608,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), owner_comments: vec![], seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, legacy_handoff:false, legacy_prepared:false, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1054,7 +1053,7 @@ impl<'a> Service<'a> {
             || self.cfg.install.join("restart").exists() || crate::dot(&self.cfg.root).join("restart").exists();
         let waiting=if let Some(host)=&self.host {
             host.lock().map(|h|h.restart&&h.handoff_wait().is_some()).unwrap_or(false)
-        } else {pending&&!crate::lifecycle_waits(self,&self.cfg.root,false).is_empty()};
+        } else {pending&&!crate::lifecycle_waits(self,false).is_empty()};
         let value=crate::service_versions::collect(&self.cfg.install,&self.version,&self.instance,self.started,waiting);
         *self.diagnostics.borrow_mut()=Some((std::time::Instant::now(),value.clone()));
         value
@@ -1185,9 +1184,6 @@ impl<'a> Service<'a> {
         if let Some(id) = other {
             return Err(format!("another service {id} runs as host {me}; stop it or set TASKQ_HOST"));
         }
-        self.owner_comments = views.iter().flat_map(|v| {
-            v.projection.owner_comments.iter().copied().filter_map(|id| Some((v.issue.number, id, v.log.iter().find(|e| e.id == id)?.body.trim().to_string(), v.projection.task.card.clone().unwrap_or_default())))
-        }).collect();
         self.events(&views, now)?;
         let by_n: HashMap<u64, &View> = views.iter().map(|v| (v.issue.number, v)).collect();
         let mut touched = HashSet::new();
@@ -2532,8 +2528,8 @@ mod tests {
         s.pending.insert((n,1));
         assert!(!s.handoff_waits(true).is_empty(),"an attempt without a board execution still waits");
         s.pending.remove(&(n,1));
-        if cfg!(windows) {assert!(crate::lifecycle_waits(&s,&c.root,false).is_empty());}
-        assert!(!crate::lifecycle_waits(&s,&c.root,true).is_empty(),"stop still waits");
+        if cfg!(windows) {assert!(crate::lifecycle_waits(&s,false).is_empty());}
+        assert!(!crate::lifecycle_waits(&s,true).is_empty(),"stop still waits");
     }
 
     // Chain: #1359 § 3 claim -> launch -> acceptance, one pass. Risk: a claim rereads the task log the pass just read.
@@ -2930,7 +2926,7 @@ mod tests {
             h.handoff_ready()
         };
         assert!(!project_pass(&mut s), "the live worker defers the handover");
-        assert_eq!(crate::lifecycle_waits(&s, &root, false), vec![format!("#{n}")]);
+        assert_eq!(crate::lifecycle_waits(&s, false), vec![format!("#{n}")]);
         *exit.borrow_mut() = Some(0);
         assert!(project_pass(&mut s), "the released worker no longer holds the restart");
         assert!(s.kids.is_empty() && host.lock().unwrap().prepared.contains(&root));
@@ -3958,15 +3954,13 @@ mod tests {
         *e.borrow()[0].1.borrow_mut() = Some(0);
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Ask);
-        // no PM: the service alone finds the owner's free text; an untrusted author's comment is not one
-        let id = b.raw(n, "prefer z", true, false);
+        // free comments, the owner's or not, move nothing (§ 2)
+        b.raw(n, "prefer z", true, false);
         b.raw(n, "do x", false, false);
         s.pass().unwrap();
-        assert_eq!(s.owner_comments, [(n, id, "prefer z".to_string(), "Which?\n1. x\n2. y ★".to_string())]);
         assert_eq!((task(&b, n).state, e.borrow().len()), (State::Ask, 1), "a free comment moves nothing");
         b.comment(n, &core::entry("answer", &["2"], None, "y")).unwrap();
         s.pass().unwrap();
-        assert!(s.owner_comments.is_empty(), "answered: no owner comment left");
         assert_eq!(e.borrow().len(), 2, "resumed once");
         assert_eq!(sessions.borrow()[1], "native-session", "resume resolves the pre-launch alias");
         let t = task(&b, n);

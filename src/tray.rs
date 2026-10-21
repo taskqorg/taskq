@@ -31,9 +31,6 @@ fn alone(install: &Path) -> bool {
 
 enum Ev {
     Tick,
-    WorkspaceOpen,
-    WorkspaceIpc(String),
-    WorkspaceEvaluated(u64, &'static str),
     Ipc(String),
     Evaluated(u64, &'static str),
     Click(Rect),
@@ -157,7 +154,7 @@ pub fn use_icon(install: &Path, draft: &Value) -> Result<(), Vec<String>> {
 
 /// Draft and history of AI requests (§ 4): `<install>/tray-requests.json`, apart from the view settings.
 fn requests_file(install: &Path) -> Value {
-    let mut v = crate::operator::read(&install.join("tray-requests.json"));
+    let mut v: Value = fs::read_to_string(install.join("tray-requests.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     if !v.is_object(){v=json!({});}
     if !v["draft"].is_string(){v["draft"]=json!("");}
     if !v["history"].is_array(){v["history"]=json!([]);}
@@ -166,85 +163,26 @@ fn requests_file(install: &Path) -> Value {
 
 /// The last 20 distinct sent texts, newest first; the same text moves to the top (menu.md M7).
 fn remember(history: &[Value], text: &str) -> Vec<Value> {
-    std::iter::once(json!(text)).chain(history.iter().filter(|h| h.as_str() != Some(text)).cloned()).take(crate::operator::KEEP).collect()
+    std::iter::once(json!(text)).chain(history.iter().filter(|h| h.as_str() != Some(text)).cloned()).take(20).collect()
 }
 
-/// The project whose service takes a new request: the first registered one with a fresh `status.json`.
-fn target(install: &Path) -> Option<String> {
-    roots(install).into_iter().find(|r| crate::file_age(&crate::dot(Path::new(r)).join("status.json")).is_some_and(|a| a < 300))
-}
-
-/// The newest request over all projects with its answer.
-fn newest(install: &Path) -> Value {
-    let all = roots(install).into_iter().filter_map(|r| crate::operator::ids(Path::new(&r)).pop().map(|id| (id, r)));
-    let Some((id, r)) = all.max_by_key(|(id, _)| (id.len(), id.clone())) else { return Value::Null };
-    let root = Path::new(&r);
-    let mut chain = Vec::new();
-    let mut current = id.clone();
-    for _ in 0..crate::operator::KEEP {
-        let q = crate::operator::read(&crate::operator::dir(root).join(format!("{current}.json")));
-        if q.is_null() { break; }
-        chain.push(json!({"id": current, "text": q["text"], "task": q["task"], "url": q["url"], "answer": crate::operator::read(&crate::operator::answer_path(root, &current))}));
-        let Some(after) = q["after"].as_str().filter(|a| !a.is_empty() && a.bytes().all(|b| b.is_ascii_digit())) else { break };
-        if chain.iter().any(|q| q["id"] == after) { break; }
-        current = after.to_string();
-    }
-    chain.reverse();
-    let mut request = chain.last().cloned().unwrap_or(Value::Null);
-    request["root"] = json!(r);
-    request["chain"] = json!(chain);
-    request
-}
-
-/// Mac Home dispatch shares the workspace queue and revision checks.
-fn workspace_home(install: &Path, a: &str, m: &Value) -> crate::Res<()> {
-    let root=m["root"].as_str().map(String::from).or_else(||self::target(install)).unwrap_or_default();
-    if a=="ai-send" {
-        let after=m["after"].as_str().unwrap_or("");
-        let text=m["text"].as_str().unwrap_or("");
-        crate::conversations::draft(install,&root,after,text)?;
-        crate::conversations::submit(install,&root,after,text).map(|_|())
-    } else {
-        crate::conversations::select(install,&root,m["id"].as_str().unwrap_or(""))
-    }
-}
-
-fn ai(install: &Path, a: &str, m: &Value) {
-    let path = install.join("tray-requests.json");
+/// AI requests (§ 4): Send opens one new session in a registered project through the setup path.
+fn ai(install: &Path, a: &str, m: &Value) -> Result<(), String> {
     let mut f = requests_file(install);
-    if f["state"]=="unknown" {return;}
     match a {
         "ai-draft" => f["draft"] = json!(m["text"].as_str().unwrap_or("")),
         "ai-clear" => f["history"] = json!([]),
         "ai-send" => {
-            let (Some(text), Some(r)) = (m["text"].as_str().map(str::trim).filter(|t| !t.is_empty()), target(install)) else { return };
-            let onboard = m["onboard"].as_str();
-            let root = Path::new(&r);
-            let id = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0).to_string();
-            let after = m["after"].as_str().filter(|x| !x.is_empty() && x.bytes().all(|b| b.is_ascii_digit()));
-            let _ = fs::create_dir_all(crate::operator::dir(root));
-            if crate::platform::write_atomic(&crate::operator::dir(root).join(format!("{id}.json")), &json!({"text": text, "after": after, "onboard": onboard}).to_string()).is_err() {
-                return;
-            }
-            let _ = crate::poke(root);
-            if onboard.is_some() {
-                return;
-            }
-            f["history"] = json!(remember(f["history"].as_array().map_or(&[][..], |v| v), text));
+            // only a registered project: the page never names a path of its own
+            let root = m["root"].as_str().filter(|r| roots(install).iter().any(|x| x == r)).ok_or("Choose a registered project")?;
+            let text = m["text"].as_str().unwrap_or("");
+            crate::setup::open(install, Path::new(root), text)?;
+            f["history"] = json!(remember(f["history"].as_array().map_or(&[][..], |v| v), text.trim()));
             f["draft"]=json!("");
         }
-        // only a registered project and a request id: the page never names a path of its own
-        "ai-confirm" => {
-            let (r, id) = (m["root"].as_str().unwrap_or(""), m["id"].as_str().unwrap_or(""));
-            if roots(install).iter().any(|x| x == r) && !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()) {
-                let _ = fs::write(crate::operator::dir(Path::new(r)).join(format!("{id}.confirm")), m["rev"].as_u64().unwrap_or(0).to_string());
-                let _ = crate::poke(Path::new(r));
-            }
-            return;
-        }
-        _ => return,
+        _ => return Ok(()),
     }
-    let _ = crate::platform::write_atomic(&path, &f.to_string());
+    crate::platform::write_atomic(&install.join("tray-requests.json"), &f.to_string()).map_err(|e| e.to_string())
 }
 
 fn roots(install: &Path) -> Vec<String> {
@@ -801,15 +739,6 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     }
 }
 
-const WORKSPACE_HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/workspace.html"));
-struct Workspace { window: Window, view: WebView, calls: WebCalls, shown: String }
-fn workspace_push(workspace: &mut Workspace, value: &Value, proxy: &tao::event_loop::EventLoopProxy<Ev>) {
-    if workspace.calls.failed || workspace.calls.pending.contains_key(&0) {return;}
-    let Some(id)=workspace.calls.begin("tray.workspace.receive",Instant::now()) else {return};
-    let proxy=proxy.clone();
-    if workspace.view.evaluate_script_with_callback(&web_script(&format!("taskq.receive({value})")),move |result|{let _=proxy.send_event(Ev::WorkspaceEvaluated(id,web_result(&result)));}).is_err(){workspace.calls.finish(id,"submit-error");}
-}
-
 pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> Result<(), String> {
     if snapshot.is_none() && !alone(&install) {
         return Err("taskq tray already runs on this host".into());
@@ -817,7 +746,6 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     if let Some(r) = routes.iter().find(|r| r.as_str() != "icon" && !ROUTES.contains(&r.as_str())) {
         return Err(format!("unknown route {r}; known: icon, {}", ROUTES.join(", ")));
     }
-    if routes.iter().any(|r|r=="workspace")&&routes.len()!=1 {return Err("Capture workspace separately from menu routes".into());}
     let mut settings = Settings::load(&install);
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
@@ -884,8 +812,6 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
     let mut ui: Option<(Window, WebView)> = None;
     let mut tray: Option<TrayIcon> = None;
-    let mut workspace: Option<Workspace> = None;
-    let workspace_snapshot = routes == ["workspace"];
     let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
     let mut hidden_at = Instant::now() - Duration::from_secs(1);
     let mut shown_at = hidden_at;
@@ -929,51 +855,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if !web.failed {web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,web);}
             }
         };
-        if let Some(ws)=&mut workspace {
-            ws.calls.expire(Instant::now());
-            if ws.calls.failed&&!ws.calls.notified {ws.calls.notified=true;let _=ws.view.evaluate_script("window.taskqWebFault('native')");}
-        }
         match event {
-            Event::WindowEvent {window_id,event,..} if workspace.as_ref().is_some_and(|ws|ws.window.id()==window_id) => {
-                if let WindowEvent::CloseRequested=event {workspace.as_ref().unwrap().window.set_visible(false);}
-            }
-            Event::UserEvent(Ev::WorkspaceOpen) => {
-                if workspace.is_none() {
-                    let p=proxy.clone();
-                    let built=WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ · AI conversations").with_inner_size(LogicalSize::new(860.0,680.0)).with_min_inner_size(LogicalSize::new(360.0,400.0)).build(target).map_err(|e|e.to_string()).and_then(|window|{
-                        WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::WorkspaceIpc(r.into_body()));}).build(&window).map(|view|Workspace{window,view,calls:WebCalls::new(),shown:String::new()}).map_err(|e|e.to_string())
-                    });
-                    match built {Ok(ws)=>workspace=Some(ws),Err(reason)=>{push(&mut web,&ui,&json!({"aiError":reason}));return;}}
-                }
-                icon_sig.clear();
-                let ws=workspace.as_mut().unwrap();ws.window.set_visible(true);ws.window.set_focus();
-                workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":true,"font":settings.font}),&proxy);
-            }
-            Event::UserEvent(Ev::WorkspaceEvaluated(id,result)) => {if let Some(ws)=&mut workspace {ws.calls.finish(id,result);}}
-            Event::UserEvent(Ev::WorkspaceIpc(message)) => {
-                let Some(ws)=&mut workspace else {return};
-                let Ok(m)=serde_json::from_str::<Value>(&message) else {ws.calls.fault("invalid-ipc");return};
-                let a=m["a"].as_str().unwrap_or("");
-                if a=="web-error" {ws.calls.errors(&m);return;}
-                if a=="web-observation" {ws.calls.metadata(&m["row"]);return;}
-                if ws.calls.failed {return;}
-                let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{ws.calls.fault("invalid-web-context");return;}},None=>None};
-                let _continuation=context.as_ref().map(|context|context.span().entered());
-                let root=m["root"].as_str().unwrap_or("");let id=m["id"].as_str().unwrap_or("");
-                let result=match a {
-                    "ready"=>{ws.calls.finish(0,"ok");Ok(())},
-                    "refresh"=>Ok(()),
-                    "select"=>crate::conversations::select(&install,root,id),
-                    "draft"=>crate::conversations::draft(&install,root,id,m["text"].as_str().unwrap_or("")),
-                    "send"=>crate::conversations::submit(&install,root,id,m["text"].as_str().unwrap_or("")).map(|_|()),
-                    "confirm"=>crate::conversations::confirm(&install,root,id,m["rev"].as_u64().unwrap_or(0)),
-                    _=>Err("Unsupported workspace action".into()),
-                };
-                if a=="draft"&&result.is_ok(){return;}
-                let sent=a=="send"&&result.is_ok();
-                workspace_push(ws,&json!({"data":crate::conversations::snapshot(&install),"select":a=="select"||a=="ready"||a=="refresh","receipt":true,"sent":sent,"error":result.err().unwrap_or_default(),"font":settings.font}),&proxy);
-                push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
-            }
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
@@ -984,7 +866,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let p = proxy.clone();
                 let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
                     // only our page: a link goes to the browser through the bridge
-                    WebViewBuilder::new().with_transparent(true).with_accept_first_mouse(true).with_html(if workspace_snapshot {WORKSPACE_HTML}else{HTML}).with_navigation_handler(own_page)
+                    WebViewBuilder::new().with_transparent(true).with_accept_first_mouse(true).with_html(HTML).with_navigation_handler(own_page)
                         .with_ipc_handler(move |r| {
                             let _ = p.send_event(Ev::Ipc(r.into_body()));
                         })
@@ -992,7 +874,6 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 });
                 match built {
                     Ok(x) => {
-                        if workspace_snapshot {let (width,height)=settings.pin.size.unwrap_or((860.0,680.0));x.0.set_inner_size(LogicalSize::new(width,height));}
                         dark = is_dark(&x.0);
                         ui = Some(x);
                     }
@@ -1072,12 +953,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if std::mem::take(&mut moved) {
                     settings.save(&install);
                 }
-                if let Some(ws)=&mut workspace {
-                    let data=crate::conversations::snapshot(&install);let signature=data.to_string();
-                    if signature!=ws.shown&&!ws.calls.pending.contains_key(&0){ws.shown=signature;workspace_push(ws,&json!({"data":data,"font":settings.font}),&proxy);}
-                }
                 let st = state(&install, &settings, dark, None, &adding);
-                if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w), workspace.as_ref().map(|ws|&ws.window));}
+                if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));}
                 notes(&install, &mut settings, &st, &mut asked, &mut bursts);
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
@@ -1241,12 +1118,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     "set" => {
                         settings.set(&m);
                         settings.save(&install);
-                        if let Some(ws)=&mut workspace {
-                    let data=crate::conversations::snapshot(&install);let signature=data.to_string();
-                    if signature!=ws.shown&&!ws.calls.pending.contains_key(&0){ws.shown=signature;workspace_push(ws,&json!({"data":data,"font":settings.font}),&proxy);}
-                }
                 let st = state(&install, &settings, dark, None, &adding);
-                        refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w), workspace.as_ref().map(|ws|&ws.window));
+                        refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));
                         push(&mut web,&ui, &st);
                     }
                     // `Edit limits` after the page's confirm: the same write as `service capacity` (§ 5), this host only
@@ -1286,18 +1159,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));}
                     }
                     "add-setup" if matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
-                        let text = format!("Set up {} as a taskq project", adding["name"].as_str().unwrap_or("this folder"));
-                        ai(&install, "ai-send", &json!({"text": text, "onboard": adding["path"]}));
+                        if let Err(reason) = crate::setup::submit(&install, "claude", None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {push(&mut web,&ui,&json!({"aiError":reason}));}
                         adding = Value::Null;
                         push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
                     }
                     a if a.starts_with("ai-") => {
-                        let mut m = m.clone();
-                        m["onboard"] = Value::Null;
-                        if matches!(a,"ai-send"|"ai-open"|"ai-confirm") && cfg!(target_os="macos") {
-                            let result=workspace_home(&install,a,&m);
-                            match result {Ok(())=>{push(&mut web,&ui,&json!({"aiSubmitted":true}));let _=proxy.send_event(Ev::WorkspaceOpen);},Err(reason)=>push(&mut web,&ui,&json!({"aiError":reason}))}
-                        }else{ai(&install,a,&m);}
+                        match ai(&install,a,&m) {Ok(())=>if a=="ai-send" {push(&mut web,&ui,&json!({"aiSubmitted":true}));},Err(reason)=>push(&mut web,&ui,&json!({"aiError":reason}))}
                         push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
                     }
                     a => {
@@ -1438,7 +1305,7 @@ const ANSWERS: [(&str, &str); 4] = [
     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
 ];
-const ROUTES: [&str; 17] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "workspace"];
+const ROUTES: [&str; 16] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1452,7 +1319,7 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
-    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"answers"|"workspace") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
+    }).filter(|(_, p, _, js)| if routes.is_empty() { !matches!(route_of(p, js),"scroll"|"answers") } else { routes.iter().any(|r| r == route_of(p, js)) }).collect()
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
@@ -1468,14 +1335,13 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
 }
 
 fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value) -> Value {
-    if let Some((theme,"workspace"))=snap {return json!({"data":crate::conversations::snapshot(install),"select":true,"theme":theme,"font":s.font});}
     let ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
     let (start, end) = s.range(now());
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
-        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "ai": {"target": target(install), "request": newest(install), "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
+        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "ai": {"request": crate::setup::last(install, true), "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     if cfg!(target_os = "macos") {
@@ -1543,7 +1409,7 @@ fn draw(c: &Value, s: &Summary, dark: bool, k: f32, dpr: f32) -> Result<Rgba, Ve
     icon::render(c, (22.0 * k * dpr).round() as u32, dpr, &d, dark)
 }
 
-fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>, workspace: Option<&Window>) {
+fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>) {
     let Some(t) = tray else { return };
     let sum = summary(st["projects"].as_array().map_or(&[][..], |v| v), day(now()));
     // Windows shows only the compact q (menu.md M1)
@@ -1566,7 +1432,7 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
         // Same configuration, state and fallback as the tray, rendered at native app-icon resolution.
         let app = config.as_ref().and_then(|c| draw(c, &sum, dark, 1.0, 256.0/22.0).ok())
             .unwrap_or_else(|| compact(sum.run, dark, 256.0/22.0));
-        refresh_app_icon(&app, window, workspace)?;
+        refresh_app_icon(&app, window)?;
         if k > 1.0 { fit_status_image(k); }
         if failed { Err("invalid icon render".to_string()) } else { applied.map_err(|e| e.to_string()) }
     });
@@ -1581,8 +1447,8 @@ fn window_icon(img: &Rgba) -> tao::window::Icon {
 }
 
 /// Live app identity is in memory; never invalidate the signed bundle by rewriting its icon.
-fn refresh_app_icon(img: &Rgba, window: Option<&Window>, workspace: Option<&Window>) -> Result<(),String> {
-    for w in window.into_iter().chain(workspace) {w.set_window_icon(Some(window_icon(img)));}
+fn refresh_app_icon(img: &Rgba, window: Option<&Window>) -> Result<(),String> {
+    if let Some(w)=window {w.set_window_icon(Some(window_icon(img)));}
     #[cfg(target_os = "macos")]
     {
         use objc2::AnyThread;
@@ -2051,7 +1917,7 @@ fn own_page(u: String) -> bool { !u.starts_with("http") }
 mod tests {
     use super::*;
 
-    // A1/C1: `|_|false` blocked the inline workspace page itself and left the window blank.
+    // A1/C1: `|_|false` blocked the inline page itself and left the window blank.
     #[test]
     fn own_page_loads_inline_html_only() {
         assert!(own_page("about:blank".into()));
@@ -2060,34 +1926,26 @@ mod tests {
         assert!(!own_page("http://example.com".into()));
     }
 
-    // A1/M7: Home Reply/Next must queue once in the bound project, not merely save a draft.
+    // A2/M7: Send opens one owner session in the chosen registered project. Risk: an unregistered path or empty
+    // text launches a session, or a refused send drops the draft.
     #[test]
-    fn home_workspace_followup_dispatch() {
-        let base=std::env::temp_dir().join(format!("taskq-home-dispatch-{}",std::process::id()));
+    fn ai_send_opens_one_session_in_a_registered_project() {
+        let base=std::env::temp_dir().join(format!("taskq-tray-ai-{}",std::process::id()));
         let _=fs::remove_dir_all(&base);
         let install=base.join("install");let root=base.join("project");let other=base.join("other");
-        fs::create_dir_all(&install).unwrap();
-        fs::write(install.join("projects"),format!("{}\n{}",other.display(),root.display())).unwrap();
+        for d in [&install,&root,&other] {fs::create_dir_all(d).unwrap();}
+        fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
         let r=root.to_str().unwrap();
-        let first=crate::conversations::submit(&install,r,"","question").unwrap();
-        fs::write(crate::operator::answer_path(&root,&first),json!({"state":"clarify","rev":1,"text":"Choose"}).to_string()).unwrap();
-        let message=json!({"root":r,"after":first,"text":"1"});
-        workspace_home(&install,"ai-send",&message).unwrap();
-        let ids=crate::operator::ids(&root);
-        assert_eq!(ids.len(),2,"Home acknowledged a reply without queuing it");
-        let next=ids.iter().find(|id|*id!=&first).unwrap();
-        let request=crate::operator::read(&crate::operator::dir(&root).join(format!("{next}.json")));
-        assert_eq!(request["after"],first);assert_eq!(request["text"],"1");
-        assert!(crate::operator::ids(&other).is_empty());
-        assert!(workspace_home(&install,"ai-send",&message).is_err());
-        assert_eq!(crate::operator::ids(&root),ids,"stale click duplicated work");
-        let state=crate::conversations::snapshot(&install);
-        assert_eq!(state["conversations"][0]["draft"],"1","refused reply lost its draft");
-        for action in ["ai-open","ai-confirm","ai-open"] {
-            workspace_home(&install,action,&json!({"root":r,"id":next})).unwrap();
-        }
-        assert_eq!(crate::operator::ids(&root),ids,"opening resubmitted work");
-        assert!(!crate::operator::dir(&root).join(format!("{next}.confirm")).exists(),"Home review applied without workspace confirmation");
+        ai(&install,"ai-draft",&json!({"text":"draft"})).unwrap();
+        assert!(ai(&install,"ai-send",&json!({"root":other.to_str().unwrap(),"text":"why"})).is_err());
+        assert!(ai(&install,"ai-send",&json!({"root":r,"text":"  "})).is_err());
+        assert_eq!(requests_file(&install)["draft"],"draft","refused send lost its draft");
+        assert!(crate::setup::last(&install,true).is_null());
+        ai(&install,"ai-send",&json!({"root":r,"text":" why "})).unwrap();
+        let req=crate::setup::last(&install,true);
+        assert_eq!(req["state"],"pending");
+        assert_eq!(crate::setup::all(&install).unwrap().0[0].root.as_deref(),Some(root.canonicalize().unwrap().to_str().unwrap()));
+        assert_eq!((requests_file(&install)["draft"].clone(),requests_file(&install)["history"].clone()),(json!(""),json!(["why"])));
         let _=fs::remove_dir_all(base);
     }
 
@@ -2285,9 +2143,7 @@ mod tests {
         assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 6)), "no filter keeps the menu matrix without scroll, answers or the separate workspace");
-        assert_eq!(names(&["workspace"]), ["dark-workspace-16", "dark-workspace-20", "light-workspace-16", "light-workspace-20"]);
-        assert!(all.iter().all(|name|!name.contains("workspace")), "workspace uses its own native renderer");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 5)), "no filter keeps the menu matrix without scroll or answers");
         for route in ROUTES {
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
         }
@@ -2504,29 +2360,6 @@ mod tests {
             assert!(incident_path(&root, &json!({"path": path})).is_none(), "{path}");
         }
         fs::remove_dir_all(root).unwrap();
-    }
-
-    // Chain: § 4 tray clarify thread. Risk: wrong order or a loop on a cyclic thread.
-    #[test]
-    fn clarify_thread_is_oldest_first_and_stops_at_missing_or_cycle() {
-        let install = std::env::temp_dir().join(format!("taskq-thread-{}", std::process::id()));
-        let root = install.join("project");
-        fs::create_dir_all(crate::operator::dir(&root)).unwrap();
-        fs::write(install.join("projects"), root.to_str().unwrap()).unwrap();
-        let put = |id: &str, after: &str| {
-            fs::write(crate::operator::dir(&root).join(format!("{id}.json")), json!({"text": id, "after": after}).to_string()).unwrap();
-            fs::write(crate::operator::answer_path(&root, id), json!({"state": "clarify", "text": format!("question {id}")}).to_string()).unwrap();
-        };
-        put("1", ""); put("2", "1"); put("3", "2");
-        let q = newest(&install);
-        assert_eq!(q["id"], "3");
-        assert_eq!(q["chain"].as_array().unwrap().iter().map(|v| v["id"].as_str().unwrap()).collect::<Vec<_>>(), ["1", "2", "3"]);
-        assert_eq!(q["answer"]["text"], "question 3");
-        put("1", "3");
-        assert_eq!(newest(&install)["chain"].as_array().unwrap().len(), 3);
-        put("2", "0");
-        assert_eq!(newest(&install)["chain"].as_array().unwrap().len(), 2);
-        fs::remove_dir_all(install).unwrap();
     }
 
     // Risk: page metadata smuggles content or forges a method outside the bundled inventory.

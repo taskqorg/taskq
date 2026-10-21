@@ -152,10 +152,10 @@ fn capacity_command_changes_host_policy_not_project_settings() {
     assert_eq!(fs::read(install.join("host.json")).unwrap(),valid);
     fs::remove_file(install.join("host.json.pending")).unwrap();
     fs::write(install.join("host.json"),"{").unwrap();
+    // § 4 owner session: retro only writes a request, so host policy (even unreadable) never gates it
     let retro=run(&["retro"]);
-    assert!(!retro.status.success());
-    assert!(String::from_utf8_lossy(&retro.stderr).contains("host.json unknown"),"operator silently used legacy project policy: {}",String::from_utf8_lossy(&retro.stderr));
-    assert!(!root.join(".taskq/retro.out").exists(),"invalid host policy reached a native runtime");
+    assert!(retro.status.success(),"{}",String::from_utf8_lossy(&retro.stderr));
+    assert_eq!(fs::read_dir(install.join("setup")).unwrap().filter(|e|e.as_ref().unwrap().path().extension().is_some_and(|x|x=="json")).count(),1);
     assert!(!run(&["service","capacity","--host","fixture-host","--codex","4"]).status.success());
     assert_eq!(fs::read_to_string(install.join("host.json")).unwrap(),"{");
     assert_eq!(fs::read_to_string(root.join("taskq.json")).unwrap(),project);

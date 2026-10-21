@@ -3,7 +3,7 @@ const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiConfirm:null,addConfirm:false,resourceNotice:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:[],pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:[],pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
@@ -257,36 +257,20 @@ update:function(){
   if(view.updating&&view.S.projects.some(p=>p.version===view.updating.v))return '<div class="row meta">Updated to '+esc(view.updating.v)+': read from status.json</div>';
   if(view.updating&&view.S.now-view.updating.at<300)return '<button class="project" disabled>Updating to '+esc(view.updating.v)+'…</button>';
   return (view.updating?'<div class="row alert">Update to '+esc(view.updating.v)+' not confirmed: see the log</div>':'')+(up?'<button class="project" data-a="update" data-root="'+esc(up.root)+'" data-v="'+esc(up.update)+'">Update now to '+esc(up.update)+'</button>':'');},
-opText:function(o){return [o.project+':',o.op,o.task?'#'+o.task:'',(o.labels||[]).join(' '),o.title?'"'+o.title+'"':'',o.goal?'goal: '+o.goal:'',(o.acceptance||[]).map(x=>'acceptance: '+x).join('; '),o.request?'request: '+o.request:'',o.option?'option '+o.option:'',o.text||''].filter(Boolean).join(' ');},
-nextActions:function(t){
-  const l=String(t||'').trim().split('\n').pop().trim();if(!l.startsWith('Next: '))return null;
-  const xs=l.slice(6).split(' · ').map((s,i)=>{const m=/^(\d+) (\S.*?)( ★)?$/.exec(s.trim());return m&&+m[1]===i+1?{n:m[1],text:s.trim(),rec:!!m[3]}:null;});
-  return xs.every(Boolean)&&xs.filter(x=>x.rec).length<2?xs:null;},
 ai:function(){
-  const A=view.S.ai,r=A.request,an=r&&r.answer||{},st=r?(an.state||'queued'):null,bad=['failed','refuse','apply failed'].includes(st);
-  let h='<div class="group"><div class="row meta">✦ Ask AI · '+(A.target?'projects: '+esc(view.S.projects.map(p=>p.name).join(', ')):'no running service: cannot send')+'</div>';
+  // menu.md M7: Send opens one new session in the chosen project; the newest request shows its state
+  const A=view.S.ai,r=A.request,ps=view.S.projects,root=ps.some(p=>p.root===view.aiRoot)?view.aiRoot:ps[0]&&ps[0].root;
+  let h='<div class="group"><div class="row meta">✦ Ask AI · new session</div>';
   if(view.aiError)h+='<p role="alert">'+esc(view.aiError)+'</p>';
-  const chain=r?(r.chain||[r]):[];
-  if(r)h+='<div class="aichain" tabindex="0" aria-label="AI exchange" data-bound="'+esc('chain/'+r.id+'/'+chain.length+'/'+st+'/'+view.S.font)+'">';
-  for(const q of chain){
-    const a=q.answer||{},state=a.state||'queued',bad=['failed','refuse','apply failed'].includes(state);
-    h+='<div class="body"><div class="meta">'+(q.url?'<a href="'+esc(q.url)+'" data-url="'+esc(q.url)+'">Comment on #'+esc(q.task)+' ↗</a>: ':'You: ')+esc(q.text||'')+'</div><div class="'+(bad?'alert':state==='applied'||state==='result'?'work':'ask')+'" role="status">'+esc(aiStates[state]||state)+(a.reason?': '+esc(a.reason):'')+'</div>'+(a.text?'<div>'+esc(a.text).replace(/\n/g,'<br>')+'</div>':'')+'</div>';
-  }
-  if(r)h+='</div>';
-  if(r&&view.S.platform!=='windows')h+='<button data-a="ai-open" data-root="'+esc(r.root)+'" data-id="'+esc(r.id)+'">Open full exchange</button>';
-  // a Next button replies with its number, the same token as typing it; the chain then shows `You: <number>`
-  const nx=r&&['result','clarify','refuse'].includes(st)&&nextActions(an.text);
-  if(nx)h+='<div class="options" role="group" aria-label="Next">'+nx.map(x=>'<button data-a="ai-next" data-v="'+x.n+'"'+(x.rec?' class="rec"':'')+'>'+esc(x.text)+'</button>').join('')+'</div>';
-  h+='<div class="askai"><textarea id="ai" rows="2" aria-label="'+(st==='clarify'?'Answer to AI':'Request to AI')+'" placeholder="'+(st==='clarify'?'Answer…':'Ask, or request a change')+'">'+esc(view.aiText)+'</textarea><button data-a="ai-menu" aria-label="History and commands" title="History and commands" aria-expanded="'+view.aiMenu+'">↶</button></div>';
+  h+=ps.length?'<select id="ai-root" aria-label="Project">'+ps.map(p=>'<option value="'+esc(p.root)+'"'+(p.root===root?' selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select>':'<div class="body meta">No project: add one first</div>';
+  h+='<div class="askai"><textarea id="ai" rows="2" aria-label="Request to AI" placeholder="Ask, or request a change">'+esc(view.aiText)+'</textarea><button data-a="ai-menu" aria-label="History and commands" title="History and commands" aria-expanded="'+view.aiMenu+'">↶</button></div>';
   if(view.aiMenu)h+='<div class="row meta">Recent</div>'+(A.history.length?A.history.map(t=>'<button class="project" data-a="ai-pick" data-v="'+esc(t)+'"><span>'+esc(t)+'</span></button>').join('')+'<button class="project" data-a="ai-clear">Clear history</button>':'<div class="body meta">No sent requests</div>')+
     '<div class="row meta">Commands</div>'+aiCommands.map(t=>'<button class="project" data-a="ai-pick" data-v="'+esc(t)+'"><span>'+esc(t)+'</span></button>').join('');
-  h+='<div class="options"><button data-a="ai-send"'+(A.target?'':' disabled')+'>'+(st==='clarify'?'Reply':'Send')+'</button></div>';
-  if(!r)return h+'</div>';
-  // a setup lists its effects, computed by the service, instead of the op (§ 6)
-  const lines=[...an.effects||(an.ops||[]).map(opText),...an.readback||[]];
-  if(lines.length)h+='<div class="body meta aiops" tabindex="0" aria-label="Proposed changes" data-bound="'+esc('ops/'+r.id+'/'+an.rev+'/'+st+'/'+view.S.font)+'">'+lines.map(esc).join('<br>')+'</div>';
-  if(st==='proposal')h+='<button class="project" data-a="ai-confirm" data-root="'+esc(r.root)+'" data-id="'+esc(r.id)+'" data-rev="'+Number(an.rev)+'"'+(view.aiConfirm===r.id+'/'+Number(an.rev)?' disabled':'')+'>'+(view.S.platform==='windows'?'Confirm: apply ':'Review changes: ')+(an.effects||an.ops).length+' change'+((an.effects||an.ops).length===1?'':'s')+'</button>';
-  if(bad)h+='<button class="project" data-a="ai-pick" data-v="'+esc(r.text||'')+'">Edit and send again</button>';
+  h+='<div class="options"><button data-a="ai-send" data-root="'+esc(root||'')+'"'+(root&&!view.aiSending?'':' disabled')+'>Send</button></div>';
+  if(r){
+    const link=r.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.url)?' <a href="#" data-url="'+esc(r.url)+'">Open session</a>':'';
+    h+='<div class="row">Request · '+esc(r.kind)+link+'</div>'+(r.reason?'<div class="body meta">'+esc(r.reason)+'</div>':'')+'<div class="body">'+esc(r.next||'Request state unknown')+'</div>';
+  }
   return h+'</div>';},
 addProject:function(){
   const A=view.S.add;
@@ -305,7 +289,7 @@ addProject:function(){
     else if(view.addConfirm)h+='<div class="body" role="alert">Register '+esc(A.path)+' and install its service? It starts at logon.</div><div class="options"><button data-a="add-install">Confirm</button><button data-a="add-back">Cancel</button></div>';
     else if(!failed)h+='<button class="project" data-a="add-ask">Install service…</button>';
   }
-  if(A.kind==='new'||A.kind==='plain')h+=view.S.ai.target?'<button class="project" data-a="add-setup">Set up with AI…</button>':'<div class="body meta">Setup needs one running project service</div>';
+  if(A.kind==='new'||A.kind==='plain')h+='<button class="project" data-a="add-setup">Set up with AI…</button>';
   return h+(A.state==='installing'?'<button class="project" data-a="add-cancel">Hide result; install continues</button>':'<button class="project" data-a="add-cancel">'+(A.state==='installed'?'Done':'Cancel')+'</button>');},
 bulk:function(run,held){
   const pausing=run.length>0;
@@ -529,7 +513,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   // after fit() sets the width: a new exchange or text size opens at the newest entry; a tick keeps the reader's place;
   // a block that drops a cut line asks for the smaller height
   const bound=[...menu.querySelectorAll('[data-bound]')];
-  bound.forEach(c=>{c.scrollTop=bounds.has(c.dataset.bound)?bounds.get(c.dataset.bound):c.classList.contains('aichain')?c.lastElementChild.offsetTop:0;wholeLines(c);});
+  bound.forEach(c=>{c.scrollTop=bounds.has(c.dataset.bound)?bounds.get(c.dataset.bound):0;wholeLines(c);});
   if(bound.some(c=>c.style.maxHeight))fit();},
 wholeLines:function(c){
   if(c.scrollHeight<=c.clientHeight)return;
@@ -614,10 +598,7 @@ const z=t(view.draft.end);
   if(d.a==='ai-menu'){view.aiMenu=!view.aiMenu;present();return;}
   // picking fills the input, never sends (M-A13)
   if(d.a==='ai-pick'){view.aiText=d.v;view.aiMenu=false;send({a:'ai-draft',text:view.aiText});present();const t=document.getElementById('ai');t.focus();t.setSelectionRange(t.value.length,t.value.length);return;}
-  if(d.a==='ai-next'){send({a:'ai-send',text:d.v,root:view.S.ai.request.root,after:view.S.ai.request.id});present();return;}
-  if(d.a==='ai-send'){const r=view.S.ai.request,an=r&&r.answer||{};if(!view.aiText.trim()||view.aiSending)return;view.aiSending=true;send({a:'ai-send',text:view.aiText,root:an.state==='clarify'?r.root:view.S.ai.target,after:an.state==='clarify'?r.id:''});if(view.S.platform==='windows'){view.aiText='';view.aiSending=false;}present();return;}
-  if(d.a==='ai-open'){send({a:'ai-open',root:d.root,id:d.id});return;}
-  if(d.a==='ai-confirm'){if(view.S.platform==='windows')view.aiConfirm=d.id+'/'+d.rev;send({a:view.S.platform==='windows'?'ai-confirm':'ai-open',root:d.root,id:d.id,rev:Number(d.rev)});present();return;}
+  if(d.a==='ai-send'){if(!view.aiText.trim()||view.aiSending)return;view.aiSending=true;send({a:'ai-send',text:view.aiText,root:d.root});present();return;}
   if(d.a==='ai-clear'){send({a:'ai-clear'});return;}
   if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return;}
   if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;
@@ -633,7 +614,7 @@ const z=t(view.draft.end);
   if(d.a==='restart'||d.a==='stop'||d.a==='uninstall'){api.lifecycleStart(d.root,d.a);return;}
   if(d.a==='pause'||d.a==='resume'||d.a==='focus'){focusStart(d.a,d.root,d.label);view.ask=null;present();return;}
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label});}present();});
-ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}if(e.target.id==='ai'){view.aiText=e.target.value;send({a:'ai-draft',text:view.aiText});return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'input',e=>{const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';return;}if(e.target.id==='ai'){view.aiText=e.target.value;send({a:'ai-draft',text:view.aiText});return;}if(e.target.id==='ai-root'){view.aiRoot=e.target.value;present();return;}const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'mousedown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button'))send({a:'drag'});});
 ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))return;view.resizing={x:e.screenX,y:e.screenY,w:window.innerWidth,h:window.innerHeight};e.target.setPointerCapture(e.pointerId);e.preventDefault();});
@@ -649,7 +630,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,opText,nextActions,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function answerSend(board,op){
   const p=view.S&&view.S.projects.find(p=>p.issues===board);
@@ -743,8 +724,7 @@ const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map();
 
 // `Update now` only for a newer version in status.json; success only once a status.json reads it back (M9)
 
-// AI requests (menu.md M7): one input, `↶` history and commands, the newest request with its answer
-const aiStates={queued:'Queued',running:'Working…',clarify:'Needs your answer',proposal:'Needs your confirmation',applying:'Applying…',applied:'Applied: read back',result:'Done',refuse:'Refused',failed:'AI request not done','apply failed':'Not applied'};
+// AI requests (menu.md M7): one input, `↶` history and commands
 const aiCommands=['What needs my answer?','What is running now?','Why is nothing starting?','Pause all projects'];
 // every value the command gets is shown before confirm
 

@@ -312,14 +312,9 @@ fn label_matches(v: &Value, name: &str, color: &str, description: &str) -> bool 
 pub struct Kind {
     /// `board` in `taskq.json`.
     pub name: &'static str,
-    /// The login CLI and the env that names its host.
-    pub cli: &'static str,
-    pub host_env: &'static str,
     /// The user name field of the CLI's `api user`.
     pub user_key: &'static str,
     pub default_host: &'static str,
-    /// CLI arguments that print the current folder's repository, if the CLI has them.
-    pub repo_view: Option<&'static [&'static str]>,
     token: fn(&coreq::Tool, &str) -> Result<String>,
     token_env: &'static [&'static str],
     api: fn(&str, &str, &str) -> Api,

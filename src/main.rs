@@ -16,8 +16,6 @@ mod dispatch;
 mod enrollment;
 mod incident;
 mod labels;
-mod operator;
-mod conversations;
 mod recipe;
 mod requests;
 mod platform;
@@ -33,7 +31,6 @@ mod windows_sandbox;
 mod profile;
 mod telemetry;
 mod telemetry_sync;
-mod retro;
 mod runtime;
 mod service;
 mod setup;
@@ -72,7 +69,7 @@ const USAGE: &str = "taskq agents
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--only L,..] [--json] | taskq inbox N
- taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro | taskq add --retro K [--type T ..]
+ taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
@@ -856,8 +853,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut restart_empty: Option<u64> = None;
     let mut waits_logged = String::new();
     if legacy.is_none() {let _ = fs::remove_file(d.join("restart"));}
-    if legacy.is_none() {operator::recover(&cfg.root);}
-    // ponytail: the operator takes no slot of `limits`; count it when operators crowd out workers
     let mut tray = None;
     let project = project_name(&cfg.root);
     let issues = c.board.url(0).strip_suffix("/0").unwrap_or_default().to_string();
@@ -924,7 +919,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         if let Err(e) = &cap {
             log!("capacity: {e}; launches held");
         }
-        let op_rt = cap.as_ref().ok().and_then(|c| ["claude", "codex"].into_iter().find(|rt| c.limits.get(*rt).copied().unwrap_or(if c.auto { u32::MAX } else { 0 }) > 0));
         s.reload(cap);
         if let Some(host) = &host { if let Ok(h) = host.lock() { s.gate = h.gate.clone(); } }
         // § 8 Access: re-read every pass; a refused runtime is not claimed or resumed
@@ -1033,7 +1027,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err()})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("stop_progress",json!(s.stop_progress)),
-            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, &cfg.root, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
+            ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health())]
         {
@@ -1041,7 +1035,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }
         if let Some(owner)=legacy {
             status["handoff"]=json!({"state":if handoff_error.is_some()||legacy_error.is_some() {"unknown"}else if s.legacy_prepared {"prepared"}else{"draining"},"owner":owner,
-                "reason":handoff_error.as_ref().or(legacy_error.as_ref()),"waits":lifecycle_waits(&s,&cfg.root,true)});
+                "reason":handoff_error.as_ref().or(legacy_error.as_ref()),"waits":lifecycle_waits(&s, true)});
         }
         status["diagnostics"] = s.service_diagnostics();
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
@@ -1081,7 +1075,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         restart_watch(&mut restart_empty, cfg!(windows) && d.join("restart").exists() && s.kids.is_empty(), began.elapsed().as_secs(), cfg.update_every);
         if host.is_none() && legacy.is_none() && is_installed && d.join("restart").exists() {
             // Windows re-exec waits for the live children; the request stays until it can go
-            let waits = lifecycle_waits(&s, &cfg.root, false).join(", ");
+            let waits = lifecycle_waits(&s, false).join(", ");
             if waits.is_empty() {
                 let _ = fs::remove_file(d.join("restart"));
                 log!("restart requested");
@@ -1099,17 +1093,13 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 log!("{l}");
             }
         }
-        if legacy.is_none() && !reduced && admission::hold(&cfg.install).is_none() && host.as_ref().is_none_or(|h| h.lock().is_ok_and(|h| !h.restart && !h.draining.contains(&cfg.root))) {
-            operator::owner_comments(&cfg.root, &project, &issues, &s.owner_comments);
-            operator::step(&cfg.root, &cfg.install, &exe, op_rt);
-        }
         if host.is_none() && legacy.is_none() && is_installed {
             keep_tray(&cfg.install, &mut tray);
         }
         if let Some(host) = &host {
             if let Ok(mut h) = host.lock() {
             let registered = !h.draining.contains(&cfg.root);
-            let drained = s.idle() && !operator::running(&cfg.root);
+            let drained = s.idle();
             if !registered && drained { h.sync(&cfg.root, vec![]); h.ready(&cfg.root, false); return Err("project drained".into()); }
             if registered { h.busy.insert(cfg.root.clone(), !drained); }
             if let Err(e) = report_handoff(&s, &mut h, &cfg.root, drained) { log!("handoff unknown: {e}"); }
@@ -1126,7 +1116,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                     Ok(job)=>legacy_installation=Some(job),Err(e)=>legacy_error=Some(format!("legacy installation not started: {e}")),
                 }
             }
-            if (!reduced||s.legacy_prepared)&&handoff_error.is_none()&&error.is_none()&&s.idle()&&!operator::running(&cfg.root) {
+            if (!reduced||s.legacy_prepared)&&handoff_error.is_none()&&error.is_none()&&s.idle() {
                 match host::prepare_legacy(&cfg.install,owner) {
                     Ok(true)=>{s.legacy_prepared=true;legacy_error=None;},Ok(false)=>{},Err(e)=>legacy_error=Some(e),
                 }
@@ -1139,7 +1129,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             }
         }
         // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
-        let wait = if reduced&&handoff_error.is_none() {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle()||operator::running(&cfg.root), poked, s.snapshot.as_ref())};
+        let wait = if reduced&&handoff_error.is_none() {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             if sampled.is_some_and(|t| t.elapsed().as_secs() < 30) {
@@ -1285,7 +1275,7 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
 
 /// The end of a project pass under a pending restart: prepared once nothing it owns blocks the re-exec.
 fn report_handoff(s: &Service, h: &mut host::Host, root: &Path, drained: bool) -> Res<()> {
-    let ready = h.restart && (if h.stopping {drained}else{lifecycle_waits(s, root, false).is_empty()});
+    let ready = h.restart && (if h.stopping {drained}else{lifecycle_waits(s, false).is_empty()});
     let saved = if ready { save_kids(s, root) } else { Ok(()) };
     h.end_pass(root, ready && saved.is_ok());
     saved
@@ -1298,7 +1288,7 @@ fn stopped_handoff(s: &mut Service, host: &host::Shared, cfg: &Config) -> Res<bo
     s.reconcile_ownership()?;
     s.sync_host();
     let mut h = host.lock().map_err(|_| "stopped project admission unknown")?;
-    let idle = s.idle() && !operator::running(&cfg.root);
+    let idle = s.idle();
     h.busy.insert(cfg.root.clone(), !idle);
     report_handoff(s, &mut h, &cfg.root, idle)?;
     Ok(idle && h.draining.contains(&cfg.root))
@@ -1799,7 +1789,7 @@ fn other_service(root: &Path) -> Option<u32> {
 fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     use std::os::unix::process::CommandExt;
     // App turns and Claude turns without a native identity have no adoptable handle; keep their lease until completion.
-    if !lifecycle_waits(s, &cfg.root, false).is_empty() {
+    if !lifecycle_waits(s, false).is_empty() {
         return fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string());
     }
     save_kids(s, &cfg.root)?;
@@ -1815,7 +1805,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     // ponytail: Windows cannot hand children to a new image; exit once no child is live and the unit restarts us.
     // The new `current` is already written, so the update waits only for the running attempts.
-    if lifecycle_waits(s, &cfg.root, false).is_empty() {
+    if lifecycle_waits(s, false).is_empty() {
         std::process::exit(75);
     }
     // update checks pause while the restart request carries the re-exec until the children end
@@ -1824,11 +1814,10 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 
 /// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
 /// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
-fn lifecycle_waits(s: &Service, root: &Path, stopping:bool) -> Vec<String> {
+fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
     let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || k.rt=="codex-app" || k.rt=="claude"&&k.proc.native_identity().is_err()).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     w.extend(s.handoff_waits(cfg!(windows) && !stopping));
-    if let Some(reason)=operator::wait(root) {w.push(reason);}
     w
 }
 
@@ -2275,14 +2264,6 @@ fn emit(rs: &[Receipt], json: bool) -> Res<()> {
     if rs.iter().all(Receipt::ok) { Ok(()) } else { Err(String::new()) } // already shown: exit 1 quietly
 }
 
-/// An accepted `ask`, `answer` or `requeue` goes to the request log (§ 4), then the receipt is shown.
-fn logged(root: &Path, source: &str, text: &str, r: Receipt, json: bool) -> Res<()> {
-    if r.ok() {
-        retro::record(root, source, r.task, text);
-    }
-    emit(&[r], json)
-}
-
 fn golden_selftest(traces: &str, published: bool) -> Res<usize> {
     let result = core::golden(traces);
     if published && result.is_err() {
@@ -2400,12 +2381,11 @@ fn run(argv: &[String]) -> Res<()> {
             Ok(())
         }
         "service" => service(&a),
-        // § 5: the operator over the request log; no board
+        // § 5: an owner session (§ 4) in this project; no board
         "retro" => {
-            let (cfg, raw) = load(&find_root()?)?;
-            let cap = host::Policy::read(&cfg.install)?.project(&cfg.root, &raw)?;
-            let rt = ["claude", "codex"].into_iter().find(|rt| cap.limits.get(*rt).copied().unwrap_or(if cap.auto { u32::MAX } else { 0 }) > 0);
-            print!("{}", retro::run(&cfg.root, rt)?);
+            let (cfg, _) = load(&find_root()?)?;
+            let r = setup::open(&cfg.install, &cfg.root, setup::RETRO)?;
+            println!("retro: request {} pending; the host service opens a new session in {}", r.id, cfg.root.display());
             Ok(())
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
@@ -2570,12 +2550,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "add" | "finding" => {
             let finding = cmd == "finding";
             // § 1 task body: Goal, Acceptance, Scope, dependencies; limits checked before any write
-            // § 5 `--retro K`: title, goal and acceptance of the last retro report's recommendation K
-            let picked = a.one("retro").map(|k| retro::pick(root, k)).transpose()?;
-            if picked.is_some() && (a.pos.len() > 1 || a.flags.contains_key("goal") || a.flags.contains_key("acceptance")) {
-                return Err("--retro K takes title, goal and acceptance from the report; drop them".into());
-            }
-            let title = match &picked { Some((t, _, _)) => t, None => a.pos.get(1).filter(|t| !t.trim().is_empty()).ok_or("title missing")? };
+            let title = a.pos.get(1).filter(|t| !t.trim().is_empty()).ok_or("title missing")?;
             let deps: Vec<u64> = a.all("deps").iter().flat_map(|d| d.split([',', ' '])).filter(|d| !d.is_empty()).map(|d| d.trim_start_matches('#').parse().map_err(|_| format!("bad --deps {d}"))).collect::<Res<_>>()?;
             // § 9: work waits for its runtime; a soft preference is retired
             if a.flags.contains_key("prefer") {
@@ -2591,8 +2566,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             }
             let new = NewTask {
                 title: title.clone(),
-                goal: match &picked { Some((_, g, _)) => g.clone(), None => a.need("goal")?.to_string() },
-                acceptance: picked.as_ref().map_or_else(|| a.all("acceptance"), |p| p.2.clone()),
+                goal: a.need("goal")?.to_string(),
+                acceptance: a.all("acceptance"),
                 scope: a.all("scope"),
                 deps,
                 kind: a.one("type").map(String::from),
@@ -2651,19 +2626,15 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "ask" => {
             let n = a.num(1)?;
             let body = ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &a.all("link"))?;
-            logged(root, "ask", &body, act(b, root, n, "ask", &[], &body, &op), json)
+            emit(&[act(b, root, n, "ask", &[], &body, &op)], json)
         }
         "answer" if a.pos.get(1).is_some_and(|p| p.contains('.')) => {
-            let rs = answer_picks(b, cfg, &a.pos[1..], &op)?;
-            for (r, pick) in rs.iter().zip(&a.pos[1..]) {
-                if r.ok() { retro::record(root, "answer", r.task, pick); }
-            }
-            emit(&rs, json)
+            emit(&answer_picks(b, cfg, &a.pos[1..], &op)?, json)
         }
         "pick" => emit(&[dispatch::pm_pick(b, root, a.pos.get(1).ok_or("N.K missing")?, text, &op)?], json),
         "answer" => {
             let n = a.num(1)?;
-            logged(root, "answer", a.need("text")?, act(b, root, n, "answer", &[], a.need("text")?, &op), json)
+            emit(&[act(b, root, n, "answer", &[], a.need("text")?, &op)], json)
         }
         "result" => {
             let n = a.num(1)?;
@@ -2674,7 +2645,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "requeue" => {
             let n = a.num(1)?;
-            logged(root, "requeue", text, act(b, root, n, cmd, &[], text, &op), json)
+            emit(&[act(b, root, n, cmd, &[], text, &op)], json)
         }
         "later" => {
             let n = a.num(1)?;
@@ -3934,7 +3905,7 @@ mod tests {
         while !root.join("exit").exists() { assert!(Instant::now()<until); std::thread::sleep(Duration::from_millis(10)); }
     }
 
-    // § 8 re-exec preserves native CLI and Claude identity and defers for app/operator ownership; no unit reload path remains.
+    // § 8 re-exec preserves native CLI and Claude identity and defers for app ownership; no unit reload path remains.
     #[cfg(unix)]
     #[test]
     fn live_child_survives_reexec_preparation_and_native_adoption() {
@@ -3964,17 +3935,10 @@ mod tests {
         s.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: 41, task: 7, attempt: 41, rt: "codex-app".into(), proc: Box::new(runtime::Adopted::new(coreq::process::identity(pid).unwrap().unwrap())) });
         reexec(&s, &c).unwrap();
         assert!(dot(&root).join("restart").exists());
-        assert_eq!(lifecycle_waits(&s, &root, false), ["#7","ownership unknown"], "status names the active task and missing ownership read");
+        assert_eq!(lifecycle_waits(&s, false), ["#7","ownership unknown"], "status names the active task and missing ownership read");
         assert_eq!(s.kids[0].attempt, 41);
         assert_eq!(adopted.exited(), Ok(None));
         s.kids.clear();
-        fs::create_dir_all(operator::dir(&root)).unwrap();
-        fs::write(operator::dir(&root).join("1.json"), "{}").unwrap();
-        fs::write(operator::answer_path(&root, "1"), r#"{"state":"running"}"#).unwrap();
-        reexec(&s, &c).unwrap();
-        assert!(dot(&root).join("restart").exists());
-        assert_eq!(lifecycle_waits(&s, &root, false), ["ownership unknown","operator"]);
-        fs::write(operator::answer_path(&root, "1"), r#"{"state":"result"}"#).unwrap();
         coreq::process::terminate(&coreq::process::identity(pid).unwrap().unwrap()).unwrap();
         child.wait().unwrap();
         let _ = fs::remove_dir_all(&root);

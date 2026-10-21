@@ -6,11 +6,8 @@ use std::cell::RefCell;
 
 pub const KIND: Kind = Kind {
     name: "gitlab",
-    cli: "glab",
-    host_env: "GITLAB_HOST",
     user_key: "username",
     default_host: "gitlab.com",
-    repo_view: None,
     token: |tool, host| tool.token(true, host),
     token_env: &["GITLAB_TOKEN"],
     api,
