@@ -35,6 +35,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.locator('[data-a=message-archive][data-key="'+r+'"]').click();
   const archive=await page.evaluate(()=>sent.filter(m=>m.a==='message-action').at(-1));assert.equal(archive.action,'archive');
   await page.evaluate(({id,key})=>taskq.receive({messageReceipt:{id,outcomes:[{key,action:'archive',state:'accepted'}]}}),{id:archive.id,key:r});
+  assert.match(await page.locator('[data-status=workspace]').innerText(),/Message archived/,'success names the action without an internal digest');
   const archived=structuredClone(snapshot);archived.messages.entries[1].archived=true;archived.messages.count=1;
   await page.evaluate(s=>taskq.receive(s),archived);assert.equal(await page.locator('[data-a=message-open]').count(),1);
   await page.locator('[data-field=message-filter]').selectOption('archived');

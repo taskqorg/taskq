@@ -111,7 +111,7 @@ const {create}=execution.module('workspace',{
     if(s.messageReceipt){
      if(s.messageReceipt.id!==view.messageBusy)return;
      const r=s.messageReceipt;view.messageBusy=null;
-     view.messageNotice=r.reason||r.outcomes.map(o=>o.state==='accepted'?o.action+' read back for '+o.key.slice(0,8):'Unknown: '+o.reason).join('; ');
+     view.messageNotice=r.reason||r.outcomes.map(o=>o.state==='accepted'?({read:'Message marked read',archive:'Message archived',delete:'Message permanently deleted'}[o.action]||'Message updated'):'Unknown: '+o.reason).join('; ');
      api.draw();return;
     }
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
