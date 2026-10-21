@@ -1,14 +1,14 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "3df748bc93ab3a401451b6fcec346cdd670e56e2",
-  "binarySha256": "ee782d708fd594e1e2d5ad06f7ac725d69267103d817f430ccbebd8f91060d49",
+  "sourceCommit": "1673b767b02163ad390a9275621f5f0575a16479",
+  "binarySha256": "d19b0c7390ed7e6ffddd10d10f739604ac802fae47cf10ea6e7fdfbdc44f59c4",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "280eeb477048c642452e20a51778a9c40495b173",
+    "src/tray.rs": "cea132adc88b56f88bbec27f1b027b329ce527b6",
     "src/tray.html": "393c9f6da2dcf835deaa39822859a1e1c9c9d66d",
     "src/tray-app.js": "8c479b20f56b29c9f6284dc4ddbec2e754c9ec27",
     "src/tray-view-state.js": "4c727c44c5164800e629a23d57e3919ac8c8a02b",
@@ -25,7 +25,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "5e843a4cc51507d59aaecc504515d65eeedf0a0e0aee4a4b1476a96bb6d6766d"
+      "sha256": "e6efd9b07a33a1b42a3fe660cabde345afa455331e5e229ce6de719343cb14d9"
     },
     {
       "file": "popover-dark-project-16.png",
