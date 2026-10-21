@@ -4,13 +4,37 @@ const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null),esc=shell.escape;
   const view={page:'messages',taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0},trail=[];
-  const routes={messages:{title:'Messages'},request:{title:'New AI request',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},agents:{title:'Agent settings',parent:'messages'},operations:{title:'Operation review',parent:'messages'}};
+  const routes={messages:{title:'Messages'},message:{title:'Message',parent:'messages'},request:{title:'New AI request',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},agents:{title:'Agent settings',parent:'messages'},operations:{title:'Operation review',parent:'messages'}};
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail,root:'messages',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   const local=signal({text:'',caret:[0,0],op:null,receipt:null});let hydrated=false,timer=null,composing=false;
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw()});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const api=execution.module('workspace.instance',{
+   messageAction:function(action,keys){
+    if(view.messageBusy||!keys.length)return;
+    const id=Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');view.messageBusy=id;view.messageNotice='Checking '+action+' readback…';
+    ui.defer(()=>{if(view.messageBusy===id){view.messageBusy=null;view.messageNotice='Message action outcome unknown. Refresh to read back; no action was replayed.';api.draw();}},30000);
+    ui.send({a:'message-action',id,action,keys});api.draw();
+   },
+   messageButtons:function(row){return row.archived?'<button data-a="message-delete" data-key="'+esc(row.key)+'"'+(view.messageBusy?' disabled':'')+'>Delete permanently</button>':'<button data-a="message-archive" data-key="'+esc(row.key)+'"'+(view.messageBusy?' disabled':'')+'>Archive</button>';},
+   messageList:function(){
+    const m=snapshot.value.messages,filter=view.messageFilter||'all',rows=(m?.entries||[]).filter(r=>filter==='archived'?r.archived:!r.archived&&(filter!=='pending'||r.pending));
+    return '<div class="options"><button data-route="request">New AI request</button><button data-route="sessions">Work sessions</button><button data-route="agents">Agent settings</button></div>'+
+     '<label for="message-filter">Show messages</label><select id="message-filter" data-field="message-filter">'+[['all','All messages'],['pending','Pending'],['archived','Archived']].map(([v,label])=>'<option value="'+v+'"'+(filter===v?' selected':'')+'>'+label+'</option>').join('')+'</select>'+
+     (m?.complete!==true?'<p role="status">Messages unknown: '+esc(m?.reason||'Source unavailable; refresh status.')+'</p>':'')+
+     (filter==='archived'?'<p>Delete permanently removes TaskQ message records and owned copies. There is no undo. Board tasks, source files and native chats stay; sessions keep running. Requests awaiting launch cannot be deleted.</p><button data-a="message-delete-all"'+(!rows.length||view.messageBusy?' disabled':'')+'>Delete all archived permanently</button>':'')+
+     (rows.map(r=>'<section class="message-row" aria-label="'+esc(r.title||'Message')+'"><button class="project" data-a="message-open" data-key="'+esc(r.key)+'">'+esc(r.kind==='question'?(r.project||'Board')+' · #'+r.task+' '+r.title:r.title||'Request')+'</button><p class="meta">'+esc(r.kind==='question'?(r.state==='ask'?'Unanswered':'Archived')+' question · revision '+r.revision:(r.host||'Unknown host')+' · '+r.id+' · '+r.state)+(r.deleting?' · Deletion incomplete; retry Delete':r.read?' · Read':' · Unread')+'</p><div class="options">'+api.messageButtons(r)+'</div></section>').join('')||'<p>No '+(filter==='archived'?'archived ':filter==='pending'?'pending ':'')+'messages in the available snapshot.</p>');
+   },
+   messageDetail:function(){
+    const r=snapshot.value.messages?.entries?.find(r=>r.key===view.message);
+    if(!r)return '<p role="status">This message is unavailable or was deleted. Back returns to the list; Refresh reads current status.</p>';
+    const request=r.request,url=request?.url;
+    return '<p>'+esc(r.title||'Message')+'</p><p class="meta">'+esc(r.host||'Unknown host')+' · '+esc(r.id)+' · '+esc(r.state)+'</p>'+
+     '<p>'+esc(request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.')+'</p>'+
+     (url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url)?'<a data-url="'+esc(url)+'" href="'+esc(url)+'">Open native session</a>':'')+
+     '<p>Replies stay in the native runtime. Opening this record never sends a request.</p><div class="options">'+api.messageButtons(r)+'</div>';
+   },
    persist:function(){ui.send({a:'ai-draft',text:local.value.text,root:view.aiRoot,local:local.value});},
    requestProblem:function(){
     if(!snapshot.value)return 'Loading project status; use Refresh.';
@@ -35,6 +59,7 @@ const {create}=execution.module('workspace',{
    },
    body:function(){
     if(view.page==='operations')return operations.operationBody(view.operation);
+    if(view.page==='message')return api.messageDetail();
     if(view.page==='request')return api.request();
     if(view.page==='answer'){
      const c=view.answer,p=view.S.projects.find(p=>p.issues===c?.board&&(!c.root||p.root===c.root)),t=p?.tasks?.find(t=>t.n===c.task);
@@ -45,10 +70,7 @@ const {create}=execution.module('workspace',{
       (t.state==='ask'?answers.answerSlot(row):'<p role="status">Task state: '+esc(t.state)+'. There is no open question.</p>')+answers.answerNotices(p.issues);
     }
     if(view.page==='messages'){
-     const ps=view.S.projects,questions=ps.flatMap(p=>(p.tasks||[]).filter(t=>t.state==='ask').map(t=>'<button class="project" data-a="open-answer" data-root="'+esc(p.root)+'" data-board="'+esc(p.issues)+'" data-task="'+t.n+'" data-revision="'+t.revision+'">'+esc(p.name)+' · #'+t.n+' '+esc(t.title)+'</button>')).join('');
-     return '<div class="options"><button data-route="request">New AI request</button><button data-route="sessions">Work sessions</button><button data-route="agents">Agent settings</button></div>'+
-      (ps.some(p=>!p.alive||p.complete===false)?'<p role="status">Questions may be missing: project status is stale, unavailable or partial. Refresh or inspect the board.</p>':'')+
-      (questions||'<p>No questions in the available snapshot.</p>')+answers.answerNotices();
+     return api.messageList()+answers.answerNotices();
     }
     return view.page==='sessions'?'<p>Work sessions are not available here. Use the tray’s Agents view and the recorded native session links.</p>':'<p>Agent settings are not available here. Use Settings → Agents in the tray. Opening this screen changes no runtime or permissions.</p>';
    },
@@ -56,7 +78,7 @@ const {create}=execution.module('workspace',{
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
     const actions='<button data-a="refresh" title="Refresh workspace status" aria-label="Refresh workspace status">Refresh</button><details class="shell-overflow" data-view-key="navigation-actions"><summary title="Workspace navigation" aria-label="Workspace navigation">⋯</summary><nav class="overflow-actions" aria-label="Workspace"><button data-route="messages">Messages</button><button data-route="request">New AI request</button><button data-route="sessions">Work sessions</button><button data-route="agents">Agent settings</button></nav></details>';
-    renderer.draw(shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:'<button data-a="hide" title="Close workspace" aria-label="Close workspace">×</button>'})+'<main class="content"><div class="content-body">'+(view.unavailable?'<p role="status">'+esc(view.unavailable)+' The surviving destination is Messages.</p>':'')+(s?api.body():'<p>Loading workspace. Refresh if status does not arrive.</p>')+[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>'<p role="alert">'+esc(error)+'</p>').join('')+'<p class="meta" role="status" aria-live="polite" aria-atomic="true" data-status="workspace">'+esc(view.notice||'')+'</p></div></main>'+answers.answerToast(),'/'+view.page);
+    renderer.draw(shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:'<button data-a="hide" title="Close workspace" aria-label="Close workspace">×</button>'})+'<main class="content"><div class="content-body">'+(view.unavailable?'<p role="status">'+esc(view.unavailable)+' The surviving destination is Messages.</p>':'')+(s?api.body():'<p>Loading workspace. Refresh if status does not arrive.</p>')+[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>'<p role="alert">'+esc(error)+'</p>').join('')+'<p class="meta" role="status" aria-live="polite" aria-atomic="true" data-status="workspace">'+esc(view.messageNotice||view.notice||'')+'</p></div></main>'+answers.answerToast(),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     state.flush();
@@ -67,6 +89,7 @@ const {create}=execution.module('workspace',{
     trail.push(state.capture());if(trail.length>32)trail.shift();view.page=page;
     if(page==='answer')view.answer=context;
     if(page==='operations')view.operation={operation:context?.operation,root:context?.root||null};
+    if(page==='message')view.message=context?.key;
     if(page==='request'&&context?.root){
      if(local.value.op&&['sending','unknown'].includes(local.value.receipt?.state)){view.aiRoot=local.value.op.root;view.notice='A request is awaiting readback in its original project. Check delivery before changing project.';}
      else view.aiRoot=context.root;
@@ -85,6 +108,12 @@ const {create}=execution.module('workspace',{
     ui.send({a:'ai-send',...op,reconcile});
    },
    receive:function(s){
+    if(s.messageReceipt){
+     if(s.messageReceipt.id!==view.messageBusy)return;
+     const r=s.messageReceipt;view.messageBusy=null;
+     view.messageNotice=r.reason||r.outcomes.map(o=>o.state==='accepted'?o.action+' read back for '+o.key.slice(0,8):'Unknown: '+o.reason).join('; ');
+     api.draw();return;
+    }
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
     if(['capmsg','focus_receipt','action_error','resources_receipt','aiError'].some(k=>s[k])){operations.receive(s);return;}
     if(s.answerReceipt){answers.answerReceipt(s.answerReceipt);return;}
@@ -116,6 +145,14 @@ const {create}=execution.module('workspace',{
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route);
      else if(b.dataset.a==='open-answer')api.navigate('answer',{root:b.dataset.root,board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
+     else if(b.dataset.a==='message-open'){
+      const r=snapshot.value.messages?.entries?.find(r=>r.key===b.dataset.key);if(!r)return;
+      api.messageAction('read',[r.key]);
+      if(r.kind==='question')api.navigate('answer',{root:r.root,board:r.board,task:r.task,revision:r.revision});else api.navigate('message',{key:r.key});
+     }
+     else if(b.dataset.a==='message-archive')api.messageAction('archive',[b.dataset.key]);
+     else if(b.dataset.a==='message-delete')api.messageAction('delete',[b.dataset.key]);
+     else if(b.dataset.a==='message-delete-all')api.messageAction('delete',(snapshot.value.messages?.entries||[]).filter(r=>r.archived).map(r=>r.key));
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){api.persist();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
@@ -126,7 +163,7 @@ const {create}=execution.module('workspace',{
     });
     ui.listen(menu,'submit',e=>{if(e.target.dataset.form==='request'){e.preventDefault();api.submit();}});
     ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.field==='request'){local.value={...local.value,text:e.target.value,caret:[e.target.selectionStart,e.target.selectionEnd]};api.persist();api.draw();}});
-    ui.listen(menu,'change',e=>{if(e.target.dataset.field==='project'){view.aiRoot=e.target.value;api.persist();api.draw();}});
+    ui.listen(menu,'change',e=>{if(e.target.dataset.field==='project'){view.aiRoot=e.target.value;api.persist();api.draw();}else if(e.target.dataset.field==='message-filter'){view.messageFilter=e.target.value;view.messageNotice=null;api.draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.field==='request'){local.value={...local.value,caret:[e.target.selectionStart,e.target.selectionEnd]};api.persist();}});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);

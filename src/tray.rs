@@ -1109,6 +1109,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
                     }
                     Some("hide") => w.set_visible(false),
+                    Some("message-action") => {
+                        let ps:Vec<Value>=roots(&install).iter().map(|r|project(&install,r)).collect();
+                        let keys:Vec<String>=m["keys"].as_array().into_iter().flatten().filter_map(|v|v.as_str().map(String::from)).collect();
+                        let mut receipt=crate::messages::act(&install,&ps,m["action"].as_str().unwrap_or(""),&keys);receipt["id"]=m["id"].clone();
+                        web_eval(wv,&format!("taskq.receive({})",json!({"messageReceipt":receipt})),"tray.web.receive",&proxy,calls);
+                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
+                        push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
+                    }
                     Some("workspace-set") => {
                         settings.set(&json!({"workspace_navigation":m["navigation"]}));
                         let saved=m["navigation"].is_object() && m["navigation"]["schema"]==1 && settings.workspace_navigation==m["navigation"] && settings.save(&install);
@@ -1498,11 +1506,12 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
 
 fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value) -> Value {
     let ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
+    let messages=crate::messages::snapshot(install,&ps);
     let (start, end) = s.range(now());
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
-        "navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
+        "messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
         "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});

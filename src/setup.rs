@@ -35,7 +35,8 @@ const STATES: [&str; 5] = ["pending", "launching", "launched", "failed", "interr
 pub fn dir(install: &Path) -> PathBuf { install.join("setup") }
 fn file(install: &Path, id: &str) -> PathBuf { dir(install).join(format!("{id}.json")) }
 
-fn read(path: &Path) -> Res<Request> {
+pub(crate) fn read(path: &Path) -> Res<Request> {
+    if !crate::messages::plain(path)? {return Err("Setup request absent".into());}
     let text = fs::read_to_string(path).map_err(|e| format!("setup request unknown: {e}"))?;
     let r: Request = serde_json::from_str(&text).map_err(|e| format!("setup request {} unknown: {e}", path.display()))?;
     if r.schema != 2 || !STATES.contains(&r.state.as_str()) || !crate::resources::id(&r.id) || path.file_stem() != Some(r.id.as_ref()) {
@@ -65,7 +66,8 @@ fn write(install: &Path, r: &Request) -> Res<()> {
     crate::platform::write_atomic(&file(install, &r.id), &(text + "\n")).map_err(|e| format!("setup request write uncertain: {e}"))
 }
 
-fn locked<T>(install: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
+pub(crate) fn locked<T>(install: &Path, f: impl FnOnce() -> Res<T>) -> Res<T> {
+    crate::messages::plain(&dir(install))?;
     fs::create_dir_all(dir(install)).map_err(|e| format!("setup: {e}"))?;
     let _lock = coreq::file_lock::try_lock(&dir(install).join("lock")).map_err(|e| format!("setup request busy, retry: {e}"))?;
     f()
@@ -156,6 +158,7 @@ fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<Str
         targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root };
     r.brief = brief(&r, &id);
     locked(install, || {
+        if crate::messages::request_deleted(install,&id)? {return Err("Owner request was permanently deleted; it cannot launch again".into());}
         if requested_id.is_some() {
             match fs::metadata(file(install, &id)) {
                 Ok(_) => {
@@ -220,7 +223,10 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
         Launched::Unknown(e) => { r.state = "interrupted".into(); r.reason = Some(e); }
     }
     // A lost write leaves `launching`; the next service start turns it into `interrupted`, never a second launch.
-    locked(install, || write(install, &r))
+    locked(install, || {
+        if read(&file(install,&id))?.state!="launching" {return Err("Setup launch record changed; late result not written".into());}
+        write(install, &r)
+    })
 }
 
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
