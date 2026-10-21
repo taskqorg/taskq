@@ -95,3 +95,23 @@ cases. The owner accepted this four-image layout in [answer 6320399983](https://
 “Accept this layout; retain native operation and picker qualification as release work.”
 This closes the A8/V38 visual decision; it does not qualify native effects or
 replace green merge-result CI (R12/§ 7).
+
+## Windows publication repair
+
+The [merge-group run](https://github.com/taskqorg/taskq/actions/runs/39631644429)
+at `ed12df70eb2cd4e5e46deb9291edfa0539c7e8d2` failed on Windows:
+`detached_install_observers_share_one_acknowledgement_and_cannot_create_a_command`
+completed its installation assertions, then fixture directory removal returned
+Windows error 32 (file in use). Linux, macOS and Windows GNU jobs passed.
+
+The receipt worker notified settlement before dropping its tracing dispatcher.
+That dispatcher can retain the collector and its SQLite writer after the fixture
+has settled and dropped its own capture. Release it before notifying settlement;
+the FIFO, immutable command identity, required checkpoint and error handling stay
+unchanged. The installer test keeps every scope, generation, replay, ownership
+and unchanged-file assertion. R9, R11, R12 and § 6 are unchanged; no rule is amended.
+
+`telemetry::tests::receipt_settlement_waits_for_dispatch_release` holds dispatcher
+destruction open and checks that settlement cannot finish until it is released.
+This is a worker/collector teardown check, not native installation qualification.
+The accepted four-image layout and owner answer remain unchanged.
