@@ -1,5 +1,24 @@
 # Canonical gate failure inventory
 
+Resumed full gate at `a2ed8b6`: `python scripts/check.py --base 00a8a4f`
+failed with 424 passed, 21 failed, 35 ignored (84.640 s / 900 s). The unchanged
+R8 size check passes. This retains the 20 failures below and adds
+`runtime::app_control::windows_pipe::tests::native_pipe_bounds_unread_writes_and_empty_reads`:
+the peer's `listener.accept()` reached `Codex App IPC deadline; cancellation
+outcome unknown`, then the join failed. This timing failure remains unqualified.
+The publication issue-read assertion still observes 2 instead of 0 on the other
+host. Explicit host/policy/security refusals remain sandbox-blocked; neither
+they nor the other assertions are PASS. The worker authority environment stays
+intact.
+
+After the notification-label repair at `a200eca`, the affected web gate
+`python scripts/check.py --base a2ed8b6` passes (65.875 s / 900 s). It includes
+the nine core checks, all Node components, manifest/release scripts and the
+shell browser regression. The full Rust suite was not repeated for the CSS and
+browser-only repair; no Rust behavior changed. This selected pass does not
+erase the full-gate failures. Offline selftest passes 92 traces, formats and
+staged telemetry; board unknown. Native and merge-result CI remain separate.
+
 Owner-revision gate: `python scripts/check.py --base a4605ba` failed with
 421 passed, 21 failed, 35 ignored (91.047 s / 900 s). Its extra failure was
 `core::tests::every_table_row_has_a_golden_trace`: contract over 60 KiB after

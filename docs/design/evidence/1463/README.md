@@ -1,11 +1,67 @@
 # #1463 navigation and controls
 
-Implemented source. The owner accepted the earlier set except the heading-focus
-and breadcrumb corrections below; four refreshed after-images await A8 review. Not merged, released or
-deployed. Native qualification and the merge gate are incomplete (R12).
+Implemented source. The owner accepted the seven-image set, including the four
+heading-focus and breadcrumb corrections in [answer 6315388620](https://github.com/taskqorg/taskq/issues/1463#issuecomment-6315388620).
+Not merged, released or deployed. Native qualification and the merge gate remain incomplete (R12).
 Source blobs are pinned in the artifact receipts; UI before evidence: `0804397`.
 Candidate rebased on `a4605ba`; the M2 note, publication fix and new-task intake change are retained.
 [Seven actual-size images](screenshots.md) · [source/artifact receipts](artifacts.json).
+
+## Resumed capture and notification repair
+
+The branch incorporates `00a8a4f`, including #1488's npm setup for README shots.
+The manifest check reproduced exit 2 before capture. The first resumed macOS
+[capture 39602159027](https://github.com/taskqorg/taskq/actions/runs/39602159027)
+at `a2ed8b6c180e0ec4911fcadf8266695e25340600` built successfully, then failed
+its unchanged native overflow check: Banner and Banner with sound exceeded
+their buttons by 2 CSS px in both themes.
+
+V23/V26 repair: notification toggle groups now use content-based flex bases
+instead of the shared 38 px basis, retaining wrapping, targets and selection.
+The added case in `tests/shell-navigation.browser.cjs` failed before at 18 px
+(Inherit: 2 px overflow; Banner and Banner with sound: 7 px), then passed after
+for host and project controls at 14/16/18/20/40 px. Every existing assertion
+remains. This fixes implementation against the existing rules; no rule or
+protection changed. Chromium and Windows Playwright WebKit probes agree; the
+latter is a browser observation, not WKWebView qualification.
+
+`python scripts/check.py --base a2ed8b6` passes the affected web selection in
+65.875 s / 900 s: nine Rust core checks, every component/IPC check, release and
+manifest-script protection, and the repaired shell browser check. The separate
+view-state/filter/window checks pass. Whole-route text checks again report
+304 cells with zero measured gaps. Isolated offline selftest passes 92 golden
+traces, formats and staged telemetry; the board is unknown (not read).
+
+The fresh full local gate at `a2ed8b6` failed: 424 passed, 21 failed, 35 ignored,
+84.640 s / 900 s. It retains the earlier 20 failures and adds a native-pipe peer
+accept deadline failure; the R8 size check passes. Explicit host/policy/security
+refusals are sandbox-blocked. The remaining assertions and native-pipe timing
+stay unqualified. No worker authority was removed and no failure was retried
+into a passing claim. The notification repair changes no Rust behavior.
+
+Windows workspace qualification was attempted with an isolated fixture tray.
+Computer Use returned `GetCursorPos failed: Access is denied. (0x80070005)`;
+one fresh read returned `IGraphicsCaptureItemInterop.CreateForMonitor failed:
+Could not capture the given monitor. (0x80070057)`. No workspace interaction was
+proved. The fixture tray was stopped after verifying its recorded PID and
+executable; the running installed tray/service and active attempts were untouched.
+
+The repaired source also passed the separate native WebView2 project snapshot:
+`cargo +stable run --locked -- tray --snapshot .taskq/evidence/1463/resume-native/shots --route project`
+emitted two PNGs (dark/light, 16 px) and exited 0. Fixture paths were converted
+to native Windows paths before capture; an earlier POSIX-path fixture emitted
+no frames and does not count. Development binary SHA-256:
+`b8953f11eec8e6131c2b20d86a5a6793d1e54dc03df78d4503e7d98c71662abb`.
+This is project rendering only, not native workspace or installed qualification.
+
+Replacement macOS [capture 39603193860](https://github.com/taskqorg/taskq/actions/runs/39603193860)
+was dispatched on `a200eca` after the repair and remains queued. No matching
+`readme-shots` artifact exists yet; the committed manifest still exits 2. Resume
+only after reading the successful artifact's actual `sourceCommit` and matching
+its UI blob IDs to the candidate, then applying the captured images and manifest.
+Do not substitute browser output or rewrite old hashes. The original seven
+review images remain unchanged and accepted. Native workspace and merge-result
+CI gates remain open (R12; §7).
 
 ## Owner correction: heading focus and breadcrumbs
 
@@ -84,7 +140,7 @@ queue, grant, capacity, task attempt or native agent session was changed.
 | A5 / TW8 | One pressed/current/focus treatment, preserving native checkboxes and source semantics. All tasks is pressed only for unrestricted scope; selected state capsules remain independent OR toggles. Existing font/notification/window groups use the same treatment. Mac-only controls remain platform-unqualified. |
 | A6 | [304 text cells](text-checks.json): 19 route variants × two themes × four fonts (14/16/18/20) × two widths (320/360). Zero measured type, horizontal-overflow, active-text contrast or enabled input-edge gaps. Titles compute to 1.1b/600; text ≥4.5:1 and measured essential input edges ≥3:1. Tray/workspace declare distinct spacing tokens. No spatial animation was added. This finite fixture set excludes disabled/native control painting and is not a WCAG or native acceptance claim. |
 | A7 | Existing component, answer, resource, filter and link checks pass. IDs, original operation payloads/receipts, active-work guards and window/emergency distinctions remain. Public JS byte equality and asset hashes pass. |
-| A8 | Seven images, source hashes and whole-route text checks retained. Agent inspection is complete; the rest of the set is accepted; four changed after-images await owner actual-size acceptance. WebView2 evidence is limited to the fixture project route. WKWebView, installed layout and the actual new native workspace path remain unknown. |
+| A8 | Seven images, source hashes and whole-route text checks retained. The owner accepted all seven, including the four corrections (answer 6315388620). Historical WebView2 evidence is limited to the fixture project route. Installed layout and the actual new native workspace path remain unknown; see the resumed capture evidence above. |
 
 The route ledger is Home, Projects, Project, filtered Tasks, global All tasks,
 Attention, Settings, Appearance, Activity history, Notifications, Agents,
@@ -160,9 +216,8 @@ and browser results stay separate under R12.
 
 ## Remaining acceptance
 
-Owner A8/V38 actual-size review of the four changed after-images is required
-before adopting those visual references; the other images remain accepted.
-Then refresh `docs/shots/manifest.json` through the qualified screenshot path;
+Owner A8/V38 actual-size review of the seven-image set is recorded in answer
+6315388620. Refresh `docs/shots/manifest.json` through the qualified screenshot path;
 the expanded watcher includes the new shell/workspace sources. Do not hand-edit
 old image hashes to imply a fresh capture. Green merge-result CI and the missing
 native evidence remain required; neither source delivery nor visual approval
