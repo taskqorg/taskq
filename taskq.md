@@ -128,7 +128,7 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 1. `Done: <what was checked or attempted>` -- one line, at most 160 characters; say `not started` when true.
 2. `Problem: <decision needed and user effect>` -- one or two lines, at most 240 characters per line.
 3. Optional `Evidence: [<label>](<url>)` -- one line, at most two screenshot/video/issue/PR links, labels at most 40 characters each.
-4. Two to four options, `1. <action and trade-off>` etc.; one line each, at most 160 characters, exactly one ends in `★`. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
+4. Two to four options, `1. <action and trade-off>` etc.; one line each, at most 160 characters, exactly one ends in `★`. A Problem or option line holds at most one `[label](url)` link (label at most 40 characters), no bare URL; limits count visible text, not the URL; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
 5. To answer: `taskq answer N.K` or comment `K` or the option text; an owner action: `taskq answer N --text <done>`. Last line; substitute this task's number for N.
 Presentation and tray card rules: [answer card](docs/design/answer-card.md#contract-detail). A pick shows `PM N.K: <reason>` beside the ★.
 `--text` supplies literal Done and Problem lines; `--link` supplies Evidence; `--option` and `--recommend` supply the options/star.

@@ -172,6 +172,71 @@
       ]
     },
     {
+      "name": "linked option and problem",
+      "board": "github.com/o/r",
+      "capability": {
+        "answer": true
+      },
+      "rows": [
+        {
+          "n": 850,
+          "title": "Merge order",
+          "state": "ask",
+          "url": "https://github.com/o/r/issues/850",
+          "revision": 4,
+          "card": "Done: read #1443\nProblem: Merge after [#1443](https://github.com/o/r/issues/1443) or now?\nEvidence: [shot](https://github.com/o/r/pull/12)\n1. Wait for [#1443](https://github.com/o/r/issues/1443) ★\n2. Merge now, see [bad](javascript:alert(1))\nTo answer: `taskq answer 850.K` or comment `K` or the option text.",
+          "question": {
+            "parsed": true,
+            "text": "Done: read #1443\nProblem: Merge after [#1443](https://github.com/o/r/issues/1443) or now?\nEvidence: [shot](https://github.com/o/r/pull/12)\n1. Wait for [#1443](https://github.com/o/r/issues/1443) ★\n2. Merge now, see [bad](javascript:alert(1))\nTo answer: `taskq answer 850.K` or comment `K` or the option text.",
+            "done": "read #1443",
+            "problem": "Merge after [#1443](https://github.com/o/r/issues/1443) or now?",
+            "evidence": [
+              {
+                "label": "shot",
+                "url": "https://github.com/o/r/pull/12"
+              }
+            ],
+            "choices": [
+              {
+                "id": 1,
+                "text": "Wait for [#1443](https://github.com/o/r/issues/1443)",
+                "recommended": true,
+                "consequential": false
+              },
+              {
+                "id": 2,
+                "text": "Merge now, see [bad](javascript:alert(1))",
+                "recommended": false,
+                "consequential": false
+              }
+            ],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "check",
+          "status": "actionable",
+          "sent": 0,
+          "has": [
+            "Merge after <a href=\"https://github.com/o/r/issues/1443\" target=\"_blank\" rel=\"noopener\">#1443</a> or now?",
+            "1.</span> <span>Wait for #1443 <span class=\"qac-star\"",
+            "<a class=\"qac-link\" href=\"https://github.com/o/r/issues/1443\" target=\"_blank\" rel=\"noopener\">#1443 ↗</a>",
+            "<a class=\"qac-link\" href=\"#\" target=\"_blank\" rel=\"noopener\">bad ↗</a>",
+            ">shot</a>"
+          ],
+          "not": [
+            "](",
+            "javascript:"
+          ]
+        }
+      ]
+    },
+    {
       "name": "free text, rejected keeps the draft",
       "board": "github.com/o/r",
       "capability": {
