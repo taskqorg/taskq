@@ -61,7 +61,7 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   }
   await page.evaluate(s=>taskq.receive({...s,projects:s.projects.map(p=>({...p,complete:false}))}),snapshot);
   assert.equal((await counter('failed').innerText()).trim(),'?','partial is unknown, never zero');
-  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['size','ready','web-observation'].includes(m.a))),[],'view filters must not write queue/focus');
+  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['size','ready','web-observation'].includes(m.a)&&!(m.a==='set'&&m.navigation&&Object.keys(m).every(k=>['a','context','navigation'].includes(k))))),[],'view filters must not write queue/focus');
   if(out)fs.writeFileSync(out+'/observations.json',JSON.stringify({browser:browser.version(),observations},null,2)+'\n');
   console.log('PASS #1438 K-A2/K-A6, UI25–UI28: toggles, zero/unknown, OR, All tasks, keyboard, refresh, Back, no writes; 8 theme/type/width cells');
  }finally{await browser.close();}

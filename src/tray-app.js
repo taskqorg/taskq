@@ -3,7 +3,7 @@ const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:[],pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {manualSize:null,aiText:null,aiMenu:false,aiRoot:null,addConfirm:false,resourceNotice:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
@@ -57,7 +57,7 @@ lifecycleControl:function(p,action='restart'){
   const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>projects.find(p=>p.root===root)?.name||root):null;
   const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Use reviewed recovery to resume selected tasks.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
   const scope=action==='uninstall'?esc(p.name):'all registered projects: '+(targets?targets.length?targets.map(esc).join(', '):'none registered':'unknown');
-  return '<details class="host-'+action+'"><summary>'+title+' '+(action==='uninstall'?esc(p.name):'host service')+'</summary><div class="body meta">Affects '+scope+'. '+effect+'</div>'+(!review?.instance?'<div class="body alert">'+esc(review?.reason||title+' protocol unavailable')+'</div>':'')+'<button class="project" data-a="'+action+'" data-root="'+esc(p.root)+'"'+(pending||!review?.instance||!targets?' disabled':'')+'>Confirm '+(action==='uninstall'?'uninstall '+esc(p.name):'host '+action)+'</button>'+(pending&&r?api.lifecycleWaits():'')+(r?.id||r?.reason?'<div class="body meta" role="status">'+title+' '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'')+'</details>';
+  return '<details class="host-'+action+'" data-view-key="'+esc(p.root)+':'+action+'"><summary>'+title+' '+(action==='uninstall'?esc(p.name):'host service')+'</summary><div class="body meta">Affects '+scope+'. '+effect+'</div>'+(!review?.instance?'<div class="body alert">'+esc(review?.reason||title+' protocol unavailable')+'</div>':'')+'<button class="project" data-a="'+action+'" data-root="'+esc(p.root)+'"'+(pending||!review?.instance||!targets?' disabled':'')+'>Confirm '+(action==='uninstall'?'uninstall '+esc(p.name):'host '+action)+'</button>'+(pending&&r?api.lifecycleWaits():'')+(r?.id||r?.reason?'<div class="body meta" role="status">'+title+' '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'')+'</details>';
 },
 stopPanel:function(){
   const projects=view.S.projects||[],root=projects[0]?.root,held=view.S.stop_hold;
@@ -128,15 +128,15 @@ focusReadback:function(){
   }
   for(const root of Object.keys(view.pending))if(!view.S.projects.some(p=>p.root===root))delete view.pending[root];
 },
-remember:function(){return {page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard,scroll:(menu.querySelector('.content')||document.scrollingElement).scrollTop,open:[...menu.querySelectorAll('details')].map(d=>d.open)};},
+remember:function(){return {...viewState.capture(),workCard:view.workCard};},
 navigate:function(next,filter=null,work=null){
-  trail.push(remember());view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures=[];
+  trail.push(remember());if(trail.length>32)trail.shift();view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
   menu.querySelector('h1')?.focus();
 },
 back:function(){
-  const prior=trail.pop()||{page:'home',taskFilter:null,working:null,workCard:null,scroll:0,open:[]};
-  ({page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard}=prior);view.noted=null;view.disclosures=prior.open;
+  const prior=trail.pop()||{page:'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
+  ({page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard}=prior);view.noted=null;view.disclosures=prior.open;view.aiRoot=prior.aiRoot;view.restoreScroll=prior.scroll;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=prior.scroll;
   menu.querySelector('h1')?.focus({preventScroll:true});
 },
@@ -175,7 +175,7 @@ answerNotices:function(board){
   const {line}=execution.module("tray.create.answerNotices.helpers",{line:([key,r],role)=>'<div class="body'+(r.state==='accepted'?'':' alert')+'"'+role+'>#'+r.op.task+' · '+esc(r.state)+(r.reason?': '+esc(r.reason):'')+(r.next?' · '+esc(r.next):'')+' <a href="'+esc(r.board+'/'+r.op.task)+'" data-url="'+esc(r.board+'/'+r.op.task)+'">Board ↗</a>'+(r.state==='unknown'?'<button data-a="answer-retry" data-key="'+esc(key)+'">Check delivery</button>':'')+(answerRequests.has(key)?'':'<button data-a="answer-dismiss" data-key="'+esc(key)+'" aria-label="Dismiss #'+r.op.task+' receipt" title="Dismiss">×</button>')+'</div>'});
   const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
-  return shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,' role="status"')).join('')+(answered.length?'<details class="group answered"><summary>Answered'+counter(answered.length,'muted','Answered')+'</summary>'+answered.map(x=>line(x,'')).join('')+'</details>':'');
+  return shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,' role="status"')).join('')+(answered.length?'<details class="group answered" data-view-key="answered"><summary>Answered'+counter(answered.length,'muted','Answered')+'</summary>'+answered.map(x=>line(x,'')).join('')+'</details>':'');
 },
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);
@@ -190,6 +190,7 @@ mountAnswers:function(){
     if(card.el.parentNode!==slot)slot.append(card.el);
     const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);
     card.ui.update([{board:p.issues,row:t}]);
+    for(const d of slot.querySelectorAll('details')){const key='answer:'+t.key+':'+d.className;if(d.dataset.viewKey!==key)d.dataset.viewKey=key;}
   }
   const keys=new Set(view.S.projects.flatMap(tasks).map(t=>t.key));
   for(const key of answerCards.keys())if(!keys.has(key))answerCards.delete(key);
@@ -202,7 +203,7 @@ mode:function(p){return p.focus.length?'run':p.saved?'paused':'watch';},
 counter:function(v,kind,label){return '<span class="counter '+(v>0?kind+' filled':'zero')+'" aria-label="'+esc(label+': '+v)+'" title="'+esc(label)+'">'+v+'</span>';},
 known:function(ps){return ps.every(p=>p.complete!==false);},
 taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return '<div data-card="'+esc(t.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),t,global)+answerSlot(t)+'</div>';},
-globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?'<details class="group"><summary><span class="'+color(st)+'">'+names[st]+'</span>'+counter(ts.length,color(st),names[st])+'</summary>'+ts.map(t=>taskRow(t,true)).join('')+'</details>':'';},
+globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?'<details class="group" data-view-key="state:'+st+'"><summary><span class="'+color(st)+'">'+names[st]+'</span>'+counter(ts.length,color(st),names[st])+'</summary>'+ts.map(t=>taskRow(t,true)).join('')+'</details>':'';},
 age:function(s){return s<120?s+' s':s<7200?Math.round(s/60)+' min':s<172800?Math.round(s/3600)+' h':Math.round(s/86400)+' d';},
 problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+age(p.age)+' old: service not running?'):p.error?'service error: '+p.error:'';return e?'<button class="project alert" data-a="log" data-root="'+esc(p.root)+'" title="'+esc(e)+'"'+(p.log?'':' disabled')+'><span>⚠ '+esc(p.name)+': '+esc(e)+'</span><span class="meta">'+(p.log?'Log':'')+'</span><span></span></button>':'';},
 modeText:function(p){return {run:'Admitting: '+p.focus.join(' '),paused:'Paused: running tasks finish, no new ones',watch:'Observation only: focus off'}[mode(p)];},
@@ -224,8 +225,8 @@ incident:function(p,top=false){
   if(p.alive&&i&&i.state==='sent'&&i.url)h+='<a class="project" href="'+esc(i.url)+'" data-url="'+esc(i.url)+'">Open incident ↗</a>';
   return h;
 },
-incidentNotice:function(p){return p.incident_notice?'<details class="group incident-notice"><summary>Incident reports: notice <span class="meta">'+esc(p.name)+'</span></summary><div class="body">Reports stay local until you choose.</div><div class="body meta">Destination: '+esc(p.incident_repo)+' on GitHub (public). Posting account: unknown here; verify the github.com account used by this project before enabling.</div><div class="body meta">Only sanitized fault codes, fingerprint, report ID, release, revision, contract, board/runtime/OS classes, source site and evidence codes are sent. No project, task, user, session, token or raw error text.</div><div class="body meta">Offline or unsupported login: keep a local JSON report. After confirming the destination and posting account, set incident_reports to true in taskq.json to enable, or false to opt out. TASKQ_INCIDENT_REPORTS=off also disables reporting.</div></details>':'';},
-service:function(p){const s=view.S?.service;return '<details class="group service"><summary>⚙ Service <span class="meta">'+esc(p.name)+'</span></summary><div class="body meta" role="status">Host service: '+esc(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+esc(s.reason):'')+'</div>'+incident(p)+
+incidentNotice:function(p){return p.incident_notice?'<details class="group incident-notice" data-view-key="incident:'+esc(p.root)+'"><summary>Incident reports: notice <span class="meta">'+esc(p.name)+'</span></summary><div class="body">Reports stay local until you choose.</div><div class="body meta">Destination: '+esc(p.incident_repo)+' on GitHub (public). Posting account: unknown here; verify the github.com account used by this project before enabling.</div><div class="body meta">Only sanitized fault codes, fingerprint, report ID, release, revision, contract, board/runtime/OS classes, source site and evidence codes are sent. No project, task, user, session, token or raw error text.</div><div class="body meta">Offline or unsupported login: keep a local JSON report. After confirming the destination and posting account, set incident_reports to true in taskq.json to enable, or false to opt out. TASKQ_INCIDENT_REPORTS=off also disables reporting.</div></details>':'';},
+service:function(p){const s=view.S?.service;return '<details class="group service" data-view-key="service:'+esc(p.root)+'"><summary>⚙ Service <span class="meta">'+esc(p.name)+'</span></summary><div class="body meta" role="status">Host service: '+esc(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+esc(s.reason):'')+'</div>'+incident(p)+
   (p.log?'<button class="project" data-a="log" data-root="'+esc(p.root)+'">Open log</button>':'<div class="body meta">Log path unknown</div>')+
   '<button class="project" data-a="folder" data-root="'+esc(p.root)+'">Open folder</button>'+
   api.lifecycleControl(p)+
@@ -248,7 +249,7 @@ const part=none.length>0||H.since>H.start;
   const note=H.since==null?'No history yet: unknown, not zero.':[H.since>H.start?'Incomplete: history since '+when(H.since,H.tz)+'; earlier is unknown, not zero.':'',none.length?'No history in '+none.join(', ')+'.':''].join(' ').trim();
   // the summary wraps between totals, never inside one, so all four stay readable at every text size (#1083)
   const total=[periods[view.S.period],...(H.since==null?kinds.map(k=>k+' —'):kinds.map((k,i)=>k+' '+tot[i]).concat(part?['incomplete']:[]))].map(t=>t.replace(/ /g,'\u00a0')).join('\u00a0· ');
-  return '<details class="group hist"><summary>▥ History <span class="meta">'+total+'</span></summary><div class="options periods">'+Object.entries(periods).map(([k,l])=>'<button data-set="period" data-v="'+k+'" aria-pressed="'+(view.S.period===k||k==='custom'&&view.draft!=null)+'">'+l+'</button>').join('')+'</div>'+
+  return '<details class="group hist" data-view-key="history"><summary>▥ History <span class="meta">'+total+'</span></summary><div class="options periods">'+Object.entries(periods).map(([k,l])=>'<button data-set="period" data-v="'+k+'" aria-pressed="'+(view.S.period===k||k==='custom'&&view.draft!=null)+'">'+l+'</button>').join('')+'</div>'+
   (view.draft?custom():'')+'<div class="body meta">['+esc(when(H.start,H.tz))+', '+esc(when(H.end,H.tz))+')'+(view.S.now<H.end?' · last bin partial':'')+' · peak '+peak+'</div>'+
   '<div class="bars" role="img" aria-label="'+esc(named(tot,', ')+'; '+n+' equal bins, oldest left'+(note?'; '+note:''))+'">'+H.bins.map((b,i)=>{const t=H.start+i*w,u=H.since==null||t+w<=H.since;
     return '<span'+(u?' class="unknown" title="unknown"':' title="'+esc(when(t,H.tz)+(view.S.now<t+w?' (partial)':'')+': '+named(b,', '))+'"')+'>'+[3,2,1,0].map(k=>'<i class="k'+k+'" style="height:'+b[k]/peak*100+'%"></i>').join('')+'</span>';}).join('')+'</div>'+(note?'<div class="body meta">'+esc(note)+'</div>':'')+'</details>';},
@@ -359,7 +360,7 @@ runningAgents:function(){
     const unknown=partial||host.unknown;
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
     if(!unknown&&runtimes.length){
-      h+='<details><summary><strong>'+esc(host.name)+'</strong> · '+runtimes.map(([rt,c])=>esc(rt)+' '+(c.worker+c.reviewer)).join(' · ')+'</summary><div class="body">';
+      h+='<details data-view-key="host:'+esc(host.name)+'"><summary><strong>'+esc(host.name)+'</strong> · '+runtimes.map(([rt,c])=>esc(rt)+' '+(c.worker+c.reviewer)).join(' · ')+'</summary><div class="body">';
       for(const [rt,c] of runtimes)h+='<div>'+esc(rt)+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')+'</div>';
       h+='</div></details>';
     }else h+='<div class="body"><strong>'+esc(host.name)+'</strong>'+(unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':''):' · idle')+'</div>';
@@ -368,7 +369,7 @@ runningAgents:function(){
   const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
   const cap=latest?.capacity?.host_runtime_used,capFresh=latest&&Number.isFinite(latest.age)&&latest.age>=0&&latest.age<=60;
   const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
-  h+='<details><summary>Reconcile counts</summary><div class="body meta">Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review)+'</div>';
+  h+='<details data-view-key="counts"><summary>Reconcile counts</summary><div class="body meta">Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review)+'</div>';
   if(capFresh&&occupied){
     h+='<div class="body meta">'+esc(view.S.host)+' · Occupied: '+(Object.entries(cap).map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old</div>';
     const reserved=new Map();let known=local.length>0;
@@ -387,7 +388,7 @@ runningAgents:function(){
 },
 home:function(){
   let h='<div class="body meta">'+esc(view.S.host)+'</div>'+views()+controls();
-  h+='<details><summary>↳ Scope <span class="meta">'+view.S.projects.length+' projects</span></summary><div class="body">'+view.S.projects.map(p=>'<div><strong>'+esc(p.name)+'</strong> <span class="meta">'+esc(modeText(p))+'</span></div><div class="meta">You asked: '+esc(p.request||'not recorded')+'</div>').join('')+'</div></details>';
+  h+='<details data-view-key="scope"><summary>↳ Scope <span class="meta">'+view.S.projects.length+' projects</span></summary><div class="body">'+view.S.projects.map(p=>'<div><strong>'+esc(p.name)+'</strong> <span class="meta">'+esc(modeText(p))+'</span></div><div class="meta">You asked: '+esc(p.request||'not recorded')+'</div>').join('')+'</div></details>';
   h+='<div class="row">Attention'+routeButton('attention','All')+'</div>'+attention();
   h+=api.runningAgents();
   h+=ai();
@@ -422,7 +423,7 @@ resourceReceipt:function(m){
   defer(fit,0);},
 capacity:function(p){
   if(!p.resources)return '';
-  return '<details class="group"><summary>▤ Capacity <span class="meta">'+esc((p.cap_host||'this host')+' · '+TaskqResources.headline(resourceGroup(p),view.S.now))+'</span></summary><div data-resources="'+esc(p.root)+'"></div></details>';},
+  return '<details class="group" data-view-key="capacity:'+esc(p.root)+'"><summary>▤ Capacity <span class="meta">'+esc((p.cap_host||'this host')+' · '+TaskqResources.headline(resourceGroup(p),view.S.now))+'</span></summary><div data-resources="'+esc(p.root)+'"></div></details>';},
 workEntry:function(root){return view.S.projects.some(p=>p.resources)?'<button class="project" data-a="work"'+(root?' data-root="'+esc(root)+'"':'')+'>◎ Work mode…</button>':'';},
 workPage:function(){const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0];return p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?'<div data-resources="'+esc(p.root)+'"></div>':'<div data-work></div>';},
 mountResources:function(){
@@ -450,7 +451,7 @@ notifications:function(){
 notifyGroup:function(p){
   const N=view.S.notify.projects[p.root];if(!N)return '';
   const {name}=execution.module("tray.create.notifyGroup",{name:v=>modes.find(m=>m[0]===v)[1]});
-  return '<details class="group"><summary>◉ Notifications <span class="meta">'+kinds.map(([k])=>name(N[k][1])).join(' · ')+'</span></summary>'+kinds.map(([k,l])=>'<div class="body">'+l+' <span class="meta">· '+name(N[k][1])+'</span></div><div class="options">'+[['inherit','Inherit'],...modes].map(([v,m])=>'<button data-a="notify" data-kind="'+k+'" data-root="'+esc(p.root)+'" data-v="'+v+'" aria-pressed="'+((N[k][0]||'inherit')===v)+'">'+m+'</button>').join('')+'</div>').join('')+'</details>';
+  return '<details class="group" data-view-key="notifications:'+esc(p.root)+'"><summary>◉ Notifications <span class="meta">'+kinds.map(([k])=>name(N[k][1])).join(' · ')+'</span></summary>'+kinds.map(([k,l])=>'<div class="body">'+l+' <span class="meta">· '+name(N[k][1])+'</span></div><div class="options">'+[['inherit','Inherit'],...modes].map(([v,m])=>'<button data-a="notify" data-kind="'+k+'" data-root="'+esc(p.root)+'" data-v="'+v+'" aria-pressed="'+((N[k][0]||'inherit')===v)+'">'+m+'</button>').join('')+'</div>').join('')+'</details>';
 },
 openCard:function(o){
   const p=view.S&&view.S.projects.find(p=>p.root===o.root);if(!p)return;
@@ -491,7 +492,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const focusedSummary=!navigating&&active?.tagName==='SUMMARY'?[...menu.querySelectorAll('summary')].indexOf(active):-1;
   const caret=answerFocus&&active.tagName==='TEXTAREA'?[active.selectionStart,active.selectionEnd]:null;
   const answerSelector=answerFocus&&(caret?'textarea':active.dataset.choice?'[data-choice="'+active.dataset.choice+'"]':active.dataset.qac?'[data-qac="'+active.dataset.qac+'"]':'button[type=submit]');
-  const open=navigating?view.disclosures:[...menu.querySelectorAll('details')].map(d=>d.open),p=view.S.projects.find(p=>p.root===view.page);
+  const open=navigating||view.restoreScroll!=null?view.disclosures:viewState.groups(),p=view.S.projects.find(p=>p.root===view.page);
   if(!p&&!routes[view.page])view.page='home';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
@@ -500,21 +501,23 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const html=head()+'<div class="content"><div class="content-body">'+actionNotices()+(view.page!=='home'||view.working||view.taskFilter?'<button data-a="back">‹ Back</button>':'')+'<h1 tabindex="-1">'+esc(title)+'</h1>'+(view.S.settings_error?'<div class="body alert" role="alert">Settings unknown: '+esc(view.S.settings_error)+'; defaults shown</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
   // #1430: an unchanged refresh leaves the menu alone; a rebuild replaced the textarea being typed in and its edits
   // landed on the detached node. Mounted cards still take the new rows and repaint only what changed.
-  if(!navigating&&html===view.html){mountAnswers();mountResources();return;}
+  if(!navigating&&html===view.html){mountAnswers();mountResources();viewState.restore(open);viewState.flush();return;}
   menu.innerHTML=view.html=html;
   mountAnswers();mountResources();
-  menu.querySelectorAll('details').forEach((d,i)=>d.open=open[i]??(!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page)));
+  menu.querySelectorAll('details[data-view-key]').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page));
+  viewState.restore(open);
   if(view.S.page!==undefined)menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
   const restored=answerFocus&&menu.querySelector('[data-answer="'+CSS.escape(answerFocus.dataset.answer)+'"] '+answerSelector);
   if(restored&&!navigating){restored.focus({preventScroll:true});if(caret)restored.setSelectionRange(...caret);}
   else if(!navigating){const target=focusedSummary>=0?menu.querySelectorAll('summary')[focusedSummary]:focusKey&&active.tagName==='H1'?menu.querySelector('h1'):focusKey&&focusKey!=='{}'?[...menu.querySelectorAll(active.tagName)].filter(same)[focusAt]:null;target?.focus({preventScroll:true});}
-  (menu.querySelector('.content')||document.scrollingElement).scrollTop=scroll;
+  (menu.querySelector('.content')||document.scrollingElement).scrollTop=view.restoreScroll??scroll;view.restoreScroll=null;
   fit();
   // after fit() sets the width: a new exchange or text size opens at the newest entry; a tick keeps the reader's place;
   // a block that drops a cut line asks for the smaller height
   const bound=[...menu.querySelectorAll('[data-bound]')];
   bound.forEach(c=>{c.scrollTop=bounds.has(c.dataset.bound)?bounds.get(c.dataset.bound):0;wholeLines(c);});
-  if(bound.some(c=>c.style.maxHeight))fit();},
+  if(bound.some(c=>c.style.maxHeight))fit();
+  viewState.flush();},
 wholeLines:function(c){
   if(c.scrollHeight<=c.clientHeight)return;
   const top=c.getBoundingClientRect().top+c.clientTop;
@@ -530,6 +533,7 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(s.viewStateError!==undefined){view.S.settings_error=s.viewStateError;present();return;}
   if(s.diagnose){const d=s.diagnose,remaining=d.until_ms-Date.now();
     if(d.id!==view.diagnosticId&&remaining>0){execution.diagnose(d.selector,Math.min(60000,remaining),d.limit);view.diagnosticId=d.id;}
     return;
@@ -543,10 +547,10 @@ receive:function(s){
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
-  view.S=s;view.receivedAt=performance.now();focusReadback();answerReadback();api.lifecycleReadback();
+  viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();answerReadback();api.lifecycleReadback();
   if(view.aiText===null)view.aiText=s.ai.draft||'';
   // snapshot mode names the page
-  if(s.page!==undefined&&s.page!==view.page){view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;trail.length=0;view.disclosures=[];present(true);return;}
+  if(s.page!==undefined&&s.page!==view.page){view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;trail.length=0;view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
   if(document.activeElement&&(document.activeElement.dataset.draft||document.activeElement.dataset.rscField||document.activeElement.dataset.recoveryEvidence||document.activeElement.id==='ai'))return;
   refresh(performance.now());
@@ -561,7 +565,8 @@ measure:function(name){
 },
 mount:function(){
 window.taskq={settle,receive,measure,model:{unique,counts,mode}};
-ui.listen(menu,'scroll',e=>{const c=e.target;if(!c.dataset?.bound)return;cancel(c.settling);c.settling=defer(()=>settle(c),150);},true);
+ui.listen(menu,'toggle',()=>viewState.schedule(),true);
+ui.listen(menu,'scroll',e=>{const c=e.target;if(c.classList?.contains('content'))viewState.schedule();if(!c.dataset?.bound)return;cancel(c.settling);c.settling=defer(()=>settle(c),150);},true);
 // a refresh between press and release rebuilds the pressed control and its click is lost (U-A4):
 // the refresh waits for the release, at most 5 s, then runs after the click
 
@@ -579,6 +584,7 @@ ui.listen(menu,'click',e=>{
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
+  if(d.a==='hide')viewState.flush();
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){answerFeedback.delete(d.key);if(view.toast===d.key)view.toast=null;present();return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
@@ -621,7 +627,7 @@ ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))ret
 ui.listen(menu,'pointermove',e=>{if(!view.resizing)return;view.manualSize=[Math.max(240,view.resizing.w+e.screenX-view.resizing.x),Math.max(120,view.resizing.h+e.screenY-view.resizing.y)];menu.style.width='100%';send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])ui.listen(menu,event,()=>{if(view.resizing)send({a:'resize-end'});view.resizing=null;});
 ui.listen(menu,'keydown',e=>{if(!e.target.closest('.grip')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();view.manualSize=[Math.max(240,window.innerWidth+(e.key==='ArrowRight'?10:e.key==='ArrowLeft'?-10:0)),Math.max(120,window.innerHeight+(e.key==='ArrowDown'?10:e.key==='ArrowUp'?-10:0))];send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});send({a:'resize-end'});});
-ui.listen(document,'keydown',e=>{if(e.key==='Escape')send({a:'hide'});});
+ui.listen(document,'keydown',e=>{if(e.key==='Escape'){viewState.flush();send({a:'hide'});}});
 ui.listen(menu,'toggle',()=>fit(),true);
 // § 4 Tray: row ages tick in place while the menu is open; a redraw would move the reading position
 const {ages}=execution.module("tray.create.mount.ages",{ages:()=>{if(view.S){const now=view.S.now+Math.round((performance.now()-view.receivedAt)/1000);for(const e of menu.querySelectorAll('[data-since]'))e.textContent=TaskqProjectBlocks.age(now-Number(e.dataset.since));}defer(ages,30000);}});
@@ -682,6 +688,7 @@ const actionErrors=new Map();
 // Navigation is view state only: every route consumes the same pushed snapshot.
 const routes={recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
 const trail=[];
+const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail,routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:['appearance','cadence','notifications','agents','services','about'].includes(page)?'settings':'home'}]))});
 
 
 

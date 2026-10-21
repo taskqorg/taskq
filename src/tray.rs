@@ -58,6 +58,7 @@ struct Settings {
     pin: Pin,
     /// Notification modes and cursors (`notify.rs`), kept as saved
     notify: Value,
+    navigation: Value,
 }
 
 /// Pinned window (menu.md M13): pinned or not, the last display and the last top-left per display, physical pixels.
@@ -90,7 +91,7 @@ impl Settings {
         let size_anchor = v["size_anchor"].as_str().filter(|v| ["fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"top"}).to_string();
         let pin = Pin { size_anchor, attached_edge: "top".into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
         let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin,
-            notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
+            navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
         // an invalid or corrupt saved icon falls back to Summary (CI4)
         if icon::validate(&v["icon"]).is_empty() {
             s.icon = v["icon"].clone();
@@ -100,6 +101,10 @@ impl Settings {
     }
 
     fn set(&mut self, v: &Value) {
+        // M8: the web module validates route keys against the current registered snapshot.
+        if v["navigation"].is_object() && v["navigation"]["schema"] == 1 && v["navigation"].to_string().len() <= 65536 {
+            self.navigation = v["navigation"].clone();
+        }
         if let Some(x) = v["view"].as_str().filter(|x| ["icon", "full"].contains(x) || (*x == "custom" && !self.icon.is_null())) {
             self.view = x.into();
         }
@@ -128,7 +133,7 @@ impl Settings {
 
     fn save(&self, install: &Path) -> bool {
         let v = json!({"view": self.view, "font": self.font, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz, "icon": self.icon,
-            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify});
+            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation});
         let p = install.join("tray.json");
         if crate::data::json(&p).is_err() && fs::copy(&p, install.join("tray.json.corrupt")).is_err() {
             return false;
@@ -1117,7 +1122,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     "notify-os" => notify::open_settings(),
                     "set" => {
                         settings.set(&m);
-                        settings.save(&install);
+                        let saved = (m.get("navigation").is_none() || settings.navigation == m["navigation"]) && settings.save(&install);
+                        if m.get("navigation").is_some() {
+                            push(&mut web, &ui, &json!({"viewStateError": if saved { Value::Null } else { json!("tray.json: save failed; view state is not persisted") }}));
+                            return;
+                        }
                 let st = state(&install, &settings, dark, None, &adding);
                         refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));
                         push(&mut web,&ui, &st);
@@ -1340,7 +1349,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
-        "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
+        "navigation": s.navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
         "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "ai": {"request": crate::setup::last(install, true), "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
@@ -2501,11 +2510,11 @@ mod tests {
     // Chain: § 4 tray settings input. Risk: webview input stores unknown values.
     #[test]
     fn settings_keep_only_known_values() {
-        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null };
+        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null };
         s.set(&json!({"view": "full", "font": 18, "period": "1w"}));
         s.set(&json!({"view": "x", "font": 15, "period": "2y"}));
         s.set(&json!({"period": "custom", "start": 50, "end": 50, "tz": "UTC"}));
-        assert!(s == Settings { view: "full".into(), font: 18, period: "1w".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null });
+        assert!(s == Settings { view: "full".into(), font: 18, period: "1w".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null });
         assert_eq!(s.range(1000), (50400 - 604800, 50400), "whole 14 h bins, the newest holds now");
         s.set(&json!({"period": "custom", "start": 40, "end": 160, "tz": "UTC"}));
         assert_eq!((s.range(1000), s.tz.as_str()), ((40, 160), "UTC"));
@@ -2533,8 +2542,18 @@ mod tests {
         let invalid = Settings::load(&install);
         assert!(invalid.pin.size.is_none() && !invalid.pin.top, "invalid size cannot hide the header or resize grip");
         s.pin = Pin { size_anchor: "bottom".into(), attached_edge: "top".into(), top: false, size: Some((480.0, 600.0)), pinned: true, display: "B".into(), pos: [("A".into(), (10, 20)), ("B".into(), (-1500, 300))].into() };
+        // M8/UI02: navigation shares the existing settings save, independent of release version.
+        s.set(&json!({"view":"full","period":"custom","start":40,"end":160,"tz":"UTC",
+            "navigation":{"schema":1,"current":{"page":"projects","taskFilter":["doing"],"scroll":120,"open":{"scope":true}},"trail":[]}}));
         assert!(s.save(&install));
         let r = Settings::load(&install);
+        assert!(r == s, "restart must retain navigation and every existing appearance/window setting");
+        assert_eq!(r.navigation["current"]["scroll"], 120);
+        let mut invalid_navigation = r.clone();
+        invalid_navigation.set(&json!({"navigation":{"schema":2}}));
+        assert!(invalid_navigation == r, "unsupported navigation cannot overwrite known settings");
+        invalid_navigation.set(&json!({"navigation":{"schema":1,"current":{"page":"x".repeat(65536)}}}));
+        assert!(invalid_navigation == r, "oversized IPC data cannot replace saved settings");
         assert!(r.pin == s.pin && r.font == 18);
         // M14: modes and cursors survive a restart as saved, unknown values included
         let mut s = r;
