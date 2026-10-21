@@ -13,10 +13,25 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       const board='https://github.com/o/r/issues',root='project',rows=fx.cases.find(c=>c.name.startsWith('stale')).rows;
       const state={page:root,font,theme,projects:[{root,name:'project',issues:board,alive:true,complete:true,focus:[],labels:[],tasks:[rows[0]],cap_saved:{error:'not configured'}}],ai:{draft:''},notify:{projects:{}}};
       await page.evaluate(s=>taskq.receive(s),state);
-      await page.locator('.qac-other summary').click();const text=page.locator('.qac textarea');await text.fill('keep draft');await text.focus();
+      // #1430: every poll rebuilt the menu and the card, so the textarea being typed in was replaced and native edits
+      // landed on the detached node; Send stayed disabled. Risk kept: a refresh that touches DOM it did not change.
+      await page.evaluate(()=>{window.mutations=0;new MutationObserver(l=>mutations+=l.length).observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});});
+      await page.evaluate(s=>taskq.receive(s),state);
+      assert.equal(await page.evaluate(()=>mutations),0,'an unchanged refresh changes no DOM');
+      await page.locator('.qac-other summary').click();const text=page.locator('.qac textarea'),typed=await text.elementHandle();await typed.focus();
+      for(const ch of 'yes'){await page.keyboard.type(ch);await page.evaluate(s=>taskq.receive(s),state);}
+      assert(await typed.evaluate(t=>t.isConnected&&document.activeElement===t&&t.value==='yes'),'refreshes keep the node being typed in');
+      assert.equal(await page.locator('.qac button[type=submit]').isDisabled(),false,'Send enables for a valid answer');
+      await text.fill('keep draft');await text.focus();
       await text.evaluate(t=>t.setSelectionRange(2,4));
+      const scroll=()=>page.locator('.content').evaluate(c=>c.scrollTop),top=await scroll();
       await page.evaluate(s=>taskq.receive(s),state);
       assert.deepEqual(await text.evaluate(t=>({draft:t.value,focused:document.activeElement===t,caret:[t.selectionStart,t.selectionEnd]})),{draft:'keep draft',focused:true,caret:[2,4]});
+      // a changed refresh repaints and keeps draft, caret, focus and scroll
+      state.projects[0].tasks=[{...rows[0],title:rows[0].title+' (edited)'}];await page.evaluate(s=>taskq.receive(s),state);
+      assert((await page.locator('.qac-head').textContent()).includes('(edited)'));
+      assert.deepEqual(await text.evaluate(t=>({draft:t.value,focused:document.activeElement===t,caret:[t.selectionStart,t.selectionEnd]})),{draft:'keep draft',focused:true,caret:[2,4]});
+      assert.equal(await scroll(),top);
       state.projects[0].tasks=[rows[1]];await page.evaluate(s=>taskq.receive(s),state);
       assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'stale');
       assert.equal(await text.inputValue(),'keep draft');

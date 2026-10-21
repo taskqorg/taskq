@@ -1,7 +1,7 @@
 {
   "version": "4.6.27",
-  "sourceCommit": "ef4517bc3d73fba3973dcbf9cfbfaac1f89a03b6",
-  "binarySha256": "3a79472ff23f771a848a62966a3e1a90b7f3f806a19028c9cfc5d30c963196c2",
+  "sourceCommit": "f11e763802d885ace6f7f7927ffc17ff8563ce39",
+  "binarySha256": "b45a63a8f84c2d8f7ab14527cab4564c805acbeb8fb984730e797e366cf1bf42",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -10,7 +10,7 @@
   "uiSources": {
     "src/tray.rs": "062380f3b3098ef388c3b7d6c6cff25b4ae19c53",
     "src/tray.html": "b66b981c08bc62962c3a334c26011179249449b2",
-    "src/tray-app.js": "087b11e34403d6244ebab6796f00b93c6d87293c",
+    "src/tray-app.js": "7b2684abe8498f4a39663a1cdcce93b28af67902",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
     "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
@@ -19,7 +19,7 @@
     "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
     "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
   },
-  "capture": "Historical screenshots retained. Owner waived further capture and checks for #1347; uiSources identifies the delivered candidate, not a new capture. capturedUiSources records the original capture sources.",
+  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
     {
       "file": "../header.webp",
@@ -27,7 +27,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "410f388d895bd0b834b58e9e0bb3860c29901b38a5561e5000becddd4f98545d"
+      "sha256": "7fe18227cb3dc3bae0a0030ef4db85459f999fc1e64567015903da48eddf6ef9"
     },
     {
       "file": "popover-dark-project-16.png",
@@ -37,17 +37,5 @@
       "file": "popover-dark-workspace-16.png",
       "sha256": "6a226cf921da6448069d8d0630bb024de1ebe650ae737e4e3cb6ab5e3c4b9aa3"
     }
-  ],
-  "capturedUiSources": {
-    "src/tray.rs": "701b02811e064fc958ab76707909ddd88408b95c",
-    "src/tray.html": "b66b981c08bc62962c3a334c26011179249449b2",
-    "src/tray-app.js": "087b11e34403d6244ebab6796f00b93c6d87293c",
-    "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
-    "src/workspace.html": "ecdf1f0321608d32abba10991f04c495be058649",
-    "src/workspace.js": "f57a772c89ba379868e7a92519f107de7bf458e2",
-    "src/workspace-entry.js": "4a0dc64f9d25fb8d9c4e945c1d74c2563a3a9e67",
-    "scripts/build-web.cjs": "1cdc726f88e8ed3ddaa50efb3550a5f48a0f0318",
-    "src/icon.rs": "1d5823aa09be26a4ae62950b10b0ce6025482073",
-    "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
-  }
+  ]
 }

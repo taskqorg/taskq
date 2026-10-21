@@ -118,7 +118,10 @@ receipt:function(st, reason, url, id, next, action) {
       (next ? '. ' + esc(next) : '') + (st === 'read-only' || st === 'unknown' ? ' <a href="' + href(url) + '" target="_blank" rel="noopener">Open on board ↗</a>' : '') + '</p>';
   },
 mount:function(el, adapter) {
-const {apply,paint}=execution.module("answer-card.mount",{
+const {apply,paint,markup}=execution.module("answer-card.mount",{
+markup:function() {
+      return [...cards].map(([k, c]) => '<div data-qac-key="' + esc(k) + '">' + render(c.board, c.row, locals.get(k), adapter.capability(c.board, c.row)) + '</div>').join('');
+    },
 apply:function(k, ev) {
       const {board, row} = cards.get(k), cap = adapter.capability(board, row), r = step(row, locals.get(k), cap, ev, newId);
       locals.set(k, r.local);
@@ -127,12 +130,17 @@ apply:function(k, ev) {
       else if (ev.type === 'input') {
         const s = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] button[type=submit]'), cap2 = adapter.capability(board, row);
         if (s) s.disabled = !!textProblem(draftQuestion(row, cap2), r.local.draft) || !['actionable', 'rejected'].includes(status(row, r.local, cap2));
+        // the live textarea already shows this draft: a refresh with the same rows must not rebuild it
+        painted = markup();
       }
     },
 paint:function() {
       const a = document.activeElement, focus = a && el.contains(a) ? {k: a.closest('[data-qac-key]')?.dataset.qacKey, sel: a.dataset.qac === 'input' ? 'textarea' : a.dataset.choice ? '[data-choice="' + a.dataset.choice + '"]' : '[data-qac="' + a.dataset.qac + '"]', s: a.selectionStart, e: a.selectionEnd} : null;
       const scroll = el.scrollTop, open = new Set([...el.querySelectorAll('details[open]')].map(d => d.closest('[data-qac-key]')?.dataset.qacKey + ' ' + d.className));
-      el.innerHTML = [...cards].map(([k, c]) => '<div data-qac-key="' + esc(k) + '">' + render(c.board, c.row, locals.get(k), adapter.capability(c.board, c.row)) + '</div>').join('');
+      const html = markup();
+      // an unchanged card keeps its nodes: focus, caret, open details and an in-progress edit stay untouched
+      if (html === painted) return;
+      el.innerHTML = painted = html;
       for (const d of el.querySelectorAll('details')) if (open.has(d.closest('[data-qac-key]').dataset.qacKey + ' ' + d.className)) d.open = true;
       el.scrollTop = scroll;
       const t = focus && focus.k && el.querySelector('[data-qac-key="' + CSS.escape(focus.k) + '"] ' + focus.sel);
@@ -141,6 +149,7 @@ paint:function() {
 });
 
     const locals = new Map(), cards = new Map();
+    let painted = null;
     const newId = adapter.newId || (() => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : 'qac-' + Date.now().toString(36) + Math.random().toString(36).slice(2)));
 
 
