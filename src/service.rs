@@ -25,6 +25,8 @@ pub struct Config {
     pub limits: BTreeMap<String, u32>,
     /// What this host offers for `needs-<x>` labels.
     pub has: Vec<String>,
+    /// host.json `claim` `labelled` (§ 9): new claims need this host's `host-<me>` label.
+    pub labelled: bool,
     pub permission_mode: String,
     pub codex: Vec<String>,
     pub ttl: i64,
@@ -50,6 +52,11 @@ fn stable(body: &str) -> Vec<String> {
         }
         _ => l.to_string(),
     }).collect()
+}
+
+/// § 4 Filter: a `host-*` label names the only host; an unlabelled task goes to any host whose `claim` is `any`.
+fn claims(i: &Issue, me: &str, labelled: bool) -> bool {
+    label(i, "host-").map_or(!labelled, |h| h == me)
 }
 
 pub fn is_task(i: &Issue) -> bool {
@@ -1551,7 +1558,7 @@ impl<'a> Service<'a> {
                 if let Err(e) = crate::labels::validate(&v.issue.labels) { log!("#{}: {e}; not admitted", v.issue.number); return false; }
                 true
             })
-            .filter(|v| label(&v.issue, "host-").is_none_or(|h| h == me))
+            .filter(|v| claims(&v.issue, &me, self.cfg.labelled))
             // `needs-gate`: every host of this version has gates; N-1 lacks them and leaves the task alone (§ 8)
             .filter(|v| v.issue.labels.iter().filter_map(|l| l.strip_prefix("needs-")).all(|x| x == "gate" || if x == "gui" { self.gui().is_ok() } else { self.cfg.has.iter().any(|h| h == x) }))
             .filter(|v| priority(&v.issue) == 0 || self.focus.iter().any(|f| f == "all" || crate::labels::matches(&v.issue.labels, f)))
@@ -2331,6 +2338,7 @@ mod tests {
             me: me.into(),
             limits: BTreeMap::from([("claude".to_string(), 1)]),
             has: vec![],
+            labelled: false,
             permission_mode: "dontAsk".into(),
             codex: vec![],
             ttl: 300,
@@ -4452,6 +4460,20 @@ mod tests {
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Doing);
         std::fs::remove_dir_all(&c.root).ok();
+    }
+
+    // Chain: § 4 Filter, host.json `claim` (#1493). Risk: a labelled host claims unrouted work, or an any host stops
+    // taking it.
+    #[test]
+    fn labelled_host_claims_only_its_own_host_label() {
+        let b = Fake::default();
+        let open = b.create("U", "", &["taskq".into()]).unwrap();
+        let own = b.create("F", "", &["taskq".into(), "host-fra".into()]).unwrap();
+        let fra = Config { labelled: true, ..cfg("fra") };
+        service(&b, &fra, Default::default()).pass().unwrap();
+        assert_eq!((task(&b, open).state, task(&b, own).state), (State::Ready, State::Doing), "labelled host skips the unlabelled task");
+        service(&b, &cfg("mac"), Default::default()).pass().unwrap();
+        assert_eq!(task(&b, open).state, State::Doing, "an any host still takes unlabelled work");
     }
 
     // Chain: § 1 `Depends on <repo>#N` (#1126). Risk: a task blocked by another repository never starts, starts on a

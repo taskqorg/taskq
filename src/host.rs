@@ -19,6 +19,8 @@ pub struct Policy {
     pub cap: Capacity,
     pub me: String,
     pub has: Vec<String>,
+    /// `claim` `labelled`: this host claims only tasks labelled `host-<me>` (§ 9).
+    pub labelled: bool,
     pub codex: Vec<String>,
     pub permission_mode: String,
     pub update_every: u64,
@@ -27,7 +29,7 @@ pub struct Policy {
 
 impl Policy {
     pub fn apply(&self, cfg: &mut service::Config) {
-        cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.codex = self.codex.clone();
+        cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.labelled = self.labelled; cfg.codex = self.codex.clone();
         cfg.permission_mode = self.permission_mode.clone(); cfg.update_every = self.update_every; cfg.rollback_after = self.rollback_after;
     }
     pub fn parse(v: Value, hostname: &str) -> Res<Self> {
@@ -54,6 +56,11 @@ impl Policy {
             Value::Null => "dontAsk".into(), Value::String(s) if !s.is_empty() => s.clone(),
             _ => return Err("host.json: permission_mode must be a nonempty string".into()),
         };
+        let labelled = match v["claim"].as_str() {
+            _ if v["claim"].is_null() => false,
+            Some("any") => false, Some("labelled") => true,
+            _ => return Err("host.json: claim must be any or labelled".into()),
+        };
         let timer = |k: &str, d| if v[k].is_null() { Ok(d) } else { v[k].as_u64().filter(|n| *n > 0).ok_or(format!("host.json: {k} must be positive seconds")) };
         let (update_every, rollback_after) = (timer("update_every", 60)?, timer("rollback_after", 600)?);
         crate::platform::channel_of(&v)?;
@@ -76,7 +83,7 @@ impl Policy {
                 if cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("host.json: projects.{root}.limits.{rt} raises host ceiling")); }
             }
         }
-        let policy=Self { raw: v, cap, me, has, codex, permission_mode, update_every, rollback_after };
+        let policy=Self { raw: v, cap, me, has, labelled, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
     }
@@ -213,6 +220,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
             if let Some(value)=edit.cpu_max {next["load_gate"]["cpu_max"]=json!(value);}
             if let Some(value)=edit.memory_min {next["load_gate"]["memory_min"]=json!(value);}
         }
+        if let Some(labelled)=edit.claim {next["claim"]=json!(if labelled {"labelled"} else {"any"});}
         let candidate=Policy::parse(next,&hostname)?;
         let command=CommandReceipt::current()?;
         crate::telemetry::receipt(&command,"received")?;
@@ -1739,6 +1747,14 @@ mod tests {
     fn temp(name: &str) -> PathBuf {
         let p = std::env::temp_dir().join(format!("taskq-host-{name}-{}", std::process::id()));
         fs::create_dir_all(&p).unwrap(); p
+    }
+    // Chain: § 9 `claim` (#1493). Risk: a typo silently makes a labelled host claim everything.
+    #[test]
+    fn claim_parses_any_or_labelled_only() {
+        assert!(!policy().labelled, "missing claim: any");
+        assert!(Policy::parse(json!({"claim": "labelled"}), "invented").unwrap().labelled);
+        assert!(!Policy::parse(json!({"claim": "any"}), "invented").unwrap().labelled);
+        assert!(Policy::parse(json!({"claim": "label"}), "invented").is_err());
     }
     fn policy() -> Policy {
         Policy::parse(json!({"limits": {"codex": 2}, "admission": {"max": 2}, "load_gate": {"enabled": false}}), "invented").unwrap()

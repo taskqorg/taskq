@@ -77,7 +77,7 @@ const USAGE: &str = "taskq agents
  taskq service setup [--runtime claude] [--client C] [--target PATH..] [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
- taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P]
+ taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq tray [--snapshot DIR [--route R,..]] [--icon FILE] | taskq selftest
@@ -213,6 +213,7 @@ fn project_config(root:&Path)->Res<(Config,Value)> {
         me,
         limits,
         has,
+        labelled: false,
         permission_mode: str_or("permission_mode", "dontAsk"),
         codex,
         ttl: secs("ttl", 300) as i64,
@@ -1338,6 +1339,8 @@ struct CapEdit {
     gate: Option<bool>,
     cpu_max: Option<u32>,
     memory_min: Option<u32>,
+    /// host.json `claim`: `labelled` (true) or `any` (false), § 9
+    claim: Option<bool>,
 }
 
 impl CapEdit {
@@ -1361,11 +1364,17 @@ impl CapEdit {
             Some("off") => Some(false),
             Some(x) => return Err(format!("--load-gate: on or off, not {x}")),
         };
+        e.claim = match a.one("claim") {
+            None => None,
+            Some("any") => Some(false),
+            Some("labelled") => Some(true),
+            Some(x) => return Err(format!("--claim: any or labelled, not {x}")),
+        };
         Ok(e)
     }
 
     fn is_empty(&self) -> bool {
-        self.mode.is_none() && self.max.is_none() && self.limits.is_empty() && self.unset.is_empty() && self.gate.is_none() && self.cpu_max.is_none() && self.memory_min.is_none()
+        self.mode.is_none() && self.max.is_none() && self.limits.is_empty() && self.unset.is_empty() && self.gate.is_none() && self.cpu_max.is_none() && self.memory_min.is_none() && self.claim.is_none()
     }
 }
 
@@ -1444,6 +1453,14 @@ fn cap_changes(old: &service::Capacity, new: &service::Capacity) -> String {
     }
     if out.is_empty() { "no change".into() } else { out.join(", ") }
 }
+
+/// § 9: a follow-up added inside an attempt on a `claim` `labelled` host keeps that host unless `--host` names one.
+fn add_host(given: Option<&str>, cfg: &Config, attempt: bool) -> Option<String> {
+    given.map(String::from).or_else(|| (attempt && cfg.labelled).then(|| cfg.me.clone()))
+}
+
+/// host.json `claim` value (§ 9).
+fn claim_name(labelled: bool) -> &'static str { if labelled { "labelled" } else { "any" } }
 
 fn runtime_name(rt: &str) -> String {
     let mut c = rt.chars();
@@ -1555,12 +1572,14 @@ fn capacity_cmd(a: &Args) -> Res<()> {
     };
     let e = CapEdit::from_args(a)?;
     if e.is_empty() {
+        let claim=policy.as_ref().ok().filter(|p|p.me==host).map(|p|p.labelled);
         let saved = policy.and_then(|policy| {
             if policy.me!=host {return Err("no local policy for remote host".into());}
             Ok(policy.cap)
         });
         if let Err(reason)=&saved {println!("Saved host policy: unknown ({reason})");}
         println!("Capacity on {host}");
+        if let Some(l)=claim {println!("Claim: {}",claim_name(l));}
         let c = status().and_then(|st|service::host_capacity(&st["capacity"])).filter(|_|host==me);
         let limits = c.as_ref().map(|c| c["limits"].clone()).or_else(|| saved.as_ref().ok().map(|s| s.json()["limits"].clone())).unwrap_or_default();
         let mut rts: std::collections::BTreeSet<String> = RUNTIMES.iter().map(|rt|rt.to_string()).collect();
@@ -1593,7 +1612,8 @@ fn capacity_cmd(a: &Args) -> Res<()> {
     let host = a.need("host")?.to_string();
     let (old,saved,command)=host::write_capacity(&install,&host,&e,None)?;
     println!("Receipt: {}",command.event_id("observed")?);
-    let changes=cap_changes(&old,&saved);
+    let mut changes=cap_changes(&old,&saved);
+    if let Some(l)=e.claim {changes=if changes=="no change" {format!("Claim {}",claim_name(l))} else {format!("{changes}, Claim {}",claim_name(l))};}
     let mut unknown=None;
     for _ in 0..20 {
         match host::capacity_observed(&install,&command) {
@@ -1862,6 +1882,10 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
         Ok(f) if f.is_empty() => out.push("Focus: off".into()),
         Ok(f) => out.extend(f.iter().map(|l| format!("Focus: {l}"))),
         Err(e) => out.push(format!("Focus: unknown ({e})")),
+    }
+    match host::Policy::read(&platform::default_install()) {
+        Ok(p) => out.push(format!("Claim: {} (host {})", claim_name(p.labelled), p.me)),
+        Err(e) => out.push(format!("Claim: unknown ({e})")),
     }
     if let Err(e) = &status {
         out.push(format!("Status: unknown ({e})"));
@@ -2614,7 +2638,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 kind: a.one("type").map(String::from),
                 runtime: a.one("runtime").map(String::from),
                 priority: a.one("priority").map(String::from),
-                host: a.one("host").map(String::from),
+                host: add_host(a.one("host"), cfg, std::env::var_os("TASKQ_ATTEMPT").is_some()),
                 labels: vec![],
             };
             if finding {
@@ -3070,6 +3094,7 @@ mod tests {
             me: "mac".into(),
             limits: BTreeMap::new(),
             has: vec![],
+            labelled: false,
             permission_mode: "dontAsk".into(),
             codex: vec![],
             ttl: 300,
@@ -3077,6 +3102,23 @@ mod tests {
             update_every: 900,
             rollback_after: 600,
         }
+    }
+
+    // Chain: § 9 `claim` (#1493). Risk: a follow-up filed on a labelled host leaves it, or an explicit --host is lost.
+    #[test]
+    fn follow_up_add_inherits_the_labelled_host() {
+        let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let mut c = cfg();
+        c.labelled = true;
+        assert_eq!(add_host(None, &c, true).as_deref(), Some("mac"));
+        assert_eq!(add_host(Some("win"), &c, true).as_deref(), Some("win"));
+        assert_eq!(add_host(None, &c, false), None, "an owner add outside an attempt stays unrouted");
+        c.labelled = false;
+        assert_eq!(add_host(None, &c, true), None);
+        let a = parse(&["service", "capacity", "--host", "mac", "--claim", "labelled"]).unwrap();
+        assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(true));
+        let bad = parse(&["service", "capacity", "--claim", "some"]).unwrap();
+        assert!(CapEdit::from_args(&bad).is_err());
     }
 
     // Chain: § 5 CLI arguments. Risk: stray words or a consumed scope/JSON flag change the requested command.
@@ -4440,7 +4482,7 @@ mod tests {
         run(&["close".into(), "12".into(), "--help".into()]).unwrap();
         assert!(USAGE.contains("--recommend K"));
         assert!(USAGE.contains("--snapshot DIR"));
-        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P]"));
+        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
         let e = platform::error_text("#7 is ready", None);
         assert!(e.starts_with("Error: #7 is ready\nNext: "));
