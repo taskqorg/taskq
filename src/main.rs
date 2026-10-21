@@ -1760,7 +1760,7 @@ fn other_service(root: &Path) -> Option<u32> {
 #[cfg(unix)]
 fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     use std::os::unix::process::CommandExt;
-    // App turns have no adoptable child; keep their lease until completion.
+    // App turns and Claude turns without a native identity have no adoptable handle; keep their lease until completion.
     if !lifecycle_waits(s, &cfg.root, false).is_empty() {
         return fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string());
     }
@@ -1784,9 +1784,10 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string())
 }
 
-/// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children pass over.
+/// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
+/// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
 fn lifecycle_waits(s: &Service, root: &Path, stopping:bool) -> Vec<String> {
-    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || matches!(k.rt.as_str(), "codex-app" | "claude")).map(|k| format!("#{}", k.task)).collect();
+    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || k.rt=="codex-app" || k.rt=="claude"&&k.proc.native_identity().is_err()).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     w.extend(s.handoff_waits());
     if let Some(reason)=operator::wait(root) {w.push(reason);}
@@ -3851,7 +3852,7 @@ mod tests {
         while !root.join("exit").exists() { assert!(Instant::now()<until); std::thread::sleep(Duration::from_millis(10)); }
     }
 
-    // § 8 re-exec preserves native CLI identity and defers for app/operator ownership; no unit reload path remains.
+    // § 8 re-exec preserves native CLI and Claude identity and defers for app/operator ownership; no unit reload path remains.
     #[cfg(unix)]
     #[test]
     fn live_child_survives_reexec_preparation_and_native_adoption() {

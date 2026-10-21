@@ -2812,7 +2812,7 @@ mod tests {
         drop(h); std::fs::remove_dir_all(root).unwrap();
     }
 
-    // #1402 A1: restart pending, a live claude kid with unknown completion defers the handover; once it exits and
+    // #1402 A1: restart pending, a live claude kid without a native identity defers the handover; once it exits and
     // is released, the next pass reports prepared. Risk: a released worker keeps the host on the old image.
     #[test]
     fn released_kid_lets_the_next_pass_prepare_the_restart() {
