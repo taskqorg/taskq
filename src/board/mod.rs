@@ -1105,6 +1105,9 @@ exit 0
                 let value = if url.contains("/pulls?") { json!([{"head": {"sha": "a".repeat(40)}, "node_id": "PR_7"}]) }
                     else if url.ends_with("/graphql") {
                         if body.as_ref().unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest") {
+                            // #1472: GitHub's DequeuePullRequestInput names the PR `id`; `pullRequestId` fails missingRequiredInputObjectAttribute.
+                            assert!(body.as_ref().unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest(input: {id: $id})"), "{body:?}");
+                            assert_eq!(body.as_ref().unwrap()["variables"]["id"], "PR_7");
                             *done.borrow_mut() = true;
                             json!({"data": {"dequeuePullRequest": {"clientMutationId": null}}})
                         } else if scenario == "unknown" { json!({"data": {"node": null}}) }
