@@ -50,7 +50,7 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
     await shot(theme+'-'+font+'-'+width+'-toggles');
     await strip.getByRole('button',{name:'All tasks: 6 open',exact:true}).click();
     assert.equal(await rows(),6,'All tasks removes project/state restrictions');
-    assert.deepEqual(await page.locator('.all-tasks-project > .tqp-project').evaluateAll(es=>es.map(e=>e.getAttribute('aria-label'))),['Alpha','Beta'],'nonzero projects keep their own counters and tasks');
+    assert.deepEqual(await page.locator('.all-tasks-project .tqp-project').evaluateAll(es=>es.map(e=>e.getAttribute('aria-label'))),['Alpha','Beta'],'nonzero projects keep their own counters and tasks');
     assert.equal(await page.locator('.all-tasks-project [data-state="failed"]').count(),0,'project summaries still hide zero');
     assert.equal(await strip.locator('[data-state][aria-pressed="true"]').count(),0);
     assert.equal(await strip.locator('[data-a="all-tasks"]').getAttribute('aria-pressed'),'true','TW8/#1455: unrestricted All tasks is selected');
