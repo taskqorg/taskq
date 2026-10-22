@@ -1,14 +1,14 @@
 {
   "version": "4.6.30",
-  "sourceCommit": "178711113827866ac8123f0eddba80a41b9ad6b9",
-  "binarySha256": "d3d99a9012b708f28c2a743210478229ea4f43c49b24fdfc47771708caeb6296",
+  "sourceCommit": "66237b3f2f404a6804e97030384f9b376a760b35",
+  "binarySha256": "05474c7f3d872772bf96ac899a58872cb05d63ce361ee9750953fe67899c9f18",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "c047fd4c6d187b5b0c5620179a4474e780a073f4",
+    "src/tray.rs": "ba75923dae192e8a1a7c63ee6d0e19d8f96d1b00",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
     "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
@@ -29,7 +29,7 @@
     "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
     "scripts/build-web.cjs": "4cda0aabf65ac6ed4263e9a3b9f35555183c705e",
-    "src/icon.rs": "e646baf12222e57b333fdb423ab7300246e8bd9c"
+    "src/icon.rs": "46395f38dcca4c8e46a35f6677ed4b70d4af732b"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
@@ -39,7 +39,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "37ea07e2f14f63252dda3db1da9ce027feb39f14ea9596a59fba5e31263acd5b"
+      "sha256": "723b8ecfdcf7019750b506455c819d6cf1384cb5bf78fe4a72458e0ae1ad8026"
     },
     {
       "file": "popover-dark-project-16.png",

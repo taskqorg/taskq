@@ -10,8 +10,8 @@
     "reference_font_pt": 9
   },
   "sourceBlobs": {
-    "src/icon.rs": "e646baf12222e57b333fdb423ab7300246e8bd9c",
-    "src/tray.rs": "c047fd4c6d187b5b0c5620179a4474e780a073f4",
+    "src/icon.rs": "46395f38dcca4c8e46a35f6677ed4b70d4af732b",
+    "src/tray.rs": "ba75923dae192e8a1a7c63ee6d0e19d8f96d1b00",
     "src/main.rs": "89f578ac6cf3bc50ce859ee7a3edb86ae94ee03d",
     "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
