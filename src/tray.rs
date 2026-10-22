@@ -1351,7 +1351,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);reply!(&state(&install,&settings,dark,None,&adding));}
                     }
                     "add-setup" if m["generation"].is_u64() && m["generation"]==adding["generation"] && matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
-                        if let Err(reason) = crate::setup::submit(&install, "claude", None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {reply!(&json!({"aiError":reason}));}
+                        if let Err(reason) = crate::setup::submit(&install, crate::runtime::OWNER, None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {reply!(&json!({"aiError":reason}));}
                         adding = Value::Null;
                         reply!(&state(&install, &settings, dark, None, &adding));
                     }
@@ -1997,7 +1997,7 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
 /// Web links and Codex app threads (setup sessions, #1522); the id reaches a shell on Windows, so only a plain id.
 fn openable(u: &str) -> bool {
     u.starts_with("https://") || u.starts_with("http://")
-        || u.strip_prefix("codex://threads/").is_some_and(crate::runtime::plain_thread)
+        || crate::runtime::thread_of(u).is_some_and(crate::runtime::plain_thread)
 }
 
 fn open(arg: &str) {

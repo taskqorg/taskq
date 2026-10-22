@@ -160,7 +160,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
-            .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| s.starts_with("claude:")))
+            .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
         stuck: stuck(v.issue.number, &v.projection.task, &v.blockers,
             v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),

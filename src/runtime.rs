@@ -1702,7 +1702,18 @@ impl ClaudeTurn {
 /// Windows, a shell: only a plain id.
 pub fn plain_thread(id: &str) -> bool { !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') }
 
-pub fn thread_url(id: &str) -> String { format!("codex://threads/{id}") }
+const THREADS: &str = "codex://threads/";
+
+pub fn thread_url(id: &str) -> String { format!("{THREADS}{id}") }
+
+/// The thread id of a Codex app link.
+pub fn thread_of(url: &str) -> Option<&str> { url.strip_prefix(THREADS) }
+
+/// The native id of a board session `<rt>:<id>[ <host>]` whose runtime has Remote Control links.
+pub fn remote_session(session: &str) -> Option<&str> {
+    let (rt, id) = session.split(' ').next()?.split_once(':')?;
+    of(rt).remote.then_some(id)
+}
 
 /// A canonical Claude Remote Control URL.
 pub fn remote_url(u: &str) -> bool {
@@ -2253,6 +2264,14 @@ mod tests {
         let name = session_name(&l("worker", cyr));
         assert_eq!(name.strip_prefix("work #1561 ").unwrap().chars().count(), 40);
         assert!(cyr.starts_with(name.strip_prefix("work #1561 ").unwrap()));
+    }
+
+    // Chain: board session -> Remote Control lookup and Codex app link. Risk: a Codex session is probed as Claude.
+    #[test]
+    fn session_links_follow_the_adapter() {
+        assert_eq!(remote_session("claude:abc mac"), Some("abc"));
+        assert_eq!((remote_session("codex:abc mac"), remote_session("codex-app:abc"), remote_session("claude")), (None, None, None));
+        assert_eq!(thread_of(&thread_url("019a-b2")), Some("019a-b2"));
     }
 
     // Chain: systemd unit PATH frozen without ~/.local/bin -> codex resolves (#1393). Risk: the service spawns a bare

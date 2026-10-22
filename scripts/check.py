@@ -25,15 +25,21 @@ def selection(paths):
 
 # docs/runtime-qualification.md#runtime-adapters: only these files may name a runtime
 ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/main.rs', 'src/labels.rs', 'src/host.rs'}
-RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)"')
+RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)(:[^"]*)?"')
+TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
 
 
 def runtime_names(path, text):
-    """Runtime name literals in non-test Rust outside the runtime adapter and the named exceptions."""
+    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions."""
     if path in ADAPTER_EXCEPTIONS or path.startswith('src/runtime/') or path.endswith('_tests.rs'):
         return []
-    code = text.split('#[cfg(test)]', 1)[0]
-    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(code.splitlines(), 1) if RUNTIME_NAME.search(line)]
+    # Blank only `#[cfg(test)] mod x { .. }` bodies, keeping line numbers; other code stays scanned.
+    # ponytail: a module ends at its first column-0 `}`; an early end only adds hits, never hides one
+    for m in reversed(list(TEST_MOD.finditer(text))):
+        close = text.find('\n}', m.end())
+        end = len(text) if close < 0 else close + 2
+        text = text[:m.start()] + re.sub(r'[^\n]', ' ', text[m.start():end]) + text[end:]
+    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if RUNTIME_NAME.search(line)]
 
 
 def changes(base):

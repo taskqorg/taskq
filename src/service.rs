@@ -1364,7 +1364,7 @@ impl<'a> Service<'a> {
         // shortcut: bounded transcript scans restart until a URL appears; retain a cursor if costly.
         for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).remote && k.session_url.is_none()) {
             k.session_url = by_n.get(&k.task).filter(|v| v.projection.task.attempt == Some(k.attempt))
-                .and_then(|v| v.projection.task.session.as_deref()?.split(' ').next()?.strip_prefix("claude:"))
+                .and_then(|v| crate::runtime::remote_session(v.projection.task.session.as_deref()?))
                 .and_then(|id| crate::runtime::observe_until(native_until,||crate::runtime::claude_remote(id)));
         }
         if let Some(first)=deferred.and_then(|id|self.kids.iter().position(|k|k.execution==id)) {self.kids.rotate_left(first);}
