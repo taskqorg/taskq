@@ -406,9 +406,9 @@ impl Snapshot {
             out.extend(qs);
         }
         let mut parked = vec![];
-        for (name, state) in [("Held", State::Held), ("Later", State::Later)] {
+        for state in [State::Held, State::Later] {
             let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(link).collect();
-            if !rows.is_empty() { parked.push(format!("{name}: {}", rows.join(", "))); }
+            if !rows.is_empty() { parked.push(format!("{}: {}", crate::display::name(state.name()), rows.join(", "))); }
         }
         if !parked.is_empty() {
             out.push(String::new());
@@ -574,6 +574,44 @@ mod tests {
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["stuck"].clone(), rows[0]["age_s"].clone()), (json!(true), json!(9000)));
         assert_eq!((rows[1]["stuck"].clone(), rows[1].get("age_s")), (json!(false), None));
+    }
+
+    // Chain: #1592 A4 one display model. Risk: the CLI and the tray page disagree on counts, order, state names or age
+    // text for one board. The golden fixture feeds the page tests (tests/display-model.test.cjs) the same model.
+    #[test]
+    fn cli_and_page_model_agree_on_one_board() {
+        let now = 200_000;
+        let row = |n, state, labels: &[&str], ago: i64| Row { n, title: format!("T{n}"), labels: labels.iter().map(|l| l.to_string()).collect(), url: format!("https://github.com/o/r/issues/{n}"),
+            task: Task { state, ..Default::default() }, since: Some(now - ago), stuck: (state == State::Ask).then_some(ago), ..Default::default() };
+        let snap = Snapshot { source: "board", observed: now, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![], tasks: vec![
+            row(3, State::Ready, &["p1"], 300), row(5, State::Ready, &[], 7200), row(7, State::Doing, &[], 60), row(8, State::Ready, &["p0"], 30),
+            row(9, State::Ask, &[], 9000), row(2, State::Held, &[], 90_000), row(4, State::Later, &[], 600)] };
+        // the `from_views` key: priority, then number
+        let mut snap = snap;
+        snap.tasks.sort_by_key(|r| (crate::display::priority(&r.labels), r.n));
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        let mut ps = [json!({"name": "a", "root": "a", "issues": "https://github.com/o/r/issues", "board_kind": "github", "complete": true, "focus": [], "saved": true,
+            "tasks": snap.json()["tasks"]})];
+        let display = crate::display::model(&mut ps, now);
+        let n = |s: &str| display["all"]["counts"].as_array().unwrap().iter().find(|c| c["state"] == s).unwrap()["n"].as_u64().unwrap();
+        assert_eq!(text.lines().nth(1).unwrap(), format!("In work {} · Waiting for answer {} · Ready {}", n("doing") + n("review"), n("ask"), n("ready")));
+        let rows = ps[0]["tasks"].as_array().unwrap();
+        let ready: Vec<String> = rows.iter().filter(|t| t["state"] == "ready").map(|t| format!("[#{} ", t["n"])).collect();
+        let table: Vec<&str> = text.lines().filter(|l| l.contains("| ready |")).collect();
+        assert_eq!(table.len(), ready.len(), "{text}");
+        assert!(table.iter().zip(&ready).all(|(l, r)| l.starts_with(&format!("| {r}"))), "ready order {ready:?}\n{text}");
+        for t in rows.iter().filter(|t| ["held", "later"].contains(&t["state"].as_str().unwrap())) {
+            assert!(text.contains(&format!("{}: [#{} ", t["state_name"].as_str().unwrap(), t["n"])), "{text}");
+        }
+        let ask = rows.iter().find(|t| t["state"] == "ask").unwrap();
+        assert!(text.contains(&format!("(ask, {})", ask["age"].as_str().unwrap())), "{text}");
+        assert_eq!(ps[0]["mode"], "paused");
+        // the first line names the per-test project directory
+        let got = json!({"cli": text.lines().skip(1).collect::<Vec<_>>().join("\n"), "now": now, "display": display, "projects": ps});
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/display-model.json");
+        if std::env::var_os("TASKQ_BLESS").is_some() { std::fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap(); }
+        let want: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(got, want, "TASKQ_BLESS=1 rewrites {}", path.display());
     }
 
     // Chain: #1524 menu.md M3 Task row text. Risk: a raw execution, fence or wait diagnostic reaches a tray or status row.

@@ -14,8 +14,9 @@ const restored=views.normalize(JSON.parse(JSON.stringify(m)));assert.deepEqual(r
 views.reset(restored);assert.equal(views.current(restored).working.query,'needle');
 focus.working.query='saved';views.save(m);assert.equal(focus.saved.query,'saved');assert.equal(views.dirty(focus),false);
 assert.deepEqual(views.scope([a,b,{...a,issues:'https://other.example/org/b/issues'}],all.working),[a,b]);
-const rows=[{state:'ready',n:2,boardIdentity:'b'},{state:'ready',n:2,boardIdentity:'a'},{state:'ready',n:9,labels:['p0']},{state:'review',n:12}];
-assert.deepEqual(rows.sort(views.compare).map(r=>[r.state,r.n,r.boardIdentity]),[['review',12,undefined],['ready',9,undefined],['ready',2,'a'],['ready',2,'b']]);
+// #1592: the page keeps the display model's `rank` (state, priority, number, board: display::tests); unranked rows last.
+const rows=[{n:2,rank:3},{n:5},{n:2,rank:2},{n:9,rank:1},{n:12,rank:0}];
+assert.deepEqual(rows.sort(views.compare).map(r=>r.rank),[0,1,2,3,undefined]);
 assert(views.matches({title:'A NEEDLE',project:'Alpha'},'needle'));assert(!views.matches({title:'other'},'needle'));
 assert(!views.add(m,'','bad'));assert.equal(views.normalize({views:[{id:'toString',name:'Bad'}]}).selected,'all');
 console.log('PASS O2/O3 canonical comparator, OR/project/search scope, migration, independent working views, Save/Reset/restart');

@@ -3,36 +3,34 @@
 const fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require('node:crypto');
 const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json');
 const p=fx.project,row=fx.row;
-let got=q.observation([{...p,tasks:[row]},{...p,id:'second-registration',tasks:[row]}]);
-assert.equal(got.counts.doing,1);assert.equal(got.counts.review,0);assert.deepEqual(got.partial,[]);
-// K-A1/K-A3/K-A6: All tasks counts open rows once, includes held, excludes closed rows; Held is its own counter and Closed is gone.
-assert.equal(got.open,1);
-got=q.observation([{...p,tasks:[row,{...row,n:2,state:'held'},{...row,n:3,state:'closed'}]}]);
-assert.equal(got.open,2);assert.equal(got.counts.held,1);assert(!('closed' in got.counts),'no Closed counter (#1476)');
-assert.equal(q.observation([{...p,complete:false,tasks:[row]}]).open,null);
-assert.match(q.aggregate([{...p,complete:false,tasks:[row]}],[]),/All tasks \?<\/button>/);
-assert(!q.summary(p,[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
-assert.match(q.aggregate([{...p,tasks:[row]}],[]),/data-a="all-tasks" aria-pressed="true"/,'All tasks is selected without a state filter');
-assert.match(q.aggregate([{...p,tasks:[row]}],['doing']),/data-a="all-tasks" aria-pressed="false"/,'All tasks clears its selection under a state filter');
-assert.match(q.aggregate([{...p,tasks:[row]},{...p,id:'duplicate',tasks:[row]}],[]),/All tasks 1<\/button>/);
-assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,state:'review'}]}]).counts.doing,null);
-assert.equal(q.observation([{...p,complete:false}]).counts.ready,null);
-assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,title:'Changed title'}]}]).open,null,'conflicting titles make search scope unknown');
-assert.equal(q.observation([{...p,complete:false}]).counts.held,null,'partial snapshots show Held as unknown');
-assert.match(q.summary({...p,tasks:[{...row,state:'held'}]}),/data-state="held"[^>]*aria-label="[^"]* · Held: 1"/);
-assert(!q.summary(p).includes('tqp-counts'),'known zero shows identity only');
-assert(q.summary({...p,complete:false}).includes('Partial:'));
-assert(!q.summary({...p,tasks:[row]}).includes('Closed'),'no Closed capsule');
+// #1592: counts, dedup, conflict and partial come from the Rust display model (display.rs tests); blocks only render it.
+const {display}=require('./fixtures/display-model.json'),names=Object.fromEntries(display.states.map(s=>[s.id,s.name]));
+const counts=(o={},unknown=false)=>Object.keys(names).map(state=>({state,name:names[state],n:unknown?null:o[state]||0}));
+const all=(o,open,partial=[])=>({counts:counts(o,!!partial.length),partial,open:partial.length?null:open});
+// K-A1/K-A6: Held is its own counter and Closed is gone; unknown counts and All tasks read `?`, never zero.
+assert.deepEqual(Object.keys(q.marks),Object.keys(names),'one mark per model state');
+// The released fixture is display model output: its project carries model counts/partial and its row the model name/age.
+assert.deepEqual([p.counts,p.partial,p.open,row.state_name],[counts(),[],0,names[row.state]],'fixture follows the display model');
+assert.match(q.aggregate(all({},null,['project']),[]),/All tasks \?<\/button>/);
+assert(!q.summary({...p,counts:counts()},[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
+assert.match(q.aggregate(all({doing:1},1),[]),/data-a="all-tasks" aria-pressed="true"/,'All tasks is selected without a state filter');
+assert.match(q.aggregate(all({doing:1},1),['doing']),/data-a="all-tasks" aria-pressed="false"/,'All tasks clears its selection under a state filter');
+assert.match(q.aggregate(all({doing:1},1),[]),/All tasks 1<\/button>/);
+assert.match(q.aggregate(all({},null,['project']),[]),/aria-label="All projects · Held: unknown"/,'partial snapshots show Held as unknown');
+assert.match(q.summary({...p,counts:counts({held:1})}),/data-state="held"[^>]*aria-label="[^"]* · Held: 1"/);
+assert(!q.summary({...p,counts:counts()}).includes('tqp-counts'),'known zero shows identity only');
+assert(q.summary({...p,counts:counts({},true),partial:[p.name]}).includes('Partial:'));
+assert(!q.summary({...p,counts:counts({doing:1})}).includes('Closed'),'no Closed capsule');
 assert(q.task(p,{...row,title:'<script>alert(1)</script>',url:'javascript:alert(1)'}).includes('&lt;script&gt;'));
 assert(!q.task(p,{...row,url:'javascript:alert(1)'}).includes('href="javascript:'));
 assert(!q.task(p,{...row,local_session:false}).includes('codex://'));
 assert(q.task(p,{...row,local_session:false,session_reason:'Codex session opens only on WIN'}).includes('title="Codex session opens only on WIN">Session unavailable'));
 // R6/R12: the native snapshot's unresolved execution must remain visible in every shared task block.
-// § 4 Tray age: short units from the last logged state change; unknown names its reason; no `since`, no age.
-assert.deepEqual([59,300,7200,259200,-5].map(q.age),['<1m','5m','2h','3d','<1m']);
-assert(q.task({...p,now:1300},{...row,since:1000}).includes('data-since="1000" title="Since the last state change">5m<'));
-assert(q.task(p,{...row,since:null}).includes('title="Age unknown: no logged state change">age ?'));
-assert(!q.task(p,row).includes('tqp-age'));
+// § 4 Tray age: the model's age text; unknown names its reason; no `since`, no age.
+assert(q.task(p,{...row,since:1000,age:'5m'}).includes('title="Since the last state change">5m<'));
+assert(q.task(p,{...row,since:null,age:null}).includes('title="Age unknown: no logged state change">age ?'));
+assert(q.task(p,row).includes('>'+row.age+'<'),'fixture row shows its model age');
+const {since,...bare}=row;assert(!q.task(p,bare).includes('tqp-age'));
 const waiting=require('./fixtures/status-snapshot.json').tasks.find(t=>t.n===2),waitRow=q.task(p,waiting);
 // Chain: #1524 menu.md M3 Task row text. Risk: the raw execution diagnostic reaches the row instead of the owner text.
 assert(waitRow.includes(waiting.wait)&&!waitRow.includes(waiting.execution_wait),'owner wait text is visible, the raw execution reason is not');
@@ -62,5 +60,5 @@ for(const name of ['github','gitlab','claude','openai'])assert.equal(q.assets[na
 const tray=fs.readFileSync('build/web/tray.html','utf8');
 const sandbox={setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto};require('node:vm').createContext(sandbox);
 require('node:vm').runInContext(fs.readFileSync('build/web/project-blocks.js','utf8'),sandbox);
-assert.deepEqual(JSON.parse(JSON.stringify(sandbox.TaskqProjectBlocks.observation([p]))),JSON.parse(JSON.stringify(q.observation([p]))));
-console.log('PASS shared counts, dedup/conflict/partial/Held, safe links, local/remote sessions, independent navigation, provider assets, provenance and native/release wiring');
+assert.equal(sandbox.TaskqProjectBlocks.summary({...p,counts:counts({doing:1})}),q.summary({...p,counts:counts({doing:1})}));
+console.log('PASS model counters, unknown/partial/Held, safe links, local/remote sessions, independent navigation, provider assets, provenance and native/release wiring');

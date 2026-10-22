@@ -23,6 +23,8 @@
       },
       "complete": true,
       "closed": 100,
+      "counts": [{"state": "doing", "name": "Doing", "n": 1}, {"state": "review", "name": "Review", "n": 1}, {"state": "ask", "name": "Ask", "n": 0}, {"state": "failed", "name": "Failed", "n": 0}, {"state": "ready", "name": "Ready", "n": 0}, {"state": "waiting", "name": "Blocked", "n": 0}, {"state": "later", "name": "Later", "n": 0}, {"state": "held", "name": "Held", "n": 0}],
+      "partial": [],
       "tasks": [
         {
           "n": 1,
