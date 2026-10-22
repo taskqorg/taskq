@@ -103,7 +103,7 @@ fn image(_:u32)->Res<PathBuf>{Err("native agentq executable probe unavailable".i
 fn detect()->Value {
     match root(){Ok(r)=>inspect(&r,exists(&r.join(if cfg!(windows){"agentq.exe"}else{"agentq"})),status(&r.join("status.json")),now(),process),Err(e)=>unknown(e)}
 }
-fn project(install:&Path,mut state:Value)->Value {
+fn project(install:&Path,mut state:Value,previous_warning:bool)->Value {
     let result=locked(install,||{
         let mut p=preferences(install)?;let old=serde_json::to_value(&p).unwrap();
         if state["kind"]=="running" {p.dismissed=false;p.warning=false;p.request=None;}
@@ -117,7 +117,7 @@ fn project(install:&Path,mut state:Value)->Value {
             }
         } Ok(())
     });
-    if let Err(e)=result {state["kind"]=json!("unknown");state["reason"]=json!(e);state["warning"]=json!(true);}
+    if let Err(e)=result {state["kind"]=json!("unknown");state["reason"]=json!(e);state["warning"]=json!(previous_warning);}
     state
 }
 fn runtimes(install:&Path)->Value {
@@ -143,9 +143,9 @@ pub fn start(install:&Path) {
     CACHE.get_or_init(||{
         let cache=Arc::new(Mutex::new(unknown("agentq readback pending")));let output=cache.clone();let install=install.to_path_buf();
         std::thread::spawn(move||{
-            let mut choices=Value::Null;let mut checked=None;
+            let mut choices=Value::Null;let mut checked=None;let mut warning=false;
             loop {
-                let mut v=project(&install,detect());v["host"]=json!(crate::hostname());v["platform"]=json!(std::env::consts::OS);
+                let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::hostname());v["platform"]=json!(std::env::consts::OS);
                 v["targets"]=json!({"codex":targets("codex").ok(),"claude":targets("claude").ok()});v["runtimes"]=choices.clone();
                 *output.lock().unwrap()=v;
                 if checked.is_none_or(|t:Instant|t.elapsed()>=Duration::from_secs(300)){choices=runtimes(&install);checked=Some(Instant::now());}
@@ -208,14 +208,16 @@ mod tests {
     #[test]
     fn dismissal_and_setup_recovery_preserve_unknown_effects() {
         let dir=std::env::temp_dir().join(format!("taskq-agentq-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
-        let shown=project(&dir,json!({"kind":"shown"}));assert_eq!(shown["warning"],true);
-        action(&dir,"agentq-dismiss","","").unwrap();assert_eq!(project(&dir,json!({"kind":"shown"}))["warning"],false);
-        let u=project(&dir,unknown("read denied"));assert_eq!(u["kind"],"unknown");assert_eq!(u["dismissed"],true);
+        let shown=project(&dir,json!({"kind":"shown"}),false);assert_eq!(shown["warning"],true);
+        action(&dir,"agentq-dismiss","","").unwrap();assert_eq!(project(&dir,json!({"kind":"shown"}),false)["warning"],false);
+        let u=project(&dir,unknown("read denied"),false);assert_eq!(u["kind"],"unknown");assert_eq!(u["dismissed"],true);
         let mut p=preferences(&dir).unwrap();p.request=Some("missing-request".into());save(&dir,&p).unwrap();
-        assert_eq!(project(&dir,json!({"kind":"shown"}))["kind"],"interrupted");assert!(crate::setup::all(&dir).unwrap().0.is_empty());
-        assert_eq!(project(&dir,json!({"kind":"running"}))["warning"],false);assert!(!preferences(&dir).unwrap().dismissed);
-        assert_eq!(project(&dir,json!({"kind":"shown"}))["warning"],true);
-        fs::write(dir.join(FILE),"{bad").unwrap();assert_eq!(project(&dir,json!({"kind":"running"}))["kind"],"unknown");assert_eq!(fs::read_to_string(dir.join(FILE)).unwrap(),"{bad");
+        assert_eq!(project(&dir,json!({"kind":"shown"}),false)["kind"],"interrupted");assert!(crate::setup::all(&dir).unwrap().0.is_empty());
+        assert_eq!(project(&dir,json!({"kind":"running"}),false)["warning"],false);assert!(!preferences(&dir).unwrap().dismissed);
+        assert_eq!(project(&dir,json!({"kind":"shown"}),false)["warning"],true);
+        fs::write(dir.join(FILE),"{bad").unwrap();
+        let unreadable=project(&dir,json!({"kind":"running"}),true);assert_eq!(unreadable["kind"],"unknown");assert_eq!(unreadable["warning"],true);
+        assert_eq!(project(&dir,json!({"kind":"running"}),false)["warning"],false,"unknown preferences alone must not invent an absence");assert_eq!(fs::read_to_string(dir.join(FILE)).unwrap(),"{bad");
         fs::remove_dir_all(dir).unwrap();
     }
 }
