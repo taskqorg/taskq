@@ -35,7 +35,7 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'mac',now:1000,vers
   assert.match(await page.locator('.running-agents').innerText(),/unknown.*stale/i);
   assert.doesNotMatch(await page.locator('.running-agents').innerText(),/codex 1/);
   await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[{...project,tasks:[{...project.tasks[0],state:'ask',revision:9}]}]});
-  await page.locator('[data-page="answer"]').click();
+  await page.locator('[data-a="row-menu"]').click();await page.locator('[data-page="answer"]').click();
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open),{page:'answer',operation:null,root:project.root,board:project.issues,task:1,revision:9});
   assert.equal(await page.locator('[data-card]').count(),1,'question appears once');
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['workspace','size','ready','web-observation'].includes(m.a)&&!(m.a==='set'&&m.navigation))),[],'panels/navigation apply no policy or retry');
