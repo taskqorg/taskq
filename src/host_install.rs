@@ -446,7 +446,7 @@ fn upgrade(install:&Path,root:&Path)->Res<bool> {
     let tool=crate::platform::tool(install);
     let root=root.canonicalize().map_err(|e|e.to_string())?;
     let version={
-        let _update=crate::platform::update_lock(install)?;
+        let _update=crate::platform::update_lock_within(install,crate::resources::WAIT)?;
         match fs::symlink_metadata(install.join(INSTALL_PENDING)) {
             Ok(_)=>return Ok(false),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string()),
         }
@@ -540,7 +540,8 @@ fn adopt_upgrade(install:&Path,root:&Path,running:&str)->Res<Option<Pending>> {
 
 fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res<String> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
-    let _update=crate::platform::update_lock(install)?;
+    // the installer waits for the re-exec'd host's update steps; host recovery (`expected`) must not block its loop
+    let _update=crate::platform::update_lock_within(install,if expected.is_none() {crate::resources::WAIT} else {std::time::Duration::ZERO})?;
     let root=root.canonicalize().map_err(|e|e.to_string())?;
     let tool=crate::platform::tool(install);
     let replay=match fs::symlink_metadata(install.join(INSTALL_PENDING)) {
