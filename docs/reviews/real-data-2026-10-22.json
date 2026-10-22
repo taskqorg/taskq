@@ -1,0 +1,1202 @@
+{
+  "captured_at": 1792678585,
+  "captured_at_utc": "2026-10-22T14:16:25+00:00",
+  "captured_at_local": "2026-10-22T21:16:25+07:00",
+  "timezone": "Asia/Bangkok",
+  "scope": "All seven boards registered in this Mac installation; board events may describe work executed on other hosts.",
+  "source_registry": "<install>/projects",
+  "source_registry_sha256": "71c9a43d65ff87e6e002ddd7c4afaa9d9fa5757e01885d8374c9ab932fa858c2",
+  "source_policy": "Read only local status.json and events; no service command, board write or install change. Whitelisted snapshot; no tokens or sessions.",
+  "window": {
+    "start": 1792598400,
+    "end": 1792684800,
+    "seconds_per_bin": 14400,
+    "bin_count": 6,
+    "alignment": "Whole epoch-aligned 4-hour bins; newest contains capture time. Last bin partial; not a literal trailing 24-hour interval ending at capture."
+  },
+  "current_totals": {
+    "doing": 1,
+    "review": 0,
+    "ask": 0,
+    "failed": 0,
+    "ready": 1,
+    "waiting": 0,
+    "later": 0,
+    "held": 3
+  },
+  "history_bins": [
+    {
+      "start": 1792598400,
+      "end": 1792612800,
+      "local_label": "21 Oct 23:00–03:00",
+      "partial_current": false,
+      "not_collected_for": [
+        "pilotq"
+      ],
+      "partly_collected_for": [],
+      "observed_counts": {
+        "close": 6,
+        "failed": 0,
+        "ask": 1,
+        "blocked": 3
+      }
+    },
+    {
+      "start": 1792612800,
+      "end": 1792627200,
+      "local_label": "22 Oct 03:00–07:00",
+      "partial_current": false,
+      "not_collected_for": [
+        "pilotq"
+      ],
+      "partly_collected_for": [],
+      "observed_counts": {
+        "close": 8,
+        "failed": 0,
+        "ask": 4,
+        "blocked": 2
+      }
+    },
+    {
+      "start": 1792627200,
+      "end": 1792641600,
+      "local_label": "22 Oct 07:00–11:00",
+      "partial_current": false,
+      "not_collected_for": [
+        "pilotq"
+      ],
+      "partly_collected_for": [],
+      "observed_counts": {
+        "close": 9,
+        "failed": 0,
+        "ask": 9,
+        "blocked": 7
+      }
+    },
+    {
+      "start": 1792641600,
+      "end": 1792656000,
+      "local_label": "22 Oct 11:00–15:00",
+      "partial_current": false,
+      "not_collected_for": [
+        "pilotq"
+      ],
+      "partly_collected_for": [],
+      "observed_counts": {
+        "close": 12,
+        "failed": 0,
+        "ask": 5,
+        "blocked": 0
+      }
+    },
+    {
+      "start": 1792656000,
+      "end": 1792670400,
+      "local_label": "22 Oct 15:00–19:00",
+      "partial_current": false,
+      "not_collected_for": [],
+      "partly_collected_for": [
+        "pilotq"
+      ],
+      "observed_counts": {
+        "close": 11,
+        "failed": 0,
+        "ask": 3,
+        "blocked": 5
+      }
+    },
+    {
+      "start": 1792670400,
+      "end": 1792684800,
+      "local_label": "22 Oct 19:00–23:00",
+      "partial_current": true,
+      "not_collected_for": [],
+      "partly_collected_for": [],
+      "observed_counts": {
+        "close": 6,
+        "failed": 0,
+        "ask": 1,
+        "blocked": 0
+      }
+    }
+  ],
+  "projects": [
+    {
+      "name": "agentq",
+      "root": "<projects>/agentq",
+      "board_issues_url": "https://github.com/taskqorg/agentq/issues",
+      "snapshot_at": 1792678558,
+      "board_observed_at": 1792678465,
+      "tasks_age_seconds": 93,
+      "status_complete": true,
+      "status_file_age_at_capture": 26.023,
+      "current_counts": {
+        "doing": 0,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 0,
+        "waiting": 0,
+        "later": 0,
+        "held": 0
+      },
+      "current_tasks": [],
+      "history_since": 1791871003,
+      "source_status_sha256": "d317829dc8d9806de434ef393d5992afebbd2a6805903a58b01d48ca7c3f857b",
+      "source_events_sha256": "b0d98abf3254c855c062bb597359a339a45b41241cac7a8c068a1adbf5548c6a",
+      "cached_event_count": 102,
+      "cached_event_kind_counts": {
+        "ask": 40,
+        "close": 48,
+        "blocked": 12,
+        "gone": 2
+      },
+      "window_events": [],
+      "bins": [
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        }
+      ]
+    },
+    {
+      "name": "coreq",
+      "root": "<projects>/coreq",
+      "board_issues_url": "https://github.com/taskqorg/coreq/issues",
+      "snapshot_at": 1792678564,
+      "board_observed_at": 1792678465,
+      "tasks_age_seconds": 98,
+      "status_complete": true,
+      "status_file_age_at_capture": 20.864,
+      "current_counts": {
+        "doing": 0,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 0,
+        "waiting": 0,
+        "later": 0,
+        "held": 0
+      },
+      "current_tasks": [],
+      "history_since": 1791872437,
+      "source_status_sha256": "7e73e168986fdbcec48eefe78504661a497589e8505c3cd0d5489597fd874716",
+      "source_events_sha256": "04ece680ea0c67c0534c365c7882f20d89cbd9926e776e5725aed5fe62bafbfe",
+      "cached_event_count": 45,
+      "cached_event_kind_counts": {
+        "ask": 7,
+        "close": 36,
+        "blocked": 2
+      },
+      "window_events": [
+        {
+          "at": 1792604222,
+          "task": 74,
+          "kind": "close",
+          "id": "6322112433"
+        },
+        {
+          "at": 1792615768,
+          "task": 76,
+          "kind": "close",
+          "id": "6325828844"
+        },
+        {
+          "at": 1792619546,
+          "task": 78,
+          "kind": "close",
+          "id": "6326785024"
+        },
+        {
+          "at": 1792623102,
+          "task": 80,
+          "kind": "close",
+          "id": "6328114699"
+        },
+        {
+          "at": 1792638669,
+          "task": 82,
+          "kind": "close",
+          "id": "6331592159"
+        }
+      ],
+      "bins": [
+        {
+          "close": 1,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 3,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 1,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        }
+      ]
+    },
+    {
+      "name": "dashq",
+      "root": "<projects>/dashq",
+      "board_issues_url": "https://github.com/taskqorg/dashq/issues",
+      "snapshot_at": 1792678560,
+      "board_observed_at": 1792678465,
+      "tasks_age_seconds": 95,
+      "status_complete": true,
+      "status_file_age_at_capture": 24.014,
+      "current_counts": {
+        "doing": 0,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 0,
+        "waiting": 0,
+        "later": 0,
+        "held": 0
+      },
+      "current_tasks": [],
+      "history_since": 1791872455,
+      "source_status_sha256": "4706dea7a28b793a800e0fe44b87185f578387751eebff775b70771f68dbd6f9",
+      "source_events_sha256": "9086b353aa9f8249da2423fa68414fa492b59028c2cfe504f07d953ed8387e0c",
+      "cached_event_count": 171,
+      "cached_event_kind_counts": {
+        "ask": 75,
+        "close": 72,
+        "blocked": 23,
+        "gone": 1
+      },
+      "window_events": [
+        {
+          "at": 1792624076,
+          "task": 173,
+          "kind": "ask",
+          "id": "6328532671"
+        },
+        {
+          "at": 1792624832,
+          "task": 173,
+          "kind": "close",
+          "id": "6328694731"
+        }
+      ],
+      "bins": [
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 1,
+          "failed": 0,
+          "ask": 1,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        }
+      ]
+    },
+    {
+      "name": "serverq",
+      "root": "<projects>/serverq",
+      "board_issues_url": "https://github.com/taskqorg/serverq/issues",
+      "snapshot_at": 1792678557,
+      "board_observed_at": 1792678465,
+      "tasks_age_seconds": 92,
+      "status_complete": true,
+      "status_file_age_at_capture": 27.246,
+      "current_counts": {
+        "doing": 0,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 0,
+        "waiting": 0,
+        "later": 0,
+        "held": 0
+      },
+      "current_tasks": [],
+      "history_since": 1791871307,
+      "source_status_sha256": "58ae342f17e661fec912b420e2fd31c2f4e463db32c0053e35bc817814505402",
+      "source_events_sha256": "5bfd3af2107c1cc39fedd4e1cc0494aa7195863523ad00cfcd848852ad8b4d6b",
+      "cached_event_count": 34,
+      "cached_event_kind_counts": {
+        "close": 15,
+        "ask": 19
+      },
+      "window_events": [],
+      "bins": [
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        }
+      ]
+    },
+    {
+      "name": "specq",
+      "root": "<projects>/specq",
+      "board_issues_url": "https://github.com/taskqorg/specq/issues",
+      "snapshot_at": 1792678560,
+      "board_observed_at": 1792678464,
+      "tasks_age_seconds": 95,
+      "status_complete": true,
+      "status_file_age_at_capture": 24.601,
+      "current_counts": {
+        "doing": 0,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 0,
+        "waiting": 0,
+        "later": 0,
+        "held": 0
+      },
+      "current_tasks": [],
+      "history_since": 1791871967,
+      "source_status_sha256": "defede87d1d501bc4a63c3dd9820808813b1397119eeea3fc5a81808794104b4",
+      "source_events_sha256": "a2ea72cb8b2a10d499b80665443eb6f11e48e1429662acda17d7a8958b3874e0",
+      "cached_event_count": 47,
+      "cached_event_kind_counts": {
+        "ask": 8,
+        "close": 30,
+        "blocked": 1,
+        "gone": 8
+      },
+      "window_events": [
+        {
+          "at": 1792630786,
+          "task": 84,
+          "kind": "close",
+          "id": "6330041565"
+        },
+        {
+          "at": 1792664642,
+          "task": 86,
+          "kind": "close",
+          "id": "6338389602"
+        }
+      ],
+      "bins": [
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 1,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 1,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        }
+      ]
+    },
+    {
+      "name": "taskq",
+      "root": "<projects>/taskq",
+      "board_issues_url": "https://github.com/taskqorg/taskq/issues",
+      "snapshot_at": 1792678580,
+      "board_observed_at": 1792678552,
+      "tasks_age_seconds": 27,
+      "status_complete": true,
+      "status_file_age_at_capture": 4.944,
+      "current_counts": {
+        "doing": 1,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 1,
+        "waiting": 0,
+        "later": 0,
+        "held": 3
+      },
+      "current_tasks": [
+        {
+          "number": 1566,
+          "state": "doing",
+          "title": "Windows merge_group CI fails on flaky telemetry_process integration tests"
+        },
+        {
+          "number": 1578,
+          "state": "ready",
+          "title": "Implement the approved task dashboard, menu and settings"
+        },
+        {
+          "number": 1580,
+          "state": "held",
+          "title": "Implement the approved Conversations journey and attachments"
+        },
+        {
+          "number": 802,
+          "state": "held",
+          "title": "Promo video A: scene, timing, style and voice approval package"
+        },
+        {
+          "number": 1573,
+          "state": "held",
+          "title": "PM: decompose the approved TaskQ interface design package"
+        }
+      ],
+      "history_since": 1791843119,
+      "source_status_sha256": "0ae73e72c1095291b86a952eb9e3f8e2530ecb416f68f87d01f12c2e1aea80b7",
+      "source_events_sha256": "7a8a84104cc6e41db07d02a86c4a01be063877cfd9a3e58c0d5505f56eb486d8",
+      "cached_event_count": 794,
+      "cached_event_kind_counts": {
+        "close": 367,
+        "ask": 308,
+        "blocked": 95,
+        "gone": 24
+      },
+      "window_events": [
+        {
+          "at": 1792598767,
+          "task": 1507,
+          "kind": "close",
+          "id": "6320401080"
+        },
+        {
+          "at": 1792600225,
+          "task": 1506,
+          "kind": "close",
+          "id": "6320898523"
+        },
+        {
+          "at": 1792601341,
+          "task": 1465,
+          "kind": "close",
+          "id": "6321313141"
+        },
+        {
+          "at": 1792601458,
+          "task": 1499,
+          "kind": "blocked",
+          "id": "6320646618"
+        },
+        {
+          "at": 1792602175,
+          "task": 1466,
+          "kind": "ask",
+          "id": "6321499211"
+        },
+        {
+          "at": 1792602245,
+          "task": 1514,
+          "kind": "blocked",
+          "id": "6321766630"
+        },
+        {
+          "at": 1792605862,
+          "task": 1514,
+          "kind": "close",
+          "id": "6322875872"
+        },
+        {
+          "at": 1792608224,
+          "task": 1499,
+          "kind": "close",
+          "id": "6323705449"
+        },
+        {
+          "at": 1792612063,
+          "task": 1517,
+          "kind": "blocked",
+          "id": "6324782098"
+        },
+        {
+          "at": 1792616022,
+          "task": 1517,
+          "kind": "blocked",
+          "id": "6326250843"
+        },
+        {
+          "at": 1792620614,
+          "task": 1517,
+          "kind": "close",
+          "id": "6327482290"
+        },
+        {
+          "at": 1792621743,
+          "task": 1519,
+          "kind": "close",
+          "id": "6327846057"
+        },
+        {
+          "at": 1792624580,
+          "task": 1466,
+          "kind": "close",
+          "id": "6328582550"
+        },
+        {
+          "at": 1792626658,
+          "task": 1391,
+          "kind": "ask",
+          "id": "6329129108"
+        },
+        {
+          "at": 1792626658,
+          "task": 1409,
+          "kind": "ask",
+          "id": "6329144112"
+        },
+        {
+          "at": 1792626714,
+          "task": 1521,
+          "kind": "ask",
+          "id": "6329163173"
+        },
+        {
+          "at": 1792626852,
+          "task": 1521,
+          "kind": "close",
+          "id": "6329163173"
+        },
+        {
+          "at": 1792626926,
+          "task": 1391,
+          "kind": "blocked",
+          "id": "6329129108"
+        },
+        {
+          "at": 1792627206,
+          "task": 1523,
+          "kind": "blocked",
+          "id": "6329265849"
+        },
+        {
+          "at": 1792627848,
+          "task": 1467,
+          "kind": "close",
+          "id": "6329335270"
+        },
+        {
+          "at": 1792627917,
+          "task": 1524,
+          "kind": "blocked",
+          "id": "6329437242"
+        },
+        {
+          "at": 1792628189,
+          "task": 1470,
+          "kind": "ask",
+          "id": "6329428958"
+        },
+        {
+          "at": 1792628324,
+          "task": 1409,
+          "kind": "ask",
+          "id": "6329512375"
+        },
+        {
+          "at": 1792628430,
+          "task": 1409,
+          "kind": "blocked",
+          "id": "6329512375"
+        },
+        {
+          "at": 1792629536,
+          "task": 1526,
+          "kind": "blocked",
+          "id": "6329803963"
+        },
+        {
+          "at": 1792629596,
+          "task": 1527,
+          "kind": "blocked",
+          "id": "6329807104"
+        },
+        {
+          "at": 1792630395,
+          "task": 1409,
+          "kind": "ask",
+          "id": "6329968226"
+        },
+        {
+          "at": 1792630754,
+          "task": 1437,
+          "kind": "ask",
+          "id": "6330056351"
+        },
+        {
+          "at": 1792630772,
+          "task": 1409,
+          "kind": "blocked",
+          "id": "6329968226"
+        },
+        {
+          "at": 1792630998,
+          "task": 1470,
+          "kind": "ask",
+          "id": "6330019015"
+        },
+        {
+          "at": 1792632166,
+          "task": 1531,
+          "kind": "close",
+          "id": "6330286711"
+        },
+        {
+          "at": 1792632194,
+          "task": 1420,
+          "kind": "close",
+          "id": "6329978798"
+        },
+        {
+          "at": 1792632194,
+          "task": 1470,
+          "kind": "ask",
+          "id": "6330351691"
+        },
+        {
+          "at": 1792632534,
+          "task": 1409,
+          "kind": "ask",
+          "id": "6330453125"
+        },
+        {
+          "at": 1792632794,
+          "task": 1470,
+          "kind": "close",
+          "id": "6330351691"
+        },
+        {
+          "at": 1792635238,
+          "task": 1535,
+          "kind": "close",
+          "id": "6330845457"
+        },
+        {
+          "at": 1792635746,
+          "task": 1522,
+          "kind": "close",
+          "id": "6330955055"
+        },
+        {
+          "at": 1792635838,
+          "task": 1533,
+          "kind": "ask",
+          "id": "6330646004"
+        },
+        {
+          "at": 1792636049,
+          "task": 1391,
+          "kind": "ask",
+          "id": "6331154470"
+        },
+        {
+          "at": 1792636110,
+          "task": 1533,
+          "kind": "blocked",
+          "id": "6330646004"
+        },
+        {
+          "at": 1792636982,
+          "task": 1523,
+          "kind": "close",
+          "id": "6331264510"
+        },
+        {
+          "at": 1792643352,
+          "task": 1524,
+          "kind": "close",
+          "id": "6332626877"
+        },
+        {
+          "at": 1792644227,
+          "task": 1541,
+          "kind": "close",
+          "id": "6332821090"
+        },
+        {
+          "at": 1792644305,
+          "task": 1533,
+          "kind": "close",
+          "id": "6332830582"
+        },
+        {
+          "at": 1792644421,
+          "task": 1526,
+          "kind": "close",
+          "id": "6332857477"
+        },
+        {
+          "at": 1792645448,
+          "task": 1527,
+          "kind": "close",
+          "id": "6333068705"
+        },
+        {
+          "at": 1792646337,
+          "task": 1391,
+          "kind": "ask",
+          "id": "6333303027"
+        },
+        {
+          "at": 1792650191,
+          "task": 1391,
+          "kind": "close",
+          "id": "6334120609"
+        },
+        {
+          "at": 1792651342,
+          "task": 1409,
+          "kind": "ask",
+          "id": "6334517449"
+        },
+        {
+          "at": 1792651471,
+          "task": 1409,
+          "kind": "close",
+          "id": "6334517449"
+        },
+        {
+          "at": 1792652012,
+          "task": 1546,
+          "kind": "ask",
+          "id": "6334531581"
+        },
+        {
+          "at": 1792652453,
+          "task": 1546,
+          "kind": "ask",
+          "id": "6334804699"
+        },
+        {
+          "at": 1792653392,
+          "task": 1550,
+          "kind": "ask",
+          "id": "6334992179"
+        },
+        {
+          "at": 1792653825,
+          "task": 1546,
+          "kind": "close",
+          "id": "6335062077"
+        },
+        {
+          "at": 1792654539,
+          "task": 1437,
+          "kind": "close",
+          "id": "6335340234"
+        },
+        {
+          "at": 1792654539,
+          "task": 1549,
+          "kind": "close",
+          "id": "6335274333"
+        },
+        {
+          "at": 1792655416,
+          "task": 1548,
+          "kind": "close",
+          "id": "6335519577"
+        },
+        {
+          "at": 1792655923,
+          "task": 1550,
+          "kind": "close",
+          "id": "6335651821"
+        },
+        {
+          "at": 1792660732,
+          "task": 1555,
+          "kind": "close",
+          "id": "6337099369"
+        },
+        {
+          "at": 1792663730,
+          "task": 1565,
+          "kind": "blocked",
+          "id": "6338167371"
+        },
+        {
+          "at": 1792663813,
+          "task": 1562,
+          "kind": "ask",
+          "id": "6338191145"
+        },
+        {
+          "at": 1792663936,
+          "task": 1557,
+          "kind": "close",
+          "id": "6337813516"
+        },
+        {
+          "at": 1792664095,
+          "task": 1561,
+          "kind": "close",
+          "id": "6338155844"
+        },
+        {
+          "at": 1792664189,
+          "task": 1558,
+          "kind": "close",
+          "id": "6338206465"
+        },
+        {
+          "at": 1792665979,
+          "task": 1564,
+          "kind": "close",
+          "id": "6338733836"
+        },
+        {
+          "at": 1792667484,
+          "task": 1567,
+          "kind": "close",
+          "id": "6339165517"
+        },
+        {
+          "at": 1792667770,
+          "task": 1562,
+          "kind": "close",
+          "id": "6339297296"
+        },
+        {
+          "at": 1792667908,
+          "task": 1565,
+          "kind": "ask",
+          "id": "6339411690"
+        },
+        {
+          "at": 1792670529,
+          "task": 1565,
+          "kind": "close",
+          "id": "6340110919"
+        },
+        {
+          "at": 1792671331,
+          "task": 1572,
+          "kind": "close",
+          "id": "6340348762"
+        },
+        {
+          "at": 1792675719,
+          "task": 1586,
+          "kind": "close",
+          "id": "6341836716"
+        },
+        {
+          "at": 1792677505,
+          "task": 1588,
+          "kind": "close",
+          "id": "6342379764"
+        }
+      ],
+      "bins": [
+        {
+          "close": 5,
+          "failed": 0,
+          "ask": 1,
+          "blocked": 3
+        },
+        {
+          "close": 4,
+          "failed": 0,
+          "ask": 3,
+          "blocked": 2
+        },
+        {
+          "close": 7,
+          "failed": 0,
+          "ask": 9,
+          "blocked": 7
+        },
+        {
+          "close": 12,
+          "failed": 0,
+          "ask": 5,
+          "blocked": 0
+        },
+        {
+          "close": 7,
+          "failed": 0,
+          "ask": 2,
+          "blocked": 1
+        },
+        {
+          "close": 4,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        }
+      ]
+    },
+    {
+      "name": "pilotq",
+      "root": "<projects>/pilotq",
+      "board_issues_url": "https://github.com/taskqorg/pilotq/issues",
+      "snapshot_at": 1792678557,
+      "board_observed_at": 1792678465,
+      "tasks_age_seconds": 92,
+      "status_complete": true,
+      "status_file_age_at_capture": 27.135,
+      "current_counts": {
+        "doing": 0,
+        "review": 0,
+        "ask": 0,
+        "failed": 0,
+        "ready": 0,
+        "waiting": 0,
+        "later": 0,
+        "held": 0
+      },
+      "current_tasks": [],
+      "history_since": 1792658904,
+      "source_status_sha256": "e7983a5fd0e9972f46b7bf3f289d5814e9fbd84d2242e4baa07441efeda6fb1f",
+      "source_events_sha256": "4c7edb3c99f9f989138abacc3b455cc16547b8e23e0e8e4ab137139f27ad7ba8",
+      "cached_event_count": 11,
+      "cached_event_kind_counts": {
+        "blocked": 4,
+        "close": 5,
+        "ask": 2
+      },
+      "window_events": [
+        {
+          "at": 1792659030,
+          "task": 4,
+          "kind": "blocked",
+          "id": "6336708987"
+        },
+        {
+          "at": 1792659030,
+          "task": 5,
+          "kind": "blocked",
+          "id": "6336713519"
+        },
+        {
+          "at": 1792659037,
+          "task": 6,
+          "kind": "blocked",
+          "id": "6336718128"
+        },
+        {
+          "at": 1792660888,
+          "task": 8,
+          "kind": "blocked",
+          "id": "6337289048"
+        },
+        {
+          "at": 1792666029,
+          "task": 3,
+          "kind": "close",
+          "id": "6338818837"
+        },
+        {
+          "at": 1792666992,
+          "task": 4,
+          "kind": "ask",
+          "id": "6339147699"
+        },
+        {
+          "at": 1792669182,
+          "task": 4,
+          "kind": "close",
+          "id": "6339713205"
+        },
+        {
+          "at": 1792669993,
+          "task": 5,
+          "kind": "close",
+          "id": "6339944817"
+        },
+        {
+          "at": 1792671436,
+          "task": 6,
+          "kind": "close",
+          "id": "6340393286"
+        },
+        {
+          "at": 1792672364,
+          "task": 8,
+          "kind": "ask",
+          "id": "6340781019"
+        },
+        {
+          "at": 1792672784,
+          "task": 8,
+          "kind": "close",
+          "id": "6340781019"
+        }
+      ],
+      "bins": [
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 0,
+          "failed": 0,
+          "ask": 0,
+          "blocked": 0
+        },
+        {
+          "close": 3,
+          "failed": 0,
+          "ask": 1,
+          "blocked": 4
+        },
+        {
+          "close": 2,
+          "failed": 0,
+          "ask": 1,
+          "blocked": 0
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Counts are frozen cache observations, not a new board query.",
+    "Collection-start metadata does not prove continuous collection or absence of gaps.",
+    "Observed zero means no recorded event of that kind in the cache, not proof that no board event happened.",
+    "PilotQ history begins during this window; earlier all-board totals are unknown, with observed lower bounds available.",
+    "No failed event exists in any of the seven available cached histories; gone is a separate event and is not failed.",
+    "Current tasks are not historical queue snapshots; no completion percentage or queue trend can be reconstructed from these event counts alone."
+  ]
+}

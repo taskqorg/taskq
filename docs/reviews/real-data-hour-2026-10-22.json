@@ -1,0 +1,50 @@
+{
+  "source": "real-data-2026-10-22.json, projects[name=taskq].window_events",
+  "captured_at": 1792678585,
+  "timezone": "Asia/Bangkok",
+  "window_start": 1792675200,
+  "window_end": 1792678800,
+  "seconds_per_bin": 600,
+  "bins": [
+    {
+      "close": 1,
+      "failed": 0,
+      "ask": 0,
+      "blocked": 0
+    },
+    {
+      "close": 0,
+      "failed": 0,
+      "ask": 0,
+      "blocked": 0
+    },
+    {
+      "close": 0,
+      "failed": 0,
+      "ask": 0,
+      "blocked": 0
+    },
+    {
+      "close": 1,
+      "failed": 0,
+      "ask": 0,
+      "blocked": 0
+    },
+    {
+      "close": 0,
+      "failed": 0,
+      "ask": 0,
+      "blocked": 0
+    },
+    {
+      "close": 0,
+      "failed": 0,
+      "ask": 0,
+      "blocked": 0
+    }
+  ],
+  "event_issues": [
+    1586,
+    1588
+  ]
+}
