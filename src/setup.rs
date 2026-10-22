@@ -263,13 +263,44 @@ pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     match stdout.lines().find_map(|l| l.strip_prefix("backgrounded · ").and_then(|s| s.split_whitespace().next())) {
         // One link read at launch, never after: the Claude session manager owns the session from here.
         Some(id) if out.status.success() && crate::runtime::native_job_id(id) => {
-            let session = crate::runtime::claude_agents(workdir).ok()
-                .and_then(|rows| rows.iter().find(|v| v["id"] == id).and_then(|v| v["sessionId"].as_str().map(String::from)));
-            let url = session.as_deref().and_then(crate::runtime::claude_remote);
+            let (session, url) = claude_link(workdir, id);
             Launched::Job { job: id.into(), session, url }
         }
         _ => Launched::Unknown("Claude returned no background job; outcome unknown, inspect native sessions".into()),
     }
+}
+
+/// A launched job's native session and Remote Control link, each unknown until Claude publishes it.
+pub fn claude_link(workdir: &Path, job: &str) -> (Option<String>, Option<String>) {
+    let session = crate::runtime::claude_agents(workdir).ok()
+        .and_then(|rows| rows.iter().find(|v| v["id"] == job).and_then(|v| v["sessionId"].as_str().map(String::from)));
+    let url = session.as_deref().and_then(crate::runtime::claude_remote);
+    (session, url)
+}
+
+/// The native read, replaceable in tests.
+pub type Linker = fn(&Path, &str) -> (Option<String>, Option<String>);
+
+/// How long after its request a launched session's missing link is still read.
+const LINK_WINDOW_MS: u128 = 10 * 60 * 1000;
+
+/// Remote Control publishes the link after `--bg` returns (#1409): later passes fill a missing session or link
+/// within the window, then stop; the session itself is never tracked.
+pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
+    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
+        let Some(job) = r.job.clone() else { continue };
+        let own = r.root.as_deref().map_or_else(|| dir(install).join(&r.id), PathBuf::from);
+        let (session, url) = observe(&own, &job);
+        if session.is_none() && url.is_none() { continue; }
+        locked(install, || {
+            let mut cur = read(&file(install, &r.id))?;
+            if cur.state != "launched" || cur.job.as_deref() != Some(&job) { return Ok(()); }
+            cur.session = cur.session.or_else(|| session.clone());
+            cur.url = cur.url.or_else(|| url.clone());
+            write(install, &cur)
+        })?;
+    }
+    Ok(())
 }
 
 const MISSING: &str = "runtime missing:";
@@ -331,6 +362,32 @@ mod tests {
         assert!(open_id(&install,&install,"literal request","owner-1464","claude",true).is_err(),"missing readback must never recreate a request");
         assert!(all(&install).unwrap().0.is_empty());
         fs::remove_dir_all(install).unwrap();
+    }
+
+    // #1409: a Mac launch recorded `launched` with null session and url; Remote Control publishes the link later.
+    // Risk: no Open session, a link written to another job, or rereads that never stop.
+    #[test]
+    fn later_passes_fill_a_missing_link_within_the_window() {
+        fn none(_: &Path, _: &str) -> (Option<String>, Option<String>) { (None, None) }
+        fn found(_: &Path, job: &str) -> (Option<String>, Option<String>) {
+            assert_eq!(job, "abcd1234");
+            (Some("abcd1234-0000-0000-0000-000000000000".into()), Some("https://claude.ai/code/session_x".into()))
+        }
+        fn never(_: &Path, _: &str) -> (Option<String>, Option<String>) { panic!("read outside the window") }
+        let t = tmp();
+        let r = submit(&t, "claude", None, &[]).unwrap();
+        step(&t, ok).unwrap();
+        link(&t, r.created, none).unwrap();
+        assert_eq!(read(&file(&t, &r.id)).unwrap().url, None);
+        link(&t, r.created + 1000, found).unwrap();
+        let cur = read(&file(&t, &r.id)).unwrap();
+        assert_eq!((cur.session.as_deref(), cur.url.as_deref()), (Some("abcd1234-0000-0000-0000-000000000000"), Some("https://claude.ai/code/session_x")));
+        assert_eq!(view(&cur)["kind"], "launched");
+        link(&t, r.created + 2000, never).unwrap();
+        let late = submit(&t, "claude", None, &[]).unwrap();
+        step(&t, ok).unwrap();
+        link(&t, late.created + LINK_WINDOW_MS, never).unwrap();
+        fs::remove_dir_all(t).unwrap();
     }
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }

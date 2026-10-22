@@ -786,6 +786,7 @@ fn guarded_policy(configured:Res<Policy>,barrier:&Res<()>)->(Res<Policy>,(u64,u6
 pub fn run(install: &Path) -> Res<()> {
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
     let mut reported=String::new();
+    let mut linked=std::time::Instant::now();
     let _owner=loop {
         let message=match owner(install) {
             Ok(Some(owner))=>break owner,
@@ -903,6 +904,14 @@ pub fn run(install: &Path) -> Res<()> {
         // § 4 setup sessions: only this loop launches them. ponytail: a launch blocks this pass up to 30 s; a thread if that matters.
         if let Err(e)=crate::setup::step(install,crate::setup::claude_launch) {
             if reported!=e {crate::platform::log(&e);reported=e;}
+        }
+        // Missing setup links: one native read per 10 s, not per pass.
+        if linked.elapsed()>=std::time::Duration::from_secs(10) {
+            linked=std::time::Instant::now();
+            let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_millis());
+            if let Err(e)=crate::setup::link(install,now,crate::setup::claude_link) {
+                if reported!=e {crate::platform::log(&e);reported=e;}
+            }
         }
         let loaded={let h=shared.lock().unwrap_or_else(|e|e.into_inner());
             h.capacity_command.is_none().then(||h.policy.as_ref().ok().cloned()).flatten()};
