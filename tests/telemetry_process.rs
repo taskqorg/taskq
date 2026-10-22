@@ -1,4 +1,5 @@
 use std::{fs, process::Command};
+use crate::Bounded;
 
 // Chain: unavailable receipts -> Resume refuses before mutation, Pause remains usable, then durable recovery.
 #[test]
@@ -9,7 +10,7 @@ fn focus_cli_requires_receipts_without_blocking_safe_pause() {
     fs::write(install.join("hold"),"owner hold").unwrap();
     fs::write(install.join("telemetry.log"),"store unavailable").unwrap();
     let invoke=|command:&[&str]|Command::new(env!("CARGO_BIN_EXE_taskq")).arg("service").args(command)
-        .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install).env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+        .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install).env("TASKQ_INCIDENT_REPORTS","off").bounded();
     let refused=invoke(&["resume"]);
     assert!(!refused.status.success(),"Resume accepted without a committed receipt");
     assert_eq!(fs::read_to_string(root.join(".taskq/focus")).unwrap(),"off");
@@ -52,7 +53,7 @@ fn independent_cli_preserves_the_dispatch_trace_on_failure() {
     let out=Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service","resume"])
         .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
         .env("TASKQ_INCIDENT_REPORTS","off").env("COREQ_TRACE_CONTEXT",format!("1 {trace} {parent}"))
-        .output().unwrap();
+        .bounded();
     assert!(!out.status.success());assert!(String::from_utf8_lossy(&out.stderr).contains("no saved focus"));
     assert_eq!(fs::read_to_string(root.join(".taskq/focus")).unwrap(),"off");
     assert_eq!(fs::read_to_string(install.join("hold")).unwrap(),"owner-held fixture");
@@ -122,7 +123,7 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
         .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
         // Independent owner commands do not inherit the test runner's continuation.
         .env_remove("COREQ_TRACE_CONTEXT").env("COREQ_TELEMETRY_STORE_TRACE","1")
-        .env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+        .env("TASKQ_INCIDENT_REPORTS","off").bounded();
     let refused=invoke();
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("no saved focus"));
@@ -144,7 +145,7 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
     assert_eq!(fs::read_to_string(install.join("hold")).unwrap(),"owner-held fixture");
     let exported=Command::new(env!("CARGO_BIN_EXE_taskq")).args(["profile","export"])
         .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
-        .env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+        .env("TASKQ_INCIDENT_REPORTS","off").bounded();
     assert!(exported.status.success(),"{}",String::from_utf8_lossy(&exported.stderr));
     let export=String::from_utf8(exported.stdout).unwrap();
     let rows:Vec<serde_json::Value>=export.lines().map(|line|serde_json::from_str(line).unwrap()).collect();
@@ -178,11 +179,11 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
         loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
         let policy=format!("(version 1)(allow default)(deny file-write* (subpath {}))",serde_json::to_string(install.canonicalize().unwrap().to_str().unwrap()).unwrap());
         let denied=Command::new("/usr/bin/sandbox-exec").args(["-p",&policy,"/usr/bin/touch"])
-            .arg(install.join("write-probe")).output().unwrap();
+            .arg(install.join("write-probe")).bounded();
         assert!(!denied.status.success(),"test sandbox did not deny writes");
         let read=Command::new("/usr/bin/sandbox-exec").args(["-p",&policy,env!("CARGO_BIN_EXE_taskq"),"profile","export"])
             .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
-            .env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+            .env("TASKQ_INCIDENT_REPORTS","off").bounded();
         assert!(read.status.success(),"{}",String::from_utf8_lossy(&read.stderr));
         assert!(String::from_utf8_lossy(&read.stdout).contains("taskq.resume"));
         assert!(!String::from_utf8_lossy(&read.stderr).contains("Telemetry: unknown"));
@@ -221,7 +222,7 @@ fn commands_collect_without_configuration_and_flush_on_exit() {
         let install = root.join("install");
         let out = Command::new(env!("CARGO_BIN_EXE_taskq")).args(args).current_dir(&root)
             .env("TASKQ_INSTALL", &install).env("TASKQ_ROOT", &root)
-            .env("TASKQ_INCIDENT_REPORTS", "off").output().unwrap();
+            .env("TASKQ_INCIDENT_REPORTS", "off").bounded();
         assert_eq!(out.status.success(), success, "{}", String::from_utf8_lossy(&out.stderr));
         assert!(!String::from_utf8_lossy(&out.stderr).contains("Telemetry: unknown"), "{}", String::from_utf8_lossy(&out.stderr));
         let store = coreq::telemetry::Store::open(&install.join("telemetry.log/universal.sqlite3")).unwrap();
@@ -276,7 +277,7 @@ fn selftest_requires_committed_local_capture() {
     let invoke=|install: &std::path::Path,command: &str| Command::new(env!("CARGO_BIN_EXE_taskq"))
         .arg(command).current_dir(&root).env("TASKQ_INSTALL",install).env("TASKQ_ROOT",&root)
         .env("TMPDIR",install).env("TMP",install).env("TEMP",install)
-        .env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").env("COREQ_TELEMETRY_STORE_TRACE","1").output().unwrap();
+        .env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").env("COREQ_TELEMETRY_STORE_TRACE","1").bounded();
     let help=invoke(&blocked,"help");assert!(help.status.success(),"ordinary help outcome changed");
     let failed=invoke(&blocked,"selftest");
     assert!(!failed.status.success(),"selftest accepted unavailable capture: {}",String::from_utf8_lossy(&failed.stdout));
@@ -365,7 +366,7 @@ fn migration_cli_uses_quiesced_owner_and_preserves_legacy_text() {
     fs::write(install.join("taskq.log"),format!("{line}\n")).unwrap();
     let invoke=||Command::new(env!("CARGO_BIN_EXE_taskq")).args(["profile","migrate"])
         .current_dir(&root).env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT")
-        .env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+        .env("TASKQ_INCIDENT_REPORTS","off").bounded();
     let path=install.join("telemetry.log/universal.sqlite3");
     use std::io::BufRead;
     struct Owner(std::process::Child);
@@ -410,7 +411,7 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
     loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
     let invoke=|command:&[&str]|Command::new(env!("CARGO_BIN_EXE_taskq")).args(command)
         .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
-        .env("COREQ_TELEMETRY_STORE_TRACE","1").env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+        .env("COREQ_TELEMETRY_STORE_TRACE","1").env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").bounded();
     let selftest=invoke(&["selftest"]);
     use std::io::Write;
     writeln!(std::io::stderr(),"handover selftest diagnostics: {}",String::from_utf8_lossy(&selftest.stderr)).unwrap();
@@ -432,7 +433,7 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
         std::fs::copy(assets.join(name),&args[5]).unwrap();
         std::fs::write(assets.join(format!("{name}.served")),b"fixture").unwrap();
     }"#).unwrap();
-    let compiled=Command::new("rustc").arg(&helper).arg("-o").arg(bin.join(format!("curl{}",std::env::consts::EXE_SUFFIX))).output().unwrap();
+    let compiled=Command::new("rustc").arg(&helper).arg("-o").arg(bin.join(format!("curl{}",std::env::consts::EXE_SUFFIX))).bounded();
     assert!(compiled.status.success(),"{}",String::from_utf8_lossy(&compiled.stderr));
     let version=env!("CARGO_PKG_VERSION");let target=coreq::update::target();
     let name=format!("taskq-{version}-{target}{}",std::env::consts::EXE_SUFFIX);
@@ -446,7 +447,7 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
     let path=std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))).unwrap();
     let update=||Command::new(&updater).arg("update").current_dir(&root)
         .env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install).env("TASKQ_FIXTURE_ASSETS",&assets).env("PATH",&path)
-        .env("TASKQ_INCIDENT_REPORTS","off").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").output().unwrap();
+        .env("TASKQ_INCIDENT_REPORTS","off").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").bounded();
     fs::write(assets.join("SHA256SUMS"),format!("{}  {name}\n","0".repeat(64))).unwrap();
     let rejected=update();
     assert!(assets.join("SHA256SUMS.served").is_file()&&assets.join(format!("{name}.served")).is_file(),
@@ -467,6 +468,8 @@ fn incompatible_running_writer_hands_over_selftest_and_receipts() {
     drop(owner.0.stdin.take());assert!(owner.0.wait().unwrap().success());
     // Shared export must retain the actual command receipts; no side store may bypass its bound.
     assert!(coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3")).unwrap()
-        .export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().any(|r|r["observation"]["source"]=="command"));
+        .export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().any(|r|r["observation"]["source"]=="command"),
+        "no command receipt in the shared store; resume stderr:\n{}\ncli-errors.log:\n{}",String::from_utf8_lossy(&resumed.stderr),
+        fs::read_to_string(root.join(".taskq/cli-errors.log")).unwrap_or_default());
     fs::remove_dir_all(root).unwrap();
 }
