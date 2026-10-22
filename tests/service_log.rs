@@ -1,3 +1,4 @@
+use crate::Bounded;
 use std::process::Command;
 
 // Chain: § 4 service log lines on a failed start. Risk: a config error before the loop reaches the unit log unstamped
@@ -6,7 +7,7 @@ use std::process::Command;
 fn service_run_start_error_is_one_stamped_line() {
     let root = std::env::temp_dir().join(format!("q-log-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service", "run"]).env("TASKQ_ROOT", &root).env("TASKQ_INSTALL", root.join("install")).env_remove("COREQ_TELEMETRY_STORE_TRACE").current_dir(&root).output().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service", "run"]).env("TASKQ_ROOT", &root).env("TASKQ_INSTALL", root.join("install")).env_remove("COREQ_TELEMETRY_STORE_TRACE").current_dir(&root).bounded();
     let _ = std::fs::remove_dir_all(&root);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success());
