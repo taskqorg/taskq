@@ -1,6 +1,6 @@
 # Standalone agentq onboarding
 
-Design for #1184, extending [setup](setup-and-project-locations.md) and [menu](menu-product.md) MP7. The owner requested a yellow tray warning when agentq is absent, a cache-cost explanation and one OK to start an install session. These are product targets, not shipped behavior. The recommendations below await owner acceptance; this document grants no installation or runtime permission.
+Design for #1184, extending [setup](setup-and-project-locations.md) and [menu](menu-product.md) MP7. The owner requested a yellow tray warning when agentq is absent, a cache-cost explanation and one OK to start an install session. These are product targets, not shipped behavior. The owner accepted this design on 2026-10-20 (#1184); this document grants no installation or runtime permission.
 
 ## Choices
 
@@ -18,7 +18,7 @@ Codex-first is a proposed tie-break for this flow, not a change to task-worker r
 
 A host means the native OS/user installation serving this tray. Windows and WSL are separate; a WSL agentq cannot satisfy a native Windows tray. No recursive discovery, PATH scan across unrelated directories, board request, credential read or AI turn is needed for detection.
 
-The proposed host adapter reads only the known agentq launcher and `<agentq install>/status.json`, using agentq's service-status semantics: a status older than 90 seconds is unknown. A running claim also needs live process identity matching the service executable and reported PID; a PID alone is insufficient. Validate the status shape and version compatibility. Recheck on menu open, after setup completion and at the existing tray refresh cadence. Never spawn repeated service commands on each render.
+The host adapter reads only the known agentq launcher and `<agentq install>/status.json`, using agentq's service-status semantics: a status older than 90 seconds is unknown. A running claim also needs live process identity matching the service executable and reported PID; a PID alone is insufficient. Validate the status shape and version compatibility. Recheck on menu open, after setup completion and at the existing tray refresh cadence. Never spawn repeated service commands on each render.
 
 | State | Trigger and visible outcome |
 |---|---|
@@ -32,7 +32,7 @@ The proposed host adapter reads only the known agentq launcher and `<agentq inst
 
 Dismissal affects only the optional absence suggestion. It never hides another warning, a setup failure or unknown status. Removing the absence mark never clears task/host warnings. Use the existing warning composition and readable text, not color alone; preserve queue counters and emergency controls.
 
-Store dismissal and the setup request/session reference in host-owned tray preferences/history, not the board or project task state. The future R1/§4 amendment must name the storage and recovery semantics before implementation.
+Store dismissal and the setup request/session reference in host-owned tray preferences/history, not the board or project task state. `<install>/tray-agentq.json` stores schema 1, `dismissed`, `warning` and `request` (the setup request id). Unknown/corrupt preferences are preserved and shown as unknown. A verified running observation resets dismissal, warning and the request link; no preference or setup record is replayed. Unknown or stopped observations retain an already raised absence warning.
 
 ## Section and one-OK boundary
 
@@ -53,7 +53,7 @@ One OK authorizes the displayed effects and starts the session; it does not prom
 
 The dedicated setup adapter must work without a project service. Use the existing runtime discovery and visible session-link mechanisms, but not the tool-free R3 operator. Run from an owned setup directory with explicit installation and selected-client targets. No home/project search, project adoption, board token or queue mutation. Each OK opens a new session, like a new Claude or Codex chat; the owner archives finished ones. Runtime authentication and required access are checked before launch; no runtime/model/effort/permission changes are implied.
 
-The complete proposed brief follows. The adapter substitutes the five bracketed values from the exact approved request; these are data fields, not model-inferred defaults.
+The setup request prefixes the existing host PM brief with the following approved agentq scope. The adapter substitutes the five bracketed values from the exact approved request; these are data fields, not model-inferred defaults.
 
 ```text
 Set up agentq from https://github.com/taskqorg/agentq on this host.
@@ -125,7 +125,7 @@ Service-only decision (#1399): the setup session is a host service launch, not a
 
 - Scope (owner): with zero registered projects the session is a full PM chat, not a wizard. It can set up or create a project, show telemetry and show the service; agentq setup is one of its offers. Every external effect still needs § 6 confirmation and stays within the approved targets.
 - Storage (R1): each request is `<install>/setup/<id>.json`: `schema`, `id`, `created`, `host`, `platform`, `client`, `runtime`, `targets`, `brief`, `state`, `job`, `session`, `url`, `reason`, and `root` for a project session ([AI request or retro](ai-workspace.md#contract-detail)). The session runs in `root`, else `<install>/setup/<id>/`; that folder holds its input and log. No board, project or queue state is read or written.
-- Request: `taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]` needs no registered project and no board token. Each call writes a new `pending` request and pokes the host. Targets are absolute existing paths. The brief is fixed at request time from the template in `src/setup.rs`, the agentq brief above inside the PM chat scope. No model, effort or permission field exists: launch resolves § 8 Access with host.json `permission_mode`.
+- Request: `taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]` needs no registered project and no board token. Each call writes a new `pending` request and pokes the host. CLI targets are absolute existing paths. Agentq OK uses only the exact standard native agentq install (which may not exist yet) and selected client configuration root; it creates neither while recording the request. The brief is fixed at request time from the template in `src/setup.rs`, the agentq brief above inside the PM chat scope. No model, effort or permission field exists: launch resolves § 8 Access with host.json `permission_mode`.
 - Runtime: `claude` (default) opens a Claude background session with Remote Control, which gives the visible session link. `codex` (#1522) opens a thread in the Codex app on native macOS and Windows: a `codex exec --json --skip-git-repo-check` handshake turn in the session folder (no repository; the flag trusts nothing) creates the thread, then the host opens `codex://threads/<id>` and queues the brief-file instruction with `codex queue`, the § 8 `codex-app` mechanism. `codex` is refused at request time on other platforms; other runtimes are refused until a visible adapter is qualified for them. The default client follows the runtime: `Claude Code` or `Codex`.
 - Launch: only `service run` launches, oldest `pending` request first, each once. The host writes `launching` before the native call, then `launched` with the native job, `interrupted` with the reason when the outcome is unknown, or `failed` on a confirmed no-start.
 - Capacity (owner): a setup session is opened for the human, so it takes no § 3 grant. Runtime limits, `admission.max`, the load gate and launch spacing count only queue workers and reviewers; Claude capacity 0 does not hold setup. The emergency hold and a pending Stop or restart do not hold it either (owner): a session a person opens starts at once.
@@ -134,3 +134,20 @@ Service-only decision (#1399): the setup session is a host service launch, not a
 - Tray (#1400): the tray reads the newest request only and shows one setup row: `starting`, `launched`, `runtime`, `login`, `access`, `failed` or `interrupted`, with the reason and the owner's next step. `Open session` opens the recorded Remote Control link or `codex://threads/<id>` thread, where the owner reads output and answers; the tray never relays text itself.
 - Recovery: a service start that finds `launching` writes `interrupted`. No request relaunches; a new `service setup` opens a new session.
 - Exit: `launched` means only that the session started. agentq running and verified integration need independent readback (#1391).
+
+### Detection compatibility and evidence fixtures (#1391)
+
+The known install is `$HOME/.local/share/agentq` on macOS and `%LOCALAPPDATA%/agentq` on native Windows; WSL and environment overrides are not discovered. Read only its launcher (`agentq` or `agentq.exe`) and status (at most 1 MiB). Agentq 0.5–0.9 common status fields (`project: host`, `version`, `at`, `pid`) are supported; other shapes/versions are unknown. Both file age and `at` must be within 90 s, with no future timestamp. Native creation identity is read before and after the executable path; only the exact `releases/<version>/agentq[.exe]` path counts as running. A fresh valid status whose recorded process is confirmed absent, with the launcher present, is stopped; stale/missing status never proves stopped.
+
+Detection runs at the tray's 2 s cadence off the UI thread. A cached readback older than 5 s is unknown, and running expires at the source status's 90 s deadline even before then; a slow runtime probe cannot extend service evidence. Runtime/login discovery reuses the existing probe at most every 5 min; the setup host independently checks access before launch. Codex is eligible only with the existing codex-app grant. No eligible runtime leaves OK disabled and the official install phrase visible. The selected runtime/client and exact targets are shown before OK. Each explicit OK is a new request (owner #1426); transport retries reuse that click's id and never launch twice. The preference's request id refers to the existing setup record; after restart its unknown or interrupted state remains visible without retry.
+
+Snapshot-only routes use embedded invented fixtures, never a live agentq install, runtime probe or setup session. Run one command per state on either platform (replace `taskq` with the exact candidate binary):
+
+```sh
+taskq tray --snapshot shots/shown --route agentq-shown
+taskq tray --snapshot shots/setting-up --route agentq-setting-up
+taskq tray --snapshot shots/running --route agentq-running
+taskq tray --snapshot shots/unknown --route agentq-unknown
+```
+
+These commands render the same fixture states on macOS WKWebView and Windows WebView2. Fixture pictures prove presentation, not live Agentq liveness or installation. A5 retains native captures on both platforms; the PM captures DESKTOP at the PR head SHA and attaches them before acceptance.

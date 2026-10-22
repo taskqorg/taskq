@@ -1,0 +1,11 @@
+{
+  "base": {
+    "host": "fixture-native-host", "platform": "native fixture", "dismissed": false, "warning": true,
+    "targets": {"codex": ["<native agentq install>", "<native Codex configuration>"], "claude": ["<native agentq install>", "<native Claude configuration>"]},
+    "runtimes": [{"runtime": "codex", "client": "Codex", "eligible": true}, {"runtime": "claude", "client": "Claude Code", "eligible": true}]
+  },
+  "agentq-shown": {"kind": "shown"},
+  "agentq-setting-up": {"kind": "setting-up", "setup": {"kind": "launched", "url": "codex://threads/invented-fixture", "next": "Open the session to read and answer"}},
+  "agentq-running": {"kind": "running", "version": "0.9.0", "warning": false},
+  "agentq-unknown": {"kind": "unknown", "reason": "agentq status is stale (over 90 s); the last confirmed absence warning remains"}
+}

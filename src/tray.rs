@@ -816,6 +816,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     if let Some(r) = routes.iter().find(|r| r.as_str() != "icon" && !ROUTES.contains(&r.as_str())) {
         return Err(format!("unknown route {r}; known: icon, {}", ROUTES.join(", ")));
     }
+    if snapshot.is_none(){crate::agentq::start(&install);}
+    let agentq_shots=snapshot.is_some() && routes.iter().any(|r|r.starts_with("agentq-"));
     let mut settings = Settings::load(&install);
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
@@ -894,6 +896,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut step = 0usize;
     // snapshot pages wider than their window (#1073): `tray --snapshot` fails naming them
     let mut overflow: Vec<String> = Vec::new();
+    let mut capture_errors:Vec<String>=Vec::new();
     let mut adding = Value::Null;
     let mut add_generation=0u64;
     let mut moved = false;
@@ -946,7 +949,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // a snapshot renders off the visible screen (taskq.md R12)
-                let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(-20000.0, -20000.0)).with_always_on_top(false).with_focused(false) } else { b };
+                let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots{40.0}else{-20000.0}, if agentq_shots{40.0}else{-20000.0})).with_always_on_top(false).with_focused(false) } else { b };
                 #[cfg(windows)]
                 let b = tao::platform::windows::WindowBuilderExtWindows::with_skip_taskbar(b, !settings.pin.pinned);
                 let p = proxy.clone();
@@ -1161,7 +1164,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     ($value:expr) => {{
                         let value=$value;
                         push(&mut web,&ui,value);
-                        if (value["projects"].is_array() || ["capmsg","focus_receipt","action_error","resources_receipt","aiError","answerReceipt"].iter().any(|key|value.get(*key).is_some())) && let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
+                        if (value["projects"].is_array() || ["capmsg","focus_receipt","action_error","resources_receipt","aiError","agentqError","answerReceipt"].iter().any(|key|value.get(*key).is_some())) && let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
                     }};
                 }
                 match m["a"].as_str().unwrap_or("") {
@@ -1313,6 +1316,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         reply!(&state(&install, &settings, dark, None, &adding));
                         if let Err(error)=add_actions.submit(generation,None) {adding=json!({"state":"add failed","reason":error});reply!(&state(&install,&settings,dark,None,&adding));}
                     }
+                    "agentq-setup" | "agentq-dismiss" if snapshot.is_none() => {
+                        let error=crate::agentq::action(&install,m["a"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or(""),m["runtime"].as_str().unwrap_or("")).err();
+                        reply!(&json!({"agentqError":error}));
+                        reply!(&state(&install,&settings,dark,None,&adding));
+                    }
+                    "agentq-check" => {reply!(&state(&install,&settings,dark,None,&adding));}
                     "add-cancel" if adding["state"]=="picking" => {
                         add_generation=add_generation.wrapping_add(1);
                         adding = json!({"state":"picking dismissed","generation":add_generation});
@@ -1371,6 +1380,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if step == 0 {
                     let _ = fs::create_dir_all(&dir);
                 }
+                if step==0 && agentq_shots {
+                    let warning=routes.iter().find_map(|r|agentq_fixture(r)).is_some_and(|f|f["warning"]==true);
+                    let empty=summary(&[],day(now()));
+                    for (name,c) in [("icon",None),("summary",Some(icon::summary())),("custom",Some(icon::summary()))] {
+                        let image=c.and_then(|c|draw(&c,&empty,true,1.0,2.0).ok()).unwrap_or_else(||compact(false,true,2.0));
+                        fs::write(dir.join(format!("agentq-{name}.png")),agentq_mark(image,warning).png()).expect("write fixture icon");
+                    }
+                }
                 if step == 0 && (routes.is_empty() || routes.iter().any(|r| r == "icon")) {
                     let ps: Vec<Value> = roots(&install).iter().map(|r| project(&install, r)).collect();
                     let s = summary(&ps, day(now()));
@@ -1403,6 +1420,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         eprintln!("horizontal overflow: {}", overflow.join(", "));
                         std::process::exit(1);
                     }
+                    if !capture_errors.is_empty(){eprintln!("native capture unavailable: {}",capture_errors.join("; "));std::process::exit(1);}
                     *flow = ControlFlow::Exit;
                     return;
                 };
@@ -1419,7 +1437,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 });
             }
             Event::UserEvent(Ev::Shot2) => {
-                let Some((_, wv)) = &ui else { return };
+                let Some((window, wv)) = &ui else { return };
                 let dir = snapshot.clone().unwrap_or_default();
                 let p = proxy.clone();
                 let name = format!("popover-{}.png", shot_name(&install, &routes, step));
@@ -1427,6 +1445,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     shot_wait=Some(Ev::Shot2);return;
                 }
                 web_eval(wv,&format!("taskq.measure({})",json!(&name)),"tray.web.measure",&proxy,&mut web);
+                #[cfg(target_os="macos")]
+                if agentq_shots && let Err(error)=capture_screen(window,&dir.join(format!("screen-{name}"))){capture_errors.push(format!("{name}: {error}"));}
                 step += 1;
                 capture(wv, dir.join(name), move || {
                     let _ = p.send_event(Ev::Shot);
@@ -1475,7 +1495,7 @@ const ANSWERS: [(&str, &str); 4] = [
     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
 ];
-const ROUTES: [&str; 16] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery"];
+const ROUTES: [&str; 20] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1486,6 +1506,7 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
         for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "attention".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
         for route in &ROUTES[5..] {
+            if route.starts_with("agentq-") && !routes.iter().any(|r|r==route){continue;}
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
@@ -1507,17 +1528,18 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
 fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value) -> Value {
     let ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
     let messages=crate::messages::snapshot(install,&ps);
+    let onboarding=snap.and_then(|(_,route)|agentq_fixture(route)).unwrap_or_else(crate::agentq::snapshot);
     let (start, end) = s.range(now());
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
-        "messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
+        "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
         "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     if cfg!(target_os = "macos") {
         let day = summary(&ps, day(now()));
-        st["icons"] = json!({"icon": url(&compact(sum.run, dark, 2.0)), "full": draw(&icon::summary(), &day, dark, 1.0, 2.0).map_or(Value::Null, |i| json!(url(&i)))});
+        st["icons"] = json!({"icon": url(&agentq_mark(compact(sum.run, dark, 2.0),st["agentq"]["warning"]==true)), "full": draw(&icon::summary(), &day, dark, 1.0, 2.0).map_or(Value::Null, |i| json!(url(&agentq_mark(i,st["agentq"]["warning"]==true))))});
     }
     if let Some((theme, page)) = snap {
         st["theme"] = json!(theme);
@@ -1574,6 +1596,39 @@ fn rolling(now: i64, period: i64) -> (i64, i64) {
     (end - period, end)
 }
 
+/// One yellow mark composed after the existing icon, preserving its counters and other warnings.
+fn agentq_mark(image:Rgba,warning:bool)->Rgba {
+    if !warning{return image;}
+    let s=image.s;let gap=(6.0*s).ceil() as u32;let mut marked=Rgba::new(image.w+gap,image.h,s);
+    for y in 0..image.h as usize {
+        let from=y*image.w as usize*4;let to=y*marked.w as usize*4;
+        marked.px[to..to+image.w as usize*4].copy_from_slice(&image.px[from..from+image.w as usize*4]);
+    }
+    let cx=image.w as f32/s+3.0;let cy=3.0;
+    marked.fill([238,184,40,255],|x,y|(x-cx).powi(2)+(y-cy).powi(2)<=2.7f32.powi(2));
+    marked.fill([32,30,20,255],|x,y|(x-cx).abs()<0.4 && ((y-cy>=-1.6&&y-cy<=0.4)||(y-cy>=1.0&&y-cy<=1.7)));
+    marked
+}
+fn agentq_fixture(route:&str)->Option<Value> {
+    let fixtures:Value=serde_json::from_str(include_str!("../tests/fixtures/agentq-onboarding.json")).expect("invented agentq fixtures");
+    let patch=fixtures.get(route)?;let mut value=fixtures["base"].clone();
+    for (key,value_patch) in patch.as_object()?{value[key]=value_patch.clone();} Some(value)
+}
+
+#[cfg(target_os="macos")]
+fn capture_screen(window:&Window,path:&Path)->Result<(),String> {
+    use tao::platform::macos::WindowExtMacOS;
+    #[link(name="CoreGraphics",kind="framework")]
+    unsafe extern "C" {fn CGPreflightScreenCaptureAccess()->bool;}
+    // SAFETY: preflight never prompts; ns_window is this live window on its UI thread.
+    let id:isize=unsafe {
+        if !CGPreflightScreenCaptureAccess(){return Err("Screen Recording not allowed (TCC); no prompt requested".into());}
+        objc2::msg_send![window.ns_window() as *mut objc2::runtime::AnyObject, windowNumber]
+    };
+    crate::platform::output("tray.agentq-screencapture",std::process::Command::new("/usr/sbin/screencapture").args(["-x","-o","-l",&id.to_string()]).arg(path),Duration::from_secs(5)).map_err(|e|e.to_string())?;
+    if !fs::read(path).is_ok_and(|b|b.starts_with(b"\x89PNG\r\n\x1a\n")){return Err("screencapture wrote no PNG".into());} Ok(())
+}
+
 /// Configuration `c` over `s` at `k` × 22 pt and `dpr` pixels per point through the shared renderer.
 fn draw(c: &Value, s: &Summary, dark: bool, k: f32, dpr: f32) -> Result<Rgba, Vec<String>> {
     let d = icon::Data { blocked: s.known.then_some(s.blocked), counts: s.counts.map(|n| s.known.then_some(n)), bins: s.bins.clone(), paused: !s.run };
@@ -1591,18 +1646,18 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
         _ => None,
     };
     let (k, dpr) = if config.is_some() { (menu_bar_scale(), backing_scale()) } else { (1.0, 2.0) };
-    let new = format!("{config:?} {dark} {k} {dpr} {} {} {:?} {:?}", sum.run, sum.known, (sum.counts, sum.blocked), if config.is_some() { sum.bins.clone() } else { vec![] });
+    let new = format!("{} {config:?} {dark} {k} {dpr} {} {} {:?} {:?}", st["agentq"]["warning"], sum.run, sum.known, (sum.counts, sum.blocked), if config.is_some() { sum.bins.clone() } else { vec![] });
     if *sig == new {
         return;
     }
     let applied = crate::profile::measure("tray.render", || {
         let rendered = config.as_ref().map(|c| draw(c, &sum, dark, k, dpr));
         let failed = rendered.as_ref().is_some_and(Result::is_err);
-        let img = rendered.and_then(Result::ok).unwrap_or_else(|| compact(sum.run, dark, k * dpr));
+        let img = agentq_mark(rendered.and_then(Result::ok).unwrap_or_else(|| compact(sum.run, dark, k * dpr)),st["agentq"]["warning"]==true);
         let applied = t.set_icon(Some(rgba_icon(&img)));
         // Same configuration, state and fallback as the tray, rendered at native app-icon resolution.
-        let app = config.as_ref().and_then(|c| draw(c, &sum, dark, 1.0, 256.0/22.0).ok())
-            .unwrap_or_else(|| compact(sum.run, dark, 256.0/22.0));
+        let app = agentq_mark(config.as_ref().and_then(|c| draw(c, &sum, dark, 1.0, 256.0/22.0).ok())
+            .unwrap_or_else(|| compact(sum.run, dark, 256.0/22.0)),st["agentq"]["warning"]==true);
         refresh_app_icon(&app, window)?;
         if k > 1.0 { fit_status_image(k); }
         if failed { Err("invalid icon render".to_string()) } else { applied.map_err(|e| e.to_string()) }
@@ -1610,7 +1665,7 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
     match applied { Ok(()) => *sig = new, Err(e) => eprintln!("taskq app icon: {e}") }
     let [w, a, r, _] = sum.counts;
     let counts = if sum.known { format!("in work {w} · waiting for answer {a} · ready + blocked {}",r + sum.blocked) } else { "counts unknown (service error or stale status)".into() };
-    let _ = t.set_tooltip(Some(format!("taskq: {counts}{}", if sum.run { "" } else { " · paused" })));
+    let _ = t.set_tooltip(Some(format!("taskq: {counts}{}{}", if sum.run { "" } else { " · paused" },if st["agentq"]["warning"]==true{" · agentq is not installed (last confirmed absence; check Agents)"}else{""})));
 }
 
 fn window_icon(img: &Rgba) -> tao::window::Icon {
@@ -1644,7 +1699,7 @@ fn app_window(pinned: bool) {
 }
 
 fn workspace_operation(action:&str)->bool {
-    matches!(action,"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
+    matches!(action,"agentq-setup"|"agentq-dismiss"|"agentq-check"|"capacity"|"restart"|"stop"|"uninstall"|"recovery-read"|"recovery-apply"|"pause"|"resume"|"focus"|"update"|"add"|"add-cancel"|"add-install"|"add-setup"|"resources"|"log"|"folder")
 }
 
 /// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
@@ -2098,6 +2153,18 @@ mod tests {
     use super::*;
 
     // A1/C1: `|_|false` blocked the inline page itself and left the window blank.
+    // #1391 A2/A4: every icon style keeps all original counters/warnings; the absence mark clears independently.
+    #[test]
+    fn agentq_badge_preserves_icon_pixels_and_snapshot_states() {
+        let image=compact(true,true,2.0);let original=image.px.clone();let width=image.w;
+        assert_eq!(agentq_mark(compact(true,true,2.0),false).px,original);
+        let marked=agentq_mark(image,true);
+        for y in 0..marked.h as usize {assert_eq!(&marked.px[y*marked.w as usize*4..y*marked.w as usize*4+width as usize*4],&original[y*width as usize*4..(y+1)*width as usize*4]);}
+        for (route,kind,warning) in [("agentq-shown","shown",true),("agentq-setting-up","setting-up",true),("agentq-running","running",false),("agentq-unknown","unknown",true)] {
+            let f=agentq_fixture(route).unwrap();assert_eq!(f["kind"],kind);assert_eq!(f["warning"],warning);
+        }
+    }
+
     #[test]
     fn own_page_loads_inline_html_only() {
         assert!(own_page("about:blank".into()));
@@ -2349,8 +2416,10 @@ mod tests {
         assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")).count() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert!(all.iter().all(|name|!name.contains("agentq-")),"invented agentq evidence is opt-in only");
         for route in ROUTES {
+            if route.starts_with("agentq-"){assert_eq!(names(&[route]).len(),4,"one state, both themes and sizes");}
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
         }
         fs::remove_dir_all(&install).ok();
