@@ -56,7 +56,10 @@ fn with<T>(install:&Path,f:impl FnOnce(&mut State)->Res<T>)->Res<T> {
         serde_json::from_str(&text).map_err(|_|"PM storage corrupt; kept")?
     }else{State::default()};
     let valid_hash=|v:&str|v.len()==64&&v.bytes().all(|c|c.is_ascii_digit()||(b'a'..=b'f').contains(&c));
-    if s.grants.len()>64||s.ops.len()>4096||s.ops.iter().any(|(key,o)|!valid_hash(key)||o.request_id!=*key||!valid_hash(&o.hash)
+    if s.grants.len()>64||s.ops.len()>4096
+        ||s.grants.iter().any(|(id,g)|![id,&g.actor_id,&g.installation_id].iter().all(|id|resources::id(id))||g.generation==0
+            ||g.projects.iter().any(|id|!resources::id(id))||g.runtimes.iter().any(|r|!crate::runtime::setup_runtimes().any(|rt|rt==r)||!crate::runtime::of(r).remote))
+        ||s.ops.iter().any(|(key,o)|!valid_hash(key)||o.request_id!=*key||!valid_hash(&o.hash)
         ||[&o.actor_id,&o.op_id,&o.revision,&o.grant_id,&o.installation_id,&o.project_id,&o.runtime_id].iter().any(|id|!resources::id(id))) {
         return Err("PM storage identity invalid; kept".into());
     }
@@ -324,6 +327,8 @@ mod tests {
         setup::open(&t.install,&t.root,"local request after corrupt PM metadata").unwrap();setup::step(&t.install,never).unwrap();
         assert_eq!(setup::all(&t.install).unwrap().0[0].state,"interrupted");setup::step(&t.install,native).unwrap();
         assert_eq!(setup::all(&t.install).unwrap().0[1].state,"launched");
+        let t=Fixture::new();with(&t.install,|s|{s.grants.get_mut("invented-grant").unwrap().actor_id="invented private content".into();save(&t.install,s)}).unwrap();
+        let posted=dash.posts.len();assert!(exchange(&t.install,&t.active,&mut dash,t.now).is_err());assert_eq!(dash.posts.len(),posted,"corrupt grant text must never enter exchange metadata");
     }
     // R12: interrupted durable prepares cannot authorize launch from older metadata or block unrelated local work.
     #[test]
