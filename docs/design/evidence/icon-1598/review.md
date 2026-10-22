@@ -38,6 +38,15 @@ Checked visually: six separated columns; equal quantities have equal heights; ze
 
 Recreate canonical fixtures with `TASKQ_ICON_EVIDENCE=tests/fixtures/icon-history cargo +stable test --locked --bin taskq tray::tests::approved_real_history_fixtures_use_one_six_bin_svg`. Normal tests compare the saved bins, peak, palette and chart groups against the current renderer. Then run `npm run build`, compile `tests/fixtures/icon-history/capture.swift` with `swiftc`, and pass the repository root and a new output directory to that instrument. Passing size-matrix PNGs are not committed as extra review screens.
 
-The accepted images remain unchanged after rebasing onto `dd8dcf3b`; renderer, tray, web sources and bundled-page hashes are identical. The `src/main.rs` source pin now includes upstream lifecycle changes outside the rendering path. The original README capture receipt remains tied to its captured source commit.
+## Rebased candidate
+
+Candidate `37baf9d13f179192b221a3246c1f230ecbbe2216` rebases onto `a98c0a245bfc1d060f2294aff940c7d1fef00192`. Before: rebase conflicted in `src/tray.rs` and README capture inputs; `docs/shots/check.sh` then returned 2 for stale/missing source pins. After: Conversations state and its capture sources remain alongside the six-bin renderer; the obsolete Custom configuration stays removed. No assertion or permission guard was weakened (R8/R12, § 7).
+
+- `RUSTUP_TOOLCHAIN=stable sh docs/shots/update.sh` regenerated the README captures and source manifest from this candidate; `sh docs/shots/check.sh` now returns 0. Visual inspection found the project controls, counters and six-bin icon visible without clipping. The earlier before/after sheet and its manifest remain historical capture evidence.
+- The native WebKit instrument captured all eight frozen views again. All six retained native PNGs are byte-identical to the accepted images. Light day/hour History, dark incomplete History and dark picker were visually inspected. The current tray bundle SHA-256 is `f8e50b2763c780ee38ac97b39596b845cf2f5497621e82f59ef4e4541b574578`; the original manifest pins the earlier accepted capture.
+- `python3 scripts/check.py --base a98c0a245bfc1d060f2294aff940c7d1fef00192`: **sandbox-blocked**, not PASS; Rust 478 passed, 17 host-authority failures, 31 ignored; 206.226 s / 900 s. Integration and later gate stages were not reached. Icon, frozen-fixture, settings, removed-flag, macOS packaging and Conversations checks passed within that run. Host install/policy/Stop guards remain intact.
+- Separate runs passed all `tests/*.test.cjs`, `docs/shots/check.test.sh`, and the History, shell-navigation and workspace-operations browser instruments. Isolated offline selftest passed 97 golden traces and formats, committed 9 staged observations and intentionally left board reads unknown. Native service effects were not exercised.
+
+The delivered commit also records these receipts and the regenerated assets; rendering sources remain those of the checked candidate. Publication still requires green `merge_group` CI (R12, § 7).
 
 Open under R12: Windows native appearance/slot qualification; real OS menu-bar translucency/notch placement and Dock presentation. Source/native WebKit/export evidence does not qualify those shell effects. No installation, service, queue or runtime-policy change was made by this task.

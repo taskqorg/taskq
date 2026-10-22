@@ -1,14 +1,14 @@
 {
-  "version": "4.6.30",
-  "sourceCommit": "66237b3f2f404a6804e97030384f9b376a760b35",
-  "binarySha256": "05474c7f3d872772bf96ac899a58872cb05d63ce361ee9750953fe67899c9f18",
+  "version": "4.6.31",
+  "sourceCommit": "37baf9d13f179192b221a3246c1f230ecbbe2216",
+  "binarySha256": "005303a8e8d0c5b9348d926b9aedd69153f379e8fcaa359fb5592a93bb26397b",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "ba75923dae192e8a1a7c63ee6d0e19d8f96d1b00",
+    "src/tray.rs": "4991e2d9c77b07a817fcc4d3b0592691348d3a64",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
     "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
@@ -21,14 +21,18 @@
     "src/task-views.js": "cf8dc17d504e67d0317f875ca8e9ad436236064c",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "fbd352c056366bc454a8998000ac51c2e136ceea",
-    "src/ui-icons.json": "47d956d146dc84f21e3009c8bbde80064f230c7e",
+    "src/ui-icons.json": "fe01b24d446fff96e8e756ed87d55780502d17a1",
     "src/project-blocks.js": "829308d8a88e93af21fadd1982cf87d2e5a24401",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
-    "src/workspace.js": "4c4b40a1b1086d1d293b52510f2558ab89f855f7",
+    "src/conversations.rs": "7781a5ebaf3f9e60e46eb64f7063b6945e030ba2",
+    "src/conversations.js": "9d66985b9789bce23d5be51722dd245b403a7314",
+    "src/conversations.css": "1c6118f384b68ab1a98523c1b86ca9a6956ef2af",
+    "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
+    "src/workspace.js": "814d07e9aff5e02521cca249501f473553e2cdbe",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
-    "scripts/build-web.cjs": "4cda0aabf65ac6ed4263e9a3b9f35555183c705e",
+    "scripts/build-web.cjs": "3bbab0311b0abef5f9a7b5dd4ce55a2cb03dbde5",
     "src/icon.rs": "46395f38dcca4c8e46a35f6677ed4b70d4af732b"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
@@ -39,11 +43,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "723b8ecfdcf7019750b506455c819d6cf1384cb5bf78fe4a72458e0ae1ad8026"
+      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "0b32c303e206a01b4812f55c7357208b15f981e8c9a535924dca6cb8f5383bc7"
+      "sha256": "c37b22f427dbbe3305b93944838883b589a032ed6ef10be402c1bfaaba28078d"
     }
   ]
 }
