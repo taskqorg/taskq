@@ -291,6 +291,7 @@ history:function(){
       const segments=b.map(count=>{const low=Math.round(height*total/Math.max(1,peak));total+=count;return Math.round(height*total/Math.max(1,peak))-low;});
       return h('button',{'data-history-bin':i,'aria-label':detail(i),'aria-pressed':String(i===selected),title:detail(i),class:u?'unknown':'',style:'width:'+bar/dpr+'px'},[3,2,1,0].map(k=>h('i',{class:'k'+k,style:'height:'+(u?0:segments[k]/dpr)+'px'})));})),
     h('div',{class:'body meta'},'0 events · oldest → newest'),
+    n>0&&h('select',{'aria-label':'History interval','data-history-select':'',value:String(selected)},rows.map((_,i)=>h('option',{value:String(i)},'Bar '+(i+1)+' of '+n))),
     h('div',{class:'body meta history-detail',role:'status'},n?'Bar '+(selected+1)+' of '+n+' · '+detail(selected):'Graph unavailable: less than 4 physical px.'),
     h('div',{class:'body meta'},'Ask counts events, not current questions.'),note&&h('div',{class:'body meta'},note));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
@@ -666,7 +667,7 @@ const z=t(view.draft.end);
     present();return;}
   if(api.operationAction(d))return;
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label,value:d.value});}present();});
-ui.listen(menu,'input',e=>{api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'input',e=>{if(e.target.matches('[data-history-select]')){view.historyBar=Number(e.target.value);present();return;}api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'pointerdown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))view.headerDrag={x:e.screenX,y:e.screenY};});
 ui.listen(window,'pointermove',e=>{const start=view.headerDrag;if(start&&Math.hypot(e.screenX-start.x,e.screenY-start.y)>=4){view.headerDrag=null;send({a:'drag'});}});

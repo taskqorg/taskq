@@ -77,7 +77,11 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
    for(const route of ['home','projects',project.root,'attention','settings','appearance','window','tray-icon','delivery','cadence','notifications','agents','services','about','stop','recovery']){
     await p.evaluate(s=>taskq.receive(s),{...snapshot,page:route});
     assert.equal(await p.locator('h1').count(),1);assert.equal(await p.locator('.head h1').count(),1,route+' has a single fixed title');
-    const small=await p.evaluate(min=>[...document.querySelectorAll('button,a,summary,input,select,textarea,[role=button]')].filter(e=>!e.disabled&&e.checkVisibility()).map(e=>({label:e.getAttribute('aria-label')||e.innerText||e.labels?.[0]?.innerText||e.id,rect:(e.matches('input[type=checkbox]')&&e.labels?.[0]?e.labels[0]:e).getBoundingClientRect()})).filter(e=>e.rect.width<min-.1||e.rect.height<min-.1).map(e=>({label:e.label,width:e.rect.width,height:e.rect.height})),hasTouch?44:32);
+    const small=await p.evaluate(min=>{
+     // UI06: tiny quantitative bars have an equivalent full-sized interval selector.
+     const selector=document.querySelector('[data-history-select]'),r=selector?.getBoundingClientRect(),equivalent=selector?.checkVisibility()&&!selector.disabled&&r.width>=min&&r.height>=min&&selector.options.length===document.querySelectorAll('.bars button').length;
+     return [...document.querySelectorAll('button,a,summary,input,select,textarea,[role=button]')].filter(e=>!e.disabled&&e.checkVisibility()&&!(equivalent&&e.matches('.bars button'))).map(e=>({label:e.getAttribute('aria-label')||e.innerText||e.labels?.[0]?.innerText||e.id,rect:(e.matches('input[type=checkbox]')&&e.labels?.[0]?e.labels[0]:e).getBoundingClientRect()})).filter(e=>e.rect.width<min-.1||e.rect.height<min-.1).map(e=>({label:e.label,width:e.rect.width,height:e.rect.height}));
+    },hasTouch?44:32);
     await p.keyboard.press('Tab');
     const controls=await p.evaluate(()=>{
      const elements=[...document.querySelectorAll('button,a,summary,input,select,textarea,[role=button]')].filter(e=>!e.disabled&&e.checkVisibility()),unnamed=[],focus=[],overlaps=[];

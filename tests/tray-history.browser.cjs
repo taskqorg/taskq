@@ -21,6 +21,10 @@ const base={page:'cadence',font:16,size:[320,700],size_anchor:'fixed',theme:'dar
     bins.forEach((row,i)=>{let total=0;row.forEach((count,k)=>{const low=Math.round(64*dpr*total/peak);total+=count;assert(Math.abs(segments[i][k]-(Math.round(64*dpr*total/peak)-low))<.01);});});
     const last=page.locator('.bars button').last();await last.focus();await last.press('Enter');
     const detail=await page.locator('.history-detail').innerText();for(const s of ['closed 12','failed 2','ask 3','waiting 1'])assert(detail.includes(s),detail);assert(detail.includes('[Start:')&&detail.includes('End:'));
+    const selector=page.getByRole('combobox',{name:'History interval'});assert.equal(await selector.locator('option').count(),12);assert.equal(await selector.inputValue(),'11');
+    await selector.selectOption('0');assert.match(await page.locator('.history-detail').innerText(),/Bar 1 of 12/);
+    await selector.focus();assert(await selector.evaluate(e=>e===document.activeElement));await selector.selectOption('1');assert.match(await page.locator('.history-detail').innerText(),/Bar 2 of 12/);
+    assert.equal(await page.locator('.bars button[aria-pressed=true]').getAttribute('data-history-bin'),'1','full-sized equivalent keeps the exact bar selection');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
    }
    // Resize and theme changes retain integer geometry; unknown history never claims zero.
