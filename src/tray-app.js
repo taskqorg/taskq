@@ -301,7 +301,7 @@ about:function(){
 setup:function(){
   const s=view.S.setup;if(!s)return '';
   if(!ports.workspace)return f(h('div',{class:'body meta'},'Setup · '+(s.kind||'unknown')),api.operationLauncher('setup',null,'Review setup status…'));
-  const link=s.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(s.url)&&[' ',h('a',{href:'#','data-url':s.url},'Open session')];
+  const link=s.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(s.url)&&[' ',h('a',{href:'#','data-url':s.url},'Open session')];
   return h('div',{class:'group'},h('div',{class:'row'},'Setup · '+s.kind,link),s.reason&&h('div',{class:'body meta'},s.reason),h('div',{class:'body'},s.next||'Setup state unknown; run `taskq service setup`'));
 },
 attention:function(){

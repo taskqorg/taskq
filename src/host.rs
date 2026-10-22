@@ -901,8 +901,8 @@ pub fn run(install: &Path) -> Res<()> {
             }
         }
         {let mut h=shared.lock().unwrap_or_else(|e|e.into_inner());if roots.is_empty()&&h.busy.is_empty()&&h.held.is_none() {h.rebuilding=false;}}
-        // § 4 setup sessions: only this loop launches them. ponytail: a launch blocks this pass up to 30 s; a thread if that matters.
-        if let Err(e)=crate::setup::step(install,crate::setup::claude_launch) {
+        // § 4 setup sessions: only this loop launches them. ponytail: a launch blocks this pass up to 30 s (Codex: 60 s); a thread if that matters.
+        if let Err(e)=crate::setup::step(install,crate::setup::launch) {
             if reported!=e {crate::platform::log(&e);reported=e;}
         }
         // Missing setup links: one native read per 10 s, not per pass.

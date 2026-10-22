@@ -1132,7 +1132,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|answer_actions.submit(&request));
                         if let Err(error)=result {let r=json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
                     }
-                    Some("open") => {if let Some(url)=m["url"].as_str().filter(|u|u.starts_with("https://")||u.starts_with("http://")){open(url);}}
+                    Some("open") => {if let Some(url)=m["url"].as_str().filter(|u|openable(u)){open(url);}}
                     Some(a) if matches!(a,"ai-send"|"ai-draft"|"ai-clear") => {
                         let result=ai(&install,a,&m);
                         let receipt=if a=="ai-send" {json!({"aiReceipt":{"id":m["id"],"state":if result.is_ok(){"accepted"}else{"unknown"},"reason":result.err().unwrap_or_else(||"Request saved; native launch is separate".into())}})}else{json!({"workspaceLocalError":result.err()})};
@@ -1266,7 +1266,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if let Err(error)=resources_actions.submit(&request) {reply!(&json!({"resources_receipt":{"state":"rejected","reason":error}}));}
                     }
                     "open" => {
-                        if let Some(u) = m["url"].as_str().filter(|u| u.starts_with("https://") || u.starts_with("http://")) {
+                        if let Some(u) = m["url"].as_str().filter(|u| openable(u)) {
                             open(u);
                         }
                     }
@@ -1926,6 +1926,12 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
     if let Err(error)=crate::host::capacity_request(&request) {return Ok(json!({"state":"rejected","reason":error}));}
     let policy=crate::host::Policy::read(install)?;
     crate::host::local_capacity(install,&policy.me,&request)
+}
+
+/// Web links and Codex app threads (setup sessions, #1522); the id reaches a shell on Windows, so only a plain id.
+fn openable(u: &str) -> bool {
+    u.starts_with("https://") || u.starts_with("http://")
+        || u.strip_prefix("codex://threads/").is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
 }
 
 fn open(arg: &str) {
