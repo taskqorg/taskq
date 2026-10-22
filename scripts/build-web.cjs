@@ -15,7 +15,7 @@ for(const [name,globalName] of Object.entries(components))esbuild.buildSync({ent
 for(const name of ['tray-guard','tray-entry','workspace-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
 let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8');
 for(const name of ['answer-card','project-blocks','resource-controls'])html=html.replace('{{'+name.toUpperCase().replaceAll('-','_')+'_CSS}}',fs.readFileSync(path.join(root,'src',name+'.css'),'utf8'));
-html=html.replace('</head>','<style>'+fs.readFileSync(path.join(root,'src/app-shell.css'),'utf8')+'</style></head>');
+html=html.replace('</head>','<style>'+fs.readFileSync(path.join(root,'src/app-shell.css'),'utf8')+fs.readFileSync(path.join(root,'src/task-dashboard.css'),'utf8')+'</style></head>');
 html=html.replace('{{GUARD_JS}}',fs.readFileSync(path.join(out,'tray-guard.js'),'utf8').replaceAll('</script','<\/script'));
 for(const name of ['tray','workspace']){
  const page=html.replace('{{APP_JS}}',fs.readFileSync(path.join(out,name+'-entry.js'),'utf8').replaceAll('</script','<\/script')).replace('class="menu" role="menu"','class="menu'+(name==='workspace'?' workspace':'')+'"');

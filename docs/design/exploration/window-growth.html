@@ -1,0 +1,86 @@
+<div id="tq-growth-controls" class="viz-controls" aria-label="Сравнение роста окна">
+  <span>Задач:</span>
+  <button class="btn" type="button" data-count="2" aria-pressed="false">2</button>
+  <button class="btn" type="button" data-count="4" aria-pressed="true">4</button>
+  <button class="btn" type="button" data-count="8" aria-pressed="false">8</button>
+</div>
+<div id="tq-growth-session" class="viz-dotted-background">
+  <div class="gw-comparison">
+    <section class="gw-example" data-mode="down" aria-label="Рост вниз">
+      <button class="gw-choice cursor-interaction" type="button" data-choice="down" aria-pressed="false"><i data-lucide="arrow-down" aria-hidden="true"></i>Растёт вниз</button>
+      <div class="gw-caption">Верхний край остаётся</div>
+      <div class="gw-stage"></div>
+    </section>
+    <section class="gw-example" data-mode="up" aria-label="Рост вверх">
+      <button class="gw-choice cursor-interaction" type="button" data-choice="up" aria-pressed="false"><i data-lucide="arrow-up" aria-hidden="true"></i>Растёт вверх</button>
+      <div class="gw-caption">Нижний край остаётся</div>
+      <div class="gw-stage"></div>
+    </section>
+    <section class="gw-example" data-mode="fixed" aria-label="Фиксированный размер">
+      <button class="gw-choice cursor-interaction" type="button" data-choice="fixed" aria-pressed="false"><i data-lucide="scan-line" aria-hidden="true"></i>Фиксированный размер</button>
+      <div class="gw-caption">Оба края остаются</div>
+      <div class="gw-stage"></div>
+    </section>
+  </div>
+  <div class="gw-selection" aria-live="polite">Режим пока не выбран</div>
+</div>
+<style>
+#tq-growth-session{--gw-bg:light-dark(#fafbfc,#252b32);--gw-fg:light-dark(#243039,#eef2f5);--gw-muted:light-dark(#59636e,#b9c3cd);--gw-edge:light-dark(#dce0e5,#46505b);--gw-selected:light-dark(#e9edf1,#37424c);--gw-work:light-dark(#246f59,#8dd2b8);--gw-shadow:light-dark(#2430391c,#00000044);font:400 16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--gw-fg);padding:12px 8px;container-type:inline-size}
+#tq-growth-session *{box-sizing:border-box}
+#tq-growth-session .gw-comparison{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;max-width:1024px;margin:auto}
+#tq-growth-session .gw-example{min-width:0}
+#tq-growth-session .gw-choice{display:flex;align-items:center;gap:6px;min-height:32px;padding:4px 6px;border:1px solid var(--gw-edge);border-radius:6px;background:var(--gw-bg);color:var(--gw-fg);font:inherit;text-align:left}
+#tq-growth-session .gw-choice[aria-pressed="true"]{background:var(--gw-selected)}
+#tq-growth-session .gw-caption{font-size:.85em;color:var(--gw-muted);margin:4px 0 0 6px}
+#tq-growth-session svg{width:16px;height:16px;stroke-width:1.7;flex:none;vertical-align:middle}
+#tq-growth-session .gw-stage{height:480px;position:relative}
+#tq-growth-session .gw-window{position:absolute;left:0;right:0;display:flex;flex-direction:column;min-height:0;border:1px solid var(--gw-edge);border-radius:12px;background:var(--gw-bg);box-shadow:0 6px 18px var(--gw-shadow);color:var(--gw-fg)}
+#tq-growth-session .gw-chrome{flex:none;padding:6px 8px 0}
+#tq-growth-session .gw-header{display:flex;align-items:center;gap:10px;min-height:32px;font-size:.85em}
+#tq-growth-session .gw-header>span:first-child{margin-right:auto}
+#tq-growth-session .gw-count{font-size:.85em;min-height:32px;padding:5px 4px;border-bottom:1px solid var(--gw-edge);font-variant-numeric:tabular-nums}
+#tq-growth-session .gw-body{overflow:auto;min-height:0;flex:1;padding:0 8px 4px;scrollbar-width:thin;border-radius:0 0 12px 12px}
+#tq-growth-session .gw-task{padding:5px 3px;border-bottom:1px solid var(--gw-edge)}
+#tq-growth-session .gw-meta{display:flex;align-items:center;gap:4px;min-height:22px;font-size:.85em;font-variant-numeric:tabular-nums}
+#tq-growth-session .gw-stage-age{margin-left:auto;display:flex;align-items:center;gap:4px;color:var(--gw-muted)}
+#tq-growth-session .gw-work{color:var(--gw-work)}
+#tq-growth-session .gw-title{overflow-wrap:anywhere}
+#tq-growth-session .gw-selection{max-width:1024px;margin:4px auto 0;font-size:.85em;color:var(--gw-muted)}
+@container(max-width:900px){#tq-growth-session .gw-comparison{grid-template-columns:minmax(0,1fr);max-width:360px}}
+@media(pointer:coarse){#tq-growth-session .gw-choice{min-height:44px}}
+</style>
+<script>
+(()=>{
+const root=document.getElementById('tq-growth-session'),controls=document.getElementById('tq-growth-controls');
+const modes=['down','up','fixed'],labels={down:'Растёт вниз',up:'Растёт вверх',fixed:'Фиксированный размер'};
+const tasks=[
+ {id:107,title:'Keep task filters when returning from settings',stage:'Doing',time:'10m'},
+ {id:103,title:'Recover a request after a connection failure',stage:'Review',time:'2m'},
+ {id:101,title:'Bundle monochrome menu icons',stage:'Ready',time:'20m'},
+ {id:109,title:'Keep the current view after closing the panel',stage:'Doing',time:'5m'},
+ {id:110,title:'Restore the saved window position',stage:'Review',time:'3m'},
+ {id:111,title:'Show all task states in one selector',stage:'Ready',time:'15m'},
+ {id:112,title:'Keep window controls visible while scrolling',stage:'Doing',time:'7m'},
+ {id:113,title:'Verify the final task remains reachable',stage:'Review',time:'1m'}
+];
+const I=name=>'<i data-lucide="'+name+'" aria-hidden="true"></i>';
+let model={version:1,count:4,choice:null,font:16};
+function restore(state){const value=state?.privateContent;if(value?.version!==1||![2,4,8].includes(value.count)||!(value.choice===null||modes.includes(value.choice)))return false;model={version:1,count:value.count,choice:value.choice,font:[14,16,18,20].includes(value.font)?value.font:16};return true}
+restore(window.openai?.widgetState);
+// shortcut: this bounded stage compares growth; native work-area and saved fixed-size policy remain unqualified.
+function geometry(mode,natural,base,area){const top=(area-base)/2,bottom=top+base,limit=bottom-12;const height=mode==='fixed'?base:Math.min(natural,limit);return{top:mode==='up'?bottom-height:top,height}}
+console.assert(geometry('down',300,180,480).top===150,'Down keeps top');
+console.assert(geometry('up',300,180,480).top+geometry('up',300,180,480).height===330,'Up keeps bottom');
+console.assert(geometry('fixed',500,180,480).height===180,'Fixed keeps size');
+console.assert(geometry('down',700,180,480).height===318,'Growth is bounded');
+root.querySelectorAll('.gw-stage').forEach(stage=>{stage.innerHTML='<div class="gw-window"><div class="gw-chrome"><div class="gw-header"><span>Mac · Auto</span><span aria-label="Pinned">'+I('pin')+'</span><span aria-hidden="true">'+I('x')+'</span></div><div class="gw-count"></div></div><section class="gw-body" aria-label="'+labels[stage.closest('[data-mode]').dataset.mode]+' · task list"><div class="gw-tasks"></div></section></div>'});
+function layout(){root.querySelectorAll('.gw-example').forEach(example=>{const stage=example.querySelector('.gw-stage'),window=example.querySelector('.gw-window'),chrome=example.querySelector('.gw-chrome'),items=[...example.querySelectorAll('.gw-task')],list=example.querySelector('.gw-tasks');const base=chrome.getBoundingClientRect().height+items.slice(0,2).reduce((height,row)=>height+row.getBoundingClientRect().height,0)+6,natural=chrome.getBoundingClientRect().height+list.getBoundingClientRect().height+6,g=geometry(example.dataset.mode,natural,base,stage.clientHeight);window.style.top=g.top+'px';window.style.height=g.height+'px'})}
+function render(){root.style.fontSize=model.font+'px';root.querySelectorAll('.gw-example').forEach(example=>{example.querySelector('.gw-count').textContent='All '+model.count;example.querySelector('.gw-tasks').innerHTML=tasks.slice(0,model.count).map(t=>'<article class="gw-task"><div class="gw-meta">'+I('circle-dot')+'#'+t.id+'<span class="gw-stage-age '+(t.stage==='Ready'?'':'gw-work')+'" aria-label="'+t.stage+' · '+t.time+'">'+I(t.stage==='Doing'?'loader':t.stage==='Review'?'scan-eye':'circle')+t.time+'</span></div><div class="gw-title">'+t.title+'</div></article>').join('');example.querySelector('[data-choice]').setAttribute('aria-pressed',String(model.choice===example.dataset.mode));example.querySelector('.gw-body').scrollTop=0});controls.querySelectorAll('[data-count]').forEach(button=>button.setAttribute('aria-pressed',String(Number(button.dataset.count)===model.count)));root.querySelector('.gw-selection').textContent=model.choice?'Выбрано для обсуждения: '+labels[model.choice]:'Режим пока не выбран';if(globalThis.lucide)globalThis.lucide.createIcons({attrs:{width:16,height:16}});layout()}
+function save(){window.openai?.setWidgetState({modelContent:{prototype:'pinned-window-growth',growth:model.choice,taskCount:model.count},privateContent:model}).catch(()=>{})}
+controls.addEventListener('click',event=>{const button=event.target.closest('[data-count]');if(!button)return;model.count=Number(button.dataset.count);render();save()});
+root.addEventListener('click',event=>{const button=event.target.closest('[data-choice]');if(!button)return;model.choice=button.dataset.choice;root.querySelectorAll('[data-choice]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.choice===model.choice)));root.querySelector('.gw-selection').textContent='Выбрано для обсуждения: '+labels[model.choice];save()});
+window.addEventListener('openai:set_globals',event=>{const state=event.detail?.globals?.widgetState;if(JSON.stringify(state?.privateContent)===JSON.stringify(model))return;if(restore(state))render()});
+render();new ResizeObserver(layout).observe(root.querySelector('.gw-comparison'));
+if(globalThis.Tweak){const tuning={font:model.font};const tweak=new Tweak({container:root,onChange:()=>{model.font=tuning.font;render()}});tweak.addSlider(tuning,'font',{label:'Text size',min:14,max:20,step:2,unit:'px'})}
+})();
+</script>

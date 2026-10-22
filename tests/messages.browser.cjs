@@ -20,6 +20,11 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
   await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:m=>sent.push(JSON.parse(m))};});
   await page.evaluate(s=>taskq.receive(s),snapshot);
+  await page.evaluate(()=>taskq.receive({open:{page:'conversations'}}));
+  assert.equal(await page.locator('h1').innerText(),'Conversations');
+  assert.equal(await page.locator('[data-a=message-open]').count(),2,'Conversations excludes board questions and reuses current owner-session records');
+  assert.equal(await page.evaluate(()=>sent.some(m=>['ai-send','answer','message-action'].includes(m.a))),false,'navigation launches/sends nothing');
+  await page.evaluate(()=>taskq.receive({open:{page:'messages'}}));
   assert.equal(await page.locator('[data-a=message-open]').count(),3);
   if(evidence)await page.screenshot({path:evidence+'/messages-dark-16.png'});
   await page.locator('[data-field=message-filter]').selectOption('pending');

@@ -8,7 +8,7 @@ const ui=require('./ui-runtime.js'),{execution}=ui;
 options.debounceRendering=callback=>ui.defer(callback);
 const api=execution.module('shell',{
  bar:function({title,back,crumbs,actions,windows}){
-  return h('header',{class:'head'},h('div',{class:'nav-back'},back&&h('button',{'data-a':'back',title:'Back','aria-label':'Back'},'‹')),h('div',{class:'nav-title'},crumbs&&h('nav',{class:'breadcrumbs','aria-label':'Breadcrumb'},crumbs),h('h1',{tabindex:'-1',title},title)),h('div',{class:'nav-actions'},actions),h('div',{class:'window-controls','aria-label':'Window controls'},windows));
+  return h('header',{class:'head'},h('div',{class:'nav-back'},back&&h('button',{'data-a':'back',title:'Back','aria-label':'Back'},require('./ui-icons.js').icon('arrow-left'))),h('div',{class:'nav-title'},crumbs&&h('nav',{class:'breadcrumbs','aria-label':'Breadcrumb'},crumbs),h('h1',{tabindex:'-1',title},title)),h('div',{class:'nav-actions'},actions),h('div',{class:'window-controls','aria-label':'Window controls'},windows));
  },
  Frame:function({frame}){const [route]=useLocation();return h(Route,{path:frame.route},h('div',{'class':'shell','data-shell-route':route,'data-shell-depth':frame.depth},frame.nodes));},
  create:function(container){

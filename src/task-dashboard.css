@@ -1,0 +1,39 @@
+/* #1573 conversation-walkthrough: task-dominant dashboard, shared tokens and anchored controls. */
+.ui-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:1em;height:1em;vertical-align:-.12em}
+.ui-icon svg{width:100%;height:100%}.ui-icon svg:not([fill]){fill:currentColor}
+.menu:not(.workspace) .head{gap:3px}.menu:not(.workspace) .head:has(.nav-back:empty){grid-template-columns:minmax(0,1fr) auto auto}.head .nav-back:empty{display:none}
+.menu:not(.workspace) .head .nav-actions{gap:1px}.head button{border-color:transparent}
+.menu:not(.workspace) .head .window-controls{padding-left:2px}
+.menu .project:has(>.ui-icon){display:flex;gap:8px;white-space:normal}
+.dashboard-status{border-bottom:1px solid var(--edge);padding-bottom:3px}.dashboard-status>summary{font-size:.85em;min-height:32px}
+.viewbar{display:flex;align-items:flex-start;gap:4px;padding-top:5px}.view-picks{display:flex;flex-wrap:wrap;align-items:center;gap:2px;flex:1;min-width:0}
+.viewbar button{border:0;padding:3px 6px;font-size:.85em}.view-picks>button:first-child{font-weight:600;background:light-dark(#e9edf1,#37424c)}
+.view-criteria{color:var(--muted);font-size:.8em;padding:2px 4px;overflow-wrap:anywhere}
+.task-search{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--edge);padding:2px 4px}.task-search input{flex:1;width:100%;min-width:0;border:0;background:transparent;font:inherit;font-size:.85em;color:inherit;padding:3px 0}.task-search .meta{font-variant-numeric:tabular-nums}
+.filter-header{padding-block:4px}.filter-header .tqp-counts{gap:3px}
+.project-group{display:flex;align-items:center;gap:5px;padding-top:6px;color:var(--muted);font-size:.85em}.project-group button{border:0;display:flex;align-items:center;gap:5px;text-align:left;overflow-wrap:anywhere}.project-group a{margin-left:auto}.project-group .ui-icon{width:14px;height:14px}
+.menu .task-row{display:block;border-bottom:1px solid var(--edge)}.task-row .tqp-task{padding:4px 2px 5px}.task-row .tqp-task-head{display:flex;align-items:center;flex-wrap:wrap;gap:0 5px}
+.task-row .task-identity{display:inline-flex;align-items:center;gap:4px;padding:2px;font-size:.85em;font-weight:500;white-space:normal}.task-row .task-stage{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-size:.85em;white-space:nowrap}
+.task-row .tqp-task-title>a{display:block;min-height:var(--target);padding:2px 0;font-size:1em;line-height:1.4;width:100%;text-align:left}.task-row .tqp-task-title>a:hover{text-decoration:underline;text-underline-offset:3px}
+.status-footer{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:2px 8px;border-top:1px solid var(--edge);font-size:max(12px,.8em);color:var(--muted);padding:0 0 0 8px;min-height:32px}.status-footer>span{overflow-wrap:anywhere}.status-footer>span:nth-child(2){margin-left:auto}.menu .status-footer .grip{margin-left:auto;width:32px;height:32px;min-height:32px;background-color:transparent;border:0;border-radius:0}
+.anchored-popover{position:fixed;inset:auto;margin:0;width:320px;padding:8px;background:var(--surface);color:inherit;border:1px solid var(--edge);border-radius:9px;box-shadow:0 6px 18px #0004;overflow:auto;overscroll-behavior:contain;font:inherit;font-size:var(--size,16px);z-index:30;overflow-wrap:anywhere}
+.anchored-popover::backdrop{background:transparent}.popover-heading{display:flex;align-items:center;gap:4px;margin-bottom:5px}.popover-heading strong{flex:1}.popover-heading button{border:0;display:inline-flex;align-items:center;justify-content:center}
+.anchored-popover fieldset,.growth-options{min-width:0}.anchored-popover fieldset{border:0;border-top:1px solid var(--edge);padding:5px 0;margin:5px 0}.anchored-popover legend{font-size:.85em;color:var(--muted);padding-right:6px}
+.facet-list{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}.facet-list button{border:0;display:flex;align-items:center;gap:6px;text-align:left;overflow-wrap:anywhere}
+.saved-view{display:flex;gap:4px}.saved-view>button:first-child{flex:1;text-align:left;border:0}.anchored-popover label{display:block;font-size:.85em;margin-block:6px}.anchored-popover input{font:inherit;display:block;width:100%;background:transparent;color:inherit;border:1px solid var(--edge);padding:5px}
+.detail-title{display:block!important;text-align:left!important;font-weight:600}.task-card-text{white-space:pre-wrap;font-size:.85em;user-select:text}.task-steps{font-size:.85em;margin:4px;padding-left:24px}.row-actions{display:flex;gap:4px;flex-wrap:wrap}.row-actions .task-controls,.row-actions>span{display:contents}
+.settings-section{padding-block:4px}.settings-section+.settings-section{border-top:1px solid var(--edge)}
+.growth-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.growth-options>button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 0;font-size:.85em}
+.growth-miniature{display:block;width:42px;height:40px;position:relative;border-top:2px solid var(--muted)}.growth-miniature>i{position:absolute;left:5px;right:5px;top:5px;height:15px;border:1px solid var(--muted);border-radius:3px;animation:window-grow 1.6s ease-in-out infinite alternate}
+.growth-miniature[data-growth=bottom]{border-top:0;border-bottom:2px solid var(--muted)}.growth-miniature[data-growth=bottom]>i,.growth-miniature[data-growth=auto][data-opening=up]>i{top:auto;bottom:5px}.growth-miniature[data-growth=fixed]>i{animation:none;height:25px}
+@keyframes window-grow{from{height:12px}to{height:28px}}
+@media(max-width:360px){.menu:not(.workspace) .head:has(.nav-back button){grid-template-columns:auto minmax(0,1fr) auto}.menu:not(.workspace) .head:has(.nav-back button) .nav-actions{grid-column:1/3;grid-row:2}.menu:not(.workspace) .head:has(.nav-back button) .window-controls{grid-column:3;grid-row:1}}
+@media(prefers-reduced-motion:reduce){.growth-miniature>i{animation:none;height:25px}}
+
+@media(pointer:coarse){.menu:not(.workspace) .head:has(.nav-back:empty){grid-template-columns:minmax(0,1fr) auto}.menu:not(.workspace) .head:has(.nav-back:empty) .nav-actions{grid-row:2;grid-column:1/-1}.menu:not(.workspace) .head:has(.nav-back:empty) .window-controls{grid-row:1;grid-column:2}.menu .status-footer .grip{width:44px;height:44px;min-height:44px}}
+
+.menu .views img{width:22px;height:22px;object-fit:contain;flex:none}
+/* Actual-size previews sit above their labels; intrinsic labels wrap the set before they can clip. */
+.menu .views button{flex-direction:column;flex-basis:auto;min-width:max-content;gap:4px}
+
+.views>p{flex-basis:100%;margin:4px 0;font-size:.85em}

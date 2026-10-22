@@ -9,13 +9,13 @@ cd "$t"
 git init -q . && git config user.email t@t && git config user.name t && git config core.autocrlf false
 mkdir -p src scripts docs/design docs/shots
 cp "$src" docs/shots/check.sh
-for f in src/tray.rs src/tray.html src/tray-app.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/workspace.js src/workspace-entry.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json; do echo "$f" > "$f"; done
+for f in src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/task-dashboard.js src/task-dashboard.css src/task-views.js src/anchored-popover.js src/ui-icons.js src/ui-icons.json src/project-blocks.js src/project-blocks.css src/workspace.js src/workspace-entry.js src/workspace-answers.js src/answer-card.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json; do echo "$f" > "$f"; done
 echo '![](docs/shots/a.png)' > README.md
 git add -A && git commit -qm ui
 manifest() { # $1: blob recorded for src/tray.rs
   printf '{\n  "sourceCommit": "%s",\n  "uiSources": {\n' "$(git rev-parse HEAD)"
   sep=''
-  for f in src/tray.rs src/tray.html src/tray-app.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/workspace.js src/workspace-entry.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json; do
+  for f in src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/task-dashboard.js src/task-dashboard.css src/task-views.js src/anchored-popover.js src/ui-icons.js src/ui-icons.json src/project-blocks.js src/project-blocks.css src/workspace.js src/workspace-entry.js src/workspace-answers.js src/answer-card.js scripts/build-web.cjs src/icon.rs docs/design/icon-summary.config.json; do
     b=$(git rev-parse "HEAD:$f"); [ "$f" = src/tray.rs ] && b=$1
     printf '%s    "%s": "%s"' "$sep" "$f" "$b"; sep=',
 '

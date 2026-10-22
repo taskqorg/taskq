@@ -1,5 +1,5 @@
 'use strict';
-const ui=require('./ui-runtime.js'),{execution}=ui,TaskqAnswerCard=require('./answer-card.js'),{h}=require('preact');
+const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
 const {create}=execution.module('workspace.answers',{
 create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={};
@@ -53,7 +53,7 @@ mountAnswers:function(){
     const t=unique(view.S.projects.filter(p=>!view.answer?.root||p.root===view.answer.root).flatMap(tasks)).find(t=>t.key===slot.dataset.answer);
     if(!t)continue;
     let card=answerCards.get(t.key);
-    if(!card){const el=document.createElement('div');card={el,ui:TaskqAnswerCard.mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
+    if(!card){const el=document.createElement('div');card={el,ui:require('./answer-card.js').mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
     if(card.el.parentNode!==slot)slot.append(card.el);
     const p=api.project(t.key.slice(0,t.key.lastIndexOf('/')));
     card.ui.update([{board:p.issues,row:t}]);

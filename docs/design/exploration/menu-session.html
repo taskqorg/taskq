@@ -1,0 +1,185 @@
+<div id="tq-menu-review" class="viz-dotted-background">
+  <div class="qs-comparison">
+    <section class="qs-example" aria-label="По проектам">
+      <div class="qs-example-title">По проектам</div>
+      <div class="qs-app" data-group="project" aria-label="Grouped task list prototype"></div>
+    </section>
+    <section class="qs-example" aria-label="Общий список">
+      <div class="qs-example-title">Общий список</div>
+      <div class="qs-app" data-group="none" aria-label="Flat task list prototype"></div>
+    </section>
+  </div>
+  <div class="qs-status" aria-live="polite">Illustrative data · local prototype interactions</div>
+</div>
+<style>
+#tq-menu-review{--qs-bg:light-dark(#fafbfc,#252b32);--qs-fg:light-dark(#243039,#eef2f5);--qs-muted:light-dark(#59636e,#b9c3cd);--qs-edge:light-dark(#dce0e5,#46505b);--qs-hover:light-dark(#e9edf1,#37424c);--qs-work:light-dark(#246f59,#8dd2b8);--qs-ask:light-dark(#955525,#edbc96);--qs-fail:light-dark(#a6324b,#ee96a5);--qs-shadow:light-dark(#2430391c,#00000044);font:400 16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--qs-fg);padding:12px 8px}
+#tq-menu-review *{box-sizing:border-box}#tq-menu-review [hidden]{display:none!important}
+#tq-menu-review .qs-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;max-width:960px;margin:auto;align-items:start}
+#tq-menu-review .qs-example{min-width:0}#tq-menu-review .qs-example-title{font-size:14px;font-weight:500;margin:0 0 8px 4px}
+#tq-menu-review .qs-app{min-width:0;background:var(--qs-bg);color:var(--qs-fg);border:1px solid var(--qs-edge);border-radius:12px;padding:8px;box-shadow:0 6px 18px var(--qs-shadow)}
+#tq-menu-review button,#tq-menu-review input,#tq-menu-review select{font:inherit;color:inherit;background:var(--qs-bg);min-width:0;border:1px solid var(--qs-edge);border-radius:6px;min-height:32px;padding:4px 6px}
+#tq-menu-review button{display:inline-flex;align-items:center;justify-content:center;gap:5px}#tq-menu-review button:hover{background:var(--qs-hover)}
+#tq-menu-review button[aria-pressed="true"]{background:var(--qs-hover)}
+#tq-menu-review svg{display:inline-block;width:16px;height:16px;vertical-align:middle;flex:none;stroke-width:1.7}
+#tq-menu-review .qs-ghost{border:0;background:transparent;padding:4px;width:32px;height:32px;flex:none}
+#tq-menu-review .qs-header{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+#tq-menu-review .qs-header strong{font-weight:500}#tq-menu-review .qs-host{color:var(--qs-muted);font-size:.85em;margin-right:auto;margin-left:4px}
+#tq-menu-review .qs-overview{display:flex;align-items:center;gap:5px 10px;flex-wrap:wrap;padding:5px 2px 7px;border-bottom:1px solid var(--qs-edge);font-size:.85em}
+#tq-menu-review .qs-overview span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+#tq-menu-review .qs-overview .qs-machine{margin-left:auto;color:var(--qs-muted)}
+#tq-menu-review .qs-work{color:var(--qs-work)}#tq-menu-review .qs-ask{color:var(--qs-ask)}#tq-menu-review .qs-failed{color:var(--qs-fail)}
+#tq-menu-review .qs-viewbar{display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:7px 0 3px}
+#tq-menu-review .qs-viewbar button{border:0;min-height:30px;padding:3px 6px;font-size:.85em}
+#tq-menu-review .qs-viewbar .qs-current{font-weight:500;background:var(--qs-hover)}
+#tq-menu-review .qs-viewbar .qs-edit{margin-left:auto}
+#tq-menu-review .qs-viewbar .qs-chevron{width:11px;height:11px}
+#tq-menu-review .qs-criteria{display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:.8em;color:var(--qs-muted)}
+#tq-menu-review .qs-criteria:empty{display:none}#tq-menu-review .qs-criteria button{border:0;background:transparent;font-size:inherit;min-height:25px;padding:2px 4px}
+#tq-menu-review .qs-search{display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--qs-edge);color:var(--qs-muted);padding:2px 3px 5px}
+#tq-menu-review .qs-search input{flex:1;width:100%;border:0;background:transparent;font-size:.85em;padding:3px 0;min-height:28px}
+#tq-menu-review .qs-search .qs-result-count{font-size:.8em;font-variant-numeric:tabular-nums}
+#tq-menu-review .qs-group-title{display:flex;align-items:center;gap:5px;color:var(--qs-muted);font-size:.8em;font-weight:500;padding:7px 3px 2px}
+#tq-menu-review .qs-group-title svg{width:13px;height:13px}
+#tq-menu-review .qs-task{display:grid;grid-template-columns:minmax(0,1fr);gap:0;padding:5px 0 6px;border-bottom:1px solid var(--qs-edge);align-items:start}
+#tq-menu-review .qs-reference{border:0;background:transparent;padding:3px;min-height:32px;font-size:.85em;font-weight:500;white-space:nowrap}
+#tq-menu-review .qs-forge{display:inline-block;flex:none;width:15px;height:15px;background:currentColor;mask:url("data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+R2l0SHViPC90aXRsZT48cGF0aCBkPSJNMTIgLjI5N2MtNi42MyAwLTEyIDUuMzczLTEyIDEyIDAgNS4zMDMgMy40MzggOS44IDguMjA1IDExLjM4NS42LjExMy44Mi0uMjU4LjgyLS41NzcgMC0uMjg1LS4wMS0xLjA0LS4wMTUtMi4wNC0zLjMzOC43MjQtNC4wNDItMS42MS00LjA0Mi0xLjYxQzQuNDIyIDE4LjA3IDMuNjMzIDE3LjcgMy42MzMgMTcuN2MtMS4wODctLjc0NC4wODQtLjcyOS4wODQtLjcyOSAxLjIwNS4wODQgMS44MzggMS4yMzYgMS44MzggMS4yMzYgMS4wNyAxLjgzNSAyLjgwOSAxLjMwNSAzLjQ5NS45OTguMTA4LS43NzYuNDE3LTEuMzA1Ljc2LTEuNjA1LTIuNjY1LS4zLTUuNDY2LTEuMzMyLTUuNDY2LTUuOTMgMC0xLjMxLjQ2NS0yLjM4IDEuMjM1LTMuMjItLjEzNS0uMzAzLS41NC0xLjUyMy4xMDUtMy4xNzYgMCAwIDEuMDA1LS4zMjIgMy4zIDEuMjMuOTYtLjI2NyAxLjk4LS4zOTkgMy0uNDA1IDEuMDIuMDA2IDIuMDQuMTM4IDMgLjQwNSAyLjI4LTEuNTUyIDMuMjg1LTEuMjMgMy4yODUtMS4yMy42NDUgMS42NTMuMjQgMi44NzMuMTIgMy4xNzYuNzY1Ljg0IDEuMjMgMS45MSAxLjIzIDMuMjIgMCA0LjYxLTIuODA1IDUuNjI1LTUuNDc1IDUuOTIuNDIuMzYuODEgMS4wOTYuODEgMi4yMiAwIDEuNjA2LS4wMTUgMi44OTYtLjAxNSAzLjI4NiAwIC4zMTUuMjEuNjkuODI1LjU3QzIwLjU2NSAyMi4wOTIgMjQgMTcuNTkyIDI0IDEyLjI5N2MwLTYuNjI3LTUuMzczLTEyLTEyLTEyIi8+PC9zdmc+") center/contain no-repeat}
+#tq-menu-review .qs-stage{display:inline-flex;align-items:center;gap:5px;color:var(--qs-muted);font-size:.85em;font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}
+#tq-menu-review .qs-stage.qs-work{color:var(--qs-work)}#tq-menu-review .qs-stage.qs-ask{color:var(--qs-ask)}#tq-menu-review .qs-stage.qs-failed{color:var(--qs-fail)}
+#tq-menu-review .qs-task-title{display:block;text-align:left;border:0;background:transparent;width:100%;min-height:0;padding:3px 0;border-radius:0;overflow-wrap:anywhere}
+#tq-menu-review .qs-task-title:hover{background:transparent;text-decoration:underline;text-underline-offset:3px}
+#tq-menu-review .qs-task-title strong{font-weight:500;margin-right:4px}
+#tq-menu-review .qs-popup{position:absolute;inset:auto;margin:0;max-width:calc(100% - 16px);min-width:0;width:300px;padding:7px;border:1px solid var(--qs-edge);border-radius:8px;background:var(--qs-bg);color:var(--qs-fg);box-shadow:0 6px 20px var(--qs-shadow);font:inherit}
+#tq-menu-review .qs-card-head{display:flex;align-items:center;gap:5px;color:var(--qs-muted);font-size:.85em}
+#tq-menu-review .qs-card-head>span:not(.qs-forge){margin-right:auto}
+#tq-menu-review .qs-card-title{font-size:1em;font-weight:500;margin:5px 3px 8px;overflow-wrap:anywhere}
+#tq-menu-review .qs-card-context{display:flex;align-items:center;gap:5px;flex-wrap:wrap;color:var(--qs-muted);font-size:.85em;padding:0 3px 7px}
+#tq-menu-review .qs-card-context .qs-card-stage{display:inline-flex;align-items:center;gap:4px;margin-right:auto}
+#tq-menu-review .qs-time-row[aria-current="step"]{background:var(--qs-hover);border-radius:4px;font-weight:500}
+#tq-menu-review .qs-time-row small{font:inherit;color:var(--qs-muted)}
+#tq-menu-review .qs-popup-heading{font-size:.85em;font-weight:500;padding:3px 4px 6px}
+#tq-menu-review .qs-popup button.qs-command{width:100%;border:0;justify-content:flex-start;text-align:left}
+#tq-menu-review .qs-preset-row{display:flex;align-items:center;gap:3px}
+#tq-menu-review .qs-preset-row>.qs-command{flex:1;width:auto!important}
+#tq-menu-review .qs-star{border:0;background:transparent;width:30px;min-height:30px;padding:4px}
+#tq-menu-review .qs-star[aria-pressed="true"] svg{fill:currentColor}
+#tq-menu-review .qs-divider{border:0;border-top:1px solid var(--qs-edge);margin:5px 0}
+#tq-menu-review .qs-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:7px}
+#tq-menu-review .qs-form label{font-size:.85em;display:flex;flex-direction:column;gap:3px;min-width:0}
+#tq-menu-review .qs-form label>span{color:var(--qs-muted)}#tq-menu-review .qs-form select{width:100%;font-size:inherit}
+#tq-menu-review .qs-actions{display:flex;gap:5px;justify-content:flex-end;padding-top:8px;flex-wrap:wrap}
+#tq-menu-review .qs-actions button{font-size:.85em}
+#tq-menu-review .qs-field{display:flex;flex-direction:column;gap:5px;font-size:.85em}
+#tq-menu-review .qs-time-row{display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:.85em;padding:4px}
+#tq-menu-review .qs-time-row span:last-child{font-variant-numeric:tabular-nums}
+#tq-menu-review .qs-back{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--qs-edge)}
+#tq-menu-review .qs-back strong{font-weight:500}
+#tq-menu-review .qs-detail{padding:7px 3px}#tq-menu-review .qs-detail h3{font-size:1em;font-weight:500;margin:7px 0}#tq-menu-review .qs-detail p{font-size:.85em;color:var(--qs-muted)}
+#tq-menu-review .qs-empty{color:var(--qs-muted);font-size:.85em;padding:24px 4px;text-align:center}
+#tq-menu-review .qs-status{max-width:960px;margin:8px auto 0;font-size:13px;color:var(--qs-muted);min-height:18px}
+@media(max-width:700px){#tq-menu-review .qs-comparison{grid-template-columns:minmax(0,1fr);max-width:460px;gap:20px}}
+@media(pointer:coarse){#tq-menu-review button,#tq-menu-review select{min-height:44px}#tq-menu-review .qs-task{grid-template-columns:minmax(0,1fr)}#tq-menu-review .qs-ghost{width:44px;height:44px}}
+#tq-menu-review .qs-task-meta{display:flex;align-items:center;gap:5px;min-width:0;flex-wrap:nowrap}
+#tq-menu-review .qs-task-title{padding:1px 3px 3px}
+#tq-menu-review .qs-current svg:last-child{width:11px!important;height:11px!important}
+</style>
+<script>
+(()=>{
+const root=document.getElementById('tq-menu-review');
+const I=name=>'<i data-lucide="'+name+'" aria-hidden="true"></i>';
+const forge='<span class="qs-forge" aria-hidden="true"></span>';
+const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icons={ask:'message-circle-question',review:'scan-eye',doing:'loader',failed:'circle-x',blocked:'git-pull-request-arrow',ready:'circle'};
+const names={ask:'Question',review:'Review',doing:'Doing',failed:'Failed',blocked:'Blocked',ready:'Ready'};
+const tasks=[
+ {id:104,title:'Choose the menu layout',project:'TaskQ',state:'ask',runtime:'Claude',host:'Mac',priority:0,chain:[['Ready',120],['Doing',900],['Question',7200]]},
+ {id:103,title:'Recover a request after a connection failure',project:'TaskQ',state:'review',runtime:'Codex',host:'Mac',priority:1,chain:[['Ready',120],['Doing',600],['Review',180],['Doing',300],['Review',120]]},
+ {id:105,title:'Keep drafts when switching conversations',project:'AgentQ',state:'doing',runtime:'Codex',host:'Mac',priority:2,chain:[['Ready',180],['Doing',2400]]},
+ {id:106,title:'Restore the gateway connection',project:'PilotQ',state:'failed',runtime:'Claude',host:'Windows',priority:1,chain:[['Ready',60],['Doing',420],['Review',80],['Failed',300]]},
+ {id:102,title:'Wait for the shared resource adapter',project:'AgentQ',state:'blocked',runtime:'Codex',host:'Windows',priority:2,chain:[['Ready',120],['Doing',480],['Blocked',5400]]},
+ {id:101,title:'Bundle monochrome menu icons',project:'TaskQ',state:'ready',runtime:'Claude',host:'Mac',priority:3,chain:[['Ready',1200]]}
+];
+const age=t=>t.chain.at(-1)[1],total=t=>t.chain.reduce((a,s)=>a+s[1],0),time=s=>s>=3600?Math.floor(s/3600)+'h'+(Math.floor(s%3600/60)?' '+Math.floor(s%3600/60)+'m':''):s>=60?Math.floor(s/60)+'m'+(s%60?' '+s%60+'s':''):s+'s';
+const defaults=[{id:'all',name:'All tasks',project:'all',state:'all',sort:'priority',star:true},{id:'attention',name:'Attention',project:'all',state:'attention',sort:'priority',star:true},{id:'taskq',name:'TaskQ',project:'TaskQ',state:'all',sort:'priority',star:true},{id:'long',name:'Long running',project:'all',state:'long',sort:'age',star:false}];
+let model={version:2,views:structuredClone(defaults),selected:'all',draft:null,query:''};
+const status=text=>{root.querySelector('.qs-status').textContent=text};
+const hydrate=()=>{if(globalThis.lucide)globalThis.lucide.createIcons({attrs:{width:16,height:16}})};
+const validCriteria=v=>v&&['all','TaskQ','AgentQ','PilotQ'].includes(v.project)&&['all','attention','long',...Object.keys(names)].includes(v.state)&&['priority','age','total'].includes(v.sort);
+function restore(snapshot){const s=snapshot?.privateContent;if(s?.version!==2||!Array.isArray(s.views)||!s.views.length)return false;const valid=s.views.every(v=>typeof v.id==='string'&&typeof v.name==='string'&&v.name.length<=40&&validCriteria(v));if(!valid)return false;model={version:2,views:s.views.map(v=>({...v,star:!!v.star})),selected:s.views.some(v=>v.id===s.selected)?s.selected:s.views[0].id,draft:validCriteria(s.draft)?s.draft:null,query:typeof s.query==='string'?s.query.slice(0,160):''};return true}
+restore(window.openai?.widgetState);
+const selected=()=>model.views.find(v=>v.id===model.selected)||model.views[0],criteria=()=>model.draft||selected();
+function saveState(){if(!window.openai?.setWidgetState)return;window.openai.setWidgetState({modelContent:{prototype:'hover-card-grouping-comparison',activeView:selected().name},privateContent:model}).catch(()=>status('View remains available in this preview; saving was unavailable.'))}
+function match(t,c,q=''){return(c.project==='all'||t.project===c.project)&&(c.state==='all'||(c.state==='attention'?['ask','failed'].includes(t.state):c.state==='long'?age(t)>=1800:t.state===c.state))&&(t.id+' '+t.title).toLowerCase().includes(q.trim().toLowerCase())}
+function rows(){const c=criteria();return tasks.filter(t=>match(t,c,model.query)).sort((a,b)=>c.sort==='age'?age(b)-age(a):c.sort==='total'?total(b)-total(a):a.priority-b.priority||a.id-b.id)}
+console.assert(tasks.filter(t=>match(t,defaults[1])).length===2,'Attention filter');console.assert(total(tasks[1])===1320,'Repeated stages remain distinct');console.assert(tasks.filter(t=>match(t,defaults[2])).length===3,'Project preset');
+const apps=[...root.querySelectorAll('.qs-app')].map((app,index)=>{
+ app.innerHTML='<header class="qs-header"><strong>TaskQ</strong><span class="qs-host">Mac · Auto</span><button class="qs-ghost cursor-interaction" data-open="controls" aria-label="Work controls" data-tooltip="Work controls">'+I('sliders-horizontal')+'</button><button class="qs-ghost cursor-interaction" data-open="notifications" aria-label="Notifications" data-tooltip="Notifications">'+I('bell')+'</button><button class="qs-ghost cursor-interaction" data-open="conversations" aria-label="Conversations" data-tooltip="Conversations">'+I('messages-square')+'</button><button class="qs-ghost cursor-interaction" data-action="settings" aria-label="Settings" data-tooltip="Settings">'+I('settings')+'</button></header><div class="qs-overview"><span class="qs-work" data-tooltip="1 doing · 1 review">'+I('activity')+'2</span><span class="qs-ask" data-tooltip="1 question">'+I('message-circle-question')+'1</span><span class="qs-failed" data-tooltip="1 failed">'+I('circle-x')+'1</span><span data-tooltip="1 ready">'+I('circle')+'1</span><span data-tooltip="1 blocked">'+I('git-pull-request-arrow')+'1</span><span class="qs-machine" data-tooltip="CPU 24 percent">'+I('cpu')+'24%</span><span data-tooltip="11 of 24 GB memory">'+I('memory-stick')+'11/24G</span></div><div data-page="home"><div class="qs-viewbar" data-viewbar></div><div class="qs-criteria" data-criteria></div><label class="qs-search">'+I('search')+'<input type="search" maxlength="160" placeholder="Find…" aria-label="Find tasks"><span class="qs-result-count" data-count></span></label><div data-tasks aria-live="polite"></div></div><div data-page="detail" hidden></div><div class="qs-popup" id="qs-pop-'+index+'" popover aria-label="Context menu"></div>';
+ const popup=app.querySelector('.qs-popup');let returnTo=null,previewTrigger=null,pinned=false,closing=false,showTimer,hideTimer;
+ // shortcut: grow the conversation preview around overlays; native monitor clamping still needs platform qualification.
+ function fitPreview(){root.style.minHeight='';const bottom=Math.max(...[...root.querySelectorAll(':popover-open')].map(el=>el.getBoundingClientRect().bottom),0);if(bottom>root.getBoundingClientRect().bottom)root.style.minHeight=bottom-root.getBoundingClientRect().top+12+'px'}
+ function close(){clearTimeout(showTimer);clearTimeout(hideTimer);if(previewTrigger)previewTrigger.setAttribute('aria-expanded','false');previewTrigger=null;pinned=false;closing=true;try{if(popup.matches(':popover-open'))popup.hidePopover()}finally{closing=false}fitPreview()}
+ function position(trigger){const b=trigger.getBoundingClientRect(),r=app.getBoundingClientRect();popup.style.width=Math.min(340,r.width-12)+'px';popup.style.left=Math.max(r.left+6,Math.min(b.left,r.right-popup.offsetWidth-6))+scrollX+'px';const below=b.bottom+3,above=b.top-popup.offsetHeight-3;popup.style.top=(below+popup.offsetHeight<=r.bottom-5||above<r.top+5?below:above)+scrollY+'px';fitPreview()}
+ function pin(value){pinned=value;const b=popup.querySelector('[data-action="pin"]');if(b){b.setAttribute('aria-pressed',String(value));b.setAttribute('aria-label',value?'Unpin preview':'Keep preview open')}}
+ function scheduleClose(){clearTimeout(showTimer);clearTimeout(hideTimer);if(!previewTrigger)return;hideTimer=setTimeout(()=>{if(!pinned&&previewTrigger&&!popup.matches(':hover')&&!previewTrigger.matches(':hover')&&!popup.contains(document.activeElement)&&document.activeElement!==previewTrigger)close()},260)}
+ function preview(trigger){if(closing||pinned||popup.matches(':popover-open')&&!previewTrigger)return;if(previewTrigger===trigger&&popup.matches(':popover-open'))return;close();returnTo=trigger;previewTrigger=trigger;const t=tasks.find(t=>t.id===Number(trigger.dataset.preview));trigger.setAttribute('aria-expanded','true');popup.setAttribute('popover','manual');popup.setAttribute('role','dialog');popup.setAttribute('aria-label',t.project+' #'+t.id+' preview');popup.innerHTML='<div class="qs-card-head">'+forge+'<span>'+t.project+' #'+t.id+'</span><button class="qs-ghost cursor-interaction" data-action="pin" aria-label="Keep preview open" aria-pressed="false">'+I('pin')+'</button><button class="qs-ghost cursor-interaction" data-action="dismiss" aria-label="Close preview">'+I('x')+'</button></div><h3 class="qs-card-title">'+esc(t.title)+'</h3><div class="qs-card-context"><span class="qs-card-stage">'+I(icons[t.state])+names[t.state]+'</span><span>'+t.runtime+' · '+t.host+'</span></div>'+history(t)+'<hr class="qs-divider"><button class="qs-command cursor-interaction" data-detail="'+t.id+'">'+I('panel-top')+'Task detail</button>';popup.showPopover();hydrate();position(trigger)}
+ popup.addEventListener('pointerenter',()=>{clearTimeout(hideTimer);clearTimeout(showTimer)});
+ popup.addEventListener('pointerleave',scheduleClose);
+ popup.addEventListener('focusout',scheduleClose);
+ popup.addEventListener('beforetoggle',event=>{closing=event.newState==='closed'});
+ popup.addEventListener('toggle',()=>{closing=false;if(!popup.matches(':popover-open')){if(previewTrigger)previewTrigger.setAttribute('aria-expanded','false');previewTrigger=null;pinned=false;fitPreview()}});
+ app.addEventListener('pointerover',event=>{const trigger=event.target.closest('[data-preview]');if(!trigger||trigger.contains(event.relatedTarget))return;clearTimeout(hideTimer);clearTimeout(showTimer);showTimer=setTimeout(()=>preview(trigger),180)});
+ app.addEventListener('pointerout',event=>{const trigger=event.target.closest('[data-preview]');if(trigger&&!trigger.contains(event.relatedTarget))scheduleClose()});
+ app.addEventListener('focusin',event=>{const trigger=event.target.closest('[data-preview]');if(trigger)preview(trigger)});
+ app.addEventListener('focusout',event=>{if(event.target.closest('[data-preview]'))scheduleClose()});
+ document.addEventListener('pointerdown',event=>{if(previewTrigger&&!popup.contains(event.target)&&!previewTrigger.contains(event.target))close()});
+ app.addEventListener('keydown',event=>{if(event.key==='Escape'&&previewTrigger){event.preventDefault();const trigger=previewTrigger;close();closing=true;try{trigger.focus()}finally{closing=false}}});
+ function home(){close();app.querySelector('[data-page="home"]').hidden=false;app.querySelector('[data-page="detail"]').hidden=true;if(returnTo?.isConnected)returnTo.focus();returnTo=null}
+ function detail(title,content,trigger){close();returnTo=trigger;app.querySelector('[data-page="home"]').hidden=true;const page=app.querySelector('[data-page="detail"]');page.innerHTML='<div class="qs-back"><button class="qs-ghost cursor-interaction" data-action="back" aria-label="Back to tasks">'+I('arrow-left')+'</button><strong>'+esc(title)+'</strong></div><div class="qs-detail">'+content+'</div>';page.hidden=false;hydrate();page.querySelector('button').focus()}
+ function history(t){return t.chain.map(([n,s],i)=>'<div class="qs-time-row"'+(i===t.chain.length-1?' aria-current="step"':'')+'><span><small>'+(i+1)+'</small> · '+n+'</span><span>'+time(s)+'</span></div>').join('')+'<hr class="qs-divider"><div class="qs-time-row"><span>Total · '+t.chain.length+' stages</span><span>'+time(total(t))+'</span></div>'}
+ function form(){return '<div class="qs-form"><label><span>Project</span><select name="project"><option value="all">All projects</option>'+['TaskQ','AgentQ','PilotQ'].map(p=>'<option>'+p+'</option>').join('')+'</select></label><label><span>State</span><select name="state"><option value="all">All states</option><option value="attention">Needs attention</option><option value="long">Over 30 min in stage</option>'+Object.entries(names).map(([v,n])=>'<option value="'+v+'">'+n+'</option>').join('')+'</select></label><label><span>Sort</span><select name="sort"><option value="priority">Priority</option><option value="age">Time in stage</option><option value="total">Total time</option></select></label></div><div class="qs-actions"><button class="cursor-interaction" data-action="dismiss">Cancel</button><button class="cursor-interaction" data-action="apply-filter">Apply</button></div>'}
+ function open(trigger){
+  close();popup.setAttribute('popover','auto');popup.removeAttribute('role');popup.setAttribute('aria-label','View options');returnTo=trigger;const type=trigger.dataset.open,t=tasks.find(t=>t.id===Number(trigger.dataset.task));
+  if(type==='presets')popup.innerHTML='<div class="qs-popup-heading">Saved views</div>'+model.views.map(v=>'<div class="qs-preset-row"><button class="qs-command cursor-interaction" data-select="'+esc(v.id)+'" aria-pressed="'+(v.id===model.selected)+'">'+I(v.id===model.selected?'check':'bookmark')+esc(v.name)+'</button><button class="qs-star cursor-interaction" data-star="'+esc(v.id)+'" aria-label="'+(v.star?'Unpin ':'Pin ')+esc(v.name)+'" aria-pressed="'+v.star+'">'+I('star')+'</button></div>').join('')+'<hr class="qs-divider"><button class="qs-command cursor-interaction" data-open="edit">'+I('sliders-horizontal')+'Edit conditions</button><button class="qs-command cursor-interaction" data-open="save">'+I('bookmark-plus')+'Save as…</button>';
+  if(type==='edit'){popup.innerHTML='<div class="qs-popup-heading">View conditions</div>'+form();popup.querySelectorAll('select').forEach(el=>el.value=criteria()[el.name])}
+  if(type==='save')popup.innerHTML='<div class="qs-popup-heading">Save current view</div><label class="qs-field">Name<input name="view-name" maxlength="40" value="'+esc(model.draft?'My view':selected().name+' copy')+'"></label><div class="qs-actions"><button class="cursor-interaction" data-action="dismiss">Cancel</button><button class="cursor-interaction" data-action="save-view">'+I('star')+'Save & pin</button></div>';
+  if(type==='controls')popup.innerHTML='<div class="qs-popup-heading">Mac · Auto</div><div class="qs-time-row"><span>Admission</span><span>Enabled</span></div><div class="qs-time-row"><span>Observed projects</span><span>3</span></div>';
+  if(type==='notifications')popup.innerHTML='<div class="qs-popup-heading">Needs attention</div><button class="qs-command cursor-interaction" data-detail="104">'+I('message-circle-question')+'#104 · Question</button><button class="qs-command cursor-interaction" data-detail="106">'+I('circle-x')+'#106 · Failed</button>';
+  if(type==='conversations')popup.innerHTML='<div class="qs-popup-heading">Conversations</div><div class="qs-time-row"><span>Menu redesign</span><span>1 unread</span></div><div class="qs-time-row"><span>Agent setup</span><span>Answered</span></div>';
+  popup.showPopover();hydrate();position(trigger);
+ }
+ function taskMarkup(t,withProject){return '<article class="qs-task"><div class="qs-task-meta"><button class="qs-reference cursor-interaction" data-preview="'+t.id+'" aria-label="Preview '+t.project+' task '+t.id+'" aria-haspopup="dialog" aria-expanded="false" aria-controls="'+popup.id+'">'+forge+(withProject?t.project+' ':'')+'#'+t.id+'</button><span class="qs-stage '+(t.state==='failed'?'qs-failed':t.state==='ask'?'qs-ask':['doing','review'].includes(t.state)?'qs-work':'')+'" role="img" aria-label="'+names[t.state]+' · current stage '+time(age(t))+'" data-tooltip="'+names[t.state]+' · current stage '+time(age(t))+'">'+I(icons[t.state])+time(age(t))+'</span></div><button class="qs-task-title cursor-interaction" data-detail="'+t.id+'">'+t.title+'</button></article>'}
+ function render(){
+  const c=criteria(),view=selected(),list=rows(),bar=app.querySelector('[data-viewbar]');
+  bar.innerHTML='<button class="qs-current cursor-interaction" data-open="presets" aria-label="Saved views: '+esc(view.name)+'">'+I('bookmark')+esc(view.name)+(model.draft?' *':'')+'<i class="qs-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>'+model.views.filter(v=>v.star&&v.id!==view.id).map(v=>'<button class="cursor-interaction" data-select="'+esc(v.id)+'">'+esc(v.name)+'</button>').join('')+'<button class="qs-edit qs-ghost cursor-interaction" data-open="edit" aria-label="Edit view conditions" data-tooltip="Edit conditions">'+I('sliders-horizontal')+'</button>';
+  const chips=[];if(c.project!=='all'&&(model.draft||view.name!==c.project))chips.push({key:'project',text:c.project});if(c.state!=='all')chips.push({key:'state',text:c.state==='attention'?'Question + failed':c.state==='long'?'Stage ≥ 30m':names[c.state]});if(c.sort!=='priority')chips.push({key:'sort',text:c.sort==='age'?'Longest stage first':'Oldest first'});
+  app.querySelector('[data-criteria]').innerHTML=chips.map(ch=>'<button class="cursor-interaction" data-clear="'+ch.key+'" aria-label="Remove '+esc(ch.text)+' condition">'+I('x')+esc(ch.text)+'</button>').join('')+(model.draft?'<button class="cursor-interaction" data-open="save">'+I('bookmark-plus')+'Save as…</button>':'');
+  const input=app.querySelector('input[type="search"]');if(input.value!==model.query)input.value=model.query;app.querySelector('[data-count]').textContent=list.length;
+  const attention=list.filter(t=>['ask','failed'].includes(t.state));
+  const ordinary=list.filter(t=>!['ask','failed'].includes(t.state));
+  const grouped=app.dataset.group==='project'&&c.project==='all';
+  app.querySelector('[data-tasks]').innerHTML=list.length?(attention.length?'<div class="qs-group-title">Needs attention</div>'+attention.map(t=>taskMarkup(t,c.project==='all')).join(''):'')+(grouped?['TaskQ','AgentQ','PilotQ'].map(project=>{const group=ordinary.filter(t=>t.project===project);return group.length?'<div class="qs-group-title">'+project+'</div>'+group.map(t=>taskMarkup(t,false)).join(''):''}).join(''):ordinary.map(t=>taskMarkup(t,c.project==='all')).join('')):'<div class="qs-empty">No matching tasks<br><button class="cursor-interaction" data-action="reset">All tasks</button></div>';
+  hydrate();
+ }
+ app.addEventListener('input',event=>{if(event.target.type==='search'){model.query=event.target.value;renderAll();saveState()}});
+ app.addEventListener('click',event=>{
+  const b=event.target.closest('button');if(!b)return;
+  if(b.dataset.preview){if(previewTrigger!==b||!popup.matches(':popover-open')){pinned=false;preview(b)}pin(true);if(event.detail===0)popup.querySelector('[data-detail]').focus();return}
+  if(b.dataset.open){open(b);return}
+  if(b.dataset.select){model.selected=b.dataset.select;model.draft=null;model.query='';close();renderAll();saveState();return}
+  if(b.dataset.star){const v=model.views.find(v=>v.id===b.dataset.star);v.star=!v.star;b.setAttribute('aria-pressed',String(v.star));b.setAttribute('aria-label',(v.star?'Unpin ':'Pin ')+v.name);renderAll();saveState();return}
+  if(b.dataset.clear){model.draft={...criteria(),[b.dataset.clear]:b.dataset.clear==='sort'?'priority':'all'};renderAll();saveState();return}
+  if(b.dataset.detail){const t=tasks.find(t=>t.id===Number(b.dataset.detail));detail('#'+t.id,'<h3>'+esc(t.title)+'</h3><p>'+t.project+' · '+t.runtime+' · '+t.host+'</p>'+history(t),app.querySelector('[data-preview="'+t.id+'"]'));return}
+  if(b.dataset.action==='settings'){detail('Settings','<p>Appearance</p><label class="qs-field">Text size<select data-font><option value="16">16 px</option><option value="18">18 px</option><option value="20">20 px</option></select></label><p>Agents · Services · About</p>',b);return}
+  if(b.dataset.action==='back'){home();return}if(b.dataset.action==='dismiss'){const trigger=returnTo;close();if(trigger?.isConnected)trigger.focus();close();return}if(b.dataset.action==='pin'){pin(!pinned);return}
+  if(b.dataset.action==='reset'){model.selected='all';model.draft=null;model.query='';renderAll();saveState();return}
+  if(b.dataset.action==='apply-filter'){model.draft={...selected(),...Object.fromEntries([...popup.querySelectorAll('select')].map(el=>[el.name,el.value]))};close();renderAll();saveState();return}
+  if(b.dataset.action==='save-view'){const name=popup.querySelector('[name="view-name"]').value.trim();if(!name){popup.querySelector('input').setCustomValidity('Enter a name');popup.querySelector('input').reportValidity();return}const v={...criteria(),id:'custom-'+Date.now().toString(36),name,star:true};model.views.push(v);model.selected=v.id;model.draft=null;close();renderAll();saveState();status('“'+name+'” saved and pinned in this prototype.');return}
+ });
+ app.addEventListener('change',event=>{if(event.target.hasAttribute('data-font'))app.style.fontSize=event.target.value+'px'});
+ return {render,app};
+});
+function renderAll(){apps.forEach(a=>a.render())}
+window.addEventListener('openai:set_globals',event=>{if(restore(event.detail?.globals?.widgetState))renderAll()});
+renderAll();
+if(globalThis.Tweak){const tuning={font:16};const tweak=new Tweak({container:root,onChange:()=>apps.forEach(a=>a.app.style.fontSize=tuning.font+'px')});tweak.addSlider(tuning,'font',{label:'Text size in both variants',min:14,max:20,step:2,unit:'px'})}
+})();
+</script>
