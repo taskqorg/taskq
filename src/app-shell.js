@@ -30,14 +30,21 @@ const api=execution.module('shell',{
   useLayoutEffect(execution.bind(()=>{if(previous.current!==html){ref.current.innerHTML=html;previous.current=html;}}),[html]);
   return h(tag,{...attributes,ref});
  },
- Frame:function({frame}){const [route]=useLocation();return h(Route,{path:frame.route},h('div',{'class':'shell','data-shell-route':route},frame.nodes));},
+ Frame:function({frame}){const [route]=useLocation();return h(Route,{path:frame.route},h('div',{'class':'shell','data-shell-route':route,'data-shell-depth':frame.depth},frame.nodes));},
  create:function(container){
-  const location=memoryLocation(),frame=signal(null),template=container.ownerDocument.createElement('template');
+  // A3: the recorded Wouter history is the shell's Back stack; entries[i] keeps history[i]'s scroll, disclosures and focus.
+  // ponytail: entries restored from native Settings carry no path; their route comes back on the next draw.
+  const location=memoryLocation({record:true}),frame=signal(null),entries=[];let template=null;
   return execution.module('shell.instance',{
+   entries:function(){return entries;},
+   history:function(){return location.history;},
+   push:function(state){entries.push(state);if(entries.length>32){entries.shift();if(location.history.length>1)location.history.shift();}location.navigate(location.history.at(-1));},
+   pop:function(){const state=entries.pop();if(location.history.length>1){location.history.pop();location.navigate(location.history.at(-1),{replace:true});}return state;},
+   clear:function(){entries.length=0;location.history.splice(0,location.history.length-1);},
    draw:function(html,route){
-    template.innerHTML=html;
-    frame.value={route,nodes:[...template.content.childNodes].map(api.node)};
-    location.navigate(route,{replace:true});
+    template??=container.ownerDocument.createElement('template');template.innerHTML=html;
+    frame.value={route,depth:location.history.length,nodes:[...template.content.childNodes].map(api.node)};
+    if(location.history.at(-1)!==route)location.navigate(route,{replace:true});
     render(h(Router,{hook:location.hook},h(api.Frame,{frame:frame.value})),container);
    }
   });

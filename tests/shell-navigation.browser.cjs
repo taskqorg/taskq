@@ -56,7 +56,8 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   await tray.evaluate(()=>taskq.receive({workspaceError:'Invented construction failure'}));assert.match(await tray.locator('[role=alert]').innerText(),/construction failure/);
   await tray.evaluate(()=>taskq.receive({workspaceError:null}));assert.equal(await tray.locator('[role=alert]').count(),0,'successful workspace retry clears its construction error');
   await tray.locator('[data-route=projects]').first().focus();await tray.locator('[data-route=projects]').first().click();
-  await tray.locator('[data-a=back]').click();assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
+  const shellRoute=()=>tray.locator('[data-shell-route]').evaluate(e=>e.dataset.shellRoute+' '+e.dataset.shellDepth);assert.equal(await shellRoute(),'/projects 2','A3: navigation pushes a Wouter history entry');
+  await tray.locator('[data-a=back]').click();assert.equal(await shellRoute(),'/home 1','A3: Back pops the Wouter history entry');assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
   await tray.locator('.shell-overflow > summary').click();await tray.locator('[data-route=settings]').click();
   await tray.locator('[data-route=appearance]').click();assert.equal(await tray.locator('.breadcrumbs').innerText(),'Settings','TW1: omit the current settings page from breadcrumbs');
   assert.equal(await tray.locator('.breadcrumbs a').count(),1,'TW1: each ancestor segment stays linked');
