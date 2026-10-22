@@ -6,6 +6,8 @@ macro_rules! log {
 }
 
 mod admission;
+#[cfg(any(target_os="macos",windows,test))]
+mod agentq;
 mod host;
 mod host_control;
 mod board;
