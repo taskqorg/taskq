@@ -524,6 +524,13 @@ pub struct Env<'a> {
     pub publish: &'a str,
     /// Secret values: command environment only, never brief, argv or log.
     pub board_env: &'a [(String, String)],
+    /// § 8 compile jobs: `CARGO_BUILD_JOBS` for this launch; None sets nothing.
+    pub jobs: Option<usize>,
+}
+
+/// § 8 compile jobs: an equal share of the host CPUs among occupied host slots, this launch included; unknown CPUs: None.
+pub fn compile_jobs(cpus: Option<usize>, occupied: usize) -> Option<usize> {
+    cpus.map(|cpus| (cpus / occupied.max(1)).max(1))
 }
 
 pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &Env) -> Result<Command, String> {
@@ -557,7 +564,7 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
     match (l.rt.as_str(), &l.resume) {
         ("claude", r) => {
-            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l)]);
+            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs)]);
             if r.is_some() { c.args(["--resume", &l.session]) } else { c.args(["--session-id", &l.session]) };
         }
         (_, None) => {
@@ -580,6 +587,7 @@ fn environment(env: &Env, l: &Launch, c: &mut Command) {
         .env("TASKQ_ROLE", &l.role)
         .env("TASKQ_ROOT", env.root)
         .envs(env.board_env.iter().cloned());
+    if let Some(jobs) = env.jobs { c.env("CARGO_BUILD_JOBS", jobs.to_string()); }
 }
 
 const FORMATS: &str = "Put each `--text` field on its own line. The commands render and check the taskq.md templates and limits (§ 2 Ask card,\n\
@@ -1002,12 +1010,14 @@ fn pm_rules(root: &Path, phase: &str, fetch: impl FnMut(&str) -> Result<String, 
 }
 
 /// `--settings` for a Claude turn: a SessionStart hook that re-sends the rules after compaction, and the launch's TaskQ env.
-fn compact_settings(root: &Path, install: &Path, l: &Launch) -> String {
+fn compact_settings(root: &Path, install: &Path, l: &Launch, jobs: Option<usize>) -> String {
     let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
     let exe = std::env::current_exe().unwrap_or_else(|_| "taskq".into());
     let cmd = format!("{} rules compact {} {} {} {}", q(&exe.to_string_lossy()), q(&root.to_string_lossy()), q(&l.role), l.task, l.attempt);
     let attempt = (l.role != "operator").then_some(l);
-    serde_json::json!({"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": cmd}]}]}, "env": claude_env(install, Some(root), attempt)}).to_string()
+    let mut env = claude_env(install, Some(root), attempt);
+    if let Some(jobs) = jobs { env["CARGO_BUILD_JOBS"] = jobs.to_string().into(); }
+    serde_json::json!({"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": cmd}]}]}, "env": env}).to_string()
 }
 
 /// #1531: `claude --bg` sessions run under the per-user Claude daemon, whose env is that of whoever started it;
@@ -1538,7 +1548,7 @@ impl ClaudeTurn {
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
         c.current_dir(&root).arg("--bg");
         if l.resume.is_some() { c.args(["--resume", &l.session]); }
-        else { c.args(["--settings", &compact_settings(&root, env.install, l), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode]); }
+        else { c.args(["--settings", &compact_settings(&root, env.install, l, env.jobs), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode]); }
         if l.role == "operator" { for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); } }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, launch_error:None };
@@ -3355,7 +3365,7 @@ mod tests {
         std::fs::create_dir_all(&install).unwrap();
         let codex: Vec<String> = ["-s", "workspace-write", "-m", "gpt-5", "-c", "model_reasoning_effort=high"].map(String::from).into();
         let root = std::env::temp_dir();
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, publish: "pr", board_env: &[] };
+        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, publish: "pr", board_env: &[], jobs: None };
         let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         let mut l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         crate::policy::grant(&install, "claude", "full", None, "op", 1).unwrap();
@@ -3632,7 +3642,7 @@ mod tests {
         let install = std::env::temp_dir().join(format!("taskq-app-{}", std::process::id()));
         std::fs::create_dir_all(&install).unwrap();
         crate::policy::grant(&install, "codex-app", "full", None, "op", 1).unwrap();
-        let env = Env { root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = Launch { execution: None, task: 0, title: "live".into(), attempt: 0, role: "worker".into(), rt: "codex-app".into(), session: "-".into(), url: String::new(), resume: None };
         let log = root.join("app-turn.log");
         let (text, input, _path) = app_input(&root, &format!("{}Reply with the single word QUEUED and do nothing else.", "A taskq test line; ignore it.\n".repeat(700)),None).unwrap();
@@ -3651,7 +3661,7 @@ mod tests {
     fn app_brief_powershell_values_round_trip() {
         let root = Path::new("C:\\project's $cash; folder");
         let exe = Path::new("C:\\tool's $cash; folder\\taskq.exe");
-        let env = Env { root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker's $cash; role".into(), rt: "codex-app".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let text = brief(&env, &l);
         let command = text.split("your inbox: `").nth(1).unwrap().split('`').next().unwrap();
@@ -3857,7 +3867,7 @@ mod tests {
     #[test]
     fn rules_reach_every_runtime_role_and_resume() {
         let root = rules_root("roles");
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let dir = specq_dir(&root,SPECQ_REVISION).display().to_string();
         for rt in ["claude", "codex", "codex-app"] {
             for role in ["worker", "reviewer"] {
@@ -3903,7 +3913,7 @@ mod tests {
     // Chain: section 7 step 4 test repair guidance (#1245). Risk: repairs rejected or weakened assertions accepted without a rule change.
     #[test]
     fn briefs_distinguish_test_repairs_from_weakened_checks() {
-        let env = Env { root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let rule = "Test changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).";
         for rt in ["claude", "codex", "codex-app"] {
             for role in ["worker", "reviewer"] {
@@ -3918,7 +3928,7 @@ mod tests {
     // Chain: § 7 research decision handoff (#1234). Risk: a worker bypasses owner choice or a reviewer accepts that bypass.
     #[test]
     fn research_decision_requires_ask_before_result() {
-        let env = Env { root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         for rt in ["claude", "codex", "codex-app"] {
             let mut l = Launch { execution: None, task: 7, title: "Proposal".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
             assert!(brief(&env, &l).contains("Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer."), "{rt}: worker");
@@ -3936,7 +3946,7 @@ mod tests {
         let install = root.join("install");
         std::fs::create_dir_all(&install).unwrap();
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let launch = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let args = |rt: &str| command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
         let l = launch("claude");
@@ -3950,7 +3960,7 @@ mod tests {
         // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
         let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
         assert_eq!(settings["env"], want("7", "42", "worker"));
-        let operator: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &Launch { role: "operator".into(), ..launch("claude") })).unwrap();
+        let operator: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &Launch { role: "operator".into(), ..launch("claude") }, None)).unwrap();
         assert_eq!(operator["env"], want("", "", ""), "operator: empty means unset");
         // The compact hook restores current mandatory bodies and index, without inventing a task.
         let start = turn_text(&env, &l, rule).unwrap();
@@ -3967,12 +3977,44 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
+    // Chain: § 8 compile jobs, #1605. Risk: parallel workers each start one cargo job per CPU, thrash, and the load
+    // gate holds new launches; or a Claude --bg session misses the bound because its daemon's env wins.
+    #[test]
+    fn launches_carry_the_host_compile_jobs_share() {
+        let p = crate::host::Policy::parse(serde_json::json!({"limits": {"claude": 10}, "load_gate": {"enabled": false}}), "invented").unwrap();
+        let mut h = crate::host::Host::new(Ok(p));
+        h.sync(Path::new("/a"), vec![(1, 11, "claude".into()), (2, 0, "codex".into())]);
+        h.sync(Path::new("/b"), vec![(3, 33, "claude".into()), (4, 44, "claude".into())]);
+        assert_eq!(h.occupied(), 4, "pending grants and children of every project");
+        for (cpus, occupied, jobs) in [(16, 4, 4), (8, 10, 1), (8, 3, 2), (8, 1, 8), (8, 0, 8)] {
+            assert_eq!(compile_jobs(Some(cpus), occupied), Some(jobs), "{cpus} CPUs, {occupied} slots");
+        }
+        assert_eq!(compile_jobs(None, 4), None, "unknown CPUs set nothing");
+        let root = rules_root("jobs");
+        let install = root.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
+        let launch = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        for jobs in [compile_jobs(Some(16), h.occupied()), None] {
+            let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs };
+            let want = jobs.map(|j| j.to_string());
+            for rt in ["claude", "codex"] {
+                let c = command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap();
+                let got = c.get_envs().find(|(k, _)| *k == "CARGO_BUILD_JOBS").and_then(|(_, v)| v).map(|v| v.to_string_lossy().into_owned());
+                assert_eq!(got, want, "{rt} process env");
+            }
+            let settings: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &launch("claude"), jobs)).unwrap();
+            assert_eq!(settings["env"]["CARGO_BUILD_JOBS"].as_str().map(String::from), want, "Claude --bg settings env");
+        }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     // Chain: § 8 rule delivery to a PM session, #1219. Risk: the PM hook gets other rules than a worker at the same pin,
     // compaction loses mandatory bodies, or the committed hook names a local path or misses start/compact.
     #[test]
     fn pm_hook_gets_the_worker_start_rules() {
         let root = rules_root("pm");
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let start = turn_text(&env, &l, rule).unwrap();
         assert_eq!(pm_rules(&root, "start", rule).unwrap(), start.split("\nTaskQ task\n").next().unwrap());

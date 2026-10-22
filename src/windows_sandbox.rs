@@ -189,7 +189,7 @@ mod tests {
         let base = std::env::temp_dir().join(format!("taskq-unqualified-{}", crate::runtime::uuid()));
         assert!(!base.exists());
         let root = base.join("project"); let install = base.join("install"); let exe = base.join("taskq.exe");
-        let env = crate::runtime::Env { root: &root, install: &install, exe: &exe, codex: &[], permission_mode: "dontAsk", publish: "pr", board_env: &[] };
+        let env = crate::runtime::Env { root: &root, install: &install, exe: &exe, codex: &[], permission_mode: "dontAsk", publish: "pr", board_env: &[], jobs: None };
         let args = [root.display().to_string(), install.display().to_string(), base.join("home").display().to_string(), "exec".into(), "--json".into(), "-".into()];
         for result in [ready(&root, &install), command(&env).map(|_| ()), run(&args)] {
             assert_eq!(result.unwrap_err(), "Windows sandbox: Workspace containment qualification incomplete");
@@ -286,7 +286,7 @@ mod tests {
         let python = std::env::var("TASKQ_QUALIFY_PYTHON").expect("native Python executable");
         assert!(Path::new(&python).is_file());
         let codex = vec!["-s".into(), "workspace-write".into(), "-c".into(), "sandbox_workspace_write.network_access=true".into()];
-        let env = Env { root: &root, install: &install, exe: &exe, codex: &codex, permission_mode: "dontAsk", publish: "pr", board_env: &[] };
+        let env = Env { root: &root, install: &install, exe: &exe, codex: &codex, permission_mode: "dontAsk", publish: "pr", board_env: &[], jobs: None };
         fs::create_dir_all(root.join(".codex")).unwrap();
         fs::create_dir_all(root.join(".taskq")).unwrap();
         for name in [".git", ".agents", ".aws"] { fs::create_dir_all(root.join(name)).unwrap(); }

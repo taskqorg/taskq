@@ -132,7 +132,7 @@ fn runtimes(install:&Path)->Value {
             (Some(r),_) if r["login"]!="logged in"=>Some(format!("{}",r["login"].as_str().unwrap_or("login unknown"))),
             (Some(_),Ok(p))=>{
                 let exe=std::env::current_exe().unwrap_or_default();let work=crate::setup::dir(install);
-                let env=crate::runtime::Env{root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,publish:"",board_env:&[]};
+                let env=crate::runtime::Env{root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,publish:"",board_env:&[],jobs:None};
                 crate::runtime::access(&env,crate::runtime::of(rt).setup).err().map(|e|e.message)
             },_=>Some("runtime unknown".into())
         };

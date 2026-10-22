@@ -617,6 +617,9 @@ impl Host {
 
     pub fn elapsed(&self) -> u64 { self.began.elapsed().as_secs() }
 
+    /// Host-wide pending grants and running children (§ 3), for the § 8 compile-jobs share.
+    pub fn occupied(&self)->usize {self.slots.len()}
+
     pub fn used(&self)->BTreeMap<String,usize> {
         let mut used=BTreeMap::new();
         for runtime in self.slots.values() {*used.entry(runtime.clone()).or_default()+=1;}

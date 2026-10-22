@@ -848,14 +848,15 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let cfg = &c.cfg;
     let exe = launcher(&cfg.install);
     let board_env = cfg.board.worker_env(&platform::tool(&cfg.install), &cfg.web_host)?;
-    let env = runtime::Env { board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, publish: &cfg.delivery };
+    let env = runtime::Env { board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, publish: &cfg.delivery, jobs: None };
     let start = |l: &runtime::Launch| {
         if let Some(host) = &host {
             let h = host.lock().map_err(|_| runtime::StartError::admission("host admission poisoned"))?;
             if let Some(reason)=&h.held {return Err(runtime::StartError::admission(reason.clone()));}
             let p = h.policy.clone().map_err(runtime::StartError::admission)?;
+            let jobs = runtime::compile_jobs(std::thread::available_parallelism().ok().map(|n| n.get()), h.occupied());
             drop(h);
-            let env = runtime::Env { permission_mode: &p.permission_mode, codex: &p.codex, ..env };
+            let env = runtime::Env { permission_mode: &p.permission_mode, codex: &p.codex, jobs, ..env };
             runtime::spawn(&env, l)
         } else { runtime::spawn(&env, l) }
     };
