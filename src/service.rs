@@ -166,6 +166,59 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
     }).collect()
 }
 
+fn git(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
+    coreq::process::output("cleanup.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60)).ok().map(|o| o.stdout)
+}
+
+/// #1620 (docs/testing.md#build-cache): before a worker's first start, create `.worktrees/taskq-<N>` (§ 7 rule 2) and
+/// give it a copy-on-write clone of the newest `target/debug` of the root or another worktree: a recent build shares the
+/// current Cargo.lock, so only the workspace crate recompiles. The clone only reads its source, and each worktree owns
+/// its copy. An existing worktree or no `target/debug` is left alone; any failure only logs, and the worker creates the
+/// worktree itself. `ponytail:` a source mid-build clones as is; cargo's fingerprints rebuild whatever does not match.
+pub fn seed(root: &std::path::Path, n: u64) -> Option<String> {
+    let name = format!("taskq-{n}");
+    let wt = root.join(".worktrees").join(&name);
+    if wt.exists() { return None; }
+    let others = std::fs::read_dir(root.join(".worktrees")).into_iter().flatten().flatten().map(|e| e.path().join("target/debug"));
+    let src = std::iter::once(root.join("target/debug")).chain(others)
+        .filter_map(|p| Some((std::fs::metadata(&p).ok().filter(|m| m.is_dir())?.modified().ok()?, p))).max()?.1;
+    git(root, &["fetch", "-q", "origin", "main"]).ok_or(format!("#{n} seed skipped: git fetch origin main failed")).ok()?;
+    let rel = format!(".worktrees/{name}");
+    let added = if git(root, &["rev-parse", "--verify", "-q", &format!("refs/heads/{name}")]).is_some() {
+        git(root, &["worktree", "add", "-q", &rel, &name])
+    } else {
+        git(root, &["worktree", "add", "-q", "-b", &name, &rel, "origin/main"])
+    };
+    if added.is_none() { return Some(format!("#{n} seed skipped: git worktree add failed")); }
+    let dst = wt.join("target/debug");
+    if let Err(e) = std::fs::create_dir_all(wt.join("target")) { return Some(format!("#{n} seed skipped: {e}")); }
+    let cloned = clone_dir(&src, &dst);
+    if cloned.is_err() { let _ = std::fs::remove_dir_all(&dst); }
+    Some(match cloned { Ok(()) => format!("#{n} seeded target/debug"), Err(e) => format!("#{n} seed skipped: {e}") })
+}
+
+#[cfg(target_os = "macos")]
+fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = |p: &std::path::Path| std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(|e| e.to_string());
+    let (s, d) = (c(src)?, c(dst)?);
+    // One call clones the whole tree on APFS; other volumes fail and skip.
+    if unsafe { libc::clonefile(s.as_ptr(), d.as_ptr(), 0) } == 0 { Ok(()) } else { Err(format!("clonefile: {}", std::io::Error::last_os_error())) }
+}
+
+#[cfg(target_os = "linux")]
+fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    // ponytail: reflink only (btrfs, XFS); ext4 fails at the first file and skips rather than copying gigabytes.
+    coreq::process::output("seed.cp", std::process::Command::new("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
+        .map(|_| ()).map_err(|_| "cp --reflink=always failed (no reflink on this volume)".into())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn clone_dir(_: &std::path::Path, _: &std::path::Path) -> Result<(), String> {
+    // ponytail: Windows ReFS block cloning is the upgrade path; a full copy costs more than sccache-backed builds.
+    Err("no copy-on-write clone on this OS".into())
+}
+
 /// Fold every open task (heartbeat issues and untrusted authors excluded).
 /// Remove `.worktrees/taskq-<N>` of closed tasks and their merged local branch (§ 7, R11). Without `force` git refuses
 /// dirty worktrees, so those stay; with it the uncommitted work goes to `.taskq/trash/taskq-<N>.patch` first. Commits
@@ -175,7 +228,6 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
 pub fn cleanup(board: &dyn Board, root: &std::path::Path, me: &str, boot: fn() -> Result<i64, String>, mut skip: impl FnMut(u64) -> bool, force: bool) -> Vec<String> {
     let mut log = vec![];
     let Ok(dir) = std::fs::read_dir(root.join(".worktrees")) else { return log };
-    let git = |dir: &std::path::Path, args: &[&str]| coreq::process::output("cleanup.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(30)).ok().map(|o| o.stdout);
     for e in dir.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         let Some(n) = name.strip_prefix("taskq-").and_then(|n| n.parse::<u64>().ok()) else { continue };
@@ -1929,6 +1981,7 @@ impl<'a> Service<'a> {
         l.execution=Some(execution);
         self.observations.insert((l.task,execution),core::Execution {id:execution,attempt:l.attempt,through,
             host:self.cfg.me.clone(),runtime:l.rt.clone(),accepted:false,release:None,usage_hold:None});
+        if l.role == "worker" && l.resume.is_none() { if let Some(line) = seed(&self.cfg.root, l.task) { self.log.push(line); } }
         let pos = std::fs::metadata(crate::runtime::attempt_log(&self.cfg.root, &l.role, l.task, l.attempt)).map_or(0, |m| m.len());
         let began = std::time::Instant::now();
         let started = (self.start)(&l).map(|proc| {
@@ -5340,6 +5393,39 @@ mod tests {
         b.advance(crate::snapshot::STUCK_AFTER);
         s.pass().unwrap();
         assert_eq!(lines(&s), 2, "a move rearms the line");
+    }
+
+    #[test]
+    fn new_worktrees_get_a_private_target_seed() {
+        // Chain: first worker start -> worktree + cloned target/debug. Risk: a seed that writes into or shares its source.
+        let base = std::env::temp_dir().join(format!("taskq-seed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (origin, root) = (base.join("origin"), base.join("root"));
+        let git = |dir: &std::path::Path, args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success(), "{args:?}");
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "-b", "main"]);
+        git(&origin, &["commit", "-q", "--allow-empty", "-m", "init"]);
+        git(&base, &["clone", "-q", origin.to_str().unwrap(), "root"]);
+        assert_eq!(seed(&root, 7), None, "no target/debug: nothing to seed, the worker creates its worktree");
+        std::fs::create_dir_all(root.join("target/debug/deps")).unwrap();
+        std::fs::write(root.join("target/debug/deps/libx.rlib"), "warm").unwrap();
+        let line = seed(&root, 7).unwrap();
+        let copy = root.join(".worktrees/taskq-7/target/debug/deps/libx.rlib");
+        assert!(root.join(".worktrees/taskq-7/.git").exists(), "{line}");
+        if cfg!(target_os = "macos") { assert_eq!(line, "#7 seeded target/debug", "APFS temp dir clones"); }
+        if line == "#7 seeded target/debug" {
+            std::fs::write(&copy, "edited").unwrap();
+            assert_eq!(std::fs::read_to_string(root.join("target/debug/deps/libx.rlib")).unwrap(), "warm", "the seed never writes into its source");
+        } else {
+            assert!(line.starts_with("#7 seed skipped: ") && !copy.exists(), "{line}");
+        }
+        assert_eq!(seed(&root, 7), None, "an existing worktree is continued, never reseeded");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::create_dir_all(root.join(".worktrees/taskq-5/target/debug/newest")).unwrap();
+        if seed(&root, 8).unwrap() == "#8 seeded target/debug" {
+            assert!(root.join(".worktrees/taskq-8/target/debug/newest").exists(), "the newest target/debug is the source");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     // Chain: closed task -> execution release -> worktree cleanup. Risk: deleting dirty or still-owned work.
