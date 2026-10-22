@@ -1027,7 +1027,7 @@ pub fn run(install: &Path) -> Res<()> {
                     let e = command.exec();
                     return Err(format!("host re-exec: {e}"));
                 }
-                #[cfg(not(unix))] std::process::exit(75);
+                #[cfg(not(unix))] crate::platform::exit(75);
             }
         }
         drop(h);

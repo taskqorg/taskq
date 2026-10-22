@@ -972,7 +972,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             if let Some(t)=&tray {let _=t.set_tooltip(Some("TaskQ: interface outcomes unknown; check service status"));}
             if snapshot.is_none() && let Some((_,wv))=&ui {web_eval(wv,"window.taskqWebFault('native')","tray.web.notice",&proxy,&mut web);}
         }
-        if web.failed && snapshot.is_some() && web.pending.is_empty() {std::process::exit(1);}
+        if web.failed && snapshot.is_some() && web.pending.is_empty() {crate::platform::exit(1);}
         let push = |web: &mut WebCalls, ui: &Option<(Window, WebView)>, st: &Value| {
             if let Some((_, wv)) = ui {
                 if !web.failed {web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,web);}
@@ -1454,9 +1454,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     println!("snapshots in {}", dir.display());
                     if !overflow.is_empty() {
                         eprintln!("horizontal overflow: {}", overflow.join(", "));
-                        std::process::exit(1);
+                        crate::platform::exit(1);
                     }
-                    if !capture_errors.is_empty(){eprintln!("native capture unavailable: {}",capture_errors.join("; "));std::process::exit(1);}
+                    if !capture_errors.is_empty(){eprintln!("native capture unavailable: {}",capture_errors.join("; "));crate::platform::exit(1);}
                     *flow = ControlFlow::Exit;
                     return;
                 };

@@ -172,7 +172,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let status = Command::new(p.bin).args(["exec", "--add-dir"]).arg(home).args(&args[4..])
         .env("CODEX_HOME", &args[2]).env("TASKQ_WINDOWS_SANDBOX_HOME", p.state)
         .current_dir(root).status().map_err(|e| e.to_string())?;
-    std::process::exit(status.code().unwrap_or(1));
+    crate::platform::exit(status.code().unwrap_or(1));
 }
 
 pub fn restore(args: &[String]) -> Result<(), String> {
