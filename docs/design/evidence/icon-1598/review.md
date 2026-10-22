@@ -50,3 +50,22 @@ Candidate `37baf9d13f179192b221a3246c1f230ecbbe2216` rebases onto `a98c0a245bfc1
 The delivered commit also records these receipts and the regenerated assets; rendering sources remain those of the checked candidate. Publication still requires green `merge_group` CI (R12, § 7).
 
 Open under R12: Windows native appearance/slot qualification; real OS menu-bar translucency/notch placement and Dock presentation. Source/native WebKit/export evidence does not qualify those shell effects. No installation, service, queue or runtime-policy change was made by this task.
+
+## Windows counter ink correction
+
+The [Windows merge-group run](https://github.com/taskqorg/taskq/actions/runs/39826399969) failed the unchanged `six_columns_keep_quantity_marks_palette_and_device_bounds` assertion at cell 1: painted x = 9.119532 instead of 8.1. The non-macOS renderer measured the SVG text layout box, which includes advances and side bearings, then serialized glyph paths with different ink bounds. I2 requires the painted ink to align to the cell; increasing the test tolerance would hide that defect.
+
+`6b04dd4c` measures `Text::flattened().bounding_box()` for both overflow fitting and left alignment. Font, baseline, cell origins, 5.6 pt fit limit and 9+ / + fallback stay unchanged. The existing regression assertion still requires x within 0.01 pt and width at most 5.61 pt. No assertion was removed or weakened (R8/R12, § 7).
+
+Before/after development proof: an isolated temporary crate compiled the current `src/icon.rs` renderer and its existing six-column test with the non-macOS counter selected and resvg text/system-font features enabled. Before the fix it failed ink alignment at cell 0 (x = 0.92089844 instead of 1); after the fix the same test passed. A temporary probe also required dash, 1, 9, 9+, + and 999999 to align at 8.1 within the unchanged width limit; all passed. This used this Mac's fallback fonts, not Windows Segoe, and does not claim a native Windows pass. The development-only instrument is not a second product renderer or persistent test suite.
+
+The normal macOS `cargo +stable test --locked --bin taskq icon::tests::six_columns_keep_quantity_marks_palette_and_device_bounds` also passed. Light/dark non-macOS raster exports were opened and visually inspected: dash, overflow +, single digit, six separated columns, zero tick and ongoing underline remain visible without overlap. These are canonical renderer exports, not OS shell screenshots. No new product or visual decision changes under R13; Windows native appearance and merge-result CI remain unknown under R12.
+
+Final candidate checks on macOS 27.0.1 / arm64 (R12, § 7):
+
+- `python3 scripts/check.py --base 7c1f565f8f65a2cf26e016fcd33c0af34e44a393`: **sandbox-blocked**, not PASS; 479 Rust tests passed, 17 host-authority cases failed, 31 ignored; 47.796 s / 900 s. Refusals include `a worker cannot install the host service`, `a worker cannot change host policy` and worker Stop/restart denial. Integration and later gate stages were not reached. Icon/frozen-fixture cases passed; no worker authority or assertion changed.
+- All `tests/*.test.cjs` passed separately. Isolated `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest` passed 97 golden traces and formats, committed 9 staged observations and left the board read unknown.
+- `RUSTUP_TOOLCHAIN=stable sh docs/shots/update.sh`, `sh docs/shots/check.sh` and `sh docs/shots/check.test.sh` passed. The new manifest pins `6b04dd4c` and its binary/source hashes. Native project PNG is byte-identical; the icon PNG reflects the existing fixture's current-clock events and epoch-aligned bins. Both recaptured PNGs were opened and visually inspected; no clipping or lost controls/counters was seen.
+- All 14 frozen macOS SVGs were regenerated from the current Rust renderer and compared byte-for-byte with the accepted fixture vectors; all matched. This separates the clock-dependent README capture from a change to approved geometry.
+
+The PR is handed back for review, without waiting for CI. Windows/Segoe execution and green merge-result CI remain pending; no service installation or release was performed.
