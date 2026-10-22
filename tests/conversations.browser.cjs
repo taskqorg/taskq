@@ -55,6 +55,15 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await page.locator('[data-c=undo]').click();await drain();assert.equal(await input.inputValue(),'Third draft');assert(await input.evaluate(e=>document.activeElement===e));
   await page.locator('[data-c=archive]').click();await drain();await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id="'+third.id+'"]').click();await page.locator('[data-c=restore]').click();await drain();assert.equal(await input.inputValue(),'Third draft');
   await page.locator('[data-c=recent]').click();await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,5],'separate caret retained');
+  // C-A3/F3: list scroll is independent per Recent/Archive; a new row is visible even in a dense list.
+  state.conversations.items.push(...Array.from({length:60},(_,n)=>({id:'dense-'+n,revision:1,title:'Dense saved request '+n,root:'fixture-alpha',text:'Saved draft '+n,caret:[0,0],scroll:0,files:[],archived:false})));
+  await page.evaluate(s=>taskq.receive(s),state);
+  const rows=page.locator('.conversation-rows');await rows.evaluate(e=>{e.scrollTop=240;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
+  await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=recent]').click();assert.equal(await rows.evaluate(e=>e.scrollTop),240,'Recent restores its own list scroll');
+  await page.locator('[data-c=new]').click();await drain();
+  const selectedRow=page.locator('.conversation-row[aria-current=page]');const selectedBox=await selectedRow.boundingBox(),listBox=await rows.boundingBox();
+  assert(selectedBox.y>=listBox.y&&selectedBox.y+selectedBox.height<=listBox.y+listBox.height+1,'New reveals its own row in a dense list');
+  await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();
   // History is not a submission; IME and Shift+Enter are never sends.
   await page.locator('[data-view-key=conversation-history] summary').click();await page.locator('[data-c=history]').click();await drain();assert.equal(await input.inputValue(),'History fills only');
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0);
