@@ -64,7 +64,7 @@ Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/en
 ## Product
 Looks/sound: one line each (R13).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
-- UI: Preact/Signals/Wouter. Approved dashboard: [MP11–MP13](docs/design/menu-product.md#dashboard-decisions-1573); O1 stage-only rows, O2 canonical ordering, O3 per-view working context. Reference: [frozen package](docs/design/implementation-brief.md#dashboard-baseline-1578).
+- UI: Preact/Signals/Wouter. O1–O3.
 - Standalone: [onboarding](docs/design/standalone-onboarding.md); [telemetry](docs/design/standalone-telemetry.md): local SQLite/WAL, 30 days; sent async only under revocable `taskq-telemetry/1`. `profile export` feeds analysis, `guide` guides agents. Migration keeps legacy rows; board is task truth (R1).
 - README is the whole page: header, setup phrase, one sentence, what you get, screenshots, use cases, one link to taskq.md, release checksum and provenance verification, license, donate.
 - Header: `docs/header.webp` with the caption `Agents working.` stays at the top, verbatim.

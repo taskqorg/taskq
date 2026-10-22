@@ -3,7 +3,7 @@ const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 const shell=require('./app-shell.js');
 const {h,Fragment}=require('preact');
-const {icon,button}=require('./ui-icons.js'),taskViews=require('./task-views.js');
+const {icon,button}=require('./ui-icons.js');
 
 // R-UI5: physical pixels, one gap, adjacent source bins summed without dropping any series.
 const {historyRaster}=execution.module('tray.history',{
@@ -217,7 +217,7 @@ routeButton:function(route,label=routes[route]){return h('button',{class:'projec
 answerSlot:function(t){return t.state==='ask'?h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},'Answer in workspace…'):'';},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
-tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:taskViews.identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
+tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
 blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
 unique:function(ts){return [...new Map(ts.map(t=>[t.boardIdentity?t.boardIdentity+'/'+t.n:t.key,t])).values()];},
 counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts",{n:f=>ts.filter(t=>f.includes(t.state)).length});return {work:n(['doing','review']),ask:n(['ask']),ready:n(['ready']),failed:n(['failed'])};},
@@ -226,8 +226,8 @@ counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' fil
 known:function(ps){return ps.every(p=>p.complete!==false);},
 // O1: identity anchors details/actions; title remains a full-width issue link.
 taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)));},
-taskKey:function(t){const order=TaskqProjectBlocks.states.map(([s])=>s),i=order.indexOf(t.state);return [i<0?order.length:i,taskViews.priority(t),t.n,t.boardIdentity];},
-taskOrder:function(a,b){return taskViews.compare(a,b);},
+taskKey:function(t){const order=TaskqProjectBlocks.states.map(([s])=>s),i=order.indexOf(t.state);return [i<0?order.length:i,require('./task-views.js').priority(t),t.n,t.boardIdentity];},
+taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
   if(!held.length)return '';
@@ -521,7 +521,7 @@ project:function(p){
   return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),problem(p),incident(p,true),incidentNotice(p),notedCard(p),
   groups.length?groups:h('div',{class:'body muted'},'No open tasks'),answerNotices(p.issues),
   h('div',{class:'group'},admission(p)),capacity(p),notifyGroup(p),workEntry(p.root),service(p));},
-filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=taskViews.normalize(null,{taskFilter:view.taskFilter});taskViews.current(view.dashboard).working.projects=[taskViews.identity(p)];}return dashboard.list();},
+filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=require('./task-views.js').normalize(null,{taskFilter:view.taskFilter});require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}return dashboard.list();},
 settings:function(){const sections=[['Display',[['appearance','Appearance','sliders-horizontal'],['tray-icon','Tray icon','square'],['window','Window','panels-top-left'],['notifications','Notifications','bell'],['cadence','Activity history','activity']]],['Host and projects',[['projects','Projects','folder'],['agents','Agents and Access','shield'],['delivery','Delivery','git-pull-request'],['services','Services and support','settings'],['about','About and updates','info']]]];
  return f(sections.map(([label,rows])=>h('section',{class:'settings-section'},h('div',{class:'meta'},label),rows.map(([route,label,mark])=>h('button',{class:'project','data-route':route},icon(mark),label)))),workEntry(),api.operationLauncher('admission',null,'Review Work mode scope…'),view.S.stop_modes&&api.operationLauncher('stop',null,'Emergency stop…'),view.S.stop_modes&&api.operationLauncher('recovery',null,'Recovery…'));},
 windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin',view.S.pinned?'Unpin window':'Pin window',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('panels-top-left','Keep above other windows',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
@@ -637,7 +637,7 @@ ui.listen(menu,'click',e=>{
   const crumb=e.target.closest('a[data-route]');if(crumb){e.preventDefault();if(crumb.dataset.route!==view.page||view.working||view.taskFilter)navigate(crumb.dataset.route);return;}
   const cardLink=e.target.closest('.qac a');if(cardLink){e.preventDefault();send({a:'open',url:cardLink.getAttribute('href')});return;}
   if(e.target.closest('.qac,.rsc'))return;
-  if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{const c=dashboard.criteria();if(view.page!=='home'){c.projects=id?[taskViews.identity(view.S.projects.find(p=>p.root===id))]:[];c.states=[state];navigate('home');}else dashboard.set({states:c.states.includes(state)?c.states.filter(s=>s!==state):[...c.states,state]});}}))return;
+  if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{const c=dashboard.criteria();if(view.page!=='home'){c.projects=id?[require('./task-views.js').identity(view.S.projects.find(p=>p.root===id))]:[];c.states=[state];navigate('home');}else dashboard.set({states:c.states.includes(state)?c.states.filter(s=>s!==state):[...c.states,state]});}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
   if(d.historyBin!==undefined){view.historyBar=Number(d.historyBin);present();return;}

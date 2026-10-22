@@ -21,7 +21,8 @@ module.exports=execution.module('taskDashboard',{
    },
    list:function(){const ps=api.projects(),c=api.criteria(),all=api.rows(),rows=all.filter(t=>!c.states.length||c.states.includes(t.state));
     const partial=ps.filter(p=>p.complete!==true).map(p=>p.name),missing=c.projects.filter(id=>!view.S.projects.some(p=>views.identity(p)===id));
-    const counts=blocks.observation(ps.map(p=>({...app.blockProject(p),tasks:app.tasks(p).filter(t=>views.matches(t,c.query))})));
+    const source=blocks.observation(ps.map(app.blockProject)),counts=blocks.observation(ps.map(p=>({...app.blockProject(p),tasks:app.tasks(p).filter(t=>views.matches(t,c.query))})));
+    if(source.partial.length){partial.push(...source.partial.filter(name=>!partial.includes(name)));for(const k in counts.counts)counts.counts[k]=null;counts.open=null;}
     if(missing.length){partial.push('Selected projects unavailable');for(const k in counts.counts)counts.counts[k]=null;counts.open=null;}
     const listing=c.group==='combined'?rows.map(t=>app.taskRow(t,true)):ps.filter((p,i)=>ps.findIndex(q=>views.identity(q)===views.identity(p))===i).map(p=>{
      const group=rows.filter(t=>t.boardIdentity===views.identity(p));return group.length?h('section',{class:'all-tasks-project',key:p.issues},h('div',{class:'project-group'},h('button',{'data-route':p.root},icon('folder'),p.name),h('a',{href:p.issues,'data-url':p.issues,title:'Open '+p.name+' Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind))),group.map(t=>app.taskRow(t,false))):null;

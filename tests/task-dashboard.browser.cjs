@@ -50,6 +50,8 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await p.getByRole('button',{name:'Close window',exact:true}).click();assert(await p.evaluate(()=>messages.some(m=>m.a==='hide')));
   assert.equal(await p.evaluate(()=>messages.some(m=>['focus','pause','resume','capacity','ai-send'].includes(m.a))),false,'view/window controls have no admission/grant/send effects');
   await p.close();
+  p=await open({...state,projects:[alpha,{...alpha,root:'/fixture/conflict',tasks:alpha.tasks.map(t=>({...t,title:'Changed title',revision:t.revision+1}))}]});
+  await p.locator('[data-task-query]').fill('complete');assert.equal(await p.locator('[data-a=all-tasks]').innerText(),'All tasks ?','R12: search cannot hide a same-board conflict');await p.close();
   const observations=[];
   for(const theme of ['dark','light'])for(const font of [16,20])for(const variant of ['long','short']){
    p=await open({...state,font,theme,projects:variant==='long'?[{...alpha,tasks:Array.from({length:16},(_,i)=>task(i+1,i%2?'doing':'failed',{title:('Long unbroken identifier_'+i+'_').repeat(5),since:i%2?null:900}))}]:[{...alpha,complete:false,tasks:[]} ]},{width:320,height:variant==='short'?300:700});

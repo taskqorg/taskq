@@ -36,6 +36,7 @@ Fixtures are invented and token-free. `tests/task-dashboard.browser.cjs` covers 
 |---|---|---|---|
 | MP11 missing editor | Baseline actual bundle: `[data-a=view-editor]` count 0; no saved views | Shared local view model; filters never write admission | Actual bundle editor, scopes, Save/Reset/switch/restart pass |
 | O1 row actions | Baseline right ellipsis and inline action expansion | Identity-anchored dialog; original control table/dispatcher and receipt IDs retained | Details/actions, Escape focus and exact Start retry pass |
+| R12 filtered conflict | Search incorrectly showed `All tasks 1` after excluding the conflicting same-board observation | Preserve source completeness before filtering; conflicting titles also mark Partial | Scoped All remains `?` under search |
 | O3 Back | Filtered dashboard initially hid Back after returning from a project | Back uses recorded shell history; per-view context stays local | Navigation/restart/scroll tests pass |
 | O1 Escape | Focus restoration reopened the transient preview | Suppress only that restoration's preview event | Escape closes and returns focus without reopening |
 | Profiling capacity | Eagerly loaded unused editors exceeded CoreQ's 256-method limit | Load existing answer/resource editors on use; collection limits/inventory unchanged | Menu and operational route checks pass |
@@ -52,3 +53,18 @@ Final command outcomes and exact artifact identity are recorded in `candidate.js
 - Native: isolated signed macOS WKWebView snapshots; usable-area/edge math, growth persistence and resize API remain separate evidence classes.
 - Not tested: native Windows WebView2/DPI/multi-monitor interaction, physical drag/Snap, screen reader/IME and live operational effects. Native click/raise remains owner-observed under U-A8/current UI acceptance; it is not a worker gate.
 - Not deployed. Release qualification and owner rollout remain separate under §7/§8. Review the exact candidate; browser/static pictures alone do not qualify native Windows behavior.
+
+## Acceptance status
+
+| Item | Status | Basis / limit |
+|---|---|---|
+| A1 | Pass | Frozen hashes, baseline reconciliation, canonical O1–O3/current rules; dirty primary checkout preserved |
+| A2 | Pass | Shared assets/tokens, anchored controls, task-dominant layout, direct Inbox/Conversations; operational information retained |
+| A3 | Pass | Scope/comparator and independent Save/Reset/switch/restart; no queue/admission write |
+| A4 | Pass | Stage-only compact rows, full title, ordered known/unknown board stages and every offered revision-fenced action |
+| A5 | Pass (model/browser/Mac static); Not tested (physical gesture/Windows) | Actual-anchor geometry, retained legacy preferences, thresholded Pin, footer/resize/miniatures; native interaction qualification remains explicit |
+| A6 | Pass (preservation); Not tested (live host effects) | Existing operational reviews/guards retained; inherited backend limits stay explicit |
+| A7 | Pass (supported renderer/preferences) | Existing validated Custom workflow, saved native previews, untouched/mixed resources and independent navigation; no new grant/model channel |
+| A8 | Pass (bounded browser/Mac package); Not tested (Windows native/accessibility devices) | Source/model/geometry and theme/type/adverse fixtures; click/raise owner-observed; exact observations in candidate.json |
+
+The first canonical gate exposed the contract size and missing added snapshot fields; both were fixed without changing the limits or deleting existing expected fields. Host-policy/installation/lifecycle tests invoked under this worker's real task identity remain `sandbox-blocked`, not PASS. Publication still requires green merge-result CI under R12/§7; no local environment workaround grants host authority.

@@ -14,7 +14,7 @@ observation:function(projects){
       if(!board || p.complete!==true)partial.add(p.name);
       for(const row of p.tasks || []){
         const key=board+'/'+row.n,prev=rows.get(key);
-        if(prev && (prev.state!==row.state || prev.revision!==row.revision))partial.add(p.name);
+        if(prev && (prev.state!==row.state || prev.revision!==row.revision || prev.title!==row.title))partial.add(p.name);
         rows.set(key,row);
       }
     }

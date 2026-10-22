@@ -44,6 +44,15 @@
         "later"
       ],
       "since": null,
+      "created": 1,
+      "steps": [
+        {
+          "state": "ready",
+          "start": 1,
+          "end": null,
+          "complete": false
+        }
+      ],
       "stuck": false
     },
     {
@@ -108,6 +117,27 @@
       "execution_wait": "execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",
       "wait": "Run state unknown; see service log",
       "since": 4,
+      "created": 2,
+      "steps": [
+        {
+          "state": "ready",
+          "start": 2,
+          "end": 3,
+          "complete": true
+        },
+        {
+          "state": "doing",
+          "start": 3,
+          "end": 4,
+          "complete": true
+        },
+        {
+          "state": "ask",
+          "start": 4,
+          "end": null,
+          "complete": false
+        }
+      ],
       "stuck": false
     },
     {
@@ -140,6 +170,15 @@
         "later"
       ],
       "since": null,
+      "created": 6,
+      "steps": [
+        {
+          "state": "waiting",
+          "start": 6,
+          "end": null,
+          "complete": false
+        }
+      ],
       "stuck": false
     },
     {
@@ -163,6 +202,21 @@
         "retry"
       ],
       "since": 8,
+      "created": 7,
+      "steps": [
+        {
+          "state": "ready",
+          "start": 7,
+          "end": 8,
+          "complete": true
+        },
+        {
+          "state": "failed",
+          "start": 8,
+          "end": null,
+          "complete": false
+        }
+      ],
       "stuck": false
     }
   ],
