@@ -41,7 +41,6 @@ const api=execution.module('shell',{
   const location=memoryLocation({record:true}),frame=signal(null),entries=[];let template=null;
   const instance=execution.module('shell.instance',{
    entries:function(){return entries;},
-   history:function(){return location.history;},
    push:function(state){entries.push(state);if(entries.length>32){entries.shift();if(location.history.length>1)location.history.shift();}location.navigate(location.history.at(-1));},
    pop:function(){const state=entries.pop();if(location.history.length>1){location.history.pop();location.navigate(location.history.at(-1),{replace:true});}return state;},
    clear:function(){entries.length=0;location.history.splice(0,location.history.length-1);},

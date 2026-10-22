@@ -483,7 +483,7 @@ head:function(){
 },
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
-  const firstRender=!view.html;
+  const firstRender=!view.drawn;
   const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
   const focusKey=!navigating&&active&&menu.contains(active)?JSON.stringify(active.dataset):null;
@@ -501,11 +501,9 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   const tree=[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Resize window with arrow keys',tabindex:'0'}),answerToast()];
-  // An unchanged refresh skips the focus, scroll and size work; Preact keeps unchanged nodes, so a textarea being typed in survives (#1430).
-  const html=shell.html(tree);
-  if(!navigating&&html===view.html){mountAnswers();mountResources();viewState.restore(open);viewState.flush();return;}
+  // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
-  view.html=html;
+  view.drawn=true;
   if(navigating)menu.querySelector('.shell-overflow')?.removeAttribute('open');
   mountAnswers();mountResources();
   menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page));
