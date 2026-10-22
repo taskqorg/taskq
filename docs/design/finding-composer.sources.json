@@ -17,7 +17,7 @@
     "src/answer-card.js": "9422f61d3f861f31ef99db8200dfbcd1aa44c7bb4ab35b5877ea3348c9ede4fd",
     "src/answer-card.css": "8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc",
     "tests/fixtures/finding-composer.json": "9af0a043afc637c1f5f9b87372e67e864a107c9bf89ede612fb4d660a7e082eb",
-    "docs/design/project-blocks.sources.json": "b271f51f68142faf756b98a278ea088af9539b2d53e261272b52d3c6972f4f3f"
+    "docs/design/project-blocks.sources.json": "ecc4912828a63d73d09fb596a38a93c0684c75ccfafaefd77dfd78fda3023752"
   },
   "hashEncoding": "UTF-8, LF; release version is assigned by the tag workflow; before release pin the delivery commit and these hashes"
 }

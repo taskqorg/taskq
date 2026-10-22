@@ -24,9 +24,9 @@
   "designRevision": "75757d5d843159726a2ea44ca1615f9cf7fd18fd",
   "files": {
     "tests/fixtures/project-blocks.json": "0b049c5f09b368de869672b2b4bbe1b387c1b210e14afabb371ad7c0342794b8",
-    "docs/design/visual-style.md": "a170804629cb87efa5f03c4a7029b8d77ef9fbb0cc7e80d019a4be9e9cf69e4c",
+    "docs/design/visual-style.md": "e906e63dd4606afe0c5f837b897df0a11f132db8e9c1973c77ae31684258af04",
     "src/project-blocks.js": "5f7dff84d32ef023e8229d4039c7ce4f9b4d6ba433145c7a5fb82663429e949d",
-    "docs/design/menu-next-variants.html": "e4ca4bc36bcb25f451ce4cc3c75fa5de42bf4b6d37b9f77e60b187bfc49931cf",
+    "docs/design/menu-next-variants.html": "0cb616825c0f84703dbd19da67149aa9dceaaf4431f5fd193c2df7bae4e0f86c",
     "src/project-blocks.LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0"
   },
