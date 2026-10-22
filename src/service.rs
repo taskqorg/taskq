@@ -174,8 +174,9 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
 /// Remove `.worktrees/taskq-<N>` of closed tasks and their merged local branch (§ 7, R11). Without `force` git refuses
 /// dirty worktrees, so those stay; with it the uncommitted work goes to `.taskq/trash/taskq-<N>.patch` first. Commits
 /// stay in the branch: `git branch -d` keeps an unmerged one. `ponytail:` a squash-merged branch stays until a manual
-/// `git branch -D`.
-pub fn cleanup(board: &dyn Board, root: &std::path::Path, mut skip: impl FnMut(u64) -> bool, force: bool) -> Vec<String> {
+/// `git branch -D`. #1549: only this host's executions (its name or OS hostname) hold its worktree; a boot after intent
+/// releases them (#1386), else the line names the owner step.
+pub fn cleanup(board: &dyn Board, root: &std::path::Path, me: &str, boot: fn() -> Result<i64, String>, mut skip: impl FnMut(u64) -> bool, force: bool) -> Vec<String> {
     let mut log = vec![];
     let Ok(dir) = std::fs::read_dir(root.join(".worktrees")) else { return log };
     let git = |dir: &std::path::Path, args: &[&str]| coreq::process::output("cleanup.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(30)).ok().map(|o| o.stdout);
@@ -185,8 +186,25 @@ pub fn cleanup(board: &dyn Board, root: &std::path::Path, mut skip: impl FnMut(u
         if skip(n) || !board.issue(n).is_ok_and(|i| !i.open) {
             continue; // a fresh read must show the issue closed (R12)
         }
-        if !crate::board::entries(board, n).is_ok_and(|entries| core::executions(n, &entries).iter().all(|x| x.release.is_some())) {
-            log.push(format!("#{n} worktree kept: execution termination unconfirmed"));
+        let comments = match board.comments(n) {
+            Ok(c) => c,
+            Err(e) => { log.push(format!("#{n} worktree kept: board read failed: {e}")); continue }
+        };
+        let entries: Vec<_> = comments.iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
+        let mut held = None;
+        for x in core::executions(n, &entries).into_iter().filter(|x| x.release.is_none() && (x.host == me || x.host == crate::hostname())) {
+            let intent = comments.iter().find(|c| c.id == x.id).map(|c| c.created).filter(|t| *t > 0);
+            let released = match (intent, boot()) {
+                (Some(intent), Ok(at)) if at > intent => {
+                    let proof = format!("host booted {} after intent {}", crate::board::stamp(at), crate::board::stamp(intent));
+                    release_execution_text(board, n, x.attempt, x.id, "exit", &proof).map(|_| log.push(format!("#{n} released {} exit: {proof}", x.id)))
+                }
+                _ => Err(format!("execution {} on {} termination unknown; stop its process or reboot this host", x.id, x.host)),
+            };
+            if let Err(e) = released { held.get_or_insert(e); }
+        }
+        if let Some(e) = held {
+            log.push(format!("#{n} worktree kept: {e}"));
             continue;
         }
         let wt = format!(".worktrees/{name}");
@@ -1726,7 +1744,19 @@ impl<'a> Service<'a> {
         let tried = &mut self.pruned;
         let kids: Vec<u64> = self.kids.iter().map(|k| k.task).collect();
         let skip = |n: u64| open.contains_key(&n) || kids.contains(&n) || !tried.insert(n);
-        self.log.extend(cleanup(self.board, &self.cfg.root, skip, false));
+        let lines = cleanup(self.board, &self.cfg.root, &self.cfg.me, self.boot, skip, false);
+        if lines.is_empty() { return; }
+        // #1549: a kept worktree logs once per changed line, across restarts; `.taskq/cleanup` is a cache (R1)
+        let path = crate::dot(&self.cfg.root).join("cleanup");
+        let mut last: BTreeMap<String, String> = std::fs::read_to_string(&path).unwrap_or_default().lines()
+            .filter_map(|l| l.split_once(' ').map(|(n, _)| (n.to_string(), l.to_string()))).collect();
+        for line in lines {
+            let n = line.split_once(' ').map_or(line.clone(), |(n, _)| n.to_string());
+            if last.get(&n) == Some(&line) { continue; }
+            if line.contains(" worktree kept: ") || line.contains(" worktree removal unconfirmed: ") { last.insert(n, line.clone()); } else { last.remove(&n); }
+            self.log.push(line);
+        }
+        if let Err(e) = std::fs::create_dir_all(crate::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path,last.into_values().map(|l| l + "\n").collect::<String>())) { self.log.push(format!("cleanup cache: {e}")); }
     }
 
     fn reviewer_free(&self, v: &View) -> Option<String> {
@@ -5237,38 +5267,45 @@ mod tests {
     }
 
     // Chain: closed task -> execution release -> worktree cleanup. Risk: deleting dirty or still-owned work.
+    // Defect #1549: other hosts' executions and pre-boot own ones held worktrees forever, logged every restart.
     #[test]
     fn closed_tasks_lose_clean_worktrees_only() {
+        fn no_boot() -> Result<i64, String> { Err("boot time not read in tests".into()) }
+        fn booted() -> Result<i64, String> { Ok(2_000_000_000) }
         let root = std::env::temp_dir().join(format!("taskq-prune-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&root).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap().status.success(), "{args:?}");
         git(&["init", "-q"]);
         git(&["commit", "-q", "--allow-empty", "-m", "init"]);
-        for n in ["1", "2", "3", "4"] {
+        for n in ["1", "2", "3", "4", "5"] {
             git(&["worktree", "add", "-q", "-b", &format!("taskq-{n}"), &format!(".worktrees/taskq-{n}")]);
         }
         std::fs::write(root.join(".worktrees/taskq-2/wip"), "x").unwrap();
         let b = Fake::default();
-        for _ in 0..4 {
+        for _ in 0..5 {
             b.create("T", "", &["taskq".into()]).unwrap();
         }
-        let execution = b.comment(4, "taskq: spawn worker claude:owned disconnected").unwrap();
-        b.close(4).unwrap();
-        b.close(1).unwrap();
-        b.close(2).unwrap();
+        let execution = b.comment(4, "taskq: spawn worker claude:owned mac").unwrap();
+        b.comment(5, "taskq: spawn worker claude:remote win").unwrap();
+        for n in [1, 2, 4, 5] { b.close(n).unwrap(); }
         let mut c = cfg("mac");
         c.root = root.clone();
         let mut s = service(&b, &c, Default::default());
         s.pass().unwrap();
         let wt = |n: &str| root.join(format!(".worktrees/taskq-{n}")).exists();
-        assert_eq!((wt("1"), wt("2"), wt("3")), (false, true, true), "clean closed removed; dirty and open stay");
-        cleanup(&b, &root, |_| false, true);
+        assert_eq!((wt("1"), wt("2"), wt("3"), wt("5")), (false, true, true, false), "clean closed removed; dirty and open stay; another host's execution never ran here");
+        let kept = |s: &Service| s.log.iter().filter(|l| l.starts_with("#4 worktree kept") && l.contains("reboot this host")).count();
+        assert_eq!(kept(&s), 1, "undecided own execution names the owner step: {:?}", s.log);
+        let mut restarted = service(&b, &c, Default::default());
+        restarted.pass().unwrap();
+        assert_eq!(kept(&restarted), 0, "a restart with the same outcome logs nothing: {:?}", restarted.log);
+        cleanup(&b, &root, "mac", no_boot, |_| false, true);
         assert_eq!((wt("2"), wt("3")), (false, true), "force removes dirty closed; open stays");
         assert!(wt("4"), "even forced cleanup preserves an unresolved execution's worktree");
-        release_execution(&b, 4, execution, execution, "exit").unwrap();
-        cleanup(&b, &root, |_| false, false);
-        assert!(!wt("4"), "confirmed release permits cleanup");
+        let log = cleanup(&b, &root, "mac", booted, |_| false, false);
+        assert!(!wt("4"), "a boot after intent releases and permits cleanup: {log:?}");
+        assert!(core::executions(4, &crate::board::entries(&b, 4).unwrap()).iter().all(|x| x.id != execution || x.release == Some(core::Release::Exit)));
         assert!(std::fs::read_to_string(root.join(".taskq/trash/taskq-2.patch")).unwrap().contains("wip"), "dirty work saved");
         let _ = std::fs::remove_dir_all(&root);
     }
