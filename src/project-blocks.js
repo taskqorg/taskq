@@ -54,7 +54,8 @@ task:function(p,row,global=false){
     // Rows without `since` (other consumers) show no age; null names why it is unknown.
     const since=!('since' in row)?'':row.since==null?'<small class="tqp-age" title="Age unknown: no logged state change">age ?</small>':'<small class="tqp-age" data-since="'+Number(row.since)+'" title="Since the last state change">'+age((p.now??Date.now()/1000)-row.since)+'</small>';
     const metadata=[since,global?esc(p.name):'',row.host?esc(row.host):'',marks].filter(Boolean).join(' · ');
-    const wait=row.execution_wait?'<small class="tqp-execution-wait" role="status">'+esc(row.execution_wait)+'</small>':'';
+    // #1524: only the owner text `wait`; the raw `execution_wait` stays in status --json and the service log.
+    const wait=row.wait?'<small class="tqp-execution-wait" role="status">'+esc(row.wait)+'</small>':'';
     return '<div class="tqp tqp-task"><div class="tqp-task-head"><span class="'+kind+'" title="'+esc(name)+'" aria-label="'+esc(name)+'">'+icon(mark)+'</span> '+link(row.url,icon(p.board.kind)+' #'+esc(row.n),'Open task #'+row.n)+' <span class="tqp-meta">'+metadata+'</span> '+session+' '+wait+'</div><div class="tqp-task-title">'+esc(row.title)+'</div></div>';
   },
 handle:function(event,adapter){

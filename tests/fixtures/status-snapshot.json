@@ -106,6 +106,7 @@
         }
       ],
       "execution_wait": "execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",
+      "wait": "Run state unknown; see service log",
       "since": 4,
       "stuck": false
     },

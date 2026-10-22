@@ -78,6 +78,17 @@ pub struct Row {
     pub stuck: Option<i64>,
 }
 
+/// Owner texts of a row's wait (docs/design/menu.md M3 Task row text, #1524); the raw reason stays in `execution_wait`.
+pub const WAIT_TEXTS: [&str; 6] = ["Waiting for a free slot", "Waiting for GUI access", "Waiting for the agent to accept input",
+    "Waiting for your answer", "Waiting for the previous run to end", "Run state unknown; see service log"];
+
+/// The owner text of a raw wait diagnostic; text no class names reads as the previous run's end.
+pub fn wait_text(raw: &str) -> &'static str {
+    let has = |w: &[&str]| w.iter().any(|w| raw.contains(w));
+    WAIT_TEXTS[if has(&["GUI"]) { 1 } else if has(&["admission"]) { 0 } else if has(&["owner answer"]) { 3 } else if has(&["input"]) { 2 }
+        else if has(&["unknown", "stale", "missing", "unavailable", "deferred"]) { 5 } else { 4 }]
+}
+
 /// R6: no movement for this long marks a task stuck.
 pub const STUCK_AFTER: i64 = 2 * 3600;
 
@@ -244,7 +255,7 @@ impl Row {
         // § 2: the PM's pick sits beside the worker's star; it is never an answer
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
-        if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
+        if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); row["wait"] = json!(wait_text(reason)); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
         row["stuck"] = json!(self.stuck.is_some());
@@ -324,7 +335,7 @@ impl Snapshot {
             .filter(|r| !matches!(r.task.state, State::Held | State::Ask | State::Later | State::Failed))
             .map(|r| {
                 let state = if let Some(reason) = &r.execution_wait {
-                    format!("{} · {}", r.task.state.name(), cell(&compact(reason, 160)))
+                    format!("{} · {}", r.task.state.name(), wait_text(reason))
                 } else if r.task.state == State::Waiting {
                     let deps: Vec<String> = r.deps.iter().map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&compact(&b.reason, 80)))).collect();
                     format!("blocked ({})", deps.join(", "))
@@ -489,6 +500,37 @@ mod tests {
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["stuck"].clone(), rows[0]["age_s"].clone()), (json!(true), json!(9000)));
         assert_eq!((rows[1]["stuck"].clone(), rows[1].get("age_s")), (json!(false), None));
+    }
+
+    // Chain: #1524 menu.md M3 Task row text. Risk: a raw execution, fence or wait diagnostic reaches a tray or status row.
+    #[test]
+    fn every_wait_producer_maps_to_a_spec_named_owner_text() {
+        let spec = include_str!("../docs/design/menu.md");
+        for t in WAIT_TEXTS { assert!(spec.contains(&format!("`{t}`")), "menu.md names {t}"); }
+        // every raw producer of `execution_wait`: service waits, execution statuses, gui eligibility, snapshot fallbacks
+        let cases = [
+            ("launch held by admission gate", 0),
+            ("GUI unavailable on mac: no session", 1), ("GUI runtime codex refused: sandbox", 1), ("GUI runtime claude has no effective Full grant", 1),
+            ("native input acceptance pending", 2), ("execution 3 on mac: input acceptance unknown; reconcile native input", 2),
+            ("input pending on win; await or restore the owning service", 2),
+            ("execution 3 on mac: waiting: owner answer required", 3),
+            ("execution 3 on mac: termination unconfirmed", 4), ("cancellation pending; awaiting native termination", 4),
+            ("execution 3 on mac: running: native execution observed; termination pending", 4),
+            ("execution 3 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service", 5),
+            ("native observation unavailable; restore owning runtime", 5), ("execution 3: native observation deferred; recovery budget exhausted", 5),
+            ("execution 3 on mac: recovery unknown: io", 5), ("multiple unresolved executions; verify native ownership before recovery", 4),
+            ("native execution evidence missing; reconcile the owning runtime", 5), ("session identity unknown; recover the original native session", 5),
+            ("Claude returned no valid background ID; launch outcome unknown; reconcile the original input", 2),
+        ];
+        for (raw, k) in cases { assert_eq!(wait_text(raw), WAIT_TEXTS[k], "{raw}"); }
+        // status text and row JSON: owner text only in the row, raw reason kept in --json
+        let raw = cases[11].0;
+        let row = Row { n: 1, title: "T".into(), url: "u1".into(), task: Task { state: State::Doing, ..Default::default() }, execution_wait: Some(raw.into()), ..Default::default() };
+        let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row], hosts: vec![] };
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
+        let j = &snap.json()["tasks"][0];
+        assert_eq!((j["wait"].as_str(), j["execution_wait"].as_str()), (Some(WAIT_TEXTS[5]), Some(raw)));
     }
 
     #[test]

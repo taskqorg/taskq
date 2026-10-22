@@ -33,9 +33,10 @@ assert(q.task({...p,now:1300},{...row,since:1000}).includes('data-since="1000" t
 assert(q.task(p,{...row,since:null}).includes('title="Age unknown: no logged state change">age ?'));
 assert(!q.task(p,row).includes('tqp-age'));
 const waiting=require('./fixtures/status-snapshot.json').tasks.find(t=>t.n===2),waitRow=q.task(p,waiting);
-assert(waitRow.includes(waiting.execution_wait),'unknown execution reason is visible, not only a missing session link');
-assert(waitRow.indexOf(waiting.execution_wait)<waitRow.indexOf('tqp-task-title'),'execution status stays with metadata');
-assert(!q.task(p,{...row,execution_wait:'<script>secret</script>'}).includes('<script>'),'execution reason is escaped');
+// Chain: #1524 menu.md M3 Task row text. Risk: the raw execution diagnostic reaches the row instead of the owner text.
+assert(waitRow.includes(waiting.wait)&&!waitRow.includes(waiting.execution_wait),'owner wait text is visible, the raw execution reason is not');
+assert(waitRow.indexOf(waiting.wait)<waitRow.indexOf('tqp-task-title'),'execution status stays with metadata');
+assert(!q.task(p,{...row,wait:'<script>secret</script>'}).includes('<script>'),'wait text is escaped');
 // Chain: #1204 remote Claude row. Risk: the account-scoped link is dropped, or the remote mark follows the runtime mark or adds text.
 const remoteClaude=q.task(p,{...row,runtime:'claude',local_session:false,session_url:'https://claude.ai/code/session_014abc'});
 assert(remoteClaude.includes('href="https://claude.ai/code/session_014abc"'));
