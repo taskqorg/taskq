@@ -2,6 +2,13 @@
 
 TaskQ applies [SpecQ testing](https://github.com/taskqorg/specq/blob/main/engineering/testing.md). Run `python3 scripts/check.py` from a checkout. `--base SHA` selects the entire change since that immutable base; CI sets CHECK_BASE to the merge-group base or PR base. Unknown/unavailable impact broadens to the full relevant Rust suite. No changed-file list means full, never an empty passing gate.
 
+Development loop (workers and reviewers):
+
+- While editing, run only the affected checks: a filtered `cargo test --locked <module or test name>` for the changed Rust behavior, or the changed `node tests/<name>.test.cjs` for a web component.
+- Run `python3 scripts/check.py` once on the result candidate, after the rebase and before `result` (taskq.md § 7 step 4). A reviewer runs it once on the exact candidate under review when the candidate's evidence leaves it unknown.
+- Do not rerun the full `cargo test --locked` or `check.py --full` after each edit. A repeat full run needs a named reason: the selection changed, the edit touched shared code (build, dependencies, configuration, `core.rs`, board or runtime modules), or the previous run failed.
+- The SpecQ run policy still applies: new and previously failing checks run locally, a defect fix reruns its reproduction, and unknown impact broadens to the full relevant suite. A check that did not run is reported as not run, never as a pass.
+
 - Prose-only changes use documentation/whitespace checks. Root contracts and agent entrypoints count as shared behavior. Asset-checksum pages run their component checks.
 - Web-only changes retain the Rust state model and all cheap Node component/IPC checks. Rust, fixtures, dependencies, build, configuration or unknown files run `cargo test --locked` and offline selftest in a temporary installation, never the running host store. New and previously failing checks belong to the affected selection; unresolved failures block acceptance.
 - Builders need Node.js20+ and npm. The canonical gate runs `npm ci --ignore-scripts --no-audit --no-fund`, validates the JS module/effect inventory, and bundles the same immutable CoreQ revision used by Cargo. Installed binaries need no Node.js/npm. Browser instruments consume `build/web` artifacts; generate once with `npm run build`.
