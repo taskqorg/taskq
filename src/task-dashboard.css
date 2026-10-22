@@ -35,3 +35,5 @@
 .menu .views img{width:22px;height:22px;object-fit:contain;flex:none}
 /* Actual-size previews sit above their labels; intrinsic labels wrap the set before they can clip. */
 .menu .views button{flex-direction:column;flex-basis:auto;min-width:max-content;gap:4px}
+
+.views>p{flex-basis:100%;margin:4px 0;font-size:.85em}

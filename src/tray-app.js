@@ -326,7 +326,7 @@ const {state}=execution.module("tray.create.bulk.helpers",{state:p=>({run:pausin
   return run.length?h('button',{class:'project','data-a':'confirm'},'Pause all…'):held.length?h('button',{class:'project','data-a':'confirm'},'Resume all…'):'';},
 views:function(){return h('div',{class:'options views'},[['icon','Icon'],['full','Summary'],['custom','Custom']].map(([v,l])=>h('button',{'data-set':'view','data-v':v,'aria-pressed':String(view.S.view===v),disabled:v==='custom'&&!view.S.icons?.custom},(view.S.icons?.[v]||v==='custom'&&view.S.icons?.full)&&h('img',{alt:'',src:view.S.icons?.[v]||view.S.icons.full}),l)),!view.S.icons?.custom&&h('p',{class:'meta'},'Custom not saved; import a validated configuration with taskq tray --icon FILE.'));},
 appearance:function(){
-  return f(h('div',{class:'body meta'},'Theme follows system appearance.'),views(),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font)},n))));
+  return f(h('div',{class:'body meta'},'Theme follows system appearance.'),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font)},n))));
 },
 agentq:function(settings=false){
   const A=view.S.agentq;if(!A)return '';
@@ -450,7 +450,7 @@ routeBody:function(){
     case 'attention':return attention()||h('div',{class:'body meta'},known(view.S.projects)?'No reported questions or failures':'Status incomplete; check Services');
     case 'settings':return api.settings();
     case 'window':return api.windowSettings();
-    case 'tray-icon':return f(views(),h('p',{class:'meta'},'Custom uses the same validated renderer as Summary. Import and edit a configuration with taskq tray --icon FILE; invalid configurations leave the current icon unchanged.'));
+    case 'tray-icon':return views();
     case 'delivery':return f(h('p',{class:'meta'},'Delivery is project policy, separate from Access. Exact-candidate approval and publication remain on the board.'),view.S.projects.map(p=>h('div',{class:'body'},p.name+' · '+(p.delivery?.preset||'policy unavailable'),p.delivery?.revision!=null?' · revision '+p.delivery.revision:'',p.issues&&h('a',{href:p.issues,'data-url':p.issues},'Open Board'))));
     case 'appearance':return appearance();
     case 'cadence':return history();
