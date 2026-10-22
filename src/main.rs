@@ -15,6 +15,7 @@ mod core;
 mod control;
 mod data;
 mod dispatch;
+mod display;
 mod enrollment;
 mod incident;
 mod labels;
@@ -626,14 +627,7 @@ pub fn compact(s: &str, max: usize) -> String {
     if s.chars().count() > max { s.chars().take(max - 1).chain(['…']).collect() } else { s }
 }
 
-pub fn age(secs: i64) -> String {
-    match secs {
-        s if s < 120 => format!("{s}s"),
-        s if s < 7200 => format!("{}m", s / 60),
-        s if s < 172800 => format!("{}h", s / 3600),
-        s => format!("{}d", s / 86400),
-    }
-}
+pub use display::age;
 
 #[cfg(test)]
 fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<String> {
@@ -1841,7 +1835,8 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
     let mut out = vec![format!("Project: `{}`", root.display())];
     match data::focus(root) {
         _ if !d.join("focus").exists() => out.push("Focus: unknown (focus file unavailable)".into()),
-        Ok(f) if f.is_empty() => out.push("Focus: off".into()),
+        // menu.md:250 `Paused`: focus off with a saved focus (display::mode)
+        Ok(f) if f.is_empty() => out.extend(["Focus: off".to_string()].into_iter().chain((display::mode(false, display::saved(&d)) == "paused").then(|| "Paused".to_string()))),
         Ok(f) => out.extend(f.iter().map(|l| format!("Focus: {l}"))),
         Err(e) => out.push(format!("Focus: unknown ({e})")),
     }
@@ -4163,7 +4158,10 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         assert_eq!(install_focus(&root), Ok(true));
         assert_eq!(fs::read_to_string(dot(&root).join("focus")).unwrap(), "off");
-        assert!(service_fields(&root).contains("Focus: off"));
+        assert!(service_fields(&root).contains("Focus: off") && !service_fields(&root).contains("Paused"));
+        // #1592 menu.md `Paused`: focus off with a saved focus prints the Paused line from the display model's mode
+        fs::write(dot(&root).join("focus.paused"), "area-maps").unwrap();
+        assert!(service_fields(&root).contains("Focus: off\nPaused"), "{}", service_fields(&root));
         fs::write(dot(&root).join("focus"), "area-maps").unwrap();
         assert_eq!(install_focus(&root), Ok(false));
         assert_eq!(fs::read_to_string(dot(&root).join("focus")).unwrap(), "area-maps");

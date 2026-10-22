@@ -1075,7 +1075,7 @@ pub(crate) mod tests {
         assert_eq!(fresh,"Service telemetry: collecting · scope this-process · pid 42 · at 2027-01-15 07:59 UTC\n\
             Service telemetry counts: lost 0 · failed batches 0 · timeouts unknown (not counted) · append avg 300 us · max 700 us\n");
         assert!(fresh.lines().all(|l|l.chars().count()<=160),"{fresh}");
-        assert_eq!(lines(&[st(now-90)],true),"Service telemetry: unknown (service status 90s old)\n");
+        assert_eq!(lines(&[st(now-90)],true),"Service telemetry: unknown (service status 1m old)\n");
         assert_eq!(lines(&[st(now-5)],false),"Service telemetry: unknown (service pid 42 not running)\n");
         assert_eq!(lines(&[Ok(None)],true),"Service telemetry: unknown (service status.json missing)\n");
         assert_eq!(lines(&[],true),"Service telemetry: unknown (no registered project)\n");

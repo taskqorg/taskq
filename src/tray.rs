@@ -20,7 +20,7 @@ use crate::notify;
 const HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/tray.html"));
 const WORKSPACE_HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/workspace.html"));
 const FONTS: [u64; 4] = [14, 16, 18, 20];
-const PERIODS: [(&str, i64); 5] = [("5m", 300), ("1h", 3600), ("1d", 86400), ("1w", 604800), ("1mo", 2592000)];
+use crate::display::PERIODS;
 
 /// False when another tray wrote the heartbeat `<install>/tray` in the last 10 s (it ticks every 2 s): of two trays
 /// started at once, the first to see the other's pid exits.
@@ -434,7 +434,7 @@ fn project(install: &Path, root: &str) -> Value {
     // #1591: one freshness rule; the page gets `live` and `ttl`, never a literal
     let ttl = crate::snapshot::ttl(r);
     let live = age.is_some_and(|a| crate::snapshot::live(a as i64, ttl));
-    let saved = fs::read_to_string(d.join("focus.paused")).is_ok_and(|f| !matches!(f.trim(), "" | "off"));
+    let saved = crate::display::saved(&d);
     let text = fs::read_to_string(d.join("events")).unwrap_or_default();
     let since = text.lines().next().and_then(|l| l.strip_prefix("since ")?.parse::<i64>().ok());
     let events: Vec<Value> = text.lines().skip(1).filter_map(|l| {
@@ -472,8 +472,10 @@ fn project(install: &Path, root: &str) -> Value {
 fn liveness(s: &Value, age: Option<u64>, ttl: i64, tasks: &mut [Value]) -> (Value, bool) {
     let elapsed = age.zip(s["tasks_age_seconds"].as_i64()).map(|(a, t)| a as i64 + t);
     let row_live = |row: &mut Value, at: &str| if let Some(o) = row.as_object_mut() {
-        let l = elapsed.zip(s["observed"].as_i64()).zip(o.get(at).and_then(Value::as_i64)).is_some_and(|((e, obs), at)| crate::snapshot::live(obs - at + e, ttl));
-        o.insert("live".into(), json!(l));
+        let a = elapsed.zip(s["observed"].as_i64()).zip(o.get(at).and_then(Value::as_i64)).map(|((e, obs), at)| obs - at + e);
+        o.insert("live".into(), json!(a.is_some_and(|a| crate::snapshot::live(a, ttl))));
+        o.insert("age".into(), json!(a));
+        o.insert("age_text".into(), json!(a.filter(|a| *a >= 0).map(crate::display::age)));
     };
     let mut hosts = s["hosts"].clone();
     for h in hosts.as_array_mut().into_iter().flatten() { row_live(h, "updated"); }
@@ -538,15 +540,9 @@ struct Summary {
 }
 
 /// Event kinds of the history, in stacking order from the bottom (M6).
-const KINDS: [&str; 4] = ["close", "failed", "ask", "blocked"];
+const KINDS: [&str; 4] = { let s = crate::display::SERIES; [s[0].0, s[1].0, s[2].0, s[3].0] };
 
 fn summary(ps: &[Value], (start, end): (i64, i64)) -> Summary {
-    let mut seen = std::collections::HashMap::new();
-    for p in ps {
-        for t in p["tasks"].as_array().into_iter().flatten() {
-            seen.insert(format!("{}/{}", p["issues"].as_str().unwrap_or(""), t["n"]), t["state"].as_str().unwrap_or("").to_string());
-        }
-    }
     let mut bins = vec![[0; 4]; 12];
     let mut ev = std::collections::HashSet::new();
     for p in ps {
@@ -559,9 +555,10 @@ fn summary(ps: &[Value], (start, end): (i64, i64)) -> Summary {
         }
     }
     let since = ps.iter().filter_map(|p| p["since"].as_i64()).max();
-    let t = crate::snapshot::totals(seen.values().map(String::as_str));
-    let known = ps.iter().all(|p| p["complete"] == true);
-    Summary { blocked: t["waiting"], counts: [t["doing"] + t["review"], t["ask"], t["ready"], t["failed"]], known, run: ps.iter().any(|p| p["focus"].as_array().is_some_and(|f| !f.is_empty())), bins, since }
+    // #1592: the display model's one deduplication and partial rule
+    let (t, partial, _) = crate::display::tally(ps);
+    let run = ps.iter().any(|p| crate::display::mode(p["focus"].as_array().is_some_and(|f| !f.is_empty()), false) == "run");
+    Summary { blocked: t["waiting"], counts: [t["doing"] + t["review"], t["ask"], t["ready"], t["failed"]], known: partial.is_empty(), run, bins, since }
 }
 
 struct QueuedAction {
@@ -1604,7 +1601,11 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
 }
 
 fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value) -> Value {
-    let ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
+    let mut ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
+    // #1592: the page renders this model; it keeps no counts, order, labels or age of its own
+    let display = crate::display::model(&mut ps, now());
+    let mut seen = agents(&ps);
+    if let Some(at) = seen["at"].as_i64() { seen["age"] = json!(crate::display::age(now() - at)); }
     let messages=crate::messages::snapshot(install,&ps);
     let onboarding=snap.and_then(|(_,route)|agentq_fixture(route)).unwrap_or_else(crate::agentq::snapshot);
     let (start, end) = s.range(now());
@@ -1612,7 +1613,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge, "auto_anchor":s.pin.auto_anchor,
-        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::snapshot(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
+        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": seen, "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::snapshot(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "display": display, "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     {
@@ -2828,8 +2829,8 @@ mod tests {
         fs::write(crate::dot(&root).join("status.json"),status.to_string()).unwrap();
         let projected=project(&root,root.to_str().unwrap());
         for key in ["observed","tasks_age_seconds","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
-        // #1591: rows keep every observed field and gain only the computed `live`
-        let strip=|v:&Value|{let mut v=v.clone();for r in v.as_array_mut().into_iter().flatten(){r.as_object_mut().unwrap().remove("live");}v};
+        // #1591/#1592: rows keep every observed field and gain only the computed `live`, `age` and `age_text`
+        let strip=|v:&Value|{let mut v=v.clone();for r in v.as_array_mut().into_iter().flatten(){for k in ["live","age","age_text"]{r.as_object_mut().unwrap().remove(k);}}v};
         assert_eq!(strip(&projected["hosts"]),status["hosts"]);
         assert_eq!(strip(&projected["tasks"][0]["executions"]),status["tasks"][0]["executions"]);
         assert_eq!(projected["tasks"][0]["local_session"],false);

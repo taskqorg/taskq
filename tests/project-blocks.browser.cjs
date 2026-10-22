@@ -1,12 +1,14 @@
 // B4 instrument: identical parent/standalone/tray fixtures; browser output is not native or live-board proof.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),crypto=require('node:crypto'),{chromium}=require('playwright');
-const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json');
+const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json'),{display}=require('./fixtures/display-model.json');
 const source=fs.readFileSync('docs/design/menu-next-variants.html','utf8'),css=fs.readFileSync('src/project-blocks.css','utf8'),js=fs.readFileSync('build/web/project-blocks.js','utf8');
 const parentCSS=[...source.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');
 const parentFunctions=source.split('\n').filter(l=>/^(const (esc|icon|button|ib)=|function (counts|projectRow|task)\()/.test(l)).join('\n');
 const tray=fs.readFileSync('build/web/tray.html','utf8');
 const base='<style>:root{color-scheme:light dark}body{margin:0;padding:8px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}</style>';
-function fixture(n){return {...fx.project,name:'project',tasks:q.states.flatMap(([state],i)=>Array.from({length:n},(_,j)=>({...fx.row,n:i*1000+j+1,state,revision:4}))) };}
+// #1592: counts come from the Rust display model; the fixture carries them as the page receives them.
+const states=Object.keys(q.marks),names={doing:'Doing',review:'Review',ask:'Ask',failed:'Failed',ready:'Ready',waiting:'Blocked',later:'Later',held:'Held'};
+function fixture(n){return {...fx.project,name:'project',counts:states.map(state=>({state,name:names[state],n})),partial:[],tasks:states.flatMap((state,i)=>Array.from({length:n},(_,j)=>({...fx.row,n:i*1000+j+1,state,revision:4}))) };}
 function look(sel){
   const root=document.querySelector(sel),strip=root.querySelector('.tqp-counts,.counts'),b=strip&&strip.querySelector('button'),g=(el,k)=>getComputedStyle(el)[k];
   if(!b)return null;
@@ -31,7 +33,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
       try{
         const parent=await browser.newPage({viewport:{width,height:1800},colorScheme:theme});pages.push(parent);
         await parent.setContent(base+'<style>'+parentCSS+'</style><div id="tqnext" style="font-size:'+font+'px"><div id="parent-project"></div><div id="parent-aggregate"></div><div id="parent-task"></div></div>');
-        await parent.addScriptTag({content:'const preview={platform:"Windows"};const projectCounts='+JSON.stringify({[p.name]:q.states.map(()=>n)})+';'+parentFunctions+';document.querySelector("#parent-project").innerHTML=projectRow('+JSON.stringify(p.name)+');document.querySelector("#parent-aggregate").innerHTML=counts('+JSON.stringify(p.name)+');document.querySelector("#parent-task").innerHTML=task({},938,'+JSON.stringify(fx.row.title)+');'});
+        await parent.addScriptTag({content:'const preview={platform:"Windows"};const projectCounts='+JSON.stringify({[p.name]:states.map(()=>n)})+';'+parentFunctions+';document.querySelector("#parent-project").innerHTML=projectRow('+JSON.stringify(p.name)+');document.querySelector("#parent-aggregate").innerHTML=counts('+JSON.stringify(p.name)+');document.querySelector("#parent-task").innerHTML=task({},938,'+JSON.stringify(fx.row.title)+');'});
         await parent.evaluate(assets=>{for(const i of document.querySelectorAll('[data-lucide]'))i.outerHTML=(assets[i.dataset.lucide]||'').replace('<svg','<svg aria-hidden="true"');},q.assets);
         const historical=await parent.evaluate(look,'#parent-project'),want=historical&&{...historical,padding:'2px 6px'}; // #1523 approved one centered chip style supersedes the parent's 4px sides.
         const wantTask=await parent.evaluate(taskLook,'#parent-task .task');
@@ -41,16 +43,16 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
           await page.setContent(mode==='tray'?tray:base+'<style>'+css+'</style><div id="consumer" style="font-size:'+font+'px"></div><script>'+js+'</script>');
           await page.evaluate(()=>{window.navigation=[];window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
           if(mode==='browser')await page.evaluate(({p,row})=>{
-            const q=TaskqProjectBlocks,el=document.querySelector('#consumer');el.innerHTML=q.summary(p)+q.aggregate([p])+q.task(p,row);
+            const q=TaskqProjectBlocks,el=document.querySelector('#consumer');el.innerHTML=q.summary(p)+q.aggregate(p)+q.task(p,row);
             el.addEventListener('click',e=>q.handle(e,{project:id=>navigation.push(['project',id]),tasks:(id,s)=>navigation.push(['tasks',id,s]),open:u=>navigation.push(['open',u])}));
           },{p,row:fx.row});
-          if(mode==='tray')await page.evaluate(({p,row,font,theme})=>taskq.receive({page:p.id,font,theme,projects:[{...p,root:p.id,issues:p.board.url,board_kind:p.board.kind,alive:true,focus:[],labels:[],cap_saved:{error:'fixture'},tasks:p.tasks}],ai:{draft:''},notify:{projects:{}}}),{p,row:fx.row,font,theme});
+          if(mode==='tray')await page.evaluate(({p,row,font,theme,display})=>taskq.receive({page:p.id,font,theme,projects:[{...p,root:p.id,issues:p.board.url,board_kind:p.board.kind,alive:true,focus:[],labels:[],cap_saved:{error:'fixture'},tasks:p.tasks}],ai:{draft:''},notify:{projects:{}},display:{...display,all:{counts:p.counts,partial:[],open:null}}}),{p,row:fx.row,font,theme,display});
           // O1 changes product placement, not the published default component. Compare that API inside the real tray's styles.
-          if(mode==='tray')await page.evaluate(({p,row})=>{document.querySelector('.content-body').innerHTML=TaskqProjectBlocks.summary(p)+TaskqProjectBlocks.aggregate([p])+TaskqProjectBlocks.task(p,row);},{p,row:fx.row});
+          if(mode==='tray')await page.evaluate(({p,row})=>{document.querySelector('.content-body').innerHTML=TaskqProjectBlocks.summary(p)+TaskqProjectBlocks.aggregate(p)+TaskqProjectBlocks.task(p,row);},{p,row:fx.row});
           const got=await page.evaluate(look,'.tqp-project');assert.deepEqual(got,want,JSON.stringify(at)+' '+mode+' project equals parent');
           if(mode==='browser'||n)assert.deepEqual(await page.evaluate(taskLook,'.tqp-task'),wantTask,JSON.stringify(at)+' '+mode+' flowing task geometry equals parent');
           const geo=await page.evaluate(geometry,'.tqp-counts');assert.equal(geo.overflow,false,JSON.stringify(at)+' '+mode);
-          for(const strip of geo.strips){assert(strip.rightGaps.every(g=>Math.abs(g)<1),JSON.stringify(at)+' '+mode+' K-A8');assert.deepEqual(strip.states,n?q.states.map(s=>s[0]):[]);}
+          for(const strip of geo.strips){assert(strip.rightGaps.every(g=>Math.abs(g)<1),JSON.stringify(at)+' '+mode+' K-A8');assert.deepEqual(strip.states,n?states:[]);}
           if(n)assert.equal(await page.locator('.tqp-project .tqp-counts button').count(),8);else assert.equal(await page.locator('.tqp-counts').count(),0);
           assert.deepEqual(errors,[],JSON.stringify(at)+' '+mode);
           evidence.push({...at,mode,look:got,taskLook:wantTask,geometry:geo});
@@ -67,7 +69,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         await page.setContent(mode==='tray'?tray:base+'<style>'+css+'</style><div id="consumer" style="font-size:20px"></div><script>'+js+'</script>');
         await page.evaluate(()=>{window.navigation=[];window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
         if(mode==='browser')await page.evaluate(({p,row})=>{const el=document.querySelector('#consumer');el.innerHTML=TaskqProjectBlocks.summary(p)+TaskqProjectBlocks.task(p,row);el.addEventListener('click',e=>TaskqProjectBlocks.handle(e,{project:id=>navigation.push(['project',id]),tasks:(id,s)=>navigation.push(['tasks',id,s]),open:u=>navigation.push(['open',u])}));},{p,row});
-        else await page.evaluate(({p,row})=>taskq.receive({page:p.id,font:20,theme:'dark',projects:[{...p,root:p.id,issues:p.board.url,board_kind:'github',alive:true,focus:[],labels:[],tasks:[row],cap_saved:{error:'fixture'}}],ai:{draft:''},notify:{projects:{}}}),{p,row});
+        else await page.evaluate(({p,row,display})=>taskq.receive({page:p.id,font:20,theme:'dark',projects:[{...p,root:p.id,issues:p.board.url,board_kind:'github',alive:true,focus:[],labels:[],tasks:[row],cap_saved:{error:'fixture'}}],ai:{draft:''},notify:{projects:{}},display}),{p,row,display});
         await page.locator('[data-tqp=tasks][data-state=review]').first().click();
         if(mode==='browser')assert.deepEqual(await page.evaluate(()=>navigation),[['tasks',p.id,'review']]);
         else {assert.match(await page.locator('.view-criteria').innerText(),new RegExp(p.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.equal(await page.locator('.filter-header [data-state=review]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.tqp-task').count(),1);}
@@ -79,8 +81,9 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         const flow=await page.locator('.tqp-task').evaluate(el=>({display:getComputedStyle(el).display,title:el.textContent,width:el.getBoundingClientRect().width}));
         assert.equal(flow.display,'block');assert(flow.title.includes(row.title));assert(flow.width>280);
         if(mode==='browser'){assert.equal(await page.locator('.tqp-execution-wait').innerText(),row.wait);assert(await page.locator('.tqp-execution-wait').isVisible());}else assert.match(await page.locator('#taskq-popover').innerText(),new RegExp(row.wait));
-        if(mode==='browser')await page.evaluate(p=>{document.querySelector('.tqp-project').outerHTML=TaskqProjectBlocks.summary({...p,complete:false,board:{kind:'gitlab',url:'https://gitlab.example/o/r/-/issues'}});},p);
-        else await page.evaluate(p=>taskq.receive({page:'projects',font:20,theme:'dark',projects:[{...p,root:p.id,issues:'https://gitlab.example/o/r/-/issues',board_kind:'gitlab',complete:false,alive:true,focus:[],tasks:p.tasks}],ai:{draft:''},notify:{projects:{}}}),p);
+        // #1592: the Rust model marks an incomplete source Partial with unknown counts; the fixture carries that model output.
+        if(mode==='browser')await page.evaluate(p=>{document.querySelector('.tqp-project').outerHTML=TaskqProjectBlocks.summary({...p,complete:false,partial:[p.name],counts:p.counts.map(c=>({...c,n:null})),board:{kind:'gitlab',url:'https://gitlab.example/o/r/-/issues'}});},p);
+        else await page.evaluate(({p,display})=>taskq.receive({page:'projects',font:20,theme:'dark',projects:[{...p,root:p.id,issues:'https://gitlab.example/o/r/-/issues',board_kind:'gitlab',complete:false,partial:[p.name],counts:p.counts.map(c=>({...c,n:null})),alive:true,focus:[],tasks:p.tasks}],ai:{draft:''},notify:{projects:{}},display}),{p,display});
         assert.match(await page.locator('.tqp-project').innerText(),/Partial:/);assert.equal(await page.locator('.tqp-project [data-icon=gitlab]').count(),1);assert.equal(await page.locator('.tqp-project button[data-state]').count(),8);
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       }finally{await page.close();}
@@ -90,7 +93,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
       const page=await browser.newPage({viewport:{width:320,height:1800},colorScheme:theme});
       try{
         await page.setContent(mode==='tray'?tray:base+'<style>'+css+'</style><script>'+js+'</script>');
-        if(mode==='tray')await page.evaluate(theme=>taskq.receive({page:'none',font:20,theme,projects:[],ai:{draft:''},notify:{projects:{}}}),theme);
+        if(mode==='tray')await page.evaluate(({theme,display})=>taskq.receive({page:'none',font:20,theme,projects:[],ai:{draft:''},notify:{projects:{}},display}),{theme,display});
         const marks=await page.evaluate(()=>{
           const q=TaskqProjectBlocks,p=k=>({id:k,name:k,board:{kind:k,url:'https://'+k+'.example/o/r/issues'},complete:true,tasks:[]});
           const el=document.createElement('div');el.id='providers';el.style.cssText='font-size:20px;padding:8px;background:'+getComputedStyle(document.body).backgroundColor;document.body.prepend(el);
