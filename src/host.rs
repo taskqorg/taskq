@@ -1013,7 +1013,7 @@ pub fn run(install: &Path) -> Res<()> {
                 if stopping {
                     match crate::lifecycle::pending(install).and_then(|p|p.filter(|p|p.stops()).ok_or("prepared Stop binding unavailable".into())) {
                         Ok(p)=>match crate::host_control::dispatch(install,&p) {
-                        Ok(control)=>{shared.lock().unwrap_or_else(|e|e.into_inner()).stop_controller=Some(control);},
+                        Ok(control)=>{crate::platform::log(&format!("service stops: Stop {} controller ends this process",p.id()));shared.lock().unwrap_or_else(|e|e.into_inner()).stop_controller=Some(control);},
                         Err(e)=>{let _=crate::lifecycle::failed(install,p.id(),&e);crate::platform::log(&e);}
                         },
                         Err(e)=>crate::platform::log(&e),
@@ -1030,7 +1030,7 @@ pub fn run(install: &Path) -> Res<()> {
                     let e = command.exec();
                     return Err(format!("host re-exec: {e}"));
                 }
-                #[cfg(not(unix))] crate::platform::exit(75);
+                #[cfg(not(unix))] crate::platform::service_exit(75,&format!("restart to {}",crate::platform::tool(install).current().unwrap_or_default()));
             }
         }
         drop(h);

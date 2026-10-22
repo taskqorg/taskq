@@ -1819,7 +1819,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     // ponytail: Windows cannot hand children to a new image; exit once no child is live and the unit restarts us.
     // The new `current` is already written, so the update waits only for the running attempts.
     if lifecycle_waits(s, false).is_empty() {
-        crate::platform::exit(75);
+        crate::platform::service_exit(75, &format!("restart to {}", platform::tool(&cfg.install).current().unwrap_or_default()));
     }
     // update checks pause while the restart request carries the re-exec until the children end
     fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string())
