@@ -342,6 +342,7 @@ mod tests {
     #[test]
     fn captured_exchange_never_exports_owner_text() {
         crate::with_test_capture(|store,_| {
+            tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().diagnose("pm.",std::time::Duration::from_secs(60),512)).unwrap();
             let t=Fixture::new();let mut dash=Dash{requests:vec![t.r.clone()],posts:vec![],at:t.now,offline:false,cut:None};
             exchange(&t.install,&t.active,&mut dash,t.now).unwrap();setup::step(&t.install,native).unwrap();
             assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)));
