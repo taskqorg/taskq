@@ -1033,7 +1033,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
         }
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
-        let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()) };
+        let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()),
+            progress: s.snapshot.as_ref().map(|x| enrollment::progress(x, &cfg.root, &cfg.me)).unwrap_or_default() };
         if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), &local, at) { log!("{l}"); } }
         // docs/design/standalone-telemetry.md#remote-sync-1353: only under the telemetry grant, on its own thread
         if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
@@ -2797,7 +2798,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if telemetry { println!("telemetry: {} (local telemetry rows; revoke with taskq enroll without --telemetry or taskq disconnect)", telemetry_sync::SCHEMA); }
             let conn = enrollment::pair(&cfg.install, url, &cfg.me, &board, !a.flags.contains_key("headless"), telemetry).map_err(|e| format!("pairing: {e}\nNext: rerun taskq enroll {url} and approve the new code"))?;
             // the CLI runs no runtime probe: login reads unknown until the service's next send
-            let local = enrollment::Local { host: cfg.me.clone(), service: enrollment::installation_id(&cfg.install).ok().map(|i| service_id(&i)), ttl: cfg.ttl.max(0) as u64, agents: Value::Null };
+            let local = enrollment::Local { host: cfg.me.clone(), service: enrollment::installation_id(&cfg.install).ok().map(|i| service_id(&i)), ttl: cfg.ttl.max(0) as u64, agents: Value::Null, progress: Default::default() };
             let (_, rec) = enrollment::record(&cfg.install, &snapshot::read(b, cfg, &c.raw, &[]), &conn, &local)?;
             match enrollment::first_receipt(&cfg.install, &rec, 15)? {
                 "projected" => println!("connected: {dest} workspace {} generation {}; first snapshot projected", conn["workspace"].as_str().unwrap_or("?"), conn["generation"]),
@@ -4517,7 +4518,7 @@ mod tests {
         snap.board["url"] = json!("https://user:forge-secret@github.com/o/r");
         let scope = BoardScope::new("github", "GITHUB.COM", "o/r").unwrap();
         let approved = [scope.clone()];
-        let local = enrollment::Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null };
+        let local = enrollment::Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null, progress: Default::default() };
         let a = project(&snap, &"a".repeat(64), &approved, &local).unwrap();
         let b = project(&snap, &"b".repeat(64), &approved, &local).unwrap();
         let got = serde_json::to_value(&a).unwrap();

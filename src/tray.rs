@@ -457,7 +457,8 @@ fn project(install: &Path, root: &str) -> Value {
         Err(e) => (Value::Null, json!({"error": e}), Value::Null,Value::Null, Value::Null),
     };
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
-    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), task); }
+    let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
+    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task); }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
     let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
     let observed_at=s["at"].as_i64().filter(|at|*at<=now()&&now()-*at<=60).and(age.map(|a|now()-a as i64));
@@ -478,8 +479,9 @@ fn now() -> i64 {
 }
 
 /// Native adapter (M3): a Claude URL is account-scoped, so any host links it (owning host: its transcript, else the
-/// owner's heartbeat via the snapshot); a Codex thread opens only on its owning host, elsewhere unavailable with a reason.
-fn task_session(root: &Path, local: &str, row: &mut Value) {
+/// owner's heartbeat via the snapshot); a Codex thread opens only on its owning host, elsewhere its DashQ progress page
+/// (`page` + task number, R6 3), else unavailable with a reason.
+fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
     let Some(object) = row.as_object_mut() else { return };
     let published = object.remove("session_url").and_then(|u| u.as_str().filter(|u| crate::runtime::remote_url(u)).map(String::from));
     object.remove("session_reason");
@@ -494,7 +496,12 @@ fn task_session(root: &Path, local: &str, row: &mut Value) {
     row["local_session"] = json!(own);
     let a = crate::runtime::of(rt);
     if !a.remote && !own {
-        if a.codex { row["session_reason"] = json!(format!("Codex session opens only on {host}")); }
+        if a.codex {
+            match page {
+                Some(p) => row["session_url"] = json!(format!("{p}{}", row["n"].as_u64().unwrap_or(0))),
+                None => row["session_reason"] = json!(format!("Codex session opens only on {host}")),
+            }
+        }
         return;
     }
     let id = if own && ((id == "-" && a.codex && a.child) || a.remote) {
@@ -3004,36 +3011,39 @@ mod tests {
         assert_eq!(pick_result(output(1<<8,b"",b"execution error: User canceled. (-128)\n")),Ok(None));
         assert!(pick_result(output(1<<8,b"",b"execution error: denied. (-10004)\n")).is_err());
     }
-    // Chain: canonical session -> native row -> shared task link (#1204). Risk: a Codex thread opens off its host,
-    // a remote Claude row loses its account-scoped link, or a starting observation opens anything.
+    // Chain: canonical session -> native row -> shared task link (#1204, #1565). Risk: a Codex thread opens off its host
+    // instead of its DashQ progress page, a remote Claude row loses its account-scoped link, or a starting observation opens anything.
     #[test]
     fn project_row_links_claude_anywhere_codex_only_locally() {
         let url = "https://claude.ai/code/session_014abc";
         let mut row = json!({"n": 938, "session": "codex:valid-thread win"});
-        task_session(Path::new("."), "win", &mut row);
+        task_session(Path::new("."), "win", None, &mut row);
         assert_eq!((row["session_url"].clone(), row["runtime"].clone()), (json!("codex://threads/valid-thread"), json!("codex")), "local codex: deep link");
         let mut codex = json!({"session": "codex:valid-thread mac"});
-        task_session(Path::new("."), "win", &mut codex);
+        task_session(Path::new("."), "win", None, &mut codex);
         assert!(codex["session_url"].is_null());
         assert_eq!(codex["session_reason"], "Codex session opens only on mac", "remote codex: no link, reason");
+        let mut paged = json!({"n": 7, "session": "codex:valid-thread mac"});
+        task_session(Path::new("."), "win", Some("https://d/projects#board-o%2Fr-task-"), &mut paged);
+        assert_eq!(paged["session_url"], "https://d/projects#board-o%2Fr-task-7", "remote codex: DashQ progress page, never codex://");
         let mut remote = json!({"session": "claude:valid-thread mac", "session_url": url});
-        task_session(Path::new("."), "win", &mut remote);
+        task_session(Path::new("."), "win", None, &mut remote);
         assert_eq!((remote["local_session"].clone(), remote["session_url"].clone()), (json!(false), json!(url)), "remote claude: link");
         let mut forged = json!({"session": "claude:valid-thread mac", "session_url": "https://evil.example/session_1"});
-        task_session(Path::new("."), "win", &mut forged);
+        task_session(Path::new("."), "win", None, &mut forged);
         assert!(forged["session_url"].is_null(), "only a canonical claude.ai URL");
         let mut unpublished = json!({"session": "claude:valid-thread mac"});
-        task_session(Path::new("."), "win", &mut unpublished);
+        task_session(Path::new("."), "win", None, &mut unpublished);
         assert!(unpublished["session_url"].is_null() && unpublished["session_reason"].is_null());
         let mut invalid = json!({"session": "claude:bad/path win", "session_url": url});
-        task_session(Path::new("."), "win", &mut invalid);
+        task_session(Path::new("."), "win", None, &mut invalid);
         assert!(invalid["session_url"].is_null());
         let mut local = json!({"session": "claude:valid-thread win"});
-        task_session(Path::new("."), "win", &mut local);
+        task_session(Path::new("."), "win", None, &mut local);
         assert!(local["session_url"].is_null(), "a local UUID does not prove remote registration");
         let mut starting = json!({"session": "claude:- mac", "session_url": url});
-        task_session(Path::new("."), "win", &mut starting);
+        task_session(Path::new("."), "win", None, &mut starting);
         assert!(starting["session_url"].is_null(), "starting: no link");
-        task_session(Path::new("."), "win", &mut Value::Null);
+        task_session(Path::new("."), "win", None, &mut Value::Null);
     }
 }

@@ -431,6 +431,8 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
         _ if id == "-" && r.accepted => format!("{host}: running"),
         _ if id == "-" => format!("{host}: starting"),
         _ if runtime::of(rt).remote => runtime::claude_remote(&id).filter(|_| host == cell(&cfg.me)).or_else(|| r.session_url.clone()).map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
+        // R6 3: a Codex thread opens only on its own host; elsewhere the DashQ progress page, else the host alone
+        _ if host != cell(&cfg.me) => crate::enrollment::progress_page(&cfg.install, &cfg.repo).map_or_else(|| host.clone(), |p| format!("[{host}]({p}{n})")),
         _ if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).codex && runtime::of(&c).child) => format!("[{host}]({})", runtime::thread_url(&id)),
         _ => match raw["pages"].as_str() {
             Some(p) => format!("[{host}]({}/open.html#{})", p.trim_end_matches('/'), runtime::thread_url(&id)),
@@ -462,6 +464,28 @@ mod tests {
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: running");
+    }
+
+    // Chain: R6 3 session cell per runtime and host (#1565). Risk: a Codex thread link shown off its host, where it
+    // cannot open, or the DashQ progress page replacing the owning host's thread link.
+    #[test]
+    fn codex_thread_links_only_on_its_host_else_dashq_progress() {
+        use std::fs;
+        let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
+        let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, execution_wait: None,
+            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, stuck: None };
+        let mut cfg = crate::tests::cfg();
+        cfg.me = "mac".into();
+        let pages = json!({"pages": "https://p"});
+        assert_eq!(session_link(&cfg, &pages, &row("mac")).1, "[mac](https://p/open.html#codex://threads/thread-1)");
+        assert_eq!(session_link(&cfg, &pages, &row("win")).1, "win", "no connection: the host alone");
+        cfg.install = std::env::temp_dir().join(format!("taskq-progress-page-{}", std::process::id()));
+        let id = crate::enrollment::installation_id(&cfg.install).unwrap();
+        let conn = json!({"destination": "https://dash.example/machine", "credential": "c"});
+        fs::create_dir_all(crate::enrollment::dir(&cfg.install)).unwrap();
+        fs::write(crate::enrollment::dir(&cfg.install).join("connection.json"), json!({"installation": id, "pending": null, "active": conn, "revoke": []}).to_string()).unwrap();
+        assert_eq!(session_link(&cfg, &pages, &row("win")).1, "[win](https://dash.example/projects#board-o%2Fr-task-3)");
+        fs::remove_dir_all(&cfg.install).unwrap();
     }
 
     // Chain: R6 stuck. Risk: a silent task never shows, or a moving or leased one is flagged.
