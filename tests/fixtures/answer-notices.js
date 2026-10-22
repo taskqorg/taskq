@@ -23,7 +23,7 @@ window.taskqAnswerNotices=async phase=>{
   await tick();
   delete crypto.randomUUID;
   check(sent.length===4,'four Later answers sent, got '+sent.length);
-  const top=()=>q('[data-since]')?.getBoundingClientRect().top;
+  const top=()=>q('.tqp-age')?.getBoundingClientRect().top;
   const before=top();
   state.projects[0].tasks=state.projects[0].tasks.map(x=>x.state==='ask'&&x.n<1110+k?{...x,state:'later',since:now-5}:x);
   taskq.receive(state);

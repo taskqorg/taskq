@@ -3,7 +3,7 @@
 const {execution}=require('./ui-runtime.js');
 const {normalize,create}=execution.module('tray.viewState',{
 normalize:function(saved,snapshot,routes,root='home'){
- const roots=new Set((snapshot.projects||[]).map(p=>p.root)),states=new Set(require('./project-blocks.js').states.map(([s])=>s));
+ const roots=new Set((snapshot.projects||[]).map(p=>p.root)),states=new Set(Object.keys(require('./project-blocks.js').marks));
  const {entry}=execution.module('tray.viewState.normalize',{
  entry:function(value){
   const v=value&&typeof value==='object'?value:{};

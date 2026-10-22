@@ -218,15 +218,14 @@ answerSlot:function(t){return t.state==='ask'?h('button',{'data-a':'workspace','
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
-blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
-unique:function(ts){return [...new Map(ts.map(t=>[t.boardIdentity?t.boardIdentity+'/'+t.n:t.key,t])).values()];},
-counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts",{n:f=>ts.filter(t=>f.includes(t.state)).length});return {work:n(['doing','review']),ask:n(['ask']),ready:n(['ready']),failed:n(['failed'])};},
-mode:function(p){return p.focus.length?'run':p.saved?'paused':'watch';},
+blockProject:function(p){return {id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},counts:p.counts,partial:p.partial,tasks:tasks(p)};},
+// #1592: the display model marks every repeat registration of a board task `dup`; rows come in model order.
+unique:function(ts){return ts.filter(t=>!t.dup).sort((a,b)=>require('./task-views.js').compare(a,b));},
+mode:function(p){return p.mode;},
 counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
-known:function(ps){return ps.every(p=>p.complete!==false);},
+known:function(){return !view.S.display.all.partial.length;},
 // O1: identity anchors details/actions; title remains a full-width issue link.
 taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)));},
-taskKey:function(t){const order=TaskqProjectBlocks.states.map(([s])=>s),i=order.indexOf(t.state);return [i<0?order.length:i,require('./task-views.js').priority(t),t.n,t.boardIdentity];},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
@@ -234,9 +233,8 @@ startButton:function(rows){
   const label=held.length===1&&rows.length===1?'Start #'+held[0].n:'Start '+held.length+' held';
   return h('button',{'data-a':'start','data-keys':held.map(t=>t.key).join(' '),title:label,'aria-label':label},label);
 },
-globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},names[st]),counter(ts.length,color(st),names[st])),ts.map(t=>taskRow(t,true))):'';},
-age:function(s){return s<120?s+' s':s<7200?Math.round(s/60)+' min':s<172800?Math.round(s/3600)+' h':Math.round(s/86400)+' d';},
-problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+age(p.age)+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('triangle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
+globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);const name=ts[0]?.state_name;return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},name),counter(ts.length,color(st),name)),ts.map(t=>taskRow(t,true))):'';},
+problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+p.age_text+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('triangle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
 modeText:function(p){return {run:'Admitting: '+p.focus.join(' '),paused:'Paused: running tasks finish, no new ones',watch:'Observation only: focus off'}[mode(p)];},
 admission:function(p){if(!ports.workspace)return api.operationLauncher('admission',p.root,'Review admission in '+p.name+'…');
   if(view.pending[p.root]&&!view.pending[p.root].unknown)return h('button',{class:'project',disabled:true},view.pending[p.root].text+'…');
@@ -268,7 +266,7 @@ custom:function(){
   d.error&&h('div',{class:'body alert',role:'alert'},d.error),h('button',{class:'project','data-a':'range'},'Show [start, end)'));},
 history:function(){
   const H=view.S.history,dpr=window.devicePixelRatio||1,{rows,bar}=historyRaster(H.bins,view.historyWidth||4),n=rows.length,w=(H.end-H.start)/n;
-  const kinds=['closed','failed','ask','waiting'],colors=['work','failed','ask','ready'];
+  const kinds=view.S.display.series.map(x=>x.name),colors=['work','failed','ask','ready'];
   const {sum,named,stamp,duration}=execution.module("tray.create.history.helpers",{
     sum:b=>b.reduce((a,x)=>a+x,0),
     named:b=>kinds.map((k,i)=>k+' '+b[i]).join(', '),
@@ -281,8 +279,8 @@ history:function(){
   const {detail}=execution.module("tray.create.history.helpers",{detail:i=>{const t=H.start+i*w,end=t+w,unknown=H.since==null||end<=H.since;
     return '[Start: '+stamp(t)+'; End: '+stamp(end)+') · '+(unknown?'unknown':named(rows[i]))+(view.S.now<end?' · partial':'')+(!unknown&&(part||t<H.since)?' · incomplete':'');}});
   const selected=Math.min(view.historyBar||0,n-1);
-  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},periods[view.S.period])),
-    h('div',{class:'options periods'},Object.entries(periods).map(([k,l])=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
+  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},view.S.display.periods.find(x=>x.id===view.S.period)?.name)),
+    h('div',{class:'options periods'},view.S.display.periods.map(({id:k,name:l})=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
     view.draft&&custom(),h('div',{class:'body meta'},'Start: '+when(H.start,H.tz),h('br'),'End: '+when(H.end,H.tz)+(view.S.now<H.end?' · last bin partial':'')),
     h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+(H.since==null?'—':tot[i])))),
     h('div',{class:'body meta history-label'},n+' bars · '+(n?duration(w):'unknown')+' per bar · peak '+(H.since==null?'unknown':peak)+' events'),
@@ -351,10 +349,10 @@ agentq:function(settings=false){
 },
 agents:function(){
   const A=view.S.agents;
-  return f(h('button',{class:'project','data-a':'workspace','data-page':'agents'},icon('shield'),'Access and runtime settings…'),api.agentq(true),h('div',{class:'body meta'},view.S.host+' · '+(A?'checked '+age(Math.max(0,view.S.now-A.at))+' ago':'unknown: no service probe yet')),A?A.rows.map(r=>h('div',{class:'body'},r)):h('div',{class:'body meta'},'Unknown: no status.json has agents'));
+  return f(h('button',{class:'project','data-a':'workspace','data-page':'agents'},icon('shield'),'Access and runtime settings…'),api.agentq(true),h('div',{class:'body meta'},view.S.host+' · '+(A?'checked '+A.age+' ago':'unknown: no service probe yet')),A?A.rows.map(r=>h('div',{class:'body'},r)):h('div',{class:'body meta'},'Unknown: no status.json has agents'));
 },
 about:function(){
-  return f(h('div',{class:'body'},'Tray '+view.S.version+' · '+view.S.host),view.S.projects.map(p=>h('div',{class:'body'},p.name+': '+(p.version||'version unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':age(p.age)+' old')))),update());
+  return f(h('div',{class:'body'},'Tray '+view.S.version+' · '+view.S.host),view.S.projects.map(p=>h('div',{class:'body'},p.name+': '+(p.version||'version unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':p.age_text+' old')))),update());
 },
 setup:function(){
   const s=view.S.setup;if(!s||view.S.agentq?.setup?.id&&view.S.agentq.setup.id===s.id)return '';
@@ -368,7 +366,7 @@ attention:function(){
   return parts.length?f(parts):'';
 },
 projects:function(){
-  return f(raw(TaskqProjectBlocks.aggregate(view.S.projects.map(blockProject),[])),view.S.projects.length?view.S.projects.map(p=>[raw(TaskqProjectBlocks.summary(blockProject(p))),h('div',{class:'body meta'},modeText(p)),h('div',{class:'body meta'},'You asked: '+(p.request||'not recorded'))]):h('div',{class:'body meta'},'No projects yet'),addProject());
+  return f(raw(TaskqProjectBlocks.aggregate(view.S.display.all,[])),view.S.projects.length?view.S.projects.map(p=>[raw(TaskqProjectBlocks.summary(blockProject(p))),h('div',{class:'body meta'},modeText(p)),h('div',{class:'body meta'},'You asked: '+(p.request||'not recorded'))]):h('div',{class:'body meta'},'No projects yet'),addProject());
 },
 controls:function(){
   const run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
@@ -390,10 +388,10 @@ runningAgents:function(compact=false){
     if(!Array.isArray(p.hosts)||!Array.isArray(p.tasks))reasons.add('missing host/task data');
     for(const h of Array.isArray(p.hosts)?p.hosts:[]){
       if(!h||typeof h.name!=='string'||!h.name){partial=true;continue;}
-      const age=Number.isFinite(h.updated)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-h.updated+elapsed:null;
-      const old=hosts.get(h.name);
-      if(!old)hosts.set(h.name,{name:h.name,age,unknown:!fresh||h.live!==true,counts:new Map()});
-      else {old.unknown ||= !fresh||h.live!==true;old.age=old.age===null||age===null?null:Math.max(old.age,age);}
+      // #1592: host age and its text come from the display model; the oldest registration names the host age.
+      const age=Number.isFinite(h.age)?h.age:null,old=hosts.get(h.name);
+      if(!old)hosts.set(h.name,{name:h.name,age,age_text:h.age_text,unknown:!fresh||h.live!==true,counts:new Map()});
+      else {old.unknown ||= !fresh||h.live!==true;if(old.age===null||age===null)old.age=old.age_text=null;else if(age>old.age)Object.assign(old,{age,age_text:h.age_text});}
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
       doing+=t.state==='doing'?1:0;review+=t.state==='review'?1:0;
@@ -401,7 +399,7 @@ runningAgents:function(compact=false){
       for(const x of Array.isArray(t.executions)?t.executions:[]){
         if(!x||typeof x.host!=='string'){partial=true;reasons.add('invalid execution host');continue;}
         const name=x.host||'Unknown host';
-        if(!hosts.has(name))hosts.set(name,{name,age:null,unknown:true,counts:new Map()});
+        if(!hosts.has(name))hosts.set(name,{name,age:null,age_text:null,unknown:true,counts:new Map()});
         const h=hosts.get(name);
         if(!fresh||x.live!==true||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason='Run state unknown; see service log';continue;}
         const identity=JSON.stringify([p.issues||p.root,t.n,x.id]),prior=seen.get(identity);
@@ -416,7 +414,7 @@ runningAgents:function(compact=false){
     const unknown=partial||host.unknown;
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
     if(!unknown&&runtimes.length)out.push(h('details',{'data-view-key':'host:'+host.name,key:'host:'+host.name},h('summary',null,h('strong',null,host.name),' · '+runtimes.map(([rt,c])=>rt+' '+(c.worker+c.reviewer)).join(' · ')),h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s'))))));
-    else out.push(h('div',{class:'body'},h('strong',null,host.name),unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':'')+': '+([...reasons].join('; ')||host.reason||'host observation missing or stale'):' · idle'));
+    else out.push(h('div',{class:'body'},h('strong',null,host.name),unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+host.age_text+' old':'')+': '+([...reasons].join('; ')||host.reason||'host observation missing or stale'):' · idle'));
   }
   if(!hosts.size)out.push(h('div',{class:'body meta'},'Hosts unknown: no observation'));
   const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
@@ -424,7 +422,7 @@ runningAgents:function(compact=false){
   const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
   const counted=[h('div',{class:'body meta'},'Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review))];
   if(capFresh&&occupied){
-    counted.push(h('div',{class:'body meta'},view.S.host+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old'));
+    counted.push(h('div',{class:'body meta'},view.S.host+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+latest.age_text+' old'));
     const reserved=new Map();let known=local.length>0;
     for(const p of local){
       if(p.alive!==true||p.complete!==true||p.tasks_live!==true||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
@@ -448,7 +446,7 @@ routeBody:function(){
   switch(view.page){
     case 'agentq-shown':case 'agentq-setting-up':case 'agentq-running':case 'agentq-unknown':return api.agentq(view.page==='agentq-running');
     case 'projects':return projects();
-    case 'attention':return attention()||h('div',{class:'body meta'},known(view.S.projects)?'No reported questions or failures':'Status incomplete; check Services');
+    case 'attention':return attention()||h('div',{class:'body meta'},known()?'No reported questions or failures':'Status incomplete; check Services');
     case 'settings':return api.settings();
     case 'window':return api.windowSettings();
     case 'tray-icon':return views();
@@ -459,7 +457,7 @@ routeBody:function(){
     case 'agents':return agents();
     case 'stop':return api.stopPanel();
     case 'recovery':return api.recoveryPanel();
-    case 'services':return f(api.operationLauncher('service',null,'Host maintenance in workspace…'),view.S.projects.map(p=>[h('div',{class:'body'},p.name+' · '+(p.host||'host unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':age(p.age)+' old'))),problem(p),incidentNotice(p),service(p)]));
+    case 'services':return f(api.operationLauncher('service',null,'Host maintenance in workspace…'),view.S.projects.map(p=>[h('div',{class:'body'},p.name+' · '+(p.host||'host unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':p.age_text+' old'))),problem(p),incidentNotice(p),service(p)]));
     case 'about':return about();
     default:return home();
   }
@@ -499,26 +497,26 @@ mountResources:function(){
 notifications:function(){
   const N=view.S.notify,st=N.status,line={allowed:'Allowed by the OS',blocked:'Blocked by the OS: nothing is posted','not asked':'Not asked yet: the first banner setting asks the OS',asking:'Asked: answer the OS prompt','request failed':'OS permission request failed: '+N.failure,unknown:'OS permission unknown',unsupported:'Not available on this host'}[st]||st;
   return f(h('div',{class:'body'+(st==='blocked'||st==='request failed'?' alert':' meta'),role:'status'},line),st==='blocked'&&h('button',{class:'project','data-a':'notify-os'},'Open OS setting ↗'),
-    kinds.map(([k,l])=>[h('div',{class:'body'},l),h('div',{class:'options'},modes.map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-v':v,'aria-pressed':String(N.host[k]===v)},m)),h('button',{'data-a':'notify-test','data-kind':k,disabled:st!=='allowed'},'Send test'))]));
+    view.S.display.notify.map(x=>[x.id,x.name]).map(([k,l])=>[h('div',{class:'body'},l),h('div',{class:'options'},modes.map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-v':v,'aria-pressed':String(N.host[k]===v)},m)),h('button',{'data-a':'notify-test','data-kind':k,disabled:st!=='allowed'},'Send test'))]));
 },
 notifyGroup:function(p){
   const N=view.S.notify.projects[p.root];if(!N)return '';
   const {name}=execution.module("tray.create.notifyGroup",{name:v=>modes.find(m=>m[0]===v)[1]});
-  return h('details',{class:'group','data-view-key':'notifications:'+p.root},h('summary',null,'◉ Notifications ',h('span',{class:'meta'},kinds.map(([k])=>name(N[k][1])).join(' · '))),kinds.map(([k,l])=>[h('div',{class:'body'},l+' ',h('span',{class:'meta'},'· '+name(N[k][1]))),h('div',{class:'options'},[['inherit','Inherit'],...modes].map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-root':p.root,'data-v':v,'aria-pressed':String((N[k][0]||'inherit')===v)},m)))]));
+  return h('details',{class:'group','data-view-key':'notifications:'+p.root},h('summary',null,'◉ Notifications ',h('span',{class:'meta'},view.S.display.notify.map(x=>[x.id,x.name]).map(([k])=>name(N[k][1])).join(' · '))),view.S.display.notify.map(x=>[x.id,x.name]).map(([k,l])=>[h('div',{class:'body'},l+' ',h('span',{class:'meta'},'· '+name(N[k][1]))),h('div',{class:'options'},[['inherit','Inherit'],...modes].map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-root':p.root,'data-v':v,'aria-pressed':String((N[k][0]||'inherit')===v)},m)))]));
 },
 openCard:function(o){
   const p=view.S&&view.S.projects.find(p=>p.root===o.root);if(!p)return;
   if(view.page!==p.root||view.working||view.taskFilter)navigate(p.root);
   const key=p.issues+'/'+o.n;
 const {find}=execution.module("tray.create.openCard.helpers",{find:()=>o.n!=null&&(menu.querySelector('[data-card="'+CSS.escape(key)+'"]'))});
-  if(o.n!=null&&!find()){view.noted={root:p.root,n:o.n,key,url:key,title:o.title||'',state:o.kind==='close'?'closed':o.kind};present(true);}
+  if(o.n!=null&&!find()){view.noted={root:p.root,n:o.n,key,url:key,title:o.title||'',state:o.kind==='close'?'closed':o.kind,state_name:[...view.S.display.states,...view.S.display.notify].find(x=>x.id===o.kind)?.name};present(true);}
   const el=find();
   if(el){el.scrollIntoView({block:'center'});(el.querySelector('textarea,button,a')||el).focus({preventScroll:true});}
 },
 notedCard:function(p){return view.noted&&view.noted.root===p.root?h('div',{class:'group'},h('div',{class:'row meta'},h('span',null,'Notification')),h('div',{'data-card':view.noted.key,tabindex:'-1'},raw(TaskqProjectBlocks.task(blockProject(p),view.noted)))):'';},
 project:function(p){
-  const ts=tasks(p),counters=TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name);
-  const groups=['ask','failed','doing','review','ready','waiting','later','held'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?h('div',{class:'group',key:st},h('div',{class:'row meta'},h('span',null,names[st]),counter(r.length,color(st),names[st]),r.length>1&&startButton(r)),r.map(t=>taskRow(t))):'';}).filter(Boolean);
+  const ts=tasks(p),counters=TaskqProjectBlocks.counters(p.counts,p.root,p.name);
+  const groups=view.S.display.states.map(({id:st,name})=>{const r=ts.filter(t=>t.state===st);return r.length?h('div',{class:'group',key:st},h('div',{class:'row meta'},h('span',null,name),counter(r.length,color(st),name),r.length>1&&startButton(r)),r.map(t=>taskRow(t))):'';}).filter(Boolean);
   return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),problem(p),incident(p,true),incidentNotice(p),notedCard(p),
   groups.length?groups:h('div',{class:'body muted'},'No open tasks'),answerNotices(p.issues),
   h('div',{class:'group'},admission(p)),capacity(p),notifyGroup(p),workEntry(p.root),service(p));},
@@ -620,7 +618,7 @@ measure:function(name){
   }
 },
 mount:function(){
-window.taskq={settle,receive,measure,model:{unique,counts,mode}};
+window.taskq={settle,receive,measure,model:{unique,mode}};
 dashboard.mount();
 ui.listen(menu,'toggle',()=>viewState.schedule(),true);
 ui.listen(menu,'scroll',e=>{const c=e.target;if(c.classList?.contains('content'))viewState.schedule();if(!c.dataset?.bound)return;cancel(c.settling);c.settling=defer(()=>settle(c),150);},true);
@@ -678,14 +676,11 @@ for(const event of ['pointerup','pointercancel','lostpointercapture'])ui.listen(
 ui.listen(menu,'keydown',e=>{if(!e.target.closest('.grip')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();view.manualSize=[Math.max(240,window.innerWidth+(e.key==='ArrowRight'?10:e.key==='ArrowLeft'?-10:0)),Math.max(120,window.innerHeight+(e.key==='ArrowDown'?10:e.key==='ArrowUp'?-10:0))];send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});send({a:'resize-end'});});
 ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&view.popup){e.preventDefault();dashboard.close();return;}if(e.key==='Escape'){const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}viewState.flush();send({a:'hide'});}if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(view.page!=='home'||view.taskFilter||view.working)back();}});
 ui.listen(menu,'toggle',()=>fit(),true);
-// § 4 Tray: row ages tick in place while the menu is open; a redraw would move the reading position
-const {ages}=execution.module("tray.create.mount.ages",{ages:()=>{if(view.S){const now=view.S.now+Math.round((performance.now()-view.receivedAt)/1000);for(const e of menu.querySelectorAll('[data-since]'))e.textContent=TaskqProjectBlocks.age(now-Number(e.dataset.since));}repeat(ages,30000);}});
-repeat(ages,30000);
 ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,counts,mode,counter,known,taskRow,taskKey,taskOrder,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,mode,counter,known,taskRow,taskOrder,startButton,globalGroup,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function resourceSend(g,op){
   const capability=resourceCapability(g);
@@ -706,9 +701,7 @@ const performance=window.performance||globalThis.performance,crypto=window.crypt
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
 const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
 const renderer=shell.create(menu);
-const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later',held:'Held'};
 const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'work',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
-const periods={'5m':'5 min','1h':'Hour','1d':'Day','1w':'7 days','1mo':'30 days',custom:'Custom'};
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
 // Pages are Preact vnodes; shared module HTML enters only as an island the module owns.
 const {f,raw,lines}=execution.module("tray.create",{f:(...children)=>h(Fragment,null,...children),raw:html=>html?h('div',{style:'display:contents',dangerouslySetInnerHTML:{__html:html}}):'',lines:items=>items.flatMap((x,i)=>i?[h('br'),x]:[x])});
@@ -758,7 +751,7 @@ const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Ma
 // Work mode (menu M12): the shared editor over this host's projects; only the explicitly selected ones change
 
 // Notifications (menu.md M14): host mode per kind, the OS permission, and per project overrides
-const modes=[['off','Off'],['silent','Silent'],['banner','Banner'],['sound','Banner with sound']],kinds=[['ask','Questions'],['close','Closed'],['failed','Failed'],['gone','Attempt gone']];
+const modes=[['off','Off'],['silent','Silent'],['banner','Banner'],['sound','Banner with sound']];
 
 // a notification click: the project page scrolled to the card (for `ask`, its answer card); a task no longer in the
 // open lists (closed): its card from the notification, kept on top of the page until navigation
