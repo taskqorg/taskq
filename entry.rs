@@ -46,5 +46,7 @@ fn main() {
     if let Some(private)=private {
         tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(),||drop(_telemetry));
         let _=std::fs::remove_dir_all(private);
-    }
+    } else {drop(_telemetry);}
+    // #1566: returning from main ends in the same `ExitProcess` deadlock as `platform::exit`; the drop above sealed.
+    #[cfg(windows)] platform::terminate(0);
 }

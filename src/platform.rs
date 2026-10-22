@@ -137,7 +137,27 @@ fn emit(line: &str, project: Option<&Path>, stderr: &mut dyn std::io::Write, std
 
 pub fn die(msg: &str) -> ! {
     log(&error_text(msg, crate::find_root().ok().as_deref()));
-    std::process::exit(1);
+    exit(1);
+}
+
+/// Every taskq exit. #1566: Windows `ExitProcess` first kills the other threads, then runs this thread's
+/// TLS destructors; a thread killed while it held a lock one of them takes (sharded_slab's thread-id
+/// registry) left that exit waiting forever. Seal telemetry, flush, then end without destructors.
+pub fn exit(code: i32) -> ! {
+    #[cfg(windows)] {coreq::telemetry::capture::before_exec(); terminate(code)}
+    #[cfg(not(windows))] std::process::exit(code)
+}
+
+/// Ends this process now: no other thread or destructor runs after the flush.
+#[cfg(windows)]
+pub fn terminate(code: i32) -> ! {
+    use std::io::Write;
+    #[link(name = "kernel32")]
+    unsafe extern "system" { fn GetCurrentProcess() -> isize; fn TerminateProcess(process: isize, code: u32) -> i32; }
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    unsafe { TerminateProcess(GetCurrentProcess(), code as u32); }
+    std::process::abort()
 }
 
 pub fn error_text(msg: &str, root: Option<&Path>) -> String {
