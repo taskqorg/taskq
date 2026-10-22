@@ -19,7 +19,7 @@ pub(crate) struct Sent { #[serde(default)] pub revision: u64, pub text: String, 
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Draft {
     pub revision: u64, pub title: String, pub root: String, pub text: String, pub caret: [usize;2],
-    pub scroll: u32, pub archived: bool, pub deleting: bool, pub next: bool, pub files: Vec<File>, pub sent: Option<Sent>,
+    pub scroll: u32, pub archived: bool, pub deleting: bool, pub next: bool, pub parent: Option<String>, pub files: Vec<File>, pub sent: Option<Sent>,
 }
 
 pub(crate) fn preferences(install:&Path)->Res<Value> {
@@ -135,20 +135,22 @@ pub(crate) fn preserve_draft(install:&Path,id:&str)->Res<()> {
     let files:Vec<File>=source.files.iter().filter(|f|source.sent.as_ref().is_none_or(|s|!s.files.iter().any(|sent|sent.id==f.id))).cloned().collect();
     if text.is_empty()&&files.is_empty(){return Ok(());}
     let recovered=format!("draft-{}",&hash(id.as_bytes())[..40]);
-    if drafts.contains_key(&recovered){return Ok(());}
-    let draft=Draft{revision:1,root:source.root.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
+    if crate::messages::request_deleted(install,&recovered)? {return Ok(());}
+    if let Some(existing)=drafts.get(&recovered){return if existing.parent.as_deref()==Some(id){Ok(())}else{Err("Recovery draft identity differs; original kept".into())};}
+    let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
     drafts.insert(recovered,draft);p["conversations"]=json!(drafts);persist(install,&p)
 }
 fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
     if !crate::setup::owner_id(to)||id==to {return Err("Invalid new draft identity".into());}
     crate::setup::locked(install,||{
         if crate::messages::request_deleted(install,id)? {return Err("Deleted history cannot be copied".into());}
+        if crate::messages::request_deleted(install,to)?||crate::messages::plain(&crate::setup::dir(install).join(format!("{to}.json")))? {return Err("New draft ID is already used or deleted; original kept".into());}
         let mut p=preferences(install)?;let mut drafts=rows(&p)?;
-        if drafts.contains_key(to){return Ok(to.into());}
+        if let Some(existing)=drafts.get(to){return if existing.parent.as_deref()==Some(id){Ok(to.into())}else{Err("New draft ID belongs to different input; original kept".into())};}
         let source=drafts.get(id).ok_or("Source draft unavailable")?;
         if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
-        let draft=Draft{revision:1,root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
-        let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.next=false;source.caret=[0,0];source.revision+=1;
+        let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
+        let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.next=false;source.caret=[0,0];source.revision=source.revision.checked_add(1).ok_or("Draft revision overflow")?;
         drafts.insert(to.into(),draft);p["conversations"]=json!(drafts);persist(install,&p)?;Ok(to.into())
     })
 }
@@ -402,6 +404,9 @@ mod tests {
         assert!(recovered.sent.is_none());assert_eq!(bytes(&f.0,id,&recovered.files[0]).unwrap(),b"new unsent bytes");
         assert!(!serde_json::to_string(&drafts).unwrap().contains("original sent text"));assert_eq!(drafts.len(),2);
         assert!(crate::setup::all(&f.0).unwrap().0.is_empty());assert_eq!(f.save("sent","resurrect history")["state"],"unknown");
+        f.save("other","separate context");assert_eq!(f.act("other","fork",json!({"fork_id":"next"}))["state"],"unknown");
+        assert_eq!(f.act("other","fork",json!({"fork_id":"sent"}))["state"],"unknown","deleted IDs cannot become draft destinations");
+        assert_eq!(preferences(&f.0).unwrap()["conversations"]["other"]["text"],"separate context");
         f.save("repeat","same text");f.act("repeat","send",json!({"runtime":crate::runtime::OWNER}));
         crate::setup::step(&f.0,|_,_|crate::setup::Launched::Job{job:"native-owned".into(),session:None,url:None}).unwrap();
         f.act("repeat","save",json!({"draft":{"text":"same text","title":"","root":f.0,"caret":[0,0],"scroll":0,"next":true}}));
