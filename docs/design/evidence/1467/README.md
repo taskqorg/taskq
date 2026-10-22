@@ -4,7 +4,19 @@ This candidate implements TW5–TW7 under the [owner's message-only answer](http
 
 The owner [accepted M's seven-image layout and message-only scope](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821), reviewed at `bf2a6f2324cd4e6476ecc87ef38760b8cdeac7e1`. Combined #1465/#1466 and native workspace qualification remain separately gated work. Refreshed captures after rebasing retain that message scope; inherited operation-review changes are not qualified by this acceptance.
 
-## Current Mac repair (R12, § 7)
+## Windows merge-queue investigation (R12, § 7)
+
+[Merge-group run 39694561826](https://github.com/taskqorg/taskq/actions/runs/39694561826), candidate `f9d2a7caab16d3ae1691179a011455865789cc13`, passed Linux, macOS and Windows GNU. Windows MSVC passed all 501 unit tests (466 passed, 35 ignored), then exhausted the unchanged 900s gate in `telemetry_process::emergency_state_survives_failed_wakeup_and_notifies_other_projects`. The log names no stalled internal phase; this is not evidence of a message-deletion failure or its absence.
+
+Before the fixture repair, the unchanged focused test passed locally on Windows GNU in 3.26s, and integration passed 18 tests with one ignored in 16.61s. The CI stall was not reproduced. An MSVC attempt could not build because `link.exe` is unavailable; local GNU results do not qualify MSVC.
+
+The fixture now reuses CoreQ's bounded process exchange (60s per Windows CLI invocation, 10s elsewhere) and prints timings around Hold/Release, reader open, export and cleanup. Expected nonzero CLI exits still reach every original hold-state, notification and durable-error assertion. After this change the same focused test passed in 2.43s, including all three expected refusals and durable readback. No assertion, production behavior, dependency, authority check or gate budget changed (§ 7.4). The original CI stall's cause remains unknown; merge-result CI must still pass.
+
+Tested fixture blob: `02aaf92656411d9b59dc42f136a6fb9241fbe2c3` on parent `a6a89123eca5437a951c79ae28191f131d976678`, already based on main `0128d46faeb25b6c49cd7418582b25755f4f9f1a`. The message implementation, UI sources and accepted images are unchanged in this repair; no new native/owner acceptance is claimed.
+
+`python3 scripts/check.py --base 0128d46faeb25b6c49cd7418582b25755f4f9f1a` ran once on Windows GNU: 447 passed, 19 sandbox-blocked worker-authority refusals, 35 ignored; 57.516s. All nine message-boundary tests passed. This is not a passing canonical gate; no authority environment or guard was removed. The runner stopped before integration/Node/selftest, so those ran separately: `cargo +stable test --locked --test integration` passed 18 with one ignored in 19.01s; isolated `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest` passed 97 traces, formats and nine staged observations (no board read); all 18 `tests/*.test.cjs`, screenshot manifest/script checks and release-script checks passed. No new browser or native captures were needed for this test-only repair; prior accepted rendering evidence remains historical. Merge-result CI is unknown, not a pass.
+
+## Previous Mac repair (R12, § 7)
 
 Candidate `04c62745` rebases the accepted message-only implementation onto main `0128d46faeb25b6c49cd7418582b25755f4f9f1a`. The conflict resolution keeps #1466's current Home panels and complete task list, replacing its Messages placeholder with the native snapshot badge. The following Windows results remain historical evidence, not current Mac qualification.
 
