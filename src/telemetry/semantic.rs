@@ -64,7 +64,7 @@ fn canonical(line: &str) -> Res<Value> {
 fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
     Ok(match kind {
         "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms")],
-        "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("unknown","usage_status")],
+        "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("model","model"),("output_tokens","output_tokens"),("unknown","usage_status")],
         "board" => &[("op","operation"),("us","duration_us"),("outcome","outcome"),("error","error"),("remaining","remaining"),("at_ms","started_ms")],
         "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms")],
         "requests" => &[("at_ms","started_ms")],
@@ -90,6 +90,10 @@ pub(super) fn encode(kind:&str,original:Value)->Res<Value> {
     for name in ["duration_us","remaining","previous_seconds","calls","tokens"] {
         if value.get(name).is_some_and(Value::is_null) {value["unknown"][name]=original.get("unknown").cloned().unwrap_or(json!("not-recorded"));}
     }
+    // gap G3: a stage without model or output tokens says why (its usage status, else the runtime reported none)
+    if kind=="stage" {for name in ["model","output_tokens"] {
+        if value[name].is_null() {value[name]=Value::Null;value["unknown"][name]=original.get("unknown").cloned().unwrap_or(json!("not-reported"));}
+    }}
     if kind=="operation" {value["outcome"]=json!(if value["error"]=="none" {"ok"} else {"failed"});}
     if let Some(trace)=original.get("trace") {
         for (old,new) in [("run","run_id"),("process","process_id"),("span","span_id"),("parent","parent_id")] {
@@ -186,6 +190,7 @@ mod tests {
             r#"taskq-stage {"host":"win","open":true,"project":"group/nested/repo","stage":"build","task":1230,"attempt":6185426441,"rt":"codex","us":null,"outcome":"unknown","error":"none","at_ms":null,"unknown":"open-stage"}"#,
             r#"taskq-stage {"stage":"claim","task":1230,"attempt":9,"rt":"other","us":20,"outcome":"ok","error":"none","at_ms":1000,"unknown":"no-model"}"#,
             r#"taskq-stage {"stage":"build","task":1230,"attempt":9,"rt":"codex","us":30,"outcome":"ask","error":"none","at_ms":1001,"calls":0,"tokens":null,"unknown":"no-usage"}"#,
+            r#"taskq-stage {"stage":"build","task":1614,"attempt":3,"rt":"claude","us":40,"outcome":"ok","error":"none","at_ms":1004,"calls":2,"tokens":900,"model":"claude-opus-5-5","output_tokens":70}"#,
             r#"taskq-board {"op":"close","us":12,"outcome":"failed","error":"http4xx","remaining":null,"at_ms":1002}"#,
             r#"taskq-transition {"project":"other","task":1230,"entry":18446744073709551615,"from":"doing","to":"ask","prev_s":null,"rt":null,"host":null,"at_ms":null}"#,
             r#"taskq-requests {"at_ms":1003,"source":"worker service status","ops":{"GET issues/N/comments":18446744073709551615,"POST graphql":0,"GET repos/*/issues":2}}"#,
@@ -198,6 +203,17 @@ mod tests {
         let rows=store.export(0,0,1024).unwrap();assert_eq!(rows["events"].as_array().unwrap().len(),source.len());
         for (row,text) in rows["events"].as_array().unwrap().iter().zip(source) {assert_eq!(canonical(&line(&row["observation"]).unwrap()).unwrap(),canonical(text).unwrap());}
         drop(store);std::fs::remove_dir_all(dir).unwrap();
+    }
+    // Chain: runtime usage -> stage observation (gap G3). Risk: a missing model or output count read as zero or
+    // dropped without a reason; a known one lost.
+    #[test]
+    fn stage_model_and_output_tokens_are_known_or_null_with_reason() {
+        let known=observation(r#"taskq-stage {"stage":"build","task":1,"attempt":2,"rt":"claude","us":4,"outcome":"ok","error":"none","at_ms":5,"calls":2,"tokens":9,"model":"claude-opus-5-5","output_tokens":7}"#).unwrap();
+        assert_eq!((&known["model"],&known["output_tokens"],known["unknown"].get("model")),(&json!("claude-opus-5-5"),&json!(7),None));
+        let codex=observation(r#"taskq-stage {"stage":"build","task":1,"attempt":2,"rt":"codex","us":4,"outcome":"ok","error":"none","at_ms":5,"tokens":9,"output_tokens":7}"#).unwrap();
+        assert_eq!((&codex["model"],&codex["unknown"]["model"],&codex["output_tokens"]),(&Value::Null,&json!("not-reported"),&json!(7)));
+        let service=observation(r#"taskq-stage {"stage":"claim","task":1,"attempt":2,"rt":"other","us":4,"outcome":"ok","error":"none","at_ms":5,"unknown":"no-model"}"#).unwrap();
+        assert_eq!((&service["unknown"]["model"],&service["unknown"]["output_tokens"]),(&json!("no-model"),&json!("no-model")));
     }
     #[test]
     #[ignore="read-only archive qualification; requires TASKQ_SEMANTIC_SOURCE snapshot"]

@@ -1,0 +1,549 @@
+{
+  "schema": "taskq-telemetry/1",
+  "installation": "i",
+  "source": "src/telemetry_sync.rs sender_posts_the_published_fixture",
+  "rows": [
+    {
+      "seq": 1,
+      "id": "90d89183286ce6adeccf42075df912c2",
+      "received_ms": 1792000001000,
+      "observation": {
+        "kind": "operation",
+        "operation": "service.pass",
+        "duration_us": 1200,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000001000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 2,
+      "id": "68012379a6df7f1aa5fece5a02f0e24d",
+      "received_ms": 1792000002000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 2,
+        "runtime": "claude",
+        "duration_us": 9000000,
+        "calls": 2,
+        "tokens": 230,
+        "model": "claude-opus-5-5",
+        "output_tokens": 6,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000002000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 3,
+      "id": "f78f2df83f65c763aa163bd34d566948",
+      "received_ms": 1792000003000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 3,
+        "runtime": "codex",
+        "duration_us": 5000000,
+        "tokens": 700,
+        "model": null,
+        "output_tokens": 9,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000003000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded",
+          "model": "not-reported"
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "id": "5f7a9b2e68583387313ad675912f0991",
+      "received_ms": 1792000004000,
+      "observation": {
+        "kind": "operation",
+        "operation": "service.pass",
+        "duration_us": 1200,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000004000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "id": "8b579e41c38ae3369533e293541bfd17",
+      "received_ms": 1792000005000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 5,
+        "runtime": "claude",
+        "duration_us": 9000000,
+        "calls": 2,
+        "tokens": 230,
+        "model": "claude-opus-5-5",
+        "output_tokens": 6,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000005000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "id": "144e24cb65011f828520d00020878160",
+      "received_ms": 1792000006000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 6,
+        "runtime": "codex",
+        "duration_us": 5000000,
+        "tokens": 700,
+        "model": null,
+        "output_tokens": 9,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000006000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded",
+          "model": "not-reported"
+        }
+      }
+    },
+    {
+      "seq": 7,
+      "id": "1324ec879d34ebae0c8b69d95e7f51b6",
+      "received_ms": 1792000007000,
+      "observation": {
+        "kind": "operation",
+        "operation": "service.pass",
+        "duration_us": 1200,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000007000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "id": "b38e58229548a795cd62c60a57cf86cb",
+      "received_ms": 1792000008000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 8,
+        "runtime": "claude",
+        "duration_us": 9000000,
+        "calls": 2,
+        "tokens": 230,
+        "model": "claude-opus-5-5",
+        "output_tokens": 6,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000008000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "id": "c00ffb834c952be9908b64cf71ca22cf",
+      "received_ms": 1792000009000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 9,
+        "runtime": "codex",
+        "duration_us": 5000000,
+        "tokens": 700,
+        "model": null,
+        "output_tokens": 9,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000009000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded",
+          "model": "not-reported"
+        }
+      }
+    },
+    {
+      "seq": 10,
+      "id": "51bfa6aff1fe8eabf5d86b7b3c312eb5",
+      "received_ms": 1792000010000,
+      "observation": {
+        "kind": "operation",
+        "operation": "service.pass",
+        "duration_us": 1200,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000010000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "id": "b931b403d0480f299314c75682a877e4",
+      "received_ms": 1792000011000,
+      "observation": {
+        "kind": "stage",
+        "operation": "build",
+        "task": 1614,
+        "attempt": 11,
+        "runtime": "claude",
+        "duration_us": 9000000,
+        "calls": 2,
+        "tokens": 230,
+        "model": "claude-opus-5-5",
+        "output_tokens": 6,
+        "product": "taskq",
+        "version": "4.6.31",
+        "trace": null,
+        "span": null,
+        "started_ms": 1792000011000,
+        "outcome": "ok",
+        "error": "none",
+        "unknown": {
+          "version": "not-recorded",
+          "trace": "not-recorded",
+          "span": "not-recorded"
+        }
+      }
+    }
+  ],
+  "pruned_through": 7,
+  "gap": [
+    6,
+    7
+  ],
+  "records": [
+    {
+      "schema": "taskq-telemetry/1",
+      "event_id": "t-e41deeecd8241d853f7c0679ca995190",
+      "observed_at": 1792000003,
+      "payload": {
+        "schema": 1,
+        "first": {
+          "seq": 1,
+          "id": "90d89183286ce6adeccf42075df912c2"
+        },
+        "last": {
+          "seq": 3,
+          "id": "f78f2df83f65c763aa163bd34d566948"
+        },
+        "rows": 3,
+        "bytes": 1283,
+        "gzip": "H4sIAAAAAAAA/8WS227jIBCG7/cx5ppEHGx8eJmIwFBZdsDlkFaK8u4VdtJsLWWv2i5Xw8DM/PwfF4j4Cj0jMBjooaOm7VgreCs1SmVQa1tx2tTGdoxrDgQCahzOaA6nCD1rOk7LYpRSAv4YMZxVGryD/gLj4EpTP2NYc+SvuIdyd9C4n1WMQMDk9eSQS2Ne+s3Bm6wT9JBUHF+BwBlDXKurvdwLBgRSUBqhd3maCMRZuc84qZCeCM1J+xMWcSMQwBB8gB6cdwgEshudf1ue8JjnfNoF1D4YNI+p2/Q6/2v2er3+uaw+85vPsqWMi6ZT0tjGMqVqixprRbmlyCvz1Gf+D59jUi+48fiYh2mRq+IIPZOsIqBSwtOcFjUhuzQsRuhJZYNbDt0ylRLQapriUpL8iK6EghI4eYPTZ/XOzznu6l1dVOQ053S435Y/QpP/V5riRtM2reXGtsLKWjdSKMWkOBpRmVrKrmqf0hTfSVN8oekNvm9h1neYdyhN2dwQri5vqHU/Qu327N+k9vipa3r2RdYC8wOfcizDAwUAAA==",
+        "status": {
+          "backlog_rows": 0,
+          "gap_rows": 0,
+          "backlog_bytes": 0
+        }
+      }
+    },
+    {
+      "schema": "taskq-telemetry/1",
+      "event_id": "t-889305835d983c97d334b7002b44a142",
+      "observed_at": 1792000005,
+      "payload": {
+        "schema": 1,
+        "first": {
+          "seq": 4,
+          "id": "5f7a9b2e68583387313ad675912f0991"
+        },
+        "last": {
+          "seq": 5,
+          "id": "8b579e41c38ae3369533e293541bfd17"
+        },
+        "rows": 2,
+        "bytes": 822,
+        "gzip": "H4sIAAAAAAAA/72RTW7DIBCF9z3GrElkjLENl4kwTCrLDjgwpIsod6+w07SN1O5aVqP5e49vrpDwDLphMDrQII+dUUONbS97IfpOcGFc20nF62OlFAcGES2OF3SHUwLNO1VX5TVVVTEIQ8J4MTQGD/oK0+jL0rBg3HLsS6yh9I4W94tJCRi4vFUOuSyuy74lBpctgQYyaToDgwvGtE03+3YviiGKxiJon+eZQVqMf8RkIv1gNJMNJyzmJmCAMYYIGnzwCAyyn3x4W7/wqecD7SLaEB26T9Xn9Kb/PXu73V6uG2d559wPslPYcCt6g0K0SgqBtRKy4cPR8e5HzvIXzonMKz4xHvI4r3ZNmkDzljcMDBGeFlrdxOxpXEHY2WSHz3dQq2rFwJp5TqBrBhQm9CUUFYNTcDg/pndhyWknd7K4yLRkOnx0t39yzTuO/77mOyywEcs2AwAA",
+        "status": {
+          "backlog_rows": 0,
+          "gap_rows": 0,
+          "backlog_bytes": 0
+        }
+      }
+    },
+    {
+      "schema": "taskq-telemetry/1",
+      "event_id": "t-4b5760203465c38df99e036d2b5b693b",
+      "observed_at": 1792000009,
+      "payload": {
+        "schema": 1,
+        "first": {
+          "seq": 8,
+          "id": "b38e58229548a795cd62c60a57cf86cb"
+        },
+        "last": {
+          "seq": 9,
+          "id": "c00ffb834c952be9908b64cf71ca22cf"
+        },
+        "rows": 2,
+        "bytes": 923,
+        "gzip": "H4sIAAAAAAAA/72Sy27DIBBF9/2MuyYVdvyCn4kwjCvLDjg80kpR/r3CTho1UndtWQ0Dw70zhwsCnSA7htFAot93VHdlKeqqU62otWlK3XBVt3roGt2DwZOm8UzmcAyQRStKnlfHOWdwfSB/VnF0FvKCabT50RDVG4HBLeRvZ+jTOBswRBUmyKIpKgYVIx2XuLrxycbxSJDQs0oml5u0VR9SgBSrKmfQap4DZMkQ3UQ2h3vOcHSG5q/qnVtS2NW7OrtIcUnxcL/dMCzemaQj5OrmBIYz+bD5rF6b132RjXqlCdKmeWYIi7JfcVQ+/jCOFLVbm3ATGMh75yFhnc39JDtZ974O6qFnXdx50s4bMg/V5/Sm/z17vV5fLhtNcaOpOR+GvttXWtRlT0Lwrm8qPbSFVmWphx9pit+kKb7RdIY+nmHWd5h3KG3e3BBuU36iJv6E2q3t/6T2+KlbenHZ1grzE4F6jAObAwAA",
+        "status": {
+          "backlog_rows": 0,
+          "gap_rows": 2,
+          "backlog_bytes": 0
+        }
+      }
+    }
+  ],
+  "status_after": [
+    {
+      "state": "idle",
+      "backlog_bytes": 0,
+      "gap_rows": 0,
+      "last_error": null,
+      "backlog_rows": 0
+    },
+    {
+      "state": "idle",
+      "backlog_bytes": 0,
+      "gap_rows": 0,
+      "last_error": null,
+      "backlog_rows": 0
+    },
+    {
+      "state": "idle",
+      "backlog_bytes": 0,
+      "gap_rows": 2,
+      "last_error": null,
+      "backlog_rows": 0
+    }
+  ],
+  "cases": [
+    {
+      "case": "replay",
+      "record": {
+        "schema": "taskq-telemetry/1",
+        "event_id": "t-204a294ac3421a5fe305220261c75fc2",
+        "observed_at": 1792000010,
+        "payload": {
+          "schema": 1,
+          "first": {
+            "seq": 10,
+            "id": "51bfa6aff1fe8eabf5d86b7b3c312eb5"
+          },
+          "last": {
+            "seq": 10,
+            "id": "51bfa6aff1fe8eabf5d86b7b3c312eb5"
+          },
+          "rows": 1,
+          "bytes": 361,
+          "gzip": "H4sIAAAAAAAA/3VPy27DMAy77zN49oI4WdLOP1P4IQNGWjuV7exQ5N8HL8C6DdhFIEiJpB7IdIeSvUBwUJik8XrW3ktPZ9LGT+48m5MZ7SgHMhMEmCyFjdzllqHk6X3o+76XbQgkk4k3XUKKUA8sITbTtBIfnPiBFdpusNStOmcIuHool9qMh+a3cnLVFigUnZc7BDbifFy/dXM3SggU1pagYr1eBfKq4zcumss/RWux6Uat3AIBYk4MhZgiQaDGJaaPrxeeeTGVVyab2JF7pv6lj/zf7L7vL5+zZj53aQEAAA==",
+          "status": {
+            "backlog_rows": 0,
+            "gap_rows": 2,
+            "backlog_bytes": 0
+          }
+        }
+      },
+      "receipts": [
+        "lost",
+        {
+          "state": "accepted"
+        }
+      ],
+      "status_after": [
+        {
+          "state": "retrying",
+          "backlog_bytes": 361,
+          "gap_rows": 2,
+          "last_error": "unreachable",
+          "backlog_rows": 1
+        },
+        {
+          "state": "idle",
+          "backlog_bytes": 0,
+          "gap_rows": 2,
+          "last_error": null,
+          "backlog_rows": 0
+        }
+      ]
+    },
+    {
+      "case": "mismatch",
+      "record": {
+        "schema": "taskq-telemetry/1",
+        "event_id": "t-38ebf0210a8e9571e6dbdb844996f6bc",
+        "observed_at": 1792000011,
+        "payload": {
+          "schema": 1,
+          "first": {
+            "seq": 11,
+            "id": "b931b403d0480f299314c75682a877e4"
+          },
+          "last": {
+            "seq": 11,
+            "id": "b931b403d0480f299314c75682a877e4"
+          },
+          "rows": 1,
+          "bytes": 464,
+          "gzip": "H4sIAAAAAAAA/3WQwW6EMAxE7/2MOYcqARaW/MwqJG6FgIRNnO1htf9eBdqtWqk3y/b4jeeORFdopQQmB41xaNTYysbJ9izf6mFoVGv7U3euzbnvqYVAJEvTjdxlTdCqH2oppVRKSikQxkTxZngKHvqOefLlaGLzThAIG8WvGcY8LQ4CbNIMrTrVChhmWjc+7MTseVoJGnYx2RW9y4f8khP0ULCFac2yJOhagMNMvpSNFFiDo+WprsKWU3WqTsVG5i3z5Xu7E9hicNky9G7nCoEbxXQYbV+710YVp9FYgvZ5WQTSZvyzZhP5nzwy27A/EWYIUIwhQsMHX/7JfvbhY0/qh+cDV5FsiI72fA7q3/bB/919PB4vn/CH6+jQAQAA",
+          "status": {
+            "backlog_rows": 0,
+            "gap_rows": 2,
+            "backlog_bytes": 0
+          }
+        }
+      },
+      "stored": {
+        "schema": 1,
+        "first": {
+          "seq": 11,
+          "id": "b931b403d0480f299314c75682a877e4"
+        },
+        "last": {
+          "seq": 11,
+          "id": "b931b403d0480f299314c75682a877e4"
+        },
+        "rows": 1,
+        "bytes": 464,
+        "gzip": "H4sIAAAAAAAA/3WQwW6EMAxE7/2MOYcqARaW/MwqJG6FgIRNnO1htf9eBdqtWqk3y/b4jeeORFdopQQmB41xaNTYysbJ9izf6mFoVGv7U3euzbnvqYVAJEvTjdxlTdCqH2oppVRKSikQxkTxZngKHvqOefLlaGLzThAIG8WvGcY8LQ4CbNIMrTrVChhmWjc+7MTseVoJGnYx2RW9y4f8khP0ULCFac2yJOhagMNMvpSNFFiDo+WprsKWU3WqTsVG5i3z5Xu7E9hicNky9G7nCoEbxXQYbV+710YVp9FYgvZ5WQTSZvyzZhP5nzwy27A/EWYIUIwhQsMHX/7JfvbhY0/qh+cDV5FsiI72fA7q3/bB/919PB4vn/CH6+jQAQAA"
+      },
+      "receipts": [
+        {
+          "state": "rejected",
+          "reason": "replay_mismatch"
+        }
+      ],
+      "status_after": [
+        {
+          "state": "stopped",
+          "backlog_bytes": 464,
+          "gap_rows": 2,
+          "last_error": "rejected: replay_mismatch",
+          "backlog_rows": 1
+        }
+      ]
+    },
+    {
+      "case": "reject",
+      "record": {
+        "schema": "taskq-telemetry/1",
+        "event_id": "t-38ebf0210a8e9571e6dbdb844996f6bc",
+        "observed_at": 1792000011,
+        "payload": {
+          "schema": 1,
+          "first": {
+            "seq": 11,
+            "id": "b931b403d0480f299314c75682a877e4"
+          },
+          "last": {
+            "seq": 11,
+            "id": "b931b403d0480f299314c75682a877e4"
+          },
+          "rows": 1,
+          "bytes": 464,
+          "gzip": "H4sIAAAAAAAA/3WQwW6EMAxE7/2MOYcqARaW/MwqJG6FgIRNnO1htf9eBdqtWqk3y/b4jeeORFdopQQmB41xaNTYysbJ9izf6mFoVGv7U3euzbnvqYVAJEvTjdxlTdCqH2oppVRKSikQxkTxZngKHvqOefLlaGLzThAIG8WvGcY8LQ4CbNIMrTrVChhmWjc+7MTseVoJGnYx2RW9y4f8khP0ULCFac2yJOhagMNMvpSNFFiDo+WprsKWU3WqTsVG5i3z5Xu7E9hicNky9G7nCoEbxXQYbV+710YVp9FYgvZ5WQTSZvyzZhP5nzwy27A/EWYIUIwhQsMHX/7JfvbhY0/qh+cDV5FsiI72fA7q3/bB/919PB4vn/CH6+jQAQAA",
+          "status": {
+            "backlog_rows": 0,
+            "gap_rows": 2,
+            "backlog_bytes": 0
+          }
+        }
+      },
+      "receipts": [
+        {
+          "state": "rejected",
+          "reason": "payload"
+        }
+      ],
+      "status_after": [
+        {
+          "state": "stopped",
+          "backlog_bytes": 464,
+          "gap_rows": 2,
+          "last_error": "rejected: payload",
+          "backlog_rows": 1
+        }
+      ]
+    }
+  ]
+}
