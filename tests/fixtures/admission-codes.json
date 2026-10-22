@@ -1,0 +1,250 @@
+{
+  "codes": [
+    {
+      "code": "admitted",
+      "meaning": "this host claimed the task in this pass"
+    },
+    {
+      "code": "dependency",
+      "meaning": "a Depends on issue is open or unknown"
+    },
+    {
+      "code": "hold",
+      "meaning": "an emergency hold, draining, a pending restart or an older service holds launches"
+    },
+    {
+      "code": "host",
+      "meaning": "a host-* label, a labelled claim or assignee-only assigns the task to another host"
+    },
+    {
+      "code": "capability",
+      "meaning": "a needs-* label or the routed runtime is not available on this host"
+    },
+    {
+      "code": "labels",
+      "meaning": "the task labels are invalid; no host admits it"
+    },
+    {
+      "code": "focus",
+      "meaning": "the host focus excludes the task or admits nothing"
+    },
+    {
+      "code": "capacity",
+      "meaning": "runtime, project or host slots are full or another project has the turn"
+    },
+    {
+      "code": "load-gate",
+      "meaning": "the load gate or launch spacing holds launches"
+    },
+    {
+      "code": "login",
+      "meaning": "the routed runtime is not logged in"
+    },
+    {
+      "code": "usage-limit",
+      "meaning": "the routed runtime is held after a usage limit"
+    },
+    {
+      "code": "access",
+      "meaning": "the routed runtime refused its access grant"
+    },
+    {
+      "code": "unknown",
+      "meaning": "no decision is known; reason names why"
+    }
+  ],
+  "unknown_reasons": [
+    "no host decision",
+    "capacity config unreadable",
+    "host admission unknown",
+    "execution unresolved"
+  ],
+  "tasks": [
+    {
+      "n": 1,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "admitted",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 2,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "hold",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 3,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "host",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 4,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "capability",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 5,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "labels",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 6,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "focus",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 7,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "capacity",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 8,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "load-gate",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 9,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "login",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 10,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "usage-limit",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 11,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "access",
+        "observed": 1000,
+        "host": "mac"
+      }
+    },
+    {
+      "n": 20,
+      "state": "waiting",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "dependency",
+        "observed": 1000,
+        "host": null
+      }
+    },
+    {
+      "n": 30,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "unknown",
+        "observed": 1000,
+        "host": null,
+        "reason": "no host decision"
+      }
+    },
+    {
+      "n": 31,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "unknown",
+        "observed": 1000,
+        "host": "mac",
+        "reason": "capacity config unreadable"
+      }
+    },
+    {
+      "n": 32,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "unknown",
+        "observed": 1000,
+        "host": "mac",
+        "reason": "host admission unknown"
+      }
+    },
+    {
+      "n": 33,
+      "state": "ready",
+      "revision": 0,
+      "choices": [],
+      "admission": {
+        "code": "unknown",
+        "observed": 1000,
+        "host": "mac",
+        "reason": "execution unresolved"
+      }
+    },
+    {
+      "n": 40,
+      "state": "doing",
+      "revision": 0,
+      "choices": []
+    }
+  ]
+}

@@ -355,6 +355,9 @@ struct TaskObservation {
     choices: Vec<Choice>,
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<Value>,
+    /// #1616 admission of a ready or waiting task: code, board read time, deciding host; reason only for `unknown`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    admission: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -477,6 +480,7 @@ pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope], local:
             choices: core::options(r.task.card.as_deref().unwrap_or_default()).into_iter()
                 .map(|(number, label, recommended)| Choice { number, label, recommended }).collect(),
             session: local.progress.get(&r.n).cloned(),
+            admission: r.admission.as_ref().map(crate::snapshot::Admission::projection),
         }).collect(),
         observations: observations(s, local),
     })
@@ -691,6 +695,41 @@ mod tests {
         let expired = &got["read expired"];
         assert!(expired.as_array().unwrap().iter().all(|o| o["state"] == "unknown" && o["complete"] == false), "expired reads unknown");
         assert!(!got.to_string().contains("x mac") && !got.to_string().contains("codex:y"), "no session ids");
+    }
+
+    // Chain: snapshot admission -> taskq-board/1 task rows -> shipped fixture (#1616). Risk: a consumer meets a code
+    // outside the fixture, free reason text leaves the host, or a row nobody decided reads as decided.
+    #[test]
+    fn admission_codes_match_the_fixture() {
+        use crate::{core::{State, Task}, snapshot::{Admission, Row, ADMISSION_CODES, ADMISSION_UNKNOWN}};
+        let row = |n, state, admission| Row { n, task: Task { state, ..Default::default() }, admission, ..Default::default() };
+        let decided = |code, reason: &str, host: Option<&str>| Some(Admission { code, reason: reason.into(), observed: 1000, host: host.map(String::from) });
+        let mut tasks: Vec<Row> = ADMISSION_CODES.iter().map(|c| c.0).filter(|c| !matches!(*c, "dependency" | "unknown")).enumerate()
+            .map(|(i, c)| row(i as u64 + 1, State::Ready, decided(c, "free text from the host", Some("mac")))).collect();
+        tasks.push(row(20, State::Waiting, decided("dependency", "#1 open", None)));
+        tasks.extend(ADMISSION_UNKNOWN.iter().enumerate().map(|(i, r)| row(30 + i as u64, State::Ready, decided("unknown", r, (i > 0).then_some("mac")))));
+        tasks.push(row(40, State::Doing, None));
+        let snap = Snapshot { source: "host", observed: 1000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": "o/r"}), tasks, hosts: vec![] };
+        let local = Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null, progress: BTreeMap::new() };
+        let scope = [BoardScope::new("github", "github.com", "o/r").unwrap()];
+        let o = project(&snap, &"a".repeat(64), &scope, &local).unwrap();
+        let got = json!({
+            "codes": ADMISSION_CODES.iter().map(|(code, meaning)| json!({"code": code, "meaning": meaning})).collect::<Vec<_>>(),
+            "unknown_reasons": ADMISSION_UNKNOWN,
+            "tasks": o.tasks,
+        });
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/admission-codes.json");
+        if std::env::var_os("TASKQ_BLESS").is_some() { fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap(); }
+        let want: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(got, want, "TASKQ_BLESS=1 rewrites {}", path.display());
+        let rows = got["tasks"].as_array().unwrap();
+        let mut seen: Vec<&str> = rows.iter().filter_map(|t| t["admission"]["code"].as_str()).collect();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), ADMISSION_CODES.len(), "the fixture shows every code");
+        assert!(!got["tasks"].to_string().contains("free text") && !got["tasks"].to_string().contains("#1 open"), "free reason text stays on the host");
+        assert!(rows.iter().filter(|t| t["admission"]["code"] == "unknown").all(|t| t["admission"]["reason"].is_string()), "unknown names its reason");
+        assert!(rows.iter().find(|t| t["n"] == 40).unwrap().get("admission").is_none(), "a doing row carries none");
     }
 
     // Chain: live attempt log -> R6 3 session progress -> DashQ record allowlist (#1565). Risk: another host's or an
