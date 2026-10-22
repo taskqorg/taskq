@@ -41,7 +41,7 @@ summary:function(p,selected=null,open=null){
 aggregate:function(projects,selected=null){const o=observation(projects);return '<section class="tqp" aria-label="All projects">'+counters(o.counts,'','All projects',o.partial,selected,o.open)+'</section>';},
 // Short age since the last logged state change (taskq.md § 4 Tray): 5m, 2h, 3d.
 age:function(s){s=Math.max(0,s);return s<60?'<1m':s<3600?Math.floor(s/60)+'m':s<86400?Math.floor(s/3600)+'h':Math.floor(s/86400)+'d';},
-task:function(p,row,global=false){
+task:function(p,row,global=false,compact=false){
     // Closed has no counter (#1476) but notification cards still name it.
     const st=states.find(s=>s[0]===row.state),name=st?st[1]:row.state==='closed'?'Closed':row.state,mark=st?st[2]:'circle',kind=st?st[3]:'';
     const rt=row.runtime,brand=rt==='claude'?'claude':['codex','codex-app'].includes(rt)?'openai':'';
@@ -56,6 +56,10 @@ task:function(p,row,global=false){
     const metadata=[since,global?esc(p.name):'',row.host?esc(row.host):'',marks].filter(Boolean).join(' · ');
     // #1524: only the owner text `wait`; the raw `execution_wait` stays in status --json and the service log.
     const wait=row.wait?'<small class="tqp-execution-wait" role="status">'+esc(row.wait)+'</small>':'';
+    if(compact){
+      const elapsed=Number.isFinite(row.since)&&row.since>0&&row.since<=(p.now??Date.now()/1000)?'<span class="tqp-age" data-since="'+row.since+'">'+age((p.now??Date.now()/1000)-row.since)+'</span>':'<span class="tqp-age" title="Current stage elapsed unknown">?</span>';
+      return '<div class="tqp tqp-task"><div class="tqp-task-head"><button type="button" class="task-identity" data-a="task-detail" data-key="'+esc(row.key)+'" aria-haspopup="dialog" aria-controls="taskq-popover" aria-expanded="false" aria-label="Details for '+esc(p.name)+' #'+row.n+'">'+icon(p.board.kind)+(global?' '+esc(p.name):'')+' #'+esc(row.n)+'</button><span class="task-stage '+kind+'" aria-label="'+esc(name)+' · current stage" title="'+esc(name)+' · current stage">'+icon(mark)+elapsed+'</span></div><div class="tqp-task-title">'+link(row.url,esc(row.title),'Open task #'+row.n)+'</div></div>';
+    }
     return '<div class="tqp tqp-task"><div class="tqp-task-head"><span class="'+kind+'" title="'+esc(name)+'" aria-label="'+esc(name)+'">'+icon(mark)+'</span> '+link(row.url,icon(p.board.kind)+' #'+esc(row.n),'Open task #'+row.n)+' <span class="tqp-meta">'+metadata+'</span> '+session+' '+wait+'</div><div class="tqp-task-title">'+esc(row.title)+'</div></div>';
   },
 handle:function(event,adapter){
@@ -83,7 +87,7 @@ const root=globalThis;
   const {url}=execution.module("project-blocks",{url:(s,session=false) => /^(https?:\/\/|codex:\/\/threads\/)/i.test(s || '') && (session || /^https?:\/\//i.test(s)) ? esc(s) : ''});
 
   // A board URL identifies provider/server/repository; adapter IDs only route navigation, never deduplication.
-  const {boardKey}=execution.module("project-blocks",{boardKey:p => String(p.board.url || '').replace(/\/$/,'')});
+  const {boardKey}=execution.module("project-blocks",{boardKey:p => p.board.url?(p.board.kind||'unknown')+':'+String(p.board.url).replace(/\/$/,''):''});
 
 
 

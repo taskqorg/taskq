@@ -1,4 +1,4 @@
-// #1523 A3/A2/A6/A5: Tasks list rows follow chip order then priority then number; actions live in one row menu;
+// #1523 A3/A2/A6/A5: Tasks list rows follow chip order then priority then number; actions live in identity details;
 // chips center their icon or icon+count group; content fit keeps the last row and footer visible. Invented data.
 const assert=require('node:assert/strict'),fs=require('node:fs'),{chromium}=require('playwright');
 const out=process.env.TASK_LIST_EVIDENCE;
@@ -22,11 +22,11 @@ const snapshot={platform:'macos',font:16,theme:'light',host:'fixture',now:1000,v
    assert.deepEqual(await page.locator('[data-card]').evaluateAll(es=>es.map(e=>+e.querySelector('[data-n],[data-task]')?.dataset.n||+(e.textContent.match(/#(\d+)/)||[])[1])),want,'rows follow chip order, priority, number');
    // A2: no repeated action buttons; the row menu holds them and returns focus on Escape.
    assert.equal(await page.locator('[data-card] [data-a="control"],[data-card] [data-a="start"],[data-card] [data-page="answer"]').count(),0,'rows carry no action buttons');
-   const menu=page.locator('[data-a="row-menu"][data-key$=":5"],[data-a="row-menu"][aria-label="Actions for #5"]').first();
+   const menu=page.locator('[data-a="task-detail"][aria-label="Details for Alpha #5"]').first();
    assert.equal(await menu.getAttribute('aria-expanded'),'false');
    await menu.focus();await page.keyboard.press('Enter');
    assert.equal(await menu.getAttribute('aria-expanded'),'true');
-   const actions=page.locator('#'+await menu.getAttribute('aria-controls'));
+   const actions=page.locator('#taskq-popover');
    assert.deepEqual(await actions.locator('button').evaluateAll(b=>b.map(x=>x.textContent.trim())).then(x=>x.length>0),true,'failed row menu offers its controls');
    if(out&&font===16&&anchor==='top'&&(platform==='macos'||theme==='light'))await page.screenshot({path:out+'/'+(platform==='macos'?'mac':'windows')+'-'+theme+'-row-menu.png'});
    await page.keyboard.press('Escape');
@@ -51,6 +51,6 @@ const snapshot={platform:'macos',font:16,theme:'light',host:'fixture',now:1000,v
    }
    await page.close();
   }
-  console.log('PASS #1523 A2/A3/A5/A6: chip-order rows, one row menu with Escape focus return, centered chips, layout fit with an added panel; macOS/Windows snapshots, light/dark 16/20 px, top/bottom anchors');
+  console.log('PASS #1523 A2/A3/A5/A6: chip-order rows, identity details with Escape focus return, centered chips, layout fit with an added panel; macOS/Windows snapshots, light/dark 16/20 px, top/bottom anchors');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

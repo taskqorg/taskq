@@ -56,11 +56,8 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 .recovery-evidence{display:block;margin-top:.4em}.recovery-evidence input{display:block;box-sizing:border-box;width:100%;font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:5px;margin-top:3px}.recovery-evidence input:disabled{opacity:.6}
 @media(pointer:coarse){button,summary{min-height:44px}}
 .tqp-counts button[aria-pressed="true"]{outline:2px solid currentColor;outline-offset:-2px}
-/* #1523: margins stay inside the measured content body; the row menu ends the task's top line and opens below it */
+/* The content body's margins stay inside its natural-height measurement. */
 .content-body{display:flow-root}
-.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}
-.task-row>.row-menu{grid-column:2;grid-row:1;border:0;padding:4px}
-.task-row>.row-actions{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:4px;padding:0 4px 5px}
 .row-actions .task-controls{display:contents}
 </style><style>{{ANSWER_CARD_CSS}}</style><style>{{PROJECT_BLOCKS_CSS}}</style><style>{{RESOURCE_CONTROLS_CSS}}</style></head><body><div class="menu" role="menu"></div>
 <script>{{GUARD_JS}}</script><script>{{APP_JS}}</script>

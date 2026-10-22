@@ -31,3 +31,8 @@ cat > "$d/billing-api/.taskq/status.json" <<EOF
 EOF
 printf 'since %s\n%s #14 close 301\n%s #15 close 302\n%s #16 close 303\n' \
   $((now-86400)) $((now-70000)) $((now-30000)) $((now-9000)) > "$d/billing-api/.taskq/events"
+
+# Invented project identities let the token-free native adapter render the bundled provider marks.
+for project in storefront billing-api; do
+  printf '{"board":"github","repo":"acme/%s"}\n' "$project" > "$d/$project/taskq.json"
+done

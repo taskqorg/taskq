@@ -1,0 +1,358 @@
+<div id="tq-settings-review" class="viz-controls" aria-label="Направление открытия в примере">
+  <button class="btn" type="button" data-opening="down" aria-pressed="true">Открытие вниз</button>
+  <button class="btn" type="button" data-opening="up" aria-pressed="false">Открытие вверх</button>
+  <button class="btn" type="button" data-scene="window">Настройка окна</button>
+  <button class="btn" type="button" data-scene="home">Список задач</button>
+  <button class="btn" type="button" data-launch>Открыть панель</button>
+</div>
+<div id="tq-window-settings" class="viz-dotted-background">
+  <div class="qs-comparison">
+    <section class="qs-example" aria-label="Выбранная навигация">
+      <div class="qs-app" data-editor="popup" data-nav="direct" aria-label="TaskQ window prototype"></div>
+    </section>
+  </div>
+  <section class="qs-window" data-workspace hidden aria-label="Separate workspace preview"></section>
+  <div class="qs-status" aria-live="polite">Popover · drag the header to keep open</div>
+</div>
+<style>
+#tq-window-settings{--qs-bg:light-dark(#fafbfc,#252b32);--qs-fg:light-dark(#243039,#eef2f5);--qs-muted:light-dark(#59636e,#b9c3cd);--qs-edge:light-dark(#dce0e5,#46505b);--qs-hover:light-dark(#e9edf1,#37424c);--qs-work:light-dark(#246f59,#8dd2b8);--qs-ask:light-dark(#955525,#edbc96);--qs-fail:light-dark(#a6324b,#ee96a5);--qs-shadow:light-dark(#2430391c,#00000044);font:400 16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--qs-fg);padding:12px 8px}
+#tq-window-settings *{box-sizing:border-box}#tq-window-settings [hidden]{display:none!important}
+#tq-window-settings .qs-comparison{max-width:960px;margin:auto;padding:24px 0 64px;min-height:180px}
+#tq-window-settings .qs-example{min-width:0;max-width:100%;width:fit-content;margin:auto}
+#tq-window-settings .qs-app{container-type:inline-size;display:flex;flex-direction:column;width:470px;max-width:100%;min-width:0;background:var(--qs-bg);color:var(--qs-fg);border:1px solid var(--qs-edge);border-radius:12px;padding:8px;box-shadow:0 6px 18px var(--qs-shadow);transform:translate(var(--window-x,0px),var(--window-y,0px))}
+#tq-window-settings [data-chrome],#tq-window-settings .ws-footer{flex:none}
+#tq-window-settings [data-page]{display:flex;flex-direction:column;min-height:0;overflow:hidden;flex:1}
+#tq-window-settings .qs-back,#tq-window-settings .qs-viewbar,#tq-window-settings .qs-criteria,#tq-window-settings .qs-search{flex:none}
+#tq-window-settings .qs-detail,#tq-window-settings [data-tasks]{min-height:0;overflow:auto;flex:1}
+#tq-window-settings button,#tq-window-settings input,#tq-window-settings select{font:inherit;color:inherit;background:var(--qs-bg);min-width:0;border:1px solid var(--qs-edge);border-radius:6px;min-height:32px;padding:4px 6px}
+#tq-window-settings button{display:inline-flex;align-items:center;justify-content:center;gap:5px}#tq-window-settings button:hover{background:var(--qs-hover)}
+#tq-window-settings button[aria-pressed="true"]{background:var(--qs-hover)}
+#tq-window-settings svg{display:inline-block;width:16px;height:16px;vertical-align:middle;flex:none;stroke-width:1.7}
+#tq-window-settings .qs-ghost{border:0;background:transparent;padding:4px;width:32px;height:32px;flex:none}
+#tq-window-settings .qs-header{display:flex;align-items:center;gap:3px;flex-wrap:wrap}
+#tq-window-settings .qs-header strong{font-weight:500}#tq-window-settings .qs-host{color:var(--qs-muted);font-size:.85em;margin-right:auto;margin-left:4px}
+#tq-window-settings .qs-header{gap:2px;flex-wrap:nowrap;align-items:center}
+#tq-window-settings .qs-host-button{border:0;background:transparent;white-space:nowrap;font-size:.85em;padding:4px 2px;margin-right:auto;flex:1;justify-content:flex-start;touch-action:none;user-select:none}
+#tq-window-settings .qs-header{touch-action:none}
+#tq-window-settings .qs-host-button:active{cursor:grabbing}
+@container(max-width:360px){#tq-window-settings .qs-host-button .qs-mode{display:none}}
+#tq-window-settings .qs-overview{gap:2px;padding:3px 0;border-bottom:1px solid var(--qs-edge)}
+#tq-window-settings .qs-overview button{border:0;background:transparent;font-size:1em;gap:4px;padding:4px;min-width:32px;font-variant-numeric:tabular-nums}
+#tq-window-settings [data-open="emergency"]{color:var(--qs-fail)}
+#tq-window-settings .qs-criteria,#tq-window-settings .qs-group-title,#tq-window-settings .qs-search .qs-result-count{font-size:.85em}
+#tq-window-settings .qs-command{display:flex;align-items:center;justify-content:flex-start;width:100%;border:0;background:transparent;padding:5px 4px;gap:8px;text-align:left}
+#tq-window-settings .qs-command .qs-command-hint{margin-left:auto;color:var(--qs-muted);font-size:.85em}
+#tq-window-settings .qs-nav-group{margin-top:7px;padding-top:4px;border-top:1px solid var(--qs-edge)}
+#tq-window-settings .qs-nav-group:first-child{border-top:0;margin-top:0;padding-top:0}
+#tq-window-settings .qs-nav-label{font-size:.85em;color:var(--qs-muted);padding:2px 4px}
+#tq-window-settings .qs-window{max-width:960px;margin:16px auto 0;padding:10px;background:var(--qs-bg);color:var(--qs-fg);border:1px solid var(--qs-edge);border-radius:12px}
+#tq-window-settings .qs-window-head{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--qs-edge);padding-bottom:7px;font-weight:500}
+#tq-window-settings .qs-window-head button{margin-left:auto}
+#tq-window-settings .qs-window-body{padding:8px 2px}
+#tq-window-settings .qs-window p{margin:5px 0;font-size:.85em;color:var(--qs-muted)}
+#tq-window-settings .qs-overview{display:flex;align-items:center;gap:2px;flex-wrap:wrap;padding:5px 2px 7px;border-bottom:1px solid var(--qs-edge);font-size:.85em}
+#tq-window-settings .qs-overview span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;font-variant-numeric:tabular-nums}
+#tq-window-settings .qs-overview .qs-machine{margin-left:auto;color:var(--qs-muted)}
+#tq-window-settings .qs-work{color:var(--qs-work)}#tq-window-settings .qs-ask{color:var(--qs-ask)}#tq-window-settings .qs-failed{color:var(--qs-fail)}
+#tq-window-settings .qs-viewbar{display:flex;align-items:flex-start;gap:4px;padding:7px 0 3px}
+#tq-window-settings .qs-view-picks{display:flex;align-items:center;gap:4px;flex-wrap:wrap;flex:1;min-width:0}
+#tq-window-settings .qs-viewbar button{border:0;min-height:30px;padding:3px 6px;font-size:.85em}
+#tq-window-settings .qs-viewbar .qs-current{font-weight:500;background:var(--qs-hover)}
+#tq-window-settings .qs-viewbar .qs-edit{margin-left:auto}
+#tq-window-settings .qs-viewbar .qs-chevron{width:11px;height:11px}
+#tq-window-settings .qs-criteria{display:flex;align-items:center;flex-wrap:wrap;gap:4px;font-size:.8em;color:var(--qs-muted)}
+#tq-window-settings .qs-criteria:empty{display:none}#tq-window-settings .qs-criteria button{border:0;background:transparent;font-size:inherit;min-height:25px;padding:2px 4px}
+#tq-window-settings .qs-search{display:flex;align-items:center;gap:5px;border-bottom:1px solid var(--qs-edge);color:var(--qs-muted);padding:2px 3px 5px}
+#tq-window-settings .qs-search input{flex:1;width:100%;border:0;background:transparent;font-size:.85em;padding:3px 0;min-height:28px}
+#tq-window-settings .qs-search .qs-result-count{font-size:.8em;font-variant-numeric:tabular-nums}
+#tq-window-settings .qs-group-title{display:flex;align-items:center;gap:5px;color:var(--qs-muted);font-size:.8em;font-weight:500;padding:7px 3px 2px}
+#tq-window-settings .qs-group-title svg{width:13px;height:13px}
+#tq-window-settings .qs-task{display:grid;grid-template-columns:minmax(0,1fr);gap:0;padding:5px 0 6px;border-bottom:1px solid var(--qs-edge);align-items:start}
+#tq-window-settings .qs-reference{border:0;background:transparent;padding:3px;min-height:32px;font-size:.85em;font-weight:500;white-space:nowrap}
+#tq-window-settings .qs-forge{display:inline-block;flex:none;width:15px;height:15px;background:currentColor;mask:url("data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+R2l0SHViPC90aXRsZT48cGF0aCBkPSJNMTIgLjI5N2MtNi42MyAwLTEyIDUuMzczLTEyIDEyIDAgNS4zMDMgMy40MzggOS44IDguMjA1IDExLjM4NS42LjExMy44Mi0uMjU4LjgyLS41NzcgMC0uMjg1LS4wMS0xLjA0LS4wMTUtMi4wNC0zLjMzOC43MjQtNC4wNDItMS42MS00LjA0Mi0xLjYxQzQuNDIyIDE4LjA3IDMuNjMzIDE3LjcgMy42MzMgMTcuN2MtMS4wODctLjc0NC4wODQtLjcyOS4wODQtLjcyOSAxLjIwNS4wODQgMS44MzggMS4yMzYgMS44MzggMS4yMzYgMS4wNyAxLjgzNSAyLjgwOSAxLjMwNSAzLjQ5NS45OTguMTA4LS43NzYuNDE3LTEuMzA1Ljc2LTEuNjA1LTIuNjY1LS4zLTUuNDY2LTEuMzMyLTUuNDY2LTUuOTMgMC0xLjMxLjQ2NS0yLjM4IDEuMjM1LTMuMjItLjEzNS0uMzAzLS41NC0xLjUyMy4xMDUtMy4xNzYgMCAwIDEuMDA1LS4zMjIgMy4zIDEuMjMuOTYtLjI2NyAxLjk4LS4zOTkgMy0uNDA1IDEuMDIuMDA2IDIuMDQuMTM4IDMgLjQwNSAyLjI4LTEuNTUyIDMuMjg1LTEuMjMgMy4yODUtMS4yMy42NDUgMS42NTMuMjQgMi44NzMuMTIgMy4xNzYuNzY1Ljg0IDEuMjMgMS45MSAxLjIzIDMuMjIgMCA0LjYxLTIuODA1IDUuNjI1LTUuNDc1IDUuOTIuNDIuMzYuODEgMS4wOTYuODEgMi4yMiAwIDEuNjA2LS4wMTUgMi44OTYtLjAxNSAzLjI4NiAwIC4zMTUuMjEuNjkuODI1LjU3QzIwLjU2NSAyMi4wOTIgMjQgMTcuNTkyIDI0IDEyLjI5N2MwLTYuNjI3LTUuMzczLTEyLTEyLTEyIi8+PC9zdmc+") center/contain no-repeat}
+#tq-window-settings .qs-stage{display:inline-flex;align-items:center;gap:5px;color:var(--qs-muted);font-size:.85em;font-variant-numeric:tabular-nums;white-space:nowrap;margin-left:auto}
+#tq-window-settings .qs-stage.qs-work{color:var(--qs-work)}#tq-window-settings .qs-stage.qs-ask{color:var(--qs-ask)}#tq-window-settings .qs-stage.qs-failed{color:var(--qs-fail)}
+#tq-window-settings .qs-task-title{display:block;text-align:left;border:0;background:transparent;width:100%;min-height:0;padding:3px 0;border-radius:0;overflow-wrap:anywhere}
+#tq-window-settings .qs-task-title:hover{background:transparent;text-decoration:underline;text-underline-offset:3px}
+#tq-window-settings .qs-task-title strong{font-weight:500;margin-right:4px}
+#tq-window-settings .qs-popup{position:absolute;inset:auto;margin:0;max-width:calc(100% - 16px);min-width:0;width:300px;padding:7px;border:1px solid var(--qs-edge);border-radius:8px;background:var(--qs-bg);color:var(--qs-fg);box-shadow:0 6px 20px var(--qs-shadow);font:inherit}
+#tq-window-settings .qs-card-head{display:flex;align-items:center;gap:5px;color:var(--qs-muted);font-size:.85em}
+#tq-window-settings .qs-card-head>span:not(.qs-forge){margin-right:auto}
+#tq-window-settings .qs-card-title{font-size:1em;font-weight:500;margin:5px 3px 8px;overflow-wrap:anywhere}
+#tq-window-settings .qs-card-context{display:flex;align-items:center;gap:5px;flex-wrap:wrap;color:var(--qs-muted);font-size:.85em;padding:0 3px 7px}
+#tq-window-settings .qs-card-context .qs-card-stage{display:inline-flex;align-items:center;gap:4px;margin-right:auto}
+#tq-window-settings .qs-time-row[aria-current="step"]{background:var(--qs-hover);border-radius:4px;font-weight:500}
+#tq-window-settings .qs-time-row small{font:inherit;color:var(--qs-muted)}
+#tq-window-settings .qs-popup-heading{font-size:.85em;font-weight:500;padding:3px 4px 6px}
+#tq-window-settings .qs-popup button.qs-command{width:100%;border:0;justify-content:flex-start;text-align:left}
+#tq-window-settings .qs-preset-row{display:flex;align-items:center;gap:3px}
+#tq-window-settings .qs-preset-row>.qs-command{flex:1;width:auto!important}
+#tq-window-settings .qs-star{border:0;background:transparent;width:30px;min-height:30px;padding:4px}
+#tq-window-settings .qs-star[aria-pressed="true"] svg{fill:currentColor}
+#tq-window-settings .qs-divider{border:0;border-top:1px solid var(--qs-edge);margin:5px 0}
+#tq-window-settings .qs-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,max(8.75em,calc((100% - 7px)/2))),1fr));gap:7px}
+#tq-window-settings .qs-form label{font-size:.85em;display:flex;flex-direction:column;gap:3px;min-width:0}
+#tq-window-settings .qs-form label>span{color:var(--qs-muted)}#tq-window-settings .qs-form select{width:100%;font-size:inherit}
+#tq-window-settings .qs-inline-editor{padding:6px 3px 9px;border-bottom:1px solid var(--qs-edge)}
+#tq-window-settings .qs-editor-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:1px 0 6px;font-size:.85em;font-weight:500}
+#tq-window-settings .qs-editor-heading span{display:inline-flex;align-items:center;gap:5px}
+#tq-window-settings .qs-criteria button{min-height:32px}
+#tq-window-settings .qs-actions{display:flex;gap:5px;justify-content:flex-end;padding-top:8px;flex-wrap:wrap}
+#tq-window-settings .qs-actions button{font-size:.85em}
+#tq-window-settings .qs-field{display:flex;flex-direction:column;gap:5px;font-size:.85em}
+#tq-window-settings .qs-time-row{display:flex;align-items:center;justify-content:space-between;gap:16px;font-size:.85em;padding:4px}
+#tq-window-settings .qs-time-row span:last-child{font-variant-numeric:tabular-nums}
+#tq-window-settings .qs-back{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--qs-edge)}
+#tq-window-settings .qs-back strong{font-weight:500}
+#tq-window-settings .qs-detail{padding:7px 3px}#tq-window-settings .qs-detail h3{font-size:1em;font-weight:500;margin:7px 0}#tq-window-settings .qs-detail p{font-size:.85em;color:var(--qs-muted)}
+#tq-window-settings .qs-empty{color:var(--qs-muted);font-size:.85em;padding:24px 4px;text-align:center}
+#tq-window-settings .qs-status{max-width:960px;margin:8px auto 0;font-size:13px;color:var(--qs-muted);min-height:18px}
+@media(pointer:coarse){#tq-window-settings button,#tq-window-settings select{min-height:44px}#tq-window-settings .qs-task{grid-template-columns:minmax(0,1fr)}#tq-window-settings .qs-ghost{width:44px;height:44px}}
+@media(pointer:coarse){#tq-window-settings .qs-header{flex-wrap:wrap}#tq-window-settings .qs-host-button{flex-basis:100%}}
+#tq-window-settings .qs-task-meta{display:flex;align-items:center;gap:5px;min-width:0;flex-wrap:nowrap}
+#tq-window-settings .qs-task-title{padding:1px 3px 3px}
+#tq-window-settings .qs-current svg:last-child{width:11px!important;height:11px!important}
+#tq-window-settings .qs-choices{display:flex;flex-wrap:wrap;gap:4px;margin:4px 0 8px}
+#tq-window-settings .qs-choices button{font-size:.85em;flex:0 1 auto}
+#tq-window-settings .qs-filter-section{border:0;padding:0;margin:0 0 8px;min-width:0}
+#tq-window-settings .qs-filter-section legend{font-size:.85em;color:var(--qs-muted);padding:0;margin-bottom:3px}
+#tq-window-settings .qs-state-option{display:flex;gap:2px;align-items:center}
+#tq-window-settings .qs-state-option>button:first-child{flex:1;justify-content:flex-start;border:0;font-size:.85em}
+#tq-window-settings .qs-state-option button[aria-pressed="true"]{background:var(--qs-hover)}
+#tq-window-settings .qs-filter-note{font-size:.85em;color:var(--qs-muted);margin:4px 0}
+#tq-window-settings .qs-display-switch{display:flex;gap:2px;margin-left:auto}
+#tq-window-settings .qs-overview button[aria-pressed="true"]{background:var(--qs-hover)}
+#tq-window-settings .qs-state-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
+#tq-window-settings .ws-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:6px 0}
+#tq-window-settings .ws-option{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:3px;padding:5px;min-width:0}
+#tq-window-settings .ws-option[aria-pressed="true"]{background:var(--qs-hover);box-shadow:inset 0 0 0 1px var(--qs-muted)}
+#tq-window-settings .ws-label{display:flex;align-items:center;gap:4px;justify-content:center;flex-wrap:wrap}
+#tq-window-settings .ws-default{font-size:max(12px,.85em);color:var(--qs-muted)}
+#tq-window-settings .ws-default:empty{display:none}
+#tq-window-settings .ws-edge{font-size:max(12px,.85em);color:var(--qs-muted);text-align:center}
+#tq-window-settings .ws-mini{position:relative;width:70px;max-width:100%;height:80px;flex:none}
+#tq-window-settings .ws-before,#tq-window-settings .ws-after{position:absolute;left:8px;width:54px;border:1px solid var(--qs-muted);border-radius:4px;background:var(--qs-bg)}
+#tq-window-settings .ws-before{top:25px;height:30px;border-style:dashed;background:transparent;z-index:2;pointer-events:none}
+#tq-window-settings .ws-after{top:25px;height:48px;overflow:hidden}
+#tq-window-settings [data-growth="up"] .ws-after{top:7px;height:48px}
+#tq-window-settings [data-growth="fixed"] .ws-after{top:25px;height:30px}
+#tq-window-settings .ws-after:before{content:"";display:block;height:7px;background:var(--qs-edge);border-bottom:1px solid var(--qs-muted)}
+#tq-window-settings .ws-lines{display:block;height:54px;margin:5px 7px;background:repeating-linear-gradient(to bottom,var(--qs-edge) 0 2px,transparent 2px 7px)}
+#tq-window-settings [data-growth="fixed"] .ws-lines{margin-right:13px}
+#tq-window-settings [data-growth="fixed"] .ws-after:after{content:"";position:absolute;width:3px;right:4px;top:11px;bottom:5px;background:var(--qs-muted);border-radius:2px}
+#tq-window-settings .ws-help{font-size:.85em;color:var(--qs-muted);margin:6px 0}
+#tq-window-settings .ws-footer{position:relative;display:flex;align-items:center;gap:6px;border-top:1px solid var(--qs-edge);margin-top:8px;padding:3px 28px 0 0;min-height:32px;font-size:.85em;color:var(--qs-muted)}
+#tq-window-settings .ws-footer .ws-resize{position:absolute;right:-8px;bottom:-8px;width:32px;height:32px;padding:0;border:0;border-radius:0 0 11px 0;background:transparent;touch-action:none;cursor:nwse-resize}
+#tq-window-settings .ws-resize:after{content:"";position:absolute;right:4px;bottom:4px;width:16px;height:16px;background:repeating-linear-gradient(135deg,transparent 0 3px,currentColor 3px 4px,transparent 4px 6px);clip-path:polygon(100% 0,100% 100%,0 100%);pointer-events:none}
+#tq-window-settings .ws-footer .ws-resize:hover{color:var(--qs-fg);background:transparent}
+@media(pointer:coarse){#tq-window-settings .ws-footer{min-height:44px;padding-right:40px}#tq-window-settings .ws-footer .ws-resize{width:44px;height:44px}}
+#tq-window-settings .ws-footer .ws-version{min-width:0;overflow-wrap:anywhere}
+#tq-window-settings .ws-dimensions{margin-left:auto;font-variant-numeric:tabular-nums}
+#tq-window-settings .ws-anchor{position:absolute;width:16px;height:16px;left:27px;top:4px;color:var(--qs-muted)}
+#tq-window-settings [data-opening="up"] .ws-anchor{top:60px}
+#tq-window-settings [data-opening="up"] .ws-before{top:25px}
+@container(max-width:360px){#tq-window-settings .ws-options{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(prefers-reduced-motion:no-preference){#tq-window-settings .ws-after{animation:ws-mini-growth 4s ease-in-out infinite}@keyframes ws-mini-growth{0%,10%,100%{height:30px}45%,75%{height:48px}}#tq-window-settings [data-growth="up"] .ws-after{animation-name:ws-mini-up}@keyframes ws-mini-up{0%,10%,100%{top:25px;height:30px}45%,75%{top:7px;height:48px}}#tq-window-settings [data-growth="fixed"] .ws-after{animation:none}#tq-window-settings [data-growth="fixed"] .ws-lines{animation:ws-mini-scroll 4s ease-in-out infinite}@keyframes ws-mini-scroll{0%,10%,100%{transform:translateY(0)}45%,75%{transform:translateY(-16px)}}}
+</style>
+<script>
+(()=>{
+const root=document.getElementById('tq-window-settings');
+const reviewControls=document.getElementById('tq-settings-review');
+const I=name=>'<i data-lucide="'+name+'" aria-hidden="true"></i>';
+const forge='<span class="qs-forge" aria-hidden="true"></span>';
+const esc=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icons={ask:'message-circle-question',review:'scan-eye',doing:'loader',failed:'circle-x',blocked:'git-pull-request-arrow',ready:'circle'};
+const names={ask:'Question',review:'Review',doing:'Doing',failed:'Failed',blocked:'Blocked',ready:'Ready'};
+const navGroups=[
+ ['Work',[['Work mode','sliders-horizontal','work'],['Projects','folder','projects']]],
+ ['Environment',[['Agents','bot','agents'],['Services','activity','services']]],
+ ['Personal',[['Window','panels-top-left','window'],['Appearance','type','appearance'],['Notifications','bell','preferences']]],
+ ['Support',[['Activity history','chart-no-axes-column','activity'],['Diagnostics','file-text','diagnostics'],['About','info','about']]]
+];
+const actionIcon=(icon,label,attributes)=>'<button class="qs-ghost cursor-interaction" aria-label="'+label+'" data-tooltip="'+label+'" '+attributes+'>'+I(icon)+'</button>';
+function header(app){return '<header class="qs-header"><button class="qs-host-button cursor-interaction" data-drag data-open="controls" aria-label="Mac status and work mode" data-tooltip="Mac · Auto · drag to keep open">Mac<span class="qs-mode"> · Auto</span></button>'+actionIcon('pause','Pause new work','data-open="pause"')+actionIcon('square','Emergency stop','data-open="emergency"')+actionIcon('bell','Inbox','data-nav-page="inbox"')+actionIcon('messages-square','Conversations','data-workspace="conversations"')+actionIcon('settings','Settings','data-action="settings"')+actionIcon('pin','Keep window open','data-action="window-pin" aria-pressed="'+model.pin+'"')+actionIcon('x','Close panel','data-action="window-close"')+'</header><div class="qs-overview" aria-label="Filter task states"></div>'}
+const tasks=[
+ {id:104,title:'Choose the menu layout',project:'TaskQ',state:'ask',runtime:'Claude',host:'Mac',priority:0,chain:[['Ready',120],['Doing',900],['Question',7200]]},
+ {id:103,title:'Recover a request after a connection failure',project:'TaskQ',state:'review',runtime:'Codex',host:'Mac',priority:1,chain:[['Ready',120],['Doing',600],['Review',180],['Doing',300],['Review',120]]},
+ {id:105,title:'Keep drafts when switching conversations',project:'AgentQ',state:'doing',runtime:'Codex',host:'Mac',priority:2,chain:[['Ready',180],['Doing',2400]]},
+ {id:106,title:'Restore the gateway connection',project:'PilotQ',state:'failed',runtime:'Claude',host:'Windows',priority:1,chain:[['Ready',60],['Doing',420],['Review',80],['Failed',300]]},
+ {id:102,title:'Wait for the shared resource adapter',project:'AgentQ',state:'blocked',runtime:'Codex',host:'Windows',priority:2,chain:[['Ready',120],['Doing',480],['Blocked',5400]]},
+ {id:101,title:'Bundle monochrome menu icons',project:'TaskQ',state:'ready',runtime:'Claude',host:'Mac',priority:3,chain:[['Ready',1200]]},
+ {id:107,title:'Keep task filters when returning from settings',project:'TaskQ',state:'doing',runtime:'Codex',host:'Mac',priority:2,chain:[['Ready',180],['Doing',600]]},
+ {id:108,title:'Review resource grants before applying changes',project:'AgentQ',state:'review',runtime:'Claude',host:'Mac',priority:0,chain:[['Ready',120],['Doing',420],['Review',240]]}
+];
+const age=t=>t.chain.at(-1)[1],total=t=>t.chain.reduce((a,s)=>a+s[1],0),time=s=>s>=3600?Math.floor(s/3600)+'h'+(Math.floor(s%3600/60)?' '+Math.floor(s%3600/60)+'m':''):s>=60?Math.floor(s/60)+'m'+(s%60?' '+s%60+'s':''):s+'s';
+const projectNames=['TaskQ','AgentQ','PilotQ'],stateOrder=['ask','failed','doing','review','ready','blocked'];
+const baseCriteria={projects:[],states:[],sort:'state',group:'none'};
+const defaults=[{...structuredClone(baseCriteria),id:'all',name:'All tasks',star:true},{...structuredClone(baseCriteria),id:'attention',name:'Attention',states:['ask','failed'],star:true},{...structuredClone(baseCriteria),id:'taskq',name:'TaskQ',projects:['TaskQ'],star:true}];
+let model={version:8,views:structuredClone(defaults),selected:'all',draft:null,query:'',workspaces:{},pin:false,position:{x:0,y:0},font:16,trayView:'icon',growth:'auto',opening:'down',windowSize:null};
+const status=text=>{root.querySelector('.qs-status').textContent=text};
+const hydrate=()=>{if(globalThis.lucide)globalThis.lucide.createIcons({attrs:{width:16,height:16}})};
+const validSet=(values,allowed)=>Array.isArray(values)&&values.length<=allowed.length&&new Set(values).size===values.length&&values.every(v=>allowed.includes(v));
+const stripOrder=({order,...rest})=>rest;
+const validCriteria=v=>v&&validSet(v.projects,projectNames)&&validSet(v.states,stateOrder)&&['state','age','total'].includes(v.sort)&&['project','none'].includes(v.group);
+function restore(snapshot){const s=snapshot?.privateContent;if(![6,7,8].includes(s?.version)||!Array.isArray(s.views)||!s.views.length)return false;const valid=s.views.every(v=>typeof v.id==='string'&&typeof v.name==='string'&&v.name.length<=40&&validCriteria(v));if(!valid)return false;const workspaces={};for(const v of s.views){const w=s.workspaces?.[v.id];if(w)workspaces[v.id]={draft:validCriteria(w.draft)?stripOrder(w.draft):null,query:typeof w.query==='string'?w.query.slice(0,160):''}}model={version:8,views:s.views.map(v=>({...stripOrder(v),star:!!v.star})),selected:s.views.some(v=>v.id===s.selected)?s.selected:s.views[0].id,draft:validCriteria(s.draft)?stripOrder(s.draft):null,query:typeof s.query==='string'?s.query.slice(0,160):'',workspaces,pin:s.pin===true,position:validPosition(s.position)?{...s.position}:{x:0,y:0},font:[14,16,18,20].includes(s.font)?s.font:16,trayView:['icon','summary','custom'].includes(s.trayView)?s.trayView:'icon'};return true}
+restore(window.openai?.widgetState);
+function restoreWindowFields(s){model.growth=['auto','up','down','fixed'].includes(s?.growth)?s.growth:'auto';model.opening=['up','down'].includes(s?.opening)?s.opening:'down';model.windowSize=validWindowSize(s?.windowSize)?{...s.windowSize}:null}
+restoreWindowFields(window.openai?.widgetState?.privateContent);
+function resolvedGrowth(growth,opening){return growth==='auto'?opening:growth}
+function validWindowSize(s){return s&&Number.isFinite(s.width)&&Number.isFinite(s.height)&&s.width>=280&&s.width<=800&&s.height>=260&&s.height<=760}
+console.assert(resolvedGrowth('auto','up')==='up'&&resolvedGrowth('auto','down')==='down','Auto follows placement, not platform');
+console.assert(resolvedGrowth('fixed','up')==='fixed'&&resolvedGrowth('down','up')==='down','Explicit override wins');
+console.assert(!validWindowSize({width:Infinity,height:400}),'Reject invalid saved dimensions');
+const selected=()=>model.views.find(v=>v.id===model.selected)||model.views[0],criteria=()=>model.draft||selected();
+function remember(){model.workspaces[model.selected]={draft:model.draft,query:model.query}}
+function selectView(id){remember();model.selected=id;const w=model.workspaces[id];model.draft=w?.draft||null;model.query=w?.query||''}
+function setDraft(next){model.draft=['projects','states','sort','group'].every(key=>JSON.stringify(next[key])===JSON.stringify(selected()[key]))?null:structuredClone(next)}
+function saveState(){remember();if(!window.openai?.setWidgetState)return;if(JSON.stringify(model).length>14000){status('Preview storage is full; changes remain in this session.');return}window.openai.setWidgetState({modelContent:{prototype:'window-settings',growth:model.growth,opening:model.opening,effectiveGrowth:resolvedGrowth(model.growth,model.opening),pinned:model.pin,activeView:selected().name,modified:!!model.draft},privateContent:model}).catch(()=>status('View remains available in this preview; saving was unavailable.'))}
+function match(t,c,q='',ignoreState=false){return(!c.projects.length||c.projects.includes(t.project))&&(ignoreState||!c.states.length||c.states.includes(t.state))&&(t.project+' '+t.id+' '+t.title).toLowerCase().includes(q.trim().toLowerCase())}
+function compareTasks(a,b,c){const attention=t=>['ask','failed'].includes(t.state)?0:1;return attention(a)-attention(b)||(c.sort==='age'?age(b)-age(a):c.sort==='total'?total(b)-total(a):stateOrder.indexOf(a.state)-stateOrder.indexOf(b.state))||a.priority-b.priority||a.id-b.id}
+function rows(){const c=criteria();return tasks.filter(t=>match(t,c,model.query)).sort((a,b)=>compareTasks(a,b,c))}
+function toggleValue(values,value){return values.includes(value)?values.filter(v=>v!==value):[...values,value]}
+function facetTotal(c,q=''){return tasks.filter(t=>match(t,c,q,true)).length}
+function renderFacets(app){const c=criteria(),count=state=>tasks.filter(t=>t.state===state&&match(t,c,model.query,true)).length,all=facetTotal(c,model.query);app.querySelector('.qs-overview').innerHTML='<button class="cursor-interaction" data-action="all-states" aria-label="All states: '+all+' task'+(all===1?'':'s')+'" aria-pressed="'+!c.states.length+'" data-tooltip="All states · current projects and search">All '+all+'</button>'+stateOrder.map(state=>'<button class="cursor-interaction" data-state="'+state+'" aria-label="Filter '+names[state]+': '+count(state)+' task'+(count(state)===1?'':'s')+'" aria-pressed="'+c.states.includes(state)+'" data-tooltip="'+names[state]+' · '+count(state)+' matching projects and search">'+I(icons[state])+count(state)+'</button>').join('')}
+function workspace(kind){const window=root.querySelector('section[data-workspace]'),conversation=kind==='conversations';window.innerHTML='<div class="qs-window-head">'+I(conversation?'messages-square':'sliders-horizontal')+(conversation?'Conversations':'Work mode · Mac')+'<button class="qs-ghost cursor-interaction" data-close-workspace aria-label="Close workspace preview">'+I('x')+'</button></div><div class="qs-window-body">'+(conversation?'<p>Menu redesign · 1 unread</p><p>Agent setup</p>':'<p>Auto · TaskQ, AgentQ, PilotQ</p><p>Current work continues while admission settings are reviewed.</p>')+'</div>';window.hidden=false;hydrate();status('Separate workspace destination · navigation preview only.')}
+root.addEventListener('click',event=>{if(event.target.closest('[data-close-workspace]'))root.querySelector('section[data-workspace]').hidden=true});
+console.assert(tasks.filter(t=>match(t,defaults[1])).length===2,'Attention filter');console.assert(total(tasks[1])===1320,'Repeated stages remain distinct');console.assert(tasks.filter(t=>match(t,defaults[2])).length===4,'Project preset');
+console.assert(tasks.filter(t=>match(t,{...baseCriteria,projects:['TaskQ','AgentQ'],states:['doing','review']})).length===4,'Union within facets, intersection across facets');
+console.assert(!validCriteria({...baseCriteria,states:['doing','doing']}),'Reject duplicate states');
+console.assert(tasks.filter(t=>match(t,{...baseCriteria,states:['doing','review']})).sort((a,b)=>compareTasks(a,b,baseCriteria)).map(t=>t.id).join(',')==='105,107,108,103','State then priority then issue');
+const apps=[...root.querySelectorAll('.qs-app')].map((app,index)=>{
+ app.innerHTML='<div data-chrome>'+header(app)+'</div><div data-page="home"><div class="qs-viewbar" data-viewbar></div><div class="qs-criteria" data-criteria></div><div class="qs-inline-editor" data-inline-editor hidden></div><label class="qs-search">'+I('search')+'<input type="search" maxlength="160" placeholder="Find…" aria-label="Find tasks"><span class="qs-result-count" data-count></span></label><div data-tasks aria-live="polite"></div></div><div data-page="detail" hidden></div><div class="qs-popup" id="qs-pop-'+index+'" popover aria-label="Context menu"></div><footer class="ws-footer"><span class="ws-version" aria-label="TaskQ version unknown" data-tooltip="Version unavailable">TaskQ · v—</span><span class="ws-dimensions" data-size-label></span><button class="qs-ghost ws-resize" data-resize aria-label="Resize window" data-tooltip="Drag to resize · arrow keys also work"></button></footer>';
+ const popup=app.querySelector('.qs-popup'),inlineEditor=app.querySelector('[data-inline-editor]');let backToNavigation=false;let returnTo=null,previewTrigger=null,pinned=false,closing=false,showTimer,hideTimer;
+ // shortcut: grow the conversation preview around overlays; native monitor clamping still needs platform qualification.
+ function fitPreview(){root.style.minHeight='';const bottom=Math.max(...[...root.querySelectorAll(':popover-open')].map(el=>el.getBoundingClientRect().bottom),0);if(bottom>root.getBoundingClientRect().bottom)root.style.minHeight=bottom-root.getBoundingClientRect().top+12+'px'}
+ function close(){clearTimeout(showTimer);clearTimeout(hideTimer);if(previewTrigger)previewTrigger.setAttribute('aria-expanded','false');previewTrigger=null;pinned=false;closing=true;try{if(popup.matches(':popover-open'))popup.hidePopover()}finally{closing=false}fitPreview()}
+ function position(trigger){const b=trigger.getBoundingClientRect(),r=app.getBoundingClientRect();popup.style.width=Math.min(popup.getAttribute('aria-label')==='View editor'?460:340,r.width-12)+'px';popup.style.left=Math.max(r.left+6,Math.min(b.left,r.right-popup.offsetWidth-6))+scrollX+'px';const below=b.bottom+3,above=b.top-popup.offsetHeight-3;popup.style.top=(below+popup.offsetHeight<=r.bottom-5||above<r.top+5?below:above)+scrollY+'px';fitPreview()}
+ function pin(value){pinned=value;const b=popup.querySelector('[data-action="pin"]');if(b){b.setAttribute('aria-pressed',String(value));b.setAttribute('aria-label',value?'Unpin preview':'Keep preview open')}}
+ function scheduleClose(){clearTimeout(showTimer);clearTimeout(hideTimer);if(!previewTrigger)return;hideTimer=setTimeout(()=>{if(!pinned&&previewTrigger&&!popup.matches(':hover')&&!previewTrigger.matches(':hover')&&!popup.contains(document.activeElement)&&document.activeElement!==previewTrigger)close()},260)}
+ function preview(trigger){if(closing||pinned||popup.matches(':popover-open')&&!previewTrigger)return;if(previewTrigger===trigger&&popup.matches(':popover-open'))return;close();returnTo=trigger;previewTrigger=trigger;const t=tasks.find(t=>t.id===Number(trigger.dataset.preview));trigger.setAttribute('aria-expanded','true');popup.setAttribute('popover','manual');popup.setAttribute('role','dialog');popup.setAttribute('aria-label',t.project+' #'+t.id+' preview');popup.innerHTML='<div class="qs-card-head">'+forge+'<span>'+t.project+' #'+t.id+'</span><button class="qs-ghost cursor-interaction" data-action="pin" aria-label="Keep preview open" aria-pressed="false">'+I('pin')+'</button><button class="qs-ghost cursor-interaction" data-action="dismiss" aria-label="Close preview">'+I('x')+'</button></div><h3 class="qs-card-title">'+esc(t.title)+'</h3><div class="qs-card-context"><span class="qs-card-stage">'+I(icons[t.state])+names[t.state]+'</span><span>'+t.runtime+' · '+t.host+'</span></div>'+history(t)+'<hr class="qs-divider"><button class="qs-command cursor-interaction" data-detail="'+t.id+'">'+I('panel-top')+'Task detail</button>';popup.showPopover();hydrate();position(trigger)}
+ popup.addEventListener('pointerenter',()=>{clearTimeout(hideTimer);clearTimeout(showTimer)});
+ popup.addEventListener('pointerleave',scheduleClose);
+ popup.addEventListener('focusout',scheduleClose);
+ popup.addEventListener('beforetoggle',event=>{closing=event.newState==='closed'});
+ popup.addEventListener('toggle',()=>{closing=false;if(!popup.matches(':popover-open')){if(previewTrigger)previewTrigger.setAttribute('aria-expanded','false');previewTrigger=null;pinned=false;if(inlineEditor.hidden)app.querySelector('[data-open="edit"]')?.setAttribute('aria-expanded','false');fitPreview()}});
+ app.addEventListener('pointerover',event=>{const trigger=event.target.closest('[data-preview]');if(!trigger||trigger.contains(event.relatedTarget))return;clearTimeout(hideTimer);clearTimeout(showTimer);showTimer=setTimeout(()=>preview(trigger),180)});
+ app.addEventListener('pointerout',event=>{const trigger=event.target.closest('[data-preview]');if(trigger&&!trigger.contains(event.relatedTarget))scheduleClose()});
+ app.addEventListener('focusin',event=>{const trigger=event.target.closest('[data-preview]');if(trigger)preview(trigger)});
+ app.addEventListener('focusout',event=>{if(event.target.closest('[data-preview]'))scheduleClose()});
+ document.addEventListener('pointerdown',event=>{if(previewTrigger&&!popup.contains(event.target)&&!previewTrigger.contains(event.target))close()});
+ app.addEventListener('keydown',event=>{if(event.key==='Escape'&&previewTrigger){event.preventDefault();const trigger=previewTrigger;close();closing=true;try{trigger.focus()}finally{closing=false}}else if(event.key==='Escape'&&!inlineEditor.hidden){event.preventDefault();closeEditor();app.querySelector('[data-open="edit"]').focus()}});
+ function home(){close();app.querySelector('[data-page="home"]').hidden=false;app.querySelector('[data-page="detail"]').hidden=true;if(returnTo?.isConnected)returnTo.focus();returnTo=null}
+ function detail(title,content,trigger){close();returnTo=trigger;app.querySelector('[data-page="home"]').hidden=true;const page=app.querySelector('[data-page="detail"]');page.innerHTML='<div class="qs-back"><button class="qs-ghost cursor-interaction" data-action="back" aria-label="Back to tasks">'+I('arrow-left')+'</button><strong>'+esc(title)+'</strong></div><div class="qs-detail">'+content+'</div>';page.hidden=false;hydrate();page.querySelector('button').focus()}
+ function history(t){return t.chain.map(([n,s],i)=>'<div class="qs-time-row"'+(i===t.chain.length-1?' aria-current="step"':'')+'><span><small>'+(i+1)+'</small> · '+n+'</span><span>'+time(s)+'</span></div>').join('')+'<hr class="qs-divider"><div class="qs-time-row"><span>Total · '+t.chain.length+' stages</span><span>'+time(total(t))+'</span></div>'}
+ function navRow(label,icon,id){return '<button class="qs-command cursor-interaction" data-nav-page="'+id+'">'+I(icon)+label+(['work','conversations'].includes(id)?'<span class="qs-command-hint">'+I('panels-top-left')+'</span>':'')+'</button>'}
+ function navigation(trigger){backToNavigation=false;const groups=app.dataset.nav==='menu'?[['Communication',[['Inbox','bell','inbox'],['Conversations','messages-square','conversations']]],...navGroups]:navGroups;detail(app.dataset.nav==='menu'?'Menu':'Settings',groups.map(([label,rows])=>'<section class="qs-nav-group"><div class="qs-nav-label">'+label+'</div>'+rows.map(row=>navRow(...row)).join('')+'</section>').join(''),trigger||app.querySelector('[data-action="settings"]'))}
+ function page(id,trigger){
+  if(['work','conversations'].includes(id)){workspace(id);return}
+  const row=(navGroups.flatMap(g=>g[1]).find(r=>r[2]===id))||['Inbox','bell','inbox'];let content='';
+  if(id==='window')content='<fieldset class="qs-filter-section"><legend>Window growth</legend><div class="ws-options">'+[['auto','Auto','Follow opening'],['down','Down','Top stays'],['up','Up','Bottom stays'],['fixed','Fixed','Scroll list']].map(([value,label,hint])=>'<button class="ws-option cursor-interaction" data-growth-choice="'+value+'" data-growth="'+resolvedGrowth(value,model.opening)+'" data-opening="'+model.opening+'" aria-label="'+label+' window growth" aria-pressed="'+(model.growth===value)+'"><span class="ws-mini" aria-hidden="true"><span class="ws-anchor">'+I('circle-dot')+'</span><span class="ws-before"></span><span class="ws-after"><span class="ws-lines"></span></span></span><span class="ws-label">'+label+(model.growth===value?I('check'):'')+'</span><span class="ws-edge">'+hint+'</span>'+(value==='auto'?'<span class="ws-default">Default</span>':'')+'</button>').join('')+'</div><p class="ws-help">Auto follows where the menu opens. Pinning keeps that direction.</p></fieldset>';
+  if(id==='appearance')content='<fieldset class="qs-filter-section"><legend>Text size</legend><div class="qs-choices">'+[14,16,18,20].map(n=>'<button class="cursor-interaction" data-font-choice="'+n+'" aria-pressed="'+(model.font===n)+'">'+n+' px</button>').join('')+'</div></fieldset><fieldset class="qs-filter-section"><legend>Tray view</legend><div class="qs-choices">'+['icon','summary','custom'].map(v=>'<button class="cursor-interaction" data-tray-choice="'+v+'" aria-pressed="'+(model.trayView===v)+'">'+I(v==='icon'?'square':v==='summary'?'chart-column':'sliders-horizontal')+v[0].toUpperCase()+v.slice(1)+'</button>').join('')+'</div></fieldset>';
+  if(id==='projects')content=['TaskQ','AgentQ','PilotQ'].map(p=>'<div class="qs-time-row"><span>'+I('folder')+' '+p+'</span><span>Registered</span></div>').join('')+'<button class="qs-command" disabled data-tooltip="Native folder picker is outside this prototype">'+I('plus')+'Add project</button>';
+  if(id==='agents')content='<p>Mac · probe 30s ago</p><div class="qs-time-row"><span>Codex</span><span>Available</span></div><div class="qs-time-row"><span>Claude</span><span>Available</span></div><div class="qs-time-row"><span>codex-app</span><span>Disabled</span></div>';
+  if(id==='services')content='<p>Mac · service connected</p>'+['TaskQ','AgentQ','PilotQ'].map(p=>'<div class="qs-time-row"><span>'+p+'</span><span>Observed 12s ago</span></div>').join('')+['Log','Folder','Resources','Incident consent','Restart','Stop until next login','Uninstall'].map((label,i)=>'<button class="qs-command" disabled data-tooltip="Service operations are not connected in this prototype">'+I(['file-text','folder-open','cpu','shield-check','rotate-cw','square','trash-2'][i])+label+'</button>').join('');
+  if(id==='preferences')content='<div class="qs-time-row"><span>Questions</span><span>On</span></div><div class="qs-time-row"><span>Failures</span><span>On</span></div>';
+  if(id==='activity')content='<p>All projects · last 24 hours</p>'+tasks.map(t=>'<div class="qs-time-row"><span>'+t.project+' #'+t.id+'</span><span>'+names[t.state]+'</span></div>').join('');
+  if(id==='diagnostics')content='<div class="qs-time-row"><span>Host</span><span>Mac</span></div><div class="qs-time-row"><span>Board read</span><span>12s ago</span></div><div class="qs-time-row"><span>Last error</span><span>None recorded</span></div>';
+  if(id==='about')content='<div class="qs-time-row"><span>Host</span><span>Mac</span></div><div class="qs-time-row"><span>Tray / service version</span><span>Unknown</span></div><button class="qs-command" disabled data-tooltip="No verified update metadata in this fixture">'+I('download')+'Check for updates</button>';
+  if(id==='inbox')content='<button class="qs-command cursor-interaction" data-detail="104">'+I('message-circle-question')+'TaskQ #104 · Question</button><button class="qs-command cursor-interaction" data-detail="106">'+I('circle-x')+'PilotQ #106 · Failed</button>';
+  detail(row[0],content,trigger);backToNavigation=!(id==='inbox'&&app.dataset.nav==='direct');if(backToNavigation)app.querySelector('[data-action="back"]').setAttribute('aria-label',app.dataset.nav==='direct'?'Back to Settings':'Back to Menu');
+ }
+ function choices(key,values){const c=criteria();return '<div class="qs-choices">'+values.map(([value,label,icon])=>'<button class="cursor-interaction" data-choice="'+key+'" data-value="'+value+'" aria-pressed="'+(c[key]===value)+'">'+I(icon)+label+'</button>').join('')+'</div>'}
+ function form(){const c=criteria();return '<div class="qs-editor-heading"><span>'+I('list-filter')+'View</span><button class="qs-ghost cursor-interaction" data-action="cancel-editor" aria-label="Close view editor">'+I('x')+'</button></div><fieldset class="qs-filter-section"><legend>Projects</legend><div class="qs-choices"><button class="cursor-interaction" data-facet="projects" data-value="all" aria-pressed="'+!c.projects.length+'">All projects</button>'+projectNames.map(p=>'<button class="cursor-interaction" data-facet="projects" data-value="'+p+'" aria-pressed="'+c.projects.includes(p)+'">'+I('folder')+p+'</button>').join('')+'</div></fieldset><fieldset class="qs-filter-section"><legend>States</legend><div class="qs-choices"><button class="cursor-interaction" data-facet="states" data-value="all" aria-pressed="'+!c.states.length+'">All states · '+facetTotal(c,model.query)+'</button></div><div class="qs-state-grid">'+stateOrder.map(s=>'<div class="qs-state-option"><button class="cursor-interaction" data-facet="states" data-value="'+s+'" aria-pressed="'+c.states.includes(s)+'">'+I(c.states.includes(s)?'check':icons[s])+names[s]+'</button></div>').join('')+'</div></fieldset><fieldset class="qs-filter-section"><legend>Sort</legend>'+choices('sort',[['state','State order','list-ordered'],['age','Time in stage','timer'],['total','Total time','clock-3']])+'</fieldset><fieldset class="qs-filter-section"><legend>Display</legend>'+choices('group',[['none','All together','rows-3'],['project','By project','folder']])+'</fieldset><div class="qs-actions"><button class="cursor-interaction" data-action="cancel-editor">Done</button></div>'}
+ function closeEditor(){close();inlineEditor.hidden=true;app.querySelector('[data-open="edit"]')?.setAttribute('aria-expanded','false')}
+ function edit(){closeEditor();returnTo=app.querySelector('[data-open="edit"]');const surface=app.dataset.editor==='inline'?inlineEditor:popup;surface.innerHTML=form();surface.querySelectorAll('select').forEach(el=>el.value=criteria()[el.name]);if(surface===inlineEditor)surface.hidden=false;else{popup.setAttribute('popover','auto');popup.removeAttribute('role');popup.setAttribute('aria-label','View editor');popup.setAttribute('role','dialog');popup.showPopover();}hydrate();if(surface===popup)position(returnTo);app.querySelector('[data-open="edit"]').setAttribute('aria-expanded','true');popup.querySelector('button').focus()}
+ function open(trigger){
+  if(trigger.dataset.open==='edit'){edit();return}
+  close();popup.setAttribute('popover','auto');popup.removeAttribute('role');popup.setAttribute('aria-label','View options');returnTo=trigger;const type=trigger.dataset.open,t=tasks.find(t=>t.id===Number(trigger.dataset.task));
+  if(type==='presets')popup.innerHTML='<div class="qs-popup-heading">Saved views</div>'+model.views.map(v=>'<div class="qs-preset-row"><button class="qs-command cursor-interaction" data-select="'+esc(v.id)+'" aria-pressed="'+(v.id===model.selected)+'">'+I(v.id===model.selected?'check':'bookmark')+esc(v.name)+'</button><button class="qs-star cursor-interaction" data-star="'+esc(v.id)+'" aria-label="'+(v.star?'Unpin ':'Pin ')+esc(v.name)+'" aria-pressed="'+v.star+'">'+I('star')+'</button></div>').join('')+'<hr class="qs-divider"><button class="qs-command cursor-interaction" data-open="edit">'+I('sliders-horizontal')+'Edit conditions</button><button class="qs-command cursor-interaction" data-open="save">'+I('bookmark-plus')+'Save as…</button>';
+  if(type==='save')popup.innerHTML='<div class="qs-popup-heading">Save current view</div><label class="qs-field">Name<input name="view-name" maxlength="40" value="'+esc(model.draft?'My view':selected().name+' copy')+'"></label><div class="qs-actions"><button class="cursor-interaction" data-action="dismiss">Cancel</button><button class="cursor-interaction" data-action="save-view">'+I('star')+'Save & pin</button></div>';
+  if(type==='controls')popup.innerHTML='<div class="qs-popup-heading">Mac · Auto</div><div class="qs-time-row"><span>Admission</span><span>Enabled</span></div><div class="qs-time-row"><span>CPU</span><span>24%</span></div><div class="qs-time-row"><span>Memory</span><span>11 / 24 GB</span></div><button class="qs-command cursor-interaction" data-workspace="work">'+I('sliders-horizontal')+'Work mode</button>';
+  if(type==='pause'||type==='emergency')popup.innerHTML='<div class="qs-popup-heading">'+(type==='pause'?'Pause new work':'Emergency stop')+' · Mac</div><div class="qs-detail"><p>'+(type==='pause'?'Current tasks continue.':'Owned attempts stop; admission stays held.')+'</p><p>TaskQ · AgentQ · PilotQ</p></div><div class="qs-actions"><button class="cursor-interaction" data-action="dismiss">Cancel</button><button disabled data-tooltip="Service actions are not connected in this prototype">'+(type==='pause'?'Pause':'Stop')+'</button></div>';
+  if(type==='notifications')popup.innerHTML='<div class="qs-popup-heading">Needs attention</div><button class="qs-command cursor-interaction" data-detail="104">'+I('message-circle-question')+'#104 · Question</button><button class="qs-command cursor-interaction" data-detail="106">'+I('circle-x')+'#106 · Failed</button>';
+  if(type==='conversations')popup.innerHTML='<div class="qs-popup-heading">Conversations</div><div class="qs-time-row"><span>Menu redesign</span><span>1 unread</span></div><div class="qs-time-row"><span>Agent setup</span><span>Answered</span></div>';
+  popup.showPopover();hydrate();position(trigger);
+ }
+ function taskMarkup(t,withProject){return '<article class="qs-task"><div class="qs-task-meta"><button class="qs-reference cursor-interaction" data-preview="'+t.id+'" aria-label="Preview '+t.project+' task '+t.id+'" aria-haspopup="dialog" aria-expanded="false" aria-controls="'+popup.id+'">'+forge+(withProject?t.project+' ':'')+'#'+t.id+'</button><span class="qs-stage '+(t.state==='failed'?'qs-failed':t.state==='ask'?'qs-ask':['doing','review'].includes(t.state)?'qs-work':'')+'" role="img" aria-label="'+names[t.state]+' · current stage '+time(age(t))+'" data-tooltip="'+names[t.state]+' · current stage '+time(age(t))+'">'+I(icons[t.state])+time(age(t))+'</span></div><button class="qs-task-title cursor-interaction" data-detail="'+t.id+'">'+t.title+'</button></article>'}
+ function render(){
+  const c=criteria(),view=selected(),list=rows(),bar=app.querySelector('[data-viewbar]');
+  bar.innerHTML='<div class="qs-view-picks"><button class="qs-current cursor-interaction" data-open="presets" aria-label="Saved views: '+esc(view.name)+'">'+I('bookmark')+esc(view.name)+(model.draft?' *':'')+'<i class="qs-chevron" data-lucide="chevron-down" aria-hidden="true"></i></button>'+model.views.filter(v=>v.star&&v.id!==view.id).map(v=>'<button class="cursor-interaction" data-select="'+esc(v.id)+'">'+esc(v.name)+'</button>').join('')+'</div><button class="qs-edit qs-ghost cursor-interaction" data-open="edit" aria-label="Edit view conditions" aria-expanded="false" data-tooltip="Edit view">'+I('sliders-horizontal')+'</button>';
+  renderFacets(app);
+  const chips=[];if(c.projects.length&&(model.draft||view.name!==c.projects[0]||c.projects.length>1))chips.push({key:'projects',text:c.projects.join(' + ')});
+  app.querySelector('[data-criteria]').innerHTML=chips.map(ch=>'<button class="cursor-interaction" data-clear="'+ch.key+'" aria-label="Remove '+esc(ch.text)+' condition">'+I('x')+esc(ch.text)+'</button>').join('')+((c.group==='project'||c.sort!=='state')?'<button class="cursor-interaction" data-open="edit">'+I(c.group==='project'?'folder':'timer')+[c.group==='project'?'By project':'',c.sort==='age'?'Time in stage':c.sort==='total'?'Total time':''].filter(Boolean).join(' · ')+'</button>':'')+(model.draft?'<button class="cursor-interaction" data-action="save-existing">'+I('save')+'Save</button><button class="qs-ghost cursor-interaction" data-action="revert" aria-label="Restore saved view" data-tooltip="Restore saved view">'+I('undo-2')+'</button>':'');
+  const input=app.querySelector('input[type="search"]');if(input.value!==model.query)input.value=model.query;app.querySelector('[data-count]').textContent=list.length;
+  const attention=list.filter(t=>['ask','failed'].includes(t.state));
+  const ordinary=list.filter(t=>!['ask','failed'].includes(t.state));
+  const grouped=c.group==='project'&&c.projects.length!==1;
+  app.querySelector('[data-tasks]').innerHTML=list.length?(attention.length?'<div class="qs-group-title">Needs attention</div>'+attention.map(t=>taskMarkup(t,true)).join(''):'')+(grouped?projectNames.map(project=>{const group=ordinary.filter(t=>t.project===project);return group.length?'<div class="qs-group-title">'+project+'</div>'+group.map(t=>taskMarkup(t,false)).join(''):''}).join(''):ordinary.map(t=>taskMarkup(t,c.projects.length!==1)).join('')):'<div class="qs-empty">No matching tasks<br><button class="cursor-interaction" data-action="reset">All tasks</button></div>';
+  hydrate();
+ }
+ app.addEventListener('input',event=>{if(event.target.type==='search'){model.query=event.target.value;renderAll();saveState()}});
+ app.addEventListener('click',event=>{
+  const b=event.target.closest('button');if(!b)return;
+  if(b.dataset.growthChoice){model.growth=b.dataset.growthChoice;page('window',app.querySelector('[data-action="settings"]'));app.querySelector('[data-growth-choice="'+model.growth+'"]').focus();saveState();return}
+  if(b.dataset.fontChoice||b.dataset.trayChoice){if(b.dataset.fontChoice)model.font=Number(b.dataset.fontChoice);if(b.dataset.trayChoice)model.trayView=b.dataset.trayChoice;applyPreferences();page('appearance',app.querySelector('[data-action="settings"]'));app.querySelector(b.dataset.fontChoice?'[data-font-choice="'+b.dataset.fontChoice+'"]':'[data-tray-choice="'+b.dataset.trayChoice+'"]').focus();saveState();return}
+  if(b.dataset.workspace){close();workspace(b.dataset.workspace);return}
+  if(b.dataset.navPage){page(b.dataset.navPage,b);return}
+  if(b.dataset.state||b.dataset.action==='all-states'){backToNavigation=false;home();setDraft({...criteria(),states:b.dataset.state?toggleValue(criteria().states,b.dataset.state):[]});renderAll();app.querySelector(b.dataset.state?'[data-state="'+b.dataset.state+'"]':'[data-action="all-states"]').focus();saveState();return}
+  if(b.dataset.facet||b.dataset.choice){const next=structuredClone(criteria());if(b.dataset.facet){const key=b.dataset.facet;next[key]=b.dataset.value==='all'?[]:toggleValue(next[key],b.dataset.value)}if(b.dataset.choice)next[b.dataset.choice]=b.dataset.value;const label=b.getAttribute('aria-label'),facet=b.dataset.facet,choice=b.dataset.choice,value=b.dataset.value;setDraft(next);render();returnTo=app.querySelector('[data-open="edit"]');returnTo.setAttribute('aria-expanded','true');popup.innerHTML=form();hydrate();position(returnTo);const target=label?[...popup.querySelectorAll('[aria-label]')].find(el=>el.getAttribute('aria-label')===label):[...popup.querySelectorAll('button')].find(el=>el.dataset.value===value&&(facet?el.dataset.facet===facet:el.dataset.choice===choice));if(target&&!target.disabled)target.focus();saveState();return}
+  if(b.dataset.action==='window-pin'){model.pin=!model.pin;updateWindow();saveState();return}
+  if(b.dataset.action==='window-close'){hidePanel();return}
+  if(b.dataset.action==='pin'){pin(!pinned);return}
+  if(b.dataset.preview){if(previewTrigger!==b||!popup.matches(':popover-open')){pinned=false;preview(b)}pin(true);if(event.detail===0)popup.querySelector('[data-detail]').focus();return}
+  if(b.dataset.open){open(b);return}
+  if(b.dataset.select){selectView(b.dataset.select);renderAll();saveState();return}
+  if(b.dataset.star){const v=model.views.find(v=>v.id===b.dataset.star);v.star=!v.star;b.setAttribute('aria-pressed',String(v.star));b.setAttribute('aria-label',(v.star?'Unpin ':'Pin ')+v.name);renderAll();saveState();return}
+  if(b.dataset.clear){setDraft({...criteria(),[b.dataset.clear]:[]});renderAll();saveState();return}
+  if(b.dataset.detail){const fromInbox=app.querySelector('.qs-back strong')?.textContent==='Inbox',t=tasks.find(t=>t.id===Number(b.dataset.detail));detail('#'+t.id,'<h3>'+esc(t.title)+'</h3><p>'+t.project+' · '+t.runtime+' · '+t.host+'</p>'+history(t),app.querySelector('[data-preview="'+t.id+'"]'));backToNavigation=fromInbox?'inbox':false;if(fromInbox)app.querySelector('[data-action="back"]').setAttribute('aria-label','Back to Inbox');return}
+  if(b.dataset.action==='settings'){navigation(b);return}
+  if(b.dataset.action==='back'){if(backToNavigation==='inbox')page('inbox',app.querySelector('[data-action="settings"]'));else if(backToNavigation)navigation();else home();return}if(b.dataset.action==='dismiss'){const trigger=returnTo;close();if(trigger?.isConnected)trigger.focus();close();return}
+  if(b.dataset.action==='cancel-editor'){closeEditor();app.querySelector('[data-open="edit"]').focus();return}
+  if(b.dataset.action==='save-existing'){Object.assign(selected(),model.draft);model.draft=null;renderAll();app.querySelector('[data-open="presets"]').focus();saveState();return}
+  if(b.dataset.action==='revert'){model.draft=null;renderAll();app.querySelector('[data-open="presets"]').focus();saveState();return}
+  if(b.dataset.action==='reset'){model.selected='all';model.draft=null;model.query='';renderAll();saveState();return}
+  if(b.dataset.action==='save-view'){const input=popup.querySelector('[name="view-name"]'),name=input.value.trim();input.setCustomValidity('');if(!name){input.setCustomValidity('Enter a name');input.reportValidity();return}const v={...criteria(),id:'custom-'+Date.now().toString(36),name,star:true};remember();model.views.push(v);model.selected=v.id;model.draft=null;renderAll();saveState();status('“'+name+'” saved and pinned in this prototype.');return}
+ });
+ new ResizeObserver(()=>{if(popup.matches(':popover-open')&&returnTo?.isConnected)position(previewTrigger||returnTo)}).observe(app);
+ return {render,app,edit,closeEditor,navigation,home,page};
+});
+// shortcut: dragging is bounded to this preview stage; native monitor placement needs platform qualification.
+function validPosition(p){return p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&Math.abs(p.x)<10000&&Math.abs(p.y)<10000}
+function movePanel(start,dx,dy,limit,active=false){if(!active&&Math.hypot(dx,dy)<4)return null;return{x:Math.max(-limit.x,Math.min(limit.x,start.x+dx)),y:Math.max(-24,Math.min(56,start.y+dy))}}
+console.assert(movePanel({x:0,y:0},2,1,{x:100})===null,'Click jitter does not pin');
+console.assert(movePanel({x:0,y:0},20,12,{x:100}).x===20,'First drag moves without a second gesture');
+console.assert(movePanel({x:0,y:0},200,80,{x:100}).x===100,'Preview movement stays in bounds');
+console.assert(!validPosition({x:Infinity,y:0})&&validPosition({x:12,y:4}),'Saved position validation');
+function updateWindow(){const app=apps[0].app,limit=Math.max(0,(root.querySelector('.qs-comparison').clientWidth-app.offsetWidth)/2);const pos=model.pin?{x:Math.max(-limit,Math.min(limit,model.position.x)),y:Math.max(-24,Math.min(56,model.position.y))}:{x:0,y:0};app.style.setProperty('--window-x',pos.x+'px');app.style.setProperty('--window-y',pos.y+'px');const pin=app.querySelector('[data-action="window-pin"]');pin.setAttribute('aria-pressed',String(model.pin));pin.setAttribute('aria-label',model.pin?'Unpin window':'Keep window open');pin.setAttribute('data-tooltip',model.pin?'Unpin · return to tray':'Keep window open');status(app.hidden?'Panel closed · mode and working view retained':model.pin?'Pinned · stays open outside the panel':'Popover · drag the header to keep open')}
+function hidePanel(focus=true){apps[0].closeEditor();apps[0].app.hidden=true;updateWindow();saveState();if(focus)reviewControls.querySelector('[data-launch]').focus()}
+function showPanel(){apps[0].app.hidden=false;updateWindow();apps[0].app.querySelector('[data-action="window-close"]').focus()}
+let drag=null,suppressClick=false;
+root.addEventListener('pointerdown',event=>{const handle=event.target.closest('.qs-header');if(!handle||event.button!==0||event.target.closest('button:not([data-drag])'))return;drag={target:event.target.closest('[data-drag]')||handle,id:event.pointerId,x:event.clientX,y:event.clientY,start:model.pin?{...model.position}:{x:0,y:0},active:false}});
+document.addEventListener('pointermove',event=>{if(!drag||event.pointerId!==drag.id)return;const app=apps[0].app,limit={x:Math.max(0,(root.querySelector('.qs-comparison').clientWidth-app.offsetWidth)/2)},position=movePanel(drag.start,event.clientX-drag.x,event.clientY-drag.y,limit,drag.active);if(!position)return;if(!drag.active){apps[0].closeEditor();drag.active=true;drag.target.setPointerCapture(event.pointerId)}event.preventDefault();model.pin=true;model.position=position;updateWindow()},{passive:false});
+function endDrag(event){if(!drag||event.pointerId!==drag.id)return;if(drag.active){suppressClick=true;saveState();if(drag.target.hasPointerCapture(event.pointerId))drag.target.releasePointerCapture(event.pointerId)}drag=null}
+document.addEventListener('pointerup',endDrag);document.addEventListener('pointercancel',endDrag);
+root.addEventListener('click',event=>{if(suppressClick){event.preventDefault();event.stopImmediatePropagation();suppressClick=false}},true);
+document.addEventListener('pointerdown',event=>{suppressClick=false;const app=apps[0].app;if(!app.hidden&&!model.pin&&!app.contains(event.target)&&!reviewControls.contains(event.target))hidePanel(false)});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!event.defaultPrevented&&!apps[0].app.hidden&&!apps[0].app.querySelector(':popover-open')){event.preventDefault();hidePanel()}});
+new ResizeObserver(updateWindow).observe(root.querySelector('.qs-comparison'));
+function applyWindowSize(){const app=apps[0].app;if(model.windowSize){app.style.width=model.windowSize.width+'px';app.style.height=model.windowSize.height+'px'}else{app.style.width='470px';app.style.height='auto'}const r=app.getBoundingClientRect();app.querySelector('[data-size-label]').textContent=model.windowSize?Math.round(r.width)+' × '+Math.round(r.height):'';updateWindow()}
+function resizedSize(width,height,maxWidth){return{width:Math.round(Math.max(Math.min(320,maxWidth),Math.min(Math.min(800,maxWidth),width))),height:Math.round(Math.max(260,Math.min(760,height)))}}
+console.assert(resizedSize(1000,10,640).width===640&&resizedSize(1000,10,640).height===260,'Resize respects preview bounds');
+function resizeWindow(width,height,commit){model.windowSize=resizedSize(width,height,root.querySelector('.qs-comparison').clientWidth);applyWindowSize();if(commit)saveState()}
+let resize=null;
+root.addEventListener('pointerdown',event=>{const grip=event.target.closest('[data-resize]');if(!grip||event.button!==0)return;event.preventDefault();const r=apps[0].app.getBoundingClientRect();resize={id:event.pointerId,x:event.clientX,y:event.clientY,width:r.width,height:r.height,target:grip};grip.focus();grip.setPointerCapture(event.pointerId)});
+document.addEventListener('pointermove',event=>{if(!resize||event.pointerId!==resize.id)return;event.preventDefault();resizeWindow(resize.width+event.clientX-resize.x,resize.height+event.clientY-resize.y,false)},{passive:false});
+function endResize(event){if(!resize||event.pointerId!==resize.id)return;saveState();if(resize.target.hasPointerCapture(event.pointerId))resize.target.releasePointerCapture(event.pointerId);resize=null}
+document.addEventListener('pointerup',endResize);document.addEventListener('pointercancel',endResize);
+root.addEventListener('keydown',event=>{if(!event.target.closest('[data-resize]')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();const r=apps[0].app.getBoundingClientRect();resizeWindow(r.width+(event.key==='ArrowRight'?16:event.key==='ArrowLeft'?-16:0),r.height+(event.key==='ArrowDown'?16:event.key==='ArrowUp'?-16:0),true)});
+function applyPreferences(){apps.forEach(({app})=>{app.style.fontSize=model.font+'px';app.querySelector('[data-chrome]').innerHTML=header(app);renderFacets(app)});root.querySelector('section[data-workspace]').style.fontSize=model.font+'px';hydrate();applyWindowSize()}
+function renderAll(){apps.forEach(a=>{a.closeEditor();a.render()})}
+function showWindowSettings(){showPanel();apps[0].page('window',apps[0].app.querySelector('[data-action="settings"]'));reviewControls.querySelectorAll('[data-opening]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.opening===model.opening)))}
+reviewControls.addEventListener('click',event=>{if(event.target.closest('[data-launch]'))showPanel();const opening=event.target.closest('[data-opening]');if(opening){model.opening=opening.dataset.opening;showWindowSettings();saveState()}const scene=event.target.closest('[data-scene]');if(scene){if(scene.dataset.scene==='home'){showPanel();apps[0].home()}else showWindowSettings()}});
+window.addEventListener('openai:set_globals',event=>{const snapshot=event.detail?.globals?.widgetState;if(JSON.stringify(snapshot?.privateContent)===JSON.stringify(model))return;if(restore(snapshot)){restoreWindowFields(snapshot.privateContent);renderAll();applyPreferences();showWindowSettings()}});
+renderAll();
+applyPreferences();
+showWindowSettings();
+if(globalThis.Tweak){const tuning={font:model.font};const tweak=new Tweak({container:root,onChange:()=>{model.font=tuning.font;applyPreferences()}});tweak.addSlider(tuning,'font',{label:'Text size',min:14,max:20,step:2,unit:'px'})}
+})();
+</script>

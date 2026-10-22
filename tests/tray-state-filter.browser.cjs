@@ -1,94 +1,21 @@
-// R6 / K-A2/K-A6 / UI25–UI28: counter toggles replace checkboxes without losing OR,
-// project scope, keyboard, refresh/Back retention or view-only protection. Invented data, no native/board claim.
+// K-A2/A3/A6 and O1/O2: OR toggles, scoped All, zero/unknown, accessible details and exact Start reconciliation.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
-const out=process.env.FILTER_EVIDENCE;
-const states=['doing','review','ask','failed','ready','waiting','later','held'];
-const project={root:'/fixture/alpha',name:'Alpha',host:'fixture',issues:'https://example.org/alpha/issues',board_kind:'github',alive:true,complete:true,age:1,focus:['all'],labels:[],tasks:[{n:1,state:'doing',title:'Build the menu',revision:1},{n:2,state:'review',title:'Review the menu',revision:1},{n:3,state:'ready',title:'Next task',revision:1}],cap_saved:{error:'Fixture'}};
-const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,version:'fixture',projects:[project,{...project,root:'/fixture/beta',name:'Beta',issues:'https://example.org/beta/issues'},{...project,root:'/fixture/empty',name:'Empty',issues:'https://example.org/empty/issues',tasks:[]}],ai:{draft:''},notify:{projects:{}},stop_modes:true};
-(async()=>{
- const browser=await chromium.launch(require('./browser.cjs')());
- try{
-  const page=await browser.newPage({viewport:{width:360,height:760}}),observations=[];
-  page.on('pageerror',e=>{throw e;});
-  await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
-  await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
-  await page.evaluate(s=>taskq.receive({...s,page:'/fixture/alpha'}),snapshot);
-  await page.locator('.tqp-counts [data-state="doing"]').click();
-  const strip=page.locator('.filter-header .tqp-counts'),counter=s=>strip.locator('[data-state="'+s+'"]');
-  const rows=()=>page.locator('[data-card]').count();
-  assert.deepEqual(await strip.locator('[data-state]').evaluateAll(es=>es.map(e=>e.dataset.state)),states,'K-A2: every state, including zeros, must stay available');
-  assert.equal(await page.locator('details.state-filter,input[data-filter-state],input[data-filter-all]').count(),0,'UI25: obsolete checkbox filter removed');
-  assert.equal(await counter('failed').innerText(),'','zero is icon-only');
-  assert.equal(await counter('failed').locator('svg').count(),1);
-  assert.match(await counter('failed').getAttribute('aria-label'),/Failed: 0/);
-  assert.equal(await counter('held').innerText(),'','K-A3: known zero Held is icon-only');
-  assert.equal(await rows(),1);assert.equal(await counter('doing').getAttribute('aria-pressed'),'true');
-  assert.equal(await strip.locator('[data-a="all-tasks"]').innerText(),'All tasks 6','open count spans projects even in a project filter');
-  await counter('review').click();assert.equal(await rows(),2,'selected states combine with OR');
-  await page.evaluate(s=>taskq.receive(s),snapshot);
-  assert.equal(await rows(),2);assert.equal(await counter('review').getAttribute('aria-pressed'),'true');
-  await counter('review').focus();await page.keyboard.press('Space');assert.equal(await rows(),1);
-  assert.equal(await counter('review').evaluate(e=>e===document.activeElement),true);
-  assert.equal(await counter('review').getAttribute('aria-pressed'),'false');
-  await page.keyboard.press('Enter');assert.equal(await rows(),2);
-  await counter('doing').click();assert.equal(await rows(),1);
-  await counter('review').click();assert.equal(await rows(),3,'clearing the last state removes restriction');
-  await counter('failed').click();assert.equal(await rows(),0,'zero states can be selected');
-  await page.getByRole('button',{name:'Reset',exact:true}).click();assert.equal(await rows(),3);
-  await counter('held').click();assert.equal(await rows(),0,'Held is its own filter');
-  assert.doesNotMatch(await page.locator('.content').innerText(),/Closed/,'#1476: no Closed counter or text');
-  await counter('held').click();await counter('doing').click();await counter('review').click();
-  await page.locator('.breadcrumbs [data-route="/fixture/alpha"]').click();await page.locator('[data-a="back"]').click();assert.equal(await rows(),2);
-  const shot=async name=>{if(out){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:out+'/'+name+'.png'});}};
-  for(const width of [320,360])for(const font of [16,20])for(const theme of ['light','dark']){
-    await page.setViewportSize({width,height:760});await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
-    const at=width+'/'+font+'/'+theme;
-    assert.equal(await rows(),2);
-    const layout=await strip.evaluate(e=>({fits:e.scrollWidth<=e.clientWidth&&document.documentElement.scrollWidth<=innerWidth,order:[...e.querySelectorAll('[data-state]')].map(b=>b.dataset.state),pressed:[...e.querySelectorAll('[aria-pressed="true"]')].map(b=>b.dataset.state),outlined:[...e.querySelectorAll('[aria-pressed="true"]')].every(b=>parseFloat(getComputedStyle(b).outlineWidth)>0)}));
-    assert.equal(layout.fits,true,at+' wraps without overflow');assert.equal(layout.outlined,true,at+' selected outline');
-    assert.deepEqual(layout.order,states);assert.deepEqual(layout.pressed,['doing','review']);
-    await shot(theme+'-'+font+'-'+width+'-toggles');
-    await strip.getByRole('button',{name:'All tasks: 6 open',exact:true}).click();
-    assert.equal(await rows(),6,'All tasks removes project/state restrictions');
-    assert.deepEqual(await page.locator('.all-tasks-project .tqp-project').evaluateAll(es=>es.map(e=>e.getAttribute('aria-label'))),['Alpha','Beta'],'nonzero projects keep their own counters and tasks');
-    assert.equal(await page.locator('.all-tasks-project [data-state="failed"]').count(),0,'project summaries still hide zero');
-    assert.equal(await strip.locator('[data-state][aria-pressed="true"]').count(),0);
-    assert.equal(await strip.locator('[data-a="all-tasks"]').getAttribute('aria-pressed'),'true','TW8/#1455: unrestricted All tasks is selected');
-    assert.equal(await page.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth),true,at+' all projects fit');
-    await shot(theme+'-'+font+'-'+width+'-all');
-    await counter('doing').click();assert.equal(await rows(),2,'global state filter spans projects');
-    await page.locator('[data-a="back"]').click();assert.equal(await rows(),2,'Back restores project OR filter');
-    observations.push({width,font,theme,...layout,allTasks:6,projects:['Alpha','Beta']});
-  }
-  await page.evaluate(s=>taskq.receive({...s,projects:s.projects.map(p=>({...p,complete:false}))}),snapshot);
-  assert.equal((await counter('failed').innerText()).trim(),'?','partial is unknown, never zero');
-  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['size','ready','web-observation'].includes(m.a)&&!(m.a==='set'&&m.navigation&&Object.keys(m).every(k=>['a','context','navigation'].includes(k))))),[],'view filters must not write queue/focus');
-  // #1476 K-A3: Held lists drafts with one Start per draft and one for the shown group; Start sends `start` ops only.
-  const drafts={...project,tasks:[...project.tasks,{n:4,state:'held',title:'Draft one',revision:7},{n:5,state:'held',title:'Draft two',revision:8}]};
-  await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[drafts,...snapshot.projects.slice(1)]});
-  for(const st of ['doing','review'])await counter(st).click();
-  await counter('held').click();assert.equal(await rows(),2);assert.equal((await counter('held').innerText()).trim(),'2');
-  // #1523: rows carry no repeated buttons; each draft's Start lives in its row menu.
-  assert.equal(await page.locator('[data-card] [data-a="start"]').count(),0,'no per-row Start until the row menu opens');
-  for(const key of await page.locator('[data-a="row-menu"]').evaluateAll(b=>b.map(x=>x.dataset.key))){
-    await page.locator('[data-a="row-menu"][data-key="'+key+'"]').click();
-    assert.equal(await page.locator('[data-card] [data-a="start"]').count(),1,'one Start per draft menu');
-  }
-  await page.keyboard.press('Escape');
-  await shot('held-drafts');
-  await page.evaluate(()=>{messages.length=0;});
-  await page.getByRole('button',{name:'Start 2 held',exact:true}).click();
-  const ops=(await page.evaluate(()=>messages.filter(m=>m.a==='answer'))).map(m=>m.op);
-  assert.deepEqual(ops.map(o=>[o.task,o.action,o.revision]),[[4,'start',7],[5,'start',8]],'group Start sends one start per shown draft');
-  assert(ops.every(o=>!('choice' in o)&&!('text' in o)),'start carries no answer fields');
-  await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root:project.root,id:ops[0].id,state:'unknown',reason:'fixture receipt lost'});
-  await page.locator('[data-a=answer-retry]').click();
-  await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===3);
-  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op),ops[0],'Start reconciliation keeps the exact ID and revision');
-  await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root:project.root,id:ops[0].id,state:'accepted'});
-  assert.match(await page.locator('.toast').innerText(),/#4 · started/,'Start has its own acceptance label');
-  assert.equal(await page.locator('.qac,textarea').count(),0,'Start receipts do not bring answer cards or composers back to the menu');
-  if(out)fs.writeFileSync(out+'/observations.json',JSON.stringify({browser:browser.version(),observations},null,2)+'\n');
-  console.log('PASS #1438 K-A2/K-A6, UI25–UI28: toggles, zero/unknown, OR, All tasks, keyboard, refresh, Back, no writes; 8 theme/type/width cells');
- }finally{await browser.close();}
-})().catch(e=>{console.error(e);process.exitCode=1;});
+const project={root:'/fixture/alpha',name:'Alpha',host:'fixture',issues:'https://example.org/alpha/issues',board_kind:'github',alive:true,complete:true,age:1,focus:['all'],labels:[],tasks:[{n:1,state:'doing',title:'Build the menu',revision:1},{n:2,state:'review',title:'Review the menu',revision:1},{n:3,state:'ready',title:'Next task',revision:1}]};
+const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,projects:[project,{...project,root:'/fixture/beta',name:'Beta',issues:'https://example.org/beta/issues'}],ai:{draft:''},notify:{projects:{}}};
+(async()=>{const browser=await chromium.launch(require('./browser.cjs')());try{
+ const page=await browser.newPage({viewport:{width:320,height:760}});page.on('pageerror',e=>{throw e;});await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await page.evaluate(s=>taskq.receive({...s,page:'/fixture/alpha'}),snapshot);
+ await page.locator('.tqp-counts [data-state=doing]').first().click();const strip=page.locator('.filter-header .tqp-counts'),chip=s=>strip.locator('[data-state='+s+']'),rows=()=>page.locator('[data-card]').count();
+ assert.deepEqual(await strip.locator('[data-state]').evaluateAll(es=>es.map(e=>e.dataset.state)),['doing','review','ask','failed','ready','waiting','later','held']);assert.equal(await chip('failed').innerText(),'');assert.equal(await chip('failed').locator('svg').count(),1);assert.match(await chip('failed').getAttribute('aria-label'),/Failed: 0/);
+ assert.equal(await rows(),1);assert.equal(await strip.locator('[data-a=all-tasks]').innerText(),'All tasks 3','O2: project-scoped count before state filtering');
+ await chip('review').focus();await page.keyboard.press('Space');assert.equal(await rows(),2);assert.equal(await chip('review').getAttribute('aria-pressed'),'true');assert(await chip('review').evaluate(e=>e===document.activeElement));
+ await page.evaluate(s=>taskq.receive(s),snapshot);assert.equal(await rows(),2);await chip('doing').click();await chip('review').click();assert.equal(await rows(),3);await chip('failed').click();assert.equal(await rows(),0);await strip.locator('[data-a=all-tasks]').click();assert.equal(await rows(),3,'All retains project scope');
+ for(const font of [16,20])for(const theme of ['light','dark']){await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});assert(await strip.evaluate(e=>e.scrollWidth<=e.clientWidth));assert.equal(await page.locator('input[data-filter-state],details.state-filter').count(),0);}
+ const drafts={...project,tasks:[...project.tasks,{n:4,state:'held',title:'Draft one',revision:7},{n:5,state:'held',title:'Draft two',revision:8}]};await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[drafts]});await chip('held').click();assert.equal(await rows(),2);assert.equal(await chip('held').innerText(),'2');assert.equal(await page.locator('[data-card] [data-a=start]').count(),0);
+ for(const n of [4,5]){await page.locator('[data-a=task-detail][data-key$="/'+n+'"]').click();assert.equal(await page.locator('#taskq-popover [data-a=start]').count(),1);await page.keyboard.press('Escape');}
+ await page.evaluate(()=>messages.length=0);await page.getByRole('button',{name:'Start 2 held',exact:true}).click();const ops=await page.evaluate(()=>messages.filter(m=>m.a==='answer').map(m=>m.op));assert.deepEqual(ops.map(o=>[o.task,o.action,o.revision]),[[4,'start',7],[5,'start',8]]);
+ await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root:project.root,id:ops[0].id,state:'unknown',reason:'fixture receipt lost'});await page.locator('[data-a=answer-retry]').click();await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===3);assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op),ops[0]);
+ await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root:project.root,id:ops[0].id,state:'accepted'});assert.match(await page.locator('.toast').innerText(),/#4 · started/);assert.equal(await page.locator('.qac,textarea').count(),0);
+ await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[{...drafts,complete:false}]});assert.equal(await chip('failed').innerText(),'?');assert.equal(await page.locator('[data-state=closed]').count(),0);
+ assert.equal(await page.evaluate(()=>messages.some(m=>['focus','pause','resume','capacity','ai-send'].includes(m.a))),false);
+ console.log('PASS OR/keyboard/refresh, scoped All, zero/unknown/Held, identity Start and same-ID receipt reconciliation; no policy writes');
+ }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1});

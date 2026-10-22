@@ -74,6 +74,9 @@ pub struct Row {
     pub session_url: Option<String>,
     /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
     pub since: Option<i64>,
+    /// O1: board issue creation and accepted state changes; no inferred execution timings.
+    pub created: Option<i64>,
+    pub steps: Vec<Value>,
     /// R6 stuck: seconds since the newest log entry; `None`: not stuck.
     pub stuck: Option<i64>,
 }
@@ -165,6 +168,8 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         stuck: stuck(v.issue.number, &v.projection.task, &v.blockers,
             v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),
             hosts, observed, cfg.ttl),
+        created: Some(v.issue.created).filter(|t| *t > 0),
+        steps: stage_history(v),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
@@ -178,6 +183,22 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ")).map(str::to_string).collect(),
     }).collect();
     Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
+}
+
+/// O1: ordered board stages, with unknown boundaries retained. The fold still owns transitions.
+fn stage_history(v: &View) -> Vec<Value> {
+    let mut steps = Vec::new();
+    let mut state = v.projection.changes.first().map_or(v.projection.task.state, |(_, before, _)| before.state);
+    let mut start = Some(v.issue.created).filter(|t| *t > 0);
+    for (id, _, after) in &v.projection.changes {
+        let end = v.comments.iter().find(|c| c.id == *id).map(|c| c.created).filter(|t| *t > 0);
+        let valid = start.zip(end).is_some_and(|(a,b)| b >= a);
+        steps.push(json!({"state": state.name(), "start": if valid { start } else { None }, "end": end, "complete": true}));
+        state = after.state;
+        start = end;
+    }
+    steps.push(json!({"state": state.name(), "start": start, "end": null, "complete": false}));
+    steps
 }
 
 /// `session #<N> <attempt> <url>` heartbeat lines (§ 4) by host name and attempt; only a canonical claude.ai URL.
@@ -258,6 +279,8 @@ impl Row {
         if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); row["wait"] = json!(wait_text(reason)); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
+        row["created"] = json!(self.created);
+        row["steps"] = json!(self.steps);
         row["stuck"] = json!(self.stuck.is_some());
         if let Some(a) = self.stuck { row["age_s"] = json!(a); }
         row
@@ -455,11 +478,28 @@ mod tests {
         board::Issue { number: 9, title: "taskq host win".into(), body: format!("version 4\n{row}"), updated: 1000 - age, trusted: true, ..Default::default() }
     }
 
+    // O1/R1/R12: retain accepted board stages, including missing dates; ignored entries cannot invent a step.
+    #[test]
+    fn dashboard_stages_use_only_accepted_board_changes() {
+        let log=vec![crate::core::Entry{id:1,body:"taskq: hold".into(),edited:false},
+            crate::core::Entry{id:2,body:"taskq: start".into(),edited:false},
+            crate::core::Entry{id:3,body:"taskq: spawn worker codex:s mac".into(),edited:false},
+            crate::core::Entry{id:4,body:"taskq: result deadbeef attempt 999".into(),edited:false}];
+        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false},
+            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false}];
+        let v=View {issue:board::Issue{number:1,created:100,..Default::default()},projection:crate::core::project(1,&log,false),log,comments,blockers:vec![]};
+        let steps=stage_history(&v);
+        assert_eq!(steps.iter().map(|s|s["state"].as_str().unwrap()).collect::<Vec<_>>(),["ready","held","ready","doing"]);
+        assert_eq!(steps[1],json!({"state":"held","start":100,"end":150,"complete":true}));
+        assert!(steps[2]["start"].is_null() && steps[2]["end"].is_null(),"unknown boundary never becomes a duration");
+        assert!(steps[3]["start"].is_null() && steps[3]["end"].is_null() && steps[3]["complete"]==false);
+    }
+
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, stuck: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -473,7 +513,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, stuck: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -517,7 +557,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, stuck };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");

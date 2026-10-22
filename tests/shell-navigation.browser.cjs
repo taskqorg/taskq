@@ -29,8 +29,8 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   await page.evaluate(()=>document.querySelector('.menu').style.fontSize='20px');
   await page.locator('.tqp-counts [data-state=ready]').first().click();
   assert.equal(await page.locator('h1').innerText(),'Tasks');
-  assert.equal(await page.locator('.breadcrumbs').innerText().then(s=>s.replace(/\s+/g,' ')),'Projects \u203a Alpha','TW1: filtered tasks retain linked project ancestors');
-  await page.locator('.breadcrumbs [data-route=fixture-alpha]').click();
+  assert.equal(await page.locator('.view-criteria').innerText().then(s=>s.includes('Alpha')),true,'O3: working project criteria remain visible on dashboard');
+  await page.locator('[data-route=fixture-alpha]').click();
   assert.equal(await page.locator('h1').innerText(),'Alpha');
   assert.equal(await page.locator('.breadcrumbs').innerText(),'Projects');
   // V23/V26: notification labels must fit in both host and project toggle groups.
@@ -56,25 +56,25 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   assert.equal(await tray.locator('h1').evaluate(e=>getComputedStyle(e).outlineStyle),'none','TW1: programmatic heading focus has no box');
   await tray.evaluate(()=>taskq.receive({workspaceError:'Invented construction failure'}));assert.match(await tray.locator('[role=alert]').innerText(),/construction failure/);
   await tray.evaluate(()=>taskq.receive({workspaceError:null}));assert.equal(await tray.locator('[role=alert]').count(),0,'successful workspace retry clears its construction error');
-  await tray.locator('[data-route=projects]').first().focus();await tray.locator('[data-route=projects]').first().click();
-  const shellRoute=()=>tray.locator('[data-shell-route]').evaluate(e=>e.dataset.shellRoute+' '+e.dataset.shellDepth);assert.equal(await shellRoute(),'/projects 2','A3: navigation pushes a Wouter history entry');
-  await tray.locator('[data-a=back]').click();assert.equal(await shellRoute(),'/home 1','A3: Back pops the Wouter history entry');assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
+  await tray.locator('[data-route=settings]').click();await tray.locator('[data-route=projects]').first().focus();await tray.locator('[data-route=projects]').first().click();
+  const shellRoute=()=>tray.locator('[data-shell-route]').evaluate(e=>e.dataset.shellRoute+' '+e.dataset.shellDepth);assert.equal(await shellRoute(),'/projects 3','A3: navigation pushes a Wouter history entry');
+  await tray.locator('[data-a=back]').click();assert.equal(await shellRoute(),'/settings 2','A3: Back pops the Wouter history entry');assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
   assert.equal(await tray.evaluate(()=>parses),0,'tray pages render as Preact route components without template parsing');
-  await tray.locator('.shell-overflow > summary').click();await tray.locator('[data-route=settings]').click();
+
   await tray.locator('[data-route=appearance]').click();assert.equal(await tray.locator('.breadcrumbs').innerText(),'Settings','TW1: omit the current settings page from breadcrumbs');
   assert.equal(await tray.locator('.breadcrumbs a').count(),1,'TW1: each ancestor segment stays linked');
   await tray.locator('[data-a=back]').click();assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'appearance');
   const bar=await tray.locator('.head').elementHandle();await tray.evaluate(s=>taskq.receive({...s,now:1001}),snapshot);assert.equal(await tray.locator('.head').evaluate((e,old)=>e===old,bar),true,'snapshot updates retain the bar DOM');
-  await tray.keyboard.press('Alt+ArrowLeft');assert.equal(await tray.locator('h1').innerText(),'Home');
-  await tray.locator('.shell-overflow > summary').click();await tray.keyboard.press('Escape');
-  assert.equal(await tray.locator('.shell-overflow').evaluate(e=>e.open),false,'Escape closes overflow first');
-  assert.equal(await tray.evaluate(()=>document.activeElement.tagName),'SUMMARY');
+  await tray.keyboard.press('Alt+ArrowLeft');assert.equal(await tray.locator('h1').innerText(),'Tasks');
+  await tray.locator('[data-a=view-editor]').click();await tray.keyboard.press('Escape');
+  assert.equal(await tray.locator('#taskq-popover').count(),0,'Escape closes anchored editor first');
+  assert.equal(await tray.evaluate(()=>document.activeElement.dataset.a),'view-editor');
   await tray.keyboard.press('Escape');assert.equal(await tray.evaluate(()=>messages.some(m=>m.a==='hide')),true,'Escape then closes only the window');
   const routeRows=[];
   for(const hasTouch of [false,true]){
    const context=await browser.newContext({viewport:{width:320,height:600},hasTouch});
    const p=await context.newPage();p.on('pageerror',e=>errors.push(e.message));await p.setContent(fs.readFileSync('build/web/tray.html','utf8'));
-   for(const route of ['home','projects',project.root,'attention','settings','appearance','cadence','notifications','agents','services','about','stop','recovery']){
+   for(const route of ['home','projects',project.root,'attention','settings','appearance','window','tray-icon','delivery','cadence','notifications','agents','services','about','stop','recovery']){
     await p.evaluate(s=>taskq.receive(s),{...snapshot,page:route});
     assert.equal(await p.locator('h1').count(),1);assert.equal(await p.locator('.head h1').count(),1,route+' has a single fixed title');
     const small=await p.evaluate(min=>[...document.querySelectorAll('button,a,summary,input,select,textarea,[role=button]')].filter(e=>!e.disabled&&e.checkVisibility()).map(e=>({label:e.getAttribute('aria-label')||e.innerText||e.labels?.[0]?.innerText||e.id,rect:(e.matches('input[type=checkbox]')&&e.labels?.[0]?e.labels[0]:e).getBoundingClientRect()})).filter(e=>e.rect.width<min-.1||e.rect.height<min-.1).map(e=>({label:e.label,width:e.rect.width,height:e.rect.height})),hasTouch?44:32);
@@ -87,7 +87,7 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
       if(!label?.trim())unnamed.push(e.outerHTML.slice(0,100));
       for(let j=0;j<i;j++){
        const a=boxes[i],b=boxes[j];
-       if(elements[j].contains(e)||e.contains(elements[j])||a.bottom<=0||b.bottom<=0||a.top>=innerHeight||b.top>=innerHeight)continue;
+       if(e.closest('.anchored-popover')!==elements[j].closest('.anchored-popover')||elements[j].contains(e)||e.contains(elements[j])||a.bottom<=0||b.bottom<=0||a.top>=innerHeight||b.top>=innerHeight)continue;
        const clip=e.closest('.content')?.getBoundingClientRect(),other=elements[j].closest('.content')?.getBoundingClientRect();
        if(clip&&(a.top<clip.top||a.bottom>clip.bottom)||other&&(b.top<other.top||b.bottom>other.bottom))continue;
        if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1)overlaps.push([label,elements[j].innerText||elements[j].getAttribute('aria-label')]);
@@ -118,7 +118,7 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   await workspace.locator('.content [data-route=agents]').click();
   const saved=await workspace.evaluate(()=>messages.filter(m=>m.a==='workspace-set').at(-1).navigation);
   await workspace.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await workspace.evaluate(s=>taskq.receive(s),{...snapshot,workspace_navigation:saved});
-  assert.equal(await workspace.locator('h1').innerText(),'Agent settings');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Messages');
+  assert.equal(await workspace.locator('h1').innerText(),'Agent settings');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Inbox');
   assert.deepEqual(errors,[]);await workspace.close();
   console.log('PASS TW1/V06/V09: route titles, invoker focus, stable bar, keyboard Back, fine/coarse targets and independent workspace reload/Back');
  }finally{await browser.close();}

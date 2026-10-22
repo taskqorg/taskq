@@ -22,8 +22,8 @@ normalize:function(saved,snapshot,routes,root='home'){
    unavailable:!valid&&typeof v.page==='string'?'Requested destination is no longer available.':typeof v.unavailable==='string'?v.unavailable.slice(0,160):null};
  }
  });
- if(saved?.schema!==1)return {schema:1,current:entry(null),trail:[]};
- return {schema:1,current:entry(saved.current),trail:(Array.isArray(saved.trail)?saved.trail:[]).slice(-32).filter(v=>v&&entry(v).page===v.page).map(entry)};
+ if(saved?.schema!==1)return {schema:1,current:entry(null),trail:[],...(root==='home'?{dashboard:require('./task-views.js').normalize(null)}:{})};
+ return {schema:1,...(root==='home'?{dashboard:require('./task-views.js').normalize(saved.dashboard,saved.current)}:{}),current:entry(saved.current),trail:(Array.isArray(saved.trail)?saved.trail:[]).slice(-32).filter(v=>v&&entry(v).page===v.page).map(entry)};
 },
 create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'}){
  let hydrated=false,timer=null,last='',restoring=false;
@@ -34,7 +34,7 @@ create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'})
  focus:function(saved){const target=saved?[...menu.querySelectorAll(saved.tag)].filter(e=>JSON.stringify(e.dataset)===saved.key)[saved.index]:null;(target?.checkVisibility?.()&&!target.disabled?target:menu.querySelector('h1'))?.focus({preventScroll:true});},
  hydrate:function(snapshot){
   if(snapshot.page!==undefined){hydrated=true;return;}
-  if(!hydrated){hydrated=true;const state=normalize(snapshot.navigation,snapshot,routes,root);api.apply(state.current);trail.push(...state.trail);}
+  if(!hydrated){hydrated=true;const state=normalize(snapshot.navigation,snapshot,routes,root);api.apply(state.current);if(root==='home'){view.dashboard=state.dashboard;if(!snapshot.navigation?.dashboard&&snapshot.navigation?.current?.taskFilter?.length){const p=snapshot.projects.find(p=>p.root===state.current.page);if(p)require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}}trail.push(...state.trail);}
   else {
    const current=api.capture(),state=normalize({schema:1,current,trail},snapshot,routes,root);
    if(state.current.page!==view.page||JSON.stringify(state.current.working)!==JSON.stringify(view.working)||JSON.stringify(state.current.taskFilter)!==JSON.stringify(view.taskFilter))api.apply(state.current);
@@ -49,7 +49,8 @@ create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'})
  },
  flush:function(){
   cancel(timer);timer=null;if(!hydrated||view.S?.page!==undefined)return;
-  const navigation=normalize({schema:1,current:api.capture(),trail},view.S,routes,root),text=JSON.stringify(navigation);
+  if(root==='home'&&view.dashboard&&view.page==='home')require('./task-views.js').current(view.dashboard).scroll=(menu.querySelector('.content')||document.scrollingElement)?.scrollTop||0;
+  const navigation=normalize({schema:1,current:api.capture(),trail,...(root==='home'?{dashboard:view.dashboard}:{})},view.S,routes,root),text=JSON.stringify(navigation);
   if(text!==last){last=text;send({a:'set',navigation});}
  },
  schedule:function(){if(restoring)return;cancel(timer);timer=defer(api.flush,100);}

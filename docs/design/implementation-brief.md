@@ -117,3 +117,13 @@ Accepted: product direction, six shared workflow refinements, and AI-assisted co
 The current final browser reference is workspace-preview.html, assembled from the component sources above. It remains an interactive simulation. Publication must include the matching specq revision and all TaskQ source components, assets, configuration, fixtures and evidence; transfer the package through version control rather than temporary chat paths.
 
 Installation handoff: [S1–S5](setup-and-project-locations.md) requires a real documented command per supported shell, shared setup without a running AI agent, host-owned Projects folder, exact launch/resume roots and no home discovery. Include S-A1–S-A8 in streams 1/6/9/11; audit the reported macOS prompts before attributing their cause.
+
+## Dashboard baseline (#1578)
+
+Implement #1578 against main `21742cea80e5ac90c0e9e375169fecaae8e09773`, preserving the dirty design checkout. [#1573](https://github.com/taskqorg/taskq/issues/1573#issuecomment-6340259438) settles O1–O3; [MP11–MP13](menu-product.md#dashboard-decisions-1573) are canonical. The earlier open choices and Closed/operator snapshots do not override them.
+
+Frozen archive: [taskq-design-2026-10-22.zip](https://github.com/user-attachments/files/33818402/taskq-design-2026-10-22.zip), 7,839,451 bytes, SHA256 `d9f39f3f24bbb4e43d94c113dbdd222bf839ee78e67e86de4fa0b12e2ef1f640`. [Manifest](evidence/frozen-1573-package.json) verified all 168 TaskQ and 30 shared-file hashes. The archived shared snapshot is provenance only; apply injected specq `d67126cd7e4fb88bcabd63de10748c5c3a9f5442`.
+
+Editable [reference](exploration/control-panels.html), `conversation-walkthrough`, SHA256 `9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04`. Do not regenerate it. Preserve original package evidence; implementation evidence belongs under `evidence/dashboard-1578/`.
+
+Current components to reuse: Preact/Signals/Wouter shell; project blocks/provider assets; task-controls dispatcher and answer receipts; resource/admission and lifecycle workspace reviews; owner sessions; host-only agents/access/delivery; telemetry history, incidents, setup and updates. Keep Conversations and session adapters with #1580/#1565. No new scheduler, environment engine, gateway, grants, deployment or host migration.

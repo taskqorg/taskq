@@ -1,0 +1,21 @@
+// MP11–MP13/O2/O3: per-view working context, exact Save/Reset, restart, canonical ties and no path-based scope.
+const assert=require('node:assert/strict'),views=require('../src/task-views.js');
+const a={issues:'https://forge.example/org/a/issues',board_kind:'github',root:'/one'},b={...a,root:'/two'};
+assert.equal(views.identity(a),views.identity(b));
+assert.equal(views.identity({...a,issues:'https://forge.example/org/issues-helper/issues'}),'github://forge.example/org/issues-helper');
+assert.equal(views.identity({...a,issues:'https://forge.example/org/a/-/issues',board_kind:'gitlab'}),'gitlab://forge.example/org/a');
+assert.notEqual(views.identity(a),views.identity({...a,board_kind:'gitlab'}));
+const m=views.normalize(null,{taskFilter:['doing'],scroll:50}),all=views.current(m);
+assert.deepEqual(all.working.states,['doing']);assert.equal(views.dirty(all),true);
+all.working.projects=[views.identity(a)];all.working.query='needle';
+assert(views.add(m,' Focus ','focus'));const focus=views.current(m);focus.working.states=['ask','failed'];focus.working.query='unsaved';
+m.selected='all';assert.equal(views.current(m).working.query,'needle');m.selected='focus';
+const restored=views.normalize(JSON.parse(JSON.stringify(m)));assert.deepEqual(restored,m);
+views.reset(restored);assert.equal(views.current(restored).working.query,'needle');
+focus.working.query='saved';views.save(m);assert.equal(focus.saved.query,'saved');assert.equal(views.dirty(focus),false);
+assert.deepEqual(views.scope([a,b,{...a,issues:'https://other.example/org/b/issues'}],all.working),[a,b]);
+const rows=[{state:'ready',n:2,boardIdentity:'b'},{state:'ready',n:2,boardIdentity:'a'},{state:'ready',n:9,labels:['p0']},{state:'review',n:12}];
+assert.deepEqual(rows.sort(views.compare).map(r=>[r.state,r.n,r.boardIdentity]),[['review',12,undefined],['ready',9,undefined],['ready',2,'a'],['ready',2,'b']]);
+assert(views.matches({title:'A NEEDLE',project:'Alpha'},'needle'));assert(!views.matches({title:'other'},'needle'));
+assert(!views.add(m,'','bad'));assert.equal(views.normalize({views:[{id:'toString',name:'Bad'}]}).selected,'all');
+console.log('PASS O2/O3 canonical comparator, OR/project/search scope, migration, independent working views, Save/Reset/restart');
