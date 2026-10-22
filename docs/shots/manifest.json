@@ -1,16 +1,16 @@
 {
   "version": "4.6.31",
-  "sourceCommit": "bebc6438280789c814694bd450204388efacfb1a",
-  "binarySha256": "3205ae3ec83662538764f3ed3a7267383622810e6bc6ed58e9e089a617461215",
+  "sourceCommit": "c4b30069679ff787719008233c113f1c06441ebe",
+  "binarySha256": "17001b60ff9225344ba0e1ea3f18429491f700c4d87d0d1f876a7d61df9b7de1",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "43af23d328180e22589753d3b2af02ae31434530",
-    "src/tray.html": "ee99783ea848e8be61b6d8d01d70057288344ae2",
-    "src/tray-app.js": "186c383cb3239bc957c71ebfdf6f2150206dea88",
+    "src/tray.rs": "8250de5301f4fbdd021732ef4df5076982d64ef6",
+    "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
+    "src/tray-app.js": "fd7846b418895481d1ee51408528327470bec07a",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
     "src/tray-view-state.js": "a0eb498c1a0fe83f23ec19cf1330bf7da0e05b37",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
@@ -33,8 +33,7 @@
     "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
     "scripts/build-web.cjs": "3bbab0311b0abef5f9a7b5dd4ce55a2cb03dbde5",
-    "src/icon.rs": "4b7b82dc6dd8faeb97cc78d9abc0a0937bf53047",
-    "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
+    "src/icon.rs": "172cc8303a2ff0b2ee760bc12a472dd1499b80a8"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
@@ -44,11 +43,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "cc951f4bf2b5ea39eddba254415bb45dbc84365d6d23f14c10c2603c3a2920c0"
+      "sha256": "4f3f75b50f0e7b18bdfd0fdbfd6141175479168666d64e87ee64fb48dce3783d"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "a81c539ad0282bada33cac1e8ace169569435d5dadeb52babf87d0385bec6ca6"
+      "sha256": "f8abe067838cf5737b66dc55d567d6f785a3b5e2ca3db63ab1e516ae2bd16a44"
     }
   ]
 }
