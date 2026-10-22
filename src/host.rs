@@ -792,6 +792,13 @@ pub fn run(install: &Path) -> Res<()> {
         Ok(None)=>{},
         Err(e)=>crate::platform::log(&e),
     }
+    // #1625: each start (logon, install, restart) re-arms the 5-minute repeat that Stop disabled.
+    #[cfg(windows)]
+    match crate::host_control::repeat_trigger(&crate::platform::tool(install),true) {
+        Ok("changed")=>crate::platform::log("host task 5-minute restart trigger enabled"),
+        Ok(_)=>{},
+        Err(e)=>crate::platform::log(&format!("host task restart trigger: {e}")),
+    }
     let mut telemetry=crate::telemetry::HostCapture::default();
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
     let mut hostname=crate::hostname();

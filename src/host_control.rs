@@ -68,8 +68,9 @@ $a=$d.Actions.Item(1);$e=$saved.Task.Actions.Exec
 $principal=[string]$xml.Task.Principals.Principal.UserId
 $owner=if($principal.StartsWith('S-1-',[StringComparison]::OrdinalIgnoreCase)){{[Security.Principal.SecurityIdentifier]::new($principal).Value}}else{{[Security.Principal.NTAccount]::new($principal).Translate([Security.Principal.SecurityIdentifier]).Value}}
 if($d.Principal.LogonType -ne 3 -or $d.Principal.RunLevel -ne 0 -or $owner -ne $sid -or $d.Actions.Count -ne 1 -or @($e).Count -ne 1 -or !(Test-CoreQPath $a.Path {exe}) -or $a.Arguments -ne 'service run' -or !(Test-CoreQPath $a.WorkingDirectory {cwd}) -or !(Test-CoreQPath $a.Path ([string]$e.Command)) -or $a.Arguments -ne [string]$e.Arguments -or !(Test-CoreQPath $a.WorkingDirectory ([string]$e.WorkingDirectory))){{throw 'host task scope differs'}}
-if($d.Triggers.Count -ne 1 -or $d.Triggers.Item(1).Type -ne 9 -or !$d.Triggers.Item(1).Enabled){{throw 'host task trigger differs'}}
-$principal=[string]$d.Triggers.Item(1).UserId
+$logon=@($d.Triggers|Where-Object {{$_.Type -eq 9}});$time=@($d.Triggers|Where-Object {{$_.Type -eq 1}})
+if($logon.Count -ne 1 -or !$logon[0].Enabled -or $time.Count -gt 1 -or $d.Triggers.Count -ne $logon.Count+$time.Count -or ($time.Count -eq 1 -and $time[0].Repetition.Interval -ne 'PT5M')){{throw 'host task trigger differs'}}
+$principal=[string]$logon[0].UserId
 $trigger=if($principal.StartsWith('S-1-',[StringComparison]::OrdinalIgnoreCase)){{[Security.Principal.SecurityIdentifier]::new($principal).Value}}else{{[Security.Principal.NTAccount]::new($principal).Translate([Security.Principal.SecurityIdentifier]).Value}}
 if($trigger -ne $sid){{throw 'host task trigger owner differs'}}
 if({pid} -ne 0){{$acl=[Security.AccessControl.RawSecurityDescriptor]::new($t.GetSecurityDescriptor(4));$aces=@($acl.DiscretionaryAcl)
@@ -138,7 +139,8 @@ $p=$saved.Task.Principals.Principal;$sid=[Security.Principal.WindowsIdentity]::G
 $principal=[string]$p.UserId
 $owner=if($principal.StartsWith('S-1-',[StringComparison]::OrdinalIgnoreCase)){{[Security.Principal.SecurityIdentifier]::new($principal).Value}}else{{[Security.Principal.NTAccount]::new($principal).Translate([Security.Principal.SecurityIdentifier]).Value}}
 if(@($saved.Task.Principals.Principal).Count -ne 1 -or $owner -ne $sid -or [string]$p.LogonType -ne 'InteractiveToken' -or [string]$p.RunLevel -ne 'LeastPrivilege' -or @($saved.Task.Actions.Exec).Count -ne 1 -or @($saved.Task.Actions.ChildNodes).Count -ne 1 -or !(Test-CoreQPath ([string]$e.Command) {exe}) -or [string]$e.Arguments -ne 'service run' -or !(Test-CoreQPath ([string]$e.WorkingDirectory) {cwd})){{throw 'saved host task scope differs'}}
-if(@($saved.Task.Triggers.ChildNodes).Count -ne 1 -or @($saved.Task.Triggers.LogonTrigger).Count -ne 1 -or [string]$saved.Task.Triggers.LogonTrigger.Enabled -ne 'true'){{throw 'saved host task trigger differs'}}
+$time=@($saved.Task.Triggers.ChildNodes|Where-Object {{$_.LocalName -eq 'TimeTrigger'}})
+if($time.Count -gt 1 -or @($saved.Task.Triggers.ChildNodes).Count -ne 1+$time.Count -or @($saved.Task.Triggers.ChildNodes|Where-Object {{$_.LocalName -eq 'LogonTrigger'}}).Count -ne 1 -or [string]$saved.Task.Triggers.LogonTrigger.Enabled -ne 'true' -or ($time.Count -eq 1 -and [string]$time[0].Repetition.Interval -ne 'PT5M')){{throw 'saved host task trigger differs'}}
 $principal=[string]$saved.Task.Triggers.LogonTrigger.UserId
 $trigger=if($principal.StartsWith('S-1-',[StringComparison]::OrdinalIgnoreCase)){{[Security.Principal.SecurityIdentifier]::new($principal).Value}}else{{[Security.Principal.NTAccount]::new($principal).Translate([Security.Principal.SecurityIdentifier]).Value}}
 if($trigger -ne $sid){{throw 'saved host task trigger owner differs'}}
@@ -181,6 +183,26 @@ fn powershell(code:&str)->Command {
     let code=format!("function Get-TaskQInstances($service,$task) {{ $service.GetRunningTasks(1) | Where-Object {{ $_.Path -eq $task.Path }} }}\n{code}");
     let bytes:Vec<u8>=code.encode_utf16().flat_map(u16::to_le_bytes).collect();
     let mut command=Command::new("powershell.exe");command.args(["-NoProfile","-NonInteractive","-WindowStyle","Hidden","-EncodedCommand",&crate::tray::base64(&bytes)]);command
+}
+
+/// #1625: the CoreQ unit's 5-minute repeat restarts an exited host; Stop disables only it, each host start enables it
+/// (adding it to a pre-v0.14.7 unit). Only this install's own unit is edited; a missing unit or exe is `absent`.
+#[cfg(windows)]
+pub fn repeat_trigger(tool:&coreq::Tool,enable:bool)->Res<&'static str> {
+    let exe=tool.install.join(tool.exe_name());
+    if !exe.is_file() {return Ok("absent");}
+    let code=format!(r#"$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\')
+try{{$t=$r.GetTask({name})}}catch{{if(($_.Exception.GetBaseException()).HResult -ne -2147024894){{throw}};'absent';exit 0}}
+$d=$t.Definition;$a=$d.Actions.Item(1)
+if($d.Actions.Count -ne 1 -or $a.Arguments -ne 'service run' -or !(Test-CoreQPath $a.Path {exe})){{'absent';exit 0}}
+$time=@($d.Triggers|Where-Object {{$_.Type -eq 1}});if($time.Count -gt 1 -or ($time.Count -eq 1 -and $time[0].Repetition.Interval -ne 'PT5M')){{throw 'host task repeat trigger differs'}}
+if({enable}){{if($time.Count -eq 1 -and $time[0].Enabled -and $d.Settings.MultipleInstances -eq 2){{'kept';exit 0}}
+if($time.Count -eq 0){{$x=$d.Triggers.Create(1);$x.StartBoundary='2026-01-01T00:00:00';$x.Repetition.Interval='PT5M';$x.Repetition.StopAtDurationEnd=$false}}else{{$x=$time[0]}}
+$x.Enabled=$true;$d.Settings.MultipleInstances=2}}else{{if($time.Count -eq 0 -or !$time[0].Enabled){{'kept';exit 0}};$time[0].Enabled=$false}}
+$null=$r.RegisterTaskDefinition({name},$d,4,$null,$null,3,$null);'changed'"#,name=quote(tool.title),exe=quote(&exe.to_string_lossy()),enable=if enable {"$true"}else{"$false"});
+    let code=format!("{}\n{code}",coreq::service::windows_path_identity());
+    let out=output("host.unit.repeat",&mut powershell(&code))?;
+    match String::from_utf8_lossy(&out.stdout).trim() {"absent"=>Ok("absent"),"kept"=>Ok("kept"),"changed"=>Ok("changed"),other=>Err(format!("host task repeat trigger unknown: {other}"))}
 }
 
 #[cfg(windows)]
@@ -344,31 +366,39 @@ $s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\');$t
 if($t.Definition.Actions.Count -ne 1 -or @($exec).Count -ne 1 -or !(Test-CoreQPath $a.Path ([string]$exec.Command)) -or $a.Arguments -ne [string]$exec.Arguments -or !(Test-CoreQPath $a.WorkingDirectory ([string]$exec.WorkingDirectory)) -or !(Test-CoreQPath $a.WorkingDirectory {cwd})){{throw 'scheduled host scope differs'}}
 "#,name=quote(tool.title),definition=quote(&definition(tool)?.to_string_lossy()),cwd=quote(&install.to_string_lossy()));
         let setup=format!("{}\n{setup}",coreq::service::windows_path_identity());
-        let query=format!(r#"{setup}
+        // #1625: disable the repeat before the native stop so it cannot restart the host; logon and install still start it.
+        repeat_trigger(tool,false)?;
+        let stopped=(||->Res<()> {
+            let query=format!(r#"{setup}
 $instances=@(Get-TaskQInstances $s $t);if($instances.Count -gt 1){{throw 'multiple native host instances'}}
 if($instances.Count -eq 0){{'null';exit 0}}
 $instance=$instances[0];$engine=$instance.EnginePID;$daemon=Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction Stop
 $created=(Get-Process -Id $engine -ErrorAction Stop).StartTime.ToFileTimeUtc()
 if(!$daemon -or $daemon.ParentProcessId -ne $engine -or (Get-Process -Id {pid}).StartTime.ToFileTimeUtc().ToString() -ne {started} -or $created -gt [long]{started}){{throw 'scheduled host owner differs'}}
 [pscustomobject]@{{pid=$engine;started=$created.ToString();instance=$instance.InstanceGuid}}|ConvertTo-Json -Compress"#,pid=expected.pid,started=quote(&expected.started));
-        let observed=output("host.stop.owner",&mut powershell(&query))?;
-        let observed:serde_json::Value=serde_json::from_slice(&observed.stdout).map_err(|e|format!("native launcher observation invalid: {e}"))?;
-        let mut scope=lifecycle::saved_launcher(install,id,expected)?;
-        if !observed.is_null() {lifecycle::save_launcher(install,id,expected,&observed)?;scope=Some(observed);}
-        if let Some(scope)=scope {
-            let launcher=Identity {pid:scope["pid"].as_u64().ok_or("launcher pid unknown")? as u32,started:scope["started"].as_str().ok_or("launcher creation unknown")?.into()};
-            let stop=format!(r#"{setup}
+            let observed=output("host.stop.owner",&mut powershell(&query))?;
+            let observed:serde_json::Value=serde_json::from_slice(&observed.stdout).map_err(|e|format!("native launcher observation invalid: {e}"))?;
+            let mut scope=lifecycle::saved_launcher(install,id,expected)?;
+            if !observed.is_null() {lifecycle::save_launcher(install,id,expected,&observed)?;scope=Some(observed);}
+            if let Some(scope)=scope {
+                let launcher=Identity {pid:scope["pid"].as_u64().ok_or("launcher pid unknown")? as u32,started:scope["started"].as_str().ok_or("launcher creation unknown")?.into()};
+                let stop=format!(r#"{setup}
 $instances=@(Get-TaskQInstances $s $t);if($instances.Count -gt 1){{throw 'multiple native host instances'}}
 if($instances.Count -eq 1){{$instance=$instances[0];if($instance.InstanceGuid -ne {instance} -or $instance.EnginePID -ne {pid} -or (Get-Process -Id {pid} -ErrorAction Stop).StartTime.ToFileTimeUtc().ToString() -ne {started}){{throw 'native launcher incarnation differs'}};$instance.Stop()}}
 $until=[DateTime]::UtcNow.AddSeconds(10);while(@(Get-TaskQInstances $s $t).Count -ne 0 -and [DateTime]::UtcNow -lt $until){{Start-Sleep -Milliseconds 20}}
 if(@(Get-TaskQInstances $s $t).Count -ne 0){{throw 'scheduled host stop not observed'}}"#,instance=quote(scope["instance"].as_str().ok_or("launcher instance unknown")?),pid=launcher.pid,started=quote(&launcher.started));
-            output("host.stop.native",&mut powershell(&stop))?;
-            terminate_owned(&launcher)?;
-            wait_exit(&launcher)?;
-            terminate_owned(expected)?;
-        } else if coreq::process::identity(expected.pid).map_err(|e|e.to_string())?.as_ref()==Some(expected) {
-            return Err("live daemon has no attributable scheduler launcher; Stop refused".into());
-        }
+                output("host.stop.native",&mut powershell(&stop))?;
+                terminate_owned(&launcher)?;
+                wait_exit(&launcher)?;
+                terminate_owned(expected)?;
+            } else if coreq::process::identity(expected.pid).map_err(|e|e.to_string())?.as_ref()==Some(expected) {
+                return Err("live daemon has no attributable scheduler launcher; Stop refused".into());
+            }
+            Ok(())
+        })();
+        // A refused or failed Stop leaves the host running: restore its restart source.
+        if stopped.is_err()&&coreq::process::identity(expected.pid).ok().flatten().as_ref()==Some(expected) {let _=repeat_trigger(tool,true);}
+        stopped?;
     }
     wait_exit(expected)?;
     if revision_for(tool)?!=unit_revision {return Err("host unit definition changed during Stop; outcome unknown".into());}
@@ -565,6 +595,99 @@ if($allowed.Count -eq 0){{throw 'limited controller cannot retire its own task'}
         }
         capture.flush().unwrap();drop(guard);drop(capture);
         fs::write(install.join("adapter-result.json"),json!({"unit":name,"native_pid":native.pid,"native_started":native.started,"unit_revision":revision,"exit":true,"replay":true,"definition_retained_after_stop":true,"definition_retained":!uninstall,"unit_removed":uninstall,"install_starts":starts,"running_launcher_collateral":collateral}).to_string()).unwrap();
+    }
+
+    // #1625: a CoreQ v0.14.7 unit repeats every 5 minutes, an older one has no repeat; any other trigger set stays refused.
+    #[cfg(windows)]
+    #[test]
+    fn saved_unit_accepts_only_logon_and_one_repeat_trigger() {
+        let install=std::env::temp_dir().join(format!("taskq-repeat-saved-{}",crate::runtime::uuid()));
+        let tool=coreq::Tool {install:install.clone(),..coreq::Tool::new("taskq-repeat-saved","TaskQ-Repeat-Saved","fixture/unused","1.2.3")};
+        fs::create_dir_all(&install).unwrap();fs::write(install.join(tool.exe_name()),b"").unwrap();
+        let unit=coreq::service::unit(&tool,&install,"");
+        let repeat="<TimeTrigger><Enabled>true</Enabled><StartBoundary>2026-01-01T00:00:00</StartBoundary><Repetition><Interval>PT5M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition></TimeTrigger>";
+        assert!(unit.text.contains(repeat),"pinned CoreQ unit lacks the 5-minute repeat");
+        for (text,accepted) in [(unit.text.clone(),true),(unit.text.replace(repeat,""),true),(unit.text.replace(repeat,&repeat.replace("<Enabled>true","<Enabled>false")),true),
+            (unit.text.replace(repeat,&repeat.repeat(2)),false),(unit.text.replace("PT5M","PT10M"),false),(unit.text.replace("<LogonTrigger><Enabled>true","<LogonTrigger><Enabled>false"),false)] {
+            let bytes:Vec<u8>=std::iter::once(0xFEFFu16).chain(text.encode_utf16()).flat_map(u16::to_le_bytes).collect();
+            fs::write(definition(&tool).unwrap(),bytes).unwrap();
+            let checked=verify_saved_install_scope(&tool);
+            assert_eq!(checked.is_ok(),accepted,"{checked:?}");
+            if let Err(e)=checked {assert!(e.contains("trigger differs"),"{e}");}
+        }
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    // #1625 A3: an owned temporary unit, never the product unit. Its launcher/daemon probe mirrors `service run`.
+    #[cfg(windows)]
+    #[test]
+    #[ignore="registers an owned temporary scheduled task and waits up to 12 minutes; Windows host only"]
+    fn native_repeat_restarts_exited_host() {
+        let nonce=crate::runtime::uuid().replace('-',"");
+        let install=std::env::temp_dir().join(format!("taskq-repeat-native-{nonce}"));
+        let name=Box::leak(format!("taskq-repeat-probe-{nonce}").into_boxed_str());
+        let title=Box::leak(format!("TaskQ-Repeat-Probe-{nonce}").into_boxed_str());
+        let tool=coreq::Tool {name,title,repo:"fixture/unused",version:crate::platform::VERSION,install:install.clone(),fault:None};
+        let exe=install.join(tool.exe_name());
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("probe.rs"),r#"fn main(){
+    if std::env::args().nth(1).as_deref()==Some("daemon") {
+        std::fs::write("native.json",format!("{{\"pid\":{}}}",std::process::id())).unwrap();
+        loop {std::thread::sleep(std::time::Duration::from_secs(60));}
+    }
+    let _=std::process::Command::new(std::env::current_exe().unwrap()).arg("daemon").status();
+    std::process::exit(0);
+}"#).unwrap();
+        // A clean launcher exit, like the silent one in #1625: RestartOnFailure does not apply, only the repeat restarts it.
+        assert!(Command::new("rustc").arg("-o").arg(&exe).arg(install.join("probe.rs")).status().unwrap().success());
+        let trace=std::panic::catch_unwind(std::panic::AssertUnwindSafe(||repeat_trace(&tool,&nonce)));
+        let cleanup=format!("$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\\')
+try{{$t=$r.GetTask({name});foreach($i in @(Get-TaskQInstances $s $t)){{$i.Stop()}};$r.DeleteTask({name},0)}}catch{{}}
+Get-CimInstance Win32_Process|Where-Object {{$_.ExecutablePath -eq {exe}}}|ForEach-Object {{Stop-Process -Id $_.ProcessId -Force}}",name=quote(title),exe=quote(&exe.to_string_lossy()));
+        output("host.unit.fixture.cleanup",&mut powershell(&cleanup)).unwrap();
+        let trace=trace.unwrap_or_else(|e|std::panic::resume_unwind(e));
+        println!("native repeat trace: {trace}");
+        let _=fs::remove_dir_all(&install);
+    }
+
+    #[cfg(windows)]
+    fn repeat_trace(tool:&coreq::Tool,nonce:&str)->Value {
+        let native=|code:String|String::from_utf8(output("host.unit.fixture",&mut powershell(&format!("$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\\');$t=$r.GetTask({});{code}",quote(tool.title)))).unwrap().stdout).unwrap().trim().to_string();
+        let triggers=||native("(@($t.Definition.Triggers|ForEach-Object {\"$($_.Type):$($_.Enabled)\"}) -join ',')".into());
+        let exe=quote(&tool.install.join(tool.exe_name()).to_string_lossy());
+        let processes=||native(format!("@(Get-CimInstance Win32_Process|Where-Object {{$_.ExecutablePath -eq {exe}}}).Count"));
+        start_install(tool,InstallState::Absent).unwrap_or_else(|e|panic!("fixture start: {}",e.reason));
+        let first=wait_fixture_host(tool,None);
+        verify_saved_install_scope(tool).unwrap();
+        assert_eq!(install_state(tool,Some(&first)).unwrap(),InstallState::Loaded);
+        assert_eq!((triggers().as_str(),repeat_trigger(tool,true).unwrap()),("9:True,1:True","kept"),"CoreQ unit carries the enabled repeat");
+        assert_eq!(repeat_trigger(tool,false).unwrap(),"changed");assert_eq!(triggers(),"9:True,1:False");
+        assert_eq!(repeat_trigger(tool,false).unwrap(),"kept");
+        assert_eq!(coreq::process::identity(first.pid).unwrap().as_ref(),Some(&first),"a trigger edit keeps the running host");
+        assert_eq!(install_state(tool,Some(&first)).unwrap(),InstallState::Loaded,"a disabled repeat is still this host's unit");
+        assert_eq!(repeat_trigger(tool,true).unwrap(),"changed");assert_eq!(triggers(),"9:True,1:True");
+        native("$d=$t.Definition;for($i=$d.Triggers.Count;$i -ge 1;$i--){if($d.Triggers.Item($i).Type -eq 1){$d.Triggers.Remove($i)}};$null=$r.RegisterTaskDefinition($t.Name,$d,4,$null,$null,3,$null)".into());
+        assert_eq!(triggers(),"9:True");assert_eq!(install_state(tool,Some(&first)).unwrap(),InstallState::Loaded,"a pre-v0.14.7 unit stays accepted");
+        assert_eq!(repeat_trigger(tool,true).unwrap(),"changed","host start adds the repeat to an older unit");assert_eq!(triggers(),"9:True,1:True");
+        native("$null=$t.Run($null)".into());std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(processes(),"2","a start while the host runs adds no second launcher or daemon");
+        let killed=Instant::now();terminate_owned(&first).unwrap();wait_exit(&first).unwrap();
+        let until=killed+Duration::from_secs(360);
+        let second=loop {
+            if let Some(next)=fs::read(tool.install.join("native.json")).ok().and_then(|b|serde_json::from_slice::<Value>(&b).ok()).and_then(|v|v["pid"].as_u64())
+                .and_then(|pid|coreq::process::identity(pid as u32).ok().flatten()).filter(|next|next!=&first) {break next;}
+            assert!(Instant::now()<until,"exited host not started again within 6 minutes");
+            std::thread::sleep(Duration::from_secs(1));
+        };
+        let back=killed.elapsed().as_secs();
+        assert_eq!(processes(),"2","the restart runs one launcher and one daemon");
+        let id=nonce.to_string();let revision=revision_for(tool).unwrap();
+        fixture_stop_binding(&tool.install,&id,&second,&revision);
+        stop_unit(tool,&id,&second,&revision).unwrap();
+        assert_eq!(triggers(),"9:True,1:False","Stop disables only the repeat");
+        std::thread::sleep(Duration::from_secs(330));
+        assert_eq!(processes(),"0","a stopped host stays stopped across a repeat boundary");
+        json!({"unit":tool.name,"first_pid":first.pid,"killed_by":"exact pid","second_pid":second.pid,"back_after_s":back,"processes_after_restart":2,"stop_triggers":"logon enabled, repeat disabled","after_stop_330s_processes":0})
     }
 
     fn fixture_stop_binding(install:&Path,id:&str,native:&Identity,revision:&str) {
