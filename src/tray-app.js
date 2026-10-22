@@ -291,7 +291,7 @@ history:function(){
       const segments=b.map(count=>{const low=Math.round(height*total/Math.max(1,peak));total+=count;return Math.round(height*total/Math.max(1,peak))-low;});
       return h('button',{'data-history-bin':i,'aria-label':detail(i),'aria-pressed':String(i===selected),title:detail(i),class:u?'unknown':'',style:'width:'+bar/dpr+'px'},[3,2,1,0].map(k=>h('i',{class:'k'+k,style:'height:'+(u?0:segments[k]/dpr)+'px'})));})),
     h('div',{class:'body meta'},'0 events · oldest → newest'),
-    n>0&&h('select',{'aria-label':'History interval','data-history-select':'',value:String(selected)},rows.map((_,i)=>h('option',{value:String(i)},'Bar '+(i+1)+' of '+n))),
+    n>0&&h('span',{class:'history-selection'},h('select',{'aria-label':'History interval','data-history-select':'',value:String(selected)},rows.map((_,i)=>h('option',{value:String(i)},'Bar '+(i+1)+' of '+n))),icon('arrow-down')),
     h('div',{class:'body meta history-detail',role:'status'},n?'Bar '+(selected+1)+' of '+n+' · '+detail(selected):'Graph unavailable: less than 4 physical px.'),
     h('div',{class:'body meta'},'Ask counts events, not current questions.'),note&&h('div',{class:'body meta'},note));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
