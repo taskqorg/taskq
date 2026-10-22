@@ -29,7 +29,7 @@ module.exports=execution.module('conversations',{
    next:function(){
     if(pending||!queue.length||failure)return;
     const op=queue.shift(),c=items.find(c=>c.id===op.conversation);if(!api.editable(c)){api.next();return;}
-    pending={...op,id:api.id(),revision:c.revision||0};
+    pending={...op,id:api.id(),revision:c.revision||0,version:c.version||0};
     ui.send({a:op.action==='window'?'conversation-window':'conversation-action',...pending});
     ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;notice=failure.reason;draw();}},30000);
    },
@@ -56,6 +56,7 @@ module.exports=execution.module('conversations',{
       if(op.action==='archive'&&c){c.archived=true;undo=c.id;const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;notice='Archived';api.nav();}
       if(op.action==='restore'&&c){c.archived=false;list='recent';search='';api.select(c.id);notice='Restored';undo=null;}
       if(op.action==='delete'){items=items.filter(c=>c.id!==op.conversation);selected=api.visible()[0]?.id||null;notice='Permanently deleted';confirmDelete=false;undo=null;api.nav();}
+      if(op.action==='fork'&&r.value?.forked){if(c&&c.version===op.version)Object.assign(c,native);for(const row of r.snapshot.items)if(!items.some(c=>c.id===row.id))items.push({...row,version:0,saved:0});api.select(r.value.forked);notice='Draft and files moved to a separate request. Nothing sent.';}
       if(op.action==='preview'&&r.value){
        if(r.value.file.mime.startsWith('image/'))ui.effect('conversations.previewImage',()=>new Promise((resolve,reject)=>{const image=new window.Image();ui.listen(image,'load',()=>resolve(r.value));ui.listen(image,'error',()=>reject(Error('Image preview unavailable; file and draft kept')));image.src='data:'+r.value.file.mime+';base64,'+r.value.data;}),value=>{if(value.file){preview=value;notice='Local preview';}else notice=value.reason;draw();});
        else {preview=r.value;notice='Local preview';}
@@ -71,7 +72,7 @@ module.exports=execution.module('conversations',{
     const incoming=s.conversations;
     if(incoming){
      for(const n of incoming.items||[]){const c=items.find(c=>c.id===n.id);if(c){c.request=n.request;c.sent=n.sent;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
-     if(incoming.complete)for(const c of items){if(!incoming.items.some(n=>n.id===c.id)&&!(c.version>(c.saved??0))&&!queue.some(o=>o.conversation===c.id)&&pending?.conversation!==c.id)c.deleted=true;}
+     if(incoming.complete)for(const c of items){if(c.revision>0&&!incoming.items.some(n=>n.id===c.id)){c.deleted=true;if(c.text===c.sent?.text)c.text='';c.sent=null;c.request=null;c.files=[];queue=queue.filter(o=>o.conversation!==c.id);if(pending?.conversation===c.id){pending=null;ui.cancel(timer);}if(failure?.conversation===c.id)failure=null;}}
     }
     if(!hydrated){hydrated=true;const nav=incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';selection=nav.selection||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(!selected)selected=api.visible()[0]?.id||null;}
     return false;
@@ -106,6 +107,7 @@ module.exports=execution.module('conversations',{
    },
    body:function(){
     const c=api.current(),disabled=!api.editable(c)||c.deleting,bad=api.problem(c),button=icons.button;
+    if(c?.deleted)return h('section',{class:'conversations'},h('p',{role:'status'},'History permanently deleted. Sent content cannot be restored. Independent saved drafts remain in Recent.'),c.text&&h('label',null,'Unsent local text',h('textarea',{readOnly:true,value:c.text})),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':'new'},'New request'));
     return h('section',{class:'conversations'+(listOnly?' list-only':'')+(owner.conversation?' detached':''),'aria-label':'Native dialogue workspace'},
      h('div',{class:'conversation-toolbar'},h('button',{'data-c':'list',class:'conversation-list-toggle'},listOnly?'Back':'List'),h('button',{'data-c':'new',disabled:!!owner.conversation},icons.icon('plus'),' New'),icons.button('panels-top-left','Work sessions',{'data-route':'sessions'}),h('details',{'data-view-key':'conversation-history'},h('summary',null,'History'),h('div',{class:'conversation-history'},(snapshot.ai?.history||[]).map((text,i)=>h('button',{'data-c':'history','data-index':i,disabled},text)),h('button',{'data-c':'clear-history'},'Clear command history'),h('p',{class:'meta'},'History fills only. Permanent deletion is available in Archive.')))),
      h('div',{class:'conversation-grid'},
@@ -134,8 +136,9 @@ module.exports=execution.module('conversations',{
     else if(action==='delete-review'){confirmDelete=true;draw();}
     else if(action==='delete-cancel'){confirmDelete=false;draw();}
     else if(action==='preview-close'){preview=null;draw();}
-    else if(action==='from-draft'&&api.editable(c))api.fresh(api.local(c));
+    else if(action==='from-draft'&&api.editable(c))api.action('fork',{fork_id:api.id()});
     else if(action==='raise'&&c)ui.send({a:'conversation-window',action:'raise',conversation:c.id});
+    else if(action==='return'&&c?.deleted)ui.send({a:'conversation-window',windowAction:'return',conversation:c.id});
     else if(action==='detach'||action==='return'){if(c){api.save(c);queue.push({conversation:c.id,action:'window',windowAction:action});api.next();}}
     else if(action==='retry-save'){
      const failed=failure;failure=null;

@@ -120,6 +120,38 @@ fn attach(install:&Path,id:&str,d:&mut Draft,m:&Value)->Res<()> {
 pub(crate) fn purge(install:&Path,id:&str)->Res<()> {
     let mut p=preferences(install)?;if let Some(rows)=p["conversations"].as_object_mut(){rows.remove(id);}persist(install,&p)
 }
+fn copy_files(install:&Path,from:&str,to:&str,files:&[File])->Res<Vec<File>> {
+    let mut draft=Draft::default();
+    for file in files {
+        let data=bytes(install,from,file)?;
+        attach(install,to,&mut draft,&json!({"file":file,"data":STANDARD.encode(data)}))?;
+    }Ok(draft.files)
+}
+/// TW7 keeps independent unsent work; deleted sent content is never a recovery source. Caller holds setup lock.
+pub(crate) fn preserve_draft(install:&Path,id:&str)->Res<()> {
+    let mut p=preferences(install)?;let mut drafts=rows(&p)?;
+    let Some(source)=drafts.get(id) else {return Ok(())};
+    let text=if source.sent.as_ref().is_some_and(|s|s.text==source.text){String::new()}else{source.text.clone()};
+    let files:Vec<File>=source.files.iter().filter(|f|source.sent.as_ref().is_none_or(|s|!s.files.iter().any(|sent|sent.id==f.id))).cloned().collect();
+    if text.is_empty()&&files.is_empty(){return Ok(());}
+    let recovered=format!("draft-{}",&hash(id.as_bytes())[..40]);
+    if drafts.contains_key(&recovered){return Ok(());}
+    let draft=Draft{revision:1,root:source.root.clone(),text,caret:source.caret,files:copy_files(install,id,&recovered,&files)?,..Draft::default()};
+    drafts.insert(recovered,draft);p["conversations"]=json!(drafts);persist(install,&p)
+}
+fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
+    if !crate::setup::owner_id(to)||id==to {return Err("Invalid new draft identity".into());}
+    crate::setup::locked(install,||{
+        if crate::messages::request_deleted(install,id)? {return Err("Deleted history cannot be copied".into());}
+        let mut p=preferences(install)?;let mut drafts=rows(&p)?;
+        if drafts.contains_key(to){return Ok(to.into());}
+        let source=drafts.get(id).ok_or("Source draft unavailable")?;
+        if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
+        let draft=Draft{revision:1,root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
+        let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.caret=[0,0];source.revision+=1;
+        drafts.insert(to.into(),draft);p["conversations"]=json!(drafts);persist(install,&p)?;Ok(to.into())
+    })
+}
 pub(crate) fn snapshot(install:&Path)->Value {
     let result=(||->Res<Value>{
         let p=preferences(install)?;let mut drafts=rows(&p)?;
@@ -142,6 +174,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
     let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
     let result=(||->Res<Value>{
         if !crate::setup::owner_id(id){return Err("Invalid or reserved draft identity".into());}
+        if action=="fork" {return fork(install,id,m["fork_id"].as_str().unwrap_or(""),m["revision"].as_u64()).map(|id|json!({"forked":id}));}
         if action=="preview" {
             let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
             if d.deleting||crate::messages::request_deleted(install,id)? {return Err("History deletion started; preview refused".into());}
@@ -347,5 +380,26 @@ mod tests {
         assert_eq!(f.attach("safe","x.txt","text/plain",b"private")["state"],"unknown");
         f.act("safe","archive",json!({}));assert_eq!(f.act("safe","delete",json!({}))["state"],"unknown");
         assert_eq!(fs::read_to_string(outside.join("kept")).unwrap(),"source");
+    }
+
+    // TW7/C-A4: deleting sent history cannot destroy independent next drafting or copy deleted sent content back.
+    #[test]
+    fn next_draft_files_transfer_once_and_survive_message_deletion_without_sent_history() {
+        let f=Fixture::new();f.save("sent","original sent text");f.act("sent","send",json!({"runtime":crate::runtime::OWNER}));
+        crate::setup::step(&f.0,|_,_|crate::setup::Launched::Job{job:"native-owned".into(),session:None,url:None}).unwrap();
+        f.save("sent","independent next request");f.attach("sent","next.txt","text/plain",b"next draft bytes");
+        let result=f.act("sent","fork",json!({"fork_id":"next"}));assert_eq!(result["state"],"accepted","{result}");
+        assert_eq!(f.act("sent","fork",json!({"fork_id":"next"}))["state"],"accepted","same-ID recovery makes no duplicate");
+        let p=preferences(&f.0).unwrap();assert_eq!(p["conversations"]["next"]["text"],"independent next request");
+        assert!(p["conversations"]["next"]["sent"].is_null());assert_eq!(p["conversations"]["sent"]["text"],"");
+        assert_eq!(p["conversations"]["sent"]["sent"]["text"],"original sent text");
+        let file:File=serde_json::from_value(p["conversations"]["next"]["files"][0].clone()).unwrap();assert_eq!(bytes(&f.0,"next",&file).unwrap(),b"next draft bytes");
+        f.save("sent","another independent draft");f.attach("sent","new.txt","text/plain",b"new unsent bytes");f.act("sent","archive",json!({}));
+        let deleted=f.act("sent","delete",json!({}));assert_eq!(deleted["state"],"accepted","{deleted}");
+        let p=preferences(&f.0).unwrap();assert!(p["conversations"]["sent"].is_null());
+        let drafts=rows(&p).unwrap();let (id,recovered)=drafts.iter().find(|(_,d)|d.text=="another independent draft").unwrap();
+        assert!(recovered.sent.is_none());assert_eq!(bytes(&f.0,id,&recovered.files[0]).unwrap(),b"new unsent bytes");
+        assert!(!serde_json::to_string(&drafts).unwrap().contains("original sent text"));assert_eq!(drafts.len(),2);
+        assert!(crate::setup::all(&f.0).unwrap().0.is_empty());assert_eq!(f.save("sent","resurrect history")["state"],"unknown");
     }
 }

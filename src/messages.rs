@@ -193,6 +193,7 @@ pub(crate) fn act(install: &Path, projects: &[Value], action: &str, keys: &[Stri
                     let mark=store.marks.get_mut(key).ok_or("Archived message metadata missing")?;
                     let r=mark.request.clone().ok_or("Archived request identity missing")?;
                     check_request(install,&r,mark.deleting)?;
+                    crate::conversations::preserve_draft(install,&r.id)?;
                     mark.deleting=true;
                     store.deleted.insert(request_key(&r.id));write(install,&store)?;
                     delete_request(install,&r)?;

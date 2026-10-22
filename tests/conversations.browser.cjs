@@ -7,7 +7,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
  try{
   const page=await browser.newPage({viewport:{width:900,height:720}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   const html=fs.readFileSync(process.env.TASKQ_CONVERSATION_HTML||'build/web/workspace.html','utf8');
-  const state=structuredClone(snapshot);let seen=0,paused=false;
+  const state=structuredClone(snapshot),fileData=new Map();let seen=0,paused=false;
   // Native preference saves acknowledge asynchronously, including delayed caret/scroll saves.
   // Other effects retain explicit fixture receipts; Rust tests exercise the real persistence/launch adapter.
   await page.exposeFunction('fixtureSave',async m=>{
@@ -25,12 +25,13 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
     let c=state.conversations.items.find(c=>c.id===m.conversation);
     if(!c){c={id:m.conversation,revision:0,text:'',title:'',root:'fixture-alpha',caret:[0,0],scroll:0,files:[],archived:false};state.conversations.items.push(c);}
     if(m.action==='save')Object.assign(c,m.draft);
-    if(m.action==='attach'){const data=Buffer.from(m.data,'base64');c.files.push({...m.file,hash:crypto.createHash('sha256').update(data).digest('hex')});}
+    if(m.action==='attach'){fileData.set(m.file.id,m.data);const data=Buffer.from(m.data,'base64');c.files.push({...m.file,hash:crypto.createHash('sha256').update(data).digest('hex')});}
     if(m.action==='remove')c.files=c.files.filter(f=>f.id!==m.file);
     if(m.action==='archive')c.archived=true;
     if(m.action==='restore')c.archived=false;
     if(m.action==='send'){c.sent={text:c.text,root:c.root,runtime:'claude',files:structuredClone(c.files)};c.request={id:c.id,state:'pending',kind:'starting',next:'Awaiting native launch'};}
-    const value=m.action==='preview'?{file:c.files.find(f=>f.id===m.file),data:Buffer.from('invented attachment bytes').toString('base64')}:null;
+    let value=m.action==='preview'?{file:c.files.find(f=>f.id===m.file),data:fileData.get(m.file)}:null;
+    if(m.action==='fork'){const next={id:m.fork_id,revision:1,title:'',root:c.root,text:c.text,caret:c.caret,scroll:0,files:structuredClone(c.files),archived:false};state.conversations.items.push(next);c.text='';c.caret=[0,0];c.files=[];value={forked:next.id};}
     if(m.action!=='preview')c.revision++;
     await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:m.id,state:'accepted',value,snapshot:state.conversations});
    }throw Error('Fixture queue failed to settle');
@@ -94,6 +95,18 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await page.evaluate(id=>taskq.receive({workspaceOwner:{id:'main',detached:[id]}}),first.id);assert(await input.isDisabled());
   await page.locator('[data-c=select][data-id="'+first.id+'"]').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-window').at(-1).action),'raise');
   await page.evaluate(id=>taskq.receive({workspaceOwner:{id:'main',detached:[],select:id}}),first.id);assert.equal(await input.isDisabled(),false);
+  // A5/A6: a valid image previews locally; New from draft moves the selected bytes to a separate unsent identity.
+  await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();
+  const png=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=c.height=2;c.getContext('2d').fillRect(0,0,2,2);return c.toDataURL('image/png').split(',')[1];});
+  const attachedBefore=await page.evaluate(()=>sent.filter(m=>m.action==='attach').length);
+  await page.locator('[data-c-field=files]').setInputFiles({name:'local.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
+  await page.waitForFunction(n=>sent.filter(m=>m.action==='attach').length>n,attachedBefore);await drain();
+  await page.locator('[data-c=preview]').click();await drain();await page.locator('.conversation-record img').waitFor({state:'visible'});
+  assert.equal(await page.locator('.conversation-record img').evaluate(e=>e.naturalWidth),2);await page.locator('[data-c=preview-close]').click();
+  const nextFiles=structuredClone(second.files);await page.locator('[data-c=from-draft]').click();await drain();
+  const forked=state.conversations.items.at(-1);assert.notEqual(forked.id,second.id);assert.equal(await input.inputValue(),'Next draft while launch waits');assert.deepEqual(forked.files,nextFiles);assert.equal(forked.sent,undefined);
+  assert.equal(second.sent.text,'Review the attached text');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'draft transfer never launches');
+  await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();
   // Interrupted/partial readback preserves next drafting and exposes same-ID reconciliation.
   await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();await page.locator('[data-c=reconcile]').click();
   const pending=await drain('reconcile');
