@@ -35,6 +35,7 @@ const base={page:'cadence',font:16,size:[360,760],size_anchor:'fixed',period:'1d
      assert.equal(await page.getByRole('button',{name:'Custom',exact:true}).count(),0);
      assert.equal(await page.getByRole('button',{name:'Icon',exact:true}).locator('img').count(),1,'compact picker identity remains visible');
      assert.equal(await page.locator('.summary-preview svg #chart').innerHTML(),originalChart);
+     assert.equal(await page.locator('.summary-preview svg [id^=counter-]').count(),2,'frozen Work 1 / Ready 1 must retain both counter glyph groups');
      await page.evaluate(s=>taskq.receive(s),s);
     }
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);

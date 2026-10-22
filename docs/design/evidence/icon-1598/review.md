@@ -4,12 +4,13 @@ Status: implemented; owner visual acceptance is pending (A8). R13 amends Product
 
 ## Owner review
 
-Two sheets contain ten panels: eight native WebKit views and two panels of canonical Rust raster exports. The export panels are explicitly **not OS menu-bar/Dock screenshots**. Native frame files retain their original 720 × 1600 backing pixels; the sheets display their 360 × 800 logical size.
+Three sheets contain ten panels: six selected frozen native WebKit views, two native README before/after frames and two panels of canonical Rust raster exports. The export panels are explicitly **not OS menu-bar/Dock screenshots**. Frozen native frame files retain their original 720 × 1600 backing pixels; their sheets display 360 × 800 logical size. The README pair retains the same isolated project fixture.
 
-[Light sheet](review-light.png) · [Dark sheet](review-dark.png)
+[Light sheet](review-light.png) · [Dark sheet](review-dark.png) · [README before/after](readme-before-after.png)
 
 ![Light candidate: native History and picker, canonical exports](review-light.png)
 ![Dark candidate: native History and picker, canonical exports](review-dark.png)
+![README native project fixture before and after](readme-before-after.png)
 
 Checked visually: six separated columns; equal quantities have equal heights; zero ticks differ from incomplete mid dashes; current-bin underline; native SF counter ink, 18 CSS px vector picker, fixed failed cap and fixed-width overflow. Active counters are uncropped. Pause retains the existing gray-data/cleared-square Q overlay, including its masking of underlying data; its appearance is part of the owner review, not a new pause policy.
 
@@ -28,8 +29,11 @@ Checked visually: six separated columns; equal quantities have equal heights; ze
 - `icon::tests::six_columns_keep_quantity_marks_palette_and_device_bounds`: approved palette, zero peak, failed/unknown/ongoing marks, counter ink/overflow, blocked inclusion and paused gray identity pass.
 - `tray::tests::approved_real_history_fixtures_use_one_six_bin_svg`: event identities, half-open bounds, real counts, missing sources, canonical browser/native chart groups and frozen counter identities pass.
 - `node tests/tray-history.browser.cjs`: six original SVG groups, exact/incomplete detail, click/keyboard selection, refresh identity, themes/DPR, zero visibility and picker/Custom removal pass.
-- Native WebKit: all eight frozen views captured successfully. The ordinary isolated `taskq tray --snapshot` also completed its icon/project matrix; temporary fixture data never changed the installed service.
-- Canonical gate and README capture outcomes are recorded in the PR and board handoff.
+- Native WebKit: all eight frozen views captured successfully; six are retained in the bounded review set. The ordinary isolated `taskq tray --snapshot` also completed its icon/project matrix; temporary fixture data never changed the installed service.
+- `python3 scripts/check.py --base origin/main`: **sandbox-blocked**, not PASS. Rust: 477 passed, 18 host-authority failures under the worker context, 34 ignored; 102.953 s. Explicit refusals include host install, policy edits and Stop. Permissions and assertions were not changed; integration tests were not reached. Publication still requires green `merge_group` CI.
+- All Node component checks pass. A dependent source-provenance hash failed after the approved palette/document change; its input hash was refreshed with the assertions retained.
+- Isolated offline selftest: 97 golden traces and formats pass; staged capture commits; board read intentionally unknown.
+- `docs/shots/update.sh` completed on macOS 27.0.1 from `17871111`; the actual status-slot export is 34 pt at DPR 2 (68 × 68 px). The sheets also show the approved 22/33 pt reference exports.
 
 Recreate canonical fixtures with `TASKQ_ICON_EVIDENCE=tests/fixtures/icon-history cargo +stable test --locked --bin taskq tray::tests::approved_real_history_fixtures_use_one_six_bin_svg`. Normal tests compare the saved bins, peak, palette and chart groups against the current renderer. Then run `npm run build`, compile `tests/fixtures/icon-history/capture.swift` with `swiftc`, and pass the repository root and a new output directory to that instrument. Passing size-matrix PNGs are not committed as extra review screens.
 
