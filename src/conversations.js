@@ -10,7 +10,7 @@ module.exports=execution.module('conversations',{
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
    title:function(c){return c.title||c.text.split('\n').find(s=>s.trim())?.trim()||c.sent?.text.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
    visible:function(){return items.filter(c=>!c.deleted&&!!c.archived===(list==='archive')&&(!search||[api.title(c),c.root,c.id].join(' ').toLowerCase().includes(search.toLowerCase())));},
-   local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0};},
+   local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next};},
    nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>ui.send({a:'conversation-navigation',navigation:{list,search,selection,selected,listOnly}}),100);},
    select:function(id,focus=true){const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
    fresh:function(copy){
@@ -52,7 +52,7 @@ module.exports=execution.module('conversations',{
       if(c)c.sending=false;
      }else {
       if(c&&op.action==='save')c.saved=op.version;
-      if(c&&op.action==='send'){c.sending=false;if(c.text===c.sent?.text){c.text='';c.caret=[0,0];for(const f of c.sent.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=c.files.filter(f=>!c.sent.files.some(sent=>sent.id===f.id));c.version=(c.version||0)+1;api.save(c);}notice='Request saved. Native launch and replies are separate.';}
+      if(c&&op.action==='send'){c.sending=false;if(c.text===c.sent?.text&&!c.next){c.text='';c.caret=[0,0];for(const f of c.sent.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=c.files.filter(f=>!c.sent.files.some(sent=>sent.id===f.id));c.version=(c.version||0)+1;api.save(c);}notice='Request saved. Native launch and replies are separate.';}
       if(op.action==='archive'&&c){c.archived=true;undo=c.id;const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;notice='Archived';api.nav();}
       if(op.action==='restore'&&c){c.archived=false;list='recent';search='';api.select(c.id);notice='Restored';undo=null;}
       if(op.action==='delete'){items=items.filter(c=>c.id!==op.conversation);selected=api.visible()[0]?.id||null;notice='Permanently deleted';confirmDelete=false;undo=null;api.nav();}
@@ -148,8 +148,8 @@ module.exports=execution.module('conversations',{
     return true;
    },
    mount:function(){
-    ui.listen(menu,'input',e=>{const field=e.target.dataset.cField;if(field==='search'){search=e.target.value;api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;c[field]=e.target.value;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);draw();});
-    ui.listen(menu,'change',e=>{const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
+    ui.listen(menu,'input',e=>{const field=e.target.dataset.cField;if(field==='search'){search=e.target.value;api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);draw();});
+    ui.listen(menu,'change',e=>{const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
     ui.listen(menu,'scroll',e=>{if(!e.target.classList?.contains('conversation-record'))return;const c=api.current();if(api.editable(c)&&c.scroll!==e.target.scrollTop){c.scroll=e.target.scrollTop;c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);}},true);
     ui.listen(menu,'dragover',e=>{if(e.target.closest('.conversations'))e.preventDefault();});

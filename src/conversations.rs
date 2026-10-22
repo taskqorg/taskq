@@ -14,12 +14,12 @@ pub(crate) struct File {
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Sent { pub text: String, pub root: String, pub runtime: String, pub files: Vec<File> }
+pub(crate) struct Sent { #[serde(default)] pub revision: u64, pub text: String, pub root: String, pub runtime: String, pub files: Vec<File> }
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Draft {
     pub revision: u64, pub title: String, pub root: String, pub text: String, pub caret: [usize;2],
-    pub scroll: u32, pub archived: bool, pub deleting: bool, pub files: Vec<File>, pub sent: Option<Sent>,
+    pub scroll: u32, pub archived: bool, pub deleting: bool, pub next: bool, pub files: Vec<File>, pub sent: Option<Sent>,
 }
 
 pub(crate) fn preferences(install:&Path)->Res<Value> {
@@ -131,7 +131,7 @@ fn copy_files(install:&Path,from:&str,to:&str,files:&[File])->Res<Vec<File>> {
 pub(crate) fn preserve_draft(install:&Path,id:&str)->Res<()> {
     let mut p=preferences(install)?;let mut drafts=rows(&p)?;
     let Some(source)=drafts.get(id) else {return Ok(())};
-    let text=if source.sent.as_ref().is_some_and(|s|s.text==source.text){String::new()}else{source.text.clone()};
+    let text=if source.sent.is_some()&&!source.next {String::new()}else{source.text.clone()};
     let files:Vec<File>=source.files.iter().filter(|f|source.sent.as_ref().is_none_or(|s|!s.files.iter().any(|sent|sent.id==f.id))).cloned().collect();
     if text.is_empty()&&files.is_empty(){return Ok(());}
     let recovered=format!("draft-{}",&hash(id.as_bytes())[..40]);
@@ -148,7 +148,7 @@ fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
         let source=drafts.get(id).ok_or("Source draft unavailable")?;
         if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
         let draft=Draft{revision:1,root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
-        let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.caret=[0,0];source.revision+=1;
+        let source=drafts.get_mut(id).ok_or("Source draft unavailable")?;source.text.clear();source.files.clear();source.next=false;source.caret=[0,0];source.revision+=1;
         drafts.insert(to.into(),draft);p["conversations"]=json!(drafts);persist(install,&p)?;Ok(to.into())
     })
 }
@@ -197,6 +197,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                     let text=v["text"].as_str().filter(|s|s.len()<=65536).ok_or("Draft exceeds 64 KiB; existing data kept")?;
                     let title=v["title"].as_str().filter(|s|s.chars().count()<=120).ok_or("Name exceeds 120 characters")?;
                     let root=v["root"].as_str().ok_or("Choose a project")?;
+                    if d.sent.is_some()&&(v["next"]==true||(!text.is_empty()&&d.text!=text)||d.root!=root) {d.next=true;}
                     d.text=text.into();d.title=title.into();d.root=root.into();
                     d.caret=serde_json::from_value(v["caret"].clone()).map_err(|_|"Invalid draft selection")?;
                     d.scroll=v["scroll"].as_u64().and_then(|n|n.try_into().ok()).ok_or("Invalid draft scroll")?;
@@ -210,7 +211,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                     if d.archived||d.text.trim().is_empty() {return Err("Restore the draft and write a request before sending files".into());}
                     if !registered.contains(&d.root) {return Err("Choose a registered project".into());}
                     for f in &d.files {bytes(install,id,f)?;}
-                    d.sent=Some(Sent{text:d.text.clone(),root:d.root.clone(),runtime:m["runtime"].as_str().unwrap_or("").into(),files:d.files.clone()});
+                    d.next=false;d.sent=Some(Sent{revision:d.revision,text:d.text.clone(),root:d.root.clone(),runtime:m["runtime"].as_str().unwrap_or("").into(),files:d.files.clone()});
                 }
                 "reconcile"|"cancel"=>{if d.sent.is_none(){return Err("No submitted request to reconcile".into());}}
                 "delete"=>{
@@ -401,5 +402,10 @@ mod tests {
         assert!(recovered.sent.is_none());assert_eq!(bytes(&f.0,id,&recovered.files[0]).unwrap(),b"new unsent bytes");
         assert!(!serde_json::to_string(&drafts).unwrap().contains("original sent text"));assert_eq!(drafts.len(),2);
         assert!(crate::setup::all(&f.0).unwrap().0.is_empty());assert_eq!(f.save("sent","resurrect history")["state"],"unknown");
+        f.save("repeat","same text");f.act("repeat","send",json!({"runtime":crate::runtime::OWNER}));
+        crate::setup::step(&f.0,|_,_|crate::setup::Launched::Job{job:"native-owned".into(),session:None,url:None}).unwrap();
+        f.act("repeat","save",json!({"draft":{"text":"same text","title":"","root":f.0,"caret":[0,0],"scroll":0,"next":true}}));
+        f.act("repeat","archive",json!({}));assert_eq!(f.act("repeat","delete",json!({}))["state"],"accepted");
+        assert!(rows(&preferences(&f.0).unwrap()).unwrap().values().any(|d|d.text=="same text"&&d.sent.is_none()),"an independently retyped identical draft is not deleted sent history");
     }
 }
