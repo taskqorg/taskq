@@ -2841,7 +2841,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             // a child the local service still runs keeps its worktree, whatever the board says
             let st: Value = fs::read_to_string(dot(root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
             let live: Vec<u64> = st["kids"].as_array().into_iter().flatten().filter_map(|k| k["task"].as_u64()).collect();
-            let log = service::cleanup(b, root, |n| live.contains(&n), a.flags.contains_key("force"));
+            let log = service::cleanup(b, root, &cfg.me, platform::boot_time, |n| live.contains(&n), a.flags.contains_key("force"));
             println!("{}", if log.is_empty() { "nothing to clean".into() } else { log.join("\n") });
             Ok(())
         }
