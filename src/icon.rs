@@ -405,6 +405,7 @@ mod tests {
     fn six_columns_keep_quantity_marks_palette_and_device_bounds() {
         let bins:Vec<Bin>=[4,0,999,12,7,4].into_iter().enumerate().map(|(i,c)|Bin {start:i as f64,end:(i+1) as f64,counts:[c,0,0,0],missing:if i==2 {vec!["synthetic missing source".into()]}else{vec![]},ongoing:i==5}).collect();
         let mut data=Data {counts:[Some(0);4],blocked:Some(0),bins,paused:false};
+        assert!(raster("",44).is_err(),"missing published SVG stays a render error");
         for dark in [false,true] {
             let svg=svg(&data,dark);
             assert_eq!(svg.matches("data-start=").count(),6);

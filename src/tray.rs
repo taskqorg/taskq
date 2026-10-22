@@ -1600,7 +1600,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let onboarding=snap.and_then(|(_,route)|agentq_fixture(route)).unwrap_or_else(crate::agentq::snapshot);
     let observed=now();
     let (start, end) = s.range(observed);
-    let sum = summary(&ps, (start, end));
+    let sum = summary_at(&ps, (start, end), observed);
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge, "auto_anchor":s.pin.auto_anchor,
@@ -1707,10 +1707,12 @@ fn draw(s:&Summary,dark:bool,k:f32,dpr:f32)->Result<Rgba,String> {
 
 fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>) {
     let Some(t) = tray else { return };
-    let sum = summary(st["projects"].as_array().map_or(&[][..], |v| v), s.range(now()));
+    let observed=st["now"].as_i64().unwrap_or_else(now);
+    let sum = summary_at(st["projects"].as_array().map_or(&[][..], |v| v), s.range(observed), observed);
     let full=s.view=="full";
     let (k,dpr)=if full {(menu_bar_scale(),backing_scale())}else{(1.0,2.0)};
-    let svg=full.then(||icon::svg(&icon_data(&sum),dark));
+    // Reuse the published vector: a time-bin boundary cannot split native and web surfaces.
+    let svg=full.then(||st["icons"]["full"].as_str().unwrap_or("").to_owned());
     let new=format!("{} {dark} {k} {dpr} {} {} {:?} {svg:?}",st["agentq"]["warning"],sum.run,sum.known,(sum.counts,sum.blocked));
     if *sig == new {
         return;

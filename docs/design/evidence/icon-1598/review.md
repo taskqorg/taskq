@@ -25,6 +25,7 @@ Checked visually: six separated columns; equal quantities have equal heights; ze
 
 ## Verification
 
+- Native surfaces reuse the published picker SVG and its observation time; crossing a bin boundary cannot make native and web graphs use different frames. The final focused icon/history/frozen-fixture checks pass after this wiring change.
 - Before: twelve source bins, width rebinning, stacked event heights and separate Rust/JS color/geometry tables. After: real day/hour/incomplete inputs pass through one six-bin SVG; only complete-coverage closed counts set height.
 - `icon::tests::six_columns_keep_quantity_marks_palette_and_device_bounds`: approved palette, zero peak, failed/unknown/ongoing marks, counter ink/overflow, blocked inclusion and paused gray identity pass.
 - `tray::tests::approved_real_history_fixtures_use_one_six_bin_svg`: event identities, half-open bounds, real counts, missing sources, canonical browser/native chart groups and frozen counter identities pass.
