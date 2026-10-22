@@ -1,7 +1,7 @@
 {
   "version": "4.6.29",
-  "sourceCommit": "9b3080eb4b5a10b5fb8da6d10f398630204055fa",
-  "binarySha256": "3830895b39de64b1b4d2e175dcfd7a5589baf58722b928b099ddc8bf7e89269f",
+  "sourceCommit": "98d3a5091c59a150a5d426043cd2406bcb413fd7",
+  "binarySha256": "b7f2c71c0e551fafae51743ae00a30fa4002a40f8b1a8b9bb1c74922a079bce3",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -10,7 +10,7 @@
   "uiSources": {
     "src/tray.rs": "73777309d1ab335d5534a0651421b83a3ecdf51f",
     "src/tray.html": "2ade6570c8915e951aa486c5bb358c67d4342c41",
-    "src/tray-app.js": "e10d02bf3509b6f99ef26c5d578cd4b6bc0f5497",
+    "src/tray-app.js": "4f974175507005bad7a1ba22b44773cf9b5b0a92",
     "src/tray-view-state.js": "57de9bae9348494b0bbad7eb69e160899dad3f31",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "e9cfabc12fbff25737a24d96c1b663e7adef4370",

@@ -352,7 +352,7 @@ runningAgents:function(){
         const name=x.host||'Unknown host';
         if(!hosts.has(name))hosts.set(name,{name,age:null,unknown:true,counts:new Map()});
         const h=hosts.get(name),age=Number.isFinite(x.observed)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-x.observed+elapsed:null;
-        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason='execution observation missing, stale or incomplete';continue;}
+        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason='Run state unknown; see service log';continue;}
         const identity=JSON.stringify([p.issues||p.root,t.n,x.id]),prior=seen.get(identity);
         if(prior){if(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role){h.unknown=true;hosts.get(prior.host).unknown=true;reasons.add('conflicting execution observations');}continue;}
         seen.set(identity,x);
