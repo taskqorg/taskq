@@ -424,7 +424,7 @@ fn slot(project: &Path, task: u64, attempt: u64) -> Slot {
     // Before claim there is no fencing token; only that provisional slot uses the issue number.
     (project.into(), if attempt == 0 { task } else { 0 }, attempt)
 }
-pub enum Maintenance {Update(Option<String>),Installation(String),Inventory(Res<Vec<String>>)}
+pub enum Maintenance {Update(Option<String>),Installation(String)}
 
 pub struct Host {
     pub instance: String,
@@ -671,10 +671,10 @@ pub fn other(install: &Path) -> Res<Option<u32>> {
     };
     match record {
         None=>Ok(None),
-        Some(OwnerRecord::Legacy(pid))=>Ok((pid!=std::process::id()&&crate::runtime::liveness(pid)?&&!installation::legacy_projection(install,pid,None)?).then_some(pid)),
+        Some(OwnerRecord::Legacy(pid))=>Ok((pid!=std::process::id()&&crate::runtime::liveness(pid)?).then_some(pid)),
         Some(OwnerRecord::Current(r))=> {
             let live=coreq::process::identity(r.pid).map_err(|e|format!("host service owner unknown: {e}"))?;
-            Ok((r.pid!=std::process::id()&&live.as_ref().is_some_and(|p|p.started==r.started)&&!installation::legacy_projection(install,r.pid,Some(&r.started))?).then_some(r.pid))
+            Ok((r.pid!=std::process::id()&&live.as_ref().is_some_and(|p|p.started==r.started)).then_some(r.pid))
         }
     }
 }
@@ -739,9 +739,8 @@ pub fn project_service(root: &Path) -> Res<Option<u32>> {
 }
 
 fn legacy(install:&Path,roots: &[PathBuf]) -> Res<()> {
-    if !installation::legacy_definitions(install)?.is_empty() {return Err("handoff: legacy native definitions remain; host admission held".into());}
     for root in roots {
-        // #1445: the host owner lock is held and no legacy unit remains, so a zeroed status.json has no live owner.
+        // #1445: the host owner lock is held, so a zeroed status.json has no live owner.
         if crate::data::set_aside_zeroed(&crate::dot(root).join("status.json"))? {append_project(install,root,"status.json zeroed by a power loss; kept as status.json.zeroed-*");}
         if project_service(root)?.is_some() { return Err("handoff: legacy service still running".into()); }
     }
@@ -766,18 +765,7 @@ fn owner(install:&Path)->Res<Option<coreq::file_lock::Lock>> {
     }
 }
 
-fn native_inventory_ready(inventory:&Res<Vec<String>>,checked:Option<Instant>)->Res<()> {
-    let names=inventory.as_ref().map_err(Clone::clone)?;
-    if let Some(name)=names.first() {return Err(format!("handoff: {} native legacy unit(s) remain, including {}",names.len(),crate::compact(name,128)));}
-    if checked.is_none_or(|at|at.elapsed().as_secs()>=60) {return Err("native legacy inventory stale; host admission held".into());}
-    Ok(())
-}
-
-fn native_inventory_due(inventory:&Res<Vec<String>>,checked:Option<Instant>,transitioning:bool)->bool {
-    checked.is_none_or(|at|at.elapsed().as_secs()>=if transitioning||inventory.is_err() {5}else{30})
-}
-
-// A legacy admission barrier does not replace valid host maintenance intervals.
+// An admission barrier does not replace valid host maintenance intervals.
 fn guarded_policy(configured:Res<Policy>,barrier:&Res<()>)->(Res<Policy>,(u64,u64)) {
     let timers=configured.as_ref().map(|p|(p.update_every,p.rollback_after)).unwrap_or((60,600));
     (barrier.as_ref().map_err(Clone::clone).and(configured),timers)
@@ -814,10 +802,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut drained_roots = BTreeSet::new();
     let mut checked: Option<Instant> = None;
     let mut installation_checked:Option<Instant>=None;
-    let mut native_checked:Option<Instant>=None;
-    let mut native_requested:Option<Instant>=None;
-    let mut native_legacy:Res<Vec<String>>=Err("native legacy inventory pending; host admission held".into());
-    let mut maintenance_result:[String;2]=Default::default();
+    let mut maintenance_result=String::new();
     let mut upgrade_report:Option<bool>=None;
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
@@ -837,7 +822,7 @@ pub fn run(install: &Path) -> Res<()> {
         registry.refresh(install, began.elapsed().as_secs());
         restart.refresh(install);
         roots.clone_from(&registry.roots);
-        let old = legacy(install,&roots).and_then(|_|native_inventory_ready(&native_legacy,native_checked));
+        let old = legacy(install,&roots);
         if hostname.is_empty() {hostname=crate::hostname();}
         let configured = match &old { Ok(()) => migrate_for_hostname(install, &roots,&hostname).and_then(|_| Policy::read_for_hostname(install,||hostname.clone())), Err(_) => Policy::read_for_hostname(install,||hostname.clone()) };
         let (policy,timers)=guarded_policy(configured,&old);
@@ -883,7 +868,7 @@ pub fn run(install: &Path) -> Res<()> {
                             Ok(crate::Ctx { cfg, raw, board })
                         });
                         match context {
-                            Ok(c) => return crate::service_run(&c, Some(host),None),
+                            Ok(c) => return crate::service_run(&c, Some(host)),
                             Err(e) => {
                                 if let Ok(mut h) = host.lock() {
                                     // No board/native reconciliation exists while configuration is invalid.
@@ -965,25 +950,11 @@ pub fn run(install: &Path) -> Res<()> {
         }
         if h.updating.as_ref().is_some_and(|job|job.is_finished()) {
             let updated=h.updating.take().unwrap().join().unwrap_or_else(|_|Err("host maintenance panicked; partial effects unknown".into()));
-            if let Ok(Maintenance::Inventory(result))=&updated {native_legacy=result.clone();native_checked=Some(Instant::now());}
-            let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Ok(Maintenance::Inventory(Ok(names)))=>format!("native legacy inventory: {} unit(s)",names.len()),Ok(Maintenance::Inventory(Err(e)))=>format!("native legacy inventory unknown: {e}"),Err(e)=>format!("maintenance: {e}")};
-            if maintenance_once(&mut maintenance_result,matches!(updated,Ok(Maintenance::Inventory(_))),&text) {log_all(install,&roots,&text);}
+            let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Err(e)=>format!("maintenance: {e}")};
+            if maintenance_once(&mut maintenance_result,&text) {log_all(install,&roots,&text);}
             if crate::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
-        let transitioning=h.restart||restart.current.as_ref().map_or(true,Option::is_some)||!transition_ready;
-        // #1402: a refresh started while passes drain for the handover would let them start again.
-        if h.updating.is_none()&&!h.handoff_settled()&&native_inventory_due(&native_legacy,native_requested.or(native_checked),transitioning) {
-            // Keep the last observation and its age while refreshing; stale/unknown still holds.
-            native_requested=Some(Instant::now());
-            let install=install.to_path_buf();
-            let lifecycle_controller=restart.current.as_ref().ok().and_then(Option::as_ref).filter(|p|p.stops()&&p.prepared()).map(|p|p.id().to_string());
-            let job=coreq::telemetry::capture::operation("host.legacy.inventory.dispatch",||std::thread::Builder::new().name("taskq-native-inventory".into()).spawn(coreq::telemetry::capture::bind(move || {
-                let result=(|| {let mut controllers:Vec<_>=lifecycle_controller.into_iter().collect();controllers.extend(installation::controller_id(&install)?);crate::host_control::legacy_inventory(&crate::platform::tool(&install),&controllers)})();
-                Ok(Maintenance::Inventory(result))
-            })),|_|"spawn");
-            match job {Ok(job)=>h.updating=Some(job),Err(error)=>crate::platform::log(&format!("native inventory not started: {error}"))}
-        }
         if !transition_ready&&h.updating.is_none()&&installation_checked.is_none_or(|at|at.elapsed().as_secs()>=5) {
             installation_checked=Some(Instant::now());
             let install=install.to_path_buf();
@@ -1216,7 +1187,6 @@ mod installation;
 pub use installation::install_project;
 pub use installation::install_acknowledgement;
 pub use installation::installation_status;
-pub use installation::{legacy_install,prepare_legacy,legacy_latched,dispatch_legacy,complete_legacy};
 
 fn installation_observed(service:&Value,status:Option<&Value>,version:&str)->bool {
     service["state"]=="running"&&service["fresh"]==true&&service["version"]==version
@@ -1246,10 +1216,9 @@ impl Registry {
     }
 }
 
-/// #1419: inventory and update results alternate, so each kind keeps its own last line; a failed candidate
+/// #1419: a failed candidate
 /// selftest logs once per version, not again for each pass's varying flush counts.
-fn maintenance_once(last:&mut [String;2],inventory:bool,text:&str)->bool {
-    let last=&mut last[usize::from(inventory)];
+fn maintenance_once(last:&mut String,text:&str)->bool {
     let key=|t:&str|t.find(" selftest failed").unwrap_or(t.len());
     let changed=last[..key(last)]!=text[..key(text)];
     if changed {text.clone_into(last);}
@@ -1460,15 +1429,14 @@ mod tests {
         fs::remove_dir_all(&install).unwrap();
     }
 
-    // Defect #1419: the failed 4.6.26 selftest line, alternating with inventory, was logged every pass.
+    // Defect #1419: the failed 4.6.26 selftest line was logged every pass.
     #[test]
     fn failed_selftest_logs_once_per_version() {
-        let mut last=Default::default();
+        let mut last=String::new();
         let fail=|v:&str,n:u8|format!("maintenance: {v} selftest failed: Error: telemetry: FAIL telemetry flush unacknowledged (accepted {n} inflight {n})");
-        let passes=[(false,fail("4.6.26",3)),(true,"native legacy inventory: 0 unit(s)".into()),(false,fail("4.6.26",4)),
-            (true,"native legacy inventory: 0 unit(s)".into()),(false,fail("4.6.27",3)),(false,"update: up to date".into()),(false,"update: up to date".into())];
-        let logged:Vec<_>=passes.iter().filter(|(inventory,text)|maintenance_once(&mut last,*inventory,text)).map(|(_,t)|t.as_str()).collect();
-        assert_eq!(logged,[fail("4.6.26",3).as_str(),"native legacy inventory: 0 unit(s)",&fail("4.6.27",3),"update: up to date"]);
+        let passes=[fail("4.6.26",3),fail("4.6.26",4),fail("4.6.27",3),"update: up to date".into(),"update: up to date".into()];
+        let logged:Vec<_>=passes.iter().filter(|text|maintenance_once(&mut last,text)).map(String::as_str).collect();
+        assert_eq!(logged,[fail("4.6.26",3).as_str(),&fail("4.6.27",3),"update: up to date"]);
     }
 
     // A stable owner identity must not cache policy changes or hide an interrupted write.
@@ -1490,69 +1458,37 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    // A5: refresh must wake a project sleeping on its previous blocked pass, without editing focus.
+    // A5: a released admission hold must wake a project sleeping on its previous blocked pass, without editing focus.
     #[test]
-    fn fresh_native_inventory_wakes_pending_work() {
+    fn released_admission_hold_wakes_pending_work() {
         let root=temp("inventory-wake");let roots=vec![root.clone()];
         fs::create_dir_all(crate::dot(&root)).unwrap();
         fs::write(crate::dot(&root).join("focus"),"approved-label").unwrap();
         let paths=[crate::dot(&root).join("poke"),root.join("host-poke")];
         let baseline=crate::poke_times(&paths);
         let p=policy();let mut h=Host::new(Err("inventory pending".into()));
-        for (inventory,checked) in [
-            (Ok(vec![]),Some(Instant::now()-std::time::Duration::from_secs(60))),
-            (Err("native read denied".into()),Some(Instant::now())),
-            (Ok(vec!["retained-unit".into()]),Some(Instant::now())),
-        ] {
-            let barrier=native_inventory_ready(&inventory,checked);
+        for barrier in [Err::<(),String>("handoff: legacy service still running".into()),Err("legacy liveness unknown".into())] {
             h.reload_admission(barrier.clone().map(|_|p.clone()),barrier.err(),&roots);
             assert!(h.reserve(&root,1,1,"codex",&p.cap,true,0).is_err());
             assert_eq!(crate::poke_times(&paths),baseline,"blocked refresh cannot wake admission");
         }
         h.reload_admission(Ok(p.clone()),None,&roots);
-        assert_ne!(crate::poke_times(&paths),baseline,"fresh zero-unit inventory must wake pending review/start");
+        assert_ne!(crate::poke_times(&paths),baseline,"released hold must wake pending review/start");
         crate::sleep_until_poke(&paths,baseline,Instant::now()+std::time::Duration::from_secs(60),&mut ||panic!("wake was lost"));
         assert!(h.reserve(&root,1,1,"codex",&p.cap,true,0).is_ok());
         assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"approved-label");
         fs::remove_dir_all(root).unwrap();
     }
 
-    // H-A5: a busy maintenance owner cannot prolong an old native absence observation.
+    // An admission hold keeps valid maintenance intervals; unknown configuration keeps safe defaults.
     #[test]
-    fn stale_native_inventory_holds_new_work_without_releasing_owned_slots() {
-        let p=policy();let mut h=Host::new(Ok(p.clone()));
-        let root=Path::new("owned");h.sync(root,vec![(1,7,"codex".into())]);
-        let (send,receive)=std::sync::mpsc::channel();
-        h.updating=Some(std::thread::spawn(move || {receive.recv().map_err(|e|e.to_string())?;Ok(Maintenance::Update(None))}));
-        let inventory=Ok(vec![]);
-        let refreshing=Some(Instant::now()-std::time::Duration::from_secs(30));
-        assert!(native_inventory_due(&inventory,refreshing,false),"refresh must start before the 60 s freshness deadline");
-        assert!(native_inventory_ready(&inventory,refreshing).is_ok(),"a refresh does not invalidate fresh native proof");
-        let checked=Instant::now()-std::time::Duration::from_secs(61);
-        h.policy=native_inventory_ready(&inventory,Some(checked)).map(|_|p.clone());
-        assert!(h.reserve(root,2,8,"codex",&p.cap,true,0).unwrap_err().contains("stale"));
-        assert_eq!(h.used()["codex"],1,"missing freshness cannot release owned work");
-        assert!(!h.updating.as_ref().unwrap().is_finished());
-        send.send(()).unwrap();h.updating.take().unwrap().join().unwrap().unwrap();
-        assert!(native_inventory_ready(&inventory,None).is_err());
-        assert!(native_inventory_ready(&Err("native read denied".into()),Some(Instant::now())).unwrap_err().contains("denied"));
-        assert!(native_inventory_ready(&Ok(vec!["retained-unit".into()]),Some(Instant::now())).unwrap_err().contains("retained-unit"));
-        let retained=Ok(vec!["retained-unit".into()]);
-        let retry=Some(Instant::now()-std::time::Duration::from_secs(6));
-        assert!(!native_inventory_due(&retained,retry,false),"quiescent retained units keep the ordinary cadence");
-        assert!(native_inventory_due(&retained,retry,true),"retired legacy units need fresh native proof before lifecycle can proceed");
-        assert!(native_inventory_due(&Err("native read denied".into()),retry,false),"unknown inventory retries promptly even without a transition");
-        assert!(!native_inventory_due(&inventory,retry,false),"fresh empty inventory keeps the ordinary cadence");
-        assert!(native_inventory_due(&retained,Some(checked),false),"quiescent retained inventory still refreshes at its freshness bound");
-        assert!(native_inventory_ready(&retained,retry).is_err(),"a refresh being due cannot release the native barrier");
-        let mut configured=p.clone();configured.update_every=86400;configured.rollback_after=1200;
-        let (blocked,timers)=guarded_policy(Ok(configured),&native_inventory_ready(&retained,retry));
-        assert!(blocked.unwrap_err().contains("retained-unit"),"native ownership still blocks admission");
+    fn admission_hold_keeps_maintenance_intervals() {
+        let mut configured=policy();configured.update_every=86400;configured.rollback_after=1200;
+        let (blocked,timers)=guarded_policy(Ok(configured),&Err("handoff: legacy service still running".into()));
+        assert!(blocked.unwrap_err().contains("still running"),"a live root owner still blocks admission");
         assert_eq!(timers,(86400,1200),"valid maintenance intervals survive an admission hold");
         let (invalid,timers)=guarded_policy(Err("host.json invalid".into()),&Ok(()));
         assert!(invalid.is_err());assert_eq!(timers,(60,600),"unknown configuration retains safe maintenance defaults");
-        h.policy=native_inventory_ready(&inventory,Some(Instant::now())).map(|_|p.clone());
-        assert!(h.reserve(root,2,8,"codex",&p.cap,true,0).is_ok());
     }
 
     // H-A4/H-A5: first launch waits for every project's occupancy, including unknown native ownership.
@@ -1677,7 +1613,7 @@ mod tests {
             let mut cfg=crate::tests::cfg();cfg.root=root;cfg.install=install;cfg.poll=2;
             let board=crate::board::Fake::default();board.state.borrow_mut().lists=Some(lists);
             crate::board::Board::create(&board,"Waits for the handover","",&["taskq".into()])?;
-            crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host),None)
+            crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host))
         })};
         let until=Instant::now()+std::time::Duration::from_secs(5);
         while Instant::now()<until {
@@ -1794,7 +1730,7 @@ mod tests {
 
     // H-A5: refusal precedes native installation, focus changes, release replacement and registry publication.
     #[test]
-    fn host_install_refuses_unresolved_legacy_owner_without_effects() {
+    fn host_install_refuses_another_live_root_owner_without_effects() {
         let base=temp("install-legacy-owner");let install=base.join("install");let root=base.join("project");
         fs::create_dir_all(&install).unwrap();fs::create_dir_all(crate::dot(&root)).unwrap();
         fs::write(install.join("projects"),format!("{}\n",root.display())).unwrap();
@@ -1805,7 +1741,7 @@ mod tests {
         let before=fs::read(install.join("projects")).unwrap();
         let result=install_project(&install,&root);
         child.kill().unwrap();child.wait().unwrap();
-        assert!(result.unwrap_err().contains("legacy project owner"));
+        assert!(result.unwrap_err().contains("another live service owns a registered root"));
         assert_eq!(fs::read(install.join("projects")).unwrap(),before);
         assert_eq!(fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"retained-focus");
         assert!(!install.join("releases").exists()&&!install.join("poke").exists());

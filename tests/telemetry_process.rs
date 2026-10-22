@@ -204,8 +204,6 @@ fn resident_analysis_owner() {
     let budget=coreq::telemetry::Budget {lock:install.join("taskq-profile.lock"),
         peers:vec![dir.join("telemetry.sqlite3"),dir.join("telemetry.sqlite3-wal"),dir.join("telemetry.sqlite3-shm"),install.join("taskq.log")],
         total:coreq::telemetry::INSTALLATION_BYTES,reserved:coreq::telemetry::PEER_BYTES};
-    // 4.6.19 published this budget; a different identity makes newer clients mismatch (#1294).
-    let budget=if std::env::var_os("TASKQ_ANALYSIS_LEGACY_BUDGET").is_some() {coreq::telemetry::Budget {total:64<<20,reserved:(4<<20)+(64<<10)+(2<<20),..budget}} else {budget};
     let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&path,"fixtureq","1",budget).unwrap();
     println!("ANALYSIS_READY");std::io::stdout().flush().unwrap();
     let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();
@@ -387,86 +385,4 @@ fn migration_cli_uses_quiesced_owner_and_preserves_legacy_text() {
     let reader=coreq::telemetry::Reader::open(&path).unwrap();assert!(reader.import_cursor("taskq.legacy").unwrap().is_some());
     let page=reader.export_kinds(&["operation"],0,0,1024).unwrap();assert_eq!(page["events"].as_array().unwrap().len(),1);
     drop(reader);fs::remove_dir_all(root).unwrap();
-}
-
-// Chain (#1294): a running 4.6.19 writer with another IPC budget -> new release selftest and
-// receipt-bearing focus command still complete, so update and service install can hand over.
-#[test]
-fn incompatible_running_writer_hands_over_selftest_and_receipts() {
-    use std::io::BufRead;
-    let root=std::env::temp_dir().join(format!("qw-{}",std::process::id()));
-    if root.exists() {fs::remove_dir_all(&root).unwrap();}
-    let install=root.join("i");fs::create_dir_all(&install).unwrap();fs::create_dir_all(root.join(".taskq")).unwrap();
-    fs::write(root.join(".taskq/focus"),"off").unwrap();fs::write(root.join(".taskq/focus.paused"),"all").unwrap();
-    fs::write(install.join("hold"),"owner hold").unwrap();
-    struct Owner(std::process::Child);
-    impl Drop for Owner {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
-    let mut owner=Owner(Command::new(std::env::current_exe().unwrap())
-        .args(["--exact","telemetry_process::resident_analysis_owner","--ignored","--nocapture"])
-        .env("TASKQ_ANALYSIS_OWNER",install.join("telemetry.log/universal.sqlite3")).env("TASKQ_ANALYSIS_LEGACY_BUDGET","1")
-        .env("COREQ_TELEMETRY_STORE_TRACE","1")
-        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap());
-    let mut ready=std::io::BufReader::new(owner.0.stdout.take().unwrap());
-    loop {let mut line=String::new();assert_ne!(ready.read_line(&mut line).unwrap(),0,"collector stopped before ready");if line.trim()=="ANALYSIS_READY" {break;}}
-    let invoke=|command:&[&str]|Command::new(env!("CARGO_BIN_EXE_taskq")).args(command)
-        .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
-        .env("COREQ_TELEMETRY_STORE_TRACE","1").env("TASKQ_SELFTEST_OFFLINE","1").env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
-    let selftest=invoke(&["selftest"]);
-    use std::io::Write;
-    writeln!(std::io::stderr(),"handover selftest diagnostics: {}",String::from_utf8_lossy(&selftest.stderr)).unwrap();
-    assert!(selftest.status.success(),"candidate selftest failed behind an incompatible writer: {}",String::from_utf8_lossy(&selftest.stderr));
-    let resumed=invoke(&["service","resume"]);
-    assert!(resumed.status.success(),"receipt unavailable behind an incompatible writer: {}",String::from_utf8_lossy(&resumed.stderr));
-    assert_eq!(fs::read_to_string(root.join(".taskq/focus")).unwrap(),"all");
-    assert_eq!(fs::read_to_string(install.join("hold")).unwrap(),"owner hold");
-    // A1: exercise the real updater, checksum, candidate subprocess selftest and activation.
-    // Only the release transport is substituted; no native service or production installation is touched.
-    let assets=root.join("assets");let bin=root.join("bin");fs::create_dir_all(&assets).unwrap();fs::create_dir_all(&bin).unwrap();
-    let helper=root.join("download.rs");
-    fs::write(&helper,r#"fn main() {
-        let args:Vec<_>=std::env::args().collect();
-        assert_eq!(&args[1..5], &["-fsSL", "--max-time", "300", "-o"]);
-        let name=args[6].rsplit('/').next().unwrap();
-        assert!(!name.contains('\\') && name!=".." && !name.is_empty());
-        let assets=std::path::PathBuf::from(std::env::var_os("TASKQ_FIXTURE_ASSETS").unwrap());
-        std::fs::copy(assets.join(name),&args[5]).unwrap();
-        std::fs::write(assets.join(format!("{name}.served")),b"fixture").unwrap();
-    }"#).unwrap();
-    let compiled=Command::new("rustc").arg(&helper).arg("-o").arg(bin.join(format!("curl{}",std::env::consts::EXE_SUFFIX))).output().unwrap();
-    assert!(compiled.status.success(),"{}",String::from_utf8_lossy(&compiled.stderr));
-    let version=env!("CARGO_PKG_VERSION");let target=coreq::update::target();
-    let name=format!("taskq-{version}-{target}{}",std::env::consts::EXE_SUFFIX);
-    let bytes=fs::read(env!("CARGO_BIN_EXE_taskq")).unwrap();fs::write(assets.join(&name),&bytes).unwrap();
-    fs::write(assets.join("latest.json"),serde_json::json!({"version":version,"files":{target:name}}).to_string()).unwrap();
-    fs::write(install.join("current"),"4.6.19").unwrap();
-    // Windows searches the application directory before inherited PATH and can otherwise run system curl.
-    // Keep the actual updater beside the owned transport, without changing product download resolution.
-    let updater=bin.join(format!("taskq{}",std::env::consts::EXE_SUFFIX));
-    fs::copy(env!("CARGO_BIN_EXE_taskq"),&updater).unwrap();
-    let path=std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap()))).unwrap();
-    let update=||Command::new(&updater).arg("update").current_dir(&root)
-        .env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install).env("TASKQ_FIXTURE_ASSETS",&assets).env("PATH",&path)
-        .env("TASKQ_INCIDENT_REPORTS","off").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").output().unwrap();
-    fs::write(assets.join("SHA256SUMS"),format!("{}  {name}\n","0".repeat(64))).unwrap();
-    let rejected=update();
-    assert!(assets.join("SHA256SUMS.served").is_file()&&assets.join(format!("{name}.served")).is_file(),
-        "update bypassed the fixture transport: {}",String::from_utf8_lossy(&rejected.stderr));
-    assert!(!rejected.status.success(),"invalid checksum must not activate");
-    assert!(String::from_utf8_lossy(&rejected.stderr).contains("not in SHA256SUMS"),"wrong rejection: {}",String::from_utf8_lossy(&rejected.stderr));
-    assert_eq!(fs::read_to_string(install.join("current")).unwrap(),"4.6.19");
-    fs::write(assets.join("SHA256SUMS"),format!("{}  {name}\n",ring::digest::digest(&ring::digest::SHA256,&bytes).as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>())).unwrap();
-    let updated=update();assert!(updated.status.success(),"update failed: {}",String::from_utf8_lossy(&updated.stderr));
-    assert_eq!(fs::read_to_string(install.join("current")).unwrap().trim(),version);
-    assert_eq!(fs::read_to_string(install.join("previous")).unwrap().trim(),"4.6.19");
-    let activated=install.join("releases").join(version).join(format!("taskq{}",std::env::consts::EXE_SUFFIX));
-    assert!(activated.is_file());
-    // macOS may re-sign the verified candidate with the owner's local signing identity (§ 8).
-    #[cfg(not(target_os="macos"))]
-    assert!(fs::read(&activated).unwrap()==bytes,"activated a different artifact");
-    assert!(!install.join("telemetry.log/handover").exists());
-    drop(owner.0.stdin.take());assert!(owner.0.wait().unwrap().success());
-    // Shared export must retain the actual command receipts; no side store may bypass its bound.
-    assert!(coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3")).unwrap()
-        .export(0,0,1024).unwrap()["events"].as_array().unwrap().iter().any(|r|r["observation"]["source"]=="command"));
-    fs::remove_dir_all(root).unwrap();
 }

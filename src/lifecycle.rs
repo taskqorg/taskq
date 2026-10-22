@@ -706,11 +706,11 @@ mod tests {
         let _=std::io::stdin().read(&mut [0]);
     }
 
-    // H-A5: inventory progress must not hide the unresolved execution blocking this exact Uninstall.
+    // H-A5: maintenance progress must not hide the unresolved execution blocking this exact Uninstall.
     fn assert_queued_uninstall_wait_tracks_ownership(install:&Path,root:PathBuf) {
         let mut h=host::Host::new(Err("fixture policy unused".into()));h.restart=true;h.stopping=true;
         h.busy.insert(root.clone(),false);h.prepared.insert(root.clone());
-        h.updating=Some(std::thread::spawn(||Ok(host::Maintenance::Inventory(Ok(vec![])))));
+        h.updating=Some(std::thread::spawn(||Ok(host::Maintenance::Update(None))));
         handoff_wait(install,"original",h.handoff_wait()).unwrap();
         assert_eq!(receipt(install,"exact-stop").unwrap().unwrap()["reason"],HandoffWait::Maintenance.reason());
         h.sync(&root,vec![(1,3,"codex".into())]);
