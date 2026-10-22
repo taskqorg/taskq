@@ -12,4 +12,7 @@ for(const kind of ['runtime','login','access','failed','interrupted']){
   const h=context.setup();
   assert(h.includes('Setup · '+kind)&&h.includes('r-'+kind)&&h.includes('n-'+kind),kind);
 }
+context.S.setup={id:'agentq-click',kind:'starting'};context.S.agentq={setup:{id:'agentq-click'}};
+assert.equal(context.setup(),'','onboarding reuses the linked setup row, without a duplicate');
+context.S.agentq.setup.id='other';assert(context.setup().includes('Setup · starting'),'unrelated PM requests remain visible');
 console.log('PASS setup block: Open session link, distinct runtime/login/access/failed/interrupted states');
