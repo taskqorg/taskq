@@ -1645,7 +1645,7 @@ pub fn claude_background(root: &Path, session: &str) -> Result<bool, String> {
         text.lines().filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok()).any(|v| v["sessionKind"] == "bg")))
 }
 
-const HANDSHAKE: &str = "taskq handshake: reply OK and do nothing else. The task follows in this thread.\n";
+pub(crate) const HANDSHAKE: &str = "taskq handshake: reply OK and do nothing else. The task follows in this thread.\n";
 
 /// A `codex-app` attempt stays owned until its exact native input and turn completion are observed.
 pub struct AppTurn {
@@ -1680,14 +1680,19 @@ impl AppTurn {
             binding["native"]=serde_json::json!({"thread":self.thread,"baseline":self.done});
             record_input(&self.log,binding)?;
         }
-        let ok = |c: &mut Command| coreq::process::output("runtime.app-submit", c, std::time::Duration::from_secs(10)).is_ok();
-        let url = format!("codex://threads/{}", self.thread);
-        let opened = if cfg!(windows) { ok(Command::new("cmd").args(["/C", "start", "", &url])) } else { ok(Command::new("open").arg(&url)) };
-        if !opened || !ok(codex_direct().args(["queue", "--thread", &self.thread, "--message", &self.text])) {
-            return Err(format!("codex queue failed for thread {}", self.thread));
-        }
-        Ok(())
+        app_submit(&self.thread, &self.text)
     }
+}
+
+/// Show `thread` in the Codex app and queue `text` on it (§ 8 Codex app); the caller has checked the id.
+pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
+    let ok = |c: &mut Command| coreq::process::output("runtime.app-submit", c, std::time::Duration::from_secs(10)).is_ok();
+    let url = format!("codex://threads/{thread}");
+    let opened = if cfg!(windows) { ok(Command::new("cmd").args(["/C", "start", "", &url])) } else { ok(Command::new("open").arg(&url)) };
+    if !opened || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
+        return Err(format!("codex queue failed for thread {thread}"));
+    }
+    Ok(())
 }
 
 /// Codex without a `cmd` in between: an npm `codex.cmd` shim runs its `codex.js` through `node`, since `cmd` caps a

@@ -75,7 +75,7 @@ const USAGE: &str = "taskq agents
  taskq cleanup [--force] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
- taskq service setup [--runtime claude] [--client C] [--target PATH..] [--json]
+ taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]
@@ -1974,7 +1974,7 @@ fn service(args: &Args) -> Res<()> {
     if sub == "setup" {
         if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot request the host setup session".into());}
         if args.pos.len()!=2||args.all("runtime").len()>1||args.all("client").len()>1||args.flags.keys().any(|key|!["runtime","client","target","json"].contains(&key.as_str())) {
-            return Err("usage: taskq service setup [--runtime claude] [--client C] [--target PATH..] [--json]".into());
+            return Err("usage: taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]".into());
         }
         let r=setup::submit(&platform::default_install(),args.one("runtime").unwrap_or("claude"),args.one("client"),&args.all("target"))?;
         if args.flags.contains_key("json") {println!("{}",serde_json::to_string(&r).map_err(|e|e.to_string())?);}

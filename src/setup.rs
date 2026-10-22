@@ -1,5 +1,6 @@
 //! Host setup sessions (taskq.md § 4, [detail](../docs/design/standalone-onboarding.md#contract-detail)): each `service setup`
-//! writes a new `<install>/setup/<id>.json`; the host service launches each once, then the Claude session manager owns it.
+//! writes a new `<install>/setup/<id>.json`; the host service launches each once, then its runtime (the Claude session
+//! manager or the Codex app) owns it.
 //! Tray AI requests and `taskq retro` take the same path with a project `root` ([AI requests](../docs/design/ai-workspace.md#contract-detail)).
 //! A crash between `launching` and the native answer reads `interrupted`; nothing relaunches.
 
@@ -150,11 +151,14 @@ fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String
 }
 
 fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
-    if runtime != "claude" { return Err(format!("setup runtime {runtime}: only claude has a qualified visible session")); }
+    // #1522: a visible Codex session is a Codex app thread, so only a setup request on macOS or Windows takes it.
+    if runtime != "claude" && !(runtime == "codex" && root.is_none() && cfg!(any(target_os = "macos", windows))) {
+        return Err(format!("setup runtime {runtime}: no qualified visible session here; use claude, or codex on macOS or Windows"));
+    }
     let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
-    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or("Claude Code").into(), runtime: runtime.into(),
+    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or(if runtime == "codex" { "Codex" } else { "Claude Code" }).into(), runtime: runtime.into(),
         targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root };
     r.brief = brief(&r, &id);
     locked(install, || {
@@ -229,6 +233,65 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
     })
 }
 
+/// The request's runtime adapter (§ 8 table).
+pub fn launch(own: &Path, r: &Request) -> Launched {
+    if r.runtime == "codex" { codex_launch(own, r) } else { claude_launch(own, r) }
+}
+
+/// The brief is a file in the session folder; the first message only points at it.
+fn read_brief(path: &Path) -> String {
+    format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default())
+}
+
+/// Codex app thread (§ 8 Codex app, #1522): a `codex exec` handshake turn in the session folder creates the thread, then
+/// the app shows it and gets the brief. Access is the `codex-app` grant, as for app workers; nothing falls back (R9).
+pub fn codex_launch(own: &Path, r: &Request) -> Launched {
+    let bin = crate::runtime::which("codex");
+    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} codex is not on the host service PATH")); }
+    if crate::runtime::login_state("codex", &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} Codex is not logged in on this host")); }
+    let install = own.parent().and_then(Path::parent).unwrap_or(own);
+    let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
+    let exe = std::env::current_exe().unwrap_or_default();
+    let env = crate::runtime::Env { root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[] };
+    let access = match crate::runtime::access(&env, "codex-app") { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
+    let path = own.join("brief.txt");
+    if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
+    let native = match crate::runtime::codex_native(bin) { Ok(b) => b, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
+    let mut c = match crate::runtime::executable(native, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
+    crate::platform::quiet(&mut c);
+    c.current_dir(own).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
+        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
+        // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
+        .args(["exec", "--json", "--skip-git-repo-check"]).args(access.codex.as_deref().unwrap_or(&codex)).arg("-C").arg(own).arg("-");
+    use coreq::process::Failure;
+    let out = match coreq::process::exchange("setup.codex-launch", &mut c, crate::runtime::HANDSHAKE.as_bytes(), std::time::Duration::from_secs(60)) {
+        Ok(out) | Err(Failure::Exit(out)) => out,
+        Err(e @ (Failure::InvalidDeadline | Failure::Capacity | Failure::Owner(_) | Failure::Spawn(_) | Failure::InputLimit)) => return Launched::NoStart(format!("Codex launch: {e}")),
+        Err(e) => return Launched::Unknown(format!("Codex launch outcome unknown: {e}")),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
+    codex_thread(&stdout, &stderr, out.status.code(), |thread| crate::runtime::app_submit(thread, &read_brief(&path)))
+}
+
+/// The handshake's answer: no thread is a definite no-start; a thread whose brief is not queued is unknown.
+fn codex_thread(stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOnce(&str) -> Res<()>) -> Launched {
+    let thread = stdout.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find(|v| v["type"] == "thread.started").and_then(|v| v["thread_id"].as_str().map(String::from));
+    let Some(thread) = thread else {
+        let text = format!("{stdout}{stderr}").to_lowercase();
+        if text.contains("401") || text.contains("login") || text.contains("log in") { return Launched::NoStart(format!("{LOGIN} Codex asked for login")); }
+        return Launched::NoStart(format!("Codex handshake started no thread (exit {})", code.map_or("unknown".into(), |c| c.to_string())));
+    };
+    // the id reaches the app URL and, on Windows, a shell: only a plain id
+    if thread.is_empty() || !thread.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { return Launched::Unknown(format!("Codex returned thread {thread:?}; outcome unknown")); }
+    match submit(&thread) {
+        Ok(()) => Launched::Job { job: thread.clone(), session: Some(thread.clone()), url: Some(format!("codex://threads/{thread}")) },
+        Err(e) => Launched::Unknown(format!("{e}; brief delivery unknown, inspect Codex thread {thread}")),
+    }
+}
+
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
 pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     let workdir = r.root.as_deref().map_or(own, Path::new);
@@ -247,7 +310,7 @@ pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
         .args(["--bg", "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
-    let input = format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default());
+    let input = read_brief(&path);
     use coreq::process::Failure;
     let out = match coreq::process::exchange("setup.claude-launch", &mut c, input.as_bytes(), std::time::Duration::from_secs(30)) {
         Ok(out) | Err(Failure::Exit(out)) => out,
@@ -287,7 +350,7 @@ const LINK_WINDOW_MS: u128 = 10 * 60 * 1000;
 /// Remote Control publishes the link after `--bg` returns (#1409): later passes fill a missing session or link
 /// within the window, then stop; the session itself is never tracked.
 pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
-    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
+    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && r.runtime == "claude" && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
         let Some(job) = r.job.clone() else { continue };
         let own = r.root.as_deref().map_or_else(|| dir(install).join(&r.id), PathBuf::from);
         let (session, url) = observe(&own, &job);
@@ -311,15 +374,16 @@ const ACCESS: &str = "access refused:";
 pub fn view(r: &Request) -> serde_json::Value {
     let reason = r.reason.as_deref().unwrap_or("");
     let again = if r.root.is_some() { "send the request again" } else { "run `taskq service setup`" };
+    let (name, login, sessions) = if r.runtime == "codex" { ("Codex", "codex login", "the Codex app threads") } else { ("Claude Code", "claude auth login", "`claude agents`") };
     let (kind, next) = match r.state.as_str() {
         "pending" | "launching" => ("starting", "The host service is starting the session".into()),
-        "launched" if r.url.is_some() => ("launched", "Open the session to read and answer; archive it in Claude when done".into()),
-        "launched" => ("launched", "Session started; find it in Claude (`claude agents`), archive it when done".into()),
-        "failed" if reason.starts_with(MISSING) => ("runtime", format!("Install Claude Code for the service user, then {again}")),
-        "failed" if reason.starts_with(LOGIN) => ("login", format!("Run `claude auth login` as the service user, then {again}")),
+        "launched" if r.url.is_some() => ("launched", format!("Open the session to read and answer; archive it in {name} when done")),
+        "launched" => ("launched", format!("Session started; find it in {sessions}, archive it when done")),
+        "failed" if reason.starts_with(MISSING) => ("runtime", format!("Install {name} for the service user, then {again}")),
+        "failed" if reason.starts_with(LOGIN) => ("login", format!("Run `{login}` as the service user, then {again}")),
         "failed" if reason.starts_with(ACCESS) => ("access", format!("Grant the access named here yourself (taskq never widens it), then {again}")),
         "failed" => ("failed", format!("Read the reason, fix it, then {again}")),
-        _ => ("interrupted", format!("Check `claude agents` for a live session first; only then {again}")),
+        _ => ("interrupted", format!("Check {sessions} for a live session first; only then {again}")),
     };
     serde_json::json!({"id": r.id, "state": r.state, "kind": kind, "next": next, "reason": r.reason, "url": r.url, "host": r.host, "runtime": r.runtime, "session": r.session})
 }
@@ -401,7 +465,11 @@ mod tests {
         let first = submit(i, "claude", None, &[]).unwrap();
         let second = submit(i, "claude", None, &[]).unwrap();
         assert_ne!(first.id, second.id, "every call writes a new request");
-        assert!(submit(i, "codex", None, &[]).is_err(), "unqualified runtime refused");
+        assert!(submit(i, "gemini", None, &[]).is_err(), "unqualified runtime refused");
+        // #1522: Codex setup is a Codex app thread, so only native macOS and Windows take it.
+        let codex = submit(i, "codex", None, &[]);
+        assert_eq!(codex.is_ok(), cfg!(any(target_os = "macos", windows)));
+        if let Ok(c) = codex { assert_eq!((c.client.as_str(), first.client.as_str()), ("Codex", "Claude Code")); fs::remove_file(file(i, &c.id)).unwrap(); }
         assert!(first.brief.contains("full PM chat") && first.brief.contains(&first.host));
         step(i, ok).unwrap();
         assert_eq!(all(i).unwrap().0[0].id, first.id, "oldest first");
@@ -472,5 +540,27 @@ mod tests {
         r.state = "launched".into(); r.reason = None; r.url = Some("https://claude.ai/code/session_x".into());
         assert_eq!((kind(&r).as_str(), view(&r)["url"].as_str()), ("launched", Some("https://claude.ai/code/session_x")));
         assert!(view(&r)["next"].as_str().unwrap().contains("Open the session"));
+        // #1522: a Codex request names Codex steps, never Claude ones.
+        r.runtime = "codex".into(); r.state = "failed".into(); r.url = None;
+        for (reason, step) in [(MISSING, "Install Codex"), (LOGIN, "`codex login`")] {
+            r.reason = Some(format!("{reason} x"));
+            assert!(view(&r)["next"].as_str().unwrap().contains(step));
+        }
+    }
+
+    // #1522 A4: the Codex handshake answer to the record. Risk: a login prompt reads as a generic failure, a thread whose
+    // brief was not queued reads as launched or is retried, or an unsafe id reaches the app URL.
+    #[test]
+    fn codex_outcomes_stay_distinct() {
+        let started = r#"{"type":"thread.started","thread_id":"019a-b2"}"#;
+        let queued = |t: &str| { assert_eq!(t, "019a-b2"); Ok(()) };
+        let refused = |_: &str| -> Res<()> { Err("codex queue failed for thread 019a-b2".into()) };
+        let never = |_: &str| -> Res<()> { panic!("no thread to submit") };
+        let Launched::Job { job, session, url } = codex_thread(started, "", Some(0), queued) else { panic!("thread not launched") };
+        assert_eq!((job.as_str(), session.as_deref(), url.as_deref()), ("019a-b2", Some("019a-b2"), Some("codex://threads/019a-b2")));
+        assert!(matches!(codex_thread("", "Error: 401 Unauthorized", Some(1), never), Launched::NoStart(r) if r.starts_with(LOGIN)));
+        assert!(matches!(codex_thread("", "model overloaded", Some(1), never), Launched::NoStart(r) if !r.starts_with(LOGIN)));
+        assert!(matches!(codex_thread(started, "", Some(0), refused), Launched::Unknown(r) if r.contains("019a-b2")));
+        assert!(matches!(codex_thread(r#"{"type":"thread.started","thread_id":"x&calc"}"#, "", Some(0), never), Launched::Unknown(_)));
     }
 }
