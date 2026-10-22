@@ -1544,7 +1544,8 @@ impl ClaudeTurn {
             if row["kind"]!="background" {return Err("Claude recovery job kind unknown".into());}
             let root=row["cwd"].as_str().ok_or("Claude recovery project unknown")?;
             // Native --cwd includes descendants; TaskQ submits the exact canonical project root.
-            if Path::new(root)!=self.root {continue;}
+            // #1627: native rows name the plain path; Windows canonical paths carry the `\\?\` prefix.
+            if Path::new(root).canonicalize().ok().as_deref()!=Some(self.root.as_path()) {continue;}
             let session=row["sessionId"].as_str().filter(|s|s.len()==36 && native_job_id(s)).ok_or("Claude recovery session unknown")?;
             let id=row["id"].as_str().filter(|id|native_job_id(id)).ok_or("Claude native job identity unavailable during recovery")?;
             if session!=self.session && !claude_job_input(home,id,session,&self.root,&self.input,&mut budget)? {continue;}
@@ -2002,7 +2003,9 @@ impl NativeHistory {
             {use std::os::unix::fs::MetadataExt;
                 if (old.dev(),old.ino())!=(meta.dev(),meta.ino()) {return Err("native history file replaced; reconcile original input".into());}
             }
-            if self.path.as_deref()!=Some(path) || old.created().ok()!=meta.created().ok() {
+            // #1627: Claude moves its transcript into a worktree's project folder; the file identity above survives the rename.
+            let moved=cfg!(not(any(unix,windows))) && self.path.as_deref()!=Some(path);
+            if moved || old.created().ok()!=meta.created().ok() {
                 return Err("native history identity changed; reconcile original input".into());
             }
             if meta.len()<self.offset || meta.len()<old.len() {return Err("native history truncated; completion unknown".into());}
@@ -3129,6 +3132,28 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // Chain: live Claude worker -> EnterWorktree moves its transcript to the worktree's project folder (#1627) -> history read twice.
+    // Risk: the moved transcript reads as another history, or a different file at the new path passes as the original.
+    #[test]
+    fn native_history_follows_a_moved_transcript_and_rejects_a_replacement() {
+        let root=std::env::temp_dir().join(format!("taskq-history-move-{}",uuid()));
+        for dir in ["root","worktree"] {std::fs::create_dir_all(root.join(dir)).unwrap();}
+        let (old,new)=(root.join("root/transcript.jsonl"),root.join("worktree/transcript.jsonl"));
+        std::fs::write(&old,"{\"type\":\"user\",\"n\":1}\n").unwrap();
+        let mut history=NativeHistory::default();let mut seen=Vec::new();
+        assert_eq!(history.read(&old,|v|{seen.push(v["n"].as_u64());Ok(())}),Ok(true));
+        std::fs::rename(&old,&new).unwrap();
+        File::options().append(true).open(&new).unwrap().write_all(b"{\"type\":\"assistant\",\"n\":2}\n").unwrap();
+        assert_eq!(history.read(&new,|v|{seen.push(v["n"].as_u64());Ok(())}),Ok(true),"a moved transcript keeps the execution observed");
+        assert_eq!(seen,[Some(1),Some(2)],"the cursor continues without replay");
+        // The replacement exists before the original goes, so no file system can reuse its identity.
+        std::fs::write(&old,"{\"type\":\"user\",\"n\":1}\n{\"type\":\"assistant\",\"n\":2}\n").unwrap();
+        std::fs::remove_file(&new).unwrap();std::fs::rename(&old,&new).unwrap();
+        let replaced=history.read(&new,|_|Ok(())).unwrap_err();
+        assert!(replaced.contains("replaced")||replaced.contains("identity changed"),"another file at the moved path fails closed: {replaced}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     // Chain: board intent -> native input -> cold observer. Risk: restart substitutes input, replays work or drops its lock.
     #[test]
     fn cold_input_recovery_preserves_the_exact_execution() {
@@ -3293,6 +3318,7 @@ mod tests {
 
     // Chain: lost launch reply -> exact native input lookup -> resumed observation without resubmission.
     // Risk: a missing identity stays orphaned, or unrelated/ambiguous history is adopted as this execution.
+    // #1627 `native-cwd`: `claude agents` names the plain root, not the canonical (Windows `\\?\`) form.
     #[test]
     fn claude_lost_reply_recovers_only_its_unique_input() {
         let root=std::env::temp_dir().join(format!("taskq-claude-lookup-{}",uuid()));
@@ -3302,7 +3328,7 @@ mod tests {
         std::fs::create_dir_all(root.join("projects/a")).unwrap();
         #[cfg(unix)] std::os::unix::fs::symlink(root.join("missing-native-directory"),root.join("projects/missing")).unwrap();
         for id in ["c37eb75a","eaff90e7"] {std::fs::create_dir_all(root.join("jobs").join(id)).unwrap();}
-        for case in ["match","known","blocks","absent","two-jobs","two-inputs","partial","invalid","oversize","missing","foreign","resume","old","copied","large-unrelated","locator-only","bad-locator","foreign-locator","large-locator","long-history"] {
+        for case in ["match","native-cwd","known","blocks","absent","two-jobs","two-inputs","partial","invalid","oversize","missing","foreign","resume","old","copied","large-unrelated","locator-only","bad-locator","foreign-locator","large-locator","long-history"] {
             let (input,lock,path)=claude_input(&root,"fixture task body",None).unwrap();
             let event=serde_json::json!({"type":"user","message":{"content":if case=="blocks" {serde_json::json!([{"type":"text","text":input}])} else {serde_json::json!(input)}}}).to_string()+"\n";
             let a=root.join("projects/a").join(format!("{session}.jsonl"));let b=root.join("projects/a").join(format!("{other}.jsonl"));
@@ -3333,7 +3359,9 @@ mod tests {
             if case=="large-unrelated" {std::fs::write(&b,"x".repeat(8*1024*1024+1)).unwrap();}
             let mut turn=ClaudeTurn {root:root.clone(),log:root.join("attempt.log"),session:if matches!(case,"resume"|"old") {session.clone()} else if case=="copied" {other.clone()} else {String::new()},id:if matches!(case,"known"|"two-jobs"|"resume") {"c37eb75a".into()} else {String::new()},
                 announced:false,accepted:false,history:ClaudeHistory::default(),before:usize::from(matches!(case,"resume"|"old")),mode:"dontAsk".into(),input:input.clone(),_input_file:lock,pid:0,native:None,recovery:None,done:false,failure:None,launch_error:Some("launch response lost".into())};
-            let mut rows=vec![serde_json::json!({"id":"c37eb75a","kind":"background","sessionId":session,"cwd":if case=="foreign" {root.parent().unwrap()} else {&root},"state":"working"})];
+            let plain=if cfg!(windows) {PathBuf::from(root.to_str().unwrap().trim_start_matches(r"\\?\"))} else {root.join("projects/..")};
+            let cwd=match case {"foreign"=>root.parent().unwrap(),"native-cwd"=>plain.as_path(),_=>root.as_path()};
+            let mut rows=vec![serde_json::json!({"id":"c37eb75a","kind":"background","sessionId":session,"cwd":cwd,"state":"working"})];
             if matches!(case,"two-jobs"|"large-unrelated") {rows.push(serde_json::json!({"id":"eaff90e7","kind":"background","sessionId":other,"cwd":root,"state":"working"}));}
             rows.push(serde_json::json!({"id":"abcdef12","kind":"background","cwd":root.join("deleted-worktree"),"state":"done"}));
             if case=="missing" {std::fs::remove_file(&a).unwrap();}
@@ -3350,7 +3378,7 @@ mod tests {
                 assert!(!std::fs::read_to_string(&turn.log).unwrap().contains("foreign final"));
                 assert_eq!(claude_history(&a,0,|_|{}).unwrap(),23,"pre-submission scan supports the same large history");
             }
-            if matches!(case,"match"|"known"|"blocks"|"resume"|"large-unrelated"|"long-history") {
+            if matches!(case,"match"|"native-cwd"|"known"|"blocks"|"resume"|"large-unrelated"|"long-history") {
                 result.unwrap();assert_eq!(turn.id,"c37eb75a");assert_eq!(turn.session,session);
                 assert_eq!(turn.accepted(),Ok(true));assert!(!turn.done,"input acceptance is not native exit");
                 turn.recover_job(&rows,None).unwrap();
