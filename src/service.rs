@@ -105,7 +105,7 @@ fn route(i: &Issue, reviewer: bool) -> String {
 }
 
 pub fn priority(i: &Issue) -> u8 {
-    if crate::labels::matches(&i.labels, "p0") { 0 } else if crate::labels::matches(&i.labels, "p1") { 1 } else { 2 }
+    crate::display::priority(&i.labels)
 }
 
 /// The host named in a `spawn` session (`<rt>:<session> <host>`).

@@ -100,7 +100,7 @@ async function main(){
   await load(page,'projects',20,'dark');
   result.probes.counterGrowth=[];
   for(const n of [0,1,12,100,1000]){
-   await page.evaluate(n=>{document.querySelector('.content-body').innerHTML='<div class="tqp">'+TaskqProjectBlocks.counters(Object.fromEntries(TaskqProjectBlocks.states.map(([s])=>[s,n])))+'</div>';},n);
+   await page.evaluate(n=>{document.querySelector('.content-body').innerHTML='<div class="tqp">'+TaskqProjectBlocks.counters(Object.keys(TaskqProjectBlocks.marks).map(state=>({state,name:state,n})))+'</div>';},n);
    result.probes.counterGrowth.push({n,...await page.evaluate(()=>{const strip=document.querySelector('.tqp-counts');return {buttons:document.querySelectorAll('.tqp-counts button').length,width:strip?.clientWidth||0,scrollWidth:strip?.scrollWidth||0,states:[...document.querySelectorAll('.tqp-counts button')].map(e=>e.dataset.state)};})});
 
   }
