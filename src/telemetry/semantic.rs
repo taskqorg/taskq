@@ -102,11 +102,19 @@ pub(super) fn encode(kind:&str,original:Value)->Res<Value> {
         let mut counts=serde_json::Map::new();
         for (name,count) in original["ops"].as_object().ok_or("missing request counts")? {
             let (method,path)=name.split_once(' ').ok_or("invalid request operation")?;
-            counts.insert(format!("{method}:{}",path.replace('/',".").replace('*',":")),count.clone());
+            counts.insert(count_key(method,path),count.clone());
         }
         value["counts"]=Value::Object(counts);
     }
     Ok(value)
+}
+
+/// The count key of request operation `<method> <path>` (§ 4, #1621): DashQ reads `:`-joined identifiers, so path
+/// segments join with `.`, an id segment `*` or a word over 20 bytes reads `ID` (a path stays within 64 bytes) and the
+/// API root `ROOT`. Older records spelled `*` as `:`; [`decoded`] still reads them.
+fn count_key(method:&str,path:&str)->String {
+    if path.is_empty() {return format!("{method}:ROOT");}
+    format!("{method}:{}",path.split('/').map(|s|if s=="*"||s.len()>20 {"ID"} else {s}).collect::<Vec<_>>().join("."))
 }
 
 pub(super) fn encoded_size(kind:&str,original:&Value)->Res<usize> {
@@ -131,7 +139,8 @@ fn decoded(value:&Value)->Res<Sample> {
         let mut ops=serde_json::Map::new();
         for (name,count) in value["counts"].as_object().ok_or("missing request counts")? {
             let (method,path)=name.split_once(':').ok_or("invalid request count code")?;
-            ops.insert(format!("{method} {}",path.replace('.',"/").replace(':',"*")),count.clone());
+            let path=if path=="ROOT" {String::new()} else {path.split('.').map(|s|if matches!(s,"ID"|":") {"*"} else {s}).collect::<Vec<_>>().join("/")};
+            ops.insert(format!("{method} {path}"),count.clone());
         }
         original.insert("ops".into(),Value::Object(ops));
     }
@@ -225,6 +234,47 @@ mod tests {
         let stage=r#"taskq-stage {"stage":"claim","task":1,"attempt":2,"rt":"other","us":1,"outcome":"ok","error":"none","at_ms":1,"unknown":"no-model"}"#;store.append(&[coreq::telemetry::Event::new(observation(stage).unwrap()).unwrap()]).unwrap();
         let reader=coreq::telemetry::Reader::open(&path).unwrap();let text=read(&reader,&["stage"],"").unwrap();assert_eq!(text.lines().count(),1);assert_eq!(canonical(text.trim()).unwrap(),canonical(stage).unwrap());assert!(read(&reader,&["board"],"").unwrap().is_empty());
         drop(reader);drop(store);std::fs::remove_dir_all(dir).unwrap();
+    }
+    /// DashQ's telemetry line key rule (dashq `counter_field`, dashq#181): ≤ 128 bytes, each `:` segment an identifier
+    /// of ≤ 64 bytes `[A-Za-z0-9._-]` outside the deny list.
+    fn dashq_key(k:&str)->bool {
+        const DENY:[&str;18]=["prompt","command","cmd","args","stdout","stderr","output","input","content","text","message","path","cwd","env","token","secret","password","credential"];
+        k.len()<=128&&k.split(':').all(|s| {let s=s.to_ascii_lowercase();
+            !s.is_empty()&&s.len()<=64&&s.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b))&&!DENY.iter().any(|d|s==*d||s.ends_with(&format!("_{d}")))})
+    }
+    // Defect (#1621): `GET compare/*` was sent as `GET:compare.:`, the API root as `GET:`; DashQ refused both blocks.
+    // Risk kept: any request path a board module builds (literal or `format!` template, placeholders filled with numbers,
+    // names, SHAs, mixed case and 30-byte words) yields a count key DashQ refuses, or a key the store cannot read back.
+    #[test]
+    fn every_board_request_path_yields_a_dashq_count_key() {
+        let mut paths=std::collections::BTreeSet::from([String::new()]);
+        for source in [include_str!("../board/mod.rs"),include_str!("../board/github.rs"),include_str!("../board/gitlab.rs")] {
+            for literal in source.split('"').skip(1).step_by(2).filter(|l|l.starts_with('/')||l.starts_with("{}/")) {
+                let long="abcdefghijklmnopqrstuvwxyzabcd";
+                for sample in ["7","main","0bc5c954a3c5fce342039fbb4c3a19b0e04c11ab","Q-Held",long,&format!("{long}/{long}")] {
+                    // a leading `{}` is the API root, which `Api::op` strips
+                    let mut rest=literal.strip_prefix("{}").unwrap_or(literal);let mut path=String::new();
+                    while let Some((head,tail))=rest.split_once('{') {path.push_str(head);path.push_str(sample);rest=tail.split_once('}').map_or("",|x|x.1);}
+                    path.push_str(rest);paths.insert(path);
+                }
+            }
+        }
+        let ops=paths.iter().flat_map(|p|["GET","POST","PUT","PATCH","DELETE"].map(|m|crate::requests::op(m,p))).collect::<std::collections::BTreeSet<_>>();
+        for known in ["GET compare/*","GET ","PATCH git/refs/heads","GET repos/*/issues"] {assert!(ops.contains(known),"{known}");}
+        let ops=ops.into_iter().map(|op|(op,json!(1))).collect::<serde_json::Map<_,_>>();
+        let value=observation(&format!("taskq-requests {}",json!({"at_ms":1,"source":"cli status","ops":ops}))).unwrap();
+        for key in value["counts"].as_object().unwrap().keys() {assert!(dashq_key(key),"{key}");}
+        assert_eq!(value["counts"]["GET:compare.ID"],1);assert_eq!(value["counts"]["GET:ROOT"],1);
+        let back:Value=serde_json::from_str(line(&value).unwrap().split_once(' ').unwrap().1).unwrap();
+        for op in ["GET compare/*","GET ","GET issues/N/comments","POST graphql"] {assert_eq!(back["ops"][op],1,"{op}");}
+    }
+    // A3 (#1621): records stored before the key change, with `*` spelled `:`, read back unchanged.
+    #[test]
+    fn older_colon_count_keys_still_read_back() {
+        let old=json!({"product":"taskq","version":null,"kind":"requests","operation":"requests.summary","started_ms":1,"source":"cli.status",
+            "counts":{"GET:compare.:":2,"GET:":3,"GET:commits.:.status":4,"GET:issues.N":5}});
+        let back:Value=serde_json::from_str(line(&old).unwrap().split_once(' ').unwrap().1).unwrap();
+        assert_eq!(back["ops"],json!({"GET compare/*":2,"GET ":3,"GET commits/*/status":4,"GET issues/N":5}));
     }
     #[test]
     fn unsupported_or_unsafe_source_metadata_is_refused() {
