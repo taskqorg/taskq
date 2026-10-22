@@ -314,7 +314,7 @@ agentq:function(settings=false){
   const session=A.setup?.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(A.setup.url)?h('a',{href:'#','data-url':A.setup.url},'Open session'):null;
   return h('section',{class:'group agentq','aria-label':A.kind==='shown'?'agentq is not installed':'agentq '+A.kind},
     view.agentqError&&h('div',{class:'body alert',role:'alert'},view.agentqError),
-    h('div',{class:'row'},A.kind==='shown'?'Save on repeated context':A.kind==='setting-up'?'Setting up agentq…':A.kind==='stopped'?'agentq installed · service stopped':'agentq '+(A.kind==='unknown'?'status unknown':A.kind)),
+    h('div',{class:'row'},A.kind==='shown'?(settings?'agentq not installed':'Save on repeated context'):A.kind==='setting-up'?'Setting up agentq…':A.kind==='stopped'?'agentq installed · service stopped':'agentq '+(A.kind==='unknown'?'status unknown':A.kind)),
     h('div',{class:'body meta'},A.host+' · '+A.platform),
     A.reason&&h('div',{class:'body',role:'status'},A.reason),
     A.setup&&h('div',{class:'body',role:'status'},'Setup · '+A.setup.kind,A.setup.reason&&' · '+A.setup.reason,A.setup.next&&' · '+A.setup.next,' ',session),
@@ -323,7 +323,7 @@ agentq:function(settings=false){
     rows.filter(r=>!r.eligible).map(r=>h('div',{class:'body meta'},r.client+' · '+(r.reason||'unknown'))),
     selected&&h('div',{class:'body'},'Set up agentq on this host for '+selected.client+' using '+runtime+'. This installs its verified release, engines and host service, and connects this client’s supported configuration, hooks and MCP. Existing sessions keep running. New sessions may be needed to verify the connection.'),
     selected&&h('div',{class:'body meta'},'Approved targets: '+targets.join(', ')),
-    h('div',{class:'options'},h('button',{'data-a':'agentq-setup',disabled:!selected?.eligible||targets.length!==2},settings?'Set up agentq…':'OK — set up agentq'),A.kind==='shown'&&!A.dismissed&&h('button',{'data-a':'agentq-dismiss'},'Not now'),h('button',{'data-a':'agentq-check'},'Check again')),
+    h('div',{class:'options'},h('button',{'data-a':'agentq-setup',disabled:!selected?.eligible||targets.length!==2},A.kind==='stopped'?'Review setup…':settings?'Set up agentq…':'OK — set up agentq'),A.kind==='shown'&&!A.dismissed&&h('button',{'data-a':'agentq-dismiss'},'Not now'),h('button',{'data-a':'agentq-check'},'Check again')),
     !selected?.eligible&&h('div',{class:'body meta'},'Use an existing client: Install agentq from https://github.com/taskqorg/agentq and set it up for this client. No runtime or permissions are changed here.'));
 },
 agents:function(){
