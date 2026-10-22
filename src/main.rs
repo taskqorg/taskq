@@ -1819,7 +1819,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
     // ponytail: Windows cannot hand children to a new image; exit once no child is live and the unit restarts us.
     // The new `current` is already written, so the update waits only for the running attempts.
     if lifecycle_waits(s, false).is_empty() {
-        std::process::exit(75);
+        crate::platform::exit(75);
     }
     // update checks pause while the restart request carries the re-exec until the children end
     fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string())
@@ -2813,17 +2813,17 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
 fn application() {
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("__windows-security-restore") {
-        if let Err(e) = windows_sandbox::restore(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); std::process::exit(1); }
+        if let Err(e) = windows_sandbox::restore(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); crate::platform::exit(1); }
         return;
     }
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("__windows-codex") {
-        if let Err(e) = windows_sandbox::run(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); std::process::exit(1); }
+        if let Err(e) = windows_sandbox::run(&std::env::args().skip(2).collect::<Vec<_>>()) { eprintln!("{e}"); crate::platform::exit(1); }
         return;
     }
     #[cfg(target_os = "linux")]
     if std::env::current_exe().ok().is_some_and(|p| p == Path::new(linux_sandbox::HELPER)) {
-        if let Err(e) = linux_sandbox::run(&std::env::args().skip(1).collect::<Vec<_>>()) { eprintln!("{e}"); std::process::exit(1); }
+        if let Err(e) = linux_sandbox::run(&std::env::args().skip(1).collect::<Vec<_>>()) { eprintln!("{e}"); crate::platform::exit(1); }
         return;
     }
     incident::install_panic_hook();
@@ -2834,6 +2834,13 @@ fn application() {
     let t = platform::tool(&install);
     let launcher = install.join(t.exe_name()).canonicalize().ok();
     if exe.is_some() && exe == launcher && t.current().is_some() {
+        // #1566: CoreQ's Windows launcher ends a CLI call through `ExitProcess`, the TLS-teardown hang `platform::exit` avoids.
+        #[cfg(windows)]
+        if !(args.first().map(String::as_str) == Some("service") && args.get(1).map(String::as_str) == Some("run")) {
+            let v = coreq::launcher::pick(&t, false).unwrap_or_else(|e| platform::die(&e));
+            let status = std::process::Command::new(t.release_exe(&v)).args(&args).env(t.env("INSTALL"), &t.install).status();
+            platform::exit(status.map_or_else(|e| platform::die(&format!("start {v}: {e}")), |s| s.code().unwrap_or(1)));
+        }
         coreq::launcher::launch(&t, &args);
     }
     #[cfg(target_os = "macos")]
@@ -2854,7 +2861,7 @@ fn application() {
     }
     if let Err(e) = r {
         if e.is_empty() {
-            std::process::exit(1);
+            crate::platform::exit(1);
         }
         platform::die(&e);
     }

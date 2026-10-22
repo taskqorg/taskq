@@ -152,7 +152,7 @@ pub fn install_panic_hook() {
     std::panic::set_hook(Box::new(move |info| {
         if !ACTIVE.with(Cell::get) {
             let msg = info.payload_as_str().unwrap_or("");
-            if closed_pipe(msg) && !crate::host::active() { std::process::exit(141); } // consumer closed the pipe: no TaskQ defect (§ 4)
+            if closed_pipe(msg) && !crate::host::active() { crate::platform::exit(141); } // consumer closed the pipe: no TaskQ defect (§ 4)
             #[cfg(not(test))]
             if let Ok(root) = crate::find_root() {
                 use std::io::Write;

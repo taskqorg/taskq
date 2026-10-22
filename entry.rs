@@ -39,6 +39,7 @@ fn main() {
     let _telemetry = (!maintenance).then(||telemetry::install_capture(private.as_deref().unwrap_or(&install))).transpose()
         .map_err(|e| {let _=writeln!(std::io::stderr(),"Telemetry: unknown ({e})");}).ok();
     application();
+    platform::drain_telemetry();
     // ponytail: a failed selftest exits inside application() and keeps its private store for diagnosis;
     // on Windows this removal fails while the writer is open, and the next staged selftest sweeps it.
     // #1519: the drop seals the store; a seal observed by the still-global collector queues its own checkpoint span,
@@ -46,5 +47,7 @@ fn main() {
     if let Some(private)=private {
         tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(),||drop(_telemetry));
         let _=std::fs::remove_dir_all(private);
-    }
+    } else {drop(_telemetry);}
+    // #1566: returning from main ends in the same `ExitProcess` deadlock as `platform::exit`; the drop above sealed.
+    #[cfg(windows)] platform::terminate(0);
 }

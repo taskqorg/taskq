@@ -137,7 +137,37 @@ fn emit(line: &str, project: Option<&Path>, stderr: &mut dyn std::io::Write, std
 
 pub fn die(msg: &str) -> ! {
     log(&error_text(msg, crate::find_root().ok().as_deref()));
-    std::process::exit(1);
+    exit(1);
+}
+
+/// Every taskq exit. #1566: Windows `ExitProcess` first kills the other threads, then runs this thread's
+/// TLS destructors; a thread killed while it held a lock one of them takes (sharded_slab's thread-id
+/// registry) left that exit waiting forever. Seal telemetry, flush, then end without destructors.
+pub fn exit(code: i32) -> ! {
+    #[cfg(windows)] {drain_telemetry(); coreq::telemetry::capture::before_exec(); terminate(code)}
+    #[cfg(not(windows))] std::process::exit(code)
+}
+
+/// #1566: CoreQ's exit flush waits 3 s, but one Windows append can outlast it (its writer retries a busy store for 10 s);
+/// ending the process then loses the queued observations. Retry the unacknowledged flush, bounded, before that flush.
+pub fn drain_telemetry() {
+    use coreq::telemetry::capture::Capture;
+    let Some(capture) = tracing::dispatcher::get_default(|d| d.downcast_ref::<Capture>().cloned()) else { return };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while let Err(e) = capture.flush() && std::time::Instant::now() < until
+        && (e.starts_with("telemetry flush unacknowledged (") || e == "telemetry flush queue deadline") {}
+}
+
+/// Ends this process now: no other thread or destructor runs after the flush.
+#[cfg(windows)]
+pub fn terminate(code: i32) -> ! {
+    use std::io::Write;
+    #[link(name = "kernel32")]
+    unsafe extern "system" { fn GetCurrentProcess() -> isize; fn TerminateProcess(process: isize, code: u32) -> i32; }
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    unsafe { TerminateProcess(GetCurrentProcess(), code as u32); }
+    std::process::abort()
 }
 
 pub fn error_text(msg: &str, root: Option<&Path>) -> String {

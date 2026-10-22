@@ -136,7 +136,7 @@ fn launched_by(launcher:&std::path::Path)->Result<Option<OwnedHandle>,String> {
 pub fn exit_with_launcher(launcher:&std::path::Path) {
     let handle=match launched_by(launcher) {Ok(Some(h))=>h,Ok(None)=>return,Err(e)=>{log!("launcher watch unavailable: {e}");return;}};
     std::thread::spawn(move || {
-        if unsafe {WaitForSingleObject(handle.as_raw_handle(),u32::MAX)}==0 {log!("launcher ended; service exits");std::process::exit(0);}
+        if unsafe {WaitForSingleObject(handle.as_raw_handle(),u32::MAX)}==0 {log!("launcher ended; service exits");crate::platform::exit(0);}
     });
 }
 
