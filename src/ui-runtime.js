@@ -27,8 +27,10 @@ function listen(target,type,callback,options){
   return ()=>target.removeEventListener(type,receive,options);
 }
 function defer(callback,delay=0){return setTimeout(execution.bind(execution.action('ui.timer',callback)),delay);}
+// #1548: a steady repaint; its module callback counts in the 2 s summary instead of two action rows per run.
+function repeat(callback,delay){return setTimeout(callback,delay);}
 function cancel(timer){clearTimeout(timer);}
 function effect(name,start,receive){
   execution.effect(name,()=>Promise.resolve().then(execution.bind(start)),result=>receive(result.ok?result.value:{state:'unknown',reason:result.unknown?'Completion unknown':String(result.value?.message||result.value)}));
 }
-module.exports={execution,connect,send,listen,defer,cancel,effect};
+module.exports={execution,connect,send,listen,defer,repeat,cancel,effect};
