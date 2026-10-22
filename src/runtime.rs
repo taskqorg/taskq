@@ -696,7 +696,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              After the answer, deliver the approved outcome or file approved dependent tasks (§ 7); no commit is needed for research-only output.\n\
              Do not wait for CI: `close` checks it. {CI_WAIT}{SANDBOX_CHECKS}Then exactly one of:\n\
              - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
-             - {ask} (owner decision; Acceptance unclear or untestable; or a split of work bigger than one reviewable diff — before any code),\n\
+             - {ask} (owner decision; Acceptance unclear or untestable; or a split R2 allows, never for diff size — before any code),\n\
              - {park},\n\
              - `{q} requeue {n} --text \"<why it cannot be done>\"`.\n{formats}",
             ask = ask(&q, n),
