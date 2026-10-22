@@ -183,7 +183,7 @@ pub fn exchange(install:&Path,active:&Value,w:&mut dyn Wire,now:u64)->Res<bool> 
             if active["installation"]!=o.installation_id||active["generation"]!=o.generation {continue;}
             // A revoked actor no longer receives native session identities.
             let denial=["rejected","stale"].iter().any(|v|o.receipt["outcome"]==*v);
-            if !denial&&!s.grants.get(&o.grant_id).is_some_and(|g|!g.revoked&&now<g.expires_at&&g.actor_id==o.actor_id&&active["installation"]==g.installation_id&&active["generation"]==g.generation){continue;}
+            if !denial&&!s.grants.get(&o.grant_id).is_some_and(|g|!g.revoked&&now<g.expires_at&&g.actor_id==o.actor_id&&active["installation"]==g.installation_id&&active["generation"]==g.generation&&g.projects.contains(&o.project_id)&&g.runtimes.contains(&o.runtime_id)){continue;}
             let fresh=observe(install,o);if fresh!=o.receipt{o.receipt=fresh;o.sent=false;}
             if !o.sent&&receipts.len()<8 {receipts.push((key.clone(),o.receipt.clone()));}
         }
@@ -278,6 +278,8 @@ mod tests {
                 exchange(&t.install,&t.active,&mut dash,t.now).unwrap();
                 let receipt=t.receipts().pop().unwrap();assert_eq!(receipt["native"]["session"],"invented-session");assert!(receipt["native"]["host"].is_string());
                 let mut changed=r.clone();changed["text"]=json!("changed input");dash.requests=vec![changed];assert!(exchange(&t.install,&t.active,&mut dash,t.now).is_err());
+                with(&t.install,|s|{s.grants.get_mut("invented-grant").unwrap().projects.clear();save(&t.install,s)}).unwrap();
+                let posts=dash.posts.len();dash.requests.clear();exchange(&t.install,&t.active,&mut dash,t.now).unwrap();assert_eq!(dash.posts.len(),posts,"narrowing a grant must withhold old native session identities");
             }else if case["id"]=="interrupted" {
                 let id=t.receipts()[0]["request_id"].as_str().unwrap().to_owned();fs::remove_file(setup::dir(&t.install).join(format!("{id}.json"))).unwrap();
                 exchange(&t.install,&t.active,&mut dash,t.now).unwrap();assert!(setup::all(&t.install).unwrap().0.is_empty());
@@ -343,9 +345,11 @@ mod tests {
     fn captured_exchange_never_exports_owner_text() {
         crate::with_test_capture(|store,_| {
             let t=Fixture::new();let mut dash=Dash{requests:vec![t.r.clone()],posts:vec![],at:t.now,offline:false,cut:None};
-            tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().diagnose("pm.",std::time::Duration::from_secs(60),256)).unwrap();
+            let capture=tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().clone());
+            capture.diagnose("pm.",std::time::Duration::from_secs(60),256).unwrap();
             exchange(&t.install,&t.active,&mut dash,t.now).unwrap();setup::step(&t.install,native).unwrap();
             assert!(crate::telemetry::settle(std::time::Duration::from_secs(30)));
+            capture.flush().unwrap();
             let payload=store.export(0,0,1024).unwrap().to_string();
             assert!(payload.contains("pm.exchange"),"privacy proof needs observed PM capture");
             assert!(!payload.contains(t.r["text"].as_str().unwrap()),"owner text escaped governed setup storage");
