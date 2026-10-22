@@ -2933,14 +2933,14 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
-    #[cfg(target_os = "macos")]
     #[test]
     fn removed_custom_icon_flag_refuses_before_reading_file_or_opening_tray() {
         let error=tray(PathBuf::from("invented-unused-install"),None,&[],Some("invented-missing-icon.json")).unwrap_err();
         assert!(error.contains("Custom icons were removed"),"{error}");
     }
 
+    // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
+    #[cfg(target_os = "macos")]
     #[test]
     fn app_bundle_icon_resources_preserve_signature() {
         let dir=std::env::temp_dir().join(format!("taskq-app-icon-{}",runtime::uuid()));
