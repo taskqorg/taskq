@@ -1,0 +1,96 @@
+{
+  "total_count": 7,
+  "check_runs": [
+    {
+      "id": 119788606074,
+      "name": "tests",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "failure",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    },
+    {
+      "id": 119787395557,
+      "name": "rust (ubuntu-latest)",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    },
+    {
+      "id": 119787395485,
+      "name": "rust (windows-latest)",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "failure",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    },
+    {
+      "id": 119787395343,
+      "name": "rust (macos-latest)",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    },
+    {
+      "id": 119787395286,
+      "name": "windows-gnu",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "success",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    },
+    {
+      "id": 119787342411,
+      "name": "plan",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "success",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    },
+    {
+      "id": 119787342150,
+      "name": "shots",
+      "head_sha": "cc0cb96798aa9085ce9ad8e7358d9d77de9509b3",
+      "status": "completed",
+      "conclusion": "success",
+      "app": {
+        "slug": "github-actions"
+      },
+      "check_suite": {
+        "id": 107776064444
+      }
+    }
+  ]
+}
