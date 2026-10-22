@@ -5,6 +5,16 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.28
+
+Queue: every new task starts held; only `taskq start` (or a person adding `taskq`) admits it (#1475). A worker parks on a blocker task with `later N --blocker #M`: the task waits with `Depends on #M` and returns to ready when the blocker closes (#1486); 4.6.27 hosts read that park as `later`. `service capacity --claim labelled` makes a host claim only its `host-<name>` tasks (#1493). Status lists tasks stuck for 2 hours without movement (#1487). Heartbeat issues of retired host names close (#1483). Idle passes poll the board three times less often (#1431). No board change.
+
+Publication and workers: a merge-queued PR is dequeued with GitHub's id input (#1472) and a queue removal with reason merged counts as pending (#1489). Workers read the worker contract at fetched `origin/main` (#1479). Ask cards render short labelled links and name the failing line (#1457). No board change.
+
+Hosts and runtimes: each setup OK and each tray AI request opens a new visible session, and the operator turn is gone (#1426, #1427); the Remote Control link that appears after launch is recorded (#1409). Runtime login state is kept per host, with a PM re-login runbook (#1429); Codex is held at once when its refresh token is rejected (#1446). Host records and kids survive power loss (#1445). Windows update restarts pass stale unresolved executions (#1435); a remote execution its owner reports running needs no termination wait (#1491); status reads execution rows within the heartbeat ttl (#1448) and shows an accepted remote Codex worker as running (#1478). The Linux sandbox keeps the git common dir writable in workspace mode (#1490). The staged selftest no longer recreates its private store at exit (#1519). coreq pins carry the writer promotion and owner-scan election fixes (#1500, #1514); `profile` dates and attributes telemetry store stalls (#1517). No board change.
+
+Tray and workspace: one navigation and control model (#1463); Held counter and drafts with Start, no Closed counter (#1476); toggling state counters and All tasks totals (#1438, #1455); view state kept across restarts and updates (#1439); the answer card writes nothing on an unchanged refresh and says why Send is disabled (#1430, #1456); AI requests, task answers and consequential operation reviews live in the workspace (#1464, #1465); live agent panels show before the full task list (#1466); a Messages list with archive and permanent record deletion (#1467). DashQ receives the shared task controls and scoped host online, login and queue observations (#1506, #1507). No board change.
+
 ## v4.6.27
 
 Windows update fix (#1419): the update selftest of a staged release runs in a private telemetry store, so a running service that owns the telemetry writer no longer fails every install with `telemetry flush unacknowledged`; Windows hosts stuck on 4.6.25 install this release. No board change.
