@@ -74,9 +74,18 @@ fn emergency_state_survives_failed_wakeup_and_notifies_other_projects() {
     fs::create_dir_all(&install).unwrap();
     fs::create_dir_all(bad.join(".taskq/poke")).unwrap();
     fs::write(install.join("projects"),format!("{}\n{}\n",bad.display(),good.display())).unwrap();
-    let invoke=|command|Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service",command])
-        .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
-        .env("TASKQ_INCIDENT_REPORTS","off").output().unwrap();
+    let began=std::time::Instant::now();
+    let invoke=|command| {
+        eprintln!("Emergency fixture: {command} start at {:?}",began.elapsed());
+        let result=coreq::process::output("test.emergency-cli",Command::new(env!("CARGO_BIN_EXE_taskq")).args(["service",command])
+            .current_dir(&root).env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",&install)
+            .env("TASKQ_INCIDENT_REPORTS","off"),std::time::Duration::from_secs(if cfg!(windows) {60} else {10}));
+        eprintln!("Emergency fixture: {command} returned at {:?}",began.elapsed());
+        match result {
+            Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
+            Err(e)=>panic!("emergency {command} failed at {:?}: {e}",began.elapsed()),
+        }
+    };
     for command in ["hold","release"] {
         let out=invoke(command);
         assert!(!out.status.success());
@@ -90,10 +99,14 @@ fn emergency_state_survives_failed_wakeup_and_notifies_other_projects() {
     let out=invoke("hold");
     assert!(!out.status.success()); assert!(install.join("hold").is_file());
     assert!(String::from_utf8_lossy(&out.stderr).contains("project registry unreadable"));
+    eprintln!("Emergency fixture: readback start at {:?}",began.elapsed());
     let store=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3")).unwrap();
+    eprintln!("Emergency fixture: reader opened at {:?}",began.elapsed());
     let rows=store.export(0,0,1024).unwrap();
+    eprintln!("Emergency fixture: exported at {:?}",began.elapsed());
     assert!(rows["events"].as_array().unwrap().iter().any(|r|r["observation"]["error"]=="registry-unreadable"));
     drop(store); fs::remove_dir_all(root).unwrap();
+    eprintln!("Emergency fixture: complete at {:?}",began.elapsed());
 }
 
 // Chain: Resume refusal/success -> focus readback -> durable linked trace after process exit.

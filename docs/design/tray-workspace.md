@@ -32,3 +32,19 @@ calibration runs in parallel. Toggle selection reuses #1455.
 Acceptance: each implementing task repeats its affected flow against TW1–TW8 and
 the [interaction table](evidence/1443/owner-plan.md#interaction-differences-to-remove);
 the last one reviews the combined tray and workspace against all seven points.
+
+#1467's [owner answer](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6320097999)
+confirms TW5–TW7 message records only, the prelaunch deletion refusal and #1464's
+attachment deferral. Native conversations stay in their runtime. Local metadata
+keeps content-free identity digests after deletion to prevent an unresolved
+question reappearing or a deleted request ID launching again. An incomplete
+deletion keeps only its request identity and retry status, never a history copy;
+Delete all reports each refused or incomplete item separately. Command history
+and composer drafts remain separate from these message records.
+The request's temporary write file is an owned record copy and is removed too;
+linked or unreadable paths refuse deletion rather than touching their targets.
+
+#1467's [visual and scope acceptance](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821)
+accepts M's seven-image layout and message-only outcome. Combined #1465/#1466
+acceptance and native workspace qualification remain separately gated work;
+this acceptance does not qualify those flows or remove #1464's attachment deferral.

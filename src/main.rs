@@ -34,6 +34,7 @@ mod telemetry_sync;
 mod runtime;
 mod service;
 mod setup;
+mod messages;
 mod snapshot;
 #[cfg(any(target_os = "macos", windows))]
 mod icon;

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Refresh the README screenshots (macOS): build HEAD, render docs/shots/fixture.sh with `taskq tray --snapshot`,
+# Refresh the README screenshots: build HEAD, render docs/shots/fixture.sh with `taskq tray --snapshot`,
 # copy the dark images here and write manifest.json (shape of docs/design/evidence/4.1.9/manifest.json).
 set -eu
 cd "$(dirname "$0")/../.."
@@ -8,23 +8,27 @@ ui='src/tray.rs src/tray.html src/tray-app.js src/tray-view-state.js src/tray-we
 git diff --quiet HEAD -- $ui || { echo "update.sh: commit UI source changes first: $ui" >&2; exit 1; }
 cargo build --release --locked
 bin=target/release/taskq
+case $(uname -s) in
+  MINGW*|MSYS*) bin=$bin.exe; os=Windows; renderer='WebView2 snapshot' ;;
+  *) os="macOS $(sw_vers -productVersion)"; renderer='WKWebView snapshot' ;;
+esac
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 tmp=$(mktemp -d)
-tmp=$(cd "$tmp" && pwd -P)
+tmp=$(cd "$tmp" && (pwd -W 2>/dev/null || pwd -P))
 trap 'rm -rf "$tmp"' EXIT
 TASKQ_VERSION=$version docs/shots/fixture.sh "$tmp"
 # The compact billing queue fits with all lower controls visible.
 printf '%s\n' "$tmp/billing-api" "$tmp/storefront" > "$tmp/install/projects"
 # only the routes the README shows (taskq.md R12)
-TASKQ_INSTALL=$tmp/install "$bin" tray --snapshot "$tmp/shots" --route project,icon
+TASKQ_INSTALL=$tmp/install cargo run --release --locked -- tray --snapshot "$tmp/shots" --route project,icon
 rm -f docs/shots/*.png
 cp "$tmp/shots/popover-dark-project-16.png" docs/shots/
 # Menu-bar size and scale differ between the owner's Mac and CI; keep the README link stable.
 cp "$tmp"/shots/icon-summary-run-dark-*.png docs/shots/icon-summary-run-dark.png
-sha() { shasum -a 256 "$1" | cut -d' ' -f1; }
+sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 {
   printf '{\n  "version": "%s",\n  "sourceCommit": "%s",\n  "binarySha256": "%s",\n' "$version" "$(git rev-parse HEAD)" "$(sha "$bin")"
-  printf '  "environment": {\n    "os": "macOS %s",\n    "arch": "%s",\n    "renderer": "WKWebView snapshot"\n  },\n' "$(sw_vers -productVersion)" "$(uname -m)"
+  printf '  "environment": {\n    "os": "%s",\n    "arch": "%s",\n    "renderer": "%s"\n  },\n' "$os" "$(uname -m)" "$renderer"
   printf '  "uiSources": {\n'
   sep=''
   for f in $ui; do printf '%s    "%s": "%s"' "$sep" "$f" "$(git rev-parse "HEAD:$f")"; sep=',

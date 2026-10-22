@@ -8,6 +8,8 @@ Approved target (#1462, not shipped): the composer moves to the workspace and a 
 
 Owner-approved #1464 scope ([answer 6319522673](https://github.com/taskqorg/taskq/issues/1464#issuecomment-6319522673)) accepts the seven-image layout and the Claude-only handoff; native workspace/Codex qualification remains release work. The scope is to move requests and task answers to the workspace. Full replies stay in the native runtime. Attachment handoff is deferred to a separately approved task; no conversation store or proposal protocol returns.
 
+Owner-approved #1467 scope ([answer 6328516821](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821)) accepts M's seven-image layout and message-only outcome. Combined #1465/#1466 acceptance and native workspace qualification remain separately gated; #1464's attachment deferral remains.
+
 ## Contract detail
 
 - Request: the workspace Ask AI composer names one registered project (default: the first). Send writes `<install>/setup/<id>.json` with `root` = that project and `brief` = the owner's text inside the fixed request template in `src/setup.rs`, then pokes the host. Empty text or an unregistered project writes nothing. The workspace names the qualified Claude Code runtime; the any-runtime target remains unqualified. A stable request ID binds the project, runtime and literal request. Check delivery reads that same setup record, including after restart; it never creates a new-ID retry. A lost or partial receipt preserves the draft and shows unknown until readback.

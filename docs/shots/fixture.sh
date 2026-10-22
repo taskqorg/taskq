@@ -5,7 +5,7 @@
 set -eu
 d=${1:?usage: fixture.sh DIR}
 mkdir -p "$d/install" "$d/storefront/.taskq" "$d/billing-api/.taskq"
-d=$(cd "$d" && pwd)
+d=$(cd "$d" && (pwd -W 2>/dev/null || pwd))
 printf '%s\n' "$d/storefront" "$d/billing-api" > "$d/install/projects"
 touch "$d/storefront.log" "$d/billing-api.log"
 now=$(date +%s) v=${TASKQ_VERSION:-4.2.0}

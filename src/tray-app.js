@@ -255,6 +255,7 @@ update:function(){if(!ports.workspace)return api.operationLauncher('update',null
   if(view.updating&&view.S.now-view.updating.at<300)return '<button class="project" disabled>Updating to '+esc(view.updating.v)+'…</button>';
   return (view.updating?'<div class="row alert">Update to '+esc(view.updating.v)+' not confirmed: see the log</div>':'')+(!view.updating&&up?'<button class="project" data-a="update" data-root="'+esc(up.root)+'" data-v="'+esc(up.update)+'">Update now to '+esc(up.update)+'</button>':'');},
 ai:function(){return '<button class="project" data-a="workspace" data-page="request"'+(view.aiRoot?' data-root="'+esc(view.aiRoot)+'"':'')+'>Ask AI · new session…</button>';},
+messagesBadge:function(){const m=view.S.messages,known=m?.complete===true&&Number.isSafeInteger(m.count);return '<button class="project" data-a="workspace" data-page="messages" aria-label="'+esc(known?'Messages · '+m.count:'Messages · unknown')+'">✉ Messages · '+(known?m.count:'unknown')+'</button>'+(!known?'<p class="body meta" role="status">'+esc(m?.reason||'Message source unavailable; refresh status.')+'</p>':'');},
 addProject:function(){if(!ports.workspace)return api.operationLauncher('setup',null,'Add project in workspace…');
   const A=view.S.add;
   if(!A)return '<button class="project" data-a="add">Add project…</button>';
@@ -377,7 +378,7 @@ runningAgents:function(){
 },
 home:function(){
   const faults=setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('');
-  return api.runningAgents()+controls()+ai()+'<button class="project" data-a="workspace" data-page="messages">Messages…</button>'+
+  return api.runningAgents()+controls()+ai()+api.messagesBadge()+
     (faults?'<section class="group" aria-label="Attention">'+faults+'</section>':'')+filteredTasks()+
     '<div class="group">'+routeButton('projects')+routeButton('appearance')+'</div>';
 },

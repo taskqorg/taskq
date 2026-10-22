@@ -1,0 +1,92 @@
+{
+  "codeCommit": "04c62745d5020b05703d7cf01552dc94bfce45f6",
+  "base": "0128d46faeb25b6c49cd7418582b25755f4f9f1a",
+  "before": "2f6a2d2c9ac427f9687b64714bd2cfd21805773c",
+  "native": {
+    "sourceCommit": "e9fcd8d17215c4ec1deaefbae72c2dfd849d5e11",
+    "binarySha256": "ccd42baf34e129a9833d1c30d142ccc20cbc5f6068e6ebcfe97cc9cb10e78193",
+    "renderer": "macOS 27.0.1 arm64 WKWebView; project/icon and isolated Home fixtures",
+    "homeSourceCommit": "04c62745d5020b05703d7cf01552dc94bfce45f6",
+    "captureNote": "README capture refreshed after Mac signing; Home uses the unchanged compiled UI source from codeCommit."
+  },
+  "files": {
+    "Cargo.toml": "1dc80d9330cbeaafd3531b51dff607cc6e3940dfff17b4d0f88e2c2de978e8c6",
+    "Cargo.lock": "86528f7dfc18f703753acd769c03b3ef25c2e90bf0b36cf4607d6ca75988feda",
+    "package.json": "3049aec081ab6910048f21b20efef5644e878d2483e79ecba45360e0856a91cb",
+    "package-lock.json": "18ac7bd5b50988f51704281d21d3426d11ec59088e0ea288e3c69261fb68d813",
+    "src/main.rs": "0479db5c421a1c4d76704277d142b18c85936ac6689ffc904bfd50d3b7f23f79",
+    "src/messages.rs": "e90dbb4131c51f42ead8e8cddc02d299df5aa2993c36ec7fb339f93464855243",
+    "src/setup.rs": "e68cfcab7a95aead75608281fbd31ad2cb5f8b9d7dc953a4bfc420f963ff80c8",
+    "src/platform.rs": "a62b0aa80187d6d67bee8212bfe20e6cc744e8d9565281fa416b77afaadb35c7",
+    "src/service.rs": "bb806e79372ecb2b6a6681bbaf6a494ce538b915f1ca39f68cca5ae2eb565208",
+    "src/tray.rs": "26adda6f817d7cf2e449aa34460b2bc87005931dc76833d89e77dd878d89149c",
+    "src/tray-app.js": "31d7f567442787f6002f84fce434d039c0393ec85a5fdcb78656880c8955bf6d",
+    "src/tray-view-state.js": "3a40e19abf415ccc92096a60e0b2cb12d91d3cf2b3147669a0452d6671ef2924",
+    "src/workspace.js": "7681b31a88f9fc38201cfcafaa78a85a459610405b694f8641af481a385f0b99",
+    "src/app-shell.js": "950902433fb7c567e7c8562761a8e697b9bc79eb27bcd7907be46c1d199f705c",
+    "src/app-shell.css": "4a8715293ba2902f622cb54d535e4a9d37ac6d1d8957510b9eec7cbd8b99f691",
+    "tests/messages.browser.cjs": "4f00a7f5d4bbbe99790fea2b92d6961b2e25b5f68682aaaf276b6e0f277b5377",
+    "tests/tray-home-ai.test.cjs": "d74fb5156465279a7f429129392dced5784489884ecd8582c53facdbe9a0c9e6",
+    "docs/shots/update.sh": "5b0baa00b6ee4c99545ca56eaf93d42ccd31b50bffefe5ac7f901b190b854e91",
+    "docs/shots/fixture.sh": "0ab200ed59b2d4ef7da73595d9a4e16e6edc12caac2eff41cb51e86694e39e47",
+    "scripts/build-web.cjs": "efa64a0196902f0648879f077dacb6aad4eea7469561697e4aa35e56beb2bfb7",
+    "src/workspace-answers.js": "8657116c08119e8f61289c1e367f19b7bcf1705153db4abe9c6a7dcdfdc06dcd",
+    "src/task-controls.js": "679670cf90ee3ce889f3e4182b81a8e4dc240ec7f04f24f0127a62d3aba80782",
+    "tests/task-controls.test.cjs": "d5fdac3c8244d9156d436ef44afdb6cd3c7eb76807fc192acc0e8110f338cbe7",
+    "docs/design/task-controls.md": "4349913cbe02ed9591eb3742561e60f78e0e45a0b3d11d51ece4d3e612803f76"
+  },
+  "images": {
+    "docs/design/evidence/1467/archived-dark-16.png": "d1b2510bdf09e7905ca5000135639ff376fc8ac97266248f15761415954d46a1",
+    "docs/design/evidence/1467/messages-before-dark-16.png": "84f83d8f711e90b22e05da6f3713dfd39d0fe2f1712b778e3e9aefdfa5fe8ef6",
+    "docs/design/evidence/1467/messages-dark-16.png": "74cb5cd0e306cb6390b9b304ee689bc219feab42db0121c2e75a2cd4c5019e7a",
+    "docs/design/evidence/1467/native-home-dark-16.png": "0693973561b2e31d157ed99081805ac71fbe4716c2fcf81aebe692b833a24f0a",
+    "docs/design/evidence/1467/partial-light-20-360.png": "9ac11da7f7e8b6c377a891a3baa86b1cb1abcaaa9d43462604d95f27f387b4db",
+    "docs/shots/icon-summary-run-dark.png": "28bf8c00a6ad0d441871ba3cefbc4ea5f58f9fb04b3beb163769f71c89b99f18",
+    "docs/shots/popover-dark-project-16.png": "f0c59f576d98c40a3e7b476dab92d86879b81b8cf20c618d773c69faecedb0a6"
+  },
+  "gitBlobs": {
+    "Cargo.toml": "8457166790097a3477a212ce951d77df78067b54",
+    "Cargo.lock": "a3685ad1ea5900007785747b594b14a1e857b571",
+    "package.json": "36304edc9859e1ab7d3a044ef68242a2ec8e185b",
+    "package-lock.json": "045cd3189c04b250cd939e46b830ea41801992a6",
+    "src/main.rs": "4f1bf974d7db9172da8d23fdfa4984e1284b0816",
+    "src/messages.rs": "8f2b472d968eecef2c0457cccb93e106ce59a611",
+    "src/setup.rs": "f294f1e4f4bacc41fc7e619ebb306c26d67b4c00",
+    "src/platform.rs": "6181d1c195a23908e0d8d4345a770604da8289bb",
+    "src/service.rs": "3897483c77c02c079fe2b30061ea45b758cf5b73",
+    "src/tray.rs": "93646794eaea8a7a9e71620d8baa6dd2eb231d2f",
+    "src/tray-app.js": "a4632b7bf99dcf553220644169f2cf0ddf3e52dc",
+    "src/tray-view-state.js": "57de9bae9348494b0bbad7eb69e160899dad3f31",
+    "src/workspace.js": "f7135e3d6d2d2a6749f8c4d776eb8f286ea66a3a",
+    "src/app-shell.js": "712d93430c60bef597809d89b405b186490b5b5d",
+    "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
+    "tests/messages.browser.cjs": "79ca7fbf97da1c6480729e3d7a2a8d3fadb9c32d",
+    "tests/tray-home-ai.test.cjs": "c7dca984d3aec6584aa8ced05bdff3d169da8ffa",
+    "docs/shots/update.sh": "ce382619001793e53fc71845682d4cb411006849",
+    "docs/shots/fixture.sh": "133b7aa544e7572a748b6ec939e472cc02f0f4ed",
+    "scripts/build-web.cjs": "3077d351bdb0366868516c88f97e3de8316c7c7a",
+    "src/workspace-answers.js": "e5018a8befbc020b64b4b4b0c429de66c05d8660",
+    "src/task-controls.js": "a838c39718876baf5b82fa67b8b02fe6c02e91b4",
+    "tests/task-controls.test.cjs": "1e0a958221e9050529d0b8470ecf5424382b4bd4",
+    "docs/design/task-controls.md": "060b538219c1377297df6d7a0f120ea74fc60a03"
+  },
+  "validation": {
+    "fullRustIntegrationSelftestCommit": "04c62745d5020b05703d7cf01552dc94bfce45f6",
+    "browserAndNativeCommit": "04c62745d5020b05703d7cf01552dc94bfce45f6",
+    "fullRustOutcome": "455 passed; 18 sandbox-blocked worker-authority refusals; 34 ignored; 84.253s macOS cold cache; not PASS",
+    "integration": "19 passed; 1 sandbox-blocked (sandbox_apply: Operation not permitted); 1 ignored; 7.89s",
+    "offlineSelftest": "97 fold traces, formats and 9 staged observations pass; no board read",
+    "web": "All Node component/IPC checks; message, communication, operation-review and Home-panel browser instruments pass",
+    "native": "docs/shots/update.sh and isolated Home capture pass on WKWebView; source/image hashes verified; native workspace flow unqualified",
+    "publication": "merge_group CI required; worker does not wait"
+  },
+  "ownerAcceptance": {
+    "comment": "https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821",
+    "reviewedRevision": "bf2a6f2324cd4e6476ecc87ef38760b8cdeac7e1",
+    "scope": "Seven-image message-only layout accepted; combined #1465/#1466 and native workspace qualification separately gated."
+  },
+  "imageSources": {
+    "native": "04c62745d5020b05703d7cf01552dc94bfce45f6",
+    "browser": "Owner-accepted Windows images retained; current Mac Chromium list/archive/narrow captures visually inspected separately."
+  }
+}

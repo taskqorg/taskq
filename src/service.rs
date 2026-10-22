@@ -2618,7 +2618,11 @@ mod tests {
         let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
         b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
         b.state.borrow_mut().publish = "queue-waiting".into();
-        let (win, mac) = (cfg("win"), cfg("mac"));
+        let (mut win, mut mac) = (cfg("win"), cfg("mac"));
+        // A shared /nonexistent can contain other fixtures' profile rows, which add unrelated board reads.
+        let install=std::env::temp_dir().join(format!("taskq-publication-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(&install).unwrap();
+        win.install=install.clone();mac.install=install.clone();win.root=install.join("win");mac.root=install.join("mac");
         let mut owner = Service::new(&b, &win, "test", Box::new(|_| panic!("no process while queued")));
         let mut other = Service::new(&b, &mac, "test", Box::new(|_| panic!("no process while queued")));
         let count = |b: &Fake| { let s = b.state.borrow(); (s.reads, s.comment_reads, s.publications) };
@@ -2638,6 +2642,7 @@ mod tests {
         let before = count(&b).2;
         other.pass().unwrap();
         assert_eq!(count(&b).2 - before, 1, "no host polls a publication whose owner is gone");
+        std::fs::remove_dir_all(install).unwrap();
         assert_eq!(task(&b, n).state, State::Review);
     }
 
