@@ -78,6 +78,7 @@ const USAGE: &str = "taskq agents
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
+ taskq service onboard
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]
@@ -1962,7 +1963,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"run"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"complete-legacy"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"complete-legacy"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -1982,6 +1983,11 @@ fn service(args: &Args) -> Res<()> {
         if args.flags.contains_key("json") {println!("{}",serde_json::to_string(&r).map_err(|e|e.to_string())?);}
         else {println!("Setup: {} {}{}",r.id,r.state,r.url.as_deref().map(|u|format!(" {u}")).unwrap_or_default());if let Some(reason)=&r.reason {println!("Reason: {reason}");}}
         return Ok(());
+    }
+    if sub == "onboard" {
+        if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot onboard the host".into());}
+        if args.pos.len()!=2||!args.flags.is_empty() {return Err("usage: taskq service onboard".into());}
+        return onboard_cmd(&platform::default_install());
     }
     if sub == "channel" {return channel_cmd(args);}
     if matches!(sub,"complete-stop"|"complete-legacy") {
@@ -2104,8 +2110,38 @@ fn service(args: &Args) -> Res<()> {
             println!("{}",host::install_project(&cfg.install,&root)?);
             Ok(())
         }
-        _ => Err("usage: taskq service install|run|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
+        _ => Err("usage: taskq service install|run|onboard|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
     }
+}
+
+/// Host onboarding (§ 4, #1546): runtime logins and § 8 Access are read and named as owner steps; Claude trust is the
+/// only write. Idempotent: a second run prints `unchanged`.
+fn onboard_cmd(install: &Path) -> Res<()> {
+    let mut claude = true;
+    for r in runtime::agents(install).as_array().into_iter().flatten() {
+        println!("Login: {}", runtime::agent_text(r));
+        let rt = r["runtime"].as_str().unwrap_or("?");
+        match r["login"].as_str() {
+            Some("logged in") => {}
+            // a codex-only host is valid: a missing runtime is skipped, not a failure
+            Some("not installed") => { claude &= rt != "claude"; println!("{}", setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
+            _ => println!("Next: {}", runtime::relogin(rt)),
+        }
+    }
+    let p = host::Policy::read_for_hostname(install, hostname);
+    let (mode, codex) = p.map_or(("dontAsk".to_string(), vec![]), |p| (p.permission_mode, p.codex));
+    // Access is per folder: the setup folder for owner sessions, each registered root for its workers
+    for l in setup::onboard_access("setup", &policy::report(install, &setup::dir(install), &mode, &[])) {println!("{l}");}
+    match host::projects(install) {
+        Ok(roots) => for root in roots {
+            for l in setup::onboard_access(&root.display().to_string(), &policy::report(install, &root, &mode, &codex)) {println!("{l}");}
+        },
+        Err(e) => println!("Access projects: unknown ({e})"),
+    }
+    if !claude { println!("Trust: skipped, Claude not installed"); return Ok(()); }
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
+    for l in setup::trust(install, &home, setup::claude_pids)? {println!("{l}");}
+    Ok(())
 }
 
 /// § 4 emergency hold: write or remove `<install>/hold`, then poke every registered project so its service reads it.

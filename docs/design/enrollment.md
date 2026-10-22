@@ -47,6 +47,8 @@ A worker cannot write `<install>` under the § 8 Access profile, so live enrollm
 
 ## Contract detail
 
+Pairing and revoke: `disconnect` cancels a pairing in progress and stops sending at once; the service retries an unconfirmed revoke. Snapshot host observations below carry producer, host, time, `valid_until` and `complete`; missing or expired reads unknown.
+
 Host observations (#1507) for the DashQ host-first view: every `taskq-board/1` snapshot carries `observations`, one object per `(host, kind)` with kind `online`, `login` or `queue`. Scope is the approved board plus the host name; a host is any host with a § 4 heartbeat plus the sending host. DashQ reads these objects and never infers a host state from activity, silence, missing rows or board totals. Each object names `producer` (the 12-hex service id of the heartbeat for `online`, else the sender's; null when unknown), `observed` (Unix seconds of the board read for `online`/`queue`, of the runtime probe for `login`), `valid_until`, `state`, `complete` and a fixed `reason` (null when complete).
 
 | Kind | Producer, time, validity | States and cases |
