@@ -196,7 +196,6 @@ routeButton:function(route,label=routes[route]){return h('button',{class:'projec
 answerSlot:function(t){return t.state==='ask'?h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},'Answer in workspace…'):'';},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
-mountAnswers:function(){},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
 blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
 unique:function(ts){return [...new Map(ts.map(t=>[t.key,t])).values()];},
@@ -456,7 +455,7 @@ openCard:function(o){
   const p=view.S&&view.S.projects.find(p=>p.root===o.root);if(!p)return;
   if(view.page!==p.root||view.working||view.taskFilter)navigate(p.root);
   const key=p.issues+'/'+o.n;
-const {find}=execution.module("tray.create.openCard.helpers",{find:()=>o.n!=null&&(menu.querySelector('[data-answer="'+CSS.escape(key)+'"]')||menu.querySelector('[data-card="'+CSS.escape(key)+'"]'))});
+const {find}=execution.module("tray.create.openCard.helpers",{find:()=>o.n!=null&&(menu.querySelector('[data-card="'+CSS.escape(key)+'"]'))});
   if(o.n!=null&&!find()){view.noted={root:p.root,n:o.n,key,url:key,title:o.title||'',state:o.kind==='close'?'closed':o.kind};present(true);}
   const el=find();
   if(el){el.scrollIntoView({block:'center'});(el.querySelector('textarea,button,a')||el).focus({preventScroll:true});}
@@ -491,15 +490,13 @@ head:function(){
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
   const firstRender=!view.drawn;
-  const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
+  const active=document.activeElement,scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
   const focusKey=!navigating&&active&&menu.contains(active)?JSON.stringify(active.dataset):null;
   // a refresh rebuilds the menu: refocus the same control, link or heading, by tag, data and position (U-A4)
   const {same}=execution.module("tray.create.draw.helpers",{same:e=>e.tagName===active.tagName&&JSON.stringify(e.dataset)===focusKey});
 const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).indexOf(active):-1;
   const focusedSummary=!navigating&&active?.tagName==='SUMMARY'?[...menu.querySelectorAll('summary')].indexOf(active):-1;
-  const caret=answerFocus&&active.tagName==='TEXTAREA'?[active.selectionStart,active.selectionEnd]:null;
-  const answerSelector=answerFocus&&(caret?'textarea':active.dataset.choice?'[data-choice="'+active.dataset.choice+'"]':active.dataset.qac?'[data-qac="'+active.dataset.qac+'"]':'button[type=submit]');
   const open=navigating||view.restoreScroll!=null?view.disclosures:viewState.groups(),p=view.S.projects.find(p=>p.root===view.page);
   if(!p&&!routes[view.page])view.page='home';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
@@ -512,13 +509,11 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
   if(navigating)menu.querySelector('.shell-overflow')?.removeAttribute('open');
-  mountAnswers();mountResources();
+  mountResources();
   menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page));
   viewState.restore(open);
   if(view.S.page!==undefined&&(navigating||firstRender))menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
-  const restored=answerFocus&&menu.querySelector('[data-answer="'+CSS.escape(answerFocus.dataset.answer)+'"] '+answerSelector);
-  if(restored&&!navigating){restored.focus({preventScroll:true});if(caret)restored.setSelectionRange(...caret);}
-  else if(!navigating){const target=focusedSummary>=0?menu.querySelectorAll('summary')[focusedSummary]:focusKey&&active.tagName==='H1'?menu.querySelector('h1'):focusKey&&focusKey!=='{}'?[...menu.querySelectorAll(active.tagName)].filter(same)[focusAt]:null;target?.focus({preventScroll:true});}
+  if(!navigating){const target=focusedSummary>=0?menu.querySelectorAll('summary')[focusedSummary]:focusKey&&active.tagName==='H1'?menu.querySelector('h1'):focusKey&&focusKey!=='{}'?[...menu.querySelectorAll(active.tagName)].filter(same)[focusAt]:null;target?.focus({preventScroll:true});}
   (menu.querySelector('.content')||document.scrollingElement).scrollTop=view.restoreScroll??scroll;view.restoreScroll=null;
   if(firstRender)viewState.focus(view.restoreFocus);
   fit();
@@ -581,7 +576,6 @@ ui.listen(menu,'scroll',e=>{const c=e.target;if(c.classList?.contains('content')
 // a refresh between press and release rebuilds the pressed control and its click is lost (U-A4):
 // the refresh waits for the release, at most 5 s, then runs after the click
 
-
 ui.listen(menu,'pointerdown',()=>{view.pressedAt=performance.now();});
 for(const event of ['pointerup','pointercancel'])ui.listen(window,event,release,true);
 ui.listen(window,'blur',release);
@@ -637,7 +631,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,taskKey,taskOrder,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,tasks,blockProject,unique,counts,mode,counter,known,taskRow,taskKey,taskOrder,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function resourceSend(g,op){
   const capability=resourceCapability(g);
@@ -667,57 +661,25 @@ const {f,raw,lines}=execution.module("tray.create",{f:(...children)=>h(Fragment,
 // measure at the target width: after a font change the window still has the old width, so text wraps differently
 // g: this renderer's scrollbar width; a menu taller than its window scrolls and the window adds it (#1073)
 
-
-
 const actionErrors=new Map();
-
-
-
-
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
 const routes={recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
-const trail=renderer.entries();
-const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail,routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:['appearance','cadence','notifications','agents','services','about'].includes(page)?'settings':'home'}]))});
-
-
-
+const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail:renderer.entries(),routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:['appearance','cadence','notifications','agents','services','about'].includes(page)?'settings':'home'}]))});
 
 // Task answers: the native bridge owns credentials and canonical dispatch/readback.
-
-
-
 
 // A status refresh that reads the question past an answer op's revision ends Sending: reconcile once with the same op,
 // so the CLI returns its first receipt (accepted) or names another writer (stale); the refresh itself never accepts.
 // ponytail: fallback actions (#1021) keep Check delivery; their revision fence refuses another revision.
 
-
-
-
 // one task per board and issue: `issues` names provider, host and repo (M2)
-
-
-
-
-
 
 // an incomplete or stale snapshot has unknown counts, never zero (§ 4)
 
-
-
-
 // service error and stale status.json are not failed tasks (M-A10)
 
-
-
-
-
-
 // bins, range and since come from Rust (the icon draws the same); unknown is never drawn or counted as zero (M6)
-
-
-
 
 // `Update now` only for a newer version in status.json; success only once a status.json reads it back (M9)
 
@@ -727,64 +689,36 @@ const viewState=require('./tray-view-state.js').create(view,{menu,document,send,
 
 // R6 item 7 `Next: 1 <action> ★ · 2 <action>` as the last line: numbered 1..n in order, at most one ★; else null (raw text only)
 
-
 // Add project (menu.md M10): the folder comes from the OS picker; four cases
 const addKinds={new:'New project: no taskq.json',plain:'Not a repository: files stay',taskq:'taskq project: selftest passes',old:'Old taskq project: selftest fails'};
 const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and-cutover';
 
 // the command over all projects names each one and its effect before acting (M5, M-A4)
 
-
-
-
-
-
-
-
-
-
 // Capacity (taskq.md § 4): the shared resource controls (docs/design/shared-resource-controls.md) over the tray's
 // taskq.resources/1 projection; this adapter only maps an operation onto `service capacity` and its receipt
 const {workPageFor}=execution.module('tray.operations',{workPageFor:p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.')});
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
-
-
-
-
-
 // Work mode (menu M12): the shared editor over this host's projects; only the explicitly selected ones change
-
-
 
 // Notifications (menu.md M14): host mode per kind, the OS permission, and per project overrides
 const modes=[['off','Off'],['silent','Silent'],['banner','Banner'],['sound','Banner with sound']],kinds=[['ask','Questions'],['close','Closed'],['failed','Failed'],['gone','Attempt gone']];
 
-
 // a notification click: the project page scrolled to the card (for `ask`, its answer card); a task no longer in the
 // open lists (closed): its card from the notification, kept on top of the page until navigation
 
-
-
-
 // pin (menu.md M13): the same menu as a movable window; the header is its drag handle
-
 
 // a bounded block shows whole lines: a line cut at the top scrolls into view, or at the scroll end (the newest text)
 // moves out above; the bottom edge moves up to the first line it cuts
 
 // a reader's scroll leaves cut lines: once it settles, the block takes its CSS bound again and realigns on whole lines
 
-
-
-
-
-
 const startOperations=require('./workspace-answers.js').create(view,{menu,document,send,draw:present,defer,cancel});
 const {answerSend}=startOperations;
 return {...api,resourceSend};
 }
 });
-
 
 module.exports={create,createState};
