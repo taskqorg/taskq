@@ -2108,6 +2108,10 @@ fn service(args: &Args) -> Res<()> {
         "install" => {
             let (cfg, _) = load(&root)?;
             println!("{}",host::install_project(&cfg.install,&root)?);
+            // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
+            if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+                for l in setup::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
+            }
             Ok(())
         }
         _ => Err("usage: taskq service install|run|onboard|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
@@ -2115,32 +2119,36 @@ fn service(args: &Args) -> Res<()> {
 }
 
 /// Host onboarding (§ 4, #1546): runtime logins and § 8 Access are read and named as owner steps; Claude trust is the
-/// only write. Idempotent: a second run prints `unchanged`.
+/// only write. Prints gaps only (#1555); idempotent: a ready host prints one `Ready:` line.
 fn onboard_cmd(install: &Path) -> Res<()> {
     let mut claude = true;
+    let mut gaps = vec![];
     for r in runtime::agents(install).as_array().into_iter().flatten() {
-        println!("Login: {}", runtime::agent_text(r));
         let rt = r["runtime"].as_str().unwrap_or("?");
         match r["login"].as_str() {
             Some("logged in") => {}
             // a codex-only host is valid: a missing runtime is skipped, not a failure
-            Some("not installed") => { claude &= rt != "claude"; println!("{}", setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
-            _ => println!("Next: {}", runtime::relogin(rt)),
+            Some("not installed") => { claude &= rt != "claude"; gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
+            _ => gaps.extend([format!("Login: {}", runtime::agent_text(r)), format!("Next: {}", runtime::relogin(rt))]),
         }
     }
     let p = host::Policy::read_for_hostname(install, hostname);
-    let (mode, codex) = p.map_or(("dontAsk".to_string(), vec![]), |p| (p.permission_mode, p.codex));
+    let (mode, codex, has) = p.map_or(("dontAsk".to_string(), vec![], vec![]), |p| (p.permission_mode, p.codex, p.has));
+    // codex-app is opt-in (§ 9): its refusal is a gap only where `has` lists it
+    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| e.runtime != "codex-app" || has.iter().any(|h| h == "codex-app")).collect::<Vec<_>>();
     // Access is per folder: the setup folder for owner sessions, each registered root for its workers
-    for l in setup::onboard_access("setup", &policy::report(install, &setup::dir(install), &mode, &[])) {println!("{l}");}
-    match host::projects(install) {
-        Ok(roots) => for root in roots {
-            for l in setup::onboard_access(&root.display().to_string(), &policy::report(install, &root, &mode, &codex)) {println!("{l}");}
-        },
-        Err(e) => println!("Access projects: unknown ({e})"),
+    gaps.extend(setup::onboard_access("setup", &opted(policy::report(install, &setup::dir(install), &mode, &[]))));
+    let roots = match host::projects(install) {
+        Ok(roots) => roots,
+        Err(e) => { gaps.push(format!("Access projects: unknown ({e})")); vec![] }
+    };
+    for root in &roots { gaps.extend(setup::onboard_access(&root.display().to_string(), &opted(policy::report(install, root, &mode, &codex)))); }
+    if claude {
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
+        gaps.extend(setup::trust(install, &home, setup::claude_pids)?);
     }
-    if !claude { println!("Trust: skipped, Claude not installed"); return Ok(()); }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
-    for l in setup::trust(install, &home, setup::claude_pids)? {println!("{l}");}
+    if gaps.is_empty() { gaps.push(format!("Ready: {} project(s) on {}; logins, access and trust in place", roots.len(), hostname())); }
+    for l in gaps {println!("{l}");}
     Ok(())
 }
 
@@ -4676,6 +4684,8 @@ mod tests {
         assert_eq!(fs::read_to_string(dot(&root).join("cli-errors.log")).unwrap(), format!("{original}\n"));
         let failed = platform::error_text(&original, None);
         assert!(failed.contains(&original), "a failed save never discards the original evidence");
+        // #1555: no bare `could not be saved`; it says why
+        assert!(failed.ends_with("no cli-errors.log copy (outside a taskq project)."), "{failed}");
         let _ = fs::remove_dir_all(&root);
     }
 }
