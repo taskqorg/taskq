@@ -4072,6 +4072,45 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    // #1541: an adopted child that exits before the first poll is a zombie whose identity read fails on macOS.
+    // Risk: it is never reaped and every later handover pass fails in save_kids.
+    #[cfg(unix)]
+    #[test]
+    fn adopted_zombie_child_is_reaped_and_handover_completes() {
+        let root = std::env::temp_dir().join(format!("taskq-zombie-{}", runtime::uuid()));
+        fs::create_dir_all(dot(&root)).unwrap();
+        let b=Fake::default(); let n=b.create("T","",&[service::TASK_LABEL.into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker codex:session mac").unwrap();
+        let c=Config {root:root.clone(),install:root.clone(),..cfg()};
+        let mut child=std::process::Command::new("sh").args(["-c","read x"]).stdin(std::process::Stdio::piped()).spawn().unwrap();
+        let stdin=child.stdin.take(); let pid=child.id(); drop(child); // the re-exec keeps the pid, not the handle
+        let owner=coreq::process::identity(std::process::id()).unwrap().unwrap();
+        let native=coreq::process::identity(pid).unwrap().unwrap();
+        let path=kids_path(&root,&root).unwrap(); fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, format!("pid {} {} executor-v1\n{n} {a} codex {pid} {} {a} 0\n",owner.pid,owner.started,native.started)).unwrap();
+        fs::write(runtime::attempt_log(&root,"worker",n,a),"").unwrap();
+        drop(stdin);
+        let until=Instant::now()+Duration::from_secs(10);
+        let zombie=||{ // exited, not yet reaped
+            let mut info:libc::siginfo_t=unsafe{std::mem::zeroed()};
+            assert_eq!(unsafe{libc::waitid(libc::P_PID,pid,&mut info,libc::WEXITED|libc::WNOHANG|libc::WNOWAIT)},0);
+            #[cfg(target_os="linux")] return unsafe{info.si_pid()}!=0;
+            #[cfg(not(target_os="linux"))] return info.si_pid!=0;
+        };
+        while !zombie() { assert!(Instant::now()<until,"child did not exit"); std::thread::sleep(Duration::from_millis(10)); }
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
+        adopt(&mut s,&root,&root).unwrap();
+        assert_eq!(s.kids.len(),1);
+        while !s.kids.is_empty() {
+            s.reap_owned(); assert!(Instant::now()<until,"zombie not reaped: {:?}",s.kids.iter().map(|k|&k.unknown).collect::<Vec<_>>());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(runtime::liveness(pid),Ok(false),"waitpid reaped the zombie");
+        assert!(core::executions(n,&board::entries(&b,n).unwrap()).iter().any(|x|x.id==a && x.release==Some(core::Release::Exit)));
+        save_kids(&s,&root).unwrap(); assert!(kids_file(&root,&root).unwrap().is_empty(),"handover completes");
+        let _ = fs::remove_dir_all(&root);
+    }
+
     // § 8 recovery: corrupt/legacy identities stay unknown and preserved; no timestamp can discard them.
     #[test]
     fn native_recovery_preserves_corrupt_and_legacy_evidence() {
