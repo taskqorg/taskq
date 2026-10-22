@@ -382,8 +382,8 @@ pub struct Local {
     pub progress: BTreeMap<u64, Value>,
 }
 
-/// R6 3 off-host sessions: per live attempt on `host`, the stage, the attempt log's update time and one bounded
-/// public last worker line (as `gone` posts it); never the log, a path or a session id.
+/// R6 3 off-host sessions: per live attempt on `host`, the stage and the attempt log's update time; never worker
+/// line text, the log, a path or a session id (#1617).
 pub fn progress(s: &Snapshot, root: &Path, host: &str) -> BTreeMap<u64, Value> {
     let mut out = BTreeMap::new();
     for r in s.tasks.iter().take(MAX_TASKS).filter(|r| matches!(r.task.state.name(), "doing" | "review")) {
@@ -392,10 +392,7 @@ pub fn progress(s: &Snapshot, root: &Path, host: &str) -> BTreeMap<u64, Value> {
         let runtime = session.split(':').next().unwrap_or_default();
         let log = crate::runtime::attempt_log(root, r.task.role.as_deref().unwrap_or_default(), r.n, a);
         let at = fs::metadata(&log).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
-        // DashQ refuses a record holding a path-like string, so such a line is left out
-        let line = crate::runtime::last_message(&log).map(|m| crate::runtime::public_line(&m, root, 160).chars().filter(|c| !c.is_control()).collect::<String>())
-            .filter(|l| !l.is_empty() && !l.starts_with(['/', '~', '\\']) && !l.get(1..3).is_some_and(|x| x == ":\\" || x == ":/"));
-        out.insert(r.n, json!({"host": host, "runtime": runtime, "stage": r.task.state.name(), "at": at, "line": line}));
+        out.insert(r.n, json!({"host": host, "runtime": runtime, "stage": r.task.state.name(), "at": at}));
     }
     out
 }
@@ -693,34 +690,35 @@ mod tests {
         assert!(!got.to_string().contains("x mac") && !got.to_string().contains("codex:y"), "no session ids");
     }
 
-    // Chain: live attempt log -> R6 3 session progress -> DashQ record allowlist (#1565). Risk: another host's or an
-    // idle task's progress, the log itself, a session id or a path-like line (DashQ refuses the whole record) leaving the host.
+    // Chain: live attempt log -> R6 3 session progress -> DashQ record allowlist (#1565, #1617). Risk: another host's or an
+    // idle task's progress, worker line text, the log itself, a session id or a path leaving the host.
     #[test]
-    fn progress_carries_one_bounded_line_of_this_hosts_live_attempts() {
+    fn progress_carries_only_stage_and_age_of_this_hosts_live_attempts() {
         use crate::{core::{State, Task}, snapshot::Row};
         let root = std::env::temp_dir().join(format!("taskq-progress-{}", std::process::id()));
         fs::create_dir_all(root.join(".taskq")).unwrap();
         let row = |n, state, session: &str| Row { n, task: Task { state, attempt: Some(n * 10), role: Some("worker".into()), session: Some(session.into()), ..Default::default() }, ..Default::default() };
         let say = |n: u64, text: &str| fs::write(crate::runtime::attempt_log(&root, "worker", n, n * 10),
             json!({"type": "item.completed", "item": {"type": "agent_message", "text": text}}).to_string() + "\n").unwrap();
-        say(1, &format!("Running tests\nin {}/src now {}", root.display(), "x".repeat(300)));
-        say(2, "~/secret notes");
+        say(1, &format!("Running tests in {}/src now", root.display()));
+        say(2, "secret worker words");
         say(3, "other host");
         say(4, "done");
         let s = Snapshot { tasks: vec![row(1, State::Doing, "codex:thread-a mac"), row(2, State::Review, "codex:- mac"), row(3, State::Doing, "codex:b win"),
             row(4, State::Ready, "codex:c mac")], ..snap("o/r") };
         let p = progress(&s, &root, "mac");
         assert_eq!(p.keys().copied().collect::<Vec<_>>(), vec![1, 2], "only this host's doing or review attempts");
-        let line = p[&1]["line"].as_str().unwrap();
-        assert!(line.starts_with("Running tests in src now ") && line.chars().count() <= 160, "{line}");
         assert_eq!((p[&1]["stage"].as_str(), p[&1]["runtime"].as_str(), p[&1]["host"].as_str()), (Some("doing"), Some("codex"), Some("mac")));
         assert!(p[&1]["at"].as_u64().is_some(), "update time");
-        assert_eq!(p[&2]["line"], json!("<path> notes"), "a home path never leads the line");
+        let keys = |v: &Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        assert_eq!(keys(&p[&2]), ["host", "runtime", "stage", "at"], "host, runtime, stage and age only");
         let mut l = local();
         l.progress = p;
         let o = project(&s, &"a".repeat(64), &[BoardScope::new("github", "github.com", "o/r").unwrap()], &l).unwrap();
         let text = serde_json::to_string(&o).unwrap();
-        assert!(!text.contains("thread-a") && !text.contains(&*root.to_string_lossy()), "no session id or path: {text}");
+        for leak in ["thread-a", &*root.to_string_lossy(), "Running tests", "secret worker words", "\"line\""] {
+            assert!(!text.contains(leak), "{leak} left the host: {text}");
+        }
         assert!(serde_json::to_value(&o).unwrap()["tasks"][2].get("session").is_none());
         fs::remove_dir_all(root).unwrap();
     }
