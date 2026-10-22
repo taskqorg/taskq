@@ -221,7 +221,7 @@ pub fn kids(text: &str) -> Result<(coreq::process::Identity, Vec<KidLine>), Stri
         let task=task.parse::<u64>().ok().filter(|n|*n>0)?;
         let attempt=attempt.parse::<u64>().ok().filter(|n|*n>0)?;
         let execution=execution.parse::<u64>().ok().filter(|n|*n>=attempt)?;
-        if !matches!(rt,"codex"|"claude") || rt=="claude" && (offset!="0" || job.is_some()) { return None; }
+        let a=crate::runtime::of(rt); if !a.child || a.remote && (offset!="0" || job.is_some()) { return None; }
         Some(KidLine {task,attempt,runtime:rt.into(),process:identity(pid,started)?,execution,offset:offset.parse().ok()?,job})
     };
     let v: Vec<KidLine> = lines.enumerate().map(|(i, l)| kid(l).ok_or(format!("kids: line {} malformed; file kept", i + 2))).collect::<Result<_, _>>()?;

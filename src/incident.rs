@@ -54,7 +54,7 @@ fn site(s: &str) -> bool {
 fn safe(f: &Fault) -> bool {
     let value = |s: &&str| CODES.contains(s) || CATALOG.contains(s) || site(s) || s.strip_prefix("release:").is_some_and(version);
     CATALOG.contains(&f.code) && site(f.site) && crate::board::BOARDS.iter().any(|k| k.name == f.board)
-        && matches!(f.runtime, "none" | "claude" | "codex" | "codex-app")
+        && (f.runtime == "none" || crate::runtime::RUNTIMES.contains(&f.runtime))
         && f.fields.len() <= 8 && f.fields.iter().all(value)
         && [f.evidence, f.observed, f.inferred].into_iter().all(|a| a.len() <= 8 && a.iter().all(value))
         && f.revision.len() == 40 && f.revision.bytes().all(|c| c.is_ascii_hexdigit())

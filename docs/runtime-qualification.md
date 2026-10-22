@@ -311,6 +311,19 @@ Admission controls read back through the actual TaskQ `service permissions` path
 
 Preservation readback: working `worker-policy.json` and native auth hashes match the initial snapshot. Working service versions/PIDs/project configs and global Codex config changed independently during qualification, so their snapshot is **not** evidence of unchanged installations. This work wrote only its isolated candidate/fixture and did not signal working services/app agents or change their rights. The app still had live processes. Owned scheduled probes were removed only when idle; temporary login/config copies were removed and fixture admission disabled after qualification.
 
+## Runtime adapters
+
+Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `codex`, `codex-app`) is one `crate::runtime::Adapter` in `src/runtime.rs`, found by `crate::runtime::of(name)`.
+
+- The adapter owns everything that differs by runtime: launch and resume, the command line, policy and sandbox arguments, the session link, process identity, auth and login hints.
+- The runtime module keeps that code; other modules ask the adapter (binary, client name, home, CLI child, Remote Control session, app turn, Codex family, setup access) and never compare runtime names.
+- `crate::runtime::RUNTIMES` is the only runtime list; setup runtimes, profiles and the service derive from it.
+- Setup sessions start through the runtime launch (`crate::runtime::cli`), never a copy of it.
+- `crate::runtime::thread_url`, `plain_thread` and `remote_url` are the only session-link builder and checks.
+- Allowed exceptions: CLI parsing of `--runtime` (`src/main.rs`), `run-*` and legacy `prefer-*` labels with reviewer routing (`src/labels.rs`), runtime keys in `host.json` (`src/host.rs`), and tests.
+- `scripts/check.py` refuses a runtime name literal anywhere else in non-test Rust.
+- Behavior does not change with the move: golden traces and existing tests stay unchanged.
+
 ## Contract detail
 
 Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bound. `taskq.md` keeps the decision and links here; this text keeps the same authority (R8, R13).

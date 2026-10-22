@@ -146,7 +146,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let root = checked(Path::new(&args[0]))?; let install = checked(Path::new(&args[1]))?; let home = checked(Path::new(&args[2]))?;
     let policy = crate::policy::load(&install)?;
     let scope = root.canonicalize().map_err(|e| e.to_string())?.display().to_string();
-    if !policy.grants.iter().any(|g| g.runtime == "codex" && g.mode == "workspace" && g.project.as_deref() == Some(scope.as_str())) {
+    if !policy.grants.iter().any(|g| crate::runtime::of(&g.runtime).codex && crate::runtime::of(&g.runtime).child && g.mode == "workspace" && g.project.as_deref() == Some(scope.as_str())) {
         return Err("Windows sandbox: explicit Workspace project grant required".into());
     }
     let p = paths(&root, &install, &home)?;

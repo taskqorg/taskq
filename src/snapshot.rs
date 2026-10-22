@@ -160,7 +160,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
-            .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| s.starts_with("claude:")))
+            .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
         stuck: stuck(v.issue.number, &v.projection.task, &v.blockers,
             v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),
@@ -187,7 +187,7 @@ pub fn session_urls(hosts: &[board::Issue]) -> HashMap<(String, u64), String> {
         h.body.lines().filter_map(move |l| {
             let w: Vec<&str> = l.strip_prefix("session #")?.split(' ').collect();
             let [_, a, url] = w[..] else { return None };
-            url.strip_prefix("https://claude.ai/code/session_").filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))?;
+            runtime::remote_url(url).then_some(())?;
             Some(((name.clone(), a.parse().ok()?), url.to_string()))
         })
     }).collect()
@@ -420,7 +420,7 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
     let Some((rt, id)) = t.session.as_deref().and_then(|s| s.split(' ').next()).and_then(|s| s.split_once(':')) else { return (String::new(), String::new()) };
     let host = t.session.as_deref().and_then(|s| s.rsplit(' ').next()).unwrap_or_default();
     let mut id = id.to_string();
-    if (id == "-" || rt == "claude") && host == cfg.me
+    if (id == "-" || runtime::of(rt).remote) && host == cfg.me
         && let Some(a) = t.attempt
     {
         let l = runtime::Launch { execution: None, task: n, title: String::new(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: id.clone(), url: String::new(), resume: None };
@@ -430,11 +430,11 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
     let link = match rt {
         _ if id == "-" && r.accepted => format!("{host}: running"),
         _ if id == "-" => format!("{host}: starting"),
-        "claude" => runtime::claude_remote(&id).filter(|_| host == cell(&cfg.me)).or_else(|| r.session_url.clone()).map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
-        _ if std::env::var("TASKQ_CLIENT").as_deref() == Ok("codex") => format!("[{host}](codex://threads/{id})"),
+        _ if runtime::of(rt).remote => runtime::claude_remote(&id).filter(|_| host == cell(&cfg.me)).or_else(|| r.session_url.clone()).map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
+        _ if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).codex && runtime::of(&c).child) => format!("[{host}]({})", runtime::thread_url(&id)),
         _ => match raw["pages"].as_str() {
-            Some(p) => format!("[{host}]({}/open.html#codex://threads/{id})", p.trim_end_matches('/')),
-            None => format!("{host}: `codex://threads/{id}`"),
+            Some(p) => format!("[{host}]({}/open.html#{})", p.trim_end_matches('/'), runtime::thread_url(&id)),
+            None => format!("{host}: `{}`", runtime::thread_url(&id)),
         },
     };
     (rt.to_string(), link)

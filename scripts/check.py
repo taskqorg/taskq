@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Project-owned selected gate. Unknown impact runs the full Rust suite."""
 import argparse
+import re
 import shutil
 import os
 from pathlib import Path
@@ -20,6 +21,25 @@ def selection(paths):
     if paths and all((p.startswith('src/') and Path(p).suffix in {'.js', '.css', '.html'}) or (p.startswith('tests/') and Path(p).suffix == '.cjs') for p in paths):
         return 'web'
     return 'full'
+
+
+# docs/runtime-qualification.md#runtime-adapters: only these files may name a runtime
+ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/main.rs', 'src/labels.rs', 'src/host.rs'}
+RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)(:[^"]*)?"')
+TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
+
+
+def runtime_names(path, text):
+    """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions."""
+    if path in ADAPTER_EXCEPTIONS or path.startswith('src/runtime/') or path.endswith('_tests.rs'):
+        return []
+    # Blank only `#[cfg(test)] mod x { .. }` bodies, keeping line numbers; other code stays scanned.
+    # ponytail: a module ends at its first column-0 `}`; an early end only adds hits, never hides one
+    for m in reversed(list(TEST_MOD.finditer(text))):
+        close = text.find('\n}', m.end())
+        end = len(text) if close < 0 else close + 2
+        text = text[:m.start()] + re.sub(r'[^\n]', ' ', text[m.start():end]) + text[end:]
+    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if RUNTIME_NAME.search(line)]
 
 
 def changes(base):
@@ -58,6 +78,9 @@ def main():
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
+        found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
+        if found:
+            raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
