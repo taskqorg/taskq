@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.31
+
+A pending restart no longer waits on answered or reserved tasks without a child: they pass to the new image, which resumes them from the board (#1601). The native legacy inventory, `service complete-legacy` and the other per-project migration bridges are gone, so Windows launches are no longer held by inventory timeouts (#1596). The tray gets the approved task dashboard and settings (#1578) and the Conversations journey with native-only drafts and attachments (#1580); CLI, tray and menu share one freshness rule (#1591); any worker session opens in one click and sessions are named by role, task and title (#1565, #1564). Runtimes live behind one adapter each (#1562). Recovery records stay on their own process and exited ones resolve at handover (#1561); a refused Claude launch counts as a confirmed no-start (#1557); native history stays observed on an mtime-only touch (#1588). `taskq add` refuses repeated single-value flags (#1558); onboard reports Claude trust gaps without closing Claude (#1555); profile counts only failed publish calls (#1572); history bars show exact interval counts (#1586). Merge-queue tests run on recorded GitHub responses (#1595). No board change.
+
 ## v4.6.30
 
 `taskq service onboard` readies a host's Claude folder trust in one command (#1546). Closed tasks release worktrees held by foreign or rebooted executions (#1549). A label fix that another host's fold reverts backs off, is logged and reported once (#1550). Steady tray tick telemetry folds into aggregates, so the store keeps its full retention (#1548). Codex setup sessions open through the host service (#1534); the tray warns when agentq is missing and setup sessions need one OK (#1544). The service never dequeues a newer publication of the same SHA and reaps an adopted zombie child (#1537, #1543). Tray and status task rows show only owner texts; the tasks list gains a per-row menu and chip-order sort; the workspace shell runs as Preact route components (#1524, #1523, #1538). CoreQ v0.14.6. No board change.
