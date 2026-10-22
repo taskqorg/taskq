@@ -54,6 +54,21 @@ fn stable(body: &str) -> Vec<String> {
     }).collect()
 }
 
+/// #1616: a host admission refusal (`admission.rs` code, or `host.rs` reason under code `host`) as an admission code.
+fn refusal_admission(code: &str, text: &str) -> (&'static str, String) {
+    let has = |w: &str| text.contains(w);
+    let code = match code {
+        "max" => "capacity",
+        "spacing" => "load-gate",
+        _ if has("recovery pending") || has("poisoned") || has("admission file") => return ("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].into()),
+        _ if has("load gate") => "load-gate",
+        _ if has("capacity") || has("round-robin") || has("disabled") => "capacity",
+        // `version`, an operator hold, draining and a pending restart hold every launch
+        _ => "hold",
+    };
+    (code, text.into())
+}
+
 /// § 4 Filter: a `host-*` label names the only host; an unlabelled task goes to any host whose `claim` is `any`.
 fn claims(i: &Issue, me: &str, labelled: bool) -> bool {
     label(i, "host-").map_or(!labelled, |h| h == me)
@@ -808,15 +823,25 @@ impl<'a> Service<'a> {
         self.cap = cap;
     }
 
-    #[tracing::instrument(name="service.Service.may_launch",skip_all)]
     fn may_launch(&self,task:u64) -> bool {
-        let refusal = if (self.hold.is_some() && !crate::recovery::allowed(&self.cfg.install,&self.cfg.root,task)) || crate::admission::task_hold(&self.cfg.install,&self.cfg.root,task).is_some() { Some("hold") }
-            else if self.cap.is_err() { Some("config") }
+        self.launch_refusal(task).is_none()
+    }
+
+    /// Why no launch of `task` may start now, as a #1616 admission code and reason; the trace keeps its § 3 code
+    /// under the `may_launch` span every launch check emits.
+    #[tracing::instrument(name="service.Service.may_launch",skip_all)]
+    fn launch_refusal(&self,task:u64) -> Option<(&'static str,String)> {
+        let hold = self.hold.clone().filter(|_| !crate::recovery::allowed(&self.cfg.install,&self.cfg.root,task))
+            .or_else(|| crate::admission::task_hold(&self.cfg.install,&self.cfg.root,task));
+        let refusal = if let Some(h) = hold { Some(("hold", "hold", h)) }
+            else if self.cap.is_err() { Some(("config", "unknown", crate::snapshot::ADMISSION_UNKNOWN[1].to_string())) }
             else if !self.gate.may_launch(self.mono) {
-                Some(self.gate.state(self.mono).1.first().map_or("launch-interval", |r| r.0))
+                let (code, text) = self.gate.state(self.mono).1.into_iter().next().unwrap_or(("launch-interval", "launch interval".into()));
+                Some((code, "load-gate", format!("{code}: {text}")))
             } else { None };
-        if let Some(code) = refusal { tracing::info!(coreq_refusal = code); }
-        refusal.is_none()
+        let (code, admission, reason) = refusal?;
+        tracing::info!(coreq_refusal = code);
+        Some((admission, reason))
     }
 
     fn auto(&self) -> bool {
@@ -1633,47 +1658,70 @@ impl<'a> Service<'a> {
             self.pending = pending;
             self.beat()?;
         }
-        if self.focus.is_empty() {
-            tracing::info!(coreq_refusal = "focus");
+        // #1616: every ready task this pass reaches gets one admission code, written into the snapshot rows
+        let mut decided: BTreeMap<u64, (&'static str, String)> = BTreeMap::new();
+        let focus_off = self.focus.is_empty();
+        if focus_off { tracing::info!(coreq_refusal = "focus"); }
+        let user = if focus_off { String::new() } else { self.board.me().unwrap_or_default() };
+        let mut queue: Vec<&View> = vec![];
+        for v in &views {
+            let (n, t) = (v.issue.number, &v.projection.task);
+            if touched.contains(&n) || self.kids.iter().any(|k| k.task == n) { continue; }
+            if !(t.state == State::Ready || (t.state == State::Review && t.attempt.is_none() && t.publication.is_none())) { continue; }
+            // `needs-gate`: every host of this version has gates; N-1 lacks them and leaves the task alone (§ 8)
+            let lacks = || v.issue.labels.iter().filter_map(|l| l.strip_prefix("needs-"))
+                .find(|x| !(*x == "gate" || if *x == "gui" { self.gui().is_ok() } else { self.cfg.has.iter().any(|h| h == x) }));
+            let refusal = if self.execution_waits.contains_key(&n) { Some(("unknown", crate::snapshot::ADMISSION_UNKNOWN[3].to_string())) }
+                else if let Some(r) = self.launch_refusal(n) { Some(r) }
+                else if let Err(e) = crate::labels::validate(&v.issue.labels) { log!("#{n}: {e}; not admitted"); Some(("labels", e.to_string())) }
+                else if !claims(&v.issue, &me, self.cfg.labelled) {
+                    Some(("host", label(&v.issue, "host-").map_or("labelled claim: no host-* label".into(), |h| format!("labelled host-{h}"))))
+                }
+                else if let Some(x) = lacks() { Some(("capability", format!("needs-{x}"))) }
+                else if focus_off { Some(("focus", self.focus_error.clone().unwrap_or_else(|| FOCUS_OFF.into()))) }
+                else if priority(&v.issue) != 0 && !self.focus.iter().any(|f| f == "all" || crate::labels::matches(&v.issue.labels, f)) {
+                    Some(("focus", format!("focus {}", self.focus.join(","))))
+                }
+                // last: the github.com list carries no assignees (§ 4 budget), so only a candidate reads them
+                else if v.issue.labels.iter().any(|l| l == "assignee-only") && !assigned(self.board, &v.issue, &user).unwrap_or(false) {
+                    Some(("host", "assignee-only: not assigned to this board user".into()))
+                }
+                else { None };
+            match refusal { Some(r) => { decided.insert(n, r); } None => queue.push(v) }
+        }
+        if focus_off {
             if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, false); } }
+            self.decided(decided);
             return Ok(());
         }
-        let user = self.board.me().unwrap_or_default();
-        let mut queue: Vec<&View> = views
-            .iter()
-            .filter(|v| !touched.contains(&v.issue.number) && !self.execution_waits.contains_key(&v.issue.number))
-            .filter(|v| self.may_launch(v.issue.number))
-            .filter(|v| !self.kids.iter().any(|k| k.task == v.issue.number))
-            .filter(|v| v.projection.task.state == State::Ready || (v.projection.task.state == State::Review && v.projection.task.attempt.is_none() && v.projection.task.publication.is_none()))
-            .filter(|v| {
-                if let Err(e) = crate::labels::validate(&v.issue.labels) { log!("#{}: {e}; not admitted", v.issue.number); return false; }
-                true
-            })
-            .filter(|v| claims(&v.issue, &me, self.cfg.labelled))
-            // `needs-gate`: every host of this version has gates; N-1 lacks them and leaves the task alone (§ 8)
-            .filter(|v| v.issue.labels.iter().filter_map(|l| l.strip_prefix("needs-")).all(|x| x == "gate" || if x == "gui" { self.gui().is_ok() } else { self.cfg.has.iter().any(|h| h == x) }))
-            .filter(|v| priority(&v.issue) == 0 || self.focus.iter().any(|f| f == "all" || crate::labels::matches(&v.issue.labels, f)))
-            // last: the github.com list carries no assignees (§ 4 budget), so only a candidate reads them
-            .filter(|v| !v.issue.labels.iter().any(|l| l == "assignee-only") || assigned(self.board, &v.issue, &user).unwrap_or(false))
-            .collect();
         // reviews before ready tasks, then priority and number within each (§ 4 step 6)
         queue.sort_by_key(|v| (v.projection.task.state != State::Review, priority(&v.issue), v.issue.number));
         let ready = queue.iter().any(|v| self.free(&route(&v.issue, v.projection.task.state == State::Review), needs_gui(&v.issue)).is_some());
         if let Some(host) = &self.host {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
+        // a refused reservation ends admission for this pass; the rest of the queue reads the same refusal
+        let mut refused: Option<(&'static str, String)> = None;
         for v in queue {
-            if !self.may_launch(v.issue.number) {
+            let n = v.issue.number;
+            if let Some(r) = refused.clone().or_else(|| self.launch_refusal(n)) {
+                decided.insert(n, r);
                 continue;
             }
             let role = if v.projection.task.state == State::Review { "reviewer" } else { "worker" };
             let rt = if role == "reviewer" { self.reviewer_free(v) } else { self.worker_free(v) };
-            let Some(rt) = rt else { continue };
-            if !self.reserve(v.issue.number, 0, &rt) {
-                break;
+            let rt = match rt { Ok(rt) => rt, Err(r) => { decided.insert(n, r); continue; } };
+            if !self.reserve(n, 0, &rt) {
+                let r = self.launch_refusal(n).unwrap_or_else(|| self.refused.as_ref()
+                    .map_or(("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].into()), |(c, t)| refusal_admission(c, t)));
+                decided.insert(n, r.clone());
+                refused = Some(r);
+                continue;
             }
             self.claim(v, role, &rt)?;
+            decided.insert(n, ("admitted", format!("claimed on {rt}")));
         }
+        self.decided(decided);
         Ok(())
     }
 
@@ -1829,32 +1877,55 @@ impl<'a> Service<'a> {
         if let Err(e) = std::fs::create_dir_all(crate::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path,last.into_values().map(|l| l + "\n").collect::<String>())) { self.log.push(format!("cleanup cache: {e}")); }
     }
 
-    fn reviewer_free(&self, v: &View) -> Option<String> {
-        self.free(&route(&v.issue, true), needs_gui(&v.issue))
+    fn reviewer_free(&self, v: &View) -> Result<String, (&'static str, String)> {
+        self.admit_runtime(&route(&v.issue, true), needs_gui(&v.issue))
     }
 
-    fn worker_free(&mut self, v: &View) -> Option<String> {
+    fn worker_free(&mut self, v: &View) -> Result<String, (&'static str, String)> {
         if label(&v.issue, "run-").is_none() && v.issue.labels.iter().filter(|l| l.starts_with("prefer-")).count() > 1 {
             self.log.push(format!("#{}: conflicting prefer-* labels; preference ignored", v.issue.number));
         }
-        self.free(&route(&v.issue, false), needs_gui(&v.issue))
+        self.admit_runtime(&route(&v.issue, false), needs_gui(&v.issue))
     }
 
-    /// `rt` when it has free capacity: `limits.<rt>` minus live children of it (§ 3).
-    /// `codex-app` only on a host whose `has` lists it (§ 9 opt-in).
-    /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
     fn free(&self, rt: &str, gui: bool) -> Option<String> {
-        if crate::runtime::of(rt).app && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) { return None; }
-        if self.refused_access.contains_key(rt) || self.limited.contains_key(rt) || self.logged_out.contains(rt) || (gui && !self.full.contains(rt)) { return None; }
-        let c = self.cap.as_ref().ok()?;
+        self.admit_runtime(rt, gui).ok()
+    }
+
+    /// `rt` when it has free capacity: `limits.<rt>` minus live children of it (§ 3), else the #1616 admission code
+    /// and reason. `codex-app` only on a host whose `has` lists it (§ 9 opt-in).
+    /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
+    fn admit_runtime(&self, rt: &str, gui: bool) -> Result<String, (&'static str, String)> {
+        if crate::runtime::of(rt).app && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) {
+            return Err(("capability", format!("{rt} not in has")));
+        }
+        if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
+        if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_line(rt)))); }
+        if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
+        if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
+        let c = self.cap.as_ref().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[1].to_string()))?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
-        let n = if c.auto { RUNTIMES.contains(&rt).then(|| c.limits.get(rt).copied().unwrap_or(u32::MAX))? } else { *c.limits.get(rt)? };
+        let n = if c.auto { RUNTIMES.contains(&rt).then(|| c.limits.get(rt).copied().unwrap_or(u32::MAX)).ok_or(("capability", format!("{rt} unknown runtime")))? }
+            else { *c.limits.get(rt).ok_or(("capacity", format!("{rt} not in limits")))? };
         let mut left = (n as usize).saturating_sub(self.entry().held.iter().filter(|r| r.2 == rt).count());
         if let Some(host) = &self.host {
-            let h = host.lock().ok()?;
+            let h = host.lock().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[2].to_string()))?;
             left = left.min(h.remaining(&self.cfg.root, rt, c));
         }
-        (left > 0).then(|| rt.to_string())
+        if left > 0 { Ok(rt.to_string()) } else { Err(("capacity", format!("{rt} slots full"))) }
+    }
+
+    /// #1616: each ready row of this pass's snapshot carries this host's decision; a row it did not reach keeps
+    /// `unknown`, reason `no host decision`.
+    fn decided(&mut self, decided: BTreeMap<u64, (&'static str, String)>) {
+        let me = self.cfg.me.clone();
+        let Some(snapshot) = &mut self.snapshot else { return };
+        let observed = snapshot.observed;
+        for r in snapshot.tasks.iter_mut().filter(|r| r.task.state == State::Ready) {
+            if let Some((code, reason)) = decided.get(&r.n) {
+                r.admission = Some(crate::snapshot::Admission { code, reason: reason.clone(), observed, host: Some(me.clone()) });
+            }
+        }
     }
 
     /// The view's log while nothing this pass wrote the task (every write drops its cache entry), else a fresh read:
@@ -4937,6 +5008,70 @@ mod tests {
         s.pass().unwrap();
         assert_eq!((focus(&s), task(&b, t).state), (None, State::Doing));
         assert!(!s.snapshot.as_ref().unwrap().text(&c, &Value::Null).unwrap().contains("focus"));
+    }
+
+    // Chain: § 4 step 6 admission -> snapshot rows -> status.json and taskq-board/1 (#1616). Risk: DashQ or the tray
+    // guess why a ready task waits, or a host that did not decide reads as admitted or refused.
+    #[test]
+    fn ready_rows_carry_this_hosts_admission_decision() {
+        let b = Fake::default();
+        let first = b.create("A", "", &["taskq".into()]).unwrap();
+        let second = b.create("B", "", &["taskq".into()]).unwrap();
+        let other = b.create("H", "", &["taskq".into(), "host-win".into()]).unwrap();
+        let win = b.create("W", "", &["taskq".into(), "needs-windows".into()]).unwrap();
+        let bad = b.create("X", "", &["taskq".into(), "p1".into(), "p2".into()]).unwrap();
+        let maps = b.create("M", "", &["taskq".into(), "area-maps".into()]).unwrap();
+        let dep = b.create("D", &format!("Depends on #{first}"), &["taskq".into()]).unwrap();
+        let mut c = cfg("mac");
+        c.install = std::env::temp_dir().join(format!("taskq-admission-rows-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&c.install);
+        std::fs::create_dir_all(&c.install).unwrap();
+        let mut s = service(&b, &c, Default::default());
+        let codes = |s: &Service| -> BTreeMap<u64, Value> {
+            let snap = s.snapshot.as_ref().unwrap();
+            snap.tasks.iter().filter_map(|r| r.json().get("admission").map(|a| {
+                if a["code"] != "dependency" { assert_eq!((&a["host"], &a["observed"]), (&json!("mac"), &json!(snap.observed)), "#{} decided by this host on this read", r.n); }
+                (r.n, a["code"].clone())
+            })).collect()
+        };
+        s.focus = vec![];
+        s.pass().unwrap();
+        let want = |pairs: &[(u64, &str)]| pairs.iter().map(|(n, c)| (*n, json!(c))).collect::<BTreeMap<_, _>>();
+        assert_eq!(codes(&s), want(&[(first, "focus"), (second, "focus"), (other, "host"), (win, "capability"), (bad, "labels"), (maps, "focus"), (dep, "dependency")]), "focus off");
+        s.focus = vec!["all".into()];
+        s.pass().unwrap();
+        assert_eq!(codes(&s), want(&[(first, "admitted"), (second, "capacity"), (other, "host"), (win, "capability"), (bad, "labels"), (maps, "capacity"), (dep, "dependency")]), "one claude slot");
+        s.focus = vec!["area-maps".into()];
+        s.logged_out.insert("claude".into());
+        s.pass().unwrap();
+        let got = codes(&s);
+        assert_eq!((&got[&second], &got[&maps], got.contains_key(&first)), (&json!("focus"), &json!("login"), false), "a doing task carries no admission");
+        std::fs::write(c.install.join("hold"), "fixture hold").unwrap();
+        s.pass().unwrap();
+        assert_eq!((&codes(&s)[&second], &codes(&s)[&maps]), (&json!("hold"), &json!("hold")));
+        let _ = std::fs::remove_dir_all(&c.install);
+        // the CLI read decides nothing: ready reads unknown with its reason, waiting keeps the fold's dependency
+        let rows = crate::snapshot::read(&b, &c, &Value::Null, &[]).json()["tasks"].clone();
+        let row = |n: u64| rows.as_array().unwrap().iter().find(|r| r["n"] == n).unwrap()["admission"].clone();
+        assert_eq!((&row(maps)["code"], &row(maps)["reason"], &row(maps)["host"]), (&json!("unknown"), &json!("no host decision"), &Value::Null));
+        assert_eq!(row(dep)["code"], "dependency");
+        assert!(row(dep)["reason"].as_str().unwrap().contains(&format!("#{first} open")));
+    }
+
+    // Chain: host admission refusal text -> admission code (#1616). Risk: a host.rs or admission.rs refusal reads as
+    // the wrong code, or an unknown host state reads as a decision.
+    #[test]
+    fn host_refusals_map_to_admission_codes() {
+        for (code, text, want) in [("max", "host at its maximum of 2 sessions", "capacity"), ("spacing", "host launched 3 s ago", "load-gate"),
+            ("version", "service p 4.1.11 is older than 4.2.0-dev", "hold"), ("host", "admission file unreadable (x); rebuilt", "unknown"),
+            ("host", "host occupancy recovery pending", "unknown"), ("host", "host admission poisoned; launches held", "unknown"),
+            ("host", "project draining", "hold"), ("host", "host restart pending", "hold"), ("host", "runtime disabled", "capacity"),
+            ("host", "round-robin: another project is ready", "capacity"), ("host", "host load gate or 30 s launch spacing", "load-gate"),
+            ("host", "host or project capacity full", "capacity")] {
+            let (got, reason) = refusal_admission(code, text);
+            assert_eq!(got, want, "{code}: {text}");
+            if got == "unknown" { assert!(crate::snapshot::ADMISSION_UNKNOWN.contains(&reason.as_str())); }
+        }
     }
 
     // Chain: § 8 codex-app admission. Risk: codex-app runs an unlabelled task.

@@ -89,6 +89,64 @@ pub struct Row {
     pub steps: Vec<Value>,
     /// R6 stuck: seconds since the newest log entry; `None`: not stuck.
     pub stuck: Option<i64>,
+    /// #1616 TaskQ's own admission decision of a ready or waiting task; `None` for other states.
+    pub admission: Option<Admission>,
+}
+
+/// #1616 fixed admission vocabulary of ready and waiting rows (docs/design/enrollment.md#contract-detail): code and
+/// meaning. Consumers read the code and never infer a reason from silence, activity or board totals.
+pub const ADMISSION_CODES: [(&str, &str); 13] = [
+    ("admitted", "this host claimed the task in this pass"),
+    ("dependency", "a Depends on issue is open or unknown"),
+    ("hold", "an emergency hold, draining, a pending restart or an older service holds launches"),
+    ("host", "a host-* label, a labelled claim or assignee-only assigns the task to another host"),
+    ("capability", "a needs-* label or the routed runtime is not available on this host"),
+    ("labels", "the task labels are invalid; no host admits it"),
+    ("focus", "the host focus excludes the task or admits nothing"),
+    ("capacity", "runtime, project or host slots are full or another project has the turn"),
+    ("load-gate", "the load gate or launch spacing holds launches"),
+    ("login", "the routed runtime is not logged in"),
+    ("usage-limit", "the routed runtime is held after a usage limit"),
+    ("access", "the routed runtime refused its access grant"),
+    ("unknown", "no decision is known; reason names why"),
+];
+
+/// The fixed reasons of `unknown` (A3): a host that did not decide never reads as admitted or refused.
+pub const ADMISSION_UNKNOWN: [&str; 4] = ["no host decision", "capacity config unreadable", "host admission unknown", "execution unresolved"];
+
+/// One admission decision: `observed` is the board read time it rests on, `host` the deciding host (`None`: TaskQ's
+/// board fold, or nobody decided). `reason` is free text except for `unknown`, whose reason is one of
+/// [`ADMISSION_UNKNOWN`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct Admission {
+    pub code: &'static str,
+    pub reason: String,
+    pub observed: i64,
+    pub host: Option<String>,
+}
+
+impl Admission {
+    pub fn json(&self) -> Value {
+        debug_assert!(ADMISSION_CODES.iter().any(|c| c.0 == self.code), "admission code outside the vocabulary");
+        json!({"code": self.code, "observed": self.observed, "host": self.host, "reason": self.reason})
+    }
+
+    /// The `taskq-board/1` form: free reason text stays on the host; `unknown` keeps its fixed reason.
+    pub fn projection(&self) -> Value {
+        let mut v = json!({"code": self.code, "observed": self.observed, "host": self.host});
+        if self.code == "unknown" { v["reason"] = json!(self.reason); }
+        v
+    }
+}
+
+/// The board-only admission of a row: `waiting` is the fold's dependency decision, `ready` waits for a host decision.
+fn board_admission(t: &Task, deps: &[service::Blocker], observed: i64) -> Option<Admission> {
+    let (code, reason) = match t.state {
+        State::Waiting => ("dependency", deps.iter().map(|b| format!("{} {}", b.dep.name(), b.reason)).collect::<Vec<_>>().join(", ")),
+        State::Ready => ("unknown", ADMISSION_UNKNOWN[0].to_string()),
+        _ => return None,
+    };
+    Some(Admission { code, reason, observed, host: None })
 }
 
 /// Owner texts of a row's wait (docs/design/menu.md M3 Task row text, #1524); the raw reason stays in `execution_wait`.
@@ -172,6 +230,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         executions,
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
+        admission: board_admission(&v.projection.task, &v.blockers, observed),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
@@ -293,6 +352,7 @@ impl Row {
         row["steps"] = json!(self.steps);
         row["stuck"] = json!(self.stuck.is_some());
         if let Some(a) = self.stuck { row["age_s"] = json!(a); }
+        if let Some(a) = &self.admission { row["admission"] = a.json(); }
         row
     }
 }
@@ -509,7 +569,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -523,7 +583,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -567,7 +627,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");

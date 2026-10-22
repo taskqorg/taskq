@@ -53,7 +53,13 @@
           "complete": false
         }
       ],
-      "stuck": false
+      "stuck": false,
+      "admission": {
+        "code": "unknown",
+        "observed": 99,
+        "host": null,
+        "reason": "no host decision"
+      }
     },
     {
       "n": 2,
@@ -179,7 +185,13 @@
           "complete": false
         }
       ],
-      "stuck": false
+      "stuck": false,
+      "admission": {
+        "code": "dependency",
+        "observed": 99,
+        "host": null,
+        "reason": "#3 open"
+      }
     },
     {
       "n": 5,
