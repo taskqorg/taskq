@@ -33,3 +33,5 @@
 @media(pointer:coarse){.menu:not(.workspace) .head:has(.nav-back:empty){grid-template-columns:minmax(0,1fr) auto}.menu:not(.workspace) .head:has(.nav-back:empty) .nav-actions{grid-row:2;grid-column:1/-1}.menu:not(.workspace) .head:has(.nav-back:empty) .window-controls{grid-row:1;grid-column:2}.menu .status-footer .grip{width:44px;height:44px;min-height:44px}}
 
 .menu .views img{width:22px;height:22px;object-fit:contain;flex:none}
+/* Actual-size previews sit above their labels; intrinsic labels wrap the set before they can clip. */
+.menu .views button{flex-direction:column;flex-basis:auto;min-width:max-content;gap:4px}
