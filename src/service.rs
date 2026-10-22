@@ -1450,18 +1450,18 @@ impl<'a> Service<'a> {
 
         for v in &views {
             let n = v.issue.number;
-            let revision = core::revision(n, &v.log);
-            if self.cancelled_publications.get(&n) == Some(&revision) { continue; }
-            if v.projection.task.publication.is_some() { self.cancelled_publications.insert(n, revision); continue; }
-            let cancelled = core::changes(n, &v.log).into_iter().rev().find(|(_, before, after)| before.publication.is_some() && after.publication.is_none() && matches!(after.state, State::Ready | State::Later | State::Failed));
-            if let Some((_, before, _)) = cancelled
-                && let Err(e) = self.board.cancel_publication(n, before.result.as_deref().unwrap_or_default())
-            {
+            if v.projection.task.publication.is_some() { continue; }
+            let changes = core::changes(n, &v.log);
+            let Some(at) = changes.iter().rposition(|(_, before, after)| before.publication.is_some() && after.publication.is_none() && matches!(after.state, State::Ready | State::Later | State::Failed)) else { continue };
+            let (id, before, _) = &changes[at];
+            // #1535: one cancellation per cancelling entry; a later result supersedes it, so its publication is never dequeued
+            if self.cancelled_publications.get(&n) == Some(id) || changes[at + 1..].iter().any(|(_, _, after)| after.result.is_some()) { continue; }
+            if let Err(e) = self.board.cancel_publication(n, before.result.as_deref().unwrap_or_default()) {
                 log!("#{n} publication cancellation unknown: {e}");
                 touched.insert(n);
                 continue;
             }
-            self.cancelled_publications.insert(n, revision);
+            self.cancelled_publications.insert(n, *id);
         }
 
         // § 7 publication intent is board state; every host can reconcile the queue after a restart, even with focus off.
@@ -2482,8 +2482,31 @@ mod tests {
         s.pass().unwrap();
         let before = b.state.borrow().cancelled_publications.len();
         s.pass().unwrap();
-        assert_eq!(b.state.borrow().cancelled_publications.len(), before, "verified cancellation cached by revision");
+        assert_eq!(b.state.borrow().cancelled_publications.len(), before, "verified cancellation cached by its entry");
         assert_eq!(b.state.borrow().cancelled_publications.last(), Some(&(n, "a".repeat(40))));
+        b.comment(n, "taskq: spawn worker codex:w2 other").unwrap();
+        s.pass().unwrap();
+        assert_eq!(b.state.borrow().cancelled_publications.len(), before, "a later revision does not repeat the cancellation");
+    }
+
+    // Defect #1535: a stale view of a re-produced SHA dequeued the newer publication (PR #1529 on #1470).
+    #[test]
+    fn cancellation_never_dequeues_a_newer_publication_of_the_same_sha() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented republication", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        b.comment(n, "taskq: publish\naccepted").unwrap();
+        b.comment(n, "taskq: requeue main-moved").unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w2 other").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "same SHA")).unwrap();
+        // a restarted service reads the task in review before the new publish entry
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process")));
+        s.pass().unwrap();
+        b.comment(n, "taskq: publish\naccepted").unwrap();
+        b.comment(n, "taskq: enqueued MQ_2").unwrap();
+        s.pass().unwrap();
+        assert!(b.state.borrow().cancelled_publications.is_empty(), "the newer publication stays queued");
     }
 
     type Exits = Rc<RefCell<Vec<(u64, Rc<RefCell<Option<i32>>>)>>>;
