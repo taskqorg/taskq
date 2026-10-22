@@ -1714,7 +1714,11 @@ mod tests {
             let dispatch=tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
             let window=crate::telemetry::diagnostic::HEALTH_WINDOW_MS;
             let (first,simulated)=(crate::profile::now_ms().unwrap(),crate::profile::now_ms().unwrap()/window*window);
+            // The tray module builds only on macOS and Windows; Linux hosts run no tray, so their hour has no tick rows.
+            #[cfg(any(target_os = "macos", windows))]
             let mut tray=crate::tray::steady_tick();
+            #[cfg(not(any(target_os = "macos", windows)))]
+            let mut tray=||();
             tracing::dispatcher::with_default(&dispatch,|| for tick in 0..1800 {
                 if tick%30==0 {
                     for project in 0..6 {
@@ -1752,7 +1756,7 @@ mod tests {
                 let calls=|op:&str|rows.iter().filter(|r|r["operation"]==op).filter_map(|r|r["calls"].as_u64()).sum::<u64>();
                 assert_eq!((calls("taskq.tray.refresh"),calls("taskq.service.loop")+passes),(1800,360),"aggregates keep every poll");
                 let counts=|op:&str|rows.iter().filter(|r|r["operation"]==op).filter_map(|r|r["counts"]["calls"].as_u64()).sum::<u64>();
-                assert_eq!((calls("taskq.operation.tray.web.tick"),counts("js.ui.render.tick")),(1800,1800),"{page}");
+                if cfg!(any(target_os = "macos", windows)) {assert_eq!((calls("taskq.operation.tray.web.tick"),counts("js.ui.render.tick")),(1800,1800),"{page}");}
             }
             drop(late);drop(store);fs::remove_dir_all(&install).unwrap();
         }
