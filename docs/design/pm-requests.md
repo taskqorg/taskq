@@ -24,7 +24,7 @@ Receipts echo actor/op/revision and name outcome (`accepted`, `rejected`, `stale
 
 `<install>/setup/pm/state` is governed owner-request metadata, under its own file lock. It stores grants, input hashes, dispatch intents and receipts, never a second task queue or conversation store. Persist an intent before setup creation; after any interrupted or uncertain write only read the same setup record. Missing/corrupt records remain unknown; do not recreate or launch. A repeated op-id with changed input is rejected. Keep tombstones for all admitted identities: 4096 operations and 64 grants maximum, no automatic deletion or ID reuse. At capacity refuse new input while existing receipts remain readable. Unavailable/corrupt state refuses changes and preserves bytes.
 
-The service exchanges on a separate thread at most once per 5 seconds while active, 30 seconds idle, 60 seconds after failure. HTTP failures, denial, restart and lost receipts never replay native dispatch. Changed/revoked connections cannot receive old receipts. Local launch still uses §4 setup once-only recovery; no uncertain native launch is retried. Disabling the channel leaves existing native sessions alone.
+Each service pass may start one separate exchange thread: minimum spacing 5 seconds while active, 30 seconds idle, 60 seconds after failure. Service-pass frequency also bounds delivery latency. HTTP failures, denial, restart and lost receipts never replay native dispatch. Changed/revoked connections cannot receive old receipts. Local launch still uses §4 setup once-only recovery; no uncertain native launch is retried. Disabling the channel leaves existing native sessions alone.
 
 ### Verification
 

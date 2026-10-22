@@ -1,6 +1,6 @@
 # Shared PM request candidate
 
-Runtime candidate: `fcdac54fa972dd0f214ceff575340a80d98915fd`, Windows GNU Rust 1.99.0, warm local build cache. This is producer/component evidence, not deployed FRA or native PM-session qualification.
+Dispatch/GUI candidate: `fcdac54fa972dd0f214ceff575340a80d98915fd`; checked CLI/source candidate: `0cd8e4325d6b2405b7a236891fdd80e315cd875c`, which additionally names the action/version in PM command acknowledgements. Windows GNU Rust 1.99.0, warm local build cache. This is producer/component evidence, not deployed FRA or native PM-session qualification.
 
 ## Applied contract
 
@@ -12,9 +12,10 @@ Runtime candidate: `fcdac54fa972dd0f214ceff575340a80d98915fd`, Windows GNU Rust 
 
 | Boundary | Observation |
 |---|---|
-| Canonical selected gate | `python3 scripts/check.py --base 138fd21f3762bfa7b59adae1789b0ca2a568519a`: **sandbox-blocked**, 482 Rust passes, 18 host-control worker-authority refusals, 34 ignored; 82.109 s local, not CI timing qualification. |
+| Canonical selected gate | `python3 scripts/check.py --base 138fd21f3762bfa7b59adae1789b0ca2a568519a`: **sandbox-blocked**, 482 Rust passes, 18 host-control worker-authority refusals, 34 ignored; final run 68.156 s local, not CI timing qualification. |
 | PM dispatch and privacy | All five `pm::tests` pass inside that run. Shared fixture: accepted/native session, duplicate, denied, stale, expired and interrupted. Added connection replacement, narrowed grants, malformed runtime/grant state, retained durable prepare and independent local-request recovery. Real captured PM method observations contain no owner text; outgoing exchange and PM metadata also exclude it. Native launcher and wire are substituted. |
 | Available process suite | `cargo +stable test --locked --test integration`: 17 pass, 1 ignored, including its telemetry-process module. There is no separate `telemetry_process` Cargo target in this checkout. |
+| PM CLI | Isolated `cargo +stable run --locked -- service pm` reports action/version; a PM grant command from this worker is refused before creating PM grant state. |
 | Component/IPC | All 21 `tests/*.test.cjs` pass. PM check additionally validates the built standalone bundle, exact receipt correlation, safe links, source hashes and release asset wiring. |
 | Browser | `node tests/pm-composer.browser.cjs` and `node tests/conversations.browser.cjs` pass: send/outage/reopen/readback, failed persistence, unrelated stored receipt, existing CW1–CW8/attachment/IME/keyboard and native-only handoff behavior. Browser fixtures substitute native receipts. |
 | Offline source selftest | Isolated `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest`: 97 golden traces and format checks pass; 9 staged capture observations committed. Board remains unknown/offline. |
