@@ -144,8 +144,18 @@ pub fn die(msg: &str) -> ! {
 /// TLS destructors; a thread killed while it held a lock one of them takes (sharded_slab's thread-id
 /// registry) left that exit waiting forever. Seal telemetry, flush, then end without destructors.
 pub fn exit(code: i32) -> ! {
-    #[cfg(windows)] {coreq::telemetry::capture::before_exec(); terminate(code)}
+    #[cfg(windows)] {drain_telemetry(); coreq::telemetry::capture::before_exec(); terminate(code)}
     #[cfg(not(windows))] std::process::exit(code)
+}
+
+/// #1566: CoreQ's exit flush waits 3 s, but one Windows append can outlast it (its writer retries a busy store for 10 s);
+/// ending the process then loses the queued observations. Retry the unacknowledged flush, bounded, before that flush.
+pub fn drain_telemetry() {
+    use coreq::telemetry::capture::Capture;
+    let Some(capture) = tracing::dispatcher::get_default(|d| d.downcast_ref::<Capture>().cloned()) else { return };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while let Err(e) = capture.flush() && std::time::Instant::now() < until
+        && (e.starts_with("telemetry flush unacknowledged (") || e == "telemetry flush queue deadline") {}
 }
 
 /// Ends this process now: no other thread or destructor runs after the flush.

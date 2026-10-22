@@ -2834,6 +2834,13 @@ fn application() {
     let t = platform::tool(&install);
     let launcher = install.join(t.exe_name()).canonicalize().ok();
     if exe.is_some() && exe == launcher && t.current().is_some() {
+        // #1566: CoreQ's Windows launcher ends a CLI call through `ExitProcess`, the TLS-teardown hang `platform::exit` avoids.
+        #[cfg(windows)]
+        if !(args.first().map(String::as_str) == Some("service") && args.get(1).map(String::as_str) == Some("run")) {
+            let v = coreq::launcher::pick(&t, false).unwrap_or_else(|e| platform::die(&e));
+            let status = std::process::Command::new(t.release_exe(&v)).args(&args).env(t.env("INSTALL"), &t.install).status();
+            platform::exit(status.map_or_else(|e| platform::die(&format!("start {v}: {e}")), |s| s.code().unwrap_or(1)));
+        }
         coreq::launcher::launch(&t, &args);
     }
     #[cfg(target_os = "macos")]

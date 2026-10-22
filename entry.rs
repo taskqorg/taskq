@@ -39,6 +39,7 @@ fn main() {
     let _telemetry = (!maintenance).then(||telemetry::install_capture(private.as_deref().unwrap_or(&install))).transpose()
         .map_err(|e| {let _=writeln!(std::io::stderr(),"Telemetry: unknown ({e})");}).ok();
     application();
+    platform::drain_telemetry();
     // ponytail: a failed selftest exits inside application() and keeps its private store for diagnosis;
     // on Windows this removal fails while the writer is open, and the next staged selftest sweeps it.
     // #1519: the drop seals the store; a seal observed by the still-global collector queues its own checkpoint span,
