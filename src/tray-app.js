@@ -4,6 +4,16 @@ const execution=ui.execution;
 const shell=require('./app-shell.js');
 const {h,Fragment}=require('preact');
 
+// R-UI5: physical pixels, one gap, adjacent source bins summed without dropping any series.
+const {historyRaster}=execution.module('tray.history',{
+ historyRaster:(bins,width)=>{
+  const count=bins.length&&[12,6,4,3,2,1].find(n=>bins.length%n===0&&5*n-1<=width);
+  if(!count)return {rows:[],bar:0};
+  const group=bins.length/count;
+  return {rows:Array.from({length:count},(_,i)=>Array.from({length:4},(_,k)=>bins.slice(i*group,(i+1)*group).reduce((sum,b)=>sum+b[k],0))),bar:Math.floor((width-count+1)/count)};
+ }
+});
+
 const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
@@ -257,20 +267,32 @@ custom:function(){
   return f(h('div',{class:'range'},h('label',{for:'hs'},'Start'),h('input',{id:'hs',type:'datetime-local','data-draft':'start',value:d.start}),h('label',{for:'he'},'End'),h('input',{id:'he',type:'datetime-local','data-draft':'end',value:d.end}),h('label',{for:'hz'},'Time zone'),h('select',{id:'hz','data-draft':'tz'},[['local','Local ('+zone+')'],['UTC','UTC']].map(([v,l])=>h('option',{value:v,selected:d.tz===v},l)))),
   d.error&&h('div',{class:'body alert',role:'alert'},d.error),h('button',{class:'project','data-a':'range'},'Show [start, end)'));},
 history:function(){
-  // series stack from the bottom in this order on one scale: the peak of the sum (M6)
-  const H=view.S.history,n=H.bins.length,w=(H.end-H.start)/n,kinds=['closed','failed','ask','waiting'],tot=kinds.map((_,k)=>H.bins.reduce((a,b)=>a+b[k],0));
-  const {sum}=execution.module("tray.create.history.helpers",{sum:b=>b.reduce((a,x)=>a+x,0)});
-const {named}=execution.module("tray.create.history.helpers",{named:(b,sep)=>kinds.map((k,i)=>k+' '+b[i]).join(sep)});
-const peak=Math.max(1,...H.bins.map(sum));
-const none=view.S.projects.filter(p=>p.since==null).map(p=>p.name);
-const part=none.length>0||H.since>H.start;
+  const H=view.S.history,dpr=window.devicePixelRatio||1,{rows,bar}=historyRaster(H.bins,view.historyWidth||4),n=rows.length,w=(H.end-H.start)/n;
+  const kinds=['closed','failed','ask','waiting'],colors=['work','failed','ask','ready'];
+  const {sum,named,stamp,duration}=execution.module("tray.create.history.helpers",{
+    sum:b=>b.reduce((a,x)=>a+x,0),
+    named:b=>kinds.map((k,i)=>k+' '+b[i]).join(', '),
+    stamp:t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,dateStyle:'short',timeStyle:'medium'})+' '+(H.tz==='UTC'?'UTC':zone),
+    duration:seconds=>{for(const [unit,size] of [['d',86400],['h',3600],['min',60]])if(seconds%size===0)return seconds/size+' '+unit;return (Number.isInteger(seconds)?'':'≈ ')+Number(seconds.toFixed(3))+' s';}
+  });
+  const tot=kinds.map((_,k)=>H.bins.reduce((a,b)=>a+b[k],0)),peak=Math.max(0,...rows.map(sum)),height=Math.round(64*dpr);
+  const none=view.S.projects.filter(p=>p.since==null).map(p=>p.name),part=none.length>0||H.since>H.start;
   const note=H.since==null?'No history yet: unknown, not zero.':[H.since>H.start?'Incomplete: history since '+when(H.since,H.tz)+'; earlier is unknown, not zero.':'',none.length?'No history in '+none.join(', ')+'.':''].join(' ').trim();
-  // the summary wraps between totals, never inside one, so all four stay readable at every text size (#1083)
-  const total=[periods[view.S.period],...(H.since==null?kinds.map(k=>k+' —'):kinds.map((k,i)=>k+' '+tot[i]).concat(part?['incomplete']:[]))].map(t=>t.replace(/ /g,' ')).join(' · ');
-  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},total)),h('div',{class:'options periods'},Object.entries(periods).map(([k,l])=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
-  view.draft&&custom(),h('div',{class:'body meta'},'['+when(H.start,H.tz)+', '+when(H.end,H.tz)+')'+(view.S.now<H.end?' · last bin partial':'')+' · peak '+peak),
-  h('div',{class:'bars',role:'img','aria-label':named(tot,', ')+'; '+n+' equal bins, oldest left'+(note?'; '+note:'')},H.bins.map((b,i)=>{const t=H.start+i*w,u=H.since==null||t+w<=H.since;
-    return h('span',u?{class:'unknown',title:'unknown'}:{title:when(t,H.tz)+(view.S.now<t+w?' (partial)':'')+': '+named(b,', ')},[3,2,1,0].map(k=>h('i',{class:'k'+k,style:'height:'+b[k]/peak*100+'%'})));})),note&&h('div',{class:'body meta'},note));},
+  const {detail}=execution.module("tray.create.history.helpers",{detail:i=>{const t=H.start+i*w,end=t+w,unknown=H.since==null||end<=H.since;
+    return '[Start: '+stamp(t)+'; End: '+stamp(end)+') · '+(unknown?'unknown':named(rows[i]))+(view.S.now<end?' · partial':'')+(!unknown&&(part||t<H.since)?' · incomplete':'');}});
+  const selected=Math.min(view.historyBar||0,n-1);
+  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},periods[view.S.period])),
+    h('div',{class:'options periods'},Object.entries(periods).map(([k,l])=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
+    view.draft&&custom(),h('div',{class:'body meta'},'Start: '+when(H.start,H.tz),h('br'),'End: '+when(H.end,H.tz)+(view.S.now<H.end?' · last bin partial':'')),
+    h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+(H.since==null?'—':tot[i])))),
+    h('div',{class:'body meta history-label'},n+' bars · '+(n?duration(w):'unknown')+' per bar · peak '+(H.since==null?'unknown':peak)+' events'),
+    h('div',{class:'bars',role:'group','aria-label':'Event history; '+n+' equal bins, oldest left'+(note?'; '+note:''),style:'transform:translateY('+(view.historyOffset||0)+'px);gap:'+1/dpr+'px;height:'+height/dpr+'px;padding-left:'+Math.floor(((view.historyWidth||4)-(n*bar+Math.max(0,n-1)))/2)/dpr+'px'},rows.map((b,i)=>{
+      const end=H.start+(i+1)*w,u=H.since==null||end<=H.since;let total=0;
+      const segments=b.map(count=>{const low=Math.round(height*total/Math.max(1,peak));total+=count;return Math.round(height*total/Math.max(1,peak))-low;});
+      return h('button',{'data-history-bin':i,'aria-label':detail(i),'aria-pressed':String(i===selected),title:detail(i),class:u?'unknown':'',style:'width:'+bar/dpr+'px'},[3,2,1,0].map(k=>h('i',{class:'k'+k,style:'height:'+(u?0:segments[k]/dpr)+'px'})));})),
+    h('div',{class:'body meta'},'0 events · oldest → newest'),
+    h('div',{class:'body meta history-detail',role:'status'},n?'Bar '+(selected+1)+' of '+n+' · '+detail(selected):'Graph unavailable: less than 4 physical px.'),
+    h('div',{class:'body meta'},'Ask counts events, not current questions.'),note&&h('div',{class:'body meta'},note));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
   const up=view.S.projects.find(p=>p.update&&p.update!==p.version);
   if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&p.version===view.updating.v))return h('div',{class:'row meta'},'Updated to '+view.updating.v+': read from status.json');
@@ -547,6 +569,9 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   (menu.querySelector('.content')||document.scrollingElement).scrollTop=view.restoreScroll??scroll;view.restoreScroll=null;
   if(firstRender)viewState.focus(view.restoreFocus);
   fit();
+  const plot=menu.querySelector('.bars'),rect=plot?.getBoundingClientRect(),dpr=window.devicePixelRatio||1,width=rect&&Math.floor(rect.width*dpr);
+  const top=rect&&rect.top-(view.historyOffset||0),offset=rect&&(Math.round(top*dpr)/dpr-top);
+  if(width>0&&(width!==view.historyWidth||Math.abs(offset-(view.historyOffset||0))>.001)){view.historyWidth=width;view.historyOffset=offset;defer(tick);}
   // after fit() sets the width: a new exchange or text size opens at the newest entry; a tick keeps the reader's place;
   // a block that drops a cut line asks for the smaller height
   const bound=[...menu.querySelectorAll('[data-bound]')];
@@ -610,6 +635,7 @@ ui.listen(menu,'scroll',e=>{const c=e.target;if(c.classList?.contains('content')
 ui.listen(menu,'pointerdown',()=>{view.pressedAt=performance.now();});
 for(const event of ['pointerup','pointercancel'])ui.listen(window,event,release,true);
 ui.listen(window,'blur',release);
+ui.listen(window,'resize',()=>present());
 // Press end.
 
 ui.listen(menu,'click',e=>{
@@ -619,6 +645,7 @@ ui.listen(menu,'click',e=>{
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{if(view.taskFilter&&view.page===(id||'home')){view.taskFilter=view.taskFilter.includes(state)?view.taskFilter.filter(s=>s!==state):[...view.taskFilter,state];present();}else navigate(id||'home',state);}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  if(d.historyBin!==undefined){view.historyBar=Number(d.historyBin);present();return;}
   if(d.a==='row-menu'){view.rowMenu=view.rowMenu===d.key?null:d.key;present();return;}
   if(d.a==='control'||d.a==='start'||d.a==='workspace')view.rowMenu=null;
   if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null}});return;}
@@ -753,4 +780,4 @@ return {...api,resourceSend};
 }
 });
 
-module.exports={create,createState};
+module.exports={create,createState,historyRaster};

@@ -66,7 +66,7 @@ bottom alignment: baselineY = R - actualBoundingBoxDescent
 - Stacked bars on a shared linear scale, using M6 series/order. Never stretch each bar to 100%.
 - Exploratory geometry reference: 6 bars, 0.5 logical px gaps. Production uses R-UI5 physical-pixel quantization; this reference does not approve a bin count or fractional raster gaps.
 - Earlier reference contains only close/failed. Product preserves all four M6 series; fixture simplification cannot remove data.
-- Runtime has 12 bins. Adaptive rebinning is accepted under D11; sum adjacent bins, preserving period and every series total. Do not discard half the history.
+- Runtime has 12 source bins. R-UI5 chooses the largest divisor that fits bars at least 4 physical px wide with 1 physical px gaps; sum adjacent bins, preserving period and every series total. Do not discard half the history.
 - Acceptance fixture has nonzero first/last bars. Real zero edges stay zero. Expose exact totals in the menu when pixels cannot resolve a segment.
 - Counts use the menu counter colors (K-A1–K-A6): work, ask and neutral ready/blocked respectively.
 - UI colors come from [visual-style.md](visual-style.md#palette). Board labels keep their separate API palette.
@@ -79,7 +79,7 @@ bottom alignment: baselineY = R - actualBoundingBoxDescent
 - Supply natural-size and ×8 contact sheets: both themes; 16/20/22/24/32; DPR=1/2; active/paused.
 - Counts: 0/0/0, 3/2/5, 1/7/8, 9/9/9, 12/3/24, 100/12/105. Graph: empty, mixed, equal counts across series, nonzero edges. Unknown follows [unknown is never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy).
 - Check bounds and graph totals, then inspect PNGs and native trays on both platforms. Record OS, font, size, DPI and SHA.
-- Open before release: overflow, unknown rendering, 6/12 bins and Windows DPR=1. Do not silently choose tiny text, 9+, truncation or a wider container.
+- Open before release: overflow, unknown rendering and Windows DPR=1. Do not silently choose tiny text, 9+, truncation or a wider container.
 
 ## I6 Cross-platform rendering
 
@@ -88,7 +88,7 @@ bottom alignment: baselineY = R - actualBoundingBoxDescent
 - Windows: obtain notification-area small-icon metrics for the owning monitor DPI; treat 16 physical pixels at 100% as a qualification baseline, not a hardcoded slot for every machine. Supply a matching raster/HICON; re-render on DPI/theme changes and taskbar recreation. Keep stable tray identity and saved view.
 - Qualify 16/20/24/32 physical pixels (100/125/150/200% baseline), actual OS slot and light/dark. Exported PNG size alone proves neither Shell scaling nor readability. No stretch of the macOS raster.
 - Share data, layout rules and approved vector geometry; calibrate SF/Segoe ink bounds separately. Snap chart fills to physical pixels once; text retains native antialiasing.
-- Candidate small-slot rebin: choose the largest divisor of 12 in 12/6/4/3/2/1 that fits integer bar/gap constraints, sum all four series. Keep full 12-bin detail and exact totals in menu. The adaptive policy is accepted; native size calibration and all-series preservation still require proof.
+- Small-slot rebin: follow R-UI5 in icon and menu: largest divisor of 12 in 12/6/4/3/2/1 fitting 4 physical px bars and 1 physical px gaps. Sum all four series; menu labels its rendered bin count, time per bar and exact totals. Native size calibration still requires proof.
 - Candidate overflow: a cell uses its largest readable exact value; beyond the calibrated cell capacity, show a labelled threshold such as 9+ and exact tooltip/menu values. Unknown uses an em dash with an unavailable explanation. No per-update shrinking or widening. Threshold and native legibility require visual acceptance.
 - Windows removal of the current compact-only gate ships with native evidence; retaining that gate is not completion of MP1.
 - Reference: [Microsoft NOTIFYICONDATAW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-notifyicondataw), [GetSystemMetricsForDpi](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetricsfordpi). Query actual platform metrics; the prototype cannot detect the native Shell slot.
