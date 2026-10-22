@@ -563,7 +563,8 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
 fn dev_spawn(root:&Path,sha:&str,dir:&Path)->Result<(),String> {
     use std::os::unix::process::CommandExt;
     let st=std::process::Command::new("sh").arg("-c")
-        .arg(r#"(git -C "$1" fetch -q origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/install.log" 2>&1 </dev/null &"#)
+        // `--refmap=`: fetch main's objects without updating origin/main, whose ref lock a concurrent fetch may hold (#1633)
+        .arg(r#"(git -C "$1" fetch -q --refmap= --no-write-fetch-head origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/install.log" 2>&1 </dev/null &"#)
         .arg("sh").arg(root).arg(sha).arg(dir)
         .env_remove("TASKQ_ROOT").env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE")
         .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
@@ -1036,6 +1037,9 @@ mod tests {
         git(&w,&["add","scripts"]);git(&w,&["commit","-qm","new"]);git(&w,&["push","-q","origin","main"]);
         let sha=git(&w,&["rev-parse","HEAD"]);
         assert!(!root.join("scripts/dev-install.sh").exists());
+        // #1633: another fetch in the root holds origin/main's ref lock; the install must not need that ref
+        let tracking=git(&root,&["rev-parse","origin/main"]);
+        fs::write(root.join(".git/refs/remotes/origin/main.lock"),"").unwrap();
         fs::write(install.join("host.json"),r#"{"channel":"dev"}"#).unwrap();
         assert!(dev_enabled(RELEASE_REPO,&install),"gate needs no script in the root");
         assert!(!dev_enabled("other/repo",&install)&&!dev_enabled(RELEASE_REPO,&base),"other repo or channel live: off");
@@ -1052,6 +1056,7 @@ mod tests {
         assert!(done.exists(),"fetched script ran: {}",fs::read_to_string(install.join("dev/install.log")).unwrap_or_default());
         assert_eq!(fs::read_to_string(install.join("dev/install.sh")).unwrap(),script,"script taken from the fetched SHA");
         assert!(!root.join("scripts/dev-install.sh").exists()&&git(&root,&["status","--porcelain"]).is_empty(),"root working tree untouched");
+        assert_eq!(git(&root,&["rev-parse","origin/main"]),tracking,"shared remote-tracking ref untouched");
         fs::remove_dir_all(&base).unwrap();
     }
 

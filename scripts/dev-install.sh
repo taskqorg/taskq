@@ -28,7 +28,8 @@ finish() {
 }
 trap finish EXIT
 trap 'exit 1' INT TERM HUP
-git -C "$repo" fetch -q origin main
+# A given ref (the service's SHA) needs no origin/main update, so a concurrent fetch holding its lock cannot fail it (#1633).
+if [ $# -gt 0 ]; then git -C "$repo" fetch -q --refmap= --no-write-fetch-head origin main; else git -C "$repo" fetch -q origin main; fi
 [ -d "$w" ] || git -C "$repo" worktree add -q --detach "$w" "$ref"
 cd "$w"
 git checkout -q -f --detach "$ref"
