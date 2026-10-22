@@ -264,9 +264,11 @@ fn counter(text:&str,x:f64,color:String)->String {
     let options=OPTIONS.get_or_init(||{let mut o=usvg::Options::default();o.fontdb_mut().load_system_fonts();o.fontdb_mut().set_sans_serif_family("Segoe UI");o});
     let layout=|s:&str|usvg::Tree::from_str(&format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><text id="value" y="9" font-family="Segoe UI" font-size="9" font-weight="500" fill="{color}">{s}</text></svg>"#),options).expect("fixed numeric SVG");
     let mut tree=layout(text);
-    let width=|t:&usvg::Tree|t.node_by_id("value").map_or(0.0,|n|n.bounding_box().width());
+    // Text bounds include side bearings; align and fit the paths that are actually painted.
+    let ink=|t:&usvg::Tree|t.node_by_id("value").and_then(|n|match n {usvg::Node::Text(t)=>Some(t.flattened().bounding_box()),_=>None});
+    let width=|t:&usvg::Tree|ink(t).map_or(0.0,|b|b.width());
     if width(&tree)>5.6 {tree=layout("9+");if width(&tree)>5.6 {tree=layout("+");}}
-    let left=tree.node_by_id("value").map_or(0.0,|n|n.bounding_box().x());
+    let left=ink(&tree).map_or(0.0,|b|b.x());
     let svg=tree.to_string(&usvg::WriteOptions::default());
     format!(r#"<g transform="translate({} 0)">{}</g>"#,x-left as f64,&svg[svg.find('>').unwrap()+1..svg.rfind("</svg>").unwrap()])
 }
