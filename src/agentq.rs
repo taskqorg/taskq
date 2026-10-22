@@ -61,7 +61,7 @@ fn inspect(root:&Path,launcher:Res<bool>,status:Res<Option<(Value,u64)>>,clock:u
         Ok(Some(image))=>{
             let expected=root.join("releases").join(version).join(if cfg!(windows){"agentq.exe"}else{"agentq"});
             let same=if cfg!(windows){image.to_string_lossy().replace('\\',"/").eq_ignore_ascii_case(&expected.to_string_lossy().replace('\\',"/"))}else{image==expected};
-            if same {json!({"kind":"running","version":version})} else {unknown("reported PID belongs to another executable")}
+            if same {json!({"kind":"running","version":version,"valid_until":at.saturating_add(90).min(clock.saturating_add(90-age))})} else {unknown("reported PID belongs to another executable")}
         },Err(e)=>unknown(e)
     }
 }
@@ -101,7 +101,9 @@ fn image(pid:u32)->Res<PathBuf> {
 #[cfg(not(any(target_os="macos",windows)))]
 fn image(_:u32)->Res<PathBuf>{Err("native agentq executable probe unavailable".into())}
 fn detect()->Value {
-    match root(){Ok(r)=>inspect(&r,exists(&r.join(if cfg!(windows){"agentq.exe"}else{"agentq"})),status(&r.join("status.json")),now(),process),Err(e)=>unknown(e)}
+    let clock=now();
+    let mut state=match root(){Ok(r)=>inspect(&r,exists(&r.join(if cfg!(windows){"agentq.exe"}else{"agentq"})),status(&r.join("status.json")),clock,process),Err(e)=>unknown(e)};
+    state["checked"]=json!(clock);state
 }
 fn project(install:&Path,mut state:Value,previous_warning:bool)->Value {
     let result=locked(install,||{
@@ -154,7 +156,15 @@ pub fn start(install:&Path) {
         });cache
     });
 }
-pub fn snapshot()->Value {CACHE.get().map(|c|c.lock().unwrap().clone()).unwrap_or(Value::Null)}
+fn fresh(mut state:Value,clock:u64)->Value {
+    if state.is_null(){return state;}
+    let recent=state["checked"].as_u64().is_some_and(|t|clock>=t&&clock-t<=5);
+    let running=state["kind"]=="running";
+    if !recent || running&&!state["valid_until"].as_u64().is_some_and(|t|clock<=t) {
+        state["kind"]=json!("unknown");state["reason"]=json!("agentq readback pending or stale; Check again");
+    } state
+}
+pub fn snapshot()->Value {CACHE.get().map(|c|fresh(c.lock().unwrap().clone(),now())).unwrap_or(Value::Null)}
 /// No installer here: the click's id fences transport retries in the existing setup writer.
 pub fn action(install:&Path,action:&str,id:&str,runtime:&str)->Res<()> {
     locked(install,||{
@@ -188,6 +198,10 @@ mod tests {
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(Some("/other/agentq".into()))),"unknown");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Err("denied".into())),"unknown");
         assert_eq!(check(Ok(false),Ok(Some((good.clone(),0))),Ok(Some(exe.clone()))),"unknown");
+        let mut cached=inspect(root,Ok(true),Ok(Some((good.clone(),90))),100,|_|Ok(Some(exe.clone())));cached["checked"]=json!(100);
+        assert_eq!(fresh(cached.clone(),100)["kind"],"running");assert_eq!(fresh(cached,101)["kind"],"unknown","cache cannot extend the source deadline");
+        let cached=json!({"kind":"shown","warning":true,"checked":100});assert_eq!(fresh(cached.clone(),105)["kind"],"shown");
+        let stale=fresh(cached,106);assert_eq!(stale["kind"],"unknown");assert_eq!(stale["warning"],true,"slow runtime discovery keeps the previous warning, never fresh health");
         for bad in [json!({}),json!({"project":"host","version":"1.0.0","at":100,"pid":42}),json!({"project":"host","version":"0.9.0","at":101,"pid":42})]{assert_eq!(check(Ok(true),Ok(Some((bad,0))),Ok(Some(exe.clone()))),"unknown");}
     }
     #[cfg(any(target_os="macos",windows))]
