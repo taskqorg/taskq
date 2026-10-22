@@ -68,7 +68,13 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,
   await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[drafts,...snapshot.projects.slice(1)]});
   for(const st of ['doing','review'])await counter(st).click();
   await counter('held').click();assert.equal(await rows(),2);assert.equal((await counter('held').innerText()).trim(),'2');
-  assert.equal(await page.locator('[data-card] [data-a="start"]').count(),2,'one Start per draft');
+  // #1523: rows carry no repeated buttons; each draft's Start lives in its row menu.
+  assert.equal(await page.locator('[data-card] [data-a="start"]').count(),0,'no per-row Start until the row menu opens');
+  for(const key of await page.locator('[data-a="row-menu"]').evaluateAll(b=>b.map(x=>x.dataset.key))){
+    await page.locator('[data-a="row-menu"][data-key="'+key+'"]').click();
+    assert.equal(await page.locator('[data-card] [data-a="start"]').count(),1,'one Start per draft menu');
+  }
+  await page.keyboard.press('Escape');
   await shot('held-drafts');
   await page.evaluate(()=>{messages.length=0;});
   await page.getByRole('button',{name:'Start 2 held',exact:true}).click();

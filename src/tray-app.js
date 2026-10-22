@@ -47,7 +47,9 @@ operationAction:function(d){
 },
 operationInput:function(e){const d=e.target.dataset;if(d.recoveryTask||d.recoveryEvidence){const item=view.recovery[d.root];if(!item)return;const key=d.recoveryTask||d.recoveryEvidence,draft=item.drafts[key]||(item.drafts[key]={});if(d.recoveryTask)draft.selected=e.target.checked;else draft.evidence=e.target.value;item.notice='';}},
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
-fit:function(){if(ports.workspace)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
+// #1523: the window's own layout (header, chips, summary, list, footer, any new panel) with the scroll area at full content height.
+natural:function(){const c=menu.querySelector('.content'),b=c&&c.querySelector('.content-body'),all=menu.getBoundingClientRect().height;if(!b)return Math.ceil(all);const cs=getComputedStyle(c),edges=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(cs[k])||0),0);return Math.ceil(all-c.getBoundingClientRect().height+b.getBoundingClientRect().height+edges);},
+fit:function(){if(ports.workspace)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
 actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const {alert}=execution.module("tray.create.actionNotices",{alert:text=>h('div',{class:'body alert',role:'alert'},text)});
   const items=[view.aiError&&alert(view.aiError),view.workspaceError&&alert(view.workspaceError),...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
@@ -202,7 +204,12 @@ counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts
 mode:function(p){return p.focus.length?'run':p.saved?'paused':'watch';},
 counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
 known:function(ps){return ps.every(p=>p.complete!==false);},
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return h('div',{'data-card':t.key,tabindex:'-1',key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global)),answerSlot(t),t.state==='held'&&startButton([t]),raw(TaskqTaskControls.render(t,{key:t.key,except:['start']})));},
+// #1523: no repeated row buttons; one ⋯ disclosure at the end of the top line holds the row's actions.
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key),controls=TaskqTaskControls.render(t,{key:t.key,except:['start']}),items=[answerSlot(t),t.state==='held'&&startButton([t]),controls&&raw(controls)].filter(Boolean),open=items.length&&view.rowMenu===t.key,id='row-actions-'+t.key.replace(/[^A-Za-z0-9_-]/g,'-'),label='Actions for #'+t.n;
+  return h('div',{class:'task-row','data-card':t.key,tabindex:'-1',key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global)),items.length?h('button',{class:'row-menu','data-a':'row-menu','data-key':t.key,'aria-expanded':String(!!open),'aria-controls':id,'aria-label':label,title:label},'⋯'):'',open?h('div',{class:'row-actions',id,role:'group','aria-label':label},items):'');},
+// #1523: Tasks list rows follow the counter-strip order (the one `states` list), then priority, then number.
+taskKey:function(t){const order=TaskqProjectBlocks.states.map(([s])=>s),i=order.indexOf(t.state),l=t.labels||[];return [i<0?order.length:i,l.includes('p0')?0:l.some(x=>x==='p1'||x==='priority-1')?1:2,t.n];},
+taskOrder:function(a,b){const x=taskKey(a),y=taskKey(b);return x[0]-y[0]||x[1]-y[1]||x[2]-y[2];},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
   if(!held.length)return '';
@@ -463,10 +470,10 @@ project:function(p){
   h('div',{class:'group'},admission(p)),capacity(p),notifyGroup(p),workEntry(p.root),service(p));},
 filteredTasks:function(p){
   const ps=p?[p]:view.S.projects,selected=view.taskFilter||[],states=TaskqProjectBlocks.states;
-  const rows=unique(ps.flatMap(tasks)).filter(t=>!selected.length||selected.includes(t.state));
+  const rows=unique(ps.flatMap(tasks)).filter(t=>!selected.length||selected.includes(t.state)).sort(taskOrder);
   const listing=!p&&!selected.length?ps.filter((p,i)=>ps.findIndex(q=>q.issues===p.issues)===i).map(p=>{
       const counts=TaskqProjectBlocks.observation([blockProject(p)]).counts;
-      return Object.values(counts).some(n=>n===null||n>0)?h('section',{class:'all-tasks-project',key:p.issues},raw(TaskqProjectBlocks.summary(blockProject(p))),tasks(p).map(t=>taskRow(t))):'';
+      return Object.values(counts).some(n=>n===null||n>0)?h('section',{class:'all-tasks-project',key:p.issues},raw(TaskqProjectBlocks.summary(blockProject(p))),tasks(p).sort(taskOrder).map(t=>taskRow(t))):'';
     }).filter(Boolean):rows.map(t=>taskRow(t,!p));
   return f(h('header',{class:'filter-header'},p?h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name,p.complete===true?[]:[p.name],selected,TaskqProjectBlocks.observation(view.S.projects.map(blockProject)).open)}}):raw(TaskqProjectBlocks.aggregate(ps.map(blockProject),selected)),
     h('div',{class:'body meta',role:'status'},(selected.length?states.filter(([s])=>selected.includes(s)).map(([,name])=>name).join(', '):'All states')+' · '+rows.length+' loaded'+(known(ps)?'':' · Partial'))),
@@ -587,6 +594,8 @@ ui.listen(menu,'click',e=>{
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{if(view.taskFilter&&view.page===(id||'home')){view.taskFilter=view.taskFilter.includes(state)?view.taskFilter.filter(s=>s!==state):[...view.taskFilter,state];present();}else navigate(id||'home',state);}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  if(d.a==='row-menu'){view.rowMenu=view.rowMenu===d.key?null:d.key;present();return;}
+  if(d.a==='control'||d.a==='start'||d.a==='workspace')view.rowMenu=null;
   if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null}});return;}
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
@@ -619,7 +628,7 @@ ui.listen(menu,'pointerdown',e=>{if(e.button!==0||!e.target.closest('.grip'))ret
 ui.listen(menu,'pointermove',e=>{if(!view.resizing)return;view.manualSize=[Math.max(240,view.resizing.w+e.screenX-view.resizing.x),Math.max(120,view.resizing.h+e.screenY-view.resizing.y)];menu.style.width='100%';send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});});
 for(const event of ['pointerup','pointercancel','lostpointercapture'])ui.listen(menu,event,()=>{if(view.resizing)send({a:'resize-end'});view.resizing=null;});
 ui.listen(menu,'keydown',e=>{if(!e.target.closest('.grip')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key))return;e.preventDefault();view.manualSize=[Math.max(240,window.innerWidth+(e.key==='ArrowRight'?10:e.key==='ArrowLeft'?-10:0)),Math.max(120,window.innerHeight+(e.key==='ArrowDown'?10:e.key==='ArrowUp'?-10:0))];send({a:'resize',d:window.devicePixelRatio,w:view.manualSize[0],h:view.manualSize[1]});send({a:'resize-end'});});
-ui.listen(document,'keydown',e=>{if(e.key==='Escape'){const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}viewState.flush();send({a:'hide'});}if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(view.page!=='home'||view.taskFilter||view.working)back();}});
+ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&view.rowMenu){const key=view.rowMenu;view.rowMenu=null;present();menu.querySelector('[data-a="row-menu"][data-key="'+CSS.escape(key)+'"]')?.focus();return;}if(e.key==='Escape'){const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}viewState.flush();send({a:'hide'});}if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(view.page!=='home'||view.taskFilter||view.working)back();}});
 ui.listen(menu,'toggle',()=>fit(),true);
 // § 4 Tray: row ages tick in place while the menu is open; a redraw would move the reading position
 const {ages}=execution.module("tray.create.mount.ages",{ages:()=>{if(view.S){const now=view.S.now+Math.round((performance.now()-view.receivedAt)/1000);for(const e of menu.querySelectorAll('[data-since]'))e.textContent=TaskqProjectBlocks.age(now-Number(e.dataset.since));}defer(ages,30000);}});
@@ -628,7 +637,7 @@ ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
 });
-const {gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
+const {natural,gutter,fit,actionReceipt,actionNotices,focusStart,focusReceipt,focusReadback,remember,navigate,back,routeButton,answerSlot,answerNotices,answerToast,mountAnswers,tasks,blockProject,unique,counts,mode,counter,known,taskRow,taskKey,taskOrder,startButton,globalGroup,age,problem,modeText,admission,incident,incidentNotice,service,when,local,custom,history,update,ai,addProject,bulk,views,appearance,agents,about,setup,attention,projects,controls,home,routeBody,resourceGroup,resourceCapability,resourceReceipt,capacity,workEntry,workPage,mountResources,notifications,notifyGroup,openCard,notedCard,project,filteredTasks,head,draw,wholeLines,settle,refresh,release,receive,measure,mount}=api;
 
 function resourceSend(g,op){
   const capability=resourceCapability(g);
