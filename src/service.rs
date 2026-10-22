@@ -1236,6 +1236,16 @@ impl<'a> Service<'a> {
                 self.execution_waits.insert(task, "multiple unresolved executions; verify native ownership before recovery".into());
                 continue;
             }
+            // #1557: a launch the runtime refused submitted nothing; release it so the task can start again.
+            if let Some(refusal) = crate::runtime::refused_launch(&self.cfg.root, task, x) {
+                release_execution(self.board, task, x.attempt, x.id, "no-start")?;
+                self.retired(task, x.attempt, x.id, false);
+                let t = &v.projection.task;
+                if t.attempt == Some(x.attempt) && matches!(t.state, State::Doing | State::Review) {
+                    self.gone(task, t, x.attempt, &[], &format!("start failed: Claude background launch refused: {refusal}"))?;
+                }
+                continue;
+            }
             let Some(recover) = &mut self.recover else { continue };
             if std::time::Instant::now()>=recovery_until {
                 self.execution_waits.insert(task,format!("execution {}: native observation deferred; recovery budget exhausted",x.id));
@@ -2043,6 +2053,36 @@ mod tests {
                 assert!(releases.is_empty(), "{case}");
                 assert!(s.execution_waits[&n].contains("termination unconfirmed"), "{case}");
             }
+        }
+    }
+
+    // Chain: saved refused launch -> no-start release -> admission. Risk: a refused Claude launch blocks its task forever (#1557).
+    #[test]
+    fn a_saved_refused_claude_launch_reconciles_as_no_start() {
+        for case in ["requeued","doing"] {
+            let root=std::env::temp_dir().join(format!("taskq-1557-{case}-{}",std::process::id()));
+            std::fs::create_dir_all(root.join(".taskq")).unwrap();
+            let b=Fake::default();let mut c=cfg("mac");c.root=root.clone();
+            let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
+            let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+            if case=="requeued" {b.comment(n,"taskq: requeue\ntrust set").unwrap();}
+            std::fs::write(crate::runtime::attempt_log(&root,"worker",n,a),format!("{}\n{}\n",
+                json!({"type":"taskq.input","execution":a}),json!({"type":"claude.launch","stdout":"","stderr":"Workspace not trusted"}))).unwrap();
+            let launched=Rc::new(RefCell::new(0));let count=launched.clone();
+            let mut s=Service::new(&b,&c,"fixture",Box::new(move |_|{*count.borrow_mut()+=1;Err("fixture: stop after admission".into())}));
+            s.recover=Some(Box::new(|_,_|panic!("a refused launch needs no native observer")));s.focus=vec!["all".into()];
+            let first=s.pass();
+            let log=entries(&b,n).unwrap();
+            assert_eq!(core::executions(n,&log)[0].release,Some(core::Release::NoStart),"{case}");
+            assert!(!s.execution_waits.get(&n).is_some_and(|w|w.contains("input")),"{case}: no 'accept input' wait");
+            if case=="doing" {
+                let gone=log.iter().find(|e|e.body.starts_with("taskq: gone")).expect("doing attempt ends");
+                assert!(gone.body.contains("refused: Workspace not trusted"),"{}",gone.body);
+            } else {
+                let _=s.pass();
+                assert_eq!(*launched.borrow(),1,"the requeued task is admitted again: {first:?} {:?}",s.log);
+            }
+            std::fs::remove_dir_all(root).unwrap();
         }
     }
 

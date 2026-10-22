@@ -1099,6 +1099,40 @@ fn recovery_binding(root:&Path,task:u64,x:&crate::core::Execution)->Result<(Path
     Ok((log,binding,lock))
 }
 
+fn claude_returned_id(stdout:&str)->Option<&str> {
+    stdout.lines().find_map(|line|line.strip_prefix("backgrounded · ").and_then(|s|s.split_whitespace().next())).filter(|id|native_job_id(id))
+}
+
+/// Confirmed no-start (#1557): the launcher exited non-zero, printed no background ID and said why on stderr.
+/// `status`: `Some(code)` observed (`None` code: killed by a signal, unknown); outer `None`: a record from before
+/// the status was saved, whose non-empty stderr without an ID only a refusal produced.
+fn claude_refusal(returned:bool,stderr:&str,status:Option<Option<i32>>)->Option<String> {
+    let stderr=stderr.trim();
+    let refused=!returned && !stderr.is_empty() && status.is_none_or(|code|code.is_some_and(|c|c!=0));
+    refused.then(||stderr.lines().map(str::trim).filter(|l|!l.is_empty()).collect::<Vec<_>>().join(" "))
+}
+
+/// The refusal of an unaccepted Claude execution's own launch, from its attempt log; any doubt reads `None` (unknown).
+pub fn refused_launch(root:&Path,task:u64,x:&crate::core::Execution)->Option<String> {
+    if x.runtime!="claude" || x.accepted || x.release.is_some() {return None;}
+    let logs=[attempt_log(root,"worker",task,x.attempt),attempt_log(root,"reviewer",task,x.attempt)];
+    let [log]=logs.iter().filter(|p|p.is_file()).collect::<Vec<_>>()[..] else {return None};
+    let text=std::fs::read_to_string(log).ok()?;
+    let mut bound=false;
+    for line in text.lines().filter(|l|l.trim_start().starts_with('{')) {
+        let v:serde_json::Value=serde_json::from_str(line).ok()?;
+        if v["type"]=="taskq.input" {
+            if bound {return None;}
+            bound=v["execution"].as_u64()==Some(x.id);
+        } else if bound && v["type"]=="claude.launch" {
+            let status=v.get("status").map(|s|s.as_i64().and_then(|c|i32::try_from(c).ok()));
+            if v.get("status").is_some_and(|s|!s.is_null() && !s.is_i64()) {return None;}
+            return claude_refusal(claude_returned_id(v["stdout"].as_str()?).is_some(),v["stderr"].as_str()?,status).map(|r|public_line(&r,root,200));
+        }
+    }
+    None
+}
+
 /// Reconnect observation only. This path cannot submit a prompt, queue a turn or change access.
 pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
     if x.release.is_some() {return Err("released execution cannot be recovered as live".into());}
@@ -1514,11 +1548,17 @@ impl ClaudeTurn {
         };
         let stdout=String::from_utf8_lossy(&out.stdout);
         let stderr=String::from_utf8_lossy(&out.stderr);
-        let returned=stdout.lines().find_map(|line|line.strip_prefix("backgrounded · ").and_then(|s|s.split_whitespace().next())).filter(|id|native_job_id(id));
-        // #1555: Claude refuses an untrusted root before it starts anything: a definite no-start, never an unknown launch.
-        // The text reaches the board (gone, then the limit card), so it names the root, never its path.
-        if returned.is_none()&&!out.status.success()&&stderr.contains("Workspace not trusted") {
-            return Err(StartError {message:format!("access refused: Claude does not trust this project root; {}",crate::setup::trust_step("the project root")),class:"permission",reportable:false,no_start:true});
+        let returned=claude_returned_id(&stdout);
+        let status=out.status.code();
+        if let Some(refusal)=claude_refusal(returned.is_some(),&stderr,Some(status)) {
+            // The launch observation is evidence for cold recovery; a refused launch submitted nothing (#1557).
+            let record=serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr,"status":status});
+            if let Err(e)=File::options().append(true).open(&self.log).and_then(|mut file|writeln!(file,"{record}")) {log!("Claude refused launch not recorded: {e}");}
+            // #1555: the board text names the root and its remedy, never its path.
+            if stderr.contains("Workspace not trusted") {
+                return Err(StartError {message:format!("access refused: Claude does not trust this project root; {}",crate::setup::trust_step("the project root")),class:"permission",reportable:false,no_start:true});
+            }
+            return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true});
         }
         if let Some(id)=returned {
             if !self.id.is_empty() && self.id!=id {self.launch_error=Some("Claude returned a different background job; reconcile the original input and session".into());}
@@ -1529,7 +1569,7 @@ impl ClaudeTurn {
             self.launch_error=Some(format!("Claude launch response failed: {stderr}; {uncertainty}"));
         }
         let recorded=File::options().append(true).open(&self.log).and_then(|mut file|
-            writeln!(file,"{}",serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr})));
+            writeln!(file,"{}",serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr,"status":status})));
         if let Err(e)=recorded {self.launch_error.get_or_insert_with(||format!("Claude launch observation not recorded: {e}; native handle retained"));}
         Ok(())
     }
@@ -2949,6 +2989,42 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // Risk: a refused launch blocks its task forever, or a doubtful record releases a started job (#1557).
+    #[test]
+    fn saved_launch_records_reconcile_only_a_refusal() {
+        // #1557 A4: records written before the status field still reconcile; any doubt stays unknown.
+        let root=std::env::temp_dir().join(format!("taskq-refused-{}",uuid()));
+        std::fs::create_dir_all(root.join(".taskq")).unwrap();
+        let x=crate::core::Execution {id:44,attempt:42,through:0,host:"mac".into(),runtime:"claude".into(),accepted:false,release:None,usage_hold:None};
+        let bind=|id:u64|serde_json::json!({"type":"taskq.input","execution":id}).to_string();
+        let launch=|stdout:&str,stderr:&str,status:Option<serde_json::Value>|{
+            let mut v=serde_json::json!({"type":"claude.launch","stdout":stdout,"stderr":stderr});
+            if let Some(s)=status {v["status"]=s;}
+            v.to_string()
+        };
+        let refused=launch("","Workspace not trusted",None);
+        for (case,lines,want) in [
+            ("legacy refusal",vec![bind(44),refused.clone()],true),
+            ("exit 1",vec![bind(44),launch("","Workspace not trusted",Some(1.into()))],true),
+            ("signal",vec![bind(44),launch("","Workspace not trusted",Some(serde_json::Value::Null))],false),
+            ("exit 0",vec![bind(44),launch("","warning",Some(0.into()))],false),
+            ("id printed",vec![bind(44),launch("backgrounded · c37eb75a\n","failed",Some(1.into()))],false),
+            ("empty stderr",vec![bind(44),launch("","",None)],false),
+            ("other execution",vec![bind(43),refused.clone()],false),
+            ("later binding",vec![bind(44),bind(45),refused.clone()],false),
+            ("no record",vec![bind(44)],false),
+        ] {
+            std::fs::write(attempt_log(&root,"worker",7,42),lines.join("\n")).unwrap();
+            assert_eq!(refused_launch(&root,7,&x).is_some(),want,"{case}");
+        }
+        std::fs::write(attempt_log(&root,"worker",7,42),[bind(44),refused].join("\n")).unwrap();
+        assert!(refused_launch(&root,7,&crate::core::Execution {accepted:true,..x.clone()}).is_none(),"accepted input never reads no-start");
+        assert!(refused_launch(&root,7,&crate::core::Execution {runtime:"codex-app".into(),..x.clone()}).is_none());
+        std::fs::write(attempt_log(&root,"reviewer",7,42),"").unwrap();
+        assert!(refused_launch(&root,7,&x).is_none(),"ambiguous log stays unknown");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     // Chain: exact execution input binding -> uncertain native launch -> retained observation and input lock.
     // Risk: a timeout or unreadable launch response drops the only recovery token and invites resubmission.
     #[test]
@@ -2958,7 +3034,9 @@ mod tests {
         let root=std::env::temp_dir().join(format!("taskq-uncertain-input-{}",uuid()));
         std::fs::create_dir_all(&root).unwrap();
         let candidate="c37eb75a";
-        for case in ["timeout","response","exit","log","copy","no-start","untrusted"] {
+        // A2: a timeout, a signal-killed launcher or a printed ID may have started a job; A1: a refusal did not (#1557, #1555).
+        let cases:&[&str]=if cfg!(unix) {&["timeout","response","exit-id","killed","log","copy","no-start","refused","untrusted"]} else {&["timeout","response","exit-id","log","copy","no-start","refused","untrusted"]};
+        for &case in cases {
             let log=root.join(format!("{case}.log"));
             let mut l=Launch {execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
             let (input,lock,path)=claude_input(&root,"private task body",None).unwrap();
@@ -2980,7 +3058,9 @@ mod tests {
             let output=match case {
                 "timeout"=>Err(coreq::process::Failure::Timeout),
                 "no-start"=>Err(coreq::process::Failure::Spawn(std::io::Error::new(std::io::ErrorKind::NotFound,"fixture missing launcher"))),
-                "exit"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(256),stdout:vec![],stderr:b"native launch failed".to_vec()})),
+                "killed"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(9),stdout:vec![],stderr:b"native launch failed".to_vec()})),
+                "exit-id"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(256),stdout:format!("backgrounded · {candidate}\n").into_bytes(),stderr:b"remote control unavailable".to_vec()})),
+                "refused"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(256),stdout:vec![],stderr:b"Error: Background sessions are disabled.\nAsk your administrator.\n".to_vec()})),
                 // #1555: Claude's own refusal of an untrusted root
                 "untrusted"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(256),stdout:vec![],stderr:b"Error: Workspace not trusted. Run claude here first.".to_vec()})),
                 _=>Ok(std::process::Output {status:std::process::ExitStatus::from_raw(0),stdout:if case=="response" {b"lost response".to_vec()} else {format!("backgrounded · {candidate}\n").into_bytes()},stderr:vec![]}),
@@ -2992,10 +3072,19 @@ mod tests {
                 assert!(e.no_start&&e.message.contains("does not trust")&&e.message.contains("run `claude`"),"{}",e.message);
                 assert!(!e.message.contains(&root.display().to_string()),"board text never holds a local path");
             }
+            else if case=="refused" {
+                let e=result.unwrap_err();
+                assert!(e.no_start && e.message.contains("refused: Error: Background sessions are disabled. Ask your administrator."),"{}",e.message);
+                let x=crate::core::Execution {id:44,attempt:42,through:0,host:"mac".into(),runtime:"claude".into(),accepted:false,release:None,usage_hold:None};
+                let attempt=attempt_log(&root,"worker",7,42);std::fs::copy(&log,&attempt).unwrap();
+                assert_eq!(refused_launch(&root,7,&x).as_deref(),Some("Error: Background sessions are disabled. Ask your administrator."),"saved refusal reconciles cold");
+                std::fs::remove_file(attempt).unwrap();
+            }
             else {
                 assert!(result.is_ok(),"{case}: uncertain native side effect must retain its handle");
                 assert!(turn.launch_error.is_some());
-                if case=="exit" {
+                if case=="exit-id" {assert_eq!(turn.id,candidate);}
+                if case=="killed" {
                     assert!(turn.launch_error.as_deref().unwrap().contains("native launch failed"));
                     let reason=turn.recover_job(&[],Some(&root)).unwrap_err();
                     assert!(reason.contains("native launch failed")&&reason.contains("original input not found"),"native refusal was masked: {reason}");
