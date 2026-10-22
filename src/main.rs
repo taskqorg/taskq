@@ -1531,7 +1531,10 @@ fn pm_cmd(root:&Path,a:&Args)->Res<()> {
     if let Some(id)=a.one("grant") {pm::grant(&cfg.install,id,a.need("actor")?,&a.all("project"),&a.all("runtime"),a.need("hours")?.parse().map_err(|_|"PM hours invalid")?,now)?;}
     if let Some(id)=a.one("revoke") {pm::revoke(&cfg.install,id)?;}
     let report=pm::report(&cfg.install,now)?;
-    if a.flags.contains_key("json"){println!("{report}");}else {println!("PM requests: {} authorized targets; {} recorded operations",report["targets"].as_array().map_or(0,Vec::len),report["receipts"].as_array().map_or(0,Vec::len));}
+    if a.flags.contains_key("json"){println!("{report}");}else {
+        let action=if let Some(id)=a.one("grant"){format!("PM grant {id} saved")}else if let Some(id)=a.one("revoke"){format!("PM grant {id} revoked")}else{format!("PM requests: {} authorized targets; {} recorded operations",report["targets"].as_array().map_or(0,Vec::len),report["receipts"].as_array().map_or(0,Vec::len))};
+        println!("{action} · taskq {}",platform::VERSION);
+    }
     Ok(())
 }
 

@@ -14,4 +14,6 @@ const manifest=require('../docs/design/pm-composer.sources.json');
 for(const [path,hash] of Object.entries(manifest.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,path);
 const c={TextEncoder,crypto:crypto.webcrypto,setTimeout,clearTimeout};vm.createContext(c);vm.runInContext(fs.readFileSync('build/web/pm-composer.js','utf8'),c);
 assert.deepEqual(JSON.parse(JSON.stringify(c.TaskqPmComposer.request(r,r.text,r.op_id,r.issued_at))),r);
+const release=fs.readFileSync('.github/workflows/release.yml','utf8');
+for(const asset of ['pm-composer.js','pm-composer.css','pm-composer-fixtures.json','pm-composer-sources.json'])assert(release.includes('dist/taskq-$VER-'+asset),'missing released PM asset: '+asset);
 console.log('PASS PM fixture input, immutable identity, receipt correlation, safe native handoff and released bundle provenance');
