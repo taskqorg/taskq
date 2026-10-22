@@ -96,6 +96,18 @@ pub enum Publish {
     Blocked(String),
 }
 
+impl Publish {
+    /// Profile outcome and error text: CI pending retries, an owner blocker asks; only a failed call counts in `Failed %` (#1572).
+    pub fn outcome(&self) -> (&'static str, Option<&str>) {
+        match self {
+            Publish::Done(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("ok", None),
+            Publish::Pending(e) => ("retried", Some(e)),
+            Publish::Blocked(e) => ("ask", Some(e)),
+            Publish::Failed(e) | Publish::MainMoved(e) => ("failed", Some(e)),
+        }
+    }
+}
+
 /// The trusted log of issue `n` (§ 2).
 pub fn entries(board: &dyn Board, n: u64) -> Result<Vec<Entry>> {
     Ok(board
@@ -140,8 +152,8 @@ impl Board for Profiled {
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
         let began = std::time::Instant::now();
         let p = self.0.publish(n, sha, mode, title, task_line);
-        let failed = match &p { Publish::Done(_) | Publish::Enqueued(_) | Publish::Rebased(_) => None, Publish::Pending(e) | Publish::Failed(e) | Publish::MainMoved(e) | Publish::Blocked(e) => Some(e.as_str()) };
-        crate::profile::board("publish", began.elapsed(), failed, self.0.requests().remaining);
+        let (outcome, err) = p.outcome();
+        crate::profile::board_as("publish", began.elapsed(), outcome, err, self.0.requests().remaining);
         p
     }
     fn defer_publication(&self, mode: &str) -> bool { self.0.defer_publication(mode) }
@@ -150,7 +162,8 @@ impl Board for Profiled {
     fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         let began = std::time::Instant::now();
         let p = self.0.resume_publication(n, sha, title, task_line, root, enqueued);
-        crate::profile::board("publish", began.elapsed(), match &p { Publish::Failed(e) | Publish::MainMoved(e) | Publish::Pending(e) | Publish::Blocked(e) => Some(e.as_str()), _ => None }, self.0.requests().remaining);
+        let (outcome, err) = p.outcome();
+        crate::profile::board_as("publish", began.elapsed(), outcome, err, self.0.requests().remaining);
         p
     }
     fn url(&self, n: u64) -> String { self.0.url(n) }

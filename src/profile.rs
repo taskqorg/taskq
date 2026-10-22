@@ -443,7 +443,7 @@ const STATES: [&str; 10] = ["ready", "waiting", "doing", "review", "merge-queue"
 pub(crate) struct BoardOp { op: String, us: u64, outcome: String, error: String, remaining: Option<u64>, at_ms: Option<u64> }
 
 impl BoardOp {
-    pub(crate) fn valid(&self)->bool {BOARD_OPS.contains(&self.op.as_str())&&ERRORS.contains(&self.error.as_str())&&["ok","failed"].contains(&self.outcome.as_str())}
+    pub(crate) fn valid(&self)->bool {BOARD_OPS.contains(&self.op.as_str())&&ERRORS.contains(&self.error.as_str())&&["ok","retried","ask","failed"].contains(&self.outcome.as_str())}
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -464,8 +464,13 @@ fn record(r: crate::telemetry::Sample) {
 
 /// One board operation of `kind`; `failed` is its error text (only its class is kept).
 pub fn board(kind: &'static str, took: std::time::Duration, failed: Option<&str>, remaining: Option<u64>) {
+    board_as(kind, took, if failed.is_some() { "failed" } else { "ok" }, failed, remaining)
+}
+
+/// `outcome` `ok`, `retried` or `ask` (not in `Failed %`) or `failed`; `err` keeps the class of a non-ok call.
+pub fn board_as(kind: &'static str, took: std::time::Duration, outcome: &'static str, err: Option<&str>, remaining: Option<u64>) {
     record(crate::telemetry::Sample::Board(BoardOp { op: kind.into(), us: took.as_micros().min(u64::MAX as u128) as u64,
-        outcome: if failed.is_some() { "failed" } else { "ok" }.into(), error: failed.map_or("none", error).into(), remaining, at_ms: now_ms() }));
+        outcome: outcome.into(), error: err.map_or("none", error).into(), remaining, at_ms: now_ms() }));
 }
 
 /// One queue transition of `task` caused by log `entry`; `rt`/`host` of the attempt on either side.
@@ -1171,7 +1176,14 @@ pub(crate) mod tests {
             append_line(&path, &format!("{BOARD_PREFIX}{}\n", serde_json::to_string(&BoardOp { op: op.into(), us, outcome: if err.is_some() { "failed" } else { "ok" }.into(),
                 error: err.map_or("none", error).into(), remaining, at_ms: Some(1) }).unwrap())).unwrap();
         }
+        // #1572 defect: CI pending or an owner blocker counted as a failed publish; only the CI failure counts
+        for p in [crate::board::Publish::Pending("CI pending".into()), crate::board::Publish::Blocked("merged, CI HTTP 404".into()), crate::board::Publish::Failed("CI failed".into())] {
+            let (outcome, err) = p.outcome();
+            append_line(&path, &format!("{BOARD_PREFIX}{}\n", serde_json::to_string(&BoardOp { op: "publish".into(), us: 1000, outcome: outcome.into(),
+                error: err.map_or("none", error).into(), remaining: None, at_ms: Some(1) }).unwrap())).unwrap();
+        }
         let text = report(&dir);
+        assert!(text.contains("| publish | 3 | 1.000/1.000/1.000 | 1 | other:1 |"), "{text}");
         assert!(text.contains("| list | 2 | 1.000/4.000/4.000 | 1 | http5xx:1 | 4800 | unknown |\n| claim | 1 | 2.000/2.000/2.000 | 0 | none | unknown (not reported) |"), "{text}");
         assert!(text.contains("Slow (p95): spawn > forge.call"));
         assert!(text.contains("Failing (rate): forge.call > spawn"));
