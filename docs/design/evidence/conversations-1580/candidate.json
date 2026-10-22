@@ -1,0 +1,110 @@
+{
+  "source_commit": "7f824f6bc41466960140a667b40ba795c3251321",
+  "base_commit": "c373c0ccf78567fa2b3becaad27307b7eec32f41",
+  "specq_revision": "d67126cd7e4fb88bcabd63de10748c5c3a9f5442",
+  "owner_answer": "https://github.com/taskqorg/taskq/issues/1580#issuecomment-6343852087",
+  "source_sha256": {
+    "taskq.md": "c7bda01409580fbd5a142fd30682c8e6bc9e56265999d5f580e1d57c2b78eb17",
+    "docs/design/ai-workspace.md": "f50ab98d7879c3446d2fa40b8fbd64f8bdf7bf4b9cb0c979db730af8f8a64cfb",
+    "docs/design/tray-workspace.md": "d00e02dd155404c9291b001d543906dd6ae56a850d9e290a2c5e0a83e0ed2871",
+    "src/conversations.rs": "0abcc6e05f5e1f36d5e00c53c7b7c43907b10a489a947ab4b8e1b76fe0ebdcf9",
+    "src/conversations.js": "0a8aed46d0f1d64a4ef843e44b50ed2476d5e8a9a37b42731c97f4ecb6e487e9",
+    "src/conversations.css": "34fdbef53d01dd84580459019c3f1c59b12148a3a3875edacbab0f37cd5dac94",
+    "src/tray.rs": "e54692ae8109fe1c4245a5ad493b16dc4c822349defa471115d9125339233535",
+    "src/setup.rs": "2da9b2cf4f4dee66ae9f7cead3b87569991e0b413c58203ce67496bd33902691",
+    "src/messages.rs": "301875b0600502c9a420fca073c666209b7256ffde9f460724550f4ef4ebc46e",
+    "src/workspace.js": "2a7674c235ca1b04145f6232bb04e080596bcbd65e6be8aff166b6363804eece",
+    "src/ui-runtime.js": "84ab02032fba8256b81926aca9198b02ece701b9cbee402f183113bf25fb9a8a",
+    "tests/conversations.browser.cjs": "a0db9dd2cb7b474d60d6e7895c1f680e9dd573b15120bd469fd5c7c48871cd72",
+    "tests/conversations-render.browser.cjs": "475dec7e53d9210668d1c60ad68d021b47e8f27cdb791e058335d2c4bf7e25da",
+    "tests/fixtures/conversations.json": "07ce3663e8a59bc1f5133cb95137e991909a9eaa226ddc50cc8661099056af34"
+  },
+  "bundle_sha256": "fe7823175203f0fad1792ec48dd879e28af2ae90b6f2f9b88bcdff903790e2d3",
+  "reference_sha256": "9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04",
+  "fixture_sha256": "07ce3663e8a59bc1f5133cb95137e991909a9eaa226ddc50cc8661099056af34",
+  "before_sha256": {
+    "before.txt": "a51c77e3ff87fa6e2600e20f49240bacc938e1388ffede5684a3e033f41e4784",
+    "before-draft-transfer.txt": "6ceaa68ee49abda18134bcbf20ca579a3a909b2fb4a8c89c6b3bac08ff1772e3",
+    "narrow-before.png": "08a5f0a3d002a4067e5973667cbf6a56012d03c8102322a7c2e291dd29136ba3",
+    "selection-before.png": "e620b7bafbde6ba9f1cbefc51c83caeb3a1261fa8a5a714596563655f2ce20f5"
+  },
+  "checks": {
+    "canonical": {
+      "command": "python3 scripts/check.py --base c373c0ccf78567fa2b3becaad27307b7eec32f41",
+      "outcome": "sandbox-blocked",
+      "unit_passed": 488,
+      "unit_failed": 18,
+      "unit_ignored": 34,
+      "reason": "Worker host install/policy/restart/Stop/uninstall/resource authority refusals; guards retained.",
+      "failure_names": [
+        "host::installation::tests::detached_install_observers_share_one_acknowledgement_and_cannot_create_a_command",
+        "host::installation::tests::legacy_cursor_requires_matching_drain_and_exit_proof",
+        "host::tests::acknowledged_policy_survives_writer_termination",
+        "host::tests::capacity_receipts_follow_the_loaded_command_not_equal_values",
+        "host::tests::host_install_refuses_unresolved_legacy_owner_without_effects",
+        "host::tests::local_capacity_crashes_never_replay_an_uncertain_write",
+        "host::tests::local_capacity_refuses_within_bound_while_host_lock_is_held",
+        "host::tests::local_capacity_request_replays_without_mutation_and_refuses_foreign_scope",
+        "host::tests::local_capacity_saves_while_telemetry_is_stalled",
+        "lifecycle::tests::project_uninstall_drains_before_registry_removal_and_replays_exact_receipt",
+        "lifecycle::tests::project_uninstall_refuses_foreign_scope_without_registry_effect",
+        "lifecycle::tests::restart_pending_survives_retention_and_receipt_failure",
+        "lifecycle::tests::restart_refuses_unqualified_or_unrecordable_requests",
+        "lifecycle::tests::restart_replay_scope_and_exact_generation",
+        "lifecycle::tests::stop_keeps_original_receipts_and_requires_attributable_native_exit",
+        "resources::tests::local_capacity_receipts_never_enter_the_remote_exchange",
+        "resources::tests::project_overlay_writes_only_its_scope_and_applies_on_exact_readback",
+        "tray::tests::blocked_capacity_does_not_block_pause"
+      ]
+    },
+    "integration": {
+      "command": "cargo +stable test --locked --test integration --no-fail-fast",
+      "outcome": "sandbox-blocked",
+      "passed": 19,
+      "failed": 1,
+      "ignored": 1,
+      "reason": "telemetry_process::resume_records_its_result_without_releasing_the_host_hold: sandbox-exec: sandbox_apply: Operation not permitted"
+    },
+    "native_drafts": {
+      "outcome": "Pass",
+      "tests": 4,
+      "layer": "isolated filesystem/setup, substituted launcher; actual runtime Read not tested"
+    },
+    "browser": {
+      "outcome": "Pass",
+      "scripts": 21,
+      "command": "Each tests/*.browser.cjs executed with node",
+      "layer": "actual bundle; invented native receipts; headless renderer"
+    },
+    "components": {
+      "outcome": "Pass",
+      "command": "Each tests/*.test.cjs executed with node"
+    },
+    "release_and_manifest_guards": {
+      "outcome": "Pass",
+      "commands": [
+        "sh docs/shots/check.test.sh",
+        "sh .github/release-tag.test.sh",
+        "python3 .github/release-check.test.py"
+      ]
+    },
+    "selftest": {
+      "outcome": "Pass, offline scope only",
+      "command": "TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest",
+      "golden_traces": 97,
+      "telemetry_observations": 9,
+      "board": "unknown; intentionally offline",
+      "store": "isolated temporary install"
+    },
+    "readme_shots": {
+      "outcome": "Pass",
+      "commands": [
+        "sh docs/shots/update.sh",
+        "sh docs/shots/check.sh"
+      ],
+      "layer": "isolated native WKWebView project/icon capture, not Conversations window qualification"
+    }
+  },
+  "native_qualification": "Conversation windows, actual runtime Read handoff, native IME/accessibility and Windows DPI not tested; no deployment.",
+  "native_readme_manifest_sha256": "6af9df646eebf6258f21dc41d4f163dbb79e1450ff202ee0e36158fd13e6d4ec"
+}

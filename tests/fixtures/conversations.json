@@ -1,0 +1,98 @@
+{
+  "project": {
+    "root": "fixture-alpha",
+    "name": "Alpha",
+    "issues": "https://example.org/alpha/issues",
+    "alive": true,
+    "complete": true,
+    "tasks": []
+  },
+  "items": [
+    {
+      "id": "fixture-design-request",
+      "revision": 4,
+      "title": "Design review",
+      "root": "fixture-alpha",
+      "text": "Review the saved-view behavior.\nKeep the current admission policy.",
+      "caret": [
+        7,
+        12
+      ],
+      "scroll": 0,
+      "archived": false,
+      "files": [
+        {
+          "id": "fixture-file",
+          "name": "review-notes.md",
+          "mime": "text/markdown",
+          "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bytes": 256
+        }
+      ]
+    },
+    {
+      "id": "fixture-release-request",
+      "revision": 2,
+      "title": "",
+      "root": "fixture-alpha",
+      "text": "Release checks\nInspect the current result before any publication.",
+      "caret": [
+        0,
+        0
+      ],
+      "scroll": 0,
+      "archived": false,
+      "files": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "draft-files-dark-16",
+      "state": "draft",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720
+    },
+    {
+      "name": "launched-dark-16",
+      "state": "launched",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720
+    },
+    {
+      "name": "interrupted-dark-16",
+      "state": "interrupted",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720
+    },
+    {
+      "name": "deletion-incomplete-dark-16",
+      "state": "deleting",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720
+    },
+    {
+      "name": "unavailable-narrow-light-20",
+      "state": "unavailable",
+      "theme": "light",
+      "font": 20,
+      "width": 350,
+      "height": 560
+    },
+    {
+      "name": "empty-light-16",
+      "state": "empty",
+      "theme": "light",
+      "font": 16,
+      "width": 700,
+      "height": 500
+    }
+  ]
+}

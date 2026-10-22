@@ -74,6 +74,13 @@ fn write(install: &Path, store: &Store) -> Res<()> {
 pub(crate) fn request_deleted(install: &Path, id: &str) -> Res<bool> {
     Ok(read(install)?.deleted.contains(&request_key(id)))
 }
+pub(crate) fn request_deleting(install:&Path,id:&str)->Res<bool> {
+    Ok(read(install)?.marks.values().any(|m|m.deleting&&m.request.as_ref().is_some_and(|r|r.id==id)))
+}
+/// Draft deletion uses the same content-free ID fence as sent owner-request deletion. Caller holds setup lock.
+pub(crate) fn forget_draft(install:&Path,id:&str)->Res<()> {
+    let mut store=read(install)?;store.deleted.insert(request_key(id));write(install,&store)
+}
 
 fn entries(install: &Path, projects: &[Value], store: &Store) -> Res<(Vec<Value>, Vec<String>)> {
     let mut entries=BTreeMap::new();let mut reasons=BTreeSet::new();
@@ -162,7 +169,7 @@ fn delete_request(install: &Path, r: &Identity) -> Res<()> {
 /// Native IPC passes identities only; paths and live state are always resolved again under the launch lock.
 pub(crate) fn act(install: &Path, projects: &[Value], action: &str, keys: &[String]) -> Value {
     let result=crate::setup::locked(install,|| {
-        if !["read","archive","delete"].contains(&action)||keys.is_empty() {return Err("Invalid message action".into());}
+        if !["read","archive","restore","delete"].contains(&action)||keys.is_empty() {return Err("Invalid message action".into());}
         let mut store=read(install)?;let (rows,_)=entries(install,projects,&store)?;
         let mut outcomes=vec![];let mut deletions:BTreeMap<(String,String),Res<()>>=BTreeMap::new();
         for key in keys.iter().collect::<BTreeSet<_>>() {
@@ -174,7 +181,7 @@ pub(crate) fn act(install: &Path, projects: &[Value], action: &str, keys: &[Stri
                 if row["deleting"]==true&&action!="delete" {return Err("Deletion incomplete; retry Delete".into());}
                 if action!="delete" {
                     let mark=store.marks.entry(key.clone()).or_default();
-                    if action=="read" {mark.read=true;}else if !mark.archived {
+                    if action=="read" {mark.read=true;}else if action=="restore" {mark.archived=false;}else if !mark.archived {
                         mark.archived=true;
                         if row["kind"]=="request" {mark.request=Some(Identity{host:row["host"].as_str().unwrap_or("").into(),id:row["id"].as_str().unwrap_or("").into(),state:row["state"].as_str().unwrap_or("").into()});}
                         else {mark.question=Some(Question{board:row["board"].as_str().unwrap_or("").into(),task:row["task"].as_u64().unwrap_or(0),revision:row["revision"].as_u64().unwrap_or(0)});}
@@ -186,9 +193,11 @@ pub(crate) fn act(install: &Path, projects: &[Value], action: &str, keys: &[Stri
                     let mark=store.marks.get_mut(key).ok_or("Archived message metadata missing")?;
                     let r=mark.request.clone().ok_or("Archived request identity missing")?;
                     check_request(install,&r,mark.deleting)?;
+                    crate::conversations::preserve_draft(install,&r.id)?;
                     mark.deleting=true;
                     store.deleted.insert(request_key(&r.id));write(install,&store)?;
                     delete_request(install,&r)?;
+                    crate::conversations::purge(install,&r.id)?;
                     store.marks.retain(|_,m|m.request.as_ref().is_none_or(|q|q.id!=r.id));
                 } else {store.deleted.insert(key.clone());}
                 store.marks.remove(key);write(install,&store)

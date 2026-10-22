@@ -1,0 +1,4 @@
+Source 6346f1752d2c4a74b4b33135d20aeb34d7873570; actual prior bundle with current browser regression.
+FAIL: New from draft dropped attachment metadata (actual [], expected selected PNG identity/hash/bytes).
+Current browser regression requires text/context/files to move to a separate unsent identity, without another launch.
+Native file copies and deletion preservation are additionally protected by conversations::tests::next_draft_files_transfer_once_and_survive_message_deletion_without_sent_history.

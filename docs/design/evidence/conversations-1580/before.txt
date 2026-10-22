@@ -1,0 +1,5 @@
+Base 51527d1d217c2c51621b74832be8957775d1bfa6; bundled original source.
+Command: node tests/conversations.browser.cjs (baseline bundle)
+Expected FAIL: CW1: Conversations must have direct New
+Observed: 0 !== 1
+No native, board or production effects.

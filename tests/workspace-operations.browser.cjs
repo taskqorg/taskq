@@ -54,6 +54,11 @@ const snapshot={stop_modes:true,font:16,theme:'dark',host:'fixture',now:1000,ver
   const pause=await page.evaluate(()=>messages.find(m=>m.a==='pause'));assert.equal(pause.root,root);
   await page.keyboard.press('Alt+ArrowLeft');assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='pause').length),1);
   await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='hide').length),1);
+  // #1580 regression: both new draft controls and existing reviews must coexist under the same collector budget.
+  await page.evaluate(()=>taskq.receive({open:{page:'conversations'}}));await page.locator('[data-c=new]').click();
+  await page.locator('[data-c-field=text]').fill('Independent owner draft');
+  await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'setup'}}));
+  assert.match(await page.locator('.content').innerText(),/Choose a folder/);
   assert.deepEqual(errors,[]);
   console.log('PASS workspace operation launch/Back, exact Full stop, single-use and unknown receipt fencing; native effects not exercised');
  }finally{await browser.close();}
