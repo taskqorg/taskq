@@ -11,13 +11,13 @@
   },
   "sourceBlobs": {
     "src/icon.rs": "e646baf12222e57b333fdb423ab7300246e8bd9c",
-    "src/tray.rs": "04fc4f59fd9cfa9824cf1f1658dfd4d475ac7282",
-    "src/main.rs": "54726a218f2d9e87a4049db90e7ad042003f4342",
-    "src/tray-app.js": "e772a882e150748ed542f83dd969a84302a6353c",
+    "src/tray.rs": "c047fd4c6d187b5b0c5620179a4474e780a073f4",
+    "src/main.rs": "89f578ac6cf3bc50ce859ee7a3edb86ae94ee03d",
+    "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
     "tests/fixtures/icon-history/capture.swift": "64ed407e07ed5b1733822ef88e1d7599b1c1be3c"
   },
-  "bundleSha256": "c160fa534ef1bef812733589040ca1edb21592eb67fcbf399c735f9c8df6d390",
+  "bundleSha256": "e09eb26cfe9d3974ac2dc3d74303f86b9a1c6120db1456ac6a2855f3d6ad61c0",
   "images": {
     "native/day-dark-cadence.png": "76399b8f10e8f11805be9103b6ffb6285c86468da876b438d57cf224198b6c35",
     "native/day-dark-tray-icon.png": "07abb03d93e3676ad3af2230b61146eeebd6ebdc67ab0539026f3fa992e06e38",
