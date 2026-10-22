@@ -356,14 +356,11 @@ controls:function(){
   return f(workEntry(),held.length>0&&run.length>0&&h('div',{class:'row meta'},'Paused '+held.length+' of '+(held.length+run.length)+': '+held.map(p=>p.name).join(', ')),bulk(run,held));
 },
 runningAgents:function(compact=false){
-  const boards=new Map(),hosts=new Map();
-  for(const p of view.S.projects){
-    const key=p.issues||p.root,old=boards.get(key);
-    if(!old||p.observed>old.observed)boards.set(key,p);
-  }
-  let partial=false,doing=0,review=0;
+  // #1592: task counts and the board-task identity (`key`, one per board and number) come from the display model.
+  const hosts=new Map(),all=view.S.display.all.counts;
+  let partial=false;
   const reasons=new Set(),seen=new Map();
-  for(const p of boards.values()){
+  for(const p of view.S.projects){
     const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
     const fresh=p.complete===true&&p.tasks_live===true&&Number.isFinite(p.observed);
     partial ||= !fresh||!Array.isArray(p.hosts)||!Array.isArray(p.tasks);
@@ -377,7 +374,6 @@ runningAgents:function(compact=false){
       else {old.unknown ||= !fresh||h.live!==true;if(old.age===null||age===null)old.age=old.age_text=null;else if(age>old.age)Object.assign(old,{age,age_text:h.age_text});}
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
-      doing+=t.state==='doing'?1:0;review+=t.state==='review'?1:0;
       if(t.executions!=null&&!Array.isArray(t.executions))partial=true;
       for(const x of Array.isArray(t.executions)?t.executions:[]){
         if(!x||typeof x.host!=='string'){partial=true;reasons.add('invalid execution host');continue;}
@@ -385,7 +381,7 @@ runningAgents:function(compact=false){
         if(!hosts.has(name))hosts.set(name,{name,age:null,age_text:null,unknown:true,counts:new Map()});
         const h=hosts.get(name);
         if(!fresh||x.live!==true||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason='Run state unknown; see service log';continue;}
-        const identity=JSON.stringify([p.issues||p.root,t.n,x.id]),prior=seen.get(identity);
+        const identity=JSON.stringify([t.key,x.id]),prior=seen.get(identity);
         if(prior){if(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role){h.unknown=true;hosts.get(prior.host).unknown=true;reasons.add('conflicting execution observations');}continue;}
         seen.set(identity,x);
         const counts=h.counts.get(x.runtime)||{worker:0,reviewer:0};counts[x.role]++;h.counts.set(x.runtime,counts);
@@ -400,10 +396,10 @@ runningAgents:function(compact=false){
     else out.push(h('div',{class:'body'},h('strong',null,host.name),unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+host.age_text+' old':'')+': '+([...reasons].join('; ')||host.reason||'host observation missing or stale'):' · idle'));
   }
   if(!hosts.size)out.push(h('div',{class:'body meta'},'Hosts unknown: no observation'));
-  const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
+  const local=view.S.projects.filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
   const cap=latest?.capacity?.host_runtime_used,capFresh=latest?.alive===true;
   const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
-  const counted=[h('div',{class:'body meta'},'Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review))];
+  const counted=[h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · ')))];
   if(capFresh&&occupied){
     counted.push(h('div',{class:'body meta'},view.S.host+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+latest.age_text+' old'));
     const reserved=new Map();let known=local.length>0;

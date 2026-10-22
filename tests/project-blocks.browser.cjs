@@ -7,7 +7,7 @@ const parentFunctions=source.split('\n').filter(l=>/^(const (esc|icon|button|ib)
 const tray=fs.readFileSync('build/web/tray.html','utf8');
 const base='<style>:root{color-scheme:light dark}body{margin:0;padding:8px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}</style>';
 // #1592: counts come from the Rust display model; the fixture carries them as the page receives them.
-const states=Object.keys(q.marks),names={doing:'Doing',review:'Review',ask:'Ask',failed:'Failed',ready:'Ready',waiting:'Blocked',later:'Later',held:'Held'};
+const states=Object.keys(q.marks),names=Object.fromEntries(display.states.map(s=>[s.id,s.name]));
 function fixture(n){return {...fx.project,name:'project',counts:states.map(state=>({state,name:names[state],n})),partial:[],tasks:states.flatMap((state,i)=>Array.from({length:n},(_,j)=>({...fx.row,n:i*1000+j+1,state,revision:4}))) };}
 function look(sel){
   const root=document.querySelector(sel),strip=root.querySelector('.tqp-counts,.counts'),b=strip&&strip.querySelector('button'),g=(el,k)=>getComputedStyle(el)[k];

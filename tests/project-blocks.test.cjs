@@ -4,11 +4,13 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),crypto=require(
 const q=require('../src/project-blocks.js'),fx=require('./fixtures/project-blocks.json');
 const p=fx.project,row=fx.row;
 // #1592: counts, dedup, conflict and partial come from the Rust display model (display.rs tests); blocks only render it.
-const names={doing:'Doing',review:'Review',ask:'Ask',failed:'Failed',ready:'Ready',waiting:'Blocked',later:'Later',held:'Held'};
+const {display}=require('./fixtures/display-model.json'),names=Object.fromEntries(display.states.map(s=>[s.id,s.name]));
 const counts=(o={},unknown=false)=>Object.keys(names).map(state=>({state,name:names[state],n:unknown?null:o[state]||0}));
 const all=(o,open,partial=[])=>({counts:counts(o,!!partial.length),partial,open:partial.length?null:open});
 // K-A1/K-A6: Held is its own counter and Closed is gone; unknown counts and All tasks read `?`, never zero.
 assert.deepEqual(Object.keys(q.marks),Object.keys(names),'one mark per model state');
+// The released fixture is display model output: its project carries model counts/partial and its row the model name/age.
+assert.deepEqual([p.counts,p.partial,p.open,row.state_name],[counts(),[],0,names[row.state]],'fixture follows the display model');
 assert.match(q.aggregate(all({},null,['project']),[]),/All tasks \?<\/button>/);
 assert(!q.summary({...p,counts:counts()},[],'"><script>').includes('<script>'),'All tasks only interpolates a valid count');
 assert.match(q.aggregate(all({doing:1},1),[]),/data-a="all-tasks" aria-pressed="true"/,'All tasks is selected without a state filter');
@@ -26,8 +28,9 @@ assert(q.task(p,{...row,local_session:false,session_reason:'Codex session opens 
 // R6/R12: the native snapshot's unresolved execution must remain visible in every shared task block.
 // § 4 Tray age: the model's age text; unknown names its reason; no `since`, no age.
 assert(q.task(p,{...row,since:1000,age:'5m'}).includes('title="Since the last state change">5m<'));
-assert(q.task(p,{...row,since:null}).includes('title="Age unknown: no logged state change">age ?'));
-assert(!q.task(p,row).includes('tqp-age'));
+assert(q.task(p,{...row,since:null,age:null}).includes('title="Age unknown: no logged state change">age ?'));
+assert(q.task(p,row).includes('>'+row.age+'<'),'fixture row shows its model age');
+const {since,...bare}=row;assert(!q.task(p,bare).includes('tqp-age'));
 const waiting=require('./fixtures/status-snapshot.json').tasks.find(t=>t.n===2),waitRow=q.task(p,waiting);
 // Chain: #1524 menu.md M3 Task row text. Risk: the raw execution diagnostic reaches the row instead of the owner text.
 assert(waitRow.includes(waiting.wait)&&!waitRow.includes(waiting.execution_wait),'owner wait text is visible, the raw execution reason is not');
