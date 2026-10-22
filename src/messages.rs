@@ -217,7 +217,7 @@ mod tests {
     impl Fixture {
         fn new()->Self {let path=std::env::temp_dir().join(format!("taskq-messages-{}",crate::runtime::uuid()));fs::create_dir_all(path.join("setup")).unwrap();Self(path)}
         fn request(&self,id:&str,state:&str)->crate::setup::Request {
-            let r=crate::setup::Request{schema:2,id:id.into(),created:1,host:"fixture".into(),platform:"invented".into(),client:"invented".into(),runtime:"claude".into(),targets:vec![],brief:"invented private request".into(),state:state.into(),job:Some("native-job-kept".into()),session:None,url:None,reason:None,root:Some(self.0.display().to_string())};
+            let r=crate::setup::Request{schema:2,id:id.into(),created:1,host:"fixture".into(),platform:"invented".into(),client:"invented".into(),runtime:"claude".into(),targets:vec![],brief:"invented private request".into(),state:state.into(),job:Some("native-job-kept".into()),session:None,url:None,reason:None,root:Some(self.0.display().to_string()),pm:false};
             fs::write(self.0.join(format!("setup/{id}.json")),serde_json::to_vec(&r).unwrap()).unwrap();
             fs::create_dir_all(self.0.join(format!("setup/{id}/attachments"))).unwrap();
             fs::write(self.0.join(format!("setup/{id}/attachments/copy.txt")),"owned copy").unwrap();r

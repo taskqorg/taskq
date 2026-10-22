@@ -10,7 +10,7 @@ Send only a coalesced latest unsent snapshot. Connection state and credentials a
 
 The canonical snapshot remains the only board projection; reuse its revisions, task IDs, card choices, recommendation and completeness. Explicitly approve board scope in enrollment and show it before switching. Forge tokens remain local. Coalesce per board without summing duplicate board snapshots from several hosts; installation identity and board identity are distinct.
 
-R1 exception: protected connection identity/grant/revoke state and the latest unsent projection may live locally; they are not task truth, logs or an offline task queue. Board mutations still follow canonical actor/revision/op-ID/receipt rules. This observation grant cannot answer questions or execute commands; dashboard actions require their separate contract.
+R1 exception: protected connection identity/grant/revoke state and the latest unsent projection may live locally; they are not task truth, logs or an offline task queue. Board mutations still follow canonical actor/revision/op-ID/receipt rules. This observation grant cannot answer questions or execute commands. Remote PM requests require the separate [PM exchange and host grant](pm-requests.md); resource grants never authorize PM launch.
 
 ## Prepared projection (#912)
 

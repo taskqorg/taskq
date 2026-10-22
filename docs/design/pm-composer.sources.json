@@ -1,0 +1,11 @@
+{
+  "component": "pm-composer",
+  "componentVersion": 1,
+  "schema": "taskq.pm/1",
+  "files": {
+    "src/pm-composer.js": "b3f6f9ecbc84abe2eab28ded883d0f816d527084cd002e4ca6d8ce4cf8e09420",
+    "tests/fixtures/pm-requests.json": "0f9b25c1a6abbd7aa7b0fc5e8f1551933fc9f7e73c41720510116fd4740d8e78",
+    "src/pm-composer.css": "10e0263ce874eb0a5f9570e1aa8e99323a52cb2d28d2054d25631d357f0320fb"
+  },
+  "hashEncoding": "UTF-8, LF; tag assigns release version; pin candidate commit until release"
+}

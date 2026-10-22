@@ -1,0 +1,22 @@
+{
+  "schema": "taskq.pm/1",
+  "request": {
+    "schema": "taskq.pm/1",
+    "actor_id": "invented-owner",
+    "op_id": "invented-op",
+    "grant_id": "invented-grant",
+    "revision": "r1",
+    "target": {"installation_id": "invented-installation", "generation": 1, "project_id": "invented-project", "runtime_id": "claude"},
+    "issued_at": 100,
+    "expires_at": 400,
+    "text": "Read the invented test-board status; do not change tasks."
+  },
+  "cases": [
+    {"id": "handoff", "outcome": "accepted"},
+    {"id": "duplicate", "outcome": "accepted"},
+    {"id": "denied", "outcome": "rejected"},
+    {"id": "stale", "outcome": "stale"},
+    {"id": "expired", "outcome": "rejected"},
+    {"id": "interrupted", "outcome": "unknown"}
+  ]
+}
