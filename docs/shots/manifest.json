@@ -1,7 +1,7 @@
 {
   "version": "4.6.29",
-  "sourceCommit": "98d3a5091c59a150a5d426043cd2406bcb413fd7",
-  "binarySha256": "b7f2c71c0e551fafae51743ae00a30fa4002a40f8b1a8b9bb1c74922a079bce3",
+  "sourceCommit": "6aaef93686c516c0c427f594bc82310c3cfc38a0",
+  "binarySha256": "3c57a728101fcd3751c932899885e832882264ffa5654358cbc1b7d3ee85ca7d",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -10,14 +10,14 @@
   "uiSources": {
     "src/tray.rs": "73777309d1ab335d5534a0651421b83a3ecdf51f",
     "src/tray.html": "2ade6570c8915e951aa486c5bb358c67d4342c41",
-    "src/tray-app.js": "4f974175507005bad7a1ba22b44773cf9b5b0a92",
+    "src/tray-app.js": "32d1381b63a0e39d7a98eb5ef9dbeabe6316e716",
     "src/tray-view-state.js": "57de9bae9348494b0bbad7eb69e160899dad3f31",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
-    "src/app-shell.js": "e9cfabc12fbff25737a24d96c1b663e7adef4370",
+    "src/app-shell.js": "c4c3d425bf0a7828fb2cbf1371383128f514b51a",
     "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
-    "src/workspace.js": "2bd38d612a5bd477a1f115d276316953878d1d2e",
+    "src/workspace.js": "6e0f1db7037ba481952dac0b8ac9e982d33a210d",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
-    "src/workspace-answers.js": "e5018a8befbc020b64b4b4b0c429de66c05d8660",
+    "src/workspace-answers.js": "6d69c22069f574c4080e50b8855be8da3a604cc3",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
     "scripts/build-web.cjs": "3077d351bdb0366868516c88f97e3de8316c7c7a",
     "src/icon.rs": "bb3bf966a4b8b15ff2c31772a6569c0aa15dd44a",
@@ -31,7 +31,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "e6efd9b07a33a1b42a3fe660cabde345afa455331e5e229ce6de719343cb14d9"
+      "sha256": "410f388d895bd0b834b58e9e0bb3860c29901b38a5561e5000becddd4f98545d"
     },
     {
       "file": "popover-dark-project-16.png",

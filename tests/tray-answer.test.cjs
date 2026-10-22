@@ -7,7 +7,7 @@ const board='https://github.com/o/r/issues',project={root:'project',issues:board
 const context={S:{projects:[project],font:16},send:m=>sent.push({...m,local:undefined}),fit:()=>{},render:()=>{},menu:{scrollHeight:400},esc:String,
   setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i)};
 Object.assign(context,require('../src/workspace-answers.js').create(context,{menu:context.menu,document:context.document||{},send:m=>context.send(m),draw:()=>{},defer:(f,ms)=>context.setTimeout(f,ms),cancel:id=>context.clearTimeout(id)}));
-const call=(name,...args)=>context[name](...args);
+const html=require('../src/app-shell.js').html,call=(name,...args)=>{const r=context[name](...args);return r===null||Array.isArray(r)||r?.props?html(r):r;};
 const plain=x=>JSON.parse(JSON.stringify(x));
 (async()=>{
   assert.equal(call('answerCapability',board).answer,true);
