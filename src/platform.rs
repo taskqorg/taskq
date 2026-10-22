@@ -204,9 +204,19 @@ pub fn update(install: &Path, check: bool) -> Result<Option<String>, String> {
     crate::profile::measure("update", || update_inner(install, check))
 }
 
-pub(crate) fn update_lock(install: &Path) -> Result<coreq::file_lock::Lock, String> {
+pub(crate) fn update_lock(install: &Path) -> Result<coreq::file_lock::Lock, String> {update_lock_within(install, std::time::Duration::ZERO)}
+
+/// `update_lock` for install commands that cannot retry on a later tick: a host service's update step holds the
+/// lock briefly on every tick, most often right after it re-execs into a new build, so wait at most `wait` (#1415).
+pub(crate) fn update_lock_within(install: &Path, wait: std::time::Duration) -> Result<coreq::file_lock::Lock, String> {
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
-    coreq::file_lock::try_lock(&install.join("update.lock")).map_err(|e| format!("update busy or lock unavailable: {e}"))
+    let until = std::time::Instant::now() + wait;
+    loop {
+        match coreq::file_lock::try_lock(&install.join("update.lock")) {
+            Err(fs::TryLockError::WouldBlock) if std::time::Instant::now() < until => std::thread::sleep(std::time::Duration::from_millis(100)),
+            other => return other.map_err(|e| format!("update busy or lock unavailable: {e}")),
+        }
+    }
 }
 
 /// An interrupted registry/install transition retains admission and active release selection together.
@@ -1217,6 +1227,20 @@ mod tests {
             fs::remove_file(install.join(name)).unwrap();
         }
         assert_eq!(service_update(&install).unwrap(),Some("999.0.0".into()));
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    // #1415 pattern: a dev install right after the host re-execs meets each project's update step holding the lock.
+    #[test]
+    fn installer_waits_a_bounded_time_for_a_brief_update_holder() {
+        let install = std::env::temp_dir().join(format!("taskq-update-wait-{}", crate::runtime::uuid()));
+        let lock = update_lock(&install).unwrap();
+        let started = std::time::Instant::now();
+        assert!(update_lock_within(&install, std::time::Duration::from_millis(300)).err().is_some_and(|e| e.contains("busy")));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(300));
+        let holder = std::thread::spawn(move || {std::thread::sleep(std::time::Duration::from_millis(200)); drop(lock)});
+        assert!(update_lock_within(&install, std::time::Duration::from_secs(5)).is_ok(), "a brief holder must not fail an install");
+        holder.join().unwrap();
         fs::remove_dir_all(install).unwrap();
     }
 
