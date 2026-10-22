@@ -2117,12 +2117,14 @@ fn service(args: &Args) -> Res<()> {
 /// Host onboarding (§ 4, #1546): runtime logins and § 8 Access are read and named as owner steps; Claude trust is the
 /// only write. Idempotent: a second run prints `unchanged`.
 fn onboard_cmd(install: &Path) -> Res<()> {
+    let mut claude = true;
     for r in runtime::agents(install).as_array().into_iter().flatten() {
         println!("Login: {}", runtime::agent_text(r));
         let rt = r["runtime"].as_str().unwrap_or("?");
         match r["login"].as_str() {
             Some("logged in") => {}
-            Some("not installed") => println!("Next: install {rt} for this user"),
+            // a codex-only host is valid: a missing runtime is skipped, not a failure
+            Some("not installed") => { claude &= rt != "claude"; println!("Skipped: {rt} not installed. Next, only to run {rt} here: install it for this user, then run onboard again") }
             _ => println!("Next: {}", runtime::relogin(rt)),
         }
     }
@@ -2131,6 +2133,7 @@ fn onboard_cmd(install: &Path) -> Res<()> {
         println!("Access: {}", e.line());
         if e.refused.is_some() {println!("Next: grant {} with `taskq service permissions --runtime {} --mode <mode>` in a project", e.runtime, e.runtime);}
     }
+    if !claude { println!("Trust: skipped, Claude not installed"); return Ok(()); }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
     for l in setup::trust(install, &home, setup::claude_pids)? {println!("{l}");}
     Ok(())
