@@ -2,30 +2,31 @@
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 const shell=require('./app-shell.js');
+const {h,Fragment}=require('preact');
 
 const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {manualSize:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 
-operationLauncher:function(operation,root,label){return '<button class="project" data-a="workspace" data-page="operations" data-operation="'+esc(operation)+'"'+(root?' data-root="'+esc(root)+'"':'')+'>'+esc(label)+'</button>';},
+operationLauncher:function(operation,root,label){return h('button',{class:'project','data-a':'workspace','data-page':'operations','data-operation':operation,'data-root':root||null},label);},
 operationTarget:function(d){return ({work:'resources',confirm:'admission','pause-all':'admission','resume-all':'admission',pause:'admission',resume:'admission',focus:'admission',pick:'admission',add:'setup','add-ask':'setup','add-install':'setup','add-setup':'setup','add-cancel':'setup','stop-review':'stop',stop:'stop','stop-full':'stop',restart:'service',uninstall:'service',update:'update','recovery-read':'recovery','recovery-apply':'recovery','recovery-reconcile':'recovery','recovery-pending':'recovery'})[d.a];},
 operationBody:function(context){
-  const c=context||{},ps=view.S.projects,p=ps.find(p=>p.root===c.root),host=esc(view.S.host||'unknown');
-  if(c.root&&!p)return actionNotices()+'<p role="status">Project unavailable; no operation can be applied. Return to Messages or Refresh.</p>';
-  const heading='<p class="meta">Host '+host+' · '+(p?esc(p.name)+' · '+esc(p.root):'all registered projects: '+ps.map(p=>esc(p.name)+' ('+esc(p.root)+')').join(', '))+'</p>';
+  const c=context||{},ps=view.S.projects,p=ps.find(p=>p.root===c.root),host=view.S.host||'unknown';
+  if(c.root&&!p)return f(actionNotices(),h('p',{role:'status'},'Project unavailable; no operation can be applied. Return to Messages or Refresh.'));
+  const heading=h('p',{class:'meta'},'Host '+host+' · '+(p?p.name+' · '+p.root:'all registered projects: '+ps.map(p=>p.name+' ('+p.root+')').join(', ')));
   let body;
   switch(c.operation){
-   case 'service':body='<button class="project" data-a="resources">Open resource monitor</button>'+(view.resourceNotice?'<p role="status">'+esc(view.resourceNotice.reason)+'</p>':'')+(p?service(p)+capacity(p)+workEntry(p.root):ps.map(service).join(''));break;
-   case 'resources':{const target=p||ps.find(p=>p.resources);body=target?'<p>Host limits affect every registered project; project ceilings remain read-only.</p>'+workPageFor(target):'<p role="status">Capacity unavailable: no supported host projection.</p>';break;}
-   case 'stop':body=view.S.stop_modes?api.stopPanel():'<p role="status">Emergency stop unavailable on this host. Normal stop is under Services.</p>';break;
-   case 'recovery':body=view.S.stop_modes?api.recoveryPanel():'<p role="status">Reviewed recovery unavailable on this host.</p>';break;
-   case 'admission':{const selected=p?[p]:ps;body='<p>Pause holds new admission; current tasks finish. Resume restores saved focus and cannot clear an emergency hold.</p>'+selected.map(p=>'<section><p>'+esc(p.name)+' · '+esc(modeText(p))+'</p>'+admission(p)+'</section>').join('')+(p?'':bulk(selected.filter(p=>mode(p)==='run'),selected.filter(p=>mode(p)==='paused')));break;}
-   case 'update':body='<p>Request the advertised update on this host. Running work is preserved; success requires the version read back from service status.</p>'+update();break;
-   case 'setup':body='<p>Choose a folder using the native picker. Opening or leaving this review registers nothing. Setup must confirm account, repository, visibility and exact external effects under § 6 before applying them.</p>'+addProject()+setup();break;
-   default:body='<p role="status">Operation unavailable; no effect was submitted.</p>';
+   case 'service':body=[h('button',{class:'project','data-a':'resources'},'Open resource monitor'),view.resourceNotice&&h('p',{role:'status'},view.resourceNotice.reason),p?[service(p),capacity(p),workEntry(p.root)]:ps.map(service)];break;
+   case 'resources':{const target=p||ps.find(p=>p.resources);body=target?[h('p',null,'Host limits affect every registered project; project ceilings remain read-only.'),workPageFor(target)]:h('p',{role:'status'},'Capacity unavailable: no supported host projection.');break;}
+   case 'stop':body=view.S.stop_modes?api.stopPanel():h('p',{role:'status'},'Emergency stop unavailable on this host. Normal stop is under Services.');break;
+   case 'recovery':body=view.S.stop_modes?api.recoveryPanel():h('p',{role:'status'},'Reviewed recovery unavailable on this host.');break;
+   case 'admission':{const selected=p?[p]:ps;body=[h('p',null,'Pause holds new admission; current tasks finish. Resume restores saved focus and cannot clear an emergency hold.'),selected.map(p=>h('section',{key:p.root},h('p',null,p.name+' · '+modeText(p)),admission(p))),!p&&bulk(selected.filter(p=>mode(p)==='run'),selected.filter(p=>mode(p)==='paused'))];break;}
+   case 'update':body=[h('p',null,'Request the advertised update on this host. Running work is preserved; success requires the version read back from service status.'),update()];break;
+   case 'setup':body=[h('p',null,'Choose a folder using the native picker. Opening or leaving this review registers nothing. Setup must confirm account, repository, visibility and exact external effects under § 6 before applying them.'),addProject(),setup()];break;
+   default:body=h('p',{role:'status'},'Operation unavailable; no effect was submitted.');
   }
-  return heading+actionNotices()+body;
+  return f(heading,actionNotices(),body);
 },
 operationAction:function(d){
   if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return true;}
@@ -48,7 +49,9 @@ operationInput:function(e){const d=e.target.dataset;if(d.recoveryTask||d.recover
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
 fit:function(){if(ports.workspace)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:Math.ceil(menu.querySelector('.content')?menu.querySelector('.content-body').getBoundingClientRect().height+12+menu.querySelector('.head').offsetHeight:menu.getBoundingClientRect().height)});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
-actionNotices:function(){if(!ports.workspace)return view.workspaceError?'<p role="alert">'+esc(view.workspaceError)+'</p>':'';const r=view.hostCommand||view.S?.lifecycle;return (view.aiError?'<div class="body alert" role="alert">'+esc(view.aiError)+'</div>':'')+(view.workspaceError?'<div class="body alert" role="alert">'+esc(view.workspaceError)+'</div>':'')+view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>'<div class="body alert" role="alert">'+esc(p.name)+': '+esc(actionErrors.get(p.root).text)+'</div>').join('')+(r?.action==='uninstall'?'<div class="body meta" role="status">Uninstall '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'');},
+actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const {alert}=execution.module("tray.create.actionNotices",{alert:text=>h('div',{class:'body alert',role:'alert'},text)});
+  const items=[view.aiError&&alert(view.aiError),view.workspaceError&&alert(view.workspaceError),...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
+  return items.length?f(items):'';},
 lifecycleStart:function(root,action='restart',mode='drain'){
   if(view.hostCommand&&view.hostCommand.state!=='observed')return;
   const review=action==='uninstall'?view.S.projects.find(p=>p.root===root)?.uninstall_review:action==='stop'?(mode==='full'?view.S.full_stop_review:view.S.stop_review):view.S.restart_review;
@@ -81,12 +84,12 @@ lifecycleReadback:function(r=view.S?.lifecycle){
   }
 },
 lifecycleWaits:function(){
-  if(!Array.isArray(view.S?.projects))return '<div class="body meta">Project registry unknown</div>';
-  return view.S.projects.map(p=>{
+  if(!Array.isArray(view.S?.projects))return h('div',{class:'body meta'},'Project registry unknown');
+  return f(view.S.projects.map(p=>{
     const current=view.S.service?.state==='running'&&typeof p.service_pid==='number'&&typeof p.host_instance==='string'&&typeof p.age==='number'&&p.age>=0&&p.age<=60&&p.service_pid===view.S.service?.pid&&p.host_instance===view.S.service?.instance;
     const text=!current?'waiting for current project observation':p.error?p.error:Array.isArray(p.restart_waits)?p.restart_waits.length?'waits for '+p.restart_waits.join(', '):'prepared':'waiting for recovery observation';
-    return '<div class="body meta">'+esc(p.name)+': '+esc(text)+'</div>';
-  }).join('');
+    return h('div',{class:'body meta'},p.name+': '+text);
+  }));
 },
 lifecycleControl:function(p,action='restart'){if(!ports.workspace)return api.operationLauncher('service',p.root,'Review '+p.name+' service…');
   const title={stop:'Stop',uninstall:'Uninstall'}[action]||'Restart',review=action==='uninstall'?p.uninstall_review:action==='stop'?view.S?.stop_review:view.S?.restart_review;
@@ -95,29 +98,35 @@ lifecycleControl:function(p,action='restart'){if(!ports.workspace)return api.ope
   const projects=Array.isArray(view.S?.projects)?view.S.projects:[];
   const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>(projects.find(p=>p.root===root)?.name||'Project')+' ('+root+')'):null;
   const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Use reviewed recovery to resume selected tasks.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
-  const scope=action==='uninstall'?esc(p.name):'all registered projects: '+(targets?targets.length?targets.map(esc).join(', '):'none registered':'unknown');
-  return '<details class="host-'+action+'" data-view-key="'+esc(p.root)+':'+action+'"><summary>'+title+' '+(action==='uninstall'?esc(p.name):'host service')+'</summary><div class="body meta">Affects '+scope+'. '+effect+'</div>'+(!review?.instance?'<div class="body alert">'+esc(review?.reason||title+' protocol unavailable')+'</div>':'')+'<button class="project" data-a="'+action+'" data-root="'+esc(p.root)+'"'+(pending||!review?.instance||!targets?' disabled':'')+'>Confirm '+(action==='uninstall'?'uninstall '+esc(p.name):'host '+action)+'</button>'+(pending&&r?api.lifecycleWaits():'')+(r?.id||r?.reason?'<div class="body meta" role="status">'+title+' '+esc(r.id||'')+': '+esc(r.state||'unknown')+(r.reason?' · '+esc(r.reason):'')+'</div>':'')+'</details>';
+  const scope=action==='uninstall'?p.name:'all registered projects: '+(targets?targets.length?targets.join(', '):'none registered':'unknown');
+  return h('details',{class:'host-'+action,'data-view-key':p.root+':'+action},h('summary',null,title+' '+(action==='uninstall'?p.name:'host service')),h('div',{class:'body meta'},'Affects '+scope+'. '+effect),!review?.instance&&h('div',{class:'body alert'},review?.reason||title+' protocol unavailable'),h('button',{class:'project','data-a':action,'data-root':p.root,disabled:!!(pending||!review?.instance||!targets)},'Confirm '+(action==='uninstall'?'uninstall '+p.name:'host '+action)),pending&&r&&api.lifecycleWaits(),(r?.id||r?.reason)&&h('div',{class:'body meta',role:'status'},title+' '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:'')));
 },
 stopPanel:function(){if(!ports.workspace)return api.operationLauncher('stop',null,'Review Stop and hold…');
   const projects=view.S.projects||[],root=projects[0]?.root,held=view.S.stop_hold;
   const pending=!!held&&!held.selected_count||view.hostCommand&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
-  const names=projects.map(p=>esc(p.name)).join(', ')||'no registered projects';
+  const names=projects.map(p=>p.name).join(', ')||'no registered projects';
   const host=projects[0]?.host||'unknown host',command=view.hostCommand||view.S.lifecycle;
-  const rows=projects.map(p=>'<div class="body"><strong>'+esc(p.name)+'</strong><div class="meta">'+(view.S.service?.state!=='running'||typeof p.age!=='number'||p.age<0||p.age>60||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?p.stop_progress.map(k=>'#'+esc(k.task)+' '+esc(k.rt)+': '+esc(k.state)+(k.reason?' · '+esc(k.reason):'')).join('<br>'):'No stop acknowledgement; running or unknown work may remain.')+'</div></div>').join('');
-  return '<div class="body">Stop on '+esc(host)+' · '+names+'</div><div class="body meta">Only TaskQ-owned local work is targeted. Remote hosts and unrelated agents are unaffected. Dirty files and session references are retained; unsaved buffers and interrupted external effects may be lost. Automatic rollback to older releases is disabled.</div>'+
-    '<div class="body"><strong>Drain</strong><div class="meta">Hold new admission and let current work finish. Retain autostart and the hold after service exit.</div></div><button class="project" data-a="stop" data-root="'+esc(root||'')+'"'+(pending||!root||!view.S.stop_review?.instance?' disabled':'')+'>Confirm Drain</button>'+
-    '<div class="body"><strong>Full stop</strong><div class="meta">Request cancellation now, including offline. Unknown termination stays fenced. Board reconciliation may keep the service alive.</div></div><button class="project" data-a="stop-full" data-root="'+esc(root||'')+'"'+(pending||!root||!view.S.full_stop_review?.instance?' disabled':'')+'>Confirm Full stop</button>'+
-    (!view.S.full_stop_review?.instance?'<div class="body alert">'+esc(view.S.full_stop_review?.reason||'Full stop capability unknown')+'</div>':'')+
-    (held?'<div class="body alert" role="status">Admission held: '+esc(held.mode||'unknown')+'; ordinary Play cannot clear this hold.</div>':'')+(held?'<button class="project" data-route="recovery">Review recovery</button>':'')+(command?.action==='stop'?'<div class="body meta" role="status">Stop '+esc(command.id||'')+': '+esc(command.state||'unknown')+(command.reason?' · '+esc(command.reason):'')+'</div>':'')+rows+api.lifecycleWaits();
+  const rows=projects.map(p=>h('div',{class:'body'},h('strong',null,p.name),h('div',{class:'meta'},view.S.service?.state!=='running'||typeof p.age!=='number'||p.age<0||p.age>60||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?lines(p.stop_progress.map(k=>'#'+k.task+' '+k.rt+': '+k.state+(k.reason?' · '+k.reason:''))):'No stop acknowledgement; running or unknown work may remain.')));
+  return f(h('div',{class:'body'},'Stop on '+host+' · '+names),h('div',{class:'body meta'},'Only TaskQ-owned local work is targeted. Remote hosts and unrelated agents are unaffected. Dirty files and session references are retained; unsaved buffers and interrupted external effects may be lost. Automatic rollback to older releases is disabled.'),
+    h('div',{class:'body'},h('strong',null,'Drain'),h('div',{class:'meta'},'Hold new admission and let current work finish. Retain autostart and the hold after service exit.')),h('button',{class:'project','data-a':'stop','data-root':root||'',disabled:!!(pending||!root||!view.S.stop_review?.instance)},'Confirm Drain'),
+    h('div',{class:'body'},h('strong',null,'Full stop'),h('div',{class:'meta'},'Request cancellation now, including offline. Unknown termination stays fenced. Board reconciliation may keep the service alive.')),h('button',{class:'project','data-a':'stop-full','data-root':root||'',disabled:!!(pending||!root||!view.S.full_stop_review?.instance)},'Confirm Full stop'),
+    !view.S.full_stop_review?.instance&&h('div',{class:'body alert'},view.S.full_stop_review?.reason||'Full stop capability unknown'),
+    held&&h('div',{class:'body alert',role:'status'},'Admission held: '+(held.mode||'unknown')+'; ordinary Play cannot clear this hold.'),held&&h('button',{class:'project','data-route':'recovery'},'Review recovery'),command?.action==='stop'&&h('div',{class:'body meta',role:'status'},'Stop '+(command.id||'')+': '+(command.state||'unknown')+(command.reason?' · '+command.reason:'')),rows,api.lifecycleWaits());
 },
 recoveryPanel:function(){if(!ports.workspace)return api.operationLauncher('recovery',null,'Review recovery…');
-  return '<div class="body">Only selected local tasks resume. Keep held is the default. Paused projects, other tasks and operators stay held.</div><div class="body meta">Inspect native release, work and external effects before confirming. Unknown effects must remain held. Restart discards the old result and starts from preserved files.</div>'+view.S.projects.map(p=>{
+  return f(h('div',{class:'body'},'Only selected local tasks resume. Keep held is the default. Paused projects, other tasks and operators stay held.'),h('div',{class:'body meta'},'Inspect native release, work and external effects before confirming. Unknown effects must remain held. Restart discards the old result and starts from preserved files.'),view.S.projects.map(p=>{
     const item=view.recovery[p.root],review=item?.review;
-    return '<section class="group" data-recovery-project="'+esc(p.root)+'"><div class="body"><strong>'+esc(p.name)+'</strong></div><button data-a="recovery-read" data-root="'+esc(p.root)+'"'+(item?.pending?' disabled':'')+'>Read current recovery</button>'+(item?.notice?'<div class="body alert" role="status">'+esc(item.notice)+'</div>':'')+(review?'<div class="body meta">'+esc(review.mode)+' · focus '+esc((review.focus||[]).join(', ')||'off')+'</div>'+'<div class="body meta">Limits: '+esc(review.limits?.unknown||Object.entries(review.limits?.limits||{}).map(([k,v])=>k+' '+v).join(', ')||'unknown')+'<br>Access: '+esc((review.access||[]).map(a=>a.runtime+': '+(a.refused||a.effective||'unknown')).join('; ')||'unknown')+'</div>'+review.rows.map(r=>{
-      const draft=item.drafts?.[r.task]||{},blocked=!r.eligible||r.selected||item.pending||(review.pending||[]).some(q=>q.rows.some(s=>s.task===r.task));
-      return '<div class="body"><label><input type="checkbox" data-recovery-task="'+r.task+'" data-root="'+esc(p.root)+'"'+(draft.selected?' checked':'')+(blocked?' disabled':'')+'> #'+r.task+' '+esc(r.title||'Task')+'</label><div class="meta">'+esc(r.runtime||'unknown runtime')+' · '+esc(r.host||'unknown host')+' · '+esc(r.native_exit||'unknown')+'<br>Execution '+esc(r.execution??'unknown')+' · revision '+esc(r.revision??'unknown')+'<br>'+esc(r.workspace?.state||'work unknown')+(r.blocker?'<br>'+esc(r.blocker):'')+(r.selected?'<br>Selected admission confirmed; running state is separate.':'')+'</div><a href="'+esc(r.url||'#')+'" data-url="'+esc(r.url||'')+'">Inspect task and receipts ↗</a><label class="meta recovery-evidence">Reconciled effect outcomes<input type="text" maxlength="160" data-recovery-evidence="'+r.task+'" data-root="'+esc(p.root)+'" aria-label="Effect evidence for task '+r.task+'" value="'+esc(draft.evidence||'')+'"'+(blocked?' disabled':'')+'></label></div>';
-    }).join('')+(review.pending||[]).map((q,i)=>'<button data-a="recovery-pending" data-root="'+esc(p.root)+'" data-index="'+i+'"'+(item.pending?' disabled':'')+'>Reconcile saved selection #'+esc(q.rows[0].task)+'</button>').join('')+'<div class="body meta">Confirm only when the evidence establishes the effects; native release remains mandatory. Current grants, limits and focus still apply. If the original host exit is verified, confirmation starts host supervision once.</div><button data-a="recovery-apply" data-root="'+esc(p.root)+'"'+(item.pending?' disabled':'')+'>Confirm selected recovery</button>':'')+(item?.request&&!item.pending?'<button data-a="recovery-reconcile" data-root="'+esc(p.root)+'">Reconcile same selection</button>':'')+'</section>';
-  }).join('');
+    return h('section',{class:'group','data-recovery-project':p.root,key:p.root},h('div',{class:'body'},h('strong',null,p.name)),h('button',{'data-a':'recovery-read','data-root':p.root,disabled:!!item?.pending},'Read current recovery'),item?.notice&&h('div',{class:'body alert',role:'status'},item.notice),review&&[
+      h('div',{class:'body meta'},review.mode+' · focus '+((review.focus||[]).join(', ')||'off')),
+      h('div',{class:'body meta'},'Limits: '+(review.limits?.unknown||Object.entries(review.limits?.limits||{}).map(([k,v])=>k+' '+v).join(', ')||'unknown'),h('br'),'Access: '+((review.access||[]).map(a=>a.runtime+': '+(a.refused||a.effective||'unknown')).join('; ')||'unknown')),
+      review.rows.map(r=>{
+        const draft=item.drafts?.[r.task]||{},blocked=!r.eligible||r.selected||item.pending||(review.pending||[]).some(q=>q.rows.some(s=>s.task===r.task));
+        return h('div',{class:'body',key:r.task},h('label',null,h('input',{type:'checkbox','data-recovery-task':r.task,'data-root':p.root,checked:!!draft.selected,disabled:!!blocked}),' #'+r.task+' '+(r.title||'Task')),h('div',{class:'meta'},(r.runtime||'unknown runtime')+' · '+(r.host||'unknown host')+' · '+(r.native_exit||'unknown'),h('br'),'Execution '+(r.execution??'unknown')+' · revision '+(r.revision??'unknown'),h('br'),r.workspace?.state||'work unknown',r.blocker&&[h('br'),r.blocker],r.selected&&[h('br'),'Selected admission confirmed; running state is separate.']),h('a',{href:r.url||'#','data-url':r.url||''},'Inspect task and receipts ↗'),h('label',{class:'meta recovery-evidence'},'Reconciled effect outcomes',h('input',{type:'text',maxlength:'160','data-recovery-evidence':r.task,'data-root':p.root,'aria-label':'Effect evidence for task '+r.task,value:draft.evidence||'',disabled:!!blocked})));
+      }),
+      (review.pending||[]).map((q,i)=>h('button',{'data-a':'recovery-pending','data-root':p.root,'data-index':i,disabled:!!item.pending},'Reconcile saved selection #'+q.rows[0].task)),
+      h('div',{class:'body meta'},'Confirm only when the evidence establishes the effects; native release remains mandatory. Current grants, limits and focus still apply. If the original host exit is verified, confirmation starts host supervision once.'),h('button',{'data-a':'recovery-apply','data-root':p.root,disabled:!!item.pending},'Confirm selected recovery')],
+      item?.request&&!item.pending&&h('button',{'data-a':'recovery-reconcile','data-root':p.root},'Reconcile same selection'));
+  }));
 },
 recoveryStart:function(root,action){
   const item=view.recovery[root]||(view.recovery[root]={drafts:{}});if(item.pending)return;
@@ -170,70 +179,68 @@ focusReadback:function(){
 remember:function(){return {...viewState.capture(),workCard:view.workCard};},
 navigate:function(next,filter=null,work=null){
   if(!ports.workspace&&(work||['stop','recovery'].includes(next))){send({a:'workspace',open:{page:'operations',operation:work?'resources':next,root:work?Object.keys(work)[0]||null:null}});return;}
-  trail.push(remember());if(trail.length>32)trail.shift();view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
+  renderer.push(remember());view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
   view.unavailable=null;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
   menu.querySelector('h1')?.focus();
 },
 back:function(){
-  const prior=trail.pop()||{page:['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'settings':view.S?.projects.some(p=>p.root===view.page)?view.taskFilter||view.working?view.page:'projects':'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
+  const prior=renderer.pop()||{page:['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'settings':view.S?.projects.some(p=>p.root===view.page)?view.taskFilter||view.working?view.page:'projects':'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
   ({page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard}=prior);view.noted=null;view.disclosures=prior.open;view.aiRoot=prior.aiRoot;view.restoreScroll=prior.scroll;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=prior.scroll;
   viewState.focus(prior.focus);
 },
-routeButton:function(route,label=routes[route]){return '<button class="project" data-route="'+route+'">'+esc(label)+'</button>';},
-answerSlot:function(t){return t.state==='ask'?'<button data-a="workspace" data-page="answer" data-root="'+esc(t.root||'')+'" data-board="'+esc(t.key.slice(0,t.key.lastIndexOf('/'))) + '" data-task="'+t.n+'" data-revision="'+t.revision+'">Answer in workspace…</button>':'';},
-answerNotices:function(board){return startOperations.answerNotices(board);},
-answerToast:function(){return startOperations.answerToast();},
+routeButton:function(route,label=routes[route]){return h('button',{class:'project','data-route':route},label);},
+answerSlot:function(t){return t.state==='ask'?h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},'Answer in workspace…'):'';},
+answerNotices:function(board){return raw(startOperations.answerNotices(board));},
+answerToast:function(){return raw(startOperations.answerToast());},
 mountAnswers:function(){},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
 blockProject:function(p){return {now:view.S.now+Math.round((performance.now()-view.receivedAt)/1000),id:p.root,name:p.name,board:{url:p.issues,kind:p.board_kind},complete:p.complete===true,tasks:tasks(p)};},
 unique:function(ts){return [...new Map(ts.map(t=>[t.key,t])).values()];},
 counts:function(ts){ts=unique(ts);const {n}=execution.module("tray.create.counts",{n:f=>ts.filter(t=>f.includes(t.state)).length});return {work:n(['doing','review']),ask:n(['ask']),ready:n(['ready']),failed:n(['failed'])};},
 mode:function(p){return p.focus.length?'run':p.saved?'paused':'watch';},
-counter:function(v,kind,label){return '<span class="counter '+(v>0?kind+' filled':'zero')+'" aria-label="'+esc(label+': '+v)+'" title="'+esc(label)+'">'+v+'</span>';},
+counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
 known:function(ps){return ps.every(p=>p.complete!==false);},
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return '<div data-card="'+esc(t.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),t,global)+answerSlot(t)+(t.state==='held'?startButton([t]):'')+TaskqTaskControls.render(t,{key:t.key,except:['start']})+'</div>';},
-// #1476: Start for held drafts, one per draft and one for the shown group; the bridge runs `taskq start` and reads back ready/waiting.
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.issues+'/'+t.n===t.key);return h('div',{'data-card':t.key,tabindex:'-1',key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global)),answerSlot(t),t.state==='held'&&startButton([t]),raw(TaskqTaskControls.render(t,{key:t.key,except:['start']})));},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
   if(!held.length)return '';
   const label=held.length===1&&rows.length===1?'Start #'+held[0].n:'Start '+held.length+' held';
-  return '<button data-a="start" data-keys="'+esc(held.map(t=>t.key).join(' '))+'" title="'+esc(label)+'" aria-label="'+esc(label)+'">'+esc(label)+'</button>';
+  return h('button',{'data-a':'start','data-keys':held.map(t=>t.key).join(' '),title:label,'aria-label':label},label);
 },
-globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?'<details class="group" data-view-key="state:'+st+'"><summary><span class="'+color(st)+'">'+names[st]+'</span>'+counter(ts.length,color(st),names[st])+'</summary>'+ts.map(t=>taskRow(t,true)).join('')+'</details>':'';},
+globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},names[st]),counter(ts.length,color(st),names[st])),ts.map(t=>taskRow(t,true))):'';},
 age:function(s){return s<120?s+' s':s<7200?Math.round(s/60)+' min':s<172800?Math.round(s/3600)+' h':Math.round(s/86400)+' d';},
-problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+age(p.age)+' old: service not running?'):p.error?'service error: '+p.error:'';return e?'<button class="project alert" data-a="log" data-root="'+esc(p.root)+'" title="'+esc(e)+'"'+(p.log?'':' disabled')+'><span>⚠ '+esc(p.name)+': '+esc(e)+'</span><span class="meta">'+(p.log?'Log':'')+'</span><span></span></button>':'';},
+problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+age(p.age)+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,'⚠ '+p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
 modeText:function(p){return {run:'Admitting: '+p.focus.join(' '),paused:'Paused: running tasks finish, no new ones',watch:'Observation only: focus off'}[mode(p)];},
 admission:function(p){if(!ports.workspace)return api.operationLauncher('admission',p.root,'Review admission in '+p.name+'…');
-  if(view.pending[p.root]&&!view.pending[p.root].unknown)return '<button class="project" disabled>'+esc(view.pending[p.root].text)+'…</button>';
-  if(mode(p)==='run')return '<button class="project" data-a="pause" data-root="'+esc(p.root)+'">Pause admission in '+esc(p.name)+'</button>';
-  if(p.saved)return '<button class="project" data-a="resume" data-root="'+esc(p.root)+'">Resume admission in '+esc(p.name)+'</button>';
-  if(view.ask!==p.root)return '<button class="project" data-a="pick" data-root="'+esc(p.root)+'">Resume: choose labels…</button>';
+  if(view.pending[p.root]&&!view.pending[p.root].unknown)return h('button',{class:'project',disabled:true},view.pending[p.root].text+'…');
+  if(mode(p)==='run')return h('button',{class:'project','data-a':'pause','data-root':p.root},'Pause admission in '+p.name);
+  if(p.saved)return h('button',{class:'project','data-a':'resume','data-root':p.root},'Resume admission in '+p.name);
+  if(view.ask!==p.root)return h('button',{class:'project','data-a':'pick','data-root':p.root},'Resume: choose labels…');
   // no saved focus: offer labels, never `all` (M-A12)
-  return '<div class="body meta">No saved focus. Admit tasks with one label:</div><div class="options">'+(p.labels.length?p.labels.map(l=>'<button data-a="focus" data-root="'+esc(p.root)+'" data-label="'+esc(l)+'">'+esc(l)+'</button>').join(''):'<span class="meta">No labels on open tasks: use taskq service focus</span>')+'</div>';
+  return f(h('div',{class:'body meta'},'No saved focus. Admit tasks with one label:'),h('div',{class:'options'},p.labels.length?p.labels.map(l=>h('button',{'data-a':'focus','data-root':p.root,'data-label':l},l)):h('span',{class:'meta'},'No labels on open tasks: use taskq service focus')));
 },
 incident:function(p,top=false){
   const i=p.incident,local=i&&['local','unsupported-auth'].includes(i.state);
   if(top&&(!p.alive||!local))return '';
   const line=!p.alive?'Incidents: unknown ('+(p.age==null?'no status.json':'stale status.json')+')':p.incident_line||'Incidents: unknown (no incident status)';
   const text=p.alive&&i&&(i.url||i.path)?line.replace(' · '+(i.url||i.path),''):line;
-  let h='<div class="body '+(top?'incident-attention':'meta')+'" title="'+esc(line)+'">'+esc((top?p.name+': ':'')+text)+'</div>';
-  if(p.alive&&local)h+='<div class="options"><button data-a="incident-report" data-root="'+esc(p.root)+'"'+(i.path?'':' disabled')+'>Open report</button><button data-a="incident-manual" data-root="'+esc(p.root)+'">Report manually ↗</button></div>';
-  if(p.alive&&i&&i.state==='sent'&&i.url)h+='<a class="project" href="'+esc(i.url)+'" data-url="'+esc(i.url)+'">Open incident ↗</a>';
-  return h;
+  return f(h('div',{class:'body '+(top?'incident-attention':'meta'),title:line},(top?p.name+': ':'')+text),
+    p.alive&&local&&h('div',{class:'options'},h('button',{'data-a':'incident-report','data-root':p.root,disabled:!i.path},'Open report'),h('button',{'data-a':'incident-manual','data-root':p.root},'Report manually ↗')),
+    p.alive&&i&&i.state==='sent'&&i.url&&h('a',{class:'project',href:i.url,'data-url':i.url},'Open incident ↗'));
 },
-incidentNotice:function(p){return p.incident_notice?'<details class="group incident-notice" data-view-key="incident:'+esc(p.root)+'"><summary>Incident reports: notice <span class="meta">'+esc(p.name)+'</span></summary><div class="body">Reports stay local until you choose.</div><div class="body meta">Destination: '+esc(p.incident_repo)+' on GitHub (public). Posting account: unknown here; verify the github.com account used by this project before enabling.</div><div class="body meta">Only sanitized fault codes, fingerprint, report ID, release, revision, contract, board/runtime/OS classes, source site and evidence codes are sent. No project, task, user, session, token or raw error text.</div><div class="body meta">Offline or unsupported login: keep a local JSON report. After confirming the destination and posting account, set incident_reports to true in taskq.json to enable, or false to opt out. TASKQ_INCIDENT_REPORTS=off also disables reporting.</div></details>':'';},
-service:function(p){const s=view.S?.service;return '<details class="group service" data-view-key="service:'+esc(p.root)+'"><summary>⚙ Service <span class="meta">'+esc(p.name)+'</span></summary><div class="body meta" role="status">Host service: '+esc(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+esc(s.reason):'')+'</div>'+incident(p)+
-  (p.log?'<button class="project" data-a="log" data-root="'+esc(p.root)+'">Open log</button>':'<div class="body meta">Log path unknown</div>')+
-  '<button class="project" data-a="folder" data-root="'+esc(p.root)+'">Open folder</button>'+
-  (ports.workspace?api.lifecycleControl(p)+api.lifecycleControl(p,'stop')+api.lifecycleControl(p,'uninstall'):api.operationLauncher('service',p.root,'Review service operations…'))+'</details>';},
+incidentNotice:function(p){return p.incident_notice?h('details',{class:'group incident-notice','data-view-key':'incident:'+p.root},h('summary',null,'Incident reports: notice ',h('span',{class:'meta'},p.name)),h('div',{class:'body'},'Reports stay local until you choose.'),h('div',{class:'body meta'},'Destination: '+p.incident_repo+' on GitHub (public). Posting account: unknown here; verify the github.com account used by this project before enabling.'),h('div',{class:'body meta'},'Only sanitized fault codes, fingerprint, report ID, release, revision, contract, board/runtime/OS classes, source site and evidence codes are sent. No project, task, user, session, token or raw error text.'),h('div',{class:'body meta'},'Offline or unsupported login: keep a local JSON report. After confirming the destination and posting account, set incident_reports to true in taskq.json to enable, or false to opt out. TASKQ_INCIDENT_REPORTS=off also disables reporting.')):'';},
+service:function(p){const s=view.S?.service;return h('details',{class:'group service','data-view-key':'service:'+p.root},h('summary',null,'⚙ Service ',h('span',{class:'meta'},p.name)),h('div',{class:'body meta',role:'status'},'Host service: '+(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+s.reason:'')),incident(p),
+  p.log?h('button',{class:'project','data-a':'log','data-root':p.root},'Open log'):h('div',{class:'body meta'},'Log path unknown'),
+  h('button',{class:'project','data-a':'folder','data-root':p.root},'Open folder'),
+  ports.workspace?[api.lifecycleControl(p),api.lifecycleControl(p,'stop'),api.lifecycleControl(p,'uninstall')]:api.operationLauncher('service',p.root,'Review service operations…'));},
 when:function(t,tz){return new Date(t*1000).toLocaleString([],{timeZone:tz==='UTC'?'UTC':undefined,dateStyle:'short',timeStyle:'short'})+' '+(tz==='UTC'?'UTC':zone);},
 local:function(t,tz){const d=new Date(t*1000);return (tz==='UTC'?d.toISOString():new Date(d-d.getTimezoneOffset()*60000).toISOString()).slice(0,16);},
 custom:function(){
   const d=view.draft;
-  return '<div class="range"><label for="hs">Start</label><input id="hs" type="datetime-local" data-draft="start" value="'+esc(d.start)+'"><label for="he">End</label><input id="he" type="datetime-local" data-draft="end" value="'+esc(d.end)+'"><label for="hz">Time zone</label><select id="hz" data-draft="tz">'+[['local','Local ('+zone+')'],['UTC','UTC']].map(([v,l])=>'<option value="'+v+'"'+(d.tz===v?' selected':'')+'>'+esc(l)+'</option>').join('')+'</select></div>'+
-  (d.error?'<div class="body alert" role="alert">'+esc(d.error)+'</div>':'')+'<button class="project" data-a="range">Show [start, end)</button>';},
+  return f(h('div',{class:'range'},h('label',{for:'hs'},'Start'),h('input',{id:'hs',type:'datetime-local','data-draft':'start',value:d.start}),h('label',{for:'he'},'End'),h('input',{id:'he',type:'datetime-local','data-draft':'end',value:d.end}),h('label',{for:'hz'},'Time zone'),h('select',{id:'hz','data-draft':'tz'},[['local','Local ('+zone+')'],['UTC','UTC']].map(([v,l])=>h('option',{value:v,selected:d.tz===v},l)))),
+  d.error&&h('div',{class:'body alert',role:'alert'},d.error),h('button',{class:'project','data-a':'range'},'Show [start, end)'));},
 history:function(){
   // series stack from the bottom in this order on one scale: the peak of the sum (M6)
   const H=view.S.history,n=H.bins.length,w=(H.end-H.start)/n,kinds=['closed','failed','ask','waiting'],tot=kinds.map((_,k)=>H.bins.reduce((a,b)=>a+b[k],0));
@@ -244,69 +251,70 @@ const none=view.S.projects.filter(p=>p.since==null).map(p=>p.name);
 const part=none.length>0||H.since>H.start;
   const note=H.since==null?'No history yet: unknown, not zero.':[H.since>H.start?'Incomplete: history since '+when(H.since,H.tz)+'; earlier is unknown, not zero.':'',none.length?'No history in '+none.join(', ')+'.':''].join(' ').trim();
   // the summary wraps between totals, never inside one, so all four stay readable at every text size (#1083)
-  const total=[periods[view.S.period],...(H.since==null?kinds.map(k=>k+' —'):kinds.map((k,i)=>k+' '+tot[i]).concat(part?['incomplete']:[]))].map(t=>t.replace(/ /g,'\u00a0')).join('\u00a0· ');
-  return '<details class="group hist" data-view-key="history"><summary>▥ History <span class="meta">'+total+'</span></summary><div class="options periods">'+Object.entries(periods).map(([k,l])=>'<button data-set="period" data-v="'+k+'" aria-pressed="'+(view.S.period===k||k==='custom'&&view.draft!=null)+'">'+l+'</button>').join('')+'</div>'+
-  (view.draft?custom():'')+'<div class="body meta">['+esc(when(H.start,H.tz))+', '+esc(when(H.end,H.tz))+')'+(view.S.now<H.end?' · last bin partial':'')+' · peak '+peak+'</div>'+
-  '<div class="bars" role="img" aria-label="'+esc(named(tot,', ')+'; '+n+' equal bins, oldest left'+(note?'; '+note:''))+'">'+H.bins.map((b,i)=>{const t=H.start+i*w,u=H.since==null||t+w<=H.since;
-    return '<span'+(u?' class="unknown" title="unknown"':' title="'+esc(when(t,H.tz)+(view.S.now<t+w?' (partial)':'')+': '+named(b,', '))+'"')+'>'+[3,2,1,0].map(k=>'<i class="k'+k+'" style="height:'+b[k]/peak*100+'%"></i>').join('')+'</span>';}).join('')+'</div>'+(note?'<div class="body meta">'+esc(note)+'</div>':'')+'</details>';},
+  const total=[periods[view.S.period],...(H.since==null?kinds.map(k=>k+' —'):kinds.map((k,i)=>k+' '+tot[i]).concat(part?['incomplete']:[]))].map(t=>t.replace(/ /g,' ')).join(' · ');
+  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},total)),h('div',{class:'options periods'},Object.entries(periods).map(([k,l])=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
+  view.draft&&custom(),h('div',{class:'body meta'},'['+when(H.start,H.tz)+', '+when(H.end,H.tz)+')'+(view.S.now<H.end?' · last bin partial':'')+' · peak '+peak),
+  h('div',{class:'bars',role:'img','aria-label':named(tot,', ')+'; '+n+' equal bins, oldest left'+(note?'; '+note:'')},H.bins.map((b,i)=>{const t=H.start+i*w,u=H.since==null||t+w<=H.since;
+    return h('span',u?{class:'unknown',title:'unknown'}:{title:when(t,H.tz)+(view.S.now<t+w?' (partial)':'')+': '+named(b,', ')},[3,2,1,0].map(k=>h('i',{class:'k'+k,style:'height:'+b[k]/peak*100+'%'})));})),note&&h('div',{class:'body meta'},note));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
   const up=view.S.projects.find(p=>p.update&&p.update!==p.version);
-  if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&p.version===view.updating.v))return '<div class="row meta">Updated to '+esc(view.updating.v)+': read from status.json</div>';
-  if(view.updating&&view.S.now-view.updating.at<300)return '<button class="project" disabled>Updating to '+esc(view.updating.v)+'…</button>';
-  return (view.updating?'<div class="row alert">Update to '+esc(view.updating.v)+' not confirmed: see the log</div>':'')+(!view.updating&&up?'<button class="project" data-a="update" data-root="'+esc(up.root)+'" data-v="'+esc(up.update)+'">Update now to '+esc(up.update)+'</button>':'');},
-ai:function(){return '<button class="project" data-a="workspace" data-page="request"'+(view.aiRoot?' data-root="'+esc(view.aiRoot)+'"':'')+'>Ask AI · new session…</button>';},
-messagesBadge:function(){const m=view.S.messages,known=m?.complete===true&&Number.isSafeInteger(m.count);return '<button class="project" data-a="workspace" data-page="messages" aria-label="'+esc(known?'Messages · '+m.count:'Messages · unknown')+'">✉ Messages · '+(known?m.count:'unknown')+'</button>'+(!known?'<p class="body meta" role="status">'+esc(m?.reason||'Message source unavailable; refresh status.')+'</p>':'');},
+  if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&p.version===view.updating.v))return h('div',{class:'row meta'},'Updated to '+view.updating.v+': read from status.json');
+  if(view.updating&&view.S.now-view.updating.at<300)return h('button',{class:'project',disabled:true},'Updating to '+view.updating.v+'…');
+  return f(view.updating&&h('div',{class:'row alert'},'Update to '+view.updating.v+' not confirmed: see the log'),!view.updating&&up&&h('button',{class:'project','data-a':'update','data-root':up.root,'data-v':up.update},'Update now to '+up.update));},
+ai:function(){return h('button',{class:'project','data-a':'workspace','data-page':'request','data-root':view.aiRoot||null},'Ask AI · new session…');},
+messagesBadge:function(){const m=view.S.messages,known=m?.complete===true&&Number.isSafeInteger(m.count);return f(h('button',{class:'project','data-a':'workspace','data-page':'messages','aria-label':known?'Messages · '+m.count:'Messages · unknown'},'✉ Messages · '+(known?m.count:'unknown')),!known&&h('p',{class:'body meta',role:'status'},m?.reason||'Message source unavailable; refresh status.'));},
 addProject:function(){if(!ports.workspace)return api.operationLauncher('setup',null,'Add project in workspace…');
   const A=view.S.add;
-  if(!A)return '<button class="project" data-a="add">Add project…</button>';
-  if(A.state==='picking')return '<div class="row meta">Choose a folder…</div><button class="project" data-a="add-cancel">Hide picker result</button>';
-  if(A.state==='picking dismissed')return '<div class="body meta">Folder selection is still being processed; its result will be ignored.</div>';
-  if(A.state==='installing dismissed')return '<div class="body meta">Installation was submitted; its result is hidden.</div>';
-  if(A.state==='pick failed'||A.state==='add failed')return '<div class="body alert" role="alert">'+esc(A.state==='pick failed'?'Folder picker failed':'Add project unavailable')+(A.reason?': '+esc(A.reason):'')+'</div><button class="project" data-a="add-cancel">Done</button>';
+  if(!A)return h('button',{class:'project','data-a':'add'},'Add project…');
+  if(A.state==='picking')return f(h('div',{class:'row meta'},'Choose a folder…'),h('button',{class:'project','data-a':'add-cancel'},'Hide picker result'));
+  if(A.state==='picking dismissed')return h('div',{class:'body meta'},'Folder selection is still being processed; its result will be ignored.');
+  if(A.state==='installing dismissed')return h('div',{class:'body meta'},'Installation was submitted; its result is hidden.');
+  if(A.state==='pick failed'||A.state==='add failed')return f(h('div',{class:'body alert',role:'alert'},(A.state==='pick failed'?'Folder picker failed':'Add project unavailable')+(A.reason?': '+A.reason:'')),h('button',{class:'project','data-a':'add-cancel'},'Done'));
   const failed=A.state==='install failed',known=view.S.projects.some(p=>p.root===A.path);
-  let h='<div class="body"><div class="meta">Folder: '+esc(A.path)+'</div><div role="status" class="'+(A.kind==='old'||failed?'alert':'')+'">'+(failed?'Install failed':esc(addKinds[A.kind]))+(A.reason?': '+esc(A.reason):'')+'</div></div>';
-  if(A.kind==='old')h+='<a class="project" href="'+cutover+'" data-url="'+cutover+'"><span>Repair or cutover: taskq.md § 9 ↗</span><span></span><span></span></a>';
+  const out=[h('div',{class:'body'},h('div',{class:'meta'},'Folder: '+A.path),h('div',{role:'status',class:A.kind==='old'||failed?'alert':''},(failed?'Install failed':addKinds[A.kind])+(A.reason?': '+A.reason:'')))];
+  if(A.kind==='old')out.push(h('a',{class:'project',href:cutover,'data-url':cutover},h('span',null,'Repair or cutover: taskq.md § 9 ↗'),h('span'),h('span')));
   if(A.kind==='taskq'){
-    if(A.state==='installed')h+='<div class="row work" role="status">Installed: read back from this host\'s projects</div>';
-    else if(A.state==='installing')h+='<button class="project" disabled>Installing…</button>';
-    else if(known)h+='<div class="body meta">Already in this menu</div>';
-    else if(view.addConfirm)h+='<div class="body" role="alert">Register '+esc(A.path)+' and install its service? It starts at logon.</div><div class="options"><button data-a="add-install">Confirm</button><button data-a="add-back">Cancel</button></div>';
-    else if(!failed)h+='<button class="project" data-a="add-ask">Install service…</button>';
+    if(A.state==='installed')out.push(h('div',{class:'row work',role:'status'},'Installed: read back from this host\'s projects'));
+    else if(A.state==='installing')out.push(h('button',{class:'project',disabled:true},'Installing…'));
+    else if(known)out.push(h('div',{class:'body meta'},'Already in this menu'));
+    else if(view.addConfirm)out.push(h('div',{class:'body',role:'alert'},'Register '+A.path+' and install its service? It starts at logon.'),h('div',{class:'options'},h('button',{'data-a':'add-install'},'Confirm'),h('button',{'data-a':'add-back'},'Cancel')));
+    else if(!failed)out.push(h('button',{class:'project','data-a':'add-ask'},'Install service…'));
   }
-  if(A.kind==='new'||A.kind==='plain')h+='<button class="project" data-a="add-setup">Set up with AI…</button>';
-  return h+(A.state==='installing'?'<button class="project" data-a="add-cancel">Hide result; install continues</button>':'<button class="project" data-a="add-cancel">'+(A.state==='installed'?'Done':'Cancel')+'</button>');},
+  if(A.kind==='new'||A.kind==='plain')out.push(h('button',{class:'project','data-a':'add-setup'},'Set up with AI…'));
+  return f(out,h('button',{class:'project','data-a':'add-cancel'},A.state==='installing'?'Hide result; install continues':A.state==='installed'?'Done':'Cancel'));},
 bulk:function(run,held){if(!ports.workspace)return run.length||held.length?api.operationLauncher('admission',null,'Review admission…'):'';
   const pausing=run.length>0;
 const {state}=execution.module("tray.create.bulk.helpers",{state:p=>({run:pausing?'pause':'admitting, unchanged',paused:pausing?'paused, unchanged':'resume',watch:'observation, unchanged'}[mode(p)])});
-  if(view.confirming)return '<div class="body" role="alert">'+(pausing?'Pause admission? Running tasks finish.':'Resume admission?')+'<br>'+view.S.projects.map(p=>esc(p.name)+': '+state(p)).join('<br>')+'</div><div class="options"><button data-a="'+(pausing?'pause-all':'resume-all')+'">Confirm</button><button data-a="cancel">Cancel</button></div>';
-  return run.length?'<button class="project" data-a="confirm">Pause all…</button>':held.length?'<button class="project" data-a="confirm">Resume all…</button>':'';},
-views:function(){return view.S.platform==='macos'?'<div class="options views">'+[['icon','Icon'],['full','Summary']].map(([v,l])=>'<button data-set="view" data-v="'+v+'" aria-pressed="'+(view.S.view===v)+'"><img alt="" src="'+view.S.icons[v]+'">'+l+'</button>').join('')+'</div>':'';},
+  if(view.confirming)return f(h('div',{class:'body',role:'alert'},pausing?'Pause admission? Running tasks finish.':'Resume admission?',h('br'),lines(view.S.projects.map(p=>p.name+': '+state(p)))),h('div',{class:'options'},h('button',{'data-a':pausing?'pause-all':'resume-all'},'Confirm'),h('button',{'data-a':'cancel'},'Cancel')));
+  return run.length?h('button',{class:'project','data-a':'confirm'},'Pause all…'):held.length?h('button',{class:'project','data-a':'confirm'},'Resume all…'):'';},
+views:function(){return view.S.platform==='macos'?h('div',{class:'options views'},[['icon','Icon'],['full','Summary']].map(([v,l])=>h('button',{'data-set':'view','data-v':v,'aria-pressed':String(view.S.view===v)},h('img',{alt:'',src:view.S.icons[v]}),l))):'';},
 appearance:function(){
-  return '<div class="body meta">Theme follows system appearance.</div>'+views()+'<div class="body">Text size · '+view.S.font+' px</div><div class="options">'+[14,16,18,20].map(n=>'<button data-set="font" data-v="'+n+'" aria-pressed="'+(n===view.S.font)+'">'+n+'</button>').join('')+'</div>';
+  return f(h('div',{class:'body meta'},'Theme follows system appearance.'),views(),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font)},n))));
 },
 agents:function(){
   const A=view.S.agents;
-  return '<div class="body meta">'+esc(view.S.host+' · '+(A?'checked '+age(Math.max(0,view.S.now-A.at))+' ago':'unknown: no service probe yet'))+'</div>'+(A?A.rows.map(r=>'<div class="body">'+esc(r)+'</div>').join(''):'<div class="body meta">Unknown: no status.json has agents</div>');
+  return f(h('div',{class:'body meta'},view.S.host+' · '+(A?'checked '+age(Math.max(0,view.S.now-A.at))+' ago':'unknown: no service probe yet')),A?A.rows.map(r=>h('div',{class:'body'},r)):h('div',{class:'body meta'},'Unknown: no status.json has agents'));
 },
 about:function(){
-  return '<div class="body">Tray '+esc(view.S.version)+' · '+esc(view.S.host)+'</div>'+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+': '+esc(p.version||'version unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>').join('')+update();
+  return f(h('div',{class:'body'},'Tray '+view.S.version+' · '+view.S.host),view.S.projects.map(p=>h('div',{class:'body'},p.name+': '+(p.version||'version unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':age(p.age)+' old')))),update());
 },
 setup:function(){
   const s=view.S.setup;if(!s)return '';
-  if(!ports.workspace)return '<div class="body meta">Setup · '+esc(s.kind||'unknown')+'</div>'+api.operationLauncher('setup',null,'Review setup status…');
-  const link=s.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(s.url)?' <a href="#" data-url="'+esc(s.url)+'">Open session</a>':'';
-  return '<div class="group"><div class="row">Setup · '+esc(s.kind)+link+'</div>'+(s.reason?'<div class="body meta">'+esc(s.reason)+'</div>':'')+'<div class="body">'+esc(s.next||'Setup state unknown; run `taskq service setup`')+'</div></div>';
+  if(!ports.workspace)return f(h('div',{class:'body meta'},'Setup · '+(s.kind||'unknown')),api.operationLauncher('setup',null,'Review setup status…'));
+  const link=s.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(s.url)&&[' ',h('a',{href:'#','data-url':s.url},'Open session')];
+  return h('div',{class:'group'},h('div',{class:'row'},'Setup · '+s.kind,link),s.reason&&h('div',{class:'body meta'},s.reason),h('div',{class:'body'},s.next||'Setup state unknown; run `taskq service setup`'));
 },
 attention:function(){
   const all=unique(view.S.projects.flatMap(tasks));
-  return setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('')+globalGroup('ask',all)+globalGroup('failed',all)+answerNotices();
+  const parts=[setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
+  return parts.length?f(parts):'';
 },
 projects:function(){
-  return TaskqProjectBlocks.aggregate(view.S.projects.map(blockProject),[])+(view.S.projects.length?view.S.projects.map(p=>TaskqProjectBlocks.summary(blockProject(p))+'<div class="body meta">'+esc(modeText(p))+'</div><div class="body meta">You asked: '+esc(p.request||'not recorded')+'</div>').join(''):'<div class="body meta">No projects yet</div>')+addProject();
+  return f(raw(TaskqProjectBlocks.aggregate(view.S.projects.map(blockProject),[])),view.S.projects.length?view.S.projects.map(p=>[raw(TaskqProjectBlocks.summary(blockProject(p))),h('div',{class:'body meta'},modeText(p)),h('div',{class:'body meta'},'You asked: '+(p.request||'not recorded'))]):h('div',{class:'body meta'},'No projects yet'),addProject());
 },
 controls:function(){
   const run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
-  return workEntry()+(held.length&&run.length?'<div class="row meta">Paused '+held.length+' of '+(held.length+run.length)+': '+esc(held.map(p=>p.name).join(', '))+'</div>':'')+bulk(run,held);
+  return f(workEntry(),held.length>0&&run.length>0&&h('div',{class:'row meta'},'Paused '+held.length+' of '+(held.length+run.length)+': '+held.map(p=>p.name).join(', ')),bulk(run,held));
 },
 runningAgents:function(){
   const boards=new Map(),hosts=new Map();
@@ -345,23 +353,20 @@ runningAgents:function(){
       }
     }
   }
-  let h='<section class="group running-agents" aria-label="Running agents"><div class="row">Running agents</div>';
+  const out=[];
   for(const host of [...hosts.values()].sort((a,b)=>a.name.localeCompare(b.name))){
     const unknown=partial||host.unknown;
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
-    if(!unknown&&runtimes.length){
-      h+='<details data-view-key="host:'+esc(host.name)+'"><summary><strong>'+esc(host.name)+'</strong> · '+runtimes.map(([rt,c])=>esc(rt)+' '+(c.worker+c.reviewer)).join(' · ')+'</summary><div class="body">';
-      for(const [rt,c] of runtimes)h+='<div>'+esc(rt)+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')+'</div>';
-      h+='</div></details>';
-    }else h+='<div class="body"><strong>'+esc(host.name)+'</strong>'+(unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':'')+': '+esc([...reasons].join('; ')||host.reason||'host observation missing or stale'):' · idle')+'</div>';
+    if(!unknown&&runtimes.length)out.push(h('details',{'data-view-key':'host:'+host.name,key:'host:'+host.name},h('summary',null,h('strong',null,host.name),' · '+runtimes.map(([rt,c])=>rt+' '+(c.worker+c.reviewer)).join(' · ')),h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s'))))));
+    else out.push(h('div',{class:'body'},h('strong',null,host.name),unknown?' · unknown'+(host.age!==null&&host.age>=0?' · '+age(host.age)+' old':'')+': '+([...reasons].join('; ')||host.reason||'host observation missing or stale'):' · idle'));
   }
-  if(!hosts.size)h+='<div class="body meta">Hosts unknown: no observation</div>';
+  if(!hosts.size)out.push(h('div',{class:'body meta'},'Hosts unknown: no observation'));
   const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
   const cap=latest?.capacity?.host_runtime_used,capFresh=latest&&Number.isFinite(latest.age)&&latest.age>=0&&latest.age<=60;
   const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
-  h+='<details data-view-key="counts"><summary>Reconcile counts</summary><div class="body meta">Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review)+'</div>';
+  const counted=[h('div',{class:'body meta'},'Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review))];
   if(capFresh&&occupied){
-    h+='<div class="body meta">'+esc(view.S.host)+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old</div>';
+    counted.push(h('div',{class:'body meta'},view.S.host+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old'));
     const reserved=new Map();let known=local.length>0;
     for(const p of local){
       if(!Number.isFinite(p.age)||p.age<0||p.age>60||p.complete!==true||!Number.isFinite(p.tasks_age_seconds)||p.tasks_age_seconds<0||p.tasks_age_seconds+p.age>60||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
@@ -372,28 +377,28 @@ runningAgents:function(){
       }
     }
     const counts=new Map();for(const rt of reserved.values())counts.set(rt,(counts.get(rt)||0)+1);
-    h+='<div class="body meta">Reservations: '+(known?([...counts].map(([rt,n])=>esc(rt)+' '+n).join(' · ')||'none'):'unknown')+'</div>';
-  }else h+='<div class="body meta">'+esc(view.S.host)+' · Capacity unknown</div>';
-  return h+'<div class="body meta">Reservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.</div></details></section>';
+    counted.push(h('div',{class:'body meta'},'Reservations: '+(known?([...counts].map(([rt,n])=>rt+' '+n).join(' · ')||'none'):'unknown')));
+  }else counted.push(h('div',{class:'body meta'},view.S.host+' · Capacity unknown'));
+  return h('section',{class:'group running-agents','aria-label':'Running agents'},h('div',{class:'row'},'Running agents'),out,h('details',{'data-view-key':'counts'},h('summary',null,'Reconcile counts'),counted,h('div',{class:'body meta'},'Reservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.')));
 },
 home:function(){
-  const faults=setup()+view.S.projects.map(p=>problem(p)+incident(p,true)+incidentNotice(p)).join('');
-  return api.runningAgents()+controls()+ai()+api.messagesBadge()+
-    (faults?'<section class="group" aria-label="Attention">'+faults+'</section>':'')+filteredTasks()+
-    '<div class="group">'+routeButton('projects')+routeButton('appearance')+'</div>';
+  const faults=[setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
+  return f(api.runningAgents(),controls(),ai(),api.messagesBadge(),
+    faults.length>0&&h('section',{class:'group','aria-label':'Attention'},faults),filteredTasks(),
+    h('div',{class:'group'},routeButton('projects'),routeButton('appearance')));
 },
 routeBody:function(){
   switch(view.page){
     case 'projects':return projects();
-    case 'attention':return attention()||'<div class="body meta">'+(known(view.S.projects)?'No reported questions or failures':'Status incomplete; check Services')+'</div>';
-    case 'settings':return '<div class="row meta">Display and notices</div>'+['appearance','cadence','notifications'].map(r=>routeButton(r)).join('')+'<div class="row meta">Host and maintenance</div>'+['agents','services','about'].map(r=>routeButton(r)).join('')+workEntry();
+    case 'attention':return attention()||h('div',{class:'body meta'},known(view.S.projects)?'No reported questions or failures':'Status incomplete; check Services');
+    case 'settings':return f(h('div',{class:'row meta'},'Display and notices'),['appearance','cadence','notifications'].map(r=>routeButton(r)),h('div',{class:'row meta'},'Host and maintenance'),['agents','services','about'].map(r=>routeButton(r)),workEntry());
     case 'appearance':return appearance();
     case 'cadence':return history();
     case 'notifications':return notifications();
     case 'agents':return agents();
     case 'stop':return api.stopPanel();
     case 'recovery':return api.recoveryPanel();
-    case 'services':return api.operationLauncher('service',null,'Host maintenance in workspace…')+view.S.projects.map(p=>'<div class="body">'+esc(p.name)+' · '+esc(p.host||'host unknown')+'<span class="meta"> · '+esc(p.age==null?'status unknown':age(p.age)+' old')+'</span></div>'+problem(p)+incidentNotice(p)+service(p)).join('');
+    case 'services':return f(api.operationLauncher('service',null,'Host maintenance in workspace…'),view.S.projects.map(p=>[h('div',{class:'body'},p.name+' · '+(p.host||'host unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':age(p.age)+' old'))),problem(p),incidentNotice(p),service(p)]));
     case 'about':return about();
     default:return home();
   }
@@ -410,9 +415,9 @@ resourceReceipt:function(m){
   defer(fit,0);},
 capacity:function(p){if(!ports.workspace)return p.resources?api.operationLauncher('resources',p.root,'Review capacity…'):'';
   if(!p.resources)return '';
-  return '<details class="group" data-view-key="capacity:'+esc(p.root)+'"><summary>▤ Capacity <span class="meta">'+esc((p.cap_host||'this host')+' · '+TaskqResources.headline(resourceGroup(p),view.S.now))+'</span></summary><div data-resources="'+esc(p.root)+'"></div></details>';},
-workEntry:function(root){return view.S.projects.some(p=>p.resources)?'<button class="project" data-a="work"'+(root?' data-root="'+esc(root)+'"':'')+'>◎ Work mode…</button>':'';},
-workPage:function(){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0];return p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?'<div data-resources="'+esc(p.root)+'"></div>':'<div data-work></div>';},
+  return h('details',{class:'group','data-view-key':'capacity:'+p.root},h('summary',null,'▤ Capacity ',h('span',{class:'meta'},(p.cap_host||'this host')+' · '+TaskqResources.headline(resourceGroup(p),view.S.now))),h('div',{'data-resources':p.root}));},
+workEntry:function(root){return view.S.projects.some(p=>p.resources)?h('button',{class:'project','data-a':'work','data-root':root||null},'◎ Work mode…'):'';},
+workPage:function(){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0];return p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''});},
 mountResources:function(){
   const ws=menu.querySelector('[data-work]');
   if(ws){
@@ -432,13 +437,13 @@ mountResources:function(){
 },
 notifications:function(){
   const N=view.S.notify,st=N.status,line={allowed:'Allowed by the OS',blocked:'Blocked by the OS: nothing is posted','not asked':'Not asked yet: the first banner setting asks the OS',asking:'Asked: answer the OS prompt','request failed':'OS permission request failed: '+N.failure,unknown:'OS permission unknown',unsupported:'Not available on this host'}[st]||st;
-  return '<div class="body'+(st==='blocked'||st==='request failed'?' alert':' meta')+'" role="status">'+esc(line)+'</div>'+(st==='blocked'?'<button class="project" data-a="notify-os">Open OS setting ↗</button>':'')+
-    kinds.map(([k,l])=>'<div class="body">'+l+'</div><div class="options">'+modes.map(([v,m])=>'<button data-a="notify" data-kind="'+k+'" data-v="'+v+'" aria-pressed="'+(N.host[k]===v)+'">'+m+'</button>').join('')+'<button data-a="notify-test" data-kind="'+k+'"'+(st==='allowed'?'':' disabled')+'>Send test</button></div>').join('');
+  return f(h('div',{class:'body'+(st==='blocked'||st==='request failed'?' alert':' meta'),role:'status'},line),st==='blocked'&&h('button',{class:'project','data-a':'notify-os'},'Open OS setting ↗'),
+    kinds.map(([k,l])=>[h('div',{class:'body'},l),h('div',{class:'options'},modes.map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-v':v,'aria-pressed':String(N.host[k]===v)},m)),h('button',{'data-a':'notify-test','data-kind':k,disabled:st!=='allowed'},'Send test'))]));
 },
 notifyGroup:function(p){
   const N=view.S.notify.projects[p.root];if(!N)return '';
   const {name}=execution.module("tray.create.notifyGroup",{name:v=>modes.find(m=>m[0]===v)[1]});
-  return '<details class="group" data-view-key="notifications:'+esc(p.root)+'"><summary>◉ Notifications <span class="meta">'+kinds.map(([k])=>name(N[k][1])).join(' · ')+'</span></summary>'+kinds.map(([k,l])=>'<div class="body">'+l+' <span class="meta">· '+name(N[k][1])+'</span></div><div class="options">'+[['inherit','Inherit'],...modes].map(([v,m])=>'<button data-a="notify" data-kind="'+k+'" data-root="'+esc(p.root)+'" data-v="'+v+'" aria-pressed="'+((N[k][0]||'inherit')===v)+'">'+m+'</button>').join('')+'</div>').join('')+'</details>';
+  return h('details',{class:'group','data-view-key':'notifications:'+p.root},h('summary',null,'◉ Notifications ',h('span',{class:'meta'},kinds.map(([k])=>name(N[k][1])).join(' · '))),kinds.map(([k,l])=>[h('div',{class:'body'},l+' ',h('span',{class:'meta'},'· '+name(N[k][1]))),h('div',{class:'options'},[['inherit','Inherit'],...modes].map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-root':p.root,'data-v':v,'aria-pressed':String((N[k][0]||'inherit')===v)},m)))]));
 },
 openCard:function(o){
   const p=view.S&&view.S.projects.find(p=>p.root===o.root);if(!p)return;
@@ -449,34 +454,36 @@ const {find}=execution.module("tray.create.openCard.helpers",{find:()=>o.n!=null
   const el=find();
   if(el){el.scrollIntoView({block:'center'});(el.querySelector('textarea,button,a')||el).focus({preventScroll:true});}
 },
-notedCard:function(p){return view.noted&&view.noted.root===p.root?'<div class="group"><div class="row meta"><span>Notification</span></div><div data-card="'+esc(view.noted.key)+'" tabindex="-1">'+TaskqProjectBlocks.task(blockProject(p),view.noted)+'</div></div>':'';},
+notedCard:function(p){return view.noted&&view.noted.root===p.root?h('div',{class:'group'},h('div',{class:'row meta'},h('span',null,'Notification')),h('div',{'data-card':view.noted.key,tabindex:'-1'},raw(TaskqProjectBlocks.task(blockProject(p),view.noted)))):'';},
 project:function(p){
-  const ts=tasks(p);
-  return '<section class="tqp">'+TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name)+'</section><div class="body meta">'+esc(modeText(p))+'</div>'+problem(p)+incident(p,true)+incidentNotice(p)+notedCard(p)+
-  (['ask','failed','doing','review','ready','waiting','later','held'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?'<div class="group"><div class="row meta"><span>'+names[st]+'</span>'+counter(r.length,color(st),names[st])+(r.length>1?startButton(r):'')+'</div>'+r.map(t=>taskRow(t)).join('')+'</div>':'';}).join('')||'<div class="body muted">No open tasks</div>')+answerNotices(p.issues)+
-  '<div class="group">'+admission(p)+'</div>'+capacity(p)+notifyGroup(p)+workEntry(p.root)+service(p);},
+  const ts=tasks(p),counters=TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name);
+  const groups=['ask','failed','doing','review','ready','waiting','later','held'].map(st=>{const r=ts.filter(t=>t.state===st);return r.length?h('div',{class:'group',key:st},h('div',{class:'row meta'},h('span',null,names[st]),counter(r.length,color(st),names[st]),r.length>1&&startButton(r)),r.map(t=>taskRow(t))):'';}).filter(Boolean);
+  return f(h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:counters}}),h('div',{class:'body meta'},modeText(p)),problem(p),incident(p,true),incidentNotice(p),notedCard(p),
+  groups.length?groups:h('div',{class:'body muted'},'No open tasks'),answerNotices(p.issues),
+  h('div',{class:'group'},admission(p)),capacity(p),notifyGroup(p),workEntry(p.root),service(p));},
 filteredTasks:function(p){
   const ps=p?[p]:view.S.projects,selected=view.taskFilter||[],states=TaskqProjectBlocks.states;
   const rows=unique(ps.flatMap(tasks)).filter(t=>!selected.length||selected.includes(t.state));
-  return '<header class="filter-header">'+(p?'<section class="tqp">'+TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name,p.complete===true?[]:[p.name],selected,TaskqProjectBlocks.observation(view.S.projects.map(blockProject)).open)+'</section>':TaskqProjectBlocks.aggregate(ps.map(blockProject),selected))+
-    '<div class="body meta" role="status">'+esc(selected.length?states.filter(([s])=>selected.includes(s)).map(([,name])=>name).join(', '):'All states')+' · '+rows.length+' loaded'+(known(ps)?'':' · Partial')+'</div></header>'+
-    (known(ps)?'':'<div class="body meta">Partial: refresh the affected project or open its Board.</div>')+
-    (rows.filter(t=>t.state==='held').length>1?'<div class="row">'+startButton(rows)+'</div>':'')+answerNotices(p?.issues)+
-    ((!p&&!selected.length?ps.filter((p,i)=>ps.findIndex(q=>q.issues===p.issues)===i).map(p=>{
+  const listing=!p&&!selected.length?ps.filter((p,i)=>ps.findIndex(q=>q.issues===p.issues)===i).map(p=>{
       const counts=TaskqProjectBlocks.observation([blockProject(p)]).counts;
-      return Object.values(counts).some(n=>n===null||n>0)?'<section class="all-tasks-project">'+TaskqProjectBlocks.summary(blockProject(p))+tasks(p).map(t=>taskRow(t)).join('')+'</section>':'';
-    }).join(''):rows.map(t=>taskRow(t,!p)).join(''))||'<div class="body meta">'+(known(ps)?'No matching loaded tasks':'Tasks unknown')+' <button data-a="filter-reset">Reset</button></div>');
+      return Object.values(counts).some(n=>n===null||n>0)?h('section',{class:'all-tasks-project',key:p.issues},raw(TaskqProjectBlocks.summary(blockProject(p))),tasks(p).map(t=>taskRow(t))):'';
+    }).filter(Boolean):rows.map(t=>taskRow(t,!p));
+  return f(h('header',{class:'filter-header'},p?h('section',{class:'tqp',dangerouslySetInnerHTML:{__html:TaskqProjectBlocks.counters(TaskqProjectBlocks.observation([blockProject(p)]).counts,p.root,p.name,p.complete===true?[]:[p.name],selected,TaskqProjectBlocks.observation(view.S.projects.map(blockProject)).open)}}):raw(TaskqProjectBlocks.aggregate(ps.map(blockProject),selected)),
+    h('div',{class:'body meta',role:'status'},(selected.length?states.filter(([s])=>selected.includes(s)).map(([,name])=>name).join(', '):'All states')+' · '+rows.length+' loaded'+(known(ps)?'':' · Partial'))),
+    !known(ps)&&h('div',{class:'body meta'},'Partial: refresh the affected project or open its Board.'),
+    rows.filter(t=>t.state==='held').length>1&&h('div',{class:'row'},startButton(rows)),answerNotices(p?.issues),
+    listing.length?listing:h('div',{class:'body meta'},(known(ps)?'No matching loaded tasks':'Tasks unknown')+' ',h('button',{'data-a':'filter-reset'},'Reset')));
 },
 head:function(){
   const mode=view.S.size_anchor||(view.S.size?'fixed':'top'),label={fixed:'Fixed size',bottom:'Keep bottom edge',top:'Keep top edge'}[mode],p=view.S.projects?.find(p=>p.root===view.page);
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page]||'Unavailable';
-  const crumbs=p?'<a href="#" data-route="projects">Projects</a>'+((view.taskFilter||view.working)?' › <a href="#" data-route="'+esc(p.root)+'" title="'+esc(p.name)+'">'+esc(p.name)+'</a>':''):['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'<a href="#" data-route="settings">Settings</a>':'';
-  const actions=(p?.issues?'<a href="'+esc(p.issues)+'" data-url="'+esc(p.issues)+'" aria-label="Open '+esc(p.name)+' Board" title="Open Board">Board ↗</a>':'')+'<details class="shell-overflow" data-view-key="navigation-actions"><summary title="Navigation and window options" aria-label="Navigation and window options">⋯</summary><nav class="overflow-actions" aria-label="Menu"><button data-route="home" title="Home">Home</button><button data-route="settings" title="Settings">Settings</button><button data-a="workspace" title="Open workspace">Workspace</button>'+(view.S.stop_modes?'<button data-a="stop-review" title="Emergency stop">Emergency stop…</button>':'')+'<button data-a="size-anchor" title="'+label+'" aria-label="Size anchor: '+label+'">'+label+'</button><button data-a="top" aria-pressed="'+!!view.S.top+'" title="Keep above other windows" aria-label="Keep above other windows">Keep above other windows</button><button data-a="pin" aria-pressed="'+!!view.S.pinned+'" title="'+(view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window')+'" aria-label="'+(view.S.pinned?'Unpin window':'Pin window')+'">'+(view.S.pinned?'Unpin window':'Pin window')+'</button></nav></details>';
-  return shell.bar({title,crumbs,back:view.page!=='home'||!!view.taskFilter||!!view.working,actions,windows:'<button data-a="hide" title="Close window" aria-label="Close window">×</button>'});
+  const crumbs=p?[h('a',{href:'#','data-route':'projects'},'Projects'),(view.taskFilter||view.working)&&[' › ',h('a',{href:'#','data-route':p.root,title:p.name},p.name)]]:['appearance','cadence','notifications','agents','services','about'].includes(view.page)?h('a',{href:'#','data-route':'settings'},'Settings'):'';
+  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,'aria-label':'Open '+p.name+' Board',title:'Open Board'},'Board ↗'),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Navigation and window options','aria-label':'Navigation and window options'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Menu'},h('button',{'data-route':'home',title:'Home'},'Home'),h('button',{'data-route':'settings',title:'Settings'},'Settings'),h('button',{'data-a':'workspace',title:'Open workspace'},'Workspace'),view.S.stop_modes&&h('button',{'data-a':'stop-review',title:'Emergency stop'},'Emergency stop…'),h('button',{'data-a':'size-anchor',title:label,'aria-label':'Size anchor: '+label},label),h('button',{'data-a':'top','aria-pressed':String(!!view.S.top),title:'Keep above other windows','aria-label':'Keep above other windows'},'Keep above other windows'),h('button',{'data-a':'pin','aria-pressed':String(!!view.S.pinned),title:view.S.pinned?'Unpin: back to the popover':'Pin: keep open as a movable window','aria-label':view.S.pinned?'Unpin window':'Pin window'},view.S.pinned?'Unpin window':'Pin window')))];
+  return shell.bar({title,crumbs,back:view.page!=='home'||!!view.taskFilter||!!view.working,actions,windows:h('button',{'data-a':'hide',title:'Close window','aria-label':'Close window'},'×')});
 },
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
-  const firstRender=!view.html;
+  const firstRender=!view.drawn;
   const active=document.activeElement,answerFocus=active&&active.closest('[data-answer]'),scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
   const focusKey=!navigating&&active&&menu.contains(active)?JSON.stringify(active.dataset):null;
@@ -493,13 +500,10 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  const html=head()+'<div class="content"><div class="content-body">'+(view.unavailable?'<div class="body" role="status">'+esc(view.unavailable)+' The surviving destination is '+esc(title)+'.</div>':'')+actionNotices()+(settingsError?'<div class="body alert" role="alert">Settings unknown: '+esc(settingsError)+(view.persistenceError?'':'; defaults shown')+'</div>':'')+(view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())+'</div></div><div class="grip" data-resize="" role="button" aria-label="Resize window with arrow keys" title="Resize window with arrow keys" tabindex="0"></div>'+answerToast();
-  // #1430: an unchanged refresh leaves the menu alone; a rebuild replaced the textarea being typed in and its edits
-  // landed on the detached node. Mounted cards still take the new rows and repaint only what changed.
-  if(!navigating&&html===view.html){mountAnswers();mountResources();viewState.restore(open);viewState.flush();return;}
-  renderer??=shell.create(menu);
-  renderer.draw(html,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
-  view.html=html;
+  const tree=[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Resize window with arrow keys',tabindex:'0'}),answerToast()];
+  // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
+  renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
+  view.drawn=true;
   if(navigating)menu.querySelector('.shell-overflow')?.removeAttribute('open');
   mountAnswers();mountResources();
   menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','agents','services','attention'].includes(view.page));
@@ -550,7 +554,7 @@ receive:function(s){
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
   viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
   // snapshot mode names the page
-  if(s.page!==undefined&&s.page!==view.page){view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;trail.length=0;view.disclosures={};present(true);return;}
+  if(s.page!==undefined&&s.page!==view.page){view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;renderer.clear();view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
   if(document.activeElement&&(document.activeElement.dataset.draft||document.activeElement.dataset.rscField||document.activeElement.dataset.recoveryEvidence||document.activeElement.id==='ai'))return;
   refresh(performance.now());
@@ -643,12 +647,13 @@ const TaskqAnswerCard=require('./answer-card.js'),TaskqResources=require('./reso
 const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
-let renderer=null;
+const renderer=shell.create(menu);
 const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later',held:'Held'};
 const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'work',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
 const periods={'5m':'5 min','1h':'Hour','1d':'Day','1w':'7 days','1mo':'30 days',custom:'Custom'};
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
-const {esc}=execution.module("tray.create",{esc:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))});
+// Pages are Preact vnodes; shared module HTML enters only as an island the module owns.
+const {f,raw,lines}=execution.module("tray.create",{f:(...children)=>h(Fragment,null,...children),raw:html=>html?h('div',{style:'display:contents',dangerouslySetInnerHTML:{__html:html}}):'',lines:items=>items.flatMap((x,i)=>i?[h('br'),x]:[x])});
 
 // measure at the target width: after a font change the window still has the old width, so text wraps differently
 // g: this renderer's scrollbar width; a menu taller than its window scrolls and the window adds it (#1073)
@@ -663,7 +668,7 @@ const actionErrors=new Map();
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
 const routes={recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
-const trail=[];
+const trail=renderer.entries();
 const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail,routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:['appearance','cadence','notifications','agents','services','about'].includes(page)?'settings':'home'}]))});
 
 
@@ -731,7 +736,7 @@ const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and
 
 // Capacity (taskq.md § 4): the shared resource controls (docs/design/shared-resource-controls.md) over the tray's
 // taskq.resources/1 projection; this adapter only maps an operation onto `service capacity` and its receipt
-const {workPageFor}=execution.module('tray.operations',{workPageFor:p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?'<div data-resources="'+esc(p.root)+'"></div>':'<p role="status">Legacy capacity editor unavailable; refresh host status.</p>'});
+const {workPageFor}=execution.module('tray.operations',{workPageFor:p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.')});
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
 

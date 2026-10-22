@@ -49,14 +49,17 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   console.log('PASS G01/G02: fixed Back and reachable Back/Close at 320px / 200% text');
   const tray=await browser.newPage({viewport:{width:320,height:600}});
   await tray.setContent(fs.readFileSync('build/web/tray.html','utf8'));
-  await tray.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
+  // Reviewer #1470: the tray renders route components; any HTML template parse means the string adapter came back.
+  await tray.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};window.parses=0;const d=Object.getOwnPropertyDescriptor(Element.prototype,'innerHTML');Object.defineProperty(HTMLTemplateElement.prototype,'innerHTML',{set(v){parses++;d.set.call(this,v);},get(){return d.get.call(this);}});});
   await tray.evaluate(s=>taskq.receive(s),snapshot);
   assert.equal(await tray.evaluate(()=>document.activeElement.tagName),'H1','first tray entry focuses its route heading');
   assert.equal(await tray.locator('h1').evaluate(e=>getComputedStyle(e).outlineStyle),'none','TW1: programmatic heading focus has no box');
   await tray.evaluate(()=>taskq.receive({workspaceError:'Invented construction failure'}));assert.match(await tray.locator('[role=alert]').innerText(),/construction failure/);
   await tray.evaluate(()=>taskq.receive({workspaceError:null}));assert.equal(await tray.locator('[role=alert]').count(),0,'successful workspace retry clears its construction error');
   await tray.locator('[data-route=projects]').first().focus();await tray.locator('[data-route=projects]').first().click();
-  await tray.locator('[data-a=back]').click();assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
+  const shellRoute=()=>tray.locator('[data-shell-route]').evaluate(e=>e.dataset.shellRoute+' '+e.dataset.shellDepth);assert.equal(await shellRoute(),'/projects 2','A3: navigation pushes a Wouter history entry');
+  await tray.locator('[data-a=back]').click();assert.equal(await shellRoute(),'/home 1','A3: Back pops the Wouter history entry');assert.equal(await tray.evaluate(()=>document.activeElement.dataset.route),'projects','V06: restore the invoking control');
+  assert.equal(await tray.evaluate(()=>parses),0,'tray pages render as Preact route components without template parsing');
   await tray.locator('.shell-overflow > summary').click();await tray.locator('[data-route=settings]').click();
   await tray.locator('[data-route=appearance]').click();assert.equal(await tray.locator('.breadcrumbs').innerText(),'Settings','TW1: omit the current settings page from breadcrumbs');
   assert.equal(await tray.locator('.breadcrumbs a').count(),1,'TW1: each ancestor segment stays linked');

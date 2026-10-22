@@ -1,5 +1,5 @@
 'use strict';
-const ui=require('./ui-runtime.js'),shell=require('./app-shell.js'),{signal}=require('@preact/signals'),{execution}=ui;
+const ui=require('./ui-runtime.js'),shell=require('./app-shell.js'),{h}=require('preact'),{signal}=require('@preact/signals'),{execution}=ui;
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null),esc=shell.escape;
@@ -58,7 +58,7 @@ const {create}=execution.module('workspace',{
      (r?'<section aria-label="Latest native request"><p>Request · '+esc(r.kind||'unknown')+'</p><p>'+esc(r.reason||r.next||'Request state unknown; inspect the native runtime before retrying.')+'</p>'+(r.url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(r.url)?'<a data-url="'+esc(r.url)+'" href="'+esc(r.url)+'">Open session</a>':'')+'</section>':'');
    },
    body:function(){
-    if(view.page==='operations')return operations.operationBody(view.operation);
+    if(view.page==='operations')return shell.html(operations.operationBody(view.operation));
     if(view.page==='message')return api.messageDetail();
     if(view.page==='request')return api.request();
     if(view.page==='answer'){
@@ -77,8 +77,8 @@ const {create}=execution.module('workspace',{
    draw:function(){
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
-    const actions='<button data-a="refresh" title="Refresh workspace status" aria-label="Refresh workspace status">Refresh</button><details class="shell-overflow" data-view-key="navigation-actions"><summary title="Workspace navigation" aria-label="Workspace navigation">⋯</summary><nav class="overflow-actions" aria-label="Workspace"><button data-route="messages">Messages</button><button data-route="request">New AI request</button><button data-route="sessions">Work sessions</button><button data-route="agents">Agent settings</button></nav></details>';
-    renderer.draw(shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:'<button data-a="hide" title="Close workspace" aria-label="Close workspace">×</button>'})+'<main class="content"><div class="content-body">'+(view.unavailable?'<p role="status">'+esc(view.unavailable)+' The surviving destination is Messages.</p>':'')+(s?api.body():'<p>Loading workspace. Refresh if status does not arrive.</p>')+[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>'<p role="alert">'+esc(error)+'</p>').join('')+'<p class="meta" role="status" aria-live="polite" aria-atomic="true" data-status="workspace">'+esc(view.messageNotice||view.notice||'')+'</p></div></main>'+answers.answerToast(),'/'+view.page);
+    const actions=[h('button',{'data-a':'refresh',title:'Refresh workspace status','aria-label':'Refresh workspace status'},'Refresh'),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Messages'],['request','New AI request'],['sessions','Work sessions'],['agents','Agent settings']].map(([route,label])=>h('button',{'data-route':route},label))))];
+    renderer.draw(shell.html(shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:h('button',{'data-a':'hide',title:'Close workspace','aria-label':'Close workspace'},'×')}))+'<main class="content"><div class="content-body">'+(view.unavailable?'<p role="status">'+esc(view.unavailable)+' The surviving destination is Messages.</p>':'')+(s?api.body():'<p>Loading workspace. Refresh if status does not arrive.</p>')+[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>'<p role="alert">'+esc(error)+'</p>').join('')+'<p class="meta" role="status" aria-live="polite" aria-atomic="true" data-status="workspace">'+esc(view.messageNotice||view.notice||'')+'</p></div></main>'+answers.answerToast(),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     state.flush();
