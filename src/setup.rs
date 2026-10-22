@@ -275,7 +275,7 @@ pub fn codex_launch(own: &Path, r: &Request) -> Launched {
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = crate::runtime::Env { root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[] };
+    let env = crate::runtime::Env { root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = match crate::runtime::access(&env, a.setup) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -325,7 +325,7 @@ pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = crate::runtime::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[] };
+    let env = crate::runtime::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
     let access = match crate::runtime::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }

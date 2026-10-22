@@ -2452,7 +2452,7 @@ mod tests {
         c.install = std::env::temp_dir().join(format!("taskq-claude-{}", std::process::id()));
         std::fs::create_dir_all(&c.install).unwrap();
         crate::policy::grant(&c.install, "claude", "full", None, "op", 1).unwrap();
-        let env = Env { root: &c.root, exe: std::path::Path::new("taskq"), install: &c.install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[] };
+        let env = Env { root: &c.root, exe: std::path::Path::new("taskq"), install: &c.install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let b = Fake::default();
         let n = b.create("Exit qualification", "", &["taskq".into()]).unwrap();
         let a = b.comment(n, "taskq: spawn worker claude:invented win").unwrap();

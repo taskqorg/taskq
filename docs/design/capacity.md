@@ -166,6 +166,15 @@ Local CLI writes print the original observed-receipt ID and distinguish saved se
 
 A runtime whose CLI does not resolve on the service PATH admits no claim, resume or reviewer and reads as capacity reason `access` (`<cli> CLI not found on the service PATH`). On Linux every taskq process first appends an existing `~/.local/bin` to PATH, so `service install` writes it into the systemd unit and a service under an older unit still finds CLIs installed there (#1393).
 
+## Compile jobs
+
+Parallel workers on one host share its CPUs for Rust builds. Each cargo run defaults to one compile job per CPU, so N workers building at once start N × CPUs jobs, thrash, and keep the load gate held (taskq.md § 3).
+
+- Each worker and reviewer launch under host admission gets `CARGO_BUILD_JOBS` = host CPUs (`available_parallelism`) / occupied host slots, this launch included, at least 1 (taskq.md § 8). Example: 16 CPUs, 4 occupied slots: 4 jobs.
+- The share is fixed at launch: a worker that started alone keeps its larger share. Codex gets a new share on each resume; a Claude session keeps its first launch's share, because its settings `env` survives resume. Unknown CPU count sets nothing.
+- Capacity limits, `admission.max`, `cpu_max` and `memory_min` are unchanged; the bound only spreads compile jobs.
+- Codex app turns run in the app's process and receive no launch environment, so they are not bounded.
+
 ## Usage limit
 
 A worker or reviewer whose runtime reports a usage or quota limit before any work starts ends with `usage-limit attempt <id>` (taskq.md § 2) instead of a plain `gone`:

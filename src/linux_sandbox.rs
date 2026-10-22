@@ -184,7 +184,7 @@ mod tests {
                 } else { std::thread::sleep(std::time::Duration::from_millis(10)); }
             }
         });
-        let env = Env { root: &root, install: &install, exe: &exe, codex: &codex, permission_mode: "dontAsk", publish: "pr", board_env: &[] };
+        let env = Env { root: &root, install: &install, exe: &exe, codex: &codex, permission_mode: "dontAsk", publish: "pr", board_env: &[], jobs: None };
         std::fs::create_dir_all(root.join(".codex")).unwrap();
         std::fs::create_dir_all(root.join(".taskq")).unwrap();
         let canaries = [root.parent().unwrap().join("outside.txt"), install.join("canary.txt"), root.join(".codex/canary.toml")];
