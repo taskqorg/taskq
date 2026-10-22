@@ -444,6 +444,9 @@ fn project(install: &Path, root: &str) -> Value {
         Err(e) => (Value::Null, Some(e)),
     };
     let age = crate::file_age(&d.join("status.json"));
+    // #1591: one freshness rule; the page gets `live` and `ttl`, never a literal
+    let ttl = crate::snapshot::ttl(r);
+    let live = age.is_some_and(|a| crate::snapshot::live(a as i64, ttl));
     let saved = fs::read_to_string(d.join("focus.paused")).is_ok_and(|f| !matches!(f.trim(), "" | "off"));
     let text = fs::read_to_string(d.join("events")).unwrap_or_default();
     let since = text.lines().next().and_then(|l| l.strip_prefix("since ")?.parse::<i64>().ok());
@@ -458,22 +461,37 @@ fn project(install: &Path, root: &str) -> Value {
         Err(e) => (Value::Null, json!({"error": e}), Value::Null,Value::Null, Value::Null),
     };
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
+    let (hosts, tasks_live) = liveness(&s, age, ttl, &mut tasks);
     let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
     for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task); }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
     let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
-    let observed_at=s["at"].as_i64().filter(|at|*at<=now()&&now()-*at<=60).and(age.map(|a|now()-a as i64));
+    let observed_at=s["at"].as_i64().filter(|at|crate::snapshot::live(now()-*at,ttl)).and(age.map(|a|now()-a as i64));
     let resources = resource_group(&s["capacity"], &cap_saved,&cap_revision, &project_limits, observed_at, installation, &id);
     json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(r)),
         "issues": s["issues"].as_str().unwrap_or(""), "board_kind": board_kind,
         "delivery": crate::load(r).ok().map(|(c,_)|json!({"preset":c.delivery,"revision":c.delivery_revision})),
-        "log": s["log"].is_string(), "alive": age.is_some_and(|a| a < 300), "age": age,
-        "complete": crate::snapshot::complete(&s) && age.is_some_and(|a| a < 300),
+        "log": s["log"].is_string(), "alive": live, "age": age, "ttl": ttl,
+        "complete": crate::snapshot::complete(&s) && live,
         "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::status_labels(r),
         "focus_command": s["focus_command"],"service_pid":s["pid"],"host_instance":s["host_instance"],"restart_waits":s["restart_waits"],"stop_progress":s["stop_progress"],"uninstall_review":crate::lifecycle::uninstall_review(install,"review",Some(r)).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})), "request": s["request"], "since": since, "events": events, "tasks": tasks, "host": s["host"], "version": s["version"], "update": s["update"],
-        "hosts": s["hosts"], "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
+        "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO})
+}
+
+/// #1591: the page gets each observation's live state from the one Rust rule. Task, host and execution rows age by
+/// the board read (`tasks_age_seconds`) plus the `status.json` file age `age`.
+fn liveness(s: &Value, age: Option<u64>, ttl: i64, tasks: &mut [Value]) -> (Value, bool) {
+    let elapsed = age.zip(s["tasks_age_seconds"].as_i64()).map(|(a, t)| a as i64 + t);
+    let row_live = |row: &mut Value, at: &str| if let Some(o) = row.as_object_mut() {
+        let l = elapsed.zip(s["observed"].as_i64()).zip(o.get(at).and_then(Value::as_i64)).is_some_and(|((e, obs), at)| crate::snapshot::live(obs - at + e, ttl));
+        o.insert("live".into(), json!(l));
+    };
+    let mut hosts = s["hosts"].clone();
+    for h in hosts.as_array_mut().into_iter().flatten() { row_live(h, "updated"); }
+    for x in tasks.iter_mut().filter_map(|t| t.get_mut("executions").and_then(Value::as_array_mut)).flatten() { row_live(x, "observed"); }
+    (hosts, elapsed.is_some_and(|e| crate::snapshot::live(e, ttl)))
 }
 
 fn now() -> i64 {
@@ -2736,6 +2754,25 @@ mod tests {
         fs::remove_dir_all(install).unwrap();
     }
 
+    // #1591 A3: an observation 61-299 s old reads live in the tray, as in the CLI (`snapshot::live`); older than ttl stale.
+    // Risk: a 60 s literal in the tray marks a live service unknown between idle passes.
+    #[test]
+    fn tray_and_cli_share_the_ttl_freshness_rule() {
+        let s = json!({"observed": 1000, "tasks_age_seconds": 0, "hosts": [{"name": "mac", "updated": 1000}, "bad"],
+            "tasks": [{"n": 1, "executions": [{"id": 7, "observed": 1000}]}]});
+        for (age, live) in [(0, true), (61, true), (299, true), (300, true), (301, false)] {
+            let mut tasks = s["tasks"].as_array().cloned().unwrap();
+            let (hosts, tasks_live) = liveness(&s, Some(age), 300, &mut tasks);
+            assert_eq!((tasks_live, hosts[0]["live"].clone(), tasks[0]["executions"][0]["live"].clone()), (live, json!(live), json!(live)), "{age} s");
+            assert_eq!(crate::snapshot::live(age as i64, 300), live, "CLI {age} s");
+            assert_eq!(hosts[1], "bad");
+        }
+        let mut tasks = vec![];
+        assert!(!liveness(&json!({"observed": 1000}), Some(1), 300, &mut tasks).1, "missing task age is stale");
+        assert!(!liveness(&s, None, 300, &mut tasks).1, "missing status file is stale");
+        assert!(!crate::snapshot::live(-1, 300), "a future observation is stale");
+    }
+
     // Chain: tray project page and settings. Risk: corrupt status.json or tray.json reads as zero/default and is reset
     #[test]
     fn corrupt_status_and_tray_json_read_unknown_and_stay() {
@@ -2748,8 +2785,11 @@ mod tests {
             "tasks":[{"n":1,"executions":[{"id":7,"role":"worker","runtime":"codex","state":"running"}]}]});
         fs::write(crate::dot(&root).join("status.json"),status.to_string()).unwrap();
         let projected=project(&root,root.to_str().unwrap());
-        for key in ["observed","tasks_age_seconds","hosts","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
-        assert_eq!(projected["tasks"][0]["executions"],status["tasks"][0]["executions"]);
+        for key in ["observed","tasks_age_seconds","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
+        // #1591: rows keep every observed field and gain only the computed `live`
+        let strip=|v:&Value|{let mut v=v.clone();for r in v.as_array_mut().into_iter().flatten(){r.as_object_mut().unwrap().remove("live");}v};
+        assert_eq!(strip(&projected["hosts"]),status["hosts"]);
+        assert_eq!(strip(&projected["tasks"][0]["executions"]),status["tasks"][0]["executions"]);
         assert_eq!(projected["tasks"][0]["local_session"],false);
         fs::write(crate::dot(&root).join("status.json"), "{\"tasks\": [{\"n\": 1").unwrap();
         let p = project(&root, root.to_str().unwrap());

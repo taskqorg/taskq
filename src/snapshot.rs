@@ -9,6 +9,16 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
 pub const SCHEMA: u64 = 1;
+
+/// #1591 the one freshness rule (§ 3 lease, § 4 status, R6) for CLI, tray and menu: an observation `age` seconds old
+/// is live within the project ttl, else stale; a negative age (clock skew) is stale.
+pub fn live(age: i64, ttl: i64) -> bool { (0..=ttl).contains(&age) }
+
+/// The project ttl of `root`; an unreadable config uses the default.
+pub fn ttl(root: &std::path::Path) -> i64 { crate::load(root).map_or(crate::TTL, |(c, _)| c.ttl) }
+
+/// A `status.json` file at `path` is live when its file age passes [`live`].
+pub fn status_live(path: &std::path::Path, ttl: i64) -> bool { crate::file_age(path).is_some_and(|a| live(a as i64, ttl)) }
 /// Every open state; `totals` names each one, zero included.
 pub const STATES: [&str; 8] = ["held", "ready", "waiting", "doing", "review", "ask", "later", "failed"];
 /// What a reader finds in a snapshot of each source.
@@ -32,7 +42,7 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
     let owners:Vec<_>=hosts.iter().filter(|h|h.trusted && h.title==format!("taskq host {}",x.host)).collect();
     let mut observed=None;
     if let [host]=owners[..] {
-        if (0..=ttl).contains(&(now-host.updated)) {
+        if live(now-host.updated,ttl) {
             let rows=host.body.lines().filter_map(|l|l.strip_prefix("execution ")).map(|text| {
                 if text.len()>4096 {return Err("oversized execution status".to_string());}
                 serde_json::from_str::<ExecutionStatus>(text).map_err(|e|e.to_string())
@@ -99,7 +109,7 @@ pub const STUCK_AFTER: i64 = 2 * 3600;
 pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, hosts: &[board::Issue], now: i64, ttl: i64) -> Option<i64> {
     let age = now - last;
     // § 3 lease: a fresh heartbeat lists `#<N> <attempt>`
-    let leased = || t.attempt.is_some_and(|a| hosts.iter().any(|h| h.trusted && now - h.updated < ttl && h.body.lines().any(|l| l == format!("#{n} {a}"))));
+    let leased = || t.attempt.is_some_and(|a| hosts.iter().any(|h| h.trusted && live(now - h.updated, ttl) && h.body.lines().any(|l| l == format!("#{n} {a}"))));
     match t.state {
         State::Waiting => deps.iter().all(|b| b.reason.starts_with("unknown: closed")),
         State::Held | State::Ask | State::Later => age >= STUCK_AFTER,
@@ -542,7 +552,7 @@ mod tests {
         }
         // a doing attempt its fresh heartbeat lists is leased; a stale heartbeat or another attempt is not
         assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(10)]), None);
-        assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(300)]), Some(3 * STUCK_AFTER));
+        assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(301)]), Some(3 * STUCK_AFTER)); // #1591: live through ttl, stale after it
         assert_eq!(at(&t(State::Doing, Some(6)), &[], 3 * STUCK_AFTER, &[beat(10)]), Some(3 * STUCK_AFTER));
         for s in [State::Ready, State::Review, State::Failed] {
             assert_eq!(at(&t(s, None), &[], 3 * STUCK_AFTER, &[]), None, "{s:?} never");

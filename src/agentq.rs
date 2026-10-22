@@ -1,5 +1,5 @@
 //! Optional agentq onboarding (taskq.md § 4): bounded native readback, host preference and shared setup requests.
-use std::{fs, io::Read, path::{Path,PathBuf}, sync::{Arc,Mutex,OnceLock}, time::{Duration,Instant,SystemTime}};
+use std::{fs, io::Read, path::{Path,PathBuf}, sync::{Arc,Mutex,OnceLock}, time::{Duration,SystemTime}};
 use serde::{Deserialize,Serialize};
 use serde_json::{Value,json};
 use crate::Res;
@@ -144,13 +144,17 @@ static CACHE:OnceLock<Arc<Mutex<Value>>>=OnceLock::new();
 pub fn start(install:&Path) {
     CACHE.get_or_init(||{
         let cache=Arc::new(Mutex::new(unknown("agentq readback pending")));let output=cache.clone();let install=install.to_path_buf();
+        // #1591: the runtime probe (about 1 s, longer under load) runs on its own thread so it never delays the readback stamp
+        let choices=Arc::new(Mutex::new(Value::Null));
+        {let choices=choices.clone();let install=install.clone();std::thread::spawn(move||loop{
+            let rows=runtimes(&install);*choices.lock().unwrap()=rows;std::thread::sleep(Duration::from_secs(300));
+        });}
         std::thread::spawn(move||{
-            let mut choices=Value::Null;let mut checked=None;let mut warning=false;
+            let mut warning=false;
             loop {
                 let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::hostname());v["platform"]=json!(std::env::consts::OS);
-                v["targets"]=crate::runtime::setup_runtimes().map(|rt|(rt.to_string(),json!(targets(rt).ok()))).collect::<serde_json::Map<_,_>>().into();v["runtimes"]=choices.clone();
+                v["targets"]=crate::runtime::setup_runtimes().map(|rt|(rt.to_string(),json!(targets(rt).ok()))).collect::<serde_json::Map<_,_>>().into();v["runtimes"]=choices.lock().unwrap().clone();
                 *output.lock().unwrap()=v;
-                if checked.is_none_or(|t:Instant|t.elapsed()>=Duration::from_secs(300)){choices=runtimes(&install);checked=Some(Instant::now());}
                 std::thread::sleep(Duration::from_secs(2));
             }
         });cache
