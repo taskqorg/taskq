@@ -1,6 +1,6 @@
 {
   "task": 1598,
-  "base": "d5ec8616999e2d0c6eabd4bcfa523ec183914e12",
+  "base": "dd8dcf3b7d1f0f88ac1b0a72faa7a701edbf02e4",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -12,7 +12,7 @@
   "sourceBlobs": {
     "src/icon.rs": "46395f38dcca4c8e46a35f6677ed4b70d4af732b",
     "src/tray.rs": "ba75923dae192e8a1a7c63ee6d0e19d8f96d1b00",
-    "src/main.rs": "89f578ac6cf3bc50ce859ee7a3edb86ae94ee03d",
+    "src/main.rs": "ffdfe20db0e0c4e065d1680b45eed36b30e61984",
     "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
     "tests/fixtures/icon-history/capture.swift": "64ed407e07ed5b1733822ef88e1d7599b1c1be3c"

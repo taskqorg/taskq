@@ -1,6 +1,6 @@
 # #1598 native icon candidate
 
-Status: implemented; owner visual acceptance is pending (A8). R13 amends Product and the linked I1–I6, R-UI4/R-UI5, M1/M6 and Custom compatibility pages. R8/R12 and § 7 keep source checks, native rendering, publication and installation separate.
+Status: implemented; the owner [accepted the visuals, including existing pause masking](https://github.com/taskqorg/taskq/issues/1598#issuecomment-6346651808) (A8). R13 amends Product and the linked I1–I6, R-UI4/R-UI5, M1/M6 and Custom compatibility pages. R8/R12 and § 7 keep source checks, native rendering, publication and installation separate.
 
 ## Owner review
 
@@ -31,11 +31,13 @@ Checked visually: six separated columns; equal quantities have equal heights; ze
 - `tray::tests::approved_real_history_fixtures_use_one_six_bin_svg`: event identities, half-open bounds, real counts, missing sources, canonical browser/native chart groups and frozen counter identities pass.
 - `node tests/tray-history.browser.cjs`: six original SVG groups, exact/incomplete detail, click/keyboard selection, refresh identity, themes/DPR, zero visibility and picker/Custom removal pass.
 - Native WebKit: all eight frozen views captured successfully; six are retained in the bounded review set. The ordinary isolated `taskq tray --snapshot` also completed its icon/project matrix; temporary fixture data never changed the installed service.
-- `python3 scripts/check.py --base origin/main`: **sandbox-blocked**, not PASS. Rust: 477 passed, 18 host-authority failures under the worker context, 34 ignored; 102.953 s. Explicit refusals include host install, policy edits and Stop. Permissions and assertions were not changed; integration tests were not reached. Publication still requires green `merge_group` CI.
+- `python3 scripts/check.py --base origin/main`: **sandbox-blocked**, not PASS. After rebasing: Rust 479 passed, 18 host-authority failures under the worker context, 34 ignored; gate 200.939 s / 900 s. Explicit refusals include host install, policy edits and Stop. Permissions and assertions were not changed; integration tests were not reached. Publication still requires green `merge_group` CI.
 - All Node component checks pass. A dependent source-provenance hash failed after the approved palette/document change; its input hash was refreshed with the assertions retained.
 - Isolated offline selftest: 97 golden traces and formats pass; staged capture commits; board read intentionally unknown.
 - `docs/shots/update.sh` completed on macOS 27.0.1 from `66237b3f`; the actual status-slot export is 34 pt at DPR 2 (68 × 68 px). The sheets also show the approved 22/33 pt reference exports.
 
 Recreate canonical fixtures with `TASKQ_ICON_EVIDENCE=tests/fixtures/icon-history cargo +stable test --locked --bin taskq tray::tests::approved_real_history_fixtures_use_one_six_bin_svg`. Normal tests compare the saved bins, peak, palette and chart groups against the current renderer. Then run `npm run build`, compile `tests/fixtures/icon-history/capture.swift` with `swiftc`, and pass the repository root and a new output directory to that instrument. Passing size-matrix PNGs are not committed as extra review screens.
 
-Open under R12: owner acceptance; Windows native appearance/slot qualification; real OS menu-bar translucency/notch placement and Dock presentation. Source/native WebKit/export evidence does not qualify those shell effects. No installation, service, queue or runtime-policy change was made.
+The accepted images remain unchanged after rebasing onto `dd8dcf3b`; renderer, tray, web sources and bundled-page hashes are identical. The `src/main.rs` source pin now includes upstream lifecycle changes outside the rendering path. The original README capture receipt remains tied to its captured source commit.
+
+Open under R12: Windows native appearance/slot qualification; real OS menu-bar translucency/notch placement and Dock presentation. Source/native WebKit/export evidence does not qualify those shell effects. No installation, service, queue or runtime-policy change was made by this task.
