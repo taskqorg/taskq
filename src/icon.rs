@@ -1,108 +1,23 @@
-//! The shared icon renderer (§ 4, docs/design/custom-icon.md CI1): Summary is the built-in configuration
-//! `docs/design/icon-summary.config.json`; Custom uses the same schema, `validate` and `render`. The compact q stays its
-//! own approved asset. Layout mirrors `paint` of docs/design/custom-icon.html in physical pixels.
+//! Canonical six-bin Summary SVG (I1–I6 / R-UI4/R-UI5). Compact Q keeps its approved raster asset.
 
-use serde_json::Value;
+use serde::{Serialize, Deserialize};
+use std::fmt::Write;
 
-/// The built-in Summary configuration (CI1: immutable, versioned).
-pub const SUMMARY: &str = include_str!("../docs/design/icon-summary.config.json");
-
-pub fn summary() -> Value {
-    serde_json::from_str(SUMMARY).expect("icon-summary.config.json")
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct Bin {
+    pub start: f64,
+    pub end: f64,
+    pub counts: [u32; 4],
+    pub missing: Vec<String>,
+    pub ongoing: bool,
 }
+impl Bin { pub fn complete(&self) -> bool { self.missing.is_empty() } }
 
-const VERSION: u64 = 1;
-const FONTS: [&str; 2] = ["System", "Mono"];
-const BINDS: [&str; 5] = ["work", "ask", "ready", "failed", "ready_blocked"];
-const SERIES: [&str; 4] = ["closed", "failed", "ask", "blocked"];
-
-/// Every schema error of a draft, one per field (CI2 Validate); empty: valid.
-pub fn validate(c: &Value) -> Vec<String> {
-    let Some(o) = c.as_object() else { return vec!["config: not an object".into()] };
-    let mut err = vec![];
-    if c["version"].as_u64() != Some(VERSION) {
-        err.push(format!("version: {} unsupported, want {VERSION}", c["version"]));
-    }
-    for k in o.keys().filter(|k| !["version", "font", "gap", "elements", "empty"].contains(&k.as_str())) {
-        err.push(format!("{k}: unknown field"));
-    }
-    if c.get("empty").is_some() && c["empty"] != "compact" { err.push("empty: want compact".into()); }
-    if !c["font"].as_str().is_some_and(|f| FONTS.contains(&f)) {
-        err.push(format!("font: {} unsupported, want one of {FONTS:?}", c["font"]));
-    }
-    if !c["gap"].as_u64().is_some_and(|g| g <= 2) {
-        err.push(format!("gap: {} unsupported, want 0, 1 or 2", c["gap"]));
-    }
-    let Some(es) = c["elements"].as_array().filter(|es| (1..=8).contains(&es.len())) else {
-        err.push("elements: want 1 to 8 elements".into());
-        return err;
-    };
-    let mut cells: Vec<(usize, [f64; 4])> = vec![];
-    for (i, e) in es.iter().enumerate() {
-        let at = format!("elements[{i}]");
-        let Some(eo) = e.as_object() else {
-            err.push(format!("{at}: not an object"));
-            continue;
-        };
-        for k in eo.keys().filter(|k| !["id", "type", "bind", "cell", "align", "vertical", "period", "series", "hide_zero", "color"].contains(&k.as_str())) {
-            err.push(format!("{at}.{k}: unknown field"));
-        }
-        match e["id"].as_str() {
-            None => err.push(format!("{at}.id: want a string")),
-            Some(id) if es[..i].iter().any(|o| o["id"] == id) => err.push(format!("{at}.id: duplicate {id}")),
-            _ => {}
-        }
-        let cell: Option<Vec<f64>> = e["cell"].as_array().filter(|a| a.len() == 4).and_then(|a| a.iter().map(Value::as_f64).collect());
-        match cell {
-            Some(v) if v.iter().all(|x| (0.0..=1.0).contains(x)) && v[2] > 0.0 && v[3] > 0.0 && v[0] + v[2] <= 1.0 && v[1] + v[3] <= 1.0 => {
-                let v = [v[0], v[1], v[2], v[3]];
-                for (j, o) in &cells {
-                    if v[0] < o[0] + o[2] && o[0] < v[0] + v[2] && v[1] < o[1] + o[3] && o[1] < v[1] + v[3] {
-                        err.push(format!("{at}.cell: overlaps elements[{j}]"));
-                    }
-                }
-                cells.push((i, v));
-            }
-            _ => err.push(format!("{at}.cell: want [x, y, w, h] inside the square with w, h > 0")),
-        }
-        let one = |k: &str, allowed: &[&str], err: &mut Vec<String>| {
-            if !e[k].as_str().is_some_and(|v| allowed.contains(&v)) {
-                err.push(format!("{at}.{k}: {} unsupported, want one of {allowed:?}", e[k]));
-            }
-        };
-        match e["type"].as_str() {
-            Some("counter") => {
-                one("bind", &BINDS, &mut err);
-                if e.get("hide_zero").is_some_and(|v| !v.is_boolean()) { err.push(format!("{at}.hide_zero: want a boolean")); }
-                if e.get("color").is_some() { one("color", &["work", "ask", "ready", "failed"], &mut err); }
-                one("align", &["left", "center", "right"], &mut err);
-                one("vertical", &["top", "center", "bottom"], &mut err);
-            }
-            Some("histogram") => {
-                one("period", &["24h"], &mut err);
-                if e["series"] != serde_json::json!(SERIES) {
-                    err.push(format!("{at}.series: want {SERIES:?}"));
-                }
-            }
-            _ => err.push(format!("{at}.type: {} unsupported, want counter or histogram", e["type"])),
-        }
-    }
-    err
-}
-
-/// What the icon shows: counts by bind name (None: unknown, drawn as a dash), 12 history bins of the last 24 h
-/// (close, failed, ask, blocked; oldest first) and whether every project is paused.
 pub struct Data {
     pub counts: [Option<usize>; 4],
     pub blocked: Option<usize>,
-    pub bins: Vec<[u32; 4]>,
+    pub bins: Vec<Bin>,
     pub paused: bool,
-}
-
-/// R-UI5: largest fitting divisor; every source bin and series survives aggregation.
-fn history_rows(bins: &[[u32; 4]], width: i32) -> Vec<[u32; 4]> {
-    let Some(count) = [12, 6, 4, 3, 2, 1].into_iter().find(|b| 5 * b - 1 <= width) else { return Vec::new() };
-    bins.chunks(12 / count as usize).map(|group| std::array::from_fn(|k| group.iter().map(|row| row[k]).sum())).collect()
 }
 
 /// An RGBA image, `s` pixels per point of the 22 pt reference drawing.
@@ -157,15 +72,6 @@ impl Rgba {
         }
     }
 
-    /// Paint whole pixels `[x0, x1) × [y0, y1)`: chart fills snap to physical pixels once (I6).
-    fn pixels(&mut self, rgb: [u8; 4], x0: i32, y0: i32, x1: i32, y1: i32) {
-        for y in y0.max(0)..y1.min(self.h as i32) {
-            for x in x0.max(0)..x1.min(self.w as i32) {
-                self.blend(x as u32, y as u32, rgb, 1.0);
-            }
-        }
-    }
-
     pub fn png(&self) -> Vec<u8> {
         let mut out = vec![];
         let mut e = ::png::Encoder::new(&mut out, self.w, self.h);
@@ -189,19 +95,17 @@ fn rrect(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> impl Fn(f32, f32) -> boo
 }
 
 pub struct Palette {
-    pub ink: [u8; 4],
-    pub work: [u8; 4],
-    pub ask: [u8; 4],
-    pub muted: [u8; 4],
-    pub failed: [u8; 4],
+    pub ink: [u8;4], pub work: [u8;4], pub ask: [u8;4], pub muted: [u8;4], pub failed: [u8;4],
 }
-
 pub fn palette(dark: bool) -> Palette {
-    if dark {
-        Palette { ink: [236, 239, 242, 255], work: [119, 205, 179, 255], ask: [237, 185, 147, 255], muted: [180, 189, 200, 255], failed: [239, 137, 150, 255] }
-    } else {
-        Palette { ink: [37, 41, 48, 255], work: [35, 120, 98, 255], ask: [163, 92, 41, 255], muted: [98, 107, 119, 255], failed: [174, 56, 76, 255] }
-    }
+    if dark { Palette { ink:[236,239,242,255], work:[56,232,160,255], ask:[255,194,71,255], muted:[185,198,216,255], failed:[255,99,120,255] } }
+    else { Palette { ink:[37,41,48,255], work:[8,127,91,255], ask:[153,82,0,255], muted:[83,97,113,255], failed:[201,38,65,255] } }
+}
+fn hex(c:[u8;4])->String { format!("#{:02X}{:02X}{:02X}",c[0],c[1],c[2]) }
+/// The same semantic tokens supply menu counters and chart colors; no CSS color table.
+pub fn css(dark:bool)->String {
+    let p=palette(dark);
+    format!("--work:{};--ask:{};--failed:{};--ready:{};--muted:{}",hex(p.work),hex(p.ask),hex(p.failed),hex(p.muted),hex(p.muted))
 }
 
 /// The angular q (18·z pt, stroke 1.8·z, tail bottom right) at `(x0, y0)` with ▶ (admits) or Ⅱ inside.
@@ -220,10 +124,18 @@ fn draw_q(img: &mut Rgba, x0: f32, y0: f32, z: f32, run: bool, ink: [u8; 4], p: 
     }
 }
 
+fn compact_palette(dark:bool)->Palette {
+    // Compact identity and shipped app resources remain byte-identical.
+    let mut p=palette(dark);
+    p.work=if dark {[119,205,179,255]}else{[35,120,98,255]};
+    p.muted=if dark {[180,189,200,255]}else{[98,107,119,255]};
+    p
+}
+
 /// The Icon view: the compact q in a 22 pt square at `s` pixels per point.
 #[tracing::instrument(name="icon.compact",skip_all)]
 pub fn compact(run: bool, dark: bool, s: f32) -> Rgba {
-    let p = palette(dark);
+    let p=compact_palette(dark);
     let n = (22.0 * s).round() as u32;
     let mut img = Rgba::new(n, n, s);
     // Center the body; leave space below for the tail without shifting the body up.
@@ -233,202 +145,135 @@ pub fn compact(run: bool, dark: bool, s: f32) -> Rgba {
     img
 }
 
-/// Draw a valid configuration `c` into an `n`×`n` pixel square at `dpr` pixels per point; an invalid one is refused
-/// with every error. Paused: everything gray under the centered compact q with Ⅱ (I4).
-#[tracing::instrument(name="icon.render",skip_all)]
-pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba, Vec<String>> {
-    let err = validate(c);
-    if !err.is_empty() {
-        return Err(err);
+
+pub fn peak(bins:&[Bin])->u32 {
+    bins.iter().filter(|b|b.complete()).map(|b|b.counts[0]).max().unwrap_or(0)
+}
+
+/// One source for every surface. History changes only the viewport, not these vector groups.
+#[tracing::instrument(name="icon.svg",skip_all)]
+pub fn svg(d:&Data,dark:bool)->String {
+    let p=palette(dark);
+    let color=|c|hex(if d.paused {p.muted}else{c});
+    let peak=peak(&d.bins);
+    let mut out=String::from(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">"#);
+    if d.paused {out.push_str(r#"<defs><mask id="pause-clear"><rect width="22" height="22" fill="white"/><rect x="3.5" y="3.5" width="15" height="17.7" fill="black"/></mask></defs><g mask="url(#pause-clear)">"#);}
+    let empty=d.counts.iter().all(|n|*n==Some(0))&&d.blocked==Some(0)&&d.bins.iter().all(|b|b.complete()&&b.counts==[0;4]);
+    write!(out,r#"<g id="summary-data" visibility="{}"><g id="chart" shape-rendering="crispEdges">"#,if empty {"hidden"}else{"visible"}).unwrap();
+    for (i,b) in d.bins.iter().enumerate() {
+        let x=1.0+3.5*i as f64;
+        write!(out,r#"<g id="bin-{i}" data-start="{}" data-end="{}">"#,b.start,b.end).unwrap();
+        let (y,h,c,mark)=if !b.complete() {(15.5,0.75,p.muted,"unknown")}
+            else if b.counts[0]==0 {(20.0,0.5,p.muted,"zero")}
+            else {let h=9.0*b.counts[0] as f64/peak.max(1) as f64;(20.5-h,h,p.work,"closed")};
+        write!(out,r#"<rect data-mark="{mark}" x="{x}" y="{y}" width="2.5" height="{h}" fill="{}"/>"#,color(c)).unwrap();
+        if b.counts[1]>0 {write!(out,r#"<rect data-mark="failed" x="{x}" y="10.5" width="2.5" height="0.75" fill="{}"/>"#,color(p.failed)).unwrap();}
+        if b.ongoing {write!(out,r#"<rect data-mark="ongoing" x="{x}" y="21" width="2.5" height="0.5" fill="{}"/>"#,color(p.muted)).unwrap();}
+        out.push_str("</g>");
     }
-    let p = palette(dark);
-    let gray = |c: [u8; 4]| if d.paused { p.muted } else { c };
-    let mut img = Rgba::new(n, n, n as f32 / 22.0);
-    let (nf, pad, g) = (n as f32, (0.5 * dpr).round().max(1.0), c["gap"].as_f64().unwrap_or(1.0) as f32 * dpr);
-    let mono = c["font"] == "Mono";
-    for e in c["elements"].as_array().into_iter().flatten() {
-        let v: Vec<f32> = e["cell"].as_array().into_iter().flatten().filter_map(Value::as_f64).map(|x| x as f32).collect();
-        let edge = |f: f32, inner: f32| (pad + f * (nf - 2.0 * pad) + inner).round() as i32;
-        let (x, y) = (edge(v[0], if v[0] > 0.0 { g / 2.0 } else { 0.0 }), edge(v[1], if v[1] > 0.0 { g / 2.0 } else { 0.0 }));
-        let (right, bottom) = (edge(v[0] + v[2], if v[0] + v[2] < 1.0 { -g / 2.0 } else { 0.0 }), edge(v[1] + v[3], if v[1] + v[3] < 1.0 { -g / 2.0 } else { 0.0 }));
-        let (w, h) = (right - x, bottom - y);
-        if w < 1 || h < 1 {
-            continue;
-        }
-        if e["type"] == "counter" {
-            // I2: the largest size at which every digit, `+` and the dash fit the cell by ink; fixed per cell size
-            let mut fs = (w.min(h) as f32 * 1.6) as u32;
-            while fs > 1 && !"0123456789+–".chars().all(|ch| glyphs(&ch.to_string(), fs, mono).ink().is_none_or(|i| i.2 - i.0 <= w && i.1 + i.3 <= h)) {
-                fs -= 1;
-            }
-            let digits: Vec<_> = (0..10).filter_map(|k| glyphs(&k.to_string(), fs, mono).ink()).collect();
-            let (asc, desc) = (digits.iter().map(|i| i.1).max().unwrap_or(0), digits.iter().map(|i| i.3).max().unwrap_or(0));
-            let i = BINDS.iter().position(|b| e["bind"] == *b).unwrap_or(0);
-            let count = if i == 4 { d.counts[2].zip(d.blocked).map(|(r,b)| r.saturating_add(b)) } else { d.counts[i] };
-            if e["hide_zero"] == true && count == Some(0) { continue; }
-            let text = count.map_or("–".to_string(), |v| v.to_string());
-            let fits = |t: &str| glyphs(t, fs, mono).ink().is_none_or(|i| i.2 - i.0 <= w);
-            // overflow: an explicit threshold, never clipped digits (CI4)
-            let text = if fits(&text) { text } else if fits("9+") { "9+".into() } else { "+".into() };
-            let m = glyphs(&text, fs, mono);
-            let Some((l, _, r, _)) = m.ink() else { continue };
-            let ox = match e["align"].as_str() {
-                Some("right") => right - r,
-                Some("center") => x + (w - (r - l)) / 2 - l,
-                _ => x - l,
-            };
-            let oy = match e["vertical"].as_str() {
-                Some("bottom") => bottom - desc,
-                Some("center") => y + (h - asc - desc) / 2 + asc,
-                _ => y + asc,
-            };
-            let color = match (e["color"].as_str(), dark) {
-                (Some("work"), true) => [141,210,184,255], (Some("work"), false) => [36,111,89,255],
-                (Some("ask"), true) => [237,188,150,255], (Some("ask"), false) => [149,85,37,255],
-                (Some("ready"), true) => [200,208,217,255], (Some("ready"), false) => [93,104,116,255],
-                (Some("failed"), true) => [238,150,165,255], (Some("failed"), false) => [166,50,75,255],
-                _ => p.ink,
-            };
-            m.blit(&mut img, ox, oy, gray(color));
-        } else {
-            let rows = history_rows(&d.bins, w);
-            let b = rows.len() as i32;
-            if b == 0 { continue; }
-            let peak = rows.iter().map(|r| r.iter().sum::<u32>()).max().unwrap_or(0).max(1) as f32;
-            let bw = (w - b + 1) / b;
-            let start = right - (b * bw + b - 1);
-            for (i, row) in rows.iter().enumerate() {
-                let mut total = 0;
-                for (k, cnt) in row.iter().enumerate() {
-                    let low = (h as f32 * total as f32 / peak).round() as i32;
-                    total += cnt;
-                    let high = (h as f32 * total as f32 / peak).round() as i32;
-                    let bx = start + i as i32 * (bw + 1);
-                    img.pixels(gray([p.work, p.failed, p.ask, p.muted][k]), bx, bottom - high, bx + bw, bottom - low);
-                }
-            }
-        }
+    out.push_str(r#"</g><g id="counters">"#);
+    for (i,(value,c)) in [(d.counts[0],p.work),(d.counts[1],p.ask),(d.counts[2].zip(d.blocked).map(|(a,b)|a.saturating_add(b)),p.muted)].into_iter().enumerate() {
+        if value==Some(0) {continue;}
+        let text=value.map_or("–".into(),|n|n.to_string());
+        write!(out,r#"<g id="counter-{i}">{}</g>"#,counter(&text,[1.0,8.1,15.4][i],color(c))).unwrap();
     }
-    if c["empty"] == "compact" && img.px.chunks_exact(4).all(|p| p[3] == 0) {
-        return Ok(compact(!d.paused,dark,n as f32/22.0));
-    }
-    if d.paused {
-        // the compact q at 3/4 size on a cleared square, centered at N/2 (I4)
-        let z = 0.75;
-        let (x0, y0) = (11.0 - 9.0 * z, 11.0 - 9.0 * z);
-        img.fill_rect([0, 0, 0, 0], x0 - z, y0 - z, x0 + 19.0 * z, y0 + 22.6 * z);
-        draw_q(&mut img, x0, y0, z, false, p.muted, &p);
+    out.push_str("</g>");
+    out.push_str("</g>");
+    if empty&&!d.paused {let z=22.0/25.2;let inset=(22.0-18.0*z)/2.0;write!(out,r#"<g id="empty-q">{}</g>"#,q_svg(true,&compact_palette(dark),inset,inset,z)).unwrap();}
+    // I4: gray data under the existing centered compact Q/pause overlay.
+    if d.paused {out.push_str("</g>");let gray=Palette {ink:p.muted,..p};out.push_str(&q_svg(false,&gray,4.25,4.25,0.75));}
+    out.push_str("</svg>");out
+}
+
+/// Vector form of the existing compact Q geometry; used only for empty fallback and the pause overlay.
+fn q_svg(run:bool,p:&Palette,x:f64,y:f64,z:f64)->String {
+    let c=hex(p.ink);let state=hex(if run {p.work}else{p.muted});
+    let (r,t)=(18.0,1.8);
+    let body=format!("M{t} 0H{}A{t} {t} 0 0 1 {r} {t}V{}A{t} {t} 0 0 1 {} {r}H{t}A{t} {t} 0 0 1 0 {}V{t}A{t} {t} 0 0 1 {t} 0Z M2.2 1.8H15.8A.4 .4 0 0 1 16.2 2.2V15.8A.4 .4 0 0 1 15.8 16.2H2.2A.4 .4 0 0 1 1.8 15.8V2.2A.4 .4 0 0 1 2.2 1.8Z",r-t,r-t,r-t,r-t);
+    let mark=if run {"M5.85 4.5L13.95 9L5.85 13.5Z"}else{"M4.5 4.5H7.2V13.5H4.5ZM10.8 4.5H13.5V13.5H10.8Z"};
+    format!(r#"<g transform="translate({x} {y}) scale({z})"><path fill="{c}" fill-rule="evenodd" d="{body}"/><rect x="16.2" y="17" width="1.8" height="4.6" fill="{c}"/><path fill="{state}" d="{mark}"/></g>"#)
+}
+
+/// Rasterize the final SVG directly at device scale; resvg uses premultiplied RGBA.
+pub fn raster(svg:&str,n:u32)->Result<Rgba,String> {
+    let tree=resvg::usvg::Tree::from_str(svg,&resvg::usvg::Options::default()).map_err(|e|e.to_string())?;
+    let mut pix=resvg::tiny_skia::Pixmap::new(n,n).ok_or("invalid icon dimensions")?;
+    resvg::render(&tree,resvg::tiny_skia::Transform::from_scale(n as f32/22.0,n as f32/22.0),&mut pix.as_mut());
+    let mut img=Rgba::new(n,n,n as f32/22.0);
+    for (to,from) in img.px.chunks_exact_mut(4).zip(pix.data().chunks_exact(4)) {
+        let a=from[3] as u32;to[3]=from[3];
+        if a>0 {for c in 0..3 {to[c]=((from[c] as u32*255+a/2)/a).min(255) as u8;}}
     }
     Ok(img)
 }
 
-/// The alpha of `text` drawn with its pen origin at (`ox`, baseline `base`) of a `w`×`h` mask.
-struct Mask {
-    w: i32,
-    h: i32,
-    ox: i32,
-    base: i32,
-    a: Vec<u8>,
-}
-
-impl Mask {
-    /// Painted ink edges relative to the pen origin: (left, ascent, right, descent); None: no ink.
-    fn ink(&self) -> Option<(i32, i32, i32, i32)> {
-        let lit: Vec<(i32, i32)> = (0..self.h).flat_map(|y| (0..self.w).map(move |x| (x, y))).filter(|(x, y)| self.a[(y * self.w + x) as usize] > 0).collect();
-        let (x0, x1) = (lit.iter().map(|p| p.0).min()?, lit.iter().map(|p| p.0).max()?);
-        let (y0, y1) = (lit.iter().map(|p| p.1).min()?, lit.iter().map(|p| p.1).max()?);
-        Some((x0 - self.ox, self.base - y0, x1 + 1 - self.ox, y1 + 1 - self.base))
+/// SF outlines are shared as paths, so WebKit and resvg paint identical glyph ink.
+#[cfg(target_os="macos")]
+fn counter(text:&str,x:f64,color:String)->String {
+    use objc2_app_kit::{NSFont,NSFontWeightMedium};
+    use objc2_core_foundation::{CGPoint,CGSize,CGRect};
+    use objc2_core_text::{CTFont,CTFontOrientation};
+    use std::{ffi::c_void,ptr::NonNull};
+    #[repr(C)] struct Element {kind:i32,points:*const CGPoint}
+    unsafe extern "C" {
+        fn CTFontCreatePathForGlyph(font:*const CTFont,glyph:u16,matrix:*const c_void)->*const c_void;
+        fn CGPathApply(path:*const c_void,info:*mut c_void,callback:unsafe extern "C" fn(*mut c_void,*const Element));
+        fn CGPathGetPathBoundingBox(path:*const c_void)->CGRect;
+        fn CGPathRelease(path:*const c_void);
     }
-
-    fn blit(&self, img: &mut Rgba, ox: i32, oy: i32, rgb: [u8; 4]) {
-        for y in 0..self.h {
-            for x in 0..self.w {
-                let (tx, ty, a) = (ox - self.ox + x, oy - self.base + y, self.a[(y * self.w + x) as usize]);
-                if a > 0 && tx >= 0 && ty >= 0 && tx < img.w as i32 && ty < img.h as i32 {
-                    img.blend(tx as u32, ty as u32, rgb, a as f32 / 255.0);
+    unsafe extern "C" fn append(info:*mut c_void,element:*const Element) {
+        // SAFETY: synchronous CGPathApply, valid callback pointers and stack-owned String.
+        unsafe {
+            let out=&mut *(info as *mut String);let e=&*element;
+            let (op,n)=match e.kind {0=>("M",1),1=>("L",1),2=>("Q",2),3=>("C",3),_=>("Z",0)};
+            out.push_str(op);
+            for i in 0..n {let p=*e.points.add(i);let _=write!(out,"{} {} ",p.x,p.y);}
+        }
+    }
+    // SAFETY: framework constant, toll-free NSFont/CTFont bridge and length-checked buffers.
+    unsafe {
+        let font=NSFont::systemFontOfSize_weight(9.0,NSFontWeightMedium);
+        let ct=&*(&*font as *const NSFont as *const CTFont);
+        let outline=|s:&str| {
+            let mut chars:Vec<u16>=s.encode_utf16().collect();let n=chars.len();
+            let mut glyphs=vec![0u16;n];let mut advances=vec![CGSize::new(0.0,0.0);n];
+            ct.glyphs_for_characters(NonNull::new_unchecked(chars.as_mut_ptr()),NonNull::new_unchecked(glyphs.as_mut_ptr()),n as isize);
+            ct.advances_for_glyphs(CTFontOrientation::Horizontal,NonNull::new_unchecked(glyphs.as_mut_ptr()),advances.as_mut_ptr(),n as isize);
+            let mut paths=String::new();let(mut pen,mut left,mut right)=(0.0, f64::INFINITY, f64::NEG_INFINITY);
+            for (g,a) in glyphs.iter().zip(advances) {
+                let path=CTFontCreatePathForGlyph(ct,*g,std::ptr::null());
+                if !path.is_null() {
+                    let b=CGPathGetPathBoundingBox(path);left=left.min(pen+b.origin.x);right=right.max(pen+b.origin.x+b.size.width);
+                    let mut d=String::new();CGPathApply(path,(&mut d as *mut String).cast(),append);CGPathRelease(path);
+                    write!(paths,r#"<path transform="translate({pen} 0)" d="{d}"/>"#).unwrap();
                 }
+                pen+=a.width;
             }
-        }
-    }
-}
-
-/// `text` in the system font (SF Pro; `mono`: SF Mono), weight 500, `size` px, native antialiasing (I2).
-#[cfg(target_os = "macos")]
-fn glyphs(text: &str, size: u32, mono: bool) -> Mask {
-    use objc2_app_kit::{NSFont, NSFontWeightMedium};
-    use objc2_core_foundation::{CGPoint, CGSize};
-    use objc2_core_graphics::{CGBitmapContextCreate, CGContext, CGImageAlphaInfo};
-    use objc2_core_text::{CTFont, CTFontOrientation};
-    use std::ptr::NonNull;
-    // SAFETY: a framework constant
-    let weight = unsafe { NSFontWeightMedium };
-    let font = if mono { NSFont::monospacedSystemFontOfSize_weight(size as f64, weight) } else { NSFont::systemFontOfSize_weight(size as f64, weight) };
-    // SAFETY: NSFont is toll-free bridged to CTFont
-    let ct = unsafe { &*(&*font as *const NSFont as *const CTFont) };
-    let mut chars: Vec<u16> = text.encode_utf16().collect();
-    let n = chars.len();
-    let (mut g, mut adv) = (vec![0u16; n], vec![CGSize::new(0.0, 0.0); n]);
-    // SAFETY: n characters in, n glyphs and advances out
-    unsafe {
-        ct.glyphs_for_characters(NonNull::new_unchecked(chars.as_mut_ptr()), NonNull::new_unchecked(g.as_mut_ptr()), n as isize);
-        ct.advances_for_glyphs(CTFontOrientation::Horizontal, NonNull::new_unchecked(g.as_mut_ptr()), adv.as_mut_ptr(), n as isize);
-    }
-    let mut pos = vec![];
-    let mut x = 0.0;
-    for a in &adv {
-        pos.push(CGPoint::new(x, 0.0));
-        x += a.width;
-    }
-    let (sz, len) = (size as i32, n as i32);
-    let (w, h) = (sz * (len + 2), sz * 3);
-    let mut a = vec![0u8; (w * h) as usize];
-    // SAFETY: an alpha-only bitmap over `a`, dropped before `a` is read
-    unsafe {
-        let ctx = CGBitmapContextCreate(a.as_mut_ptr().cast(), w as usize, h as usize, 8, w as usize, None, CGImageAlphaInfo::Only.0).expect("bitmap context");
-        CGContext::translate_ctm(Some(&ctx), sz as f64, sz as f64);
-        ct.draw_glyphs(NonNull::new_unchecked(g.as_mut_ptr()), NonNull::new_unchecked(pos.as_mut_ptr()), n, &ctx);
-    }
-    // bitmap rows run top down; the baseline is `sz` above the bottom
-    Mask { w, h, ox: sz, base: h - sz, a }
-}
-
-// ponytail: seven-segment glyphs until DirectWrite text lands; Windows still shows only the compact q (menu.md M1)
-#[cfg(not(target_os = "macos"))]
-fn glyphs(text: &str, size: u32, _mono: bool) -> Mask {
-    let u = size as f32 / 13.5;
-    let (sw, sh, t) = (6.0 * u, 9.0 * u, 1.6 * u);
-    let seg = [(0.0, 0.0, sw, t), (sw - t, 0.0, sw, (sh + t) / 2.0), (sw - t, (sh - t) / 2.0, sw, sh), (0.0, sh - t, sw, sh), (0.0, (sh - t) / 2.0, t, sh), (0.0, 0.0, t, (sh + t) / 2.0), (0.0, (sh - t) / 2.0, sw, (sh + t) / 2.0)];
-    let plus = [(0.0, (sh - t) / 2.0, sw, (sh + t) / 2.0), ((sw - t) / 2.0, sh / 4.0, (sw + t) / 2.0, sh * 0.75)];
-    let (sz, len) = (size as i32, text.chars().count() as i32);
-    let mut img = Rgba::new((sz * (len + 2)) as u32, (sz * 3) as u32, 1.0);
-    for (i, ch) in text.chars().enumerate() {
-        let x0 = size as f32 + i as f32 * 7.0 * u;
-        let y0 = 2.0 * size as f32 - sh;
-        let rects: Vec<(f32, f32, f32, f32)> = match ch {
-            '0'..='9' => ["abcdef", "bc", "abged", "abgcd", "fgbc", "afgcd", "afgedc", "abc", "abcdefg", "abcdfg"][ch as usize - '0' as usize].bytes().map(|c| seg[(c - b'a') as usize]).collect(),
-            '+' => plus.to_vec(),
-            _ => vec![seg[6]],
+            (paths,left,right-left)
         };
-        for (a, b, c, d) in rects {
-            img.fill_rect([255; 4], x0 + a, y0 + b, x0 + c, y0 + d);
-        }
+        let(mut paths,mut left,width)=outline(text);
+        if width>5.6 {let fallback=outline("9+");let chosen=if fallback.2<=5.6 {fallback}else{outline("+")};paths=chosen.0;left=chosen.1;}
+        format!(r#"<g fill="{color}" transform="translate({} 9) scale(1 -1)">{paths}</g>"#,x-left)
     }
-    Mask { w: img.w as i32, h: img.h as i32, ox: sz, base: 2 * sz, a: img.px.chunks(4).map(|p| p[3]).collect() }
+}
+
+#[cfg(not(target_os="macos"))]
+fn counter(text:&str,x:f64,color:String)->String {
+    use resvg::usvg;
+    static OPTIONS:std::sync::OnceLock<usvg::Options<'static>>=std::sync::OnceLock::new();
+    let options=OPTIONS.get_or_init(||{let mut o=usvg::Options::default();o.fontdb_mut().load_system_fonts();o.fontdb_mut().set_sans_serif_family("Segoe UI");o});
+    let layout=|s:&str|usvg::Tree::from_str(&format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><text id="value" y="9" font-family="Segoe UI" font-size="9" font-weight="500" fill="{color}">{s}</text></svg>"#),options).expect("fixed numeric SVG");
+    let mut tree=layout(text);
+    let width=|t:&usvg::Tree|t.node_by_id("value").map_or(0.0,|n|n.bounding_box().width());
+    if width(&tree)>5.6 {tree=layout("9+");if width(&tree)>5.6 {tree=layout("+");}}
+    let left=tree.node_by_id("value").map_or(0.0,|n|n.bounding_box().x());
+    let svg=tree.to_string(&usvg::WriteOptions::default());
+    format!(r#"<g transform="translate({} 0)">{}</g>"#,x-left as f64,&svg[svg.find('>').unwrap()+1..svg.rfind("</svg>").unwrap()])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
-
-    fn data(counts: [usize; 4], paused: bool) -> Data {
-        Data { blocked: Some(0), counts: counts.map(Some), bins: vec![[1, 1, 1, 1]; 12], paused }
-    }
-
-    fn has(i: &Rgba, c: [u8; 4]) -> bool {
-        i.px.chunks(4).any(|p| p[3] == 255 && p[..3] == c[..3])
-    }
-
     // #1347: the tail must not pull the square body above the canvas center.
     #[test]
     fn q_body_is_centered() {
@@ -555,141 +400,41 @@ mod tests {
         }
     }
 
-    // #1586 A2/A4: the largest fitting divisor preserves first/last bins and every series total.
+    // A2/A3/A4/A5: SVG semantics survive every viewport; other events cannot alter closed height.
     #[test]
-    fn history_rebin_preserves_every_series() {
-        let bins: Vec<[u32; 4]> = (0..12).map(|i| [i + 1, i % 3, 12 - i, i % 4]).collect();
-        for (width, count) in [(3,0), (4,1), (8,1), (9,2), (13,2), (14,3), (19,4), (29,6), (58,6), (59,12), (296,12), (592,12)] {
-            let rows = history_rows(&bins, width);
-            assert_eq!(rows.len(), count, "width {width}");
-            if count == 0 { continue; }
-            for (i, row) in rows.iter().enumerate() {
-                for k in 0..4 {
-                    assert_eq!(row[k], bins[i*12/count..(i+1)*12/count].iter().map(|b| b[k]).sum::<u32>());
-                }
-            }
-            for k in 0..4 { assert_eq!(rows.iter().map(|b| b[k]).sum::<u32>(), bins.iter().map(|b| b[k]).sum::<u32>()); }
+    fn six_columns_keep_quantity_marks_palette_and_device_bounds() {
+        let bins:Vec<Bin>=[4,0,999,12,7,4].into_iter().enumerate().map(|(i,c)|Bin {start:i as f64,end:(i+1) as f64,counts:[c,0,0,0],missing:if i==2 {vec!["synthetic missing source".into()]}else{vec![]},ongoing:i==5}).collect();
+        let mut data=Data {counts:[Some(0);4],blocked:Some(0),bins,paused:false};
+        for dark in [false,true] {
+            let svg=svg(&data,dark);
+            assert_eq!(svg.matches("data-start=").count(),6);
+            assert!(svg.contains(r#"y="17.5" width="2.5" height="3""#),"4 / peak 12");
+            assert_eq!(svg.matches(r#"data-mark="unknown""#).count(),1);
+            assert_eq!(svg.matches(r#"data-mark="zero""#).count(),1);
+            assert_eq!(svg.matches(r#"data-mark="ongoing""#).count(),1);
+            assert!(svg.contains(&hex(palette(dark).work)));
+            for n in [16,18,22,33,44,66,256] {let image=raster(&svg,n).unwrap();assert_eq!((image.w,image.h),(n,n));assert!(image.px.chunks_exact(4).any(|p|p[3]>0));}
         }
-    }
-
-    // R-UI5 / #1586 A2/A4: native raster widths must not regress to one-pixel bars.
-    #[test]
-    fn history_bars_keep_four_physical_pixels() {
-        for (n, dpr) in [(16, 1.0), (20, 1.0), (22, 1.0), (24, 1.0), (32, 1.0), (44, 2.0), (64, 2.0)] {
-            let img = render(&summary(), n, dpr, &data([0; 4], false), true).unwrap();
-            let y = n - (0.5_f32 * dpr).round().max(1.0) as u32 - 1;
-            let mut widths = Vec::new();
-            let mut run = 0;
-            for x in n/2..n {
-                if img.px[((y*n+x)*4+3) as usize] > 0 { run += 1; }
-                else if run > 0 { widths.push(run); run = 0; }
-            }
-            if run > 0 { widths.push(run); }
-            assert!(!widths.is_empty() && widths.iter().all(|w| *w >= 4), "{n}px @{dpr}x: {widths:?}");
-            if let Ok(dir) = std::env::var("TASKQ_FRAMES") {
-                std::fs::write(std::path::Path::new(&dir).join(format!("icon-{n}px-{dpr}x.png")), img.png()).unwrap();
-            }
+        assert_eq!(peak(&data.bins),12,"incomplete 999 cannot set the scale");
+        for (dark,expected) in [(false,[[8,127,91,255],[153,82,0,255],[201,38,65,255],[83,97,113,255]]),(true,[[56,232,160,255],[255,194,71,255],[255,99,120,255],[185,198,216,255]])] {
+            let p=palette(dark);assert_eq!([p.work,p.ask,p.failed,p.muted],expected,"approved palette A");
         }
-    }
+        let before=svg(&data,false);data.bins[0].counts=[4,8,7,6];
+        let after=svg(&data,false);
+        assert!(after.contains(r#"data-mark="failed""#));
+        assert_eq!(before.matches(r#"y="17.5" width="2.5" height="3""#).count(),after.matches(r#"y="17.5" width="2.5" height="3""#).count());
+        for b in &mut data.bins {b.counts=[0;4];b.missing.clear();}
+        let zero=svg(&data,false);assert_eq!(zero.matches(r#"data-mark="zero""#).count(),6);assert!(!zero.contains("NaN"));
+        data.counts=[None,Some(999999),Some(1),Some(0)];
+        let vector=svg(&data,false);let tree=resvg::usvg::Tree::from_str(&vector,&resvg::usvg::Options::default()).unwrap();
+        for (i,left) in [1.0,8.1,15.4].into_iter().enumerate() {let bounds=tree.node_by_id(&format!("counter-{i}")).unwrap().bounding_box();assert!((bounds.x()-left).abs()<0.01&&bounds.width()<=5.61,"ink alignment and overflow at cell {i}: {bounds:?}");}
+        data.counts=[Some(0);4];data.blocked=Some(3);let blocked=svg(&data,false);
+        data.counts[2]=Some(3);data.blocked=Some(0);assert_eq!(svg(&data,false),blocked,"ready + blocked retains meaning");
+        data.counts=[Some(0);4];assert!(svg(&data,false).contains(r#"id="empty-q""#));
+        data.paused=true;
+        let paused=svg(&data,false);let p=palette(false);
+        assert!(paused.contains("pause-clear")&&paused.contains(&hex(p.muted)));
+        for c in [p.work,p.ask,p.failed] {assert!(!paused.contains(&hex(c)),"paused data stays gray");}
 
-    // Chain: § 4 tray icon render. Risk: same config yields different bytes; Custom differs from Summary.
-    #[test]
-    fn summary_is_valid_and_renders_deterministically() {
-        assert_eq!(validate(&summary()), Vec::<String>::new());
-        let d = data([3, 2, 9, 1], false);
-        let (a, b) = (render(&summary(), 44, 2.0, &d, true).unwrap(), render(&summary(), 44, 2.0, &d, true).unwrap());
-        assert_eq!(a.png(), b.png(), "one configuration, identical bytes");
-        let hash: String = ring::digest::digest(&ring::digest::SHA256, &a.png()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
-        eprintln!("icon summary 44px dpr2 dark 3/2/9: sha256 {hash}");
-        // CI-A1: Custom is the same renderer; an identical copy is pixel-identical
-        let copy: Value = serde_json::from_str(&summary().to_string()).unwrap();
-        assert_eq!(render(&copy, 44, 2.0, &d, true).unwrap().px, a.px);
-    }
-
-    // Chain: § 4 icon config validation. Risk: an unsafe or invalid icon config renders.
-    #[test]
-    fn validate_reports_every_error() {
-        let mut c = summary();
-        c["version"] = json!(99);
-        c["script"] = json!("evil");
-        c["font"] = json!("/tmp/x.ttf");
-        c["elements"][0]["url"] = json!("https://x");
-        c["elements"][1]["cell"] = c["elements"][0]["cell"].clone();
-        c["elements"][2]["bind"] = json!("eta");
-        c["elements"][3]["series"] = json!(["closed"]);
-        let err = validate(&c);
-        assert_eq!(err.len(), 7, "{err:#?}");
-        for want in ["version", "script", "font", "elements[0].url", "elements[1].cell: overlaps elements[0]", "elements[2].bind", "elements[3].series"] {
-            assert!(err.iter().any(|e| e.starts_with(want)), "{want}: {err:#?}");
-        }
-        assert_eq!(validate(&json!({"version": 1, "font": "System", "gap": 1, "elements": [null]})), ["elements[0]: not an object"]);
-        assert!(render(&c, 44, 2.0, &data([0; 4], false), true).is_err());
-    }
-
-    // Chain: § 4 tray icon layout. Risk: ink misaligned or series on different scales.
-    #[test]
-    fn summary_aligns_by_ink_and_stacks_on_one_scale() {
-        let p = palette(true);
-        for (n, dpr) in [(22, 1.0), (44, 2.0), (66, 2.0)] {
-            for counts in [[0, 0, 0, 0], [3, 2, 5, 0], [1, 7, 8, 0], [12, 3, 24, 0], [100, 12, 105, 0]] {
-                let img = render(&summary(), n, dpr, &data(counts, false), true).unwrap();
-                let lit = |x: u32, y0: u32, y1: u32| (y0..y1).any(|y| img.px[((y * img.w + x) * 4 + 3) as usize] > 0);
-                let edge = (0.5 * dpr).round().max(1.0) as u32;
-                // work ink starts at the left inset, answers end at the right inset (I3)
-                assert_eq!(lit(edge, 0, n / 2) && !lit(edge - 1, 0, n / 2), counts[0] != 0, "{n} {counts:?}: work ink left");
-                assert_eq!(lit(n - edge - 1, 0, n / 2) && !lit(n - edge, 0, n / 2), counts[1] != 0, "{n} {counts:?}: answers ink right");
-            }
-            // equal counts per series: equal pixel rows per color in a bar column
-            let img = render(&summary(), n, dpr, &data([0; 4], false), true).unwrap();
-            let col = |c: [u8; 4]| (0..img.h).filter(|y| img.px[((y * img.w + img.w - 2) * 4) as usize..][..3] == c[..3]).count();
-            assert!(col(p.work) > 0 && col(p.work).abs_diff(col(p.failed)) <= 1 && col(p.failed).abs_diff(col(p.ask)) <= 1, "{n}");
-        }
-    }
-
-    // I1/I4 and CI4: Summary hides zeros and includes blocked; a saved Custom ready binding keeps its meaning.
-    #[test]
-    fn summary_counts_keep_custom_bindings_and_unknown() {
-        let mut d=data([0;4],false);d.bins=vec![[0;4];12];
-        assert_eq!(render(&summary(),44,2.0,&d,true).unwrap().px,compact(true,true,2.0).px);
-        d.blocked=Some(3);
-        let blocked=render(&summary(),44,2.0,&d,true).unwrap();
-        d.blocked=Some(0);d.counts[2]=Some(3);
-        assert_eq!(blocked.px,render(&summary(),44,2.0,&d,true).unwrap().px);
-        let mut custom=summary();custom["elements"][2]["bind"]=json!("ready");
-        d.counts[2]=Some(0);d.blocked=Some(3);
-        assert_eq!(render(&custom,44,2.0,&d,true).unwrap().px,compact(true,true,2.0).px);
-        custom.as_object_mut().unwrap().remove("empty");
-        assert!(render(&custom,44,2.0,&d,true).unwrap().px.iter().all(|v|*v==0));
-        d.blocked=None;
-        assert!(render(&summary(),44,2.0,&d,true).unwrap().px.iter().any(|v|*v!=0));
-        for (dark,colors) in [(true,[[141,210,184,255],[237,188,150,255],[200,208,217,255]]),(false,[[36,111,89,255],[149,85,37,255],[93,104,116,255]])] {
-            d.counts=[Some(8);4];d.blocked=Some(0);
-            let image=render(&summary(),44,2.0,&d,dark).unwrap();
-            for color in colors {assert!(has(&image,color),"menu counter color missing");}
-        }
-    }
-
-    // Chain: § 4 pause shown in the icon. Risk: a paused service looks running.
-    #[test]
-    fn paused_is_gray_under_the_q_and_compact_shows_run_or_pause() {
-        let p = palette(true);
-        let img = render(&summary(), 44, 2.0, &data([3, 2, 9, 1], true), true).unwrap();
-        assert!(has(&img, p.muted) && !has(&img, p.work) && !has(&img, p.failed));
-        let (run, pause) = (compact(true, true, 2.0), compact(false, true, 2.0));
-        assert_eq!((run.w, run.h), (44, 44));
-        assert!(has(&run, p.work) && !has(&run, p.muted));
-        assert!(has(&pause, p.muted) && !has(&pause, p.work));
-        assert!(has(&compact(true, false, 2.0), palette(false).ink));
-    }
-
-    // Chain: R12 unknown in the icon. Risk: unknown drawn as zero; large counts widen the icon.
-    #[test]
-    fn unknown_is_a_dash_and_overflow_a_threshold() {
-        let d = Data { blocked: Some(0), counts: [None, Some(2), Some(9), Some(1)], bins: vec![[0; 4]; 12], paused: false };
-        let unknown = render(&summary(), 44, 2.0, &d, true).unwrap();
-        let zero = render(&summary(), 44, 2.0, &data([0, 2, 9, 1], false), true).unwrap();
-        assert_ne!(unknown.px, zero.px, "unknown never draws as zero");
-        let big = render(&summary(), 22, 1.0, &data([100_000, 2, 9, 1], false), true).unwrap();
-        assert_eq!(big.w, 22, "values never widen the square");
     }
 }

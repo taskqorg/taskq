@@ -85,7 +85,7 @@ const USAGE: &str = "taskq agents
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
- taskq tray [--snapshot DIR [--route R,..]] [--icon FILE] | taskq selftest
+ taskq tray [--snapshot DIR [--route R,..]] | taskq selftest
 Writes to a task take [--op-id ID] [--revision R] [--json] (taskq.md section 5).
 Text templates and limits: taskq.md sections 1, 2, 5, 7.";
 
@@ -2162,12 +2162,7 @@ fn recover_cmd(root: &Path, apply: bool, json: bool) -> Res<()> {
 
 #[cfg(any(target_os = "macos", windows))]
 fn tray(install: PathBuf, snapshot: Option<&str>, routes: &[String], icon: Option<&str>) -> Res<()> {
-    if let Some(f) = icon {
-        let draft: serde_json::Value = serde_json::from_str(&fs::read_to_string(f).map_err(|e| format!("{f}: {e}"))?).map_err(|e| format!("{f}: {e}"))?;
-        tray::use_icon(&install, &draft).map_err(|e| format!("{f}: {}; tray.json unchanged", e.join("; ")))?;
-        println!("custom icon saved: {}", install.join("tray.json").display());
-        return Ok(());
-    }
+    if icon.is_some() { return Err("Custom icons were removed; choose Icon or Summary in Tray icon settings".into()); }
     if snapshot.is_none() && !routes.is_empty() {
         return Err("--route needs --snapshot DIR".into());
     }
@@ -2175,7 +2170,8 @@ fn tray(install: PathBuf, snapshot: Option<&str>, routes: &[String], icon: Optio
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-fn tray(_install: PathBuf, _snapshot: Option<&str>, _routes: &[String], _icon: Option<&str>) -> Res<()> {
+fn tray(_install: PathBuf, _snapshot: Option<&str>, _routes: &[String], icon: Option<&str>) -> Res<()> {
+    if icon.is_some() { return Err("Custom icons were removed; choose Icon or Summary in Tray icon settings".into()); }
     Err("taskq tray: macOS and Windows only".into())
 }
 
@@ -2939,6 +2935,12 @@ mod tests {
 
     // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
     #[cfg(target_os = "macos")]
+    #[test]
+    fn removed_custom_icon_flag_refuses_before_reading_file_or_opening_tray() {
+        let error=tray(PathBuf::from("invented-unused-install"),None,&[],Some("invented-missing-icon.json")).unwrap_err();
+        assert!(error.contains("Custom icons were removed"),"{error}");
+    }
+
     #[test]
     fn app_bundle_icon_resources_preserve_signature() {
         let dir=std::env::temp_dir().join(format!("taskq-app-icon-{}",runtime::uuid()));

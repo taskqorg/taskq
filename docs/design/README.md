@@ -91,7 +91,7 @@ Older board/research material may still need English translation; the current me
 General rules follow [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ decision: taskq.md first, then its linked product specification, candidate and evidence.
 Preserve requirement IDs and current capabilities. Shipped and native proof follow [shared verification](https://github.com/taskqorg/specq/blob/main/engineering/verification.md).
 
-[Custom icon](custom-icon.md): shared Summary/Custom config renderer, agent editing protocol and CI acceptance. [Final menu review](menu-final-review.md) records wording, hierarchy and icon corrections.
+[Icon compatibility](custom-icon.md): Custom removal and saved-view fallback; [I1–I6](icon-summary.md) own the fixed Summary SVG. [Final menu review](menu-final-review.md) records wording, hierarchy and icon corrections.
 
 [Refactoring backlog](refactoring-backlog.md) defines ordered workstreams, API boundaries, dependencies and acceptance for implementation tasks.
 

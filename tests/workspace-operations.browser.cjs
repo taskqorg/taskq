@@ -1,7 +1,7 @@
 // #1465 A1–A7 / V15/V28: placement, target, single-use Stop and unknown receipts.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const root='/fixture/project',review={id:'review',action:'stop',instance:'original',roots:[root],issued_at:1000,expires_at:1300};
-const snapshot={stop_modes:true,font:16,theme:'dark',host:'fixture',now:1000,version:'invented',service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',host:'mac',alive:true,age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:'',history:[]},notify:{projects:{}},history:{bins:[[0,0,0,0]],start:0,end:1000,tz:'UTC',since:null}};
+const snapshot={stop_modes:true,font:16,theme:'dark',host:'fixture',now:1000,version:'invented',service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',host:'mac',alive:true,age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:'',history:[]},notify:{projects:{}},history:{bins:Array.from({length:6},(_,i)=>({start:i*1000/6,end:(i+1)*1000/6,counts:[0,0,0,0],missing:["fixture"],ongoing:false})),start:0,end:1000,tz:'UTC',since:null}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{

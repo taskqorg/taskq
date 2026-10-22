@@ -44,38 +44,21 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 
 ## R-UI4 Cadence data
 
-- Cadence counts events, never sampled active-task count. Current task counters and cadence are separate projections.
-- Four series in order from bottom: closed, failed, Human/ask, blocked/waiting. A later successful close does not erase an earlier failure event.
-- Human counter is current Ask tasks; Human bars are Ask events in the selected period. Display that distinction in the graph detail.
-- Shared immutable histogram feeds tray and menu. Deduplicate events before binning, preserve M6 `[start,end)` and freshness semantics.
-- Fixed-time bins: same duration, oldest left. Refresh inside a bin does not move individual bars. In rolling mode, advance the whole grid by one bin at a boundary; do not squeeze/stretch spacing or animate fractional drift. A chosen historical/custom range stays fixed.
-- Rolling alignment (approved, M6): whole epoch-aligned bins, newest containing now; label last bin partial and exact displayed range. Existing exact custom bounds remain unchanged.
-- Peak = largest sum of ALL four series. Never normalize bars independently. Menu totals match histogram; current Failed/Human counts need not equal event totals.
+- Follow [approved decisions](../reviews/visual-decisions.md) and [I1–I6](icon-summary.md). Current task counters remain separate from event counts.
+- All four surfaces share the selected period (default 24 hours). Exactly six equal source bins for every period, oldest left; presets use epoch-aligned whole bins of period / 6, newest containing now. Exact custom [start,end) bounds stay fixed.
+- Deduplicate by board, event identity and kind before binning. Preserve closed, failed, ask and blocked counts and missing-source information.
+- Closed alone determines height: 9 pt × closed / peak at the 22 pt reference. Peak includes only bins with complete source coverage, including observed counts in an ongoing bin. Peak zero is safe.
+- Incomplete coverage never becomes zero or enters the peak. Detail retains observed lower bounds and missing sources. Collection start alone cannot prove uninterrupted coverage.
 
-## R-UI5 Cadence raster
+<a id="r-ui5-cadence-raster"></a>
 
-Keep 12 equal source bins for every period. For physical allocated width W, choose the largest B in `12, 6, 4, 3, 2, 1` that fits `4*B + (B-1) <= W`. Sum each adjacent group of `12/B` bins across all four series; preserve the full period and exact totals. If W < 4, show the graph as unavailable rather than painting narrower bars.
+## R-UI5 Canonical SVG
 
-At a given width and scale, every preset and custom range uses the same B, bar width, gap, colors, stack order, scale algorithm and labels. Only the time covered by a bar changes. Geometry:
-
-```
-g = 1 physical px
-b = floor((W - (B-1)*g) / B)
-plotWidth = B*b + (B-1)*g
-x0 = rightEdge - plotWidth
-x(i) = x0 + i*(b+g)
-```
-
-- `b >= 4 physical px`; all bars exactly b wide, gaps exactly g, one integer baseline. Remainder stays at the inner left edge of the graph cell; outer right/bottom remain aligned with the square. Menu graph may center its residual inset.
-- This refines I3's allocated graph origin into a physical painted origin; never stretch the final bar to consume remainder. Round shared outer bounds once.
-- Segment boundaries: round `plotHeight × cumulativeCount / peak`; derive adjacent segment heights by subtraction. No independent rounding that creates holes or exceeds peak height. Quantization may change equal segment heights by at most 1 physical pixel; cumulative boundaries remain exact after rounding.
-- Snap fills, not font curves. No border radius, stroke, blur, gradient or line interpolation on cadence bars.
-- A positive segment smaller than a pixel may be unresolved; preserve exact labelled totals. Never add an artificial minimum height and pretend it remains quantitative.
-- An all-zero bin retains its empty slot. Unknown bin is explicitly unavailable per [unknown is never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy); no fabricated event.
-- Menu: allocate 64 logical px of plot height, rounded once to physical pixels; center the integer residual inset. Label the exact period start/end and timezone, B and duration per bar, zero baseline and peak stacked event count (0 for empty known history). Colors and bottom-to-top order stay closed/work green, failed red, ask peach, waiting/ready gray, using the existing theme tokens. Show the four colored legend entries with exact period totals; ask counts events, not current questions.
-- Each menu bar has a hover title and keyboard/click access to its exact half-open time range and all four counts. Keep the selected bar detail visible below the plot; mark partial newest bins and incomplete/unknown history explicitly. Unknown slots have a dashed outline, never fabricated zero counts. Preset/custom selection does not change geometry or legend order.
-- No nearest-neighbor sample dropping or silent reduction.
-- Production tiny icons render directly at native size/DPI; no CSS/OS post-scaling assumption. Test the actual OS icon after installation as well as exported pixels.
+- One Rust function supplies Summary and its chart group to menu bar, running Dock, picker and History; no per-surface reconstruction, rebinning, heat opacity or stacks.
+- Reference geometry, palette A and state marks are [I1–I4](icon-summary.md). Rasterize once at the native target size/backing scale; snap shared straight fill boundaries, never resize an intermediate bitmap.
+- Picker embeds the vector at 18 CSS px. History projects the same chart group (reference x × 16, y × 8 at the 320 px plot), omitting current counters; responsive sizing never changes bins or normalized heights.
+- History exposes six keyboard/click-selectable bins. Keep selection by [start,end) across refresh; it changes no scope, period, admission or task state. Detail shows interval, timezone, all four exact or explicitly incomplete counts, ongoing time and missing coverage. Legend totals carry completeness qualifiers.
+- Native font/DPR, zero/unknown/ongoing/failed cues, pause and overflow need bounded owner review under R12. Source checks are not native acceptance.
 
 ## R-UI6 Feature parity and improvements
 

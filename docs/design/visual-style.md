@@ -16,6 +16,8 @@ Final candidate for the approved dense menu. Shared principles: [specq D1–D14]
 
 ## Palette
 
+Palette A follows the [approved icon review](../reviews/visual-decisions.md). Runtime semantic tokens come from `src/icon.rs`; menu components inherit them; independent exported components retain their standalone defaults.
+
 | Token | Light | Dark |
 |---|---|---|
 | Surface | #FAFBFC | #252B32 |
@@ -23,11 +25,11 @@ Final candidate for the approved dense menu. Shared principles: [specq D1–D14]
 | Secondary | #59636E | #B9C3CD |
 | Divider | #DCE0E5 | #46505B |
 | Hover/selected surface | #E9EDF1 | #37424C |
-| Work / success | #246F59 | #8DD2B8 |
-| Question / confirmation | #955525 | #EDBC96 |
-| Ready / blocked | #5D6874 | #C8D0D9 |
+| Work / closed | #087F5B | #38E8A0 |
+| Question / confirmation | #995200 | #FFC247 |
+| Neutral: Ready / Blocked / Review / Later / Held | #536171 | #B9C6D8 |
 | Closed text / fill | #68727D / #EFF1F3 | #9BA5B0 / #2B3138 |
-| Failed | #A6324B | #EE96A5 |
+| Failed | #C92641 | #FF6378 |
 
 Use subtle counter fills, not colored text blocks. Always include a symbol or label. Board-label HEX values remain in board.md; do not replace them with UI tokens.
 Closed has the lowest visual emphasis without opacity; [counter semantics](task-counters.md).

@@ -1,0 +1,33 @@
+{
+  "task": 1598,
+  "base": "d5ec8616999e2d0c6eabd4bcfa523ec183914e12",
+  "environment": {
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView",
+    "dpr": 2,
+    "font": ".AppleSystemUIFontMedium",
+    "reference_font_pt": 9
+  },
+  "sourceBlobs": {
+    "src/icon.rs": "e646baf12222e57b333fdb423ab7300246e8bd9c",
+    "src/tray.rs": "04fc4f59fd9cfa9824cf1f1658dfd4d475ac7282",
+    "src/main.rs": "54726a218f2d9e87a4049db90e7ad042003f4342",
+    "src/tray-app.js": "e772a882e150748ed542f83dd969a84302a6353c",
+    "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
+    "tests/fixtures/icon-history/capture.swift": "64ed407e07ed5b1733822ef88e1d7599b1c1be3c"
+  },
+  "bundleSha256": "c160fa534ef1bef812733589040ca1edb21592eb67fcbf399c735f9c8df6d390",
+  "images": {
+    "native/day-dark-cadence.png": "76399b8f10e8f11805be9103b6ffb6285c86468da876b438d57cf224198b6c35",
+    "native/day-dark-tray-icon.png": "07abb03d93e3676ad3af2230b61146eeebd6ebdc67ab0539026f3fa992e06e38",
+    "native/day-light-cadence.png": "19ca6254c768f0cf66099b6e5971a16113dc8735383b70428aec3937e5f8a6f6",
+    "native/day-light-tray-icon.png": "8584becb270cf8626c6122be18be47b5bf8da16aad23713d0a1c223075c1fa07",
+    "native/hour-dark-cadence.png": "be3fc706f15c0f9e207492d3b436dc489cdb82083c9f0d6dd24df01addb5b228",
+    "native/hour-light-cadence.png": "75e6efa3e4134af9f439c270017230e81312e10455e6333ecb5a4242c6639e26",
+    "native/incomplete-dark-cadence.png": "a4ba9b22e213e3a373945c6d3d72d7a2203d79eb8c6183e48a5dc620d444fece",
+    "native/incomplete-light-cadence.png": "4096fd6c9be833fcd1ebdf8f0535c6836bb831feb6010ea8454f0b0a7d368023",
+    "review-dark.png": "ab5c5f2b32c27d685a071ce2a6df837f8a65d09b1efd1b6536707b177c82de9c",
+    "review-light.png": "d76be7a5748857dba9a45da6013ac22f60fdcd99dbe6bd9b479e1ef9a8279088"
+  }
+}
