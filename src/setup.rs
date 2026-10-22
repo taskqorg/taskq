@@ -391,10 +391,18 @@ pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<
     if let Some(t) = &text {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
         let backup = home.join(format!(".claude.json.bak-onboard-{ms}"));
-        fs::write(&backup, t).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
+        // copy keeps the config's owner-only mode; a plain write would leave it world-readable
+        fs::copy(&path, &backup).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
         lines.push(format!("Backup: {}", backup.display()));
     }
-    crate::platform::write_atomic(&path, &next).map_err(|e| format!("Claude config write: {e}"))?;
+    let tmp = home.join(".claude.json.onboard-tmp");
+    let mut open = fs::OpenOptions::new();
+    open.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+    if text.is_some() { fs::copy(&path, &tmp).map_err(|e| format!("Claude config write: {e}"))?; }
+    std::io::Write::write_all(&mut open.open(&tmp).map_err(|e| format!("Claude config write: {e}"))?, next.as_bytes()).map_err(|e| format!("Claude config write: {e}"))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("Claude config write: {e}"))?;
     let (_, left) = trusted(fs::read_to_string(&path).ok().as_deref(), &keys)?;
     if !left.is_empty() { return Err(format!("Claude config readback: {} not trusted", left.join(", "))); }
     lines.extend(changed.iter().map(|k| format!("Trust: {k} trusted")));
@@ -546,6 +554,8 @@ mod tests {
         // the hand-made backslash key never matched on Windows; it stays as it was
         let old = r#"{"numStartups": 3, "projects": {"C:\\Users\\a\\p": {"hasTrustDialogAccepted": true}, "/srv/q": {"allowedTools": ["x"]}}}"#;
         fs::write(home.join(".claude.json"), old).unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(home.join(".claude.json"), std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
         let setup = claude_key(&dir(&install));
         assert!(!setup.contains('\\'));
         let e = trust(&install, &home, || Ok(vec!["42".into()])).unwrap_err();
@@ -561,6 +571,9 @@ mod tests {
         assert_eq!(v["numStartups"], 3);
         let backup = fs::read_dir(&home).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with(".claude.json.bak-onboard-")).unwrap();
         assert_eq!(fs::read_to_string(backup.path()).unwrap(), old);
+        // the config may hold account data: neither file opens to other users
+        #[cfg(unix)]
+        for p in [home.join(".claude.json"), backup.path()] { assert_eq!(std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&p).unwrap().permissions()) & 0o077, 0, "{}", p.display()); }
 
         // idempotent: nothing to change reads no processes and writes nothing
         let again = trust(&install, &home, || panic!("process list read with nothing to change")).unwrap();
