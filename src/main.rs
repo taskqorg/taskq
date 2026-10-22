@@ -2669,13 +2669,11 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if a.flags.contains_key("prefer") {
                 return Err("--prefer is retired; use --runtime codex for design, UI, visual and image work (none: claude)".into());
             }
-            for (flag, allowed) in [("type", "code|docs|research|asset"), ("runtime", "codex|claude|codex-app"), ("priority", "0|1|2")] {
-                if a.all(flag).len() > 1 {
-                    return Err(format!("--{flag} requires one of {allowed}"));
-                }
-            }
-            if a.all("host").len() > 1 {
-                return Err("--host requires one nonempty host name".into());
+            // a repeated single-value flag is refused before any write; `one` would keep only the last value
+            let mut repeated: Vec<_> = a.flags.iter().filter(|(f, v)| v.len() > 1 && !["acceptance", "scope", "deps", "evidence"].contains(&f.as_str())).map(|(f, _)| format!("--{f}")).collect();
+            repeated.sort();
+            if !repeated.is_empty() {
+                return Err(format!("{} given more than once; pass each once (a two-line --goal uses one value with a newline)", repeated.join(", ")));
             }
             let new = NewTask {
                 title: title.clone(),
@@ -3229,7 +3227,14 @@ mod tests {
         for extra in [&["--priority", "3"][..], &["--runtime", "any"], &["--type", "code", "--type", "docs"], &["--host", "win,mac"], &["--prefer", "codex-app"], &["--prefer", "codex", "--prefer", "claude"]] {
             assert!(command(&c, "add", &args(extra)).is_err());
         }
+        // #1558: a repeated single-value flag is refused by name and files nothing, never kept as the last value
+        for flag in ["--goal", "--type", "--runtime", "--priority", "--host", "--op-id", "--revision", "--text"] {
+            let e = command(&c, "add", &args(&[flag, "1", flag, "2"])).unwrap_err();
+            assert!(e.contains(flag) && e.contains("more than once"), "{flag}: {e}");
+        }
         assert_eq!(c.board.issues(None).unwrap().len(), 4);
+        command(&c, "add", &Args::parse(&["add", "T", "--goal", "G1\nG2", "--acceptance", "a", "--acceptance", "b", "--scope", "a", "--scope", "b"].map(String::from)).unwrap()).unwrap();
+        assert!(c.board.issues(None).unwrap().pop().unwrap().body.contains("## Goal\nG1\nG2\n"), "two-line goal through one value");
         assert!(task_body(&*c.board, &NewTask { title: "T".into(), goal: "G".into(), acceptance: vec!["observable".into()], labels: vec!["prefer-codex".into(), "prefer-claude".into()], ..Default::default() }, &Op::default()).is_err_and(|e| e.contains("prefer")));
     }
 
