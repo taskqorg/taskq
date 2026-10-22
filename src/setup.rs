@@ -372,6 +372,23 @@ pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
     Ok(())
 }
 
+/// Onboard `Skipped:` line. Windows plain ssh cannot follow the nvm4w node symlink, so Claude reads not installed there.
+pub fn onboard_skipped(rt: &str, windows_ssh: bool) -> String {
+    let ssh = if windows_ssh { "; over plain Windows ssh a symlinked install reads missing, so run onboard through a Scheduled Task first" } else { "" };
+    format!("Skipped: {rt} not installed. Next, only to run {rt} here: install it for this user, then run onboard again{ssh}")
+}
+
+/// Onboard `Access <scope>:` lines: grants are per folder, so each line names the folder it judged (#1546).
+pub fn onboard_access(scope: &str, es: &[crate::policy::Effective]) -> Vec<String> {
+    es.iter().flat_map(|e| {
+        let mut l = vec![format!("Access {scope}: {}", e.line())];
+        // the setup folder is no project root: only a host grant (the default scope) covers it
+        let how = if scope == "setup" { String::new() } else { format!(" --scope project` in {scope}; or `--scope host") };
+        if e.refused.is_some() { l.push(format!("Next: grant {0} with `taskq service permissions --runtime {0} --mode <mode>{how}`", e.runtime)); }
+        l
+    }).collect()
+}
+
 /// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546).
 pub fn claude_key(p: &Path) -> String { p.display().to_string().replace('\\', "/") }
 
@@ -546,6 +563,24 @@ mod tests {
     }
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
+
+    // Risk (PM run on FRA): an Access line without its folder reads as a host refusal while projects hold grants;
+    // Windows ssh reads Claude missing with no hint to use a Scheduled Task.
+    #[test]
+    fn onboard_lines_name_their_folder_and_the_windows_ssh_case() {
+        let (install, root) = (tmp(), tmp());
+        let refused = crate::policy::resolve(&Err("x".into()), &crate::policy::Host::here(&install, &root, &install), "codex", "", &[]);
+        let ok = crate::policy::Effective { refused: None, ..refused.clone() };
+        let r = root.display().to_string();
+        let lines = onboard_access(&r, &[refused.clone(), ok]);
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(lines[0].starts_with(&format!("Access {r}: ")) && lines[2].starts_with(&format!("Access {r}: ")), "{lines:?}");
+        assert!(lines[1].contains("--scope project` in ") && lines[1].contains(&r), "{lines:?}");
+        let setup = onboard_access("setup", &[refused]);
+        assert!(setup[0].starts_with("Access setup: ") && !setup[1].contains("--scope project"), "{setup:?}");
+        assert!(onboard_skipped("claude", true).contains("Scheduled Task"));
+        assert!(!onboard_skipped("claude", false).contains("Scheduled Task"));
+    }
 
     #[test]
     fn onboarding_trusts_forward_slash_keys_once_with_no_claude_running() {

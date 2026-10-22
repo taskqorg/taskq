@@ -2124,14 +2124,19 @@ fn onboard_cmd(install: &Path) -> Res<()> {
         match r["login"].as_str() {
             Some("logged in") => {}
             // a codex-only host is valid: a missing runtime is skipped, not a failure
-            Some("not installed") => { claude &= rt != "claude"; println!("Skipped: {rt} not installed. Next, only to run {rt} here: install it for this user, then run onboard again") }
+            Some("not installed") => { claude &= rt != "claude"; println!("{}", setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
             _ => println!("Next: {}", runtime::relogin(rt)),
         }
     }
-    let mode = host::Policy::read_for_hostname(install, hostname).map_or("dontAsk".to_string(), |p| p.permission_mode);
-    for e in policy::report(install, &setup::dir(install), &mode, &[]) {
-        println!("Access: {}", e.line());
-        if e.refused.is_some() {println!("Next: grant {} with `taskq service permissions --runtime {} --mode <mode>` in a project", e.runtime, e.runtime);}
+    let p = host::Policy::read_for_hostname(install, hostname);
+    let (mode, codex) = p.map_or(("dontAsk".to_string(), vec![]), |p| (p.permission_mode, p.codex));
+    // Access is per folder: the setup folder for owner sessions, each registered root for its workers
+    for l in setup::onboard_access("setup", &policy::report(install, &setup::dir(install), &mode, &[])) {println!("{l}");}
+    match host::projects(install) {
+        Ok(roots) => for root in roots {
+            for l in setup::onboard_access(&root.display().to_string(), &policy::report(install, &root, &mode, &codex)) {println!("{l}");}
+        },
+        Err(e) => println!("Access projects: unknown ({e})"),
     }
     if !claude { println!("Trust: skipped, Claude not installed"); return Ok(()); }
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
