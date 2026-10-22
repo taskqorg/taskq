@@ -85,12 +85,8 @@ fn label(i: &Issue, prefix: &str) -> Option<String> {
     i.labels.iter().find_map(|l| l.strip_prefix(prefix).map(String::from))
 }
 
-/// § 4 Filter: reviewers `claude`; workers `run-*`, else a lone legacy `prefer-codex` as `run-codex`, else `claude`.
-/// The task waits for a slot of this runtime; it never moves to another.
 fn route(i: &Issue, reviewer: bool) -> String {
-    if reviewer { return "claude".into(); }
-    let prefer: Vec<&str> = i.labels.iter().filter_map(|l| l.strip_prefix("prefer-")).collect();
-    label(i, "run-").unwrap_or_else(|| if prefer == ["codex"] { "codex" } else { "claude" }.into())
+    crate::labels::route(&i.labels, reviewer)
 }
 
 pub fn priority(i: &Issue) -> u8 {
@@ -433,7 +429,7 @@ pub const GATE_DEFAULT: GateCfg = GateCfg { enabled: false, cpu_max: 85, memory_
 pub const GATE_AUTO: GateCfg = GateCfg { enabled: true, cpu_max: 90, memory_min: 10, mean: true };
 pub const FLOOR_GIB: f64 = 2.5;
 pub const PRESSURE_CRITICAL: u32 = 4;
-pub const RUNTIMES: [&str; 3] = ["claude", "codex", "codex-app"];
+pub use crate::runtime::RUNTIMES;
 
 /// Effective capacity of one host (§ 3, § 9).
 #[derive(Clone, PartialEq, Debug)]
@@ -721,7 +717,7 @@ impl<'a> Service<'a> {
             match status {
             Ok(Some(_)) => match release_execution(self.board,k.task,k.attempt,k.execution,"exit") {
                 Ok(())=>{
-                    retired.push((k.task,k.attempt,k.execution,matches!(k.rt.as_str(),"codex"|"claude")));
+                    retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
                     false
                 },
                 Err(e)=>{k.unknown=Some(e);true}
@@ -1047,12 +1043,12 @@ impl<'a> Service<'a> {
             let (at, reported) = hold;
             let reason = format!("Usage limit: {rt} {} {}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
             self.gone(n, t, a, &["usage-limit"], &reason)
-        } else if let Some(reason) = local.then(|| rt_of(t).filter(|(rt, _)| rt.starts_with("codex"))
-            .and_then(|_| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a)))).flatten() {
+        } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| crate::runtime::of(rt)).filter(|r| r.codex)
+            .and_then(|r| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a)).map(|e| (r.bin, e)))).flatten() {
             // #1446: a rejected login holds Codex here at once and releases the attempt like a usage limit, retries kept
-            if let Err(e) = crate::runtime::mark_login_off(&self.cfg.install, "codex", &reason) { eprintln!("login-off not saved: {e}"); }
-            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| r.starts_with("codex")).map(|r| r.to_string()));
-            self.gone(n, t, a, &["usage-limit"], &format!("Login off: codex {reason}; {}", crate::runtime::relogin("codex")))
+            if let Err(e) = crate::runtime::mark_login_off(&self.cfg.install, bin, &reason) { eprintln!("login-off not saved: {e}"); }
+            self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| crate::runtime::of(r).codex).map(|r| r.to_string()));
+            self.gone(n, t, a, &["usage-limit"], &format!("Login off: {bin} {reason}; {}", crate::runtime::relogin(bin)))
         } else {
             self.gone(n, t, a, &[], text)
         }
@@ -1231,7 +1227,7 @@ impl<'a> Service<'a> {
             let task = v.issue.number;
             let unresolved: Vec<_> = v.projection.executions.iter().filter(|x| x.release.is_none()).collect();
             if self.kids.iter().any(|k| k.task == task) || self.held.iter().any(|l| l.task == task) { continue; }
-            let Some(x) = unresolved.iter().find(|x| x.host == me && matches!(x.runtime.as_str(), "claude" | "codex-app")) else { continue };
+            let Some(x) = unresolved.iter().find(|x| x.host == me && { let a = crate::runtime::of(&x.runtime); a.remote || a.app }) else { continue };
             if unresolved.len() != 1 {
                 self.execution_waits.insert(task, "multiple unresolved executions; verify native ownership before recovery".into());
                 continue;
@@ -1294,7 +1290,7 @@ impl<'a> Service<'a> {
                 }).map(|reset| reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)));
                 let evidence = hold.map_or(String::new(), |(at, reported)| format!("usage-limit {} {at}", if reported { "until" } else { "probe" }));
                 if let Err(e)=release_execution_text(self.board,k.task,k.attempt,k.execution,"exit",&evidence) {k.unknown=Some(e);return true;}
-                retired.push((k.task,k.attempt,k.execution,matches!(k.rt.as_str(),"codex"|"claude")));
+                retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
                 released.insert(k.execution);
                 exited.push((k.task, k.attempt, code, k.proc.exit_error()));
                 false
@@ -1349,7 +1345,7 @@ impl<'a> Service<'a> {
                     Ok(_) if pending_acceptance.contains(&k.attempt) => return true,
                     Ok(_) => match release_execution(self.board,k.task,k.attempt,k.execution,"exit") {
                         Ok(())=>{
-                            retired.push((k.task,k.attempt,k.execution,matches!(k.rt.as_str(),"codex"|"claude")));
+                            retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                         },
                         Err(e)=>{k.unknown=Some(e);return true;}
@@ -1366,7 +1362,7 @@ impl<'a> Service<'a> {
         self.held.retain(|l| by_n.get(&l.task).is_some_and(|v| v.projection.task.attempt == Some(l.attempt)));
         // A Claude Remote Control URL belongs to this exact live execution.
         // shortcut: bounded transcript scans restart until a URL appears; retain a cursor if costly.
-        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && k.rt == "claude" && k.session_url.is_none()) {
+        for k in self.kids.iter_mut().filter(|k| std::time::Instant::now()<native_until && crate::runtime::of(&k.rt).remote && k.session_url.is_none()) {
             k.session_url = by_n.get(&k.task).filter(|v| v.projection.task.attempt == Some(k.attempt))
                 .and_then(|v| v.projection.task.session.as_deref()?.split(' ').next()?.strip_prefix("claude:"))
                 .and_then(|id| crate::runtime::observe_until(native_until,||crate::runtime::claude_remote(id)));
@@ -1551,7 +1547,7 @@ impl<'a> Service<'a> {
             let (rt, session) = rt_of(t).unwrap_or(("", ""));
             let mut session = session.to_string();
             let mut l = Launch { execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
-            if session == "-" || rt == "claude" {
+            if session == "-" || crate::runtime::of(rt).remote {
                 session = crate::runtime::codex_thread(&crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
             }
             let text: Vec<String> = new.iter().map(|c| core::delivery(n, &v.log, c.id)).collect();
@@ -1790,7 +1786,7 @@ impl<'a> Service<'a> {
     /// `codex-app` only on a host whose `has` lists it (§ 9 opt-in).
     /// A `needs-gui` task gets only a runtime with effective Full access (§ 4 Filter): never a sandboxed one.
     fn free(&self, rt: &str, gui: bool) -> Option<String> {
-        if rt == "codex-app" && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) { return None; }
+        if crate::runtime::of(rt).app && !(cfg!(any(target_os = "macos", windows)) && self.cfg.has.iter().any(|h| h == rt)) { return None; }
         if self.refused_access.contains_key(rt) || self.limited.contains_key(rt) || self.logged_out.contains(rt) || (gui && !self.full.contains(rt)) { return None; }
         let c = self.cap.as_ref().ok()?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
@@ -1931,7 +1927,7 @@ impl<'a> Service<'a> {
         let began = std::time::Instant::now();
         let started = (self.start)(&l).map(|proc| {
             self.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution, task: l.task, attempt: l.attempt, rt: l.rt.clone(), proc });
-            if matches!(l.rt.as_str(),"codex"|"claude") {
+            if crate::runtime::of(&l.rt).child {
                 // A failed checkpoint retains the handle; polling retries persistence, never launch.
                 if let Err(e)=self.kids.last_mut().unwrap().proc.checkpoint(&self.cfg,&l,execution) { self.kids.last_mut().unwrap().unknown=Some(e); }
             }

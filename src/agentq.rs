@@ -29,7 +29,7 @@ pub fn root()->Res<PathBuf> {
 }
 fn targets(runtime:&str)->Res<Vec<String>> {
     let home=std::env::var_os(if cfg!(windows){"USERPROFILE"}else{"HOME"}).map(PathBuf::from).filter(|p|p.is_absolute()).ok_or("native client home unavailable")?;
-    Ok(vec![root()?.display().to_string(),home.join(if runtime=="codex"{".codex"}else{".claude"}).display().to_string()])
+    Ok(vec![root()?.display().to_string(),home.join(crate::runtime::of(runtime).home).display().to_string()])
 }
 fn unknown(reason:impl ToString)->Value {json!({"kind":"unknown","reason":reason.to_string()})}
 fn exists(path:&Path)->Res<bool> {
@@ -125,18 +125,18 @@ fn project(install:&Path,mut state:Value,previous_warning:bool)->Value {
 fn runtimes(install:&Path)->Value {
     let rows=crate::runtime::agents(install);
     let policy=crate::host::Policy::read_for_hostname(install,crate::hostname);
-    ["codex","claude"].iter().map(|rt|{
-        let row=rows.as_array().and_then(|rows|rows.iter().find(|r|r["runtime"]==*rt));
+    crate::runtime::setup_runtimes().map(|rt|{
+        let row=rows.as_array().and_then(|rows|rows.iter().find(|r|r["runtime"]==rt));
         let reason=match (row,&policy){
             (_,Err(e))=>Some(format!("host policy unknown: {e}")),
             (Some(r),_) if r["login"]!="logged in"=>Some(format!("{}",r["login"].as_str().unwrap_or("login unknown"))),
             (Some(_),Ok(p))=>{
                 let exe=std::env::current_exe().unwrap_or_default();let work=crate::setup::dir(install);
                 let env=crate::runtime::Env{root:&work,exe:&exe,install,permission_mode:&p.permission_mode,codex:&p.codex,publish:"",board_env:&[]};
-                crate::runtime::access(&env,if *rt=="codex"{"codex-app"}else{"claude"}).err().map(|e|e.message)
+                crate::runtime::access(&env,crate::runtime::of(rt).setup).err().map(|e|e.message)
             },_=>Some("runtime unknown".into())
         };
-        json!({"runtime":rt,"client":if *rt=="codex"{"Codex"}else{"Claude Code"},"eligible":reason.is_none(),"reason":reason})
+        json!({"runtime":rt,"client":crate::runtime::of(rt).client,"eligible":reason.is_none(),"reason":reason})
     }).collect::<Vec<_>>().into()
 }
 /// A single background probe at the existing 2 s cadence; renders never run a CLI or read credentials.
@@ -148,7 +148,7 @@ pub fn start(install:&Path) {
             let mut choices=Value::Null;let mut checked=None;let mut warning=false;
             loop {
                 let mut v=project(&install,detect(),warning);warning=v["warning"]==true;v["host"]=json!(crate::hostname());v["platform"]=json!(std::env::consts::OS);
-                v["targets"]=json!({"codex":targets("codex").ok(),"claude":targets("claude").ok()});v["runtimes"]=choices.clone();
+                v["targets"]=crate::runtime::setup_runtimes().map(|rt|(rt.to_string(),json!(targets(rt).ok()))).collect::<serde_json::Map<_,_>>().into();v["runtimes"]=choices.clone();
                 *output.lock().unwrap()=v;
                 if checked.is_none_or(|t:Instant|t.elapsed()>=Duration::from_secs(300)){choices=runtimes(&install);checked=Some(Instant::now());}
                 std::thread::sleep(Duration::from_secs(2));
@@ -170,7 +170,7 @@ pub fn action(install:&Path,action:&str,id:&str,runtime:&str)->Res<()> {
     locked(install,||{
         let mut p=preferences(install)?;
         if action=="agentq-dismiss" {p.dismissed=true;save(install,&p)?;return Ok(());}
-        if action!="agentq-setup" || !crate::resources::id(id) || !["codex","claude"].contains(&runtime){return Err("invalid agentq setup request".into());}
+        if action!="agentq-setup" || !crate::resources::id(id) || !crate::runtime::setup_runtimes().any(|rt|rt==runtime){return Err("invalid agentq setup request".into());}
         let choices=snapshot();
         if !choices["runtimes"].as_array().is_some_and(|rows|rows.iter().any(|r|r["runtime"]==runtime && r["eligible"]==true)){return Err("Selected setup runtime unavailable; check Agents and its access grant".into());}
         // Save the reference first: a crash before/after submission is unknown, never an automatic second install.

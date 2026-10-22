@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Project-owned selected gate. Unknown impact runs the full Rust suite."""
 import argparse
+import re
 import shutil
 import os
 from pathlib import Path
@@ -20,6 +21,19 @@ def selection(paths):
     if paths and all((p.startswith('src/') and Path(p).suffix in {'.js', '.css', '.html'}) or (p.startswith('tests/') and Path(p).suffix == '.cjs') for p in paths):
         return 'web'
     return 'full'
+
+
+# docs/runtime-qualification.md#runtime-adapters: only these files may name a runtime
+ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/main.rs', 'src/labels.rs', 'src/host.rs'}
+RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)"')
+
+
+def runtime_names(path, text):
+    """Runtime name literals in non-test Rust outside the runtime adapter and the named exceptions."""
+    if path in ADAPTER_EXCEPTIONS or path.startswith('src/runtime/') or path.endswith('_tests.rs'):
+        return []
+    code = text.split('#[cfg(test)]', 1)[0]
+    return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(code.splitlines(), 1) if RUNTIME_NAME.search(line)]
 
 
 def changes(base):
@@ -58,6 +72,9 @@ def main():
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
+        found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text())]
+        if found:
+            raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])

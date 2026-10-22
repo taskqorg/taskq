@@ -78,11 +78,11 @@ pub fn run(args: &[String]) -> Result<(), String> {
     ready(&root)?;
     let p = crate::policy::load(&install)?;
     let scope = root.to_str().ok_or("linux sandbox: root must be UTF-8")?;
-    let g = p.grants.iter().find(|g| g.runtime == "codex" && g.project.as_deref() == Some(scope))
+    let g = p.grants.iter().find(|g| crate::runtime::of(&g.runtime).codex && crate::runtime::of(&g.runtime).child && g.project.as_deref() == Some(scope))
         .ok_or("linux sandbox: explicit project grant required")?;
     if g.mode != *mode && !(g.mode == "workspace" && mode == "restricted") { return Err("linux sandbox: grant changed or does not permit this mode".into()); }
     let bin = Path::new(&args[3]).canonicalize().map_err(|e| e.to_string())?;
-    if bin != crate::runtime::codex_native(crate::runtime::which("codex"))?.canonicalize().map_err(|e| e.to_string())? || args[4] != "exec" || args[5..].iter().any(|a| ["danger-full-access", "--yolo", "--dangerously-bypass-approvals-and-sandbox"].contains(&a.as_str())) {
+    if bin != crate::runtime::codex_native(crate::runtime::which(crate::runtime::of(&g.runtime).bin))?.canonicalize().map_err(|e| e.to_string())? || args[4] != "exec" || args[5..].iter().any(|a| ["danger-full-access", "--yolo", "--dangerously-bypass-approvals-and-sandbox"].contains(&a.as_str())) {
         return Err("linux sandbox: only bounded Codex exec allowed".into());
     }
     let home = PathBuf::from(std::env::var_os("HOME").ok_or("linux sandbox: HOME missing")?);

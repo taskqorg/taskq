@@ -203,7 +203,7 @@ fn ai(install: &Path, a: &str, m: &Value) -> Result<(), String> {
             let root = m["root"].as_str().filter(|r| roots(install).iter().any(|x| x == r)).ok_or("Choose a registered project")?;
             let text = m["text"].as_str().unwrap_or("");
             let id=m["id"].as_str().ok_or("Owner request ID missing")?;
-            crate::setup::open_id(install, Path::new(root), text, id, m["runtime"].as_str().unwrap_or("claude"),m["reconcile"]==true)?;
+            crate::setup::open_id(install, Path::new(root), text, id, m["runtime"].as_str().unwrap_or(crate::runtime::OWNER),m["reconcile"]==true)?;
             f["history"] = json!(remember(f["history"].as_array().map_or(&[][..], |v| v), text.trim()));
             f["draft"]=json!("");
         }
@@ -225,13 +225,13 @@ fn answer_local(install: &Path, key: &str, local: &Value) -> Result<(), String> 
 
 fn owner_runtime(ps: &[Value]) -> Value {
     let probe=ps.iter().map(|p|&p["agents"]).filter(|a|a["at"].as_i64().is_some_and(|at|(0..=360).contains(&(now()-at)))).max_by_key(|a|a["at"].as_u64());
-    let row=probe.and_then(|a|a["rows"].as_array()).and_then(|rows|rows.iter().find(|r|r["runtime"]=="claude"));
+    let row=probe.and_then(|a|a["rows"].as_array()).and_then(|rows|rows.iter().find(|r|r["runtime"]==crate::runtime::OWNER));
     let reason=match row {
         Some(r) if r["login"]=="logged in" => "",
         Some(r) if r["login"]=="not logged in" => "Claude Code is not logged in; inspect Agents in the tray.",
         _ => "Claude Code owner-session readiness is unknown; refresh or inspect Agents in the tray.",
     };
-    json!({"id":"claude","name":"Claude Code","available":reason.is_empty(),"reason":reason})
+    json!({"id":crate::runtime::OWNER,"name":crate::runtime::of(crate::runtime::OWNER).client,"available":reason.is_empty(),"reason":reason})
 }
 
 fn roots(install: &Path) -> Vec<String> {
@@ -481,7 +481,7 @@ fn now() -> i64 {
 /// owner's heartbeat via the snapshot); a Codex thread opens only on its owning host, elsewhere unavailable with a reason.
 fn task_session(root: &Path, local: &str, row: &mut Value) {
     let Some(object) = row.as_object_mut() else { return };
-    let published = object.remove("session_url").and_then(|u| u.as_str().filter(|u| claude_url(u)).map(String::from));
+    let published = object.remove("session_url").and_then(|u| u.as_str().filter(|u| crate::runtime::remote_url(u)).map(String::from));
     object.remove("session_reason");
     object.insert("local_session".into(), json!(false));
     let session = row["session"].as_str().unwrap_or("").to_string();
@@ -492,25 +492,20 @@ fn task_session(root: &Path, local: &str, row: &mut Value) {
     row["runtime"] = json!(rt);
     row["host"] = json!(host);
     row["local_session"] = json!(own);
-    if rt != "claude" && !own {
-        if matches!(rt, "codex" | "codex-app") { row["session_reason"] = json!(format!("Codex session opens only on {host}")); }
+    let a = crate::runtime::of(rt);
+    if !a.remote && !own {
+        if a.codex { row["session_reason"] = json!(format!("Codex session opens only on {host}")); }
         return;
     }
-    let id = if own && ((id == "-" && rt == "codex") || rt == "claude") {
+    let id = if own && ((id == "-" && a.codex && a.child) || a.remote) {
         let l = crate::runtime::Launch { execution: None, task: row["n"].as_u64().unwrap_or(0), title: String::new(), attempt: row["attempt"].as_u64().unwrap_or(0),
             role: row["role"].as_str().unwrap_or("").into(), rt: rt.into(), session: id.into(), url: String::new(), resume: None };
         crate::runtime::codex_thread(&crate::runtime::log_path(root, &l)).unwrap_or_else(|| id.into())
     } else { id.into() };
-    if id == "-" || id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { return }
-    row["session_url"] = match rt {
-        "codex" | "codex-app" => json!(format!("codex://threads/{id}")),
-        "claude" => json!(own.then(|| crate::runtime::claude_remote(&id)).flatten().or(published)),
-        _ => Value::Null,
-    };
-}
-
-fn claude_url(u: &str) -> bool {
-    u.strip_prefix("https://claude.ai/code/session_").is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
+    if id == "-" || !crate::runtime::plain_thread(&id) { return }
+    row["session_url"] = if a.codex { json!(crate::runtime::thread_url(&id)) }
+        else if a.remote { json!(own.then(|| crate::runtime::claude_remote(&id)).flatten().or(published)) }
+        else { Value::Null };
 }
 
 /// What the icon and the history show: in work, `ask`, ready, failed over all projects (one task per board and issue), whether
@@ -2002,7 +1997,7 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
 /// Web links and Codex app threads (setup sessions, #1522); the id reaches a shell on Windows, so only a plain id.
 fn openable(u: &str) -> bool {
     u.starts_with("https://") || u.starts_with("http://")
-        || u.strip_prefix("codex://threads/").is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+        || u.strip_prefix("codex://threads/").is_some_and(crate::runtime::plain_thread)
 }
 
 fn open(arg: &str) {

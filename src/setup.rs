@@ -133,7 +133,7 @@ pub fn submit(install: &Path, runtime: &str, client: Option<&str>, targets: &[St
 
 /// Agentq OK: the existing setup writer, with exact displayed targets and this click's retry identity.
 pub fn agentq(install:&Path,id:&str,runtime:&str,targets:Vec<String>)->Res<Request> {
-    if !crate::resources::id(id) || !["codex","claude"].contains(&runtime) || targets.len()!=2 || targets.iter().any(|p|!Path::new(p).is_absolute()) {return Err("invalid agentq setup scope".into());}
+    if !crate::resources::id(id) || !crate::runtime::setup_runtimes().any(|rt|rt==runtime) || targets.len()!=2 || targets.iter().any(|p|!Path::new(p).is_absolute()) {return Err("invalid agentq setup scope".into());}
     save_id(install,runtime,None,targets,None,Some((id,false)),|r,id|format!("Set up agentq from https://github.com/taskqorg/agentq on this host now.\nThe owner selected OK in TaskQ after reviewing installation of the verified agentq release, its engines and host service, and supported configuration, hooks and MCP for the selected client only.\nConsent already names these exact displayed effects and targets (including creating the absent agentq install). Do not ask again for these same effects. Ask before other effects, conflicts, legacy removal or missing access.\nDo not change TaskQ configuration, admission, runtime policy or board state.\n{}",brief(r,&dir(install).join(id))))
 }
 
@@ -141,7 +141,7 @@ pub fn agentq(install:&Path,id:&str,runtime:&str,targets:Vec<String>)->Res<Reque
 pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
     if task.trim().is_empty() { return Err("Write a request before sending".into()); }
     let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
-    save(install, "claude", None, vec![], Some(root.clone()), |_, _| project_brief(&root, task.trim()))
+    save(install, crate::runtime::OWNER, None, vec![], Some(root.clone()), |_, _| project_brief(&root, task.trim()))
 }
 
 /// A workspace retry reads the same owner-session request; its identity never means a second launch.
@@ -158,13 +158,14 @@ fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String
 
 fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, requested_id: Option<(&str, bool)>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {
     // #1522: a visible Codex session is a Codex app thread, so only a setup request on macOS or Windows takes it.
-    if runtime != "claude" && !(runtime == "codex" && root.is_none() && cfg!(any(target_os = "macos", windows))) {
+    let a = crate::runtime::of(runtime);
+    if !a.remote && !(a.codex && a.child && root.is_none() && cfg!(any(target_os = "macos", windows))) {
         return Err(format!("setup runtime {runtime}: no qualified visible session here; use claude, or codex on macOS or Windows"));
     }
     let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
-    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or(if runtime == "codex" { "Codex" } else { "Claude Code" }).into(), runtime: runtime.into(),
+    let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or(a.client).into(), runtime: runtime.into(),
         targets, brief: String::new(), state: "pending".into(), job: None, session: None, url: None, reason: None, root };
     r.brief = brief(&r, &id);
     locked(install, || {
@@ -241,7 +242,7 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
 
 /// The request's runtime adapter (§ 8 table).
 pub fn launch(own: &Path, r: &Request) -> Launched {
-    if r.runtime == "codex" { codex_launch(own, r) } else { claude_launch(own, r) }
+    if crate::runtime::of(&r.runtime).codex { codex_launch(own, r) } else { claude_launch(own, r) }
 }
 
 /// The brief is a file in the session folder; the first message only points at it.
@@ -252,18 +253,18 @@ fn read_brief(path: &Path) -> String {
 /// Codex app thread (§ 8 Codex app, #1522): a `codex exec` handshake turn in the session folder creates the thread, then
 /// the app shows it and gets the brief. Access is the `codex-app` grant, as for app workers; nothing falls back (R9).
 pub fn codex_launch(own: &Path, r: &Request) -> Launched {
-    let bin = crate::runtime::which("codex");
-    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} codex is not on the host service PATH")); }
-    if crate::runtime::login_state("codex", &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} Codex is not logged in on this host")); }
+    let a = crate::runtime::of(&r.runtime);
+    let bin = crate::runtime::which(a.bin);
+    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    if crate::runtime::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
     let exe = std::env::current_exe().unwrap_or_default();
     let env = crate::runtime::Env { root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[] };
-    let access = match crate::runtime::access(&env, "codex-app") { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
+    let access = match crate::runtime::access(&env, a.setup) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
-    let native = match crate::runtime::codex_native(bin) { Ok(b) => b, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
-    let mut c = match crate::runtime::executable(native, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
+    let mut c = match crate::runtime::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
     crate::platform::quiet(&mut c);
     c.current_dir(own).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
@@ -291,9 +292,9 @@ fn codex_thread(stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOn
         return Launched::NoStart(format!("Codex handshake started no thread (exit {})", code.map_or("unknown".into(), |c| c.to_string())));
     };
     // the id reaches the app URL and, on Windows, a shell: only a plain id
-    if thread.is_empty() || !thread.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') { return Launched::Unknown(format!("Codex returned thread {thread:?}; outcome unknown")); }
+    if !crate::runtime::plain_thread(&thread) { return Launched::Unknown(format!("Codex returned thread {thread:?}; outcome unknown")); }
     match submit(&thread) {
-        Ok(()) => Launched::Job { job: thread.clone(), session: Some(thread.clone()), url: Some(format!("codex://threads/{thread}")) },
+        Ok(()) => Launched::Job { job: thread.clone(), session: Some(thread.clone()), url: Some(crate::runtime::thread_url(&thread)) },
         Err(e) => Launched::Unknown(format!("{e}; brief delivery unknown, inspect Codex thread {thread}")),
     }
 }
@@ -301,9 +302,10 @@ fn codex_thread(stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOn
 /// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
 pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     let workdir = r.root.as_deref().map_or(own, Path::new);
-    let bin = crate::runtime::which("claude");
-    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} claude is not on the host service PATH")); }
-    if crate::runtime::login_state("claude", &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} Claude Code is not logged in on this host")); }
+    let a = crate::runtime::of(&r.runtime);
+    let bin = crate::runtime::which(a.bin);
+    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    if crate::runtime::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
@@ -312,7 +314,7 @@ pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     let access = match crate::runtime::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
-    let mut c = match crate::runtime::executable(bin, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
+    let mut c = match crate::runtime::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
         .args(["--bg", "--settings", &serde_json::json!({"env": crate::runtime::claude_env(install, None, None)}).to_string(), "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
@@ -356,7 +358,7 @@ const LINK_WINDOW_MS: u128 = 10 * 60 * 1000;
 /// Remote Control publishes the link after `--bg` returns (#1409): later passes fill a missing session or link
 /// within the window, then stop; the session itself is never tracked.
 pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
-    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && r.runtime == "claude" && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
+    for r in all(install)?.0.into_iter().filter(|r| r.state == "launched" && crate::runtime::of(&r.runtime).remote && r.url.is_none() && now.saturating_sub(r.created) < LINK_WINDOW_MS) {
         let Some(job) = r.job.clone() else { continue };
         let own = r.root.as_deref().map_or_else(|| dir(install).join(&r.id), PathBuf::from);
         let (session, url) = observe(&own, &job);
@@ -464,7 +466,7 @@ pub fn claude_pids() -> Res<Vec<String>> {
         std::process::Command::new("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
     } else {
         // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
-        std::process::Command::new("pgrep").args(["-x", "claude"]).output()
+        std::process::Command::new("pgrep").args(["-x", crate::runtime::of(crate::runtime::OWNER).bin]).output()
     }.map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
     if cfg!(windows) {
@@ -482,7 +484,8 @@ const ACCESS: &str = "access refused:";
 pub fn view(r: &Request) -> serde_json::Value {
     let reason = r.reason.as_deref().unwrap_or("");
     let again = if r.root.is_some() { "send the request again" } else { "run `taskq service setup`" };
-    let (name, login, sessions) = if r.runtime == "codex" { ("Codex", "codex login", "the Codex app threads") } else { ("Claude Code", "claude auth login", "`claude agents`") };
+    let a = crate::runtime::of(&r.runtime);
+    let (name, login, sessions) = (a.client, a.login, a.sessions);
     let (kind, next) = match r.state.as_str() {
         "pending" | "launching" => ("starting", "The host service is starting the session".into()),
         "launched" if r.url.is_some() => ("launched", format!("Open the session to read and answer; archive it in {name} when done")),

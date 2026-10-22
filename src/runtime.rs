@@ -537,9 +537,14 @@ pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &
     })
 }
 
+/// The runtime's CLI under `access`, shared by worker turns and setup sessions: Codex runs its native executor.
+pub(crate) fn cli(rt: &str, access: &crate::policy::Effective, env: &Env) -> Result<Command, String> {
+    let a = of(rt);
+    executable(if a.codex { codex_native(which(a.bin))? } else { which(a.bin) }, access, env)
+}
+
 pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Result<Command, String> {
-    let bin=if l.rt=="claude" {which("claude")} else {codex_native(which("codex"))?};
-    let mut c = executable(bin, access, env)?;
+    let mut c = cli(&l.rt, access, env)?;
     crate::platform::quiet(&mut c);
     let codex = access.codex.as_deref().unwrap_or(env.codex);
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
@@ -1684,6 +1689,17 @@ impl ClaudeTurn {
     }
 }
 
+/// The only session-link builder and checks (§ 9 runtime adapters). A Codex thread id reaches the app URL and, on
+/// Windows, a shell: only a plain id.
+pub fn plain_thread(id: &str) -> bool { !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') }
+
+pub fn thread_url(id: &str) -> String { format!("codex://threads/{id}") }
+
+/// A canonical Claude Remote Control URL.
+pub fn remote_url(u: &str) -> bool {
+    u.strip_prefix("https://claude.ai/code/session_").is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
 /// Only a URL registered by the native session is a Remote Control link.
 pub fn claude_remote(session: &str) -> Option<String> {
     let path=claude_transcript(session)?;let mut reader=NativeHistory::default();let mut found=None;
@@ -1691,7 +1707,7 @@ pub fn claude_remote(session: &str) -> Option<String> {
     loop {
         let complete=reader.read(&path,|v| {
             if let Some(url)=v["url"].as_str() {
-                if v["subtype"]=="bridge_status" && url.strip_prefix("https://claude.ai/code/session_").is_some_and(|id|!id.is_empty()&&id.chars().all(|c|c.is_ascii_alphanumeric())) {found=Some(url.to_string());}
+                if v["subtype"]=="bridge_status" && remote_url(url) {found=Some(url.to_string());}
             }
             Ok(())
         }).ok()?;
@@ -1733,7 +1749,7 @@ pub struct AppTurn {
 impl AppTurn {
     fn queue(&mut self) -> Result<(), String> {
         // the id goes through the Windows shell: only a plain thread id
-        if self.thread.is_empty() || !self.thread.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        if !plain_thread(&self.thread) {
             return Err(format!("invalid thread id {:?}", self.thread));
         }
         self.rollout = rollout(&self.thread);
@@ -1749,7 +1765,7 @@ impl AppTurn {
 /// Show `thread` in the Codex app and queue `text` on it (§ 8 Codex app); the caller has checked the id.
 pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
     let ok = |c: &mut Command| coreq::process::output("runtime.app-submit", c, std::time::Duration::from_secs(10)).is_ok();
-    let url = format!("codex://threads/{thread}");
+    let url = thread_url(thread);
     let opened = if cfg!(windows) { ok(Command::new("cmd").args(["/C", "start", "", &url])) } else { ok(Command::new("open").arg(&url)) };
     if !opened || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
         return Err(format!("codex queue failed for thread {thread}"));
@@ -2105,9 +2121,55 @@ pub fn login_state(rt: &str, bin: &Path) -> &'static str {
     login(rt, probe("runtime.login", bin, if rt == "claude" { &["auth", "status"] } else { &["login", "status"] })).0
 }
 
+/// The only runtime list (§ 9 runtime adapters).
+pub const RUNTIMES: [&str; 3] = ["claude", "codex", "codex-app"];
+
+/// One adapter per runtime (docs/runtime-qualification.md#runtime-adapters): code outside this module asks it,
+/// never compares runtime names. Launch, session links and login probes live in this module and key on `name`.
+// ponytail: a value table, not a trait; three runtimes differ only in data, a trait when one needs its own code outside
+pub struct Adapter {
+    pub name: &'static str,
+    /// CLI binary and login account; `codex-app` shares Codex's.
+    pub bin: &'static str,
+    pub client: &'static str,
+    pub home: &'static str,
+    /// The worker is a CLI child of the service (`claude`, `codex exec`); an app turn is not.
+    pub child: bool,
+    /// A Claude Remote Control session: permission-mode args, `claude agents` links, attempt id as session.
+    pub remote: bool,
+    /// A Codex app turn: no service child, macOS and Windows opt-in (§ 9).
+    pub app: bool,
+    /// Codex family: codex sandbox args, codex login, `codex://` thread links.
+    pub codex: bool,
+    /// Runtime whose access a setup launch of this client uses; empty: no setup.
+    pub setup: &'static str,
+    pub login: &'static str,
+    pub sessions: &'static str,
+}
+
+const ADAPTERS: [Adapter; 3] = [
+    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`" },
+    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads" },
+    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads" },
+];
+const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "" };
+
+/// The adapter of `rt`; an unknown name gets one that answers no to every question.
+pub fn of(rt: &str) -> &'static Adapter {
+    ADAPTERS.iter().find(|a| a.name == rt).unwrap_or(&OTHER)
+}
+
+/// Owner sessions run Claude Code.
+pub const OWNER: &str = RUNTIMES[0];
+
+/// Runtimes a setup request may name, Codex first as the Connect list shows them.
+pub fn setup_runtimes() -> impl Iterator<Item = &'static str> {
+    ADAPTERS.iter().rev().filter(|a| !a.setup.is_empty()).map(|a| a.name)
+}
+
 /// The runtimes taskq can start here (§ 8): `codex-app` is macOS and Windows only and shares Codex's binary and login.
 pub fn agent_runtimes() -> &'static [&'static str] {
-    if cfg!(any(target_os = "macos", windows)) { &["claude", "codex", "codex-app"] } else { &["claude", "codex"] }
+    if cfg!(any(target_os = "macos", windows)) { &RUNTIMES } else { &RUNTIMES[..2] }
 }
 
 /// One row per runtime: `runtime`, `path` (null: not installed), `version`, `login`, `account`, `kind`, `refreshed`
