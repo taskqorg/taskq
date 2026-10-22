@@ -10,12 +10,12 @@ const snapshot={platform:'macos',font:16,theme:'light',host:'fixture',now:1000,v
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
-  for(const theme of ['light','dark'])for(const font of [16,20])for(const anchor of ['top','bottom']){
+  for(const platform of ['macos','windows'])for(const theme of ['light','dark'])for(const font of [16,20])for(const anchor of ['top','bottom']){
    const page=await browser.newPage({viewport:{width:360,height:900},colorScheme:theme});
    page.on('pageerror',e=>{throw e;});
    await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
    await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
-   const state={...snapshot,theme,font,size_anchor:anchor,page:'/fixture/alpha'};
+   const state={...snapshot,platform,theme,font,size_anchor:anchor,page:'/fixture/alpha'};
    await page.evaluate(s=>taskq.receive(s),state);
    await page.locator('.tqp-counts [data-state="doing"]').first().click();await page.locator('[data-a="all-tasks"]').first().click();
    // A3: chip order, then p0/p1/none, then number.
@@ -28,7 +28,7 @@ const snapshot={platform:'macos',font:16,theme:'light',host:'fixture',now:1000,v
    assert.equal(await menu.getAttribute('aria-expanded'),'true');
    const actions=page.locator('#'+await menu.getAttribute('aria-controls'));
    assert.deepEqual(await actions.locator('button').evaluateAll(b=>b.map(x=>x.textContent.trim())).then(x=>x.length>0),true,'failed row menu offers its controls');
-   if(out&&font===16&&anchor==='top')await page.screenshot({path:out+'/mac-'+theme+'-row-menu.png'});
+   if(out&&font===16&&anchor==='top'&&(platform==='macos'||theme==='light'))await page.screenshot({path:out+'/'+(platform==='macos'?'mac':'windows')+'-'+theme+'-row-menu.png'});
    await page.keyboard.press('Escape');
    assert.equal(await actions.count(),0);assert.equal(await menu.evaluate(e=>e===document.activeElement),true,'Escape returns focus to the menu button');
    // A6: chip icon alone (Blocked 0) and icon+count group (Later 13) and icon+count group are centered by bounding box.
@@ -47,10 +47,10 @@ const snapshot={platform:'macos',font:16,theme:'light',host:'fixture',now:1000,v
     const fit=await page.evaluate(()=>{const c=document.querySelector('.content'),rows=document.querySelectorAll('[data-card]'),last=rows[rows.length-1].getBoundingClientRect(),grip=document.querySelector('.menu .grip').getBoundingClientRect(),menu=document.querySelector('.menu').getBoundingClientRect();return {scroll:c.scrollHeight-c.clientHeight,last:last.bottom,content:c.getBoundingClientRect().bottom,grip:grip.bottom,menu:menu.bottom,vh:innerHeight};});
     assert(fit.scroll<=0,'list needs no scroll at fit height '+JSON.stringify(fit));
     assert(fit.last<=fit.content&&fit.grip<=fit.vh+0.5&&fit.vh-fit.menu<=1,'last row and footer visible, no gap '+JSON.stringify({extra,anchor,font,fit}));
-    if(out&&theme==='light'&&anchor==='bottom'&&extra)await page.screenshot({path:out+'/mac-'+font+'-fit-panel.png'});
+    if(out&&platform==='macos'&&theme==='light'&&anchor==='bottom'&&extra)await page.screenshot({path:out+'/mac-'+font+'-fit-panel.png'});
    }
    await page.close();
   }
-  console.log('PASS #1523 A2/A3/A5/A6: chip-order rows, one row menu with Escape focus return, centered chips, layout fit with an added panel; light/dark 16/20 px, top/bottom anchors');
+  console.log('PASS #1523 A2/A3/A5/A6: chip-order rows, one row menu with Escape focus return, centered chips, layout fit with an added panel; macOS/Windows snapshots, light/dark 16/20 px, top/bottom anchors');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
