@@ -9,7 +9,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>window.messages.push(JSON.parse(s))};});
    await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
    const root='/fixture/project',review={id:'review',action:'stop',instance:'original',roots:[root],issued_at:1000,expires_at:1300};
-   const state={stop_modes:true,page:'stop',theme,font,now:1000,service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',host:'mac',age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:''},notify:{projects:{}}};
+   const state={stop_modes:true,page:'stop',theme,font,now:1000,service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',host:'mac',alive:true,age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:''},notify:{projects:{}}};
    await page.evaluate(s=>taskq.receive(s),state);
    await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'stop'}}));
    await page.getByRole('button',{name:'Confirm Drain',exact:true}).waitFor();
@@ -24,10 +24,10 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    assert.match(await page.locator('body').innerText(),/queued/);
    assert(await page.getByRole('button',{name:'Confirm Full stop',exact:true}).isDisabled());
    if(process.env.TASKQ_STOP_SHOTS)await page.screenshot({path:process.env.TASKQ_STOP_SHOTS+'/'+theme+'-unknown.png',fullPage:true});
-   state.projects[0].age=61;state.projects[0].stop_progress[0].state='stopped';
+   state.projects[0].alive=false;state.projects[0].stop_progress[0].state='stopped';
    await page.evaluate(s=>taskq.receive(s),state);assert.match(await page.locator('body').innerText(),/Process state unknown/);
    assert.doesNotMatch(await page.locator('body').innerText(),/#7 codex: stopped/);
-   state.projects[0].age=0;state.projects[0].host_instance='previous';
+   state.projects[0].alive=true;state.projects[0].host_instance='previous';
    await page.evaluate(s=>taskq.receive(s),state);assert.match(await page.locator('body').innerText(),/Process state unknown/);
    assert.doesNotMatch(await page.locator('body').innerText(),/#7 codex: stopped/);assert.deepEqual(errors,[]);await page.close();
   }

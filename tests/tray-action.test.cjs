@@ -2,7 +2,7 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const timers=[],sent=[];
 let renders=0;
-const context={operationController:true,S:{projects:[{root:'one',name:'<project>',focus:[],saved:true,age:0},{root:'two',name:'second',focus:[],age:0}]},pending:{},
+const context={operationController:true,S:{projects:[{root:'one',name:'<project>',focus:[],saved:true,age:0,alive:true},{root:'two',name:'second',focus:[],age:0,alive:true}]},pending:{},
   render:()=>renders++,send:m=>sent.push(m),setTimeout:(f,ms)=>{assert.equal(ms,30000);timers.push(f);},crypto:require('node:crypto').webcrypto,
   esc:s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;'),window:{},settle(){},answerReadback(){},aiText:''};
 require('./tray-harness.cjs').install(context);
@@ -12,15 +12,16 @@ assert.equal(sent.length,2,'a waiting click must not dispatch twice');
 const first=sent[0].id,second=sent[1].id;
 assert.match(first,/^[a-f0-9]{32}$/);assert.notEqual(first,second);
 // Another command changes the visible mode; pending still belongs to the original click.
-context.receive({projects:[{root:'one',name:'<project>',focus:['all'],age:0,focus_command:{state:'observed',applied_receipt:other}},context.S.projects[1]]});
+context.receive({projects:[{root:'one',name:'<project>',focus:['all'],age:0,alive:true,focus_command:{state:'observed',applied_receipt:other}},context.S.projects[1]]});
 assert.equal(context.pending.one.id,first);
 context.receive({focus_receipt:{root:'one',id:first,applied_receipt:receipt}});
 assert.equal(context.pending.one.text,'Waiting for service');
-for(const age of [null,-1,61]){
-  context.S.projects[0].focus_command={state:'observed',applied_receipt:receipt,observed_receipt:observed};context.S.projects[0].age=age;
+// #1591: the Rust ttl rule sets `alive`; a stale or missing status cannot acknowledge
+for(const alive of [undefined,false]){
+  context.S.projects[0].focus_command={state:'observed',applied_receipt:receipt,observed_receipt:observed};context.S.projects[0].alive=alive;
   (context.focusReadback());assert(context.pending.one,'stale/unknown age cannot acknowledge');
 }
-context.S.projects[0].age=0;context.S.projects[0].focus_command.state='unknown';
+context.S.projects[0].alive=true;context.S.projects[0].focus_command.state='unknown';
 (context.focusReadback());assert(context.pending.one);
 context.S.projects[0].focus_command.state='observed';context.S.projects[0].focus_command.observed_receipt=null;
 (context.focusReadback());assert(context.pending.one,'missing observed receipt cannot confirm');
@@ -79,8 +80,8 @@ assert.equal(context.hostCommand.id,nextRestart.id,'unknown lifecycle retains it
 assert.match(context.hostCommand.reason,/incomplete/,'unknown receipt cannot be replaced by another review');
 console.log('PASS host restart scope, immutable request, different-generation exact receipt, late/error isolation and no deadline replay');
 context.S.service={state:'running',pid:731,instance:'origin'};
-Object.assign(context.S.projects[0],{service_pid:731,host_instance:'origin',age:0,restart_waits:['#7','operator']});
-Object.assign(context.S.projects[1],{service_pid:731,host_instance:'old',age:0,restart_waits:['#99']});
+Object.assign(context.S.projects[0],{service_pid:731,host_instance:'origin',age:0,alive:true,restart_waits:['#7','operator']});
+Object.assign(context.S.projects[1],{service_pid:731,host_instance:'old',age:0,alive:true,restart_waits:['#99']});
 assert.match(context.lifecycleWaits(),/waits for #7, operator/);assert(!context.lifecycleWaits().includes('#99'),'another generation cannot explain current readiness');
 context.S.lifecycle={id:context.hostCommand.id,state:'applied',reason:'required restart receipt unavailable: store-full'};
 context.lifecycleReadback();assert.match(context.hostCommand.reason,/store-full/);
@@ -124,14 +125,14 @@ console.log('PASS exact project Uninstall, foreign/partial refusal, last-unit ex
 // R11/E2: both choices remain visible; Full stop transmits the reviewed mode and never trusts stale progress.
 context.hostCommand=null;
 context.S.service={state:'running',pid:123,instance:'original'};
-context.S.projects=[{root:'/canonical/one',name:'<project>',host:'mac',age:0,service_pid:123,host_instance:'original',stop_progress:[{task:7,rt:'codex',state:'unknown',reason:'exit unavailable'}]}];
+context.S.projects=[{root:'/canonical/one',name:'<project>',host:'mac',age:0,alive:true,service_pid:123,host_instance:'original',stop_progress:[{task:7,rt:'codex',state:'unknown',reason:'exit unavailable'}]}];
 context.S.full_stop_review={...context.S.stop_review,mode:'full'};
 context.S.lifecycle=null;
 assert.match(context.stopPanel(),/Confirm Drain/);
 assert.match(context.stopPanel(),/Confirm Full stop/);
 assert.match(context.stopPanel(),/exit unavailable/);
 context.lifecycleStart('/canonical/one','stop','full');assert.equal(sent.at(-1).mode,'full');
-context.S.projects[0].age=61;
+context.S.projects[0].alive=false;
 assert.match(context.stopPanel(),/Process state unknown/);
 assert.doesNotMatch(context.stopPanel(),/exit unavailable/);
 context.S.stop_hold={id:'held',mode:'full',state:'held'};

@@ -220,7 +220,7 @@ fn project_config(root:&Path)->Res<(Config,Value)> {
         labelled: false,
         permission_mode: str_or("permission_mode", "dontAsk"),
         codex,
-        ttl: secs("ttl", 300) as i64,
+        ttl: secs("ttl", TTL as u64) as i64,
         poll: secs("poll", 60),
         update_every: secs("update_every", 60),
         rollback_after: secs("rollback_after", 600),
@@ -374,6 +374,8 @@ fn project_name(root: &Path) -> String {
 }
 
 use coreq::status::age as file_age;
+/// Default project ttl (§ 9): heartbeat lease and the one freshness bound (#1591).
+const TTL: i64 = 300;
 
 // ---------- writes ----------
 
@@ -1583,8 +1585,9 @@ fn capacity_cmd(a: &Args) -> Res<()> {
         roots.iter().find_map(|root| {
             let path=dot(root).join("status.json");
             let st:Value=serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
-            (st["host"]==me && st["at"].as_u64().is_some_and(|at|at<=now && now-at<=60)
-                && file_age(&path).is_some_and(|age|age<=60)).then_some(st)
+            let ttl=snapshot::ttl(root);
+            (st["host"]==me && st["at"].as_i64().is_some_and(|at|snapshot::live(now as i64-at,ttl))
+                && snapshot::status_live(&path,ttl)).then_some(st)
         })
     };
     let e = CapEdit::from_args(a)?;
@@ -1662,7 +1665,7 @@ fn channel_cmd(a: &Args) -> Res<()> {
         let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
         host::projects(&install).ok()?.iter().find_map(|root| {
             let st:Value=serde_json::from_slice(&fs::read(dot(root).join("status.json")).ok()?).ok()?;
-            (st["host"]==me.as_str() && st["at"].as_u64().is_some_and(|at|at>=since && at<=now && now-at<=60)).then(||st["channel"].as_str().map(String::from)).flatten()
+            (st["host"]==me.as_str() && st["at"].as_u64().is_some_and(|at|at>=since && snapshot::live(now as i64-at as i64,snapshot::ttl(root)))).then(||st["channel"].as_str().map(String::from)).flatten()
         })
     };
     let Some(want)=a.pos.get(2) else {
@@ -1844,7 +1847,7 @@ fn service_id(installation: &str) -> String {
 /// Another live process that wrote this root's fresh `status.json` (§ 4 one service per root).
 fn other_service(root: &Path) -> Option<u32> {
     let p = dot(root).join("status.json");
-    if file_age(&p).is_none_or(|a| a > 60) {
+    if !snapshot::status_live(&p, snapshot::ttl(root)) {
         return None;
     }
     let pid = data::json(&p).ok()??["pid"].as_u64()? as u32;
@@ -1911,16 +1914,16 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
     if let Some(w) = status.as_ref().and_then(|s| s["restart_waits"].as_array()).filter(|w| !w.is_empty()) {
         out.push(format!("Restart: waits for {}", w.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")));
     }
-    // § 4 board budget: only a status written within 60 s speaks for the running service
-    let requests = match status.as_ref().filter(|_| file_age(&d.join("status.json")).is_some_and(|a| a <= 60)) {
+    // § 4 board budget: only a live status speaks for the running service
+    let ttl = snapshot::ttl(root);
+    let requests = match status.as_ref().filter(|_| snapshot::status_live(&d.join("status.json"), ttl)) {
         Some(s) => requests::lines(s),
         None => vec!["Board requests: unknown (status missing or stale)".into()],
     };
-    let ttl = load(root).map(|(c, _)| c.ttl.max(0) as u64).unwrap_or(300);
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| d.as_secs());
     let fresh = status.as_ref().and_then(|s| {
         s["tasks_age_seconds"].as_u64()?.checked_add(now?.checked_sub(s["at"].as_u64()?)?)
-    }).filter(|a| *a <= ttl);
+    }).filter(|a| snapshot::live(*a as i64, ttl));
     match (status, fresh) {
         (Some(s), Some(a)) if snapshot::complete(&s) => {
             out.push(snapshot::counts_line(&snapshot::status_totals(&s).unwrap()));
@@ -2202,10 +2205,10 @@ fn hold_cmd(on: bool, reason: Option<&str>) -> Res<()> {
 fn recover_cmd(root: &Path, apply: bool, json: bool) -> Res<()> {
     let c = ctx()?;
     let hold = admission::hold(&c.cfg.install).ok_or("no emergency hold on this host; run `taskq service hold` first")?;
-    // the service's children, from a status.json at most 60 s old (§ 4); else every row is unknown
+    // the service's children, from a live status.json (§ 4); else every row is unknown
     let p = dot(root).join("status.json");
     let kids = match (data::json(&p), file_age(&p)) {
-        (Ok(Some(s)), Some(a)) if a <= 60 => Ok(s["kids"].as_array().cloned().unwrap_or_default()),
+        (Ok(Some(s)), Some(a)) if snapshot::live(a as i64, c.cfg.ttl) => Ok(s["kids"].as_array().cloned().unwrap_or_default()),
         (Err(e), _) => Err(e),
         (Ok(Some(_)), Some(a)) => Err(format!("status.json {a} s old")),
         _ => Err("no service status".to_string()),
@@ -2828,7 +2831,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let n = st["revoke"].as_array().map_or(0, Vec::len);
             if n > 0 { println!("revokes pending: {n}"); }
             let local = dot(root).join("status.json");
-            let report = data::json(&local).ok().flatten().filter(|_| file_age(&local).is_some_and(|a| a <= 300));
+            let report = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl));
             match report.as_ref().map(|r| &r["connection"]) {
                 Some(Value::String(o)) => println!("delivery: {o}"),
                 Some(_) => println!("delivery: unknown (the service has not tried yet)"),
@@ -2844,7 +2847,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "status" => {
             // R6: a board rate-limit pause the local service reports comes first, also when this read fails
             let local = dot(&cfg.root).join("status.json");
-            if let Some(w) = data::json(&local).ok().flatten().filter(|_| file_age(&local).is_some_and(|a| a <= 60)).as_ref().and_then(requests::warning) {
+            if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) {
                 println!("{w}");
             }
             let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());

@@ -79,8 +79,9 @@ fn entries(install: &Path, projects: &[Value], store: &Store) -> Res<(Vec<Value>
     let mut entries=BTreeMap::new();let mut reasons=BTreeSet::new();
     for p in projects {
         let board=p["issues"].as_str().unwrap_or("");
-        if p["complete"]!=true || p["alive"]!=true || !p["age"].as_u64().is_some_and(|a|a<=60)
-            || !p["tasks_age_seconds"].as_u64().is_some_and(|a|a.saturating_add(p["age"].as_u64().unwrap_or(61))<=60) || board.is_empty() || !p["tasks"].is_array() {
+        let ttl=p["ttl"].as_i64().unwrap_or(crate::TTL);
+        if p["complete"]!=true || p["alive"]!=true
+            || !p["tasks_age_seconds"].as_i64().zip(p["age"].as_i64()).is_some_and(|(t,a)|crate::snapshot::live(t.saturating_add(a),ttl)) || board.is_empty() || !p["tasks"].is_array() {
             reasons.insert(format!("{}: messages source stale, incomplete or unavailable",p["name"].as_str().unwrap_or("Project")));
         }
         for t in p["tasks"].as_array().into_iter().flatten().filter(|t|t["state"]=="ask") {
@@ -231,7 +232,8 @@ mod tests {
         assert_eq!(act(&f.0,&projects,"delete",&[question])["outcomes"][0]["state"],"accepted");
         assert_eq!(snapshot(&f.0,&projects)["count"],0,"deleted question never resurrects on fresh read");
         assert_eq!(snapshot(&f.0,&[project(10)])["count"],1,"new revision is a new message");
-        let mut stale=project(10);stale["age"]=json!(61);let s=snapshot(&f.0,&[stale]);assert!(s["count"].is_null());assert_eq!(s["complete"],false);
+        let mut live=project(10);live["age"]=json!(61);assert_eq!(snapshot(&f.0,&[live])["complete"],true,"#1591: 61 s is within ttl");
+        let mut stale=project(10);stale["age"]=json!(301);let s=snapshot(&f.0,&[stale]);assert!(s["count"].is_null());assert_eq!(s["complete"],false);
         fs::write(f.0.join("setup/corrupt.json"),"broken").unwrap();assert!(snapshot(&f.0,&[])["count"].is_null());
         fs::write(f.0.join("messages.json"),"broken kept metadata").unwrap();assert_eq!(f.action("archive","invalid")["state"],"unknown");
         assert_eq!(fs::read_to_string(f.0.join("messages.json")).unwrap(),"broken kept metadata");

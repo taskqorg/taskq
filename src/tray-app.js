@@ -108,7 +108,7 @@ lifecycleReadback:function(r=view.S?.lifecycle){
 lifecycleWaits:function(){
   if(!Array.isArray(view.S?.projects))return h('div',{class:'body meta'},'Project registry unknown');
   return f(view.S.projects.map(p=>{
-    const current=view.S.service?.state==='running'&&typeof p.service_pid==='number'&&typeof p.host_instance==='string'&&typeof p.age==='number'&&p.age>=0&&p.age<=60&&p.service_pid===view.S.service?.pid&&p.host_instance===view.S.service?.instance;
+    const current=view.S.service?.state==='running'&&typeof p.service_pid==='number'&&typeof p.host_instance==='string'&&p.alive===true&&p.service_pid===view.S.service?.pid&&p.host_instance===view.S.service?.instance;
     const text=!current?'waiting for current project observation':p.error?p.error:Array.isArray(p.restart_waits)?p.restart_waits.length?'waits for '+p.restart_waits.join(', '):'prepared':'waiting for recovery observation';
     return h('div',{class:'body meta'},p.name+': '+text);
   }));
@@ -128,7 +128,7 @@ stopPanel:function(){if(!ports.workspace)return api.operationLauncher('stop',nul
   const pending=!!held&&!held.selected_count||view.hostCommand&&view.hostCommand.state!=='observed'||['queued','applied'].includes(view.S.lifecycle?.state);
   const names=projects.map(p=>p.name).join(', ')||'no registered projects';
   const host=projects[0]?.host||'unknown host',command=view.hostCommand||view.S.lifecycle;
-  const rows=projects.map(p=>h('div',{class:'body'},h('strong',null,p.name),h('div',{class:'meta'},view.S.service?.state!=='running'||typeof p.age!=='number'||p.age<0||p.age>60||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?lines(p.stop_progress.map(k=>'#'+k.task+' '+k.rt+': '+k.state+(k.reason?' · '+k.reason:''))):'No stop acknowledgement; running or unknown work may remain.')));
+  const rows=projects.map(p=>h('div',{class:'body'},h('strong',null,p.name),h('div',{class:'meta'},view.S.service?.state!=='running'||p.alive!==true||p.service_pid!==view.S.service?.pid||p.host_instance!==view.S.service?.instance?'Process state unknown: service observation stale or from another generation.':Array.isArray(p.stop_progress)&&p.stop_progress.length?lines(p.stop_progress.map(k=>'#'+k.task+' '+k.rt+': '+k.state+(k.reason?' · '+k.reason:''))):'No stop acknowledgement; running or unknown work may remain.')));
   return f(h('div',{class:'body'},'Stop on '+host+' · '+names),h('div',{class:'body meta'},'Only TaskQ-owned local work is targeted. Remote hosts and unrelated agents are unaffected. Dirty files and session references are retained; unsaved buffers and interrupted external effects may be lost. Automatic rollback to older releases is disabled.'),
     h('div',{class:'body'},h('strong',null,'Drain'),h('div',{class:'meta'},'Hold new admission and let current work finish. Retain autostart and the hold after service exit.')),h('button',{class:'project','data-a':'stop','data-root':root||'',disabled:!!(pending||!root||!view.S.stop_review?.instance)},'Confirm Drain'),
     h('div',{class:'body'},h('strong',null,'Full stop'),h('div',{class:'meta'},'Request cancellation now, including offline. Unknown termination stays fenced. Board reconciliation may keep the service alive.')),h('button',{class:'project','data-a':'stop-full','data-root':root||'',disabled:!!(pending||!root||!view.S.full_stop_review?.instance)},'Confirm Full stop'),
@@ -192,7 +192,7 @@ focusReceipt:function(r){
 focusReadback:function(){
   for(const p of view.S.projects){
     const item=view.pending[p.root],ack=p.focus_command;
-    if(item?.receipt&&typeof p.age==='number'&&p.age>=0&&p.age<=60&&ack?.state==='observed'&&ack.applied_receipt===item.receipt&&typeof ack.observed_receipt==='string'&&/^[a-f0-9]{32}$/.test(ack.observed_receipt)){
+    if(item?.receipt&&p.alive===true&&ack?.state==='observed'&&ack.applied_receipt===item.receipt&&typeof ack.observed_receipt==='string'&&/^[a-f0-9]{32}$/.test(ack.observed_receipt)){
       delete view.pending[p.root];if(actionErrors.get(p.root)?.id===item.id)actionErrors.delete(p.root);
     }
   }
@@ -296,7 +296,7 @@ history:function(){
     h('div',{class:'body meta'},'Ask counts events, not current questions.'),note&&h('div',{class:'body meta'},note));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
   const up=view.S.projects.find(p=>p.update&&p.update!==p.version);
-  if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive&&Number.isFinite(p.age)&&p.age>=0&&p.age<=60&&p.version===view.updating.v))return h('div',{class:'row meta'},'Updated to '+view.updating.v+': read from status.json');
+  if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive===true&&p.version===view.updating.v))return h('div',{class:'row meta'},'Updated to '+view.updating.v+': read from status.json');
   if(view.updating&&view.S.now-view.updating.at<300)return h('button',{class:'project',disabled:true},'Updating to '+view.updating.v+'…');
   return f(view.updating&&h('div',{class:'row alert'},'Update to '+view.updating.v+' not confirmed: see the log'),!view.updating&&up&&h('button',{class:'project','data-a':'update','data-root':up.root,'data-v':up.update},'Update now to '+up.update));},
 ai:function(){return h('button',{class:'project','data-a':'workspace','data-page':'request','data-root':view.aiRoot||null},'Ask AI · new session…');},
@@ -384,7 +384,7 @@ runningAgents:function(compact=false){
   const reasons=new Set(),seen=new Map();
   for(const p of boards.values()){
     const elapsed=Number.isFinite(p.age)&&p.age>=0&&Number.isFinite(p.tasks_age_seconds)&&p.tasks_age_seconds>=0?p.age+p.tasks_age_seconds:null;
-    const fresh=p.complete===true&&elapsed!==null&&elapsed<=60&&Number.isFinite(p.observed);
+    const fresh=p.complete===true&&p.tasks_live===true&&Number.isFinite(p.observed);
     partial ||= !fresh||!Array.isArray(p.hosts)||!Array.isArray(p.tasks);
     if(!fresh)reasons.add(!p.complete?'partial board snapshot':elapsed===null?'missing task observation':'stale task observation');
     if(!Array.isArray(p.hosts)||!Array.isArray(p.tasks))reasons.add('missing host/task data');
@@ -392,8 +392,8 @@ runningAgents:function(compact=false){
       if(!h||typeof h.name!=='string'||!h.name){partial=true;continue;}
       const age=Number.isFinite(h.updated)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-h.updated+elapsed:null;
       const old=hosts.get(h.name);
-      if(!old)hosts.set(h.name,{name:h.name,age,unknown:!fresh||age===null||age<0||age>60,counts:new Map()});
-      else {old.unknown ||= !fresh||age===null||age<0||age>60;old.age=old.age===null||age===null?null:Math.max(old.age,age);}
+      if(!old)hosts.set(h.name,{name:h.name,age,unknown:!fresh||h.live!==true,counts:new Map()});
+      else {old.unknown ||= !fresh||h.live!==true;old.age=old.age===null||age===null?null:Math.max(old.age,age);}
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
       doing+=t.state==='doing'?1:0;review+=t.state==='review'?1:0;
@@ -402,8 +402,8 @@ runningAgents:function(compact=false){
         if(!x||typeof x.host!=='string'){partial=true;reasons.add('invalid execution host');continue;}
         const name=x.host||'Unknown host';
         if(!hosts.has(name))hosts.set(name,{name,age:null,unknown:true,counts:new Map()});
-        const h=hosts.get(name),age=Number.isFinite(x.observed)&&Number.isFinite(p.observed)&&elapsed!==null?p.observed-x.observed+elapsed:null;
-        if(!fresh||age===null||age<0||age>60||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason='Run state unknown; see service log';continue;}
+        const h=hosts.get(name);
+        if(!fresh||x.live!==true||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.unknown=true;h.reason='Run state unknown; see service log';continue;}
         const identity=JSON.stringify([p.issues||p.root,t.n,x.id]),prior=seen.get(identity);
         if(prior){if(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role){h.unknown=true;hosts.get(prior.host).unknown=true;reasons.add('conflicting execution observations');}continue;}
         seen.set(identity,x);
@@ -420,17 +420,17 @@ runningAgents:function(compact=false){
   }
   if(!hosts.size)out.push(h('div',{class:'body meta'},'Hosts unknown: no observation'));
   const local=[...boards.values()].filter(p=>p.host===view.S.host),latest=local.filter(p=>p.capacity).sort((a,b)=>a.age-b.age)[0];
-  const cap=latest?.capacity?.host_runtime_used,capFresh=latest&&Number.isFinite(latest.age)&&latest.age>=0&&latest.age<=60;
+  const cap=latest?.capacity?.host_runtime_used,capFresh=latest?.alive===true;
   const occupied=cap&&typeof cap==='object'&&!Array.isArray(cap)&&Object.values(cap).every(n=>Number.isInteger(n)&&n>=0);
   const counted=[h('div',{class:'body meta'},'Registered project boards · '+(partial?'Tasks unknown':'Tasks: Doing '+doing+' · Review '+review))];
   if(capFresh&&occupied){
     counted.push(h('div',{class:'body meta'},view.S.host+' · Occupied slots: '+(Object.entries(cap).map(([rt,n])=>rt+' '+n).join(' · ')||'0')+' · '+age(latest.age)+' old'));
     const reserved=new Map();let known=local.length>0;
     for(const p of local){
-      if(!Number.isFinite(p.age)||p.age<0||p.age>60||p.complete!==true||!Number.isFinite(p.tasks_age_seconds)||p.tasks_age_seconds<0||p.tasks_age_seconds+p.age>60||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
+      if(p.alive!==true||p.complete!==true||p.tasks_live!==true||!Array.isArray(p.capacity?.reservations)){known=false;continue;}
       for(const r of p.capacity.reservations){
         if(!r||typeof r.rt!=='string'||!r.rt||!['held','requested'].includes(r.state)){known=false;continue;}
-        const running=(p.tasks||[]).some(t=>t.n===r.task&&(Array.isArray(t.executions)?t.executions:[]).some(x=>x&&x.attempt===r.attempt&&x.host===view.S.host&&x.runtime===r.rt&&x.state==='running'&&Number.isFinite(x.observed)&&p.observed-x.observed+p.age+p.tasks_age_seconds>=0&&p.observed-x.observed+p.age+p.tasks_age_seconds<=60));
+        const running=(p.tasks||[]).some(t=>t.n===r.task&&(Array.isArray(t.executions)?t.executions:[]).some(x=>x&&x.attempt===r.attempt&&x.host===view.S.host&&x.runtime===r.rt&&x.state==='running'&&x.live===true));
         if(!running)reserved.set(p.issues+'/'+r.task+'/'+r.attempt,r.rt);
       }
     }
