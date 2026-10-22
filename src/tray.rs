@@ -33,8 +33,8 @@ fn alone(install: &Path) -> bool {
 enum Ev {
     Tick,
     Ipc(String),
-    Workspace(String),
-    WorkspaceEvaluated(u64, &'static str),
+    Workspace(String, String),
+    WorkspaceEvaluated(String, u64, &'static str),
     Evaluated(u64, &'static str),
     Click(Rect),
     Shot,
@@ -166,20 +166,7 @@ pub fn use_icon(install: &Path, draft: &Value) -> Result<(), Vec<String>> {
 }
 
 /// Draft and history of AI requests (§ 4): `<install>/tray-requests.json`, apart from the view settings.
-fn requests_file_checked(install: &Path) -> Result<Value, String> {
-    let text=match fs::read_to_string(install.join("tray-requests.json")) {
-        Ok(text)=>text,
-        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(json!({"draft":"","history":[]})),
-        Err(e)=>return Err(format!("Workspace drafts unavailable: {e}; existing data kept")),
-    };
-    let mut v:Value=serde_json::from_str(&text).map_err(|e|format!("Workspace drafts unreadable: {e}; existing data kept"))?;
-    if !v.is_object(){return Err("Workspace drafts have an unsupported format; existing data kept".into());}
-    for (key,valid) in [("draft",v["draft"].is_null()||v["draft"].is_string()),("history",v["history"].is_null()||v["history"].as_array().is_some_and(|a|a.iter().all(Value::is_string))),("answers",v["answers"].is_null()||v["answers"].is_object())] {
-        if !valid{return Err(format!("Workspace {key} has an unsupported format; existing data kept"));}
-    }
-    if v["draft"].is_null(){v["draft"]=json!("");}if v["history"].is_null(){v["history"]=json!([]);}
-    Ok(v)
-}
+use crate::conversations::preferences as requests_file_checked;
 fn requests_file(install: &Path) -> Value {
     requests_file_checked(install).unwrap_or_else(|e|json!({"error":e,"draft":"","history":[]}))
 }
@@ -703,6 +690,7 @@ fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!(
 // The page owns asynchronous work; a submission result cannot acknowledge its execution.
 struct WebCalls {
     workspace: bool,
+    surface: String,
     next: u64,
     pending: std::collections::BTreeMap<u64, (Instant, tracing::Span)>,
     counts: [u64; 4],
@@ -713,7 +701,7 @@ struct WebCalls {
 }
 impl WebCalls {
     fn new() -> Self {
-        let mut calls=Self{workspace:false,next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false};
+        let mut calls=Self{workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -840,8 +828,8 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     if calls.pending.contains_key(&0) {calls.fault("page-not-ready");return;}
     let Some(id)=calls.begin(name,Instant::now()) else {return};
     let p=proxy.clone();
-    let workspace=calls.workspace;
-    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
+    let workspace=calls.workspace;let surface=calls.surface.clone();
+    if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(surface.clone(),id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
         calls.finish(id,"submit-error");
     }
 }
@@ -922,6 +910,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut ui: Option<(Window, WebView)> = None;
     let mut workspace: Option<(Window, WebView)> = None;
     let mut workspace_web: Option<WebCalls> = None;
+    let mut detached:std::collections::BTreeMap<String,(Window,WebView,WebCalls)>=Default::default();
     let mut workspace_handoff=false;
     let mut workspace_open=Value::Null;
     let mut tray: Option<TrayIcon> = None;
@@ -979,6 +968,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             }
         };
         match event {
+            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if detached.values().any(|(w,_,_)|w.id()==window_id)=>{if let Some((w,_,_))=detached.values().find(|(w,_,_)|w.id()==window_id){w.set_visible(false);}}
+            Event::WindowEvent {window_id,..} if detached.values().any(|(w,_,_)|w.id()==window_id)=>{}
             Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
                 if let Some((w,_))=&workspace {w.set_visible(false);}
             }
@@ -1088,6 +1079,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
                     if sig!=workspace_shown && !calls.failed && !calls.pending.contains_key(&0) {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
+                for (_,wv,calls) in detached.values_mut(){if sig!=shown && !calls.failed && !calls.pending.contains_key(&0){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
                 if sig != shown && !web.pending.contains_key(&0) {
                     shown = sig;
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
@@ -1134,9 +1126,38 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 web.finish(id,result);
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
-            Event::UserEvent(Ev::WorkspaceEvaluated(id,result)) => {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}
-            Event::UserEvent(Ev::Workspace(message)) => {
-                let (Some((w,wv)),Some(calls))=(&workspace,&mut workspace_web) else {return};
+            Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
+            Event::UserEvent(Ev::Workspace(surface,message)) => {
+                let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
+                if input["a"]=="conversation-window" {
+                    let id=input["conversation"].as_str().unwrap_or("");
+                    if !crate::resources::id(id){return;}
+                    let action=input["windowAction"].as_str().or_else(||input["action"].as_str()).unwrap_or("");
+                    if action=="raise" {if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();}return;}
+                    if action=="detach" && surface=="main" && !detached.contains_key(id) {
+                        let saved=crate::conversations::snapshot(&install);
+                        let valid=saved["items"].as_array().is_some_and(|rows|rows.iter().any(|c|c["id"]==id&&c["revision"]==input["revision"]));
+                        if !valid {return;}
+                        let p=proxy.clone();let source=id.to_string();
+                        let built=WindowBuilder::new().with_title("TaskQ Request").with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
+                            WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(source.clone(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                        });
+                        match built {
+                            Ok((window,wv))=>{let mut calls=WebCalls::new();calls.workspace=true;calls.surface=id.into();window.set_visible(true);window.set_focus();detached.insert(id.into(),(window,wv,calls));}
+                            Err(_)=>{if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){let r=json!({"conversationReceipt":{"id":input["id"],"state":"unknown","reason":"Detached window unavailable; main retains ownership"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}return;}
+                        }
+                    }else if action=="return" && surface==id {detached.remove(id);if let Some((window,_))=&workspace{window.set_visible(true);window.set_focus();}}
+                    else {return;}
+                    if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){
+                        let owner=json!({"workspaceOwner":{"id":"main","detached":detached.keys().collect::<Vec<_>>()}});
+                        web_eval(wv,&format!("taskq.receive({owner})"),"tray.web.receive",&proxy,calls);
+                        if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",state(&install,&settings,dark,None,&adding),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
+                        else {let r=json!({"conversationReceipt":{"id":input["id"],"state":"accepted","snapshot":crate::conversations::snapshot(&install)}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
+                    }
+                    return;
+                }
+                let detached_ids:Vec<String>=detached.keys().cloned().collect();
+                let (w,wv,calls)=if surface=="main" {let (Some((w,wv)),Some(calls))=(&workspace,&mut workspace_web) else{return};(w,wv,calls)}else{let Some((w,wv,calls))=detached.get_mut(&surface) else{return};(&*w,&*wv,calls)};
                 let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
                 if m["a"]=="web-error" {calls.errors(&m);return;}
                 if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
@@ -1147,9 +1168,29 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     Some("ready") | Some("refresh") => {
                         calls.finish(0,"ok");
                         web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
-                        if !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                        if surface=="main" && !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                        let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
+                        web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()})),"tray.web.receive",&proxy,calls);
+                        let script=if surface=="main" {format!("taskq.receive({})",json!({"workspaceOwner":own}))}else{format!("taskq.receive({});taskq.receive({})",json!({"open":{"page":"conversations"}}),json!({"workspaceOwner":own}))};
+                        web_eval(wv,&script,"tray.web.receive",&proxy,calls);
                     }
                     Some("hide") => w.set_visible(false),
+                    Some("workspace-window")=>{
+                        match m["action"].as_str().unwrap_or("") {
+                            "pin"=>{let pin=!w.is_always_on_top();w.set_always_on_top(pin);if surface=="main" {if let Ok(mut p)=requests_file_checked(&install){p["workspace_pin"]=json!(pin);let _=crate::platform::write_atomic(&install.join("tray-requests.json"),&p.to_string());}}web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":pin})),"tray.web.receive",&proxy,calls);}
+                            "enlarge"=>{let enlarged=!w.is_maximized();w.set_maximized(enlarged);web_eval(wv,&format!("taskq.receive({})",json!({"workspaceMaximized":enlarged})),"tray.web.receive",&proxy,calls);},
+                            "size"=>{if let (Some(width),Some(height))=(m["width"].as_f64(),m["height"].as_f64()){if width.is_finite()&&height.is_finite(){let area=w.current_monitor().map(|m|work_area(&m));let scale=w.scale_factor();let max_w=area.map_or(2000.0,|(_,_,w,_)|f64::from(w)/scale).max(320.0);let max_h=area.map_or(1600.0,|(_,_,_,h)|f64::from(h)/scale).max(240.0);w.set_inner_size(LogicalSize::new(width.clamp(320.0,max_w),height.clamp(240.0,max_h)));}}}
+                            _=>{}
+                        }
+                    }
+                    Some("conversation-navigation")=>{let error=if surface=="main" {crate::conversations::navigation(&install,&m["navigation"]).err()}else{None};web_eval(wv,&format!("taskq.receive({})",json!({"conversationNavigationError":error})),"tray.web.receive",&proxy,calls);}
+                    Some("conversation-action")=>{
+                        let id=m["conversation"].as_str().unwrap_or("");
+                        let allowed=if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
+                        let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
+                        web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
+                        shown.clear();workspace_shown.clear();
+                    }
                     Some("message-action") => {
                         let ps:Vec<Value>=roots(&install).iter().map(|r|project(&install,r)).collect();
                         let keys:Vec<String>=m["keys"].as_array().into_iter().flatten().filter_map(|v|v.as_str().map(String::from)).collect();
@@ -1208,10 +1249,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 match m["a"].as_str().unwrap_or("") {
                     "workspace" if snapshot.is_none() => {
                         workspace_open=m["open"].clone();
+                        if workspace_open["page"]=="conversations" {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
                             let p=proxy.clone();
-                            let built=WindowBuilder::new().with_title("TaskQ Workspace").with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                            let built=WindowBuilder::new().with_title("TaskQ Workspace").with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                                WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace("main".into(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
                                 Ok(window)=>{workspace=Some(window);let mut calls=WebCalls::new();calls.workspace=true;workspace_web=Some(calls);}
@@ -1570,7 +1612,7 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge, "auto_anchor":s.pin.auto_anchor,
-        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
+        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::snapshot(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     {

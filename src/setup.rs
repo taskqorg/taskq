@@ -31,7 +31,8 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")] pub root: Option<String>,
 }
 
-const STATES: [&str; 5] = ["pending", "launching", "launched", "failed", "interrupted"];
+const STATES: [&str; 6] = ["pending", "launching", "launched", "failed", "interrupted", "cancelled"];
+pub(crate) fn owner_id(id:&str)->bool {crate::resources::id(id)&&!["request","lock"].contains(&id)}
 
 pub fn dir(install: &Path) -> PathBuf { install.join("setup") }
 fn file(install: &Path, id: &str) -> PathBuf { dir(install).join(format!("{id}.json")) }
@@ -163,6 +164,7 @@ fn save_id(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<Str
         return Err(format!("setup runtime {runtime}: no qualified visible session here; use claude, or codex on macOS or Windows"));
     }
     let id = requested_id.map(|(id,_)|String::from(id)).unwrap_or_else(crate::runtime::uuid);
+    if !owner_id(&id) {return Err("Reserved or invalid owner request ID; use a new ID".into());}
     let created = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_| "setup clock unknown")?.as_millis();
     let platform = format!("{} {}{}", std::env::consts::OS, std::env::consts::ARCH, if cfg!(target_os = "linux") && (std::env::var_os("WSL_DISTRO_NAME").is_some() || Path::new("/proc/sys/fs/binfmt_misc/WSLInterop").exists()) { " wsl" } else { "" });
     let mut r = Request { schema: 2, id: id.clone(), created, host: crate::hostname(), platform, client: client.unwrap_or(a.client).into(), runtime: runtime.into(),
@@ -207,6 +209,19 @@ pub fn recover(install: &Path) -> Res<()> {
 }
 
 pub enum Launched { Job { job: String, session: Option<String>, url: Option<String> }, NoStart(String), Unknown(String) }
+
+/// #1580: cancel only a not-yet-dispatched owner request. Launch and cancel share the same lock.
+pub(crate) fn cancel_pending(install:&Path,id:&str)->Res<()> {
+    if !crate::resources::id(id){return Err("Invalid owner request ID".into());}
+    locked(install,||{
+        let mut r=read(&file(install,id))?;
+        if r.root.is_none(){return Err("This is not a project owner request".into());}
+        if r.state=="cancelled" {return Ok(());}
+        if r.state!="pending" {return Err("Cancellation unavailable after launch begins; use the native session".into());}
+        r.state="cancelled".into();r.reason=Some("Launch cancelled before native dispatch; no runtime work was rolled back".into());write(install,&r)?;
+        if read(&file(install,id))?!=r {return Err("Cancellation readback unknown".into());}Ok(())
+    })
+}
 
 /// The native call with the request's own folder, replaceable in tests.
 pub type Launcher = fn(&Path, &Request) -> Launched;
@@ -488,6 +503,7 @@ pub fn view(r: &Request) -> serde_json::Value {
     let (name, login, sessions) = (a.client, a.login, a.sessions);
     let (kind, next) = match r.state.as_str() {
         "pending" | "launching" => ("starting", "The host service is starting the session".into()),
+        "cancelled" => ("cancelled", "Launch cancelled before native dispatch; continue with a new request".into()),
         "launched" if r.url.is_some() => ("launched", format!("Open the session to read and answer; archive it in {name} when done")),
         "launched" => ("launched", format!("Session started; find it in {sessions}, archive it when done")),
         "failed" if reason.starts_with(MISSING) => ("runtime", format!("Install {name} for the service user, then {again}")),

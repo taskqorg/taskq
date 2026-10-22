@@ -34,5 +34,12 @@ function surface(){const handlers={};return {addEventListener:(type,fn)=>(handle
  assert(rows.some(r=>r.operation==='js.ui.events.pointermove'&&r.counts?.calls===10000));
  assert(!/PRIVATE|private product|private result/.test(JSON.stringify(rows)),'telemetry leaked arguments/results/errors');
  assert.equal(ui.execution.health().lost,0);assert.equal(ui.execution.health().pending,0);
+ // #1580: declarations from independent screens must not exhaust CoreQ's bounded registry.
+ const registered=ui.execution.health().methods;
+ const screens=Array.from({length:300},(_,n)=>ui.execution.module('unusedScreen'+n,{run:function(value){return this.factor*value;}}));
+ assert.equal(ui.execution.health().methods,registered,'uncalled methods consume no metric slots');
+ assert.equal(ui.execution.action('fixture.screen',()=>screens[0].run.call({factor:3},7))(),21);
+ assert.equal(ui.execution.health().methods,registered+1,'executed methods retain their exact identity and receiver');
+ assert(Object.isFrozen(screens[0]));
  console.log('PASS new handlers/methods, context through deferred adapter and late completion, throw identity, bounded detail and 10000 coalesced events ('+elapsed.toFixed(2)+'ms on this Node runner)');
 })().catch(e=>{console.error(e);process.exitCode=1;});

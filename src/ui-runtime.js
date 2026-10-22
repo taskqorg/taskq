@@ -1,7 +1,20 @@
 // UI execution uses the existing native capture writer; no collector or storage here.
 'use strict';
 const core=require('@taskq/coreq');
-const execution=core.shared(),events=new WeakMap();
+const shared=core.shared(),events=new WeakMap();
+// Register a method when used: loading several screens must not exhaust CoreQ's bounded metric registry.
+// Calls retain their original operation name, receiver, execution context and result/error capture.
+const execution={...shared,module(name,methods){
+  const wrapped={};
+  for(const [key,descriptor] of Object.entries(Object.getOwnPropertyDescriptors(methods))){
+    let method;
+    Object.defineProperty(wrapped,key,{...descriptor,value:function(...args){
+      method??=shared.module(name,{[key]:descriptor.value})[key];
+      return Reflect.apply(method,this,args);
+    }});
+  }
+  return Object.freeze(wrapped);
+}};
 const frequent=new Set(['scroll','pointermove','input']);
 function send(message){
   const context=execution.context();

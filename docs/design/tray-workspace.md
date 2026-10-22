@@ -47,4 +47,4 @@ linked or unreadable paths refuse deletion rather than touching their targets.
 #1467's [visual and scope acceptance](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6328516821)
 accepts M's seven-image layout and message-only outcome. Combined #1465/#1466
 acceptance and native workspace qualification remain separately gated work;
-this acceptance does not qualify those flows or remove #1464's attachment deferral.
+this acceptance does not qualify those flows. #1580 separately implements drafts/files/history under its native-only [owner answer](ai-workspace.md#native-dialogue-workspace-c1c9); full dialogue remains native.

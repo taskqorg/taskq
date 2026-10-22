@@ -9,6 +9,7 @@ const {create}=execution.module('workspace',{
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'messages',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   const local=signal({text:'',caret:[0,0],op:null,receipt:null});let hydrated=false,timer=null,composing=false;
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw()});
+  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args)});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const {session,keyed}=execution.module('workspace.links',{session:function(url){return !!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);},
@@ -16,7 +17,7 @@ const {create}=execution.module('workspace',{
    keyed:function(v){if(Array.isArray(v))return v.map(keyed);if(!v?.props)return v===''?null:v;const p=v.props;if(v.key==null)v.key=p['data-answer']||p['data-resources']||p['data-card']||p['data-view-key']||p.id;if(p.children!=null)p.children=keyed(p.children);return v;}});
   // A1: each route returns its Preact vnodes; called directly, since signal-aware components skip renders when only the plain view changes.
   const pages=execution.module('workspace.routes',{
-   conversations:function(){return pages.messages();},
+   conversations:function(){return conversations.body();},
    messages:function(){
     const m=snapshot.value.messages,filter=view.messageFilter||'all',rows=(m?.entries||[]).filter(r=>view.page!=='conversations'||r.kind!=='question').filter(r=>filter==='archived'?r.archived:!r.archived&&(filter!=='pending'||r.pending));
     return [h('div',{class:'options'},h('button',{'data-route':'request'},'New AI request'),h('button',{'data-route':'sessions'},'Work sessions'),h('button',{'data-route':'agents'},'Agent settings')),
@@ -54,7 +55,7 @@ const {create}=execution.module('workspace',{
      t.state==='ask'?answers.answerSlot({...t,key:p.issues+'/'+t.n}):h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues)];
    },
    operations:function(){return operations.operationBody(view.operation);},
-   sessions:function(){return h('p',null,'Work sessions are not available here. Use the tray’s Agents view and the recorded native session links.');},
+   sessions:function(){return conversations.sessions();},
    agents:function(){return h('p',null,'Agent settings are not available here. Use Settings → Agents in the tray. Opening this screen changes no runtime or permissions.');}
   });
   const api=execution.module('workspace.instance',{
@@ -80,12 +81,13 @@ const {create}=execution.module('workspace',{
    draw:function(){
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
-    const actions=[h('button',{'data-a':'refresh',title:'Refresh workspace status','aria-label':'Refresh workspace status'},'Refresh'),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Inbox'],['conversations','Conversations'],['request','New AI request'],['sessions','Work sessions'],['agents','Agent settings']].map(([route,label])=>h('button',{'data-route':route},label))))];
-    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:h('button',{'data-a':'hide',title:'Close workspace','aria-label':'Close workspace'},'×')}),
-     h('main',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?(pages[view.page]||pages.agents)():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast()]),'/'+view.page);
+    const icons=require('./ui-icons.js');
+    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Inbox'],['conversations','Conversations'],['request','New AI request'],['sessions','Work sessions'],['agents','Agent settings']].map(([route,label])=>h('button',{'data-route':route},label))))];
+    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',back:view.page!=='messages',actions,windows:[icons.button('pin','Pin workspace',{'data-a':'workspace-pin','aria-pressed':!!view.workspacePin}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2','Enlarge or restore workspace',{'data-a':'workspace-enlarge'}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
+     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?(pages[view.page]||pages.agents)():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,(s?.host||'Host unknown')+' · '+(s?.service?.state||'unknown')),h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
-    state.flush();
+    conversations.afterDraw();state.flush();
    },
    navigate:function(page,context){
     if(Object.hasOwn(routes,page))view.unavailable=null;
@@ -112,6 +114,8 @@ const {create}=execution.module('workspace',{
     ui.send({a:'ai-send',...op,reconcile});
    },
    receive:function(s){
+    if(s.workspacePin!==undefined||s.workspaceMaximized!==undefined){if(s.workspacePin!==undefined)view.workspacePin=s.workspacePin;if(s.workspaceMaximized!==undefined)view.workspaceMaximized=s.workspaceMaximized;api.draw();return;}
+    if(conversations.receive(s)) {api.draw();return;}
     if(s.messageReceipt){
      if(s.messageReceipt.id!==view.messageBusy)return;
      const r=s.messageReceipt;view.messageBusy=null;
@@ -138,7 +142,7 @@ const {create}=execution.module('workspace',{
     answers.answerReadback();api.draw();if(first){const input=menu.querySelector('[data-field=request]');input?.setSelectionRange(...local.value.caret);state.focus(view.restoreFocus);}
    },
    mount:function(){
-    ui.connect();window.taskq={receive:api.receive};api.draw();
+    ui.connect();window.taskq={receive:api.receive};conversations.mount();api.draw();
     ui.listen(menu,'click',e=>{
      const link=e.target.closest('a');if(link){e.preventDefault();ui.send({a:'open',url:link.dataset.url||link.href});return;}
      const b=e.target.closest('button');if(!b||b.disabled)return;
@@ -146,6 +150,8 @@ const {create}=execution.module('workspace',{
       if(b.dataset.route==='recovery'){api.navigate('operations',{operation:'recovery'});return;}
       if(operations.operationAction(b.dataset))return;
      }
+     if(conversations.click(b))return;
+     if(b.dataset.a==='workspace-pin'||b.dataset.a==='workspace-enlarge'){ui.send({a:'workspace-window',action:b.dataset.a==='workspace-pin'?'pin':'enlarge'});return;}
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route);
      else if(b.dataset.a==='open-answer')api.navigate('answer',{root:b.dataset.root,board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
@@ -158,7 +164,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='message-delete')api.messageAction('delete',[b.dataset.key]);
      else if(b.dataset.a==='message-delete-all')api.messageAction('delete',(snapshot.value.messages?.entries||[]).filter(r=>r.archived).map(r=>r.key));
      else if(b.dataset.a==='back')api.back();
-     else if(b.dataset.a==='hide'){api.persist();state.flush();ui.send({a:'hide'});}
+     else if(b.dataset.a==='hide'){conversations.flush();api.persist();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
      else if(b.dataset.a==='request-retry'){const l=local.value;if(l.op&&l.receipt?.state==='unknown'){local.value={...l,receipt:{state:'sending'}};api.persist();api.dispatch(l.op,true);api.draw();}}
      else if(b.dataset.a==='request-pick'&&!local.value.op){local.value={...local.value,text:snapshot.value.ai.history[Number(b.dataset.index)],caret:[0,0]};api.persist();api.draw();menu.querySelector('[data-field=request]')?.focus();}
@@ -173,9 +179,14 @@ const {create}=execution.module('workspace',{
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);
     ui.listen(document,'keydown',e=>{
      if(e.target.dataset?.field==='request'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();api.submit();return;}
-     if(e.key==='Escape'){const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}api.persist();state.flush();ui.send({a:'hide'});}
+     if(e.key==='Escape'){conversations.flush();const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}api.persist();state.flush();ui.send({a:'hide'});}
      if(e.altKey&&e.key==='ArrowLeft'&&view.page!=='messages'){e.preventDefault();api.back();}
     });
+    let resizing=null;
+    ui.listen(menu,'pointerdown',e=>{if(e.target.closest('[data-a=workspace-resize]')){resizing={x:e.clientX,y:e.clientY,w:window.innerWidth,h:window.innerHeight};e.target.setPointerCapture?.(e.pointerId);e.preventDefault();}});
+    ui.listen(menu,'pointermove',e=>{if(resizing)ui.send({a:'workspace-window',action:'size',width:resizing.w+e.clientX-resizing.x,height:resizing.h+e.clientY-resizing.y});});
+    ui.listen(menu,'pointerup',()=>{resizing=null;});ui.listen(menu,'pointercancel',()=>{resizing=null;});
+    ui.listen(menu,'keydown',e=>{if(e.target.dataset.a==='workspace-resize'&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();ui.send({a:'workspace-window',action:'size',width:window.innerWidth+(e.key==='ArrowRight'?20:e.key==='ArrowLeft'?-20:0),height:window.innerHeight+(e.key==='ArrowDown'?20:e.key==='ArrowUp'?-20:0)});}});
     ui.send({a:'ready'});
    }
   });

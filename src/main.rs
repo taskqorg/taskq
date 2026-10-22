@@ -37,6 +37,7 @@ mod runtime;
 mod service;
 mod setup;
 mod messages;
+mod conversations;
 mod snapshot;
 #[cfg(any(target_os = "macos", windows))]
 mod icon;

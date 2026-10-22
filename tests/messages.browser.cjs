@@ -22,7 +22,8 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.evaluate(s=>taskq.receive(s),snapshot);
   await page.evaluate(()=>taskq.receive({open:{page:'conversations'}}));
   assert.equal(await page.locator('h1').innerText(),'Conversations');
-  assert.equal(await page.locator('[data-a=message-open]').count(),2,'Conversations excludes board questions and reuses current owner-session records');
+  assert.equal(await page.locator('[data-c=new]').count(),1,'#1580: Conversations is a separate draft/file workspace; Inbox keeps native message records');
+  assert.equal(await page.locator('[data-a=message-open]').count(),0,'board questions remain in Inbox');
   assert.equal(await page.evaluate(()=>sent.some(m=>['ai-send','answer','message-action'].includes(m.a))),false,'navigation launches/sends nothing');
   await page.evaluate(()=>taskq.receive({open:{page:'messages'}}));
   assert.equal(await page.locator('[data-a=message-open]').count(),3);
