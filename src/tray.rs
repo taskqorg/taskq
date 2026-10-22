@@ -73,13 +73,14 @@ struct Pin {
     size: Option<(f64, f64)>,
     size_anchor: String,
     attached_edge: String,
+    auto_anchor: String,
     display: String,
     pos: std::collections::BTreeMap<String, (i32, i32)>,
 }
 
 impl Default for Pin {
     fn default() -> Self {
-        Self { pinned: false, top: true, size: None, size_anchor: "top".into(), attached_edge: "top".into(), display: String::new(), pos: Default::default() }
+        Self { pinned: false, top: true, size: None, size_anchor: "auto".into(), attached_edge: "top".into(), auto_anchor: "top".into(), display: String::new(), pos: Default::default() }
     }
 }
 
@@ -92,8 +93,8 @@ impl Settings {
         }).unwrap_or_default();
         let pos = v["pos"].as_object().into_iter().flatten().filter_map(|(k, p)| Some((k.clone(), (i32::try_from(p[0].as_i64()?).ok()?, i32::try_from(p[1].as_i64()?).ok()?)))).collect();
         let size = v["size"][0].as_f64().zip(v["size"][1].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 240.0 && *h >= 120.0);
-        let size_anchor = v["size_anchor"].as_str().filter(|v| ["fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"top"}).to_string();
-        let pin = Pin { size_anchor, attached_edge: "top".into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
+        let size_anchor = v["size_anchor"].as_str().filter(|v| ["auto","fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"auto"}).to_string();
+        let pin = Pin { size_anchor, attached_edge: "top".into(), auto_anchor: v["auto_anchor"].as_str().filter(|v| ["top","bottom"].contains(v)).unwrap_or("top").into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
         let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin,
             navigation: Value::Null, workspace_navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
         // an invalid or corrupt saved icon falls back to Summary (CI4)
@@ -140,7 +141,7 @@ impl Settings {
 
     fn save(&self, install: &Path) -> bool {
         let v = json!({"view": self.view, "font": self.font, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz, "icon": self.icon,
-            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation});
+            "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "auto_anchor": self.pin.auto_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation});
         let p = install.join("tray.json");
         if crate::data::json(&p).is_err() && fs::copy(&p, install.join("tray.json.corrupt")).is_err() {
             return false;
@@ -443,6 +444,9 @@ fn project(install: &Path, root: &str) -> Value {
         Err(e) => (Value::Null, Some(e)),
     };
     let age = crate::file_age(&d.join("status.json"));
+    // #1591: one freshness rule; the page gets `live` and `ttl`, never a literal
+    let ttl = crate::snapshot::ttl(r);
+    let live = age.is_some_and(|a| crate::snapshot::live(a as i64, ttl));
     let saved = fs::read_to_string(d.join("focus.paused")).is_ok_and(|f| !matches!(f.trim(), "" | "off"));
     let text = fs::read_to_string(d.join("events")).unwrap_or_default();
     let since = text.lines().next().and_then(|l| l.strip_prefix("since ")?.parse::<i64>().ok());
@@ -457,20 +461,37 @@ fn project(install: &Path, root: &str) -> Value {
         Err(e) => (Value::Null, json!({"error": e}), Value::Null,Value::Null, Value::Null),
     };
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
-    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), task); }
+    let (hosts, tasks_live) = liveness(&s, age, ttl, &mut tasks);
+    let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
+    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task); }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
     let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
-    let observed_at=s["at"].as_i64().filter(|at|*at<=now()&&now()-*at<=60).and(age.map(|a|now()-a as i64));
+    let observed_at=s["at"].as_i64().filter(|at|crate::snapshot::live(now()-*at,ttl)).and(age.map(|a|now()-a as i64));
     let resources = resource_group(&s["capacity"], &cap_saved,&cap_revision, &project_limits, observed_at, installation, &id);
     json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(r)),
         "issues": s["issues"].as_str().unwrap_or(""), "board_kind": board_kind,
-        "log": s["log"].is_string(), "alive": age.is_some_and(|a| a < 300), "age": age,
-        "complete": crate::snapshot::complete(&s) && age.is_some_and(|a| a < 300),
+        "delivery": crate::load(r).ok().map(|(c,_)|json!({"preset":c.delivery,"revision":c.delivery_revision})),
+        "log": s["log"].is_string(), "alive": live, "age": age, "ttl": ttl,
+        "complete": crate::snapshot::complete(&s) && live,
         "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::status_labels(r),
         "focus_command": s["focus_command"],"service_pid":s["pid"],"host_instance":s["host_instance"],"restart_waits":s["restart_waits"],"stop_progress":s["stop_progress"],"uninstall_review":crate::lifecycle::uninstall_review(install,"review",Some(r)).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})), "request": s["request"], "since": since, "events": events, "tasks": tasks, "host": s["host"], "version": s["version"], "update": s["update"],
-        "hosts": s["hosts"], "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
+        "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO})
+}
+
+/// #1591: the page gets each observation's live state from the one Rust rule. Task, host and execution rows age by
+/// the board read (`tasks_age_seconds`) plus the `status.json` file age `age`.
+fn liveness(s: &Value, age: Option<u64>, ttl: i64, tasks: &mut [Value]) -> (Value, bool) {
+    let elapsed = age.zip(s["tasks_age_seconds"].as_i64()).map(|(a, t)| a as i64 + t);
+    let row_live = |row: &mut Value, at: &str| if let Some(o) = row.as_object_mut() {
+        let l = elapsed.zip(s["observed"].as_i64()).zip(o.get(at).and_then(Value::as_i64)).is_some_and(|((e, obs), at)| crate::snapshot::live(obs - at + e, ttl));
+        o.insert("live".into(), json!(l));
+    };
+    let mut hosts = s["hosts"].clone();
+    for h in hosts.as_array_mut().into_iter().flatten() { row_live(h, "updated"); }
+    for x in tasks.iter_mut().filter_map(|t| t.get_mut("executions").and_then(Value::as_array_mut)).flatten() { row_live(x, "observed"); }
+    (hosts, elapsed.is_some_and(|e| crate::snapshot::live(e, ttl)))
 }
 
 fn now() -> i64 {
@@ -478,8 +499,9 @@ fn now() -> i64 {
 }
 
 /// Native adapter (M3): a Claude URL is account-scoped, so any host links it (owning host: its transcript, else the
-/// owner's heartbeat via the snapshot); a Codex thread opens only on its owning host, elsewhere unavailable with a reason.
-fn task_session(root: &Path, local: &str, row: &mut Value) {
+/// owner's heartbeat via the snapshot); a Codex thread opens only on its owning host, elsewhere its DashQ progress page
+/// (`page` + task number, R6 3), else unavailable with a reason.
+fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
     let Some(object) = row.as_object_mut() else { return };
     let published = object.remove("session_url").and_then(|u| u.as_str().filter(|u| crate::runtime::remote_url(u)).map(String::from));
     object.remove("session_reason");
@@ -494,7 +516,12 @@ fn task_session(root: &Path, local: &str, row: &mut Value) {
     row["local_session"] = json!(own);
     let a = crate::runtime::of(rt);
     if !a.remote && !own {
-        if a.codex { row["session_reason"] = json!(format!("Codex session opens only on {host}")); }
+        if a.codex {
+            match page {
+                Some(p) => row["session_url"] = json!(format!("{p}{}", row["n"].as_u64().unwrap_or(0))),
+                None => row["session_reason"] = json!(format!("Codex session opens only on {host}")),
+            }
+        }
         return;
     }
     let id = if own && ((id == "-" && a.codex && a.child) || a.remote) {
@@ -1004,7 +1031,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         .filter(|(m, p)| on_screen(**p, (m.position().x, m.position().y, m.size().width as i32, m.size().height as i32)));
                     match (saved, tray.as_ref().and_then(TrayIcon::rect)) {
                         (Some((_, p)), _) => w.set_outer_position(PhysicalPosition::new(p.0, p.1)),
-                        (None, Some(r)) => { settings.pin.attached_edge = place(w, r).into(); },
+                        (None, Some(r)) => { settings.pin.attached_edge = place(w, r, &mut settings.pin).into(); },
                         _ => {}
                     }
                     w.set_visible(true);
@@ -1081,7 +1108,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     w.set_visible(false);
                     return;
                 }
-                settings.pin.attached_edge = place(w, rect).into();
+                settings.pin.attached_edge = place(w, rect, &mut settings.pin).into();
                 w.set_visible(true);
                 w.set_focus();
                 shown_at = Instant::now();
@@ -1095,7 +1122,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let Ok(id) = serde_json::from_str::<Value>(&id) else { return };
                 let Some((w, _)) = &ui else { return };
                 if !settings.pin.pinned && let Some(r) = anchor.or_else(|| tray.as_ref().and_then(TrayIcon::rect)) {
-                    settings.pin.attached_edge = place(w, r).into();
+                    settings.pin.attached_edge = place(w, r, &mut settings.pin).into();
                 }
                 w.set_visible(true);
                 w.set_focus();
@@ -1226,7 +1253,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         w.set_inner_size(PhysicalSize::new(width.min((max_w * scale) as u32), height));
                         if m["a"] == "size" && settings.pin.size_anchor != "fixed" {
                             if let (Some(p), Some(monitor)) = (old_position, w.current_monitor()) {
-                                let p = anchored_position((p.x,p.y),old_size.height as i32,(width as i32,height as i32),work_area(&monitor),&settings.pin.size_anchor);
+                                let p = anchored_position((p.x,p.y),old_size.height as i32,(width as i32,height as i32),work_area(&monitor),if settings.pin.size_anchor=="auto" { &settings.pin.auto_anchor } else { &settings.pin.size_anchor });
                                 w.set_outer_position(PhysicalPosition::new(p.0,p.1));
                             }
                         }
@@ -1236,11 +1263,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         }
                         // pinned: the window stays where it was put; a move then keeps it in the work area
                         if m["a"] == "size" && settings.pin.size_anchor == "fixed" && let (Some(r), false) = (anchor, settings.pin.pinned) {
-                            settings.pin.attached_edge = place(w, r).into();
+                            settings.pin.attached_edge = place(w, r, &mut settings.pin).into();
                         }
                     }
                     "size-anchor" => {
-                        settings.pin.size_anchor = match settings.pin.size_anchor.as_str() { "fixed" => "bottom", "bottom" => "top", _ => "fixed" }.into();
+                        settings.pin.size_anchor = if let Some(value)=m["value"].as_str().filter(|v| ["auto","top","bottom","fixed"].contains(v)) {value.into()} else {return};
                         if settings.pin.size_anchor == "fixed" { let size=w.inner_size().to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
                         settings.save(&install);
                         reply!(&state(&install,&settings,dark,None,&adding));
@@ -1253,8 +1280,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         settings.save(&install);
                         reply!(&state(&install, &settings, dark, None, &adding));
                     }
-                    "pin" => {
-                        settings.pin.pinned = !settings.pin.pinned;
+                    "pin" | "drag" => {
+                        settings.pin.pinned = m["a"]=="drag" || !settings.pin.pinned;
                         #[cfg(target_os = "macos")]
                         app_window(settings.pin.pinned);
                         #[cfg(windows)]
@@ -1265,14 +1292,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         }
                         // unpin: back to the popover at the tray icon
                         if let (false, Some(r)) = (settings.pin.pinned, anchor.or_else(|| tray.as_ref().and_then(TrayIcon::rect))) {
-                            settings.pin.attached_edge = place(w, r).into();
+                            settings.pin.attached_edge = place(w, r, &mut settings.pin).into();
                         }
                         settings.save(&install);
                         w.set_focus();
                         reply!(&state(&install, &settings, dark, None, &adding));
-                    }
-                    "drag" => {
-                        let _ = w.drag_window();
+                        if m["a"]=="drag" { let _=w.drag_window(); }
                     }
                     "resources" => {
                         let id=format!("resources-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()));
@@ -1484,7 +1509,7 @@ fn popover_size(m: &Value, max: f64, scale: f64) -> (u32, u32) {
 
 /// The `actions` snapshot: a refused custom range (menu.md M6), without applying a setting.
 const ACTIONS: &str = "(()=>{const q=s=>document.querySelector(s),put=(s,v)=>{const i=q(s);i.value=v;i.dispatchEvent(new Event('input',{bubbles:true}));};
-q('[data-route=cadence]').click();q('[data-v=custom]').click();put('#hs','2026-10-13T10:00');put('#he','2026-10-13T09:00');q('[data-a=range]').click();})()";
+q('[data-route=settings]').click();q('[data-route=cadence]').click();q('[data-v=custom]').click();put('#hs','2026-10-13T10:00');put('#he','2026-10-13T09:00');q('[data-a=range]').click();})()";
 
 /// The `scroll` snapshots: Home with each bounded AI block at its start, middle and end, realigned by the page's
 /// `taskq.settle`, the step a reader's scroll runs once it settles (#1115). Called directly: an off-screen capture window may
@@ -1506,7 +1531,7 @@ const ANSWERS: [(&str, &str); 4] = [
     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
 ];
-const ROUTES: [&str; 20] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown"];
+const ROUTES: [&str; 23] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "window", "tray-icon", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1544,13 +1569,13 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let sum = summary(&ps, (start, end));
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
-        "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge,
+        "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge, "auto_anchor":s.pin.auto_anchor,
         "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
-    if cfg!(target_os = "macos") {
+    {
         let day = summary(&ps, day(now()));
-        st["icons"] = json!({"icon": url(&agentq_mark(compact(sum.run, dark, 2.0),st["agentq"]["warning"]==true)), "full": draw(&icon::summary(), &day, dark, 1.0, 2.0).map_or(Value::Null, |i| json!(url(&agentq_mark(i,st["agentq"]["warning"]==true))))});
+        st["icons"] = json!({"icon": url(&agentq_mark(compact(sum.run, dark, 2.0),st["agentq"]["warning"]==true)), "full": draw(&icon::summary(), &day, dark, 1.0, 2.0).map_or(Value::Null, |i| json!(url(&agentq_mark(i,st["agentq"]["warning"]==true)))), "custom": if s.icon.is_null() {Value::Null} else {draw(&s.icon,&day,dark,1.0,2.0).map_or(Value::Null, |i|json!(url(&agentq_mark(i,st["agentq"]["warning"]==true))))}});
     }
     if let Some((theme, page)) = snap {
         st["theme"] = json!(theme);
@@ -1649,9 +1674,7 @@ fn draw(c: &Value, s: &Summary, dark: bool, k: f32, dpr: f32) -> Result<Rgba, Ve
 fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>) {
     let Some(t) = tray else { return };
     let sum = summary(st["projects"].as_array().map_or(&[][..], |v| v), day(now()));
-    // Windows shows only the compact q (menu.md M1)
     let config = match s.view.as_str() {
-        _ if cfg!(windows) => None,
         "full" => Some(icon::summary()),
         "custom" => Some(s.icon.clone()),
         _ => None,
@@ -1719,12 +1742,13 @@ fn blur_refocuses(shown_for: Duration, workspace_handoff: bool) -> bool {
 }
 
 /// Put the popover under a menu-bar icon or above a taskbar icon, inside the icon's monitor.
-fn place(w: &Window, r: Rect) -> &'static str {
+fn place(w: &Window, r: Rect, pin: &mut Pin) -> &'static str {
     let (ix, iy) = (r.position.x, r.position.y);
     let m = w.available_monitors().find(|m| {
         let (p, s) = (m.position(), m.size());
         ix >= p.x as f64 && ix < (p.x + s.width as i32) as f64 && iy >= p.y as f64 && iy < (p.y + s.height as i32) as f64
     });
+    let area=m.as_ref().map(work_area);
     let (mp, ms) = m.map_or(((0, 0), (1920, 1080)), |m| ((m.position().x, m.position().y), (m.size().width as i32, m.size().height as i32)));
     let sz = w.outer_size();
     let (ww, wh) = (sz.width as i32, sz.height as i32);
@@ -1732,7 +1756,9 @@ fn place(w: &Window, r: Rect) -> &'static str {
     let cx=ix as i32+r.size.width as i32/2-ww/2;
     let cy=iy as i32+r.size.height as i32/2-wh/2;
     let (x,y)=match edge {"bottom"=>(cx,iy as i32-wh),"left"=>(ix as i32+r.size.width as i32,cy),"right"=>(ix as i32-ww,cy),_=>(cx,iy as i32+r.size.height as i32)};
-    let p=clamp((x,y),(ww,wh),(mp.0,mp.1,ms.0,ms.1));
+    let usable=area.unwrap_or((mp.0,mp.1,ms.0,ms.1));
+    pin.auto_anchor=growth_anchor("auto",edge,Some(iy+f64::from(r.size.height)/2.0),usable).into();
+    let p=clamp((x,y),(ww,wh),usable);
     w.set_outer_position(PhysicalPosition::new(p.0,p.1));
     edge
 }
@@ -1750,6 +1776,11 @@ fn on_screen(p: (i32, i32), (x, y, w, h): (i32, i32, i32, i32)) -> bool {
 /// Top-left that keeps a window of `size` inside the area `(x, y, w, h)`; a too large window keeps its top-left edge in.
 fn clamp(p: (i32, i32), size: (i32, i32), (x, y, w, h): (i32, i32, i32, i32)) -> (i32, i32) {
     (p.0.clamp(x, (x + w - size.0).max(x)), p.1.clamp(y, (y + h - size.1).max(y)))
+}
+
+/// M13 Auto uses the actual native anchor, including side taskbars; explicit settings never change on Pin/drag.
+fn growth_anchor(mode:&str,edge:&str,icon_y:Option<f64>,area:(i32,i32,i32,i32))-> &'static str {
+    if mode=="bottom" || mode=="auto" && (edge=="bottom" || matches!(edge,"left"|"right") && icon_y.is_some_and(|y| y > f64::from(area.1)+f64::from(area.3)/2.0)) {"bottom"} else {"top"}
 }
 
 /// M13: preserve the named edge unless the monitor's work area requires a clamp.
@@ -2071,7 +2102,7 @@ fn menu_bar_scale() -> f32 {
     1.0
 }
 
-// ponytail: Windows keeps the compact q at 2x until per-monitor DPI rendering (I6) is qualified
+// shortcut: Windows uses a 2x icon raster; qualify per-monitor native sizes before changing calibration
 #[cfg(not(target_os = "macos"))]
 fn backing_scale() -> f32 {
     2.0
@@ -2723,6 +2754,25 @@ mod tests {
         fs::remove_dir_all(install).unwrap();
     }
 
+    // #1591 A3: an observation 61-299 s old reads live in the tray, as in the CLI (`snapshot::live`); older than ttl stale.
+    // Risk: a 60 s literal in the tray marks a live service unknown between idle passes.
+    #[test]
+    fn tray_and_cli_share_the_ttl_freshness_rule() {
+        let s = json!({"observed": 1000, "tasks_age_seconds": 0, "hosts": [{"name": "mac", "updated": 1000}, "bad"],
+            "tasks": [{"n": 1, "executions": [{"id": 7, "observed": 1000}]}]});
+        for (age, live) in [(0, true), (61, true), (299, true), (300, true), (301, false)] {
+            let mut tasks = s["tasks"].as_array().cloned().unwrap();
+            let (hosts, tasks_live) = liveness(&s, Some(age), 300, &mut tasks);
+            assert_eq!((tasks_live, hosts[0]["live"].clone(), tasks[0]["executions"][0]["live"].clone()), (live, json!(live), json!(live)), "{age} s");
+            assert_eq!(crate::snapshot::live(age as i64, 300), live, "CLI {age} s");
+            assert_eq!(hosts[1], "bad");
+        }
+        let mut tasks = vec![];
+        assert!(!liveness(&json!({"observed": 1000}), Some(1), 300, &mut tasks).1, "missing task age is stale");
+        assert!(!liveness(&s, None, 300, &mut tasks).1, "missing status file is stale");
+        assert!(!crate::snapshot::live(-1, 300), "a future observation is stale");
+    }
+
     // Chain: tray project page and settings. Risk: corrupt status.json or tray.json reads as zero/default and is reset
     #[test]
     fn corrupt_status_and_tray_json_read_unknown_and_stay() {
@@ -2735,8 +2785,11 @@ mod tests {
             "tasks":[{"n":1,"executions":[{"id":7,"role":"worker","runtime":"codex","state":"running"}]}]});
         fs::write(crate::dot(&root).join("status.json"),status.to_string()).unwrap();
         let projected=project(&root,root.to_str().unwrap());
-        for key in ["observed","tasks_age_seconds","hosts","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
-        assert_eq!(projected["tasks"][0]["executions"],status["tasks"][0]["executions"]);
+        for key in ["observed","tasks_age_seconds","capacity"] {assert_eq!(projected[key],status[key],"{key}");}
+        // #1591: rows keep every observed field and gain only the computed `live`
+        let strip=|v:&Value|{let mut v=v.clone();for r in v.as_array_mut().into_iter().flatten(){r.as_object_mut().unwrap().remove("live");}v};
+        assert_eq!(strip(&projected["hosts"]),status["hosts"]);
+        assert_eq!(strip(&projected["tasks"][0]["executions"]),status["tasks"][0]["executions"]);
         assert_eq!(projected["tasks"][0]["local_session"],false);
         fs::write(crate::dot(&root).join("status.json"), "{\"tasks\": [{\"n\": 1").unwrap();
         let p = project(&root, root.to_str().unwrap());
@@ -2834,6 +2887,12 @@ mod tests {
     #[test]
     fn window_anchor_preserves_edge_and_clamps_to_work_area() {
         let area=(0,0,1000,800);
+        for (edge,y,expected) in [("top",20.0,"top"),("bottom",780.0,"bottom"),("left",700.0,"bottom"),("right",100.0,"top")] {
+            assert_eq!(growth_anchor("auto",edge,Some(y),area),expected);
+            assert_eq!(growth_anchor("top",edge,Some(y),area),"top","explicit Down survives placement");
+            assert_eq!(growth_anchor("bottom",edge,Some(y),area),"bottom","explicit Up survives placement");
+        }
+
         assert_eq!(anchored_position((30,300),200,(320,400),area,"bottom"),(30,100));
         assert_eq!(anchored_position((30,300),400,(320,200),area,"bottom"),(30,500));
         assert_eq!(anchored_position((30,300),200,(320,400),area,"top"),(30,300));
@@ -2848,11 +2907,17 @@ mod tests {
         fs::create_dir_all(&install).unwrap();
         fs::write(install.join("tray.json"), r#"{"font":18}"#).unwrap();
         let mut s = Settings::load(&install);
-        assert!(!s.pin.pinned && s.pin.top && s.pin.size.is_none(), "old settings retain popover/top defaults and content fit");
+        assert!(!s.pin.pinned && s.pin.top && s.pin.size.is_none() && s.pin.size_anchor=="auto", "new growth defaults to actual-anchor Auto");
+        for mode in ["top","bottom","fixed"] {
+            fs::write(install.join("tray.json"),json!({"size_anchor":mode,"font":20}).to_string()).unwrap();
+            let legacy=Settings::load(&install);
+            assert_eq!(legacy.pin.size_anchor,mode,"existing explicit growth is never migrated to Auto");
+            assert_eq!(legacy.font,20);
+        }
         fs::write(install.join("tray.json"), r#"{"size":[-1,0],"top":false}"#).unwrap();
         let invalid = Settings::load(&install);
         assert!(invalid.pin.size.is_none() && !invalid.pin.top, "invalid size cannot hide the header or resize grip");
-        s.pin = Pin { size_anchor: "bottom".into(), attached_edge: "top".into(), top: false, size: Some((480.0, 600.0)), pinned: true, display: "B".into(), pos: [("A".into(), (10, 20)), ("B".into(), (-1500, 300))].into() };
+        s.pin = Pin { size_anchor: "bottom".into(), attached_edge: "top".into(), auto_anchor:"bottom".into(), top: false, size: Some((480.0, 600.0)), pinned: true, display: "B".into(), pos: [("A".into(), (10, 20)), ("B".into(), (-1500, 300))].into() };
         // M8/UI02: navigation shares the existing settings save, independent of release version.
         s.set(&json!({"view":"full","period":"custom","start":40,"end":160,"tz":"UTC",
             "navigation":{"schema":1,"current":{"page":"projects","taskFilter":["doing"],"scroll":120,"open":{"scope":true}},"trail":[]},
@@ -3004,36 +3069,39 @@ mod tests {
         assert_eq!(pick_result(output(1<<8,b"",b"execution error: User canceled. (-128)\n")),Ok(None));
         assert!(pick_result(output(1<<8,b"",b"execution error: denied. (-10004)\n")).is_err());
     }
-    // Chain: canonical session -> native row -> shared task link (#1204). Risk: a Codex thread opens off its host,
-    // a remote Claude row loses its account-scoped link, or a starting observation opens anything.
+    // Chain: canonical session -> native row -> shared task link (#1204, #1565). Risk: a Codex thread opens off its host
+    // instead of its DashQ progress page, a remote Claude row loses its account-scoped link, or a starting observation opens anything.
     #[test]
     fn project_row_links_claude_anywhere_codex_only_locally() {
         let url = "https://claude.ai/code/session_014abc";
         let mut row = json!({"n": 938, "session": "codex:valid-thread win"});
-        task_session(Path::new("."), "win", &mut row);
+        task_session(Path::new("."), "win", None, &mut row);
         assert_eq!((row["session_url"].clone(), row["runtime"].clone()), (json!("codex://threads/valid-thread"), json!("codex")), "local codex: deep link");
         let mut codex = json!({"session": "codex:valid-thread mac"});
-        task_session(Path::new("."), "win", &mut codex);
+        task_session(Path::new("."), "win", None, &mut codex);
         assert!(codex["session_url"].is_null());
         assert_eq!(codex["session_reason"], "Codex session opens only on mac", "remote codex: no link, reason");
+        let mut paged = json!({"n": 7, "session": "codex:valid-thread mac"});
+        task_session(Path::new("."), "win", Some("https://d/projects#board-o%2Fr-task-"), &mut paged);
+        assert_eq!(paged["session_url"], "https://d/projects#board-o%2Fr-task-7", "remote codex: DashQ progress page, never codex://");
         let mut remote = json!({"session": "claude:valid-thread mac", "session_url": url});
-        task_session(Path::new("."), "win", &mut remote);
+        task_session(Path::new("."), "win", None, &mut remote);
         assert_eq!((remote["local_session"].clone(), remote["session_url"].clone()), (json!(false), json!(url)), "remote claude: link");
         let mut forged = json!({"session": "claude:valid-thread mac", "session_url": "https://evil.example/session_1"});
-        task_session(Path::new("."), "win", &mut forged);
+        task_session(Path::new("."), "win", None, &mut forged);
         assert!(forged["session_url"].is_null(), "only a canonical claude.ai URL");
         let mut unpublished = json!({"session": "claude:valid-thread mac"});
-        task_session(Path::new("."), "win", &mut unpublished);
+        task_session(Path::new("."), "win", None, &mut unpublished);
         assert!(unpublished["session_url"].is_null() && unpublished["session_reason"].is_null());
         let mut invalid = json!({"session": "claude:bad/path win", "session_url": url});
-        task_session(Path::new("."), "win", &mut invalid);
+        task_session(Path::new("."), "win", None, &mut invalid);
         assert!(invalid["session_url"].is_null());
         let mut local = json!({"session": "claude:valid-thread win"});
-        task_session(Path::new("."), "win", &mut local);
+        task_session(Path::new("."), "win", None, &mut local);
         assert!(local["session_url"].is_null(), "a local UUID does not prove remote registration");
         let mut starting = json!({"session": "claude:- mac", "session_url": url});
-        task_session(Path::new("."), "win", &mut starting);
+        task_session(Path::new("."), "win", None, &mut starting);
         assert!(starting["session_url"].is_null(), "starting: no link");
-        task_session(Path::new("."), "win", &mut Value::Null);
+        task_session(Path::new("."), "win", None, &mut Value::Null);
     }
 }

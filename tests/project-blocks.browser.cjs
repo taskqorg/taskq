@@ -33,7 +33,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         await parent.setContent(base+'<style>'+parentCSS+'</style><div id="tqnext" style="font-size:'+font+'px"><div id="parent-project"></div><div id="parent-aggregate"></div><div id="parent-task"></div></div>');
         await parent.addScriptTag({content:'const preview={platform:"Windows"};const projectCounts='+JSON.stringify({[p.name]:q.states.map(()=>n)})+';'+parentFunctions+';document.querySelector("#parent-project").innerHTML=projectRow('+JSON.stringify(p.name)+');document.querySelector("#parent-aggregate").innerHTML=counts('+JSON.stringify(p.name)+');document.querySelector("#parent-task").innerHTML=task({},938,'+JSON.stringify(fx.row.title)+');'});
         await parent.evaluate(assets=>{for(const i of document.querySelectorAll('[data-lucide]'))i.outerHTML=(assets[i.dataset.lucide]||'').replace('<svg','<svg aria-hidden="true"');},q.assets);
-        const want=await parent.evaluate(look,'#parent-project');
+        const historical=await parent.evaluate(look,'#parent-project'),want=historical&&{...historical,padding:'2px 6px'}; // #1523 approved one centered chip style supersedes the parent's 4px sides.
         const wantTask=await parent.evaluate(taskLook,'#parent-task .task');
         for(const mode of ['browser','tray']){
           const page=await browser.newPage({viewport:{width,height:1800},colorScheme:theme});pages.push(page);
@@ -45,6 +45,8 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
             el.addEventListener('click',e=>q.handle(e,{project:id=>navigation.push(['project',id]),tasks:(id,s)=>navigation.push(['tasks',id,s]),open:u=>navigation.push(['open',u])}));
           },{p,row:fx.row});
           if(mode==='tray')await page.evaluate(({p,row,font,theme})=>taskq.receive({page:p.id,font,theme,projects:[{...p,root:p.id,issues:p.board.url,board_kind:p.board.kind,alive:true,focus:[],labels:[],cap_saved:{error:'fixture'},tasks:p.tasks}],ai:{draft:''},notify:{projects:{}}}),{p,row:fx.row,font,theme});
+          // O1 changes product placement, not the published default component. Compare that API inside the real tray's styles.
+          if(mode==='tray')await page.evaluate(({p,row})=>{document.querySelector('.content-body').innerHTML=TaskqProjectBlocks.summary(p)+TaskqProjectBlocks.aggregate([p])+TaskqProjectBlocks.task(p,row);},{p,row:fx.row});
           const got=await page.evaluate(look,'.tqp-project');assert.deepEqual(got,want,JSON.stringify(at)+' '+mode+' project equals parent');
           if(mode==='browser'||n)assert.deepEqual(await page.evaluate(taskLook,'.tqp-task'),wantTask,JSON.stringify(at)+' '+mode+' flowing task geometry equals parent');
           const geo=await page.evaluate(geometry,'.tqp-counts');assert.equal(geo.overflow,false,JSON.stringify(at)+' '+mode);
@@ -68,16 +70,17 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         else await page.evaluate(({p,row})=>taskq.receive({page:p.id,font:20,theme:'dark',projects:[{...p,root:p.id,issues:p.board.url,board_kind:'github',alive:true,focus:[],labels:[],tasks:[row],cap_saved:{error:'fixture'}}],ai:{draft:''},notify:{projects:{}}}),{p,row});
         await page.locator('[data-tqp=tasks][data-state=review]').first().click();
         if(mode==='browser')assert.deepEqual(await page.evaluate(()=>navigation),[['tasks',p.id,'review']]);
-        else {assert.equal(await page.locator('.filter-header .tqp-project').getAttribute('aria-label'),p.name);assert.equal(await page.locator('.filter-header [data-state=review]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.tqp-task').count(),1);}
-        await page.locator('[data-tqp=project]').first().click();
-        if(mode==='browser')assert.deepEqual(await page.evaluate(()=>navigation.at(-1)),['project',p.id]);
-        await page.locator('.tqp-task a').first().click();await page.locator('.tqp-task a[aria-label="Open codex session"]').click();
+        else {assert.match(await page.locator('.view-criteria').innerText(),new RegExp(p.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.equal(await page.locator('.filter-header [data-state=review]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.tqp-task').count(),1);}
+        if(mode==='browser'){await page.locator('[data-tqp=project]').first().click();assert.deepEqual(await page.evaluate(()=>navigation.at(-1)),['project',p.id]);}
+        else await page.locator('.project-group [data-route]').first().click();
+        await page.locator('.tqp-task a').first().click();if(mode==='tray'){await page.locator('[data-a=task-detail]').click();await page.locator('#taskq-popover a').filter({hasText:'Open codex session'}).click();}else await page.locator('.tqp-task a[aria-label="Open codex session"]').click();
         const opened=await page.evaluate(mode=>mode==='browser'?navigation.filter(n=>n[0]==='open').map(n=>n[1]):messages.filter(n=>n.a==='open').map(n=>n.url),mode);
         assert.deepEqual(opened,[row.url,row.session_url]);
         const flow=await page.locator('.tqp-task').evaluate(el=>({display:getComputedStyle(el).display,title:el.textContent,width:el.getBoundingClientRect().width}));
         assert.equal(flow.display,'block');assert(flow.title.includes(row.title));assert(flow.width>280);
-        assert.equal(await page.locator('.tqp-execution-wait').innerText(),row.wait);assert(await page.locator('.tqp-execution-wait').isVisible());
-        await page.evaluate(p=>{document.querySelector('.tqp-project').outerHTML=TaskqProjectBlocks.summary({...p,complete:false,board:{kind:'gitlab',url:'https://gitlab.example/o/r/-/issues'}});},p);
+        if(mode==='browser'){assert.equal(await page.locator('.tqp-execution-wait').innerText(),row.wait);assert(await page.locator('.tqp-execution-wait').isVisible());}else assert.match(await page.locator('#taskq-popover').innerText(),new RegExp(row.wait));
+        if(mode==='browser')await page.evaluate(p=>{document.querySelector('.tqp-project').outerHTML=TaskqProjectBlocks.summary({...p,complete:false,board:{kind:'gitlab',url:'https://gitlab.example/o/r/-/issues'}});},p);
+        else await page.evaluate(p=>taskq.receive({page:'projects',font:20,theme:'dark',projects:[{...p,root:p.id,issues:'https://gitlab.example/o/r/-/issues',board_kind:'gitlab',complete:false,alive:true,focus:[],tasks:p.tasks}],ai:{draft:''},notify:{projects:{}}}),p);
         assert.match(await page.locator('.tqp-project').innerText(),/Partial:/);assert.equal(await page.locator('.tqp-project [data-icon=gitlab]').count(),1);assert.equal(await page.locator('.tqp-project button[data-state]').count(),8);
         assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       }finally{await page.close();}

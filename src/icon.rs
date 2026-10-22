@@ -99,6 +99,12 @@ pub struct Data {
     pub paused: bool,
 }
 
+/// R-UI5: largest fitting divisor; every source bin and series survives aggregation.
+fn history_rows(bins: &[[u32; 4]], width: i32) -> Vec<[u32; 4]> {
+    let Some(count) = [12, 6, 4, 3, 2, 1].into_iter().find(|b| 5 * b - 1 <= width) else { return Vec::new() };
+    bins.chunks(12 / count as usize).map(|group| std::array::from_fn(|k| group.iter().map(|row| row[k]).sum())).collect()
+}
+
 /// An RGBA image, `s` pixels per point of the 22 pt reference drawing.
 pub struct Rgba {
     pub w: u32,
@@ -285,10 +291,9 @@ pub fn render(c: &Value, n: u32, dpr: f32, d: &Data, dark: bool) -> Result<Rgba,
             };
             m.blit(&mut img, ox, oy, gray(color));
         } else {
-            // R-UI5: B bars b px wide, 1 px gaps, right-aligned; adjacent bins summed (D11), one peak scale
-            let b = [12, 6, 4, 3, 2, 1].into_iter().find(|b| b * 2 - 1 <= w).unwrap_or(1);
-            let group = 12 / b as usize;
-            let rows: Vec<[u32; 4]> = (0..b as usize).map(|i| (0..4).map(|k| d.bins.iter().skip(i * group).take(group).map(|r| r[k]).sum()).collect::<Vec<_>>().try_into().unwrap()).collect();
+            let rows = history_rows(&d.bins, w);
+            let b = rows.len() as i32;
+            if b == 0 { continue; }
             let peak = rows.iter().map(|r| r.iter().sum::<u32>()).max().unwrap_or(0).max(1) as f32;
             let bw = (w - b + 1) / b;
             let start = right - (b * bw + b - 1);
@@ -547,6 +552,43 @@ mod tests {
             let rows = exported["events"].as_array().unwrap();
             assert_eq!(rows.iter().filter(|r| r["observation"]["operation"] == "taskq.icon.compact" && r["observation"]["kind"] == "method").count(), 30);
             assert!(!rows.iter().any(|r| r["observation"]["source"] == "diagnostic"), "normal rendering generated internal detail");
+        }
+    }
+
+    // #1586 A2/A4: the largest fitting divisor preserves first/last bins and every series total.
+    #[test]
+    fn history_rebin_preserves_every_series() {
+        let bins: Vec<[u32; 4]> = (0..12).map(|i| [i + 1, i % 3, 12 - i, i % 4]).collect();
+        for (width, count) in [(3,0), (4,1), (8,1), (9,2), (13,2), (14,3), (19,4), (29,6), (58,6), (59,12), (296,12), (592,12)] {
+            let rows = history_rows(&bins, width);
+            assert_eq!(rows.len(), count, "width {width}");
+            if count == 0 { continue; }
+            for (i, row) in rows.iter().enumerate() {
+                for k in 0..4 {
+                    assert_eq!(row[k], bins[i*12/count..(i+1)*12/count].iter().map(|b| b[k]).sum::<u32>());
+                }
+            }
+            for k in 0..4 { assert_eq!(rows.iter().map(|b| b[k]).sum::<u32>(), bins.iter().map(|b| b[k]).sum::<u32>()); }
+        }
+    }
+
+    // R-UI5 / #1586 A2/A4: native raster widths must not regress to one-pixel bars.
+    #[test]
+    fn history_bars_keep_four_physical_pixels() {
+        for (n, dpr) in [(16, 1.0), (20, 1.0), (22, 1.0), (24, 1.0), (32, 1.0), (44, 2.0), (64, 2.0)] {
+            let img = render(&summary(), n, dpr, &data([0; 4], false), true).unwrap();
+            let y = n - (0.5_f32 * dpr).round().max(1.0) as u32 - 1;
+            let mut widths = Vec::new();
+            let mut run = 0;
+            for x in n/2..n {
+                if img.px[((y*n+x)*4+3) as usize] > 0 { run += 1; }
+                else if run > 0 { widths.push(run); run = 0; }
+            }
+            if run > 0 { widths.push(run); }
+            assert!(!widths.is_empty() && widths.iter().all(|w| *w >= 4), "{n}px @{dpr}x: {widths:?}");
+            if let Ok(dir) = std::env::var("TASKQ_FRAMES") {
+                std::fs::write(std::path::Path::new(&dir).join(format!("icon-{n}px-{dpr}x.png")), img.png()).unwrap();
+            }
         }
     }
 

@@ -1,0 +1,16 @@
+{
+  "sourceCommit": "fef0e047609eedc22745436e5c11e90be5827283",
+  "binarySha256": "c2759279355119ae87bbd37bf1e5b5b258e3155ab91cbce11abf6f5ae3cd41b4",
+  "result": "Fail",
+  "reason": "Summary preview button overflowed by 2 CSS px in both themes at 16/20px",
+  "images": {
+    "popover-dark-appearance-16.png": "1156e18523fe84565ac8f4ddb575a232869365b5059ccc3ab3dff5bb966ae0ea",
+    "popover-dark-appearance-20.png": "5397fd9c6a6b65083e56d504092127885b184f87ea334fb1c35bf21fed4cecf1",
+    "popover-dark-tray-icon-16.png": "7cc19b82341076e7660e5f0cee7280fa661c7e53bdfdd27c482f402b58401479",
+    "popover-dark-tray-icon-20.png": "d8ab157beda71cab008eb432edbb2c74da4ef8e8c2449e738068c13a112b1e0c",
+    "popover-light-appearance-16.png": "d6e917f72424a3aafc93fdb196d60c97b0e31804f9cb874941549b7a78843c4c",
+    "popover-light-appearance-20.png": "d2838fcd96b8389cd0776858387999df9740285d57d26e53b07b712465ea3fe5",
+    "popover-light-tray-icon-16.png": "c326db6a1e2919796dd472e6feafd32c1d5eb38ead011313bf1ad4805b0b0ad3",
+    "popover-light-tray-icon-20.png": "3f30d4c8ff27c976923282da919e085361f626f4d9aade9020d1b5af286903d7"
+  }
+}

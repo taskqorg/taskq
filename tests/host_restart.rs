@@ -1,6 +1,6 @@
 //! Source-process fixture: real CLI -> host re-exec -> native generation -> original durable receipts.
 //! No board, model, native service unit, grant or installed host is used. Windows' parent supplies exit75 restart.
-//! Native inventory reads are substituted; real manager behavior has separate adapter checks.
+//! Native manager reads are substituted by tripwires; real manager behavior has separate adapter checks.
 use std::{fs,io::{Read,Write},net::{TcpListener,TcpStream},path::Path,process::{Child,Command,Stdio},sync::{Arc,atomic::{AtomicBool,AtomicUsize,Ordering}},time::{Duration,Instant,SystemTime,UNIX_EPOCH}};
 use serde_json::Value;
 
@@ -161,10 +161,10 @@ fn real_host_restart_preserves_request_after_the_caller_exits() {
     }
     #[cfg(unix)] {
         let name=if cfg!(target_os="macos") {"launchctl.calls"}else{"systemctl.calls"};
-        assert!(fs::read_to_string(base.join("bin").join(name)).unwrap().lines().count()>=2,"each source generation must use only the owned inventory substitute");
+        assert!(!base.join("bin").join(name).exists(),"restart reads no native unit inventory: the legacy inventory is retired");
     }
     #[cfg(windows)] {
-        assert!(fs::read_to_string(bin.join("powershell.calls")).unwrap().lines().count()>=2,"each source generation must use only the owned inventory substitute");
+        assert!(!bin.join("powershell.calls").exists(),"restart reads no native unit inventory: the legacy inventory is retired");
     }
     drop(owner);fs::remove_dir_all(&base).unwrap_or_else(|e|panic!("fixture cleanup {}: {e}",base.display()));
     println!("Native host restart: source generation {} -> {}; original request/trace and all three durable receipts retained",original["instance"],current["instance"]);

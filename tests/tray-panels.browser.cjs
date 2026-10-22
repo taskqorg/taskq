@@ -1,6 +1,6 @@
 // R6/R12, TW3, G05/G06: process figures and fault visibility before one complete task list.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
-const project={root:'/fixture/alpha',name:'Alpha',host:'mac',issues:'https://example.org/alpha/issues',board_kind:'github',alive:true,complete:true,age:1,tasks_age_seconds:0,observed:1000,hosts:[{name:'mac',updated:990}],focus:['all'],labels:[],tasks:[{n:1,state:'doing',title:'A full wrapped task title that remains readable across narrow menu widths and large type',runtime:'codex',host:'mac',local_session:true,session_url:'codex://threads/fixture',revision:1,executions:[{id:11,attempt:10,host:'mac',runtime:'codex',role:'worker',state:'running',observed:990}]}]};
+const project={root:'/fixture/alpha',name:'Alpha',host:'mac',issues:'https://example.org/alpha/issues',board_kind:'github',alive:true,complete:true,age:1,tasks_age_seconds:0,tasks_live:true,observed:1000,hosts:[{name:'mac',updated:990,live:true}],focus:['all'],labels:[],tasks:[{n:1,state:'doing',title:'A full wrapped task title that remains readable across narrow menu widths and large type',runtime:'codex',host:'mac',local_session:true,session_url:'codex://threads/fixture',revision:1,executions:[{id:11,attempt:10,host:'mac',runtime:'codex',role:'worker',state:'running',observed:990,live:true}]}]};
 const snapshot={platform:'windows',font:16,theme:'dark',host:'mac',now:1000,version:'fixture',projects:[project],notify:{projects:{}},stop_modes:true};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
@@ -22,6 +22,7 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'mac',now:1000,vers
   assert.deepEqual(failures,[]);
   for(const font of [16,20])for(const theme of ['dark','light']){
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme,page:'home'});
+   if(!await page.locator('.dashboard-status').evaluate(e=>e.open))await page.locator('.dashboard-status>summary').click();
    assert.equal(await page.locator('textarea,.qac').count(),0);
    assert(await page.locator('.running-agents').evaluate(e=>e.compareDocumentPosition(document.querySelector('[data-card]'))&Node.DOCUMENT_POSITION_FOLLOWING));
    assert.equal(await page.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth),true);
@@ -31,11 +32,11 @@ const snapshot={platform:'windows',font:16,theme:'dark',host:'mac',now:1000,vers
   assert.match(await page.locator('.content').innerText(),/Fixture urgent fault/);
   assert(await page.locator('.alert').first().evaluate(e=>e.compareDocumentPosition(document.querySelector('[data-card]'))&Node.DOCUMENT_POSITION_FOLLOWING));
   // A stale process source never turns Doing into a running figure.
-  await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[{...project,age:61}]});
+  await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[{...project,age:301,alive:false,tasks_live:false}]});
   assert.match(await page.locator('.running-agents').innerText(),/unknown.*stale/i);
   assert.doesNotMatch(await page.locator('.running-agents').innerText(),/codex 1/);
   await page.evaluate(s=>taskq.receive(s),{...snapshot,projects:[{...project,tasks:[{...project.tasks[0],state:'ask',revision:9}]}]});
-  await page.locator('[data-a="row-menu"]').click();await page.locator('[data-page="answer"]').click();
+  await page.locator('[data-a="task-detail"]').click();await page.locator('[data-page="answer"]').click();
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open),{page:'answer',operation:null,root:project.root,board:project.issues,task:1,revision:9});
   assert.equal(await page.locator('[data-card]').count(),1,'question appears once');
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['workspace','size','ready','web-observation'].includes(m.a)&&!(m.a==='set'&&m.navigation))),[],'panels/navigation apply no policy or retry');

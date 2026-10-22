@@ -220,7 +220,7 @@ fn project_config(root:&Path)->Res<(Config,Value)> {
         labelled: false,
         permission_mode: str_or("permission_mode", "dontAsk"),
         codex,
-        ttl: secs("ttl", 300) as i64,
+        ttl: secs("ttl", TTL as u64) as i64,
         poll: secs("poll", 60),
         update_every: secs("update_every", 60),
         rollback_after: secs("rollback_after", 600),
@@ -374,6 +374,8 @@ fn project_name(root: &Path) -> String {
 }
 
 use coreq::status::age as file_age;
+/// Default project ttl (§ 9): heartbeat lease and the one freshness bound (#1591).
+const TTL: i64 = 300;
 
 // ---------- writes ----------
 
@@ -842,7 +844,7 @@ fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
     Ok(())
 }
 
-fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::LegacyOwner>) -> Res<()> {
+fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let cfg = &c.cfg;
     let exe = launcher(&cfg.install);
     let board_env = cfg.board.worker_env(&platform::tool(&cfg.install), &cfg.web_host)?;
@@ -858,7 +860,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         } else { runtime::spawn(&env, l) }
     };
     let mut s = Service::new(c.board.as_ref(), cfg, platform::VERSION, Box::new(start));
-    s.legacy_handoff=legacy.is_some();
     s.recover = Some(Box::new(|task, execution| runtime::recover(&cfg.root, &cfg.install, task, execution)));
     s.host = host.clone();
     s.instance = enrollment::installation_id(&cfg.install).map(|id| service_id(&id))?;
@@ -877,8 +878,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }
         std::thread::sleep(Duration::from_secs(cfg.poll.max(1)));
     }
-    let mut adoption=adopt(&mut s, &cfg.install, &cfg.root);
-    if legacy.is_none() {adoption.as_ref().map_err(Clone::clone)?;}
+    adopt(&mut s, &cfg.install, &cfg.root)?;
     let is_installed = installed(&cfg.install);
     let began = Instant::now();
     log!("{}", incident::disclosure(Some(&cfg.root)));
@@ -886,7 +886,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut update: Option<String> = None;
     let mut restart_empty: Option<u64> = None;
     let mut waits_logged = String::new();
-    if legacy.is_none() {let _ = fs::remove_file(d.join("restart"));}
+    let _ = fs::remove_file(d.join("restart"));
     let mut tray = None;
     let project = project_name(&cfg.root);
     let issues = c.board.url(0).strip_suffix("/0").unwrap_or_default().to_string();
@@ -908,10 +908,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
     let mut panics = host::Panics::default();
-    let mut legacy_installation:Option<std::thread::JoinHandle<Res<String>>>=None;
-    let mut legacy_controller:Option<host_control::Control>=None;
-    let mut legacy_retry:Option<Instant>=None;
-    let mut legacy_error:Option<String>=None;
     let pokes = [d.join("poke"), cfg.install.join("poke")];
     let mut observed_poke = None;
     let mut observed_command = None;
@@ -927,14 +923,10 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         let poke_start = poke_times(&pokes);
         telemetry::diagnostic::poll(&cfg.install);
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Res<()> {
-        if legacy.is_some()&&adoption.is_err() {adoption=adopt(&mut s,&cfg.install,&cfg.root);}
-        let latch=legacy.map(|owner|host::legacy_latched(&cfg.install,owner)).transpose();
-        if matches!(latch,Ok(Some(true))) {s.legacy_prepared=true;}
-        let handoff_error=adoption.as_ref().err().cloned().or_else(||legacy.and_then(|owner|owner.verify(&platform::tool(&cfg.install)).err())).or_else(||latch.err());
         let control = control::snapshot(&cfg.root,&mut observed_poke,&mut observed_command);
         let command=match &control {Ok(snapshot)=>snapshot.command.clone(),Err(e)=>json!({"state":"unknown","reason":e})};
         let wakeup = control.as_ref().ok().and_then(|s|s.link.as_ref()).map(|link| link.span().entered());
-        let reduced = panics.quarantined() || began.elapsed().as_secs() < panics.until||handoff_error.is_some()||s.legacy_prepared;
+        let reduced = panics.quarantined() || began.elapsed().as_secs() < panics.until;
         // § 3: capacity reloads before each admission decision; children are untouched
         let cap = fs::read_to_string(cfg.root.join("taskq.json")).map_err(|e| e.to_string())
             .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| format!("taskq.json: {e}")))
@@ -981,7 +973,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             if let Ok(h) = host.lock() { if h.draining.contains(&cfg.root) { s.focus.clear(); } }
         }
         s.focus_error = focus_error.clone();
-        let r = if s.legacy_prepared {s.reduced()}else if reduced { s.reduced().and_then(|_| Err(handoff_error.clone().or_else(||panics.reason.clone()).unwrap_or_default())) } else { s.pass() };
+        let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else { s.pass() };
         s.sync_host();
         for l in s.log.drain(..) {
             log!("{l}");
@@ -1033,7 +1025,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 .filter(|r| r["login"] == "not logged in").filter_map(|r| r["runtime"].as_str().map(String::from)).collect();
         }
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
-        let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()) };
+        let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()),
+            progress: s.snapshot.as_ref().map(|x| enrollment::progress(x, &cfg.root, &cfg.me)).unwrap_or_default() };
         if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), &local, at) { log!("{l}"); } }
         // docs/design/standalone-telemetry.md#remote-sync-1353: only under the telemetry grant, on its own thread
         if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
@@ -1042,7 +1035,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
-        if !reduced && legacy.is_none() && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
+        if !reduced && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
             dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));
@@ -1068,25 +1061,21 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         {
             status[k] = v;
         }
-        if let Some(owner)=legacy {
-            status["handoff"]=json!({"state":if handoff_error.is_some()||legacy_error.is_some() {"unknown"}else if s.legacy_prepared {"prepared"}else{"draining"},"owner":owner,
-                "reason":handoff_error.as_ref().or(legacy_error.as_ref()),"waits":lifecycle_waits(&s, true)});
-        }
         status["diagnostics"] = s.service_diagnostics();
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
         drop(wakeup);
-        if host.is_none() && legacy.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
+        if host.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
             let h = cfg.install.join("releases").join(platform::VERSION).join("healthy");
             if !h.exists() {
                 if let Err(e) = fs::write(h, "") { log!("release health unknown: {e}"); }
             }
         }
         // § 4 step 7: a not installed service only reports a newer version; `<root>/.taskq/update` checks at once
-        let asked = legacy.is_none()&&fs::remove_file(d.join("update")).is_ok();
+        let asked = fs::remove_file(d.join("update")).is_ok();
         // § 8 step 3: a pending restart already goes to `current`; repeating the check would only repeat its log line
         let pending = is_installed && d.join("restart").exists();
         if host.is_some() && (asked || pending) { touch(&cfg.install.join(if asked { "update" } else { "restart" })); }
-        if host.is_none() && legacy.is_none() && !pending && (asked || checked.is_none_or(|t| t.elapsed().as_secs() >= cfg.update_every)) {
+        if host.is_none() && !pending && (asked || checked.is_none_or(|t| t.elapsed().as_secs() >= cfg.update_every)) {
             checked = Some(Instant::now());
             if is_installed {
                 match platform::service_update(&cfg.install) {
@@ -1108,7 +1097,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             }
         }
         restart_watch(&mut restart_empty, cfg!(windows) && d.join("restart").exists() && s.kids.is_empty(), began.elapsed().as_secs(), cfg.update_every);
-        if host.is_none() && legacy.is_none() && is_installed && d.join("restart").exists() {
+        if host.is_none() && is_installed && d.join("restart").exists() {
             // Windows re-exec waits for the live children; the request stays until it can go
             let waits = lifecycle_waits(&s, false).join(", ");
             if waits.is_empty() {
@@ -1128,7 +1117,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 log!("{l}");
             }
         }
-        if host.is_none() && legacy.is_none() && is_installed {
+        if host.is_none() && is_installed {
             keep_tray(&cfg.install, &mut tray);
         }
         if let Some(host) = &host {
@@ -1140,31 +1129,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             if let Err(e) = report_handoff(&s, &mut h, &cfg.root, drained) { log!("handoff unknown: {e}"); }
             }
         }
-        if let Some(owner)=legacy {
-            if legacy_installation.as_ref().is_some_and(|job|job.is_finished()) {
-                let outcome=legacy_installation.take().unwrap().join().unwrap_or_else(|_|Err("legacy installation owner panicked; original transition retained".into()));
-                if let Err(reason)=outcome {if legacy_error.as_ref()!=Some(&reason) {log!("legacy installation: {reason}");}legacy_error=Some(reason);}
-            }
-            if !s.legacy_prepared&&legacy_installation.is_none()&&legacy_retry.is_none_or(|at|at.elapsed().as_secs()>=5) {
-                legacy_retry=Some(Instant::now());let install=cfg.install.clone();let owner=owner.clone();
-                match std::thread::Builder::new().name("taskq-legacy-install".into()).spawn(coreq::telemetry::capture::bind(move ||host::legacy_install(&install,&owner))) {
-                    Ok(job)=>legacy_installation=Some(job),Err(e)=>legacy_error=Some(format!("legacy installation not started: {e}")),
-                }
-            }
-            if (!reduced||s.legacy_prepared)&&handoff_error.is_none()&&error.is_none()&&s.idle() {
-                match host::prepare_legacy(&cfg.install,owner) {
-                    Ok(true)=>{s.legacy_prepared=true;legacy_error=None;},Ok(false)=>{},Err(e)=>legacy_error=Some(e),
-                }
-            }
-            if let Some(outcome)=legacy_controller.as_mut().and_then(host_control::Control::poll) {
-                legacy_controller=None;if let Err(e)=outcome {legacy_error=Some(e);}
-            }
-            if s.legacy_prepared&&legacy_controller.is_none() {
-                match host::dispatch_legacy(&cfg.install) {Ok(control)=>legacy_controller=Some(control),Err(e)=>legacy_error=Some(e)}
-            }
-        }
         // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
-        let wait = if reduced&&handoff_error.is_none() {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
+        let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             if sampled.is_some_and(|t| t.elapsed().as_secs() < 30) {
@@ -1192,10 +1158,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }));
         match outcome {
             Ok(Ok(())) => {}
-            Ok(Err(e)) if legacy.is_some()=>{log!("legacy supervision: {e}; ownership retained");std::thread::sleep(Duration::from_secs(1));},
             Ok(Err(e)) => return Err(e),
             Err(payload) => {
-                if host.is_none()&&legacy.is_none() { std::panic::resume_unwind(payload); }
+                if host.is_none() { std::panic::resume_unwind(payload); }
                 if panics.quarantined()&&let Some(host)=&host {
                     // Stop the board loop, retaining its handles solely for safe exit/update monitoring (R11).
                     s.unready();
@@ -1216,27 +1181,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 publish_status(&platform::tool(&cfg.install), &cfg.root, &status, host.as_ref());
             }
         }
-    }
-}
-
-fn legacy_service(install:&Path,owner:&host_control::LegacyOwner)->Res<()> {
-    PROJECT_ROOT.set(Some(owner.root.clone()));
-    platform::project_log(install.join(format!("{}.log",owner.project)));
-    let mut reported=String::new();
-    loop {
-        let outcome=(|| {
-            owner.verify(&platform::tool(install))?;
-            // The host policy cannot change the permissions/capacity of an owner still draining its old unit.
-            let (cfg,raw)=project_config(&owner.root)?;
-            if cfg.install.canonicalize().ok()!=Some(install.canonicalize().map_err(|e|e.to_string())?) {
-                return Err("legacy installation scope differs; ownership retained".into());
-            }
-            let board=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&platform::tool(install))?;
-            service_run(&Ctx {cfg,raw,board},None,Some(owner))
-        })();
-        let error=outcome.err().unwrap_or_else(||"legacy supervision ended; ownership retained".into());
-        if reported!=error {log!("{error}; legacy handoff waiting");reported=error;}
-        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -1582,8 +1526,9 @@ fn capacity_cmd(a: &Args) -> Res<()> {
         roots.iter().find_map(|root| {
             let path=dot(root).join("status.json");
             let st:Value=serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
-            (st["host"]==me && st["at"].as_u64().is_some_and(|at|at<=now && now-at<=60)
-                && file_age(&path).is_some_and(|age|age<=60)).then_some(st)
+            let ttl=snapshot::ttl(root);
+            (st["host"]==me && st["at"].as_i64().is_some_and(|at|snapshot::live(now as i64-at,ttl))
+                && snapshot::status_live(&path,ttl)).then_some(st)
         })
     };
     let e = CapEdit::from_args(a)?;
@@ -1661,7 +1606,7 @@ fn channel_cmd(a: &Args) -> Res<()> {
         let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
         host::projects(&install).ok()?.iter().find_map(|root| {
             let st:Value=serde_json::from_slice(&fs::read(dot(root).join("status.json")).ok()?).ok()?;
-            (st["host"]==me.as_str() && st["at"].as_u64().is_some_and(|at|at>=since && at<=now && now-at<=60)).then(||st["channel"].as_str().map(String::from)).flatten()
+            (st["host"]==me.as_str() && st["at"].as_u64().is_some_and(|at|at>=since && snapshot::live(now as i64-at as i64,snapshot::ttl(root)))).then(||st["channel"].as_str().map(String::from)).flatten()
         })
     };
     let Some(want)=a.pos.get(2) else {
@@ -1843,7 +1788,7 @@ fn service_id(installation: &str) -> String {
 /// Another live process that wrote this root's fresh `status.json` (§ 4 one service per root).
 fn other_service(root: &Path) -> Option<u32> {
     let p = dot(root).join("status.json");
-    if file_age(&p).is_none_or(|a| a > 60) {
+    if !snapshot::status_live(&p, snapshot::ttl(root)) {
         return None;
     }
     let pid = data::json(&p).ok()??["pid"].as_u64()? as u32;
@@ -1882,7 +1827,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
     let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || k.rt=="codex-app" || k.rt=="claude"&&k.proc.native_identity().is_err()).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
-    w.extend(s.handoff_waits(cfg!(windows) && !stopping));
+    w.extend(s.handoff_waits(!stopping, cfg!(windows) && !stopping));
     w
 }
 
@@ -1910,16 +1855,16 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
     if let Some(w) = status.as_ref().and_then(|s| s["restart_waits"].as_array()).filter(|w| !w.is_empty()) {
         out.push(format!("Restart: waits for {}", w.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", ")));
     }
-    // § 4 board budget: only a status written within 60 s speaks for the running service
-    let requests = match status.as_ref().filter(|_| file_age(&d.join("status.json")).is_some_and(|a| a <= 60)) {
+    // § 4 board budget: only a live status speaks for the running service
+    let ttl = snapshot::ttl(root);
+    let requests = match status.as_ref().filter(|_| snapshot::status_live(&d.join("status.json"), ttl)) {
         Some(s) => requests::lines(s),
         None => vec!["Board requests: unknown (status missing or stale)".into()],
     };
-    let ttl = load(root).map(|(c, _)| c.ttl.max(0) as u64).unwrap_or(300);
     let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok().map(|d| d.as_secs());
     let fresh = status.as_ref().and_then(|s| {
         s["tasks_age_seconds"].as_u64()?.checked_add(now?.checked_sub(s["at"].as_u64()?)?)
-    }).filter(|a| *a <= ttl);
+    }).filter(|a| snapshot::live(*a as i64, ttl));
     match (status, fresh) {
         (Some(s), Some(a)) if snapshot::complete(&s) => {
             out.push(snapshot::counts_line(&snapshot::status_totals(&s).unwrap()));
@@ -1974,7 +1919,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"complete-legacy"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2001,11 +1946,10 @@ fn service(args: &Args) -> Res<()> {
         return onboard_cmd(&platform::default_install());
     }
     if sub == "channel" {return channel_cmd(args);}
-    if matches!(sub,"complete-stop"|"complete-legacy") {
+    if sub=="complete-stop" {
         platform::service_log();
         if args.pos.len()!=2||args.all("request").len()!=1||args.flags.keys().any(|key|!["request","json"].contains(&key.as_str())) {return Err("usage: taskq service complete-stop --request ID [--json]".into());}
-        let result=if sub=="complete-legacy" {host::complete_legacy(&platform::default_install(),args.need("request")?)?;json!({"id":args.need("request")?,"state":"legacy-retired"})}
-            else{lifecycle::complete_stop(&platform::default_install(),args.need("request")?)?};
+        let result=lifecycle::complete_stop(&platform::default_install(),args.need("request")?)?;
         if args.flags.contains_key("json") {println!("{result}");}return Ok(());
     }
     if matches!(sub,"restart"|"stop"|"uninstall") {
@@ -2045,15 +1989,6 @@ fn service(args: &Args) -> Res<()> {
     if sub == "run" {
         if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot run the host service".into());}
         let install=platform::default_install();
-        let mut reported=String::new();
-        loop {
-            match host_control::legacy_owner(&platform::tool(&install)) {
-                Ok(Some(owner))=>return legacy_service(&install,&owner),
-                Ok(None)=>break,
-                Err(error)=>if reported!=error {log!("{error}; native service scope unknown, launches held");reported=error;},
-            }
-            std::thread::sleep(Duration::from_secs(1));
-        }
         let in_install=std::env::current_dir().and_then(|p|p.canonicalize()).ok()
             .zip(install.canonicalize().ok()).is_some_and(|(cwd,install)|cwd==install);
         if !in_install {
@@ -2201,10 +2136,10 @@ fn hold_cmd(on: bool, reason: Option<&str>) -> Res<()> {
 fn recover_cmd(root: &Path, apply: bool, json: bool) -> Res<()> {
     let c = ctx()?;
     let hold = admission::hold(&c.cfg.install).ok_or("no emergency hold on this host; run `taskq service hold` first")?;
-    // the service's children, from a status.json at most 60 s old (§ 4); else every row is unknown
+    // the service's children, from a live status.json (§ 4); else every row is unknown
     let p = dot(root).join("status.json");
     let kids = match (data::json(&p), file_age(&p)) {
-        (Ok(Some(s)), Some(a)) if a <= 60 => Ok(s["kids"].as_array().cloned().unwrap_or_default()),
+        (Ok(Some(s)), Some(a)) if snapshot::live(a as i64, c.cfg.ttl) => Ok(s["kids"].as_array().cloned().unwrap_or_default()),
         (Err(e), _) => Err(e),
         (Ok(Some(_)), Some(a)) => Err(format!("status.json {a} s old")),
         _ => Err("no service status".to_string()),
@@ -2393,13 +2328,14 @@ fn golden_selftest(traces: &str, published: bool) -> Res<usize> {
     result
 }
 
-fn restart_watch(since: &mut Option<u64>, empty_restart: bool, elapsed: u64, interval: u64) {
-    if !empty_restart { *since = None; return; }
+/// True once per stuck period: `stuck` held for 2 × `interval` seconds of `elapsed`.
+fn restart_watch(since: &mut Option<u64>, stuck: bool, elapsed: u64, interval: u64) -> bool {
+    if !stuck { *since = None; return false; }
     let start = *since.get_or_insert(elapsed);
-    if elapsed.saturating_sub(start) >= interval.saturating_mul(2) {
-        incident::detect("dispatch.reexec", concat!("src/main.rs:", line!()), "none", &[], &["restart:stuck"]);
-        *since = Some(u64::MAX);
-    }
+    if elapsed.saturating_sub(start) < interval.saturating_mul(2) { return false; }
+    incident::detect("dispatch.reexec", concat!("src/main.rs:", line!()), "none", &[], &["restart:stuck"]);
+    *since = Some(u64::MAX);
+    true
 }
 
 #[tracing::instrument(name="run",skip_all)]
@@ -2477,12 +2413,9 @@ fn run(argv: &[String]) -> Res<()> {
                 println!("board: unknown (no project config found; no board read)");
             }
             let capture=coreq::telemetry::capture::qualify().map_err(|e|format!("telemetry: FAIL {e}"))?;
-            match telemetry::handover() {
-                // #1419: entry.rs gave the offline (staged release) selftest a private store.
-                _ if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some()=>println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]),
-                Some(reason)=>println!("telemetry: compatibility capture committed {} observations (running writer incompatible: {reason})",capture["committed"]),
-                None=>println!("telemetry: local capture committed {} observations",capture["committed"]),
-            }
+            // #1419: entry.rs gave the offline (staged release) selftest a private store.
+            if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some() {println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]);}
+            else {println!("telemetry: local capture committed {} observations",capture["committed"]);}
             Ok(())
         }
         "update" => {
@@ -2797,7 +2730,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if telemetry { println!("telemetry: {} (local telemetry rows; revoke with taskq enroll without --telemetry or taskq disconnect)", telemetry_sync::SCHEMA); }
             let conn = enrollment::pair(&cfg.install, url, &cfg.me, &board, !a.flags.contains_key("headless"), telemetry).map_err(|e| format!("pairing: {e}\nNext: rerun taskq enroll {url} and approve the new code"))?;
             // the CLI runs no runtime probe: login reads unknown until the service's next send
-            let local = enrollment::Local { host: cfg.me.clone(), service: enrollment::installation_id(&cfg.install).ok().map(|i| service_id(&i)), ttl: cfg.ttl.max(0) as u64, agents: Value::Null };
+            let local = enrollment::Local { host: cfg.me.clone(), service: enrollment::installation_id(&cfg.install).ok().map(|i| service_id(&i)), ttl: cfg.ttl.max(0) as u64, agents: Value::Null, progress: Default::default() };
             let (_, rec) = enrollment::record(&cfg.install, &snapshot::read(b, cfg, &c.raw, &[]), &conn, &local)?;
             match enrollment::first_receipt(&cfg.install, &rec, 15)? {
                 "projected" => println!("connected: {dest} workspace {} generation {}; first snapshot projected", conn["workspace"].as_str().unwrap_or("?"), conn["generation"]),
@@ -2827,7 +2760,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let n = st["revoke"].as_array().map_or(0, Vec::len);
             if n > 0 { println!("revokes pending: {n}"); }
             let local = dot(root).join("status.json");
-            let report = data::json(&local).ok().flatten().filter(|_| file_age(&local).is_some_and(|a| a <= 300));
+            let report = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl));
             match report.as_ref().map(|r| &r["connection"]) {
                 Some(Value::String(o)) => println!("delivery: {o}"),
                 Some(_) => println!("delivery: unknown (the service has not tried yet)"),
@@ -2843,7 +2776,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "status" => {
             // R6: a board rate-limit pause the local service reports comes first, also when this read fails
             let local = dot(&cfg.root).join("status.json");
-            if let Some(w) = data::json(&local).ok().flatten().filter(|_| file_age(&local).is_some_and(|a| a <= 60)).as_ref().and_then(requests::warning) {
+            if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) {
                 println!("{w}");
             }
             let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
@@ -4517,7 +4450,7 @@ mod tests {
         snap.board["url"] = json!("https://user:forge-secret@github.com/o/r");
         let scope = BoardScope::new("github", "GITHUB.COM", "o/r").unwrap();
         let approved = [scope.clone()];
-        let local = enrollment::Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null };
+        let local = enrollment::Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null, progress: Default::default() };
         let a = project(&snap, &"a".repeat(64), &approved, &local).unwrap();
         let b = project(&snap, &"b".repeat(64), &approved, &local).unwrap();
         let got = serde_json::to_value(&a).unwrap();

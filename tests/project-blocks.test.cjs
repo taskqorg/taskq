@@ -17,6 +17,7 @@ assert.match(q.aggregate([{...p,tasks:[row]}],['doing']),/data-a="all-tasks" ari
 assert.match(q.aggregate([{...p,tasks:[row]},{...p,id:'duplicate',tasks:[row]}],[]),/All tasks 1<\/button>/);
 assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,state:'review'}]}]).counts.doing,null);
 assert.equal(q.observation([{...p,complete:false}]).counts.ready,null);
+assert.equal(q.observation([{...p,tasks:[row]},{...p,tasks:[{...row,title:'Changed title'}]}]).open,null,'conflicting titles make search scope unknown');
 assert.equal(q.observation([{...p,complete:false}]).counts.held,null,'partial snapshots show Held as unknown');
 assert.match(q.summary({...p,tasks:[{...row,state:'held'}]}),/data-state="held"[^>]*aria-label="[^"]* · Held: 1"/);
 assert(!q.summary(p).includes('tqp-counts'),'known zero shows identity only');

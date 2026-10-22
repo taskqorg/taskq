@@ -15,13 +15,13 @@ const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:
    await page.evaluate(s=>taskq.receive(s),state);return page;
   };
   let page=await open(snapshot);
-  await page.locator('[data-tqp="project"]').first().click();
+  await page.locator('[data-route="'+project.root+'"]').first().click();
   await page.locator('.service > summary').click();
   await page.locator('.tqp-counts [data-state="doing"]').first().click();
   await page.locator('.content').evaluate(e=>{e.scrollTop=350;});
   await page.waitForTimeout(250); // flush the documented 100 ms scroll debounce
   assert(stored,'navigation must reach the shared native settings adapter');
-  assert.deepEqual(stored.current.taskFilter,['doing']);assert.equal(stored.current.aiRoot,null,'request selection now belongs to the workspace; tray filters still persist');
+  assert.deepEqual(stored.dashboard.views.find(v=>v.id===stored.dashboard.selected).working.states,['doing']);assert.equal(stored.current.aiRoot,null,'request selection now belongs to the workspace; tray filters still persist');
   const scroll=await page.locator('.content').evaluate(e=>e.scrollTop),saved=structuredClone(stored);
   assert(scroll>0);await page.close();
   for(const version of ['old','new']){
@@ -34,7 +34,7 @@ const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:
    await page.evaluate(s=>taskq.receive(s),{...snapshot,service:{state:'exited'},navigation:null});
    assert.equal(await page.locator('[data-card]').count(),18);
    if(process.env.VIEW_EVIDENCE){fs.mkdirSync(process.env.VIEW_EVIDENCE,{recursive:true});await page.screenshot({path:process.env.VIEW_EVIDENCE+'/restored-'+version+'.png'});await page.locator('.content').evaluate(e=>e.scrollTop=0);await page.screenshot({path:process.env.VIEW_EVIDENCE+'/restored-'+version+'-top.png'});await page.locator('.content').evaluate((e,s)=>e.scrollTop=s,scroll);}
-   await page.locator('.shell-overflow > summary').click();await page.locator('[data-route="settings"]').click();await page.locator('[data-a="back"]').click();
+   await page.locator('[data-route="settings"]').click();await page.locator('[data-a="back"]').click();
    assert.equal(await page.locator('.content').evaluate(e=>e.scrollTop),scroll);
    await page.locator('[data-a=back]').click();assert.equal(await page.locator('.service').evaluate(d=>d.open),true);
    await page.close();
@@ -45,7 +45,7 @@ const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:
   assert.equal(await page.locator('h1').innerText(),'Settings');await page.close();
   page=await open({...snapshot,navigation:saved});
   await page.evaluate(s=>taskq.receive({...s,projects:[]}),snapshot);
-  assert.equal(await page.locator('h1').innerText(),'Projects','live project removal uses the same fallback');
+  assert.equal(await page.locator('h1').innerText(),'Tasks','removed criteria remain explicit on the dashboard');assert.match(await page.locator('.filter-header').innerText(),/unavailable/i);
   await page.evaluate(()=>taskq.receive({viewStateError:'tray.json: save failed; view state is not persisted'}));
   assert.match(await page.locator('[role=alert]').innerText(),/Settings unknown.*save failed/);assert.doesNotMatch(await page.locator('[role=alert]').innerText(),/defaults shown/);
   await page.evaluate(s=>taskq.receive({...s,projects:[]}),snapshot);

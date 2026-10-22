@@ -109,7 +109,6 @@ pub(crate) fn health_at(now:Option<u64>)->Value {
         }
         health["scope"]=json!("this-process");health["process_id"]=json!(std::process::id());
         health["historical_completeness"]=json!("unknown");
-        if let Some(reason)=super::handover() {health["store"]=json!({"kind":"same-store-compatibility","reason":reason});}
         health["control"]=CONTROL.lock().map(|state|json!({"applied_request":state.seen,"error":state.error})).unwrap_or(json!({"error":"control-state-unavailable"}));
         Ok::<_,String>(health)
     })();

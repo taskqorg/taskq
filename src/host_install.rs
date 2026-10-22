@@ -14,13 +14,8 @@ struct Pending {
     schema:u8,id:String,baseline:String,root:PathBuf,version:String,candidate:String,
     original:Option<String>,next:String,phase:String,restore:bool,attach:bool,owner:Option<InstallOwner>,command:String,
     #[serde(default,skip_serializing_if="Option::is_none")]
-    legacy:Option<Legacy>,
-    #[serde(default,skip_serializing_if="Option::is_none")]
     activation:Option<Baseline>,
 }
-#[derive(Serialize,Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Legacy {owner:crate::host_control::LegacyOwner,phase:String}
 #[derive(Serialize,Deserialize)]
 #[serde(deny_unknown_fields)]
 struct InstallOwner {pid:u32,started:String,instance:String}
@@ -64,9 +59,7 @@ fn read_cursor(install:&Path,path:&Path)->Res<Pending> {
     let metadata:Value=serde_json::from_str(&command.encode()).map_err(|e|e.to_string())?;
     if metadata["product"]!="taskq"||metadata["operation"]!="taskq.host.install" {return Err("installation command identity invalid; retained".into());}
     let roots=project_entries(&p.next)?;
-    if !roots.iter().any(|(_,root)|root==&p.root)||p.owner.as_ref().is_some_and(|o|o.pid==0||o.started.is_empty()||!crate::resources::id(&o.instance))
-        ||p.legacy.as_ref().is_some_and(|l|l.owner.root!=p.root||!matches!(l.phase.as_str(),"draining"|"ready"|"retiring"|"retired")) {return Err("installation scope/owner binding invalid; retained".into());}
-    if let Some(legacy)=&p.legacy {legacy.owner.validate()?;}
+    if !roots.iter().any(|(_,root)|root==&p.root)||p.owner.as_ref().is_some_and(|o|o.pid==0||o.started.is_empty()||!crate::resources::id(&o.instance)) {return Err("installation scope/owner binding invalid; retained".into());}
     Ok(p)
 }
 fn save(install:&Path,p:&Pending)->Res<()> {
@@ -120,28 +113,6 @@ fn retain_reason(install:&Path,p:&Pending,reason:&str)->Res<()> {
         if op.bound!=binding(p) {return Err("installation reason belongs to another command".into());}
         checked_receipt(op)?;
         op.receipt["reason"]=json!(crate::compact(reason,256));Ok(())
-    })
-}
-
-fn record_legacy(install:&Path,p:&Pending,phase:&str)->Res<()> {
-    let owner=&p.legacy.as_ref().ok_or("installation has no legacy scope")?.owner;
-    crate::resources::within(install,crate::resources::WAIT,|state| {
-        let op=state.ops.get_mut(&p.id).ok_or("legacy installation receipt missing")?;
-        if op.bound!=binding(p) {return Err("legacy receipt belongs to another command".into());}
-        let receipt=checked_receipt(op)?;
-        if !matches!(receipt["state"].as_str(),Some("applied"|"observed")) {return Err("legacy installation has no applied command receipt".into());}
-        op.receipt[format!("legacy_{phase}")]=json!(owner);Ok(())
-    })
-}
-
-fn legacy_proven(install:&Path,p:&Pending,phase:&str)->Res<bool> {
-    let owner=&p.legacy.as_ref().ok_or("installation has no legacy scope")?.owner;
-    crate::resources::within(install,crate::resources::WAIT,|state| {
-        let op=state.ops.get(&p.id).ok_or("legacy installation receipt missing")?;
-        if op.bound!=binding(p) {return Err("legacy receipt belongs to another command".into());}
-        let receipt=checked_receipt(op)?;
-        if !matches!(receipt["state"].as_str(),Some("applied"|"observed")) {return Err("legacy installation has no applied command receipt".into());}
-        Ok(op.receipt.get(format!("legacy_{phase}")).is_some_and(|bound|*bound==json!(owner)))
     })
 }
 
@@ -281,16 +252,6 @@ fn verify_copies(folder:&Path,baseline:&Baseline)->Res<()> {
     Ok(())
 }
 
-fn verify_legacy_original(install:&Path,p:&Pending)->Res<()> {
-    let Some(legacy)=&p.legacy else {return Ok(());};
-    let baseline:Baseline=serde_json::from_slice(&fs::read(manifest(install)).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-    let unit=coreq::service::unit(&crate::platform::tool(install),&legacy.owner.root,&legacy.owner.project);
-    if !baseline.files.iter().any(|saved|saved.path==unit.path&&saved.digest.as_ref()==Some(&legacy.owner.revision)) {
-        return Err("legacy native definition is not bound to the preserved topology originals; kept".into());
-    }
-    Ok(())
-}
-
 /// Restore only pre-native activation effects. Native submission uncertainty never enters this route.
 fn restore_activation(install:&Path,p:&Pending)->Res<()> {
     let initial:Baseline;
@@ -301,7 +262,7 @@ fn restore_activation(install:&Path,p:&Pending)->Res<()> {
     if !p.restore||baseline.schema!=1||baseline.version!=p.version||!matches!(p.phase.as_str(),"prepared"|"activated") {
         return Err("native installation may own work; automatic topology restore refused".into());
     }
-    if native_owner(install,p.legacy.as_ref().map(|l|&l.owner))?.is_some()||!crate::host_control::native_absent(&crate::platform::tool(install))? {return Err("native owner/start cannot be excluded; originals retained".into());}
+    if native_owner(install)?.is_some()||!crate::host_control::native_absent(&crate::platform::tool(install))? {return Err("native owner/start cannot be excluded; originals retained".into());}
     let _owner=coreq::file_lock::try_lock(&install.join("service.lock")).map_err(|e|format!("native ownership unknown during restore: {e}"))?;
     verify_copies(&folder,baseline)?;
     guard_restore(install,p,&folder,baseline)?;
@@ -411,95 +372,14 @@ fn restore_files(install:&Path,folder:&Path,baseline:&Baseline)->Res<()> {
     Ok(())
 }
 
-fn native_owner(install:&Path,legacy:Option<&crate::host_control::LegacyOwner>)->Res<Option<coreq::process::Identity>> {
+fn native_owner(install:&Path)->Res<Option<coreq::process::Identity>> {
     match service_record(install)? {
-        None=>Ok(None),Some(OwnerRecord::Legacy(pid))=>{
-            if let Some(owner)=legacy.filter(|owner|owner.pid==pid) {owner.verify(&crate::platform::tool(install))?;return Ok(None);}
-            Err("legacy host owner requires migration; installation refused".into())
-        },
+        None=>Ok(None),Some(OwnerRecord::Legacy(_))=>Err("legacy host owner requires migration; installation refused".into()),
         Some(OwnerRecord::Current(r))=>{
             let expected=coreq::process::Identity {pid:r.pid,started:r.started};
-            if let Some(owner)=legacy.filter(|owner|owner.identity()==expected) {owner.verify(&crate::platform::tool(install))?;return Ok(None);}
             Ok(coreq::process::identity(r.pid).map_err(|e|e.to_string())?.filter(|native|native==&expected))
         },
     }
-}
-
-/// Saved units are a conservative admission barrier, never a substitute for native retirement readback.
-pub(super) fn legacy_definitions(install:&Path)->Res<Vec<PathBuf>> {
-    let tool=crate::platform::tool(install);let host=crate::host_control::definition(&tool)?;
-    let directory=host.parent().ok_or("native definitions directory unknown")?;
-    let entries=match fs::read_dir(directory) {Ok(entries)=>entries,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(vec![]),Err(e)=>return Err(e.to_string())};
-    let (prefix,suffix)=if cfg!(target_os="macos") {(format!("com.{}.",tool.name),".plist")}else if cfg!(windows) {(format!("{}-",tool.title),".xml")}else{(format!("{}-",tool.name),".service")};
-    let mut paths=vec![];let mut bytes=0;
-    for entry in entries {
-        let entry=entry.map_err(|e|e.to_string())?;let path=entry.path();let name=entry.file_name();let name=name.to_string_lossy();
-        if path==host||!name.starts_with(&prefix)||!name.ends_with(suffix) {continue;}
-        let metadata=fs::symlink_metadata(&path).map_err(|e|e.to_string())?;
-        if !metadata.is_file()||metadata.len()>65536 {return Err("legacy definition storage unknown; host admission held".into());}
-        ownership(&path)?;bytes+=path.as_os_str().len();
-        if bytes>1<<20 {return Err("legacy definition inventory exceeds migration cursor bound; kept".into());}
-        paths.push(path);
-    }
-    paths.sort();Ok(paths)
-}
-
-pub(super) fn legacy_projection(install:&Path,pid:u32,started:Option<&str>)->Res<bool> {
-    match fs::symlink_metadata(install.join(INSTALL_PENDING)) {Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(false),Err(e)=>return Err(e.to_string()),Ok(_)=>{}}
-    let p=pending(install)?;
-    let Some(legacy)=p.legacy.filter(|l|l.owner.pid==pid&&started.is_none_or(|s|s==l.owner.started)) else {return Ok(false);};
-    legacy.owner.verify(&crate::platform::tool(install))?;Ok(true)
-}
-
-pub(super) fn controller_id(install:&Path)->Res<Option<String>> {
-    match fs::symlink_metadata(install.join(INSTALL_PENDING)) {Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(None),Err(e)=>return Err(e.to_string()),Ok(_)=>{}}
-    let p=pending(install)?;
-    Ok(p.legacy.as_ref().is_some_and(|legacy|matches!(legacy.phase.as_str(),"ready"|"retiring"|"retired")).then_some(p.id))
-}
-
-fn verify_legacy_caller(install:&Path,owner:&crate::host_control::LegacyOwner)->Res<()> {
-    if coreq::process::identity(std::process::id()).map_err(|e|e.to_string())?.as_ref()!=Some(&owner.identity()) {return Err("only the original native legacy daemon may prepare its drain".into());}
-    owner.verify(&crate::platform::tool(install))
-}
-
-#[tracing::instrument(name="host.install",skip_all)]
-pub fn legacy_install(install:&Path,owner:&crate::host_control::LegacyOwner)->Res<String> {
-    verify_legacy_caller(install,owner)?;
-    install_bound(install,&owner.root,None,Some(owner))
-}
-
-/// Only the service's reconciled idle state may call this; the prepared loop then admits/resumes nothing.
-pub fn prepare_legacy(install:&Path,owner:&crate::host_control::LegacyOwner)->Res<bool> {
-    let _update=crate::platform::update_lock(install)?;
-    let _projects=coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|format!("project registry busy: {e}"))?;
-    match fs::symlink_metadata(install.join(INSTALL_PENDING)) {Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(false),Err(e)=>return Err(e.to_string()),Ok(_)=>{}}
-    let mut p=pending(install)?;
-    if p.root!=owner.root {return Ok(false);}
-    let Some(legacy)=p.legacy.as_mut() else {return Ok(false);};
-    verify_legacy_caller(install,owner)?;
-    if legacy.phase=="retired" {return Err("retired legacy unit reappeared; native reconciliation required".into());}
-    if legacy.owner!=*owner {
-        let prior=&legacy.owner;
-        if prior.root!=owner.root||prior.project!=owner.project||prior.revision!=owner.revision
-            ||coreq::process::identity(prior.pid).map_err(|e|e.to_string())?.as_ref()==Some(&prior.identity()) {return Err("prior legacy native ownership remains; preparation held".into());}
-        if let Some(launcher)=&prior.launcher {
-            let pid=launcher["pid"].as_u64().and_then(|pid|u32::try_from(pid).ok()).ok_or("prior legacy launcher unknown")?;
-            if coreq::process::identity(pid).map_err(|e|e.to_string())?.is_some_and(|native|Some(native.started.as_str())==launcher["started"].as_str()) {return Err("prior legacy launcher remains; preparation held".into());}
-        }
-        legacy.owner=owner.clone();legacy.phase="draining".into();save(install,&p)?;
-    }
-    if p.phase!="registered" {return Ok(false);}
-    let legacy=p.legacy.as_mut().unwrap();
-    if legacy.phase=="draining" {record_legacy(install,&p,"prepared")?;p.legacy.as_mut().unwrap().phase="ready".into();save(install,&p)?;}
-    Ok(matches!(p.legacy.as_ref().unwrap().phase.as_str(),"ready"|"retiring"))
-}
-
-pub fn legacy_latched(install:&Path,owner:&crate::host_control::LegacyOwner)->Res<bool> {
-    match fs::symlink_metadata(install.join(INSTALL_PENDING)) {Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return Ok(false),Err(e)=>return Err(e.to_string()),Ok(_)=>{}}
-    let p=pending(install)?;
-    let latched=p.root==owner.root&&p.legacy.as_ref().is_some_and(|legacy|matches!(legacy.phase.as_str(),"ready"|"retiring"|"retired"));
-    if latched&&!legacy_proven(install,&p,"prepared")? {return Err("legacy drain proof missing or changed; launches held".into());}
-    Ok(latched)
 }
 
 fn context(p:&Pending)->Res<String> {
@@ -507,47 +387,11 @@ fn context(p:&Pending)->Res<String> {
     coreq::telemetry::capture::TraceContext::decode(&format!("1 {} {}",command["trace"].as_str().ok_or("installation trace missing")?,command["span"].as_str().ok_or("installation span missing")?)).map(|context|context.encode())
 }
 
-pub fn dispatch_legacy(install:&Path)->Res<crate::host_control::Control> {
-    let p=pending(install)?;
-    if p.phase!="registered"||!p.legacy.as_ref().is_some_and(|legacy|matches!(legacy.phase.as_str(),"ready"|"retiring")) {return Err("legacy handoff has no prepared original command".into());}
-    if !legacy_proven(install,&p,"prepared")? {return Err("legacy controller has no original drain proof".into());}
-    crate::host_control::dispatch_command(install,&p.id,"complete-legacy",&context(&p)?)
-}
-
-pub fn complete_legacy(install:&Path,id:&str)->Res<()> {
-    if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot retire a legacy unit".into());}
-    let result=(||->Res<()> {
-    let _update=crate::platform::update_lock(install)?;
-    let _projects=coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|format!("project registry busy: {e}"))?;
-    let mut p=pending(install)?;
-    if p.id!=id||p.phase!="registered"||raw_projects(install)?.as_deref()!=Some(p.next.as_str()) {return Err("legacy retirement binding changed; kept".into());}
-    let legacy=p.legacy.as_mut().ok_or("installation has no native legacy owner")?;
-    if !matches!(legacy.phase.as_str(),"ready"|"retiring"|"retired") {return Err("legacy ownership drain not confirmed; kept".into());}
-    let owner=legacy.owner.clone();
-    let retired=legacy.phase=="retired";
-    if !legacy_proven(install,&p,"prepared")? {return Err("legacy drain proof missing or belongs to another native owner; kept".into());}
-    verify_originals(install)?;verify_legacy_original(install,&p)?;
-    if !retired {
-        p.legacy.as_mut().unwrap().phase="retiring".into();save(install,&p)?;
-    }
-    owner.retire(&crate::platform::tool(install),id)?;
-    record_legacy(install,&p,"retired")?;
-    p.legacy.as_mut().unwrap().phase="retired".into();save(install,&p)?;
-    let context=context(&p)?;drop(_projects);drop(_update);
-    crate::host_control::retire_command(install,id,"complete-legacy",&context)
-    })();
-    if let Err(reason)=&result {
-        if let Ok(p)=pending(install)&&p.id==id {retain_reason(install,&p,reason).map_err(|e|format!("{reason}; legacy failure could not be retained: {e}"))?;}
-    }
-    result
-}
-
 pub(super) fn recover(install:&Path)->Res<String> {
     let p=pending(install)?;
     let context=coreq::telemetry::capture::TraceContext::decode(&context(&p)?)?;
     let _context=context.span().entered();
-    if p.legacy.as_ref().is_some_and(|legacy|matches!(legacy.phase.as_str(),"ready"|"retiring")) {dispatch_legacy(install)?.wait()?;}
-    install_bound(install,&p.root,Some(&p.id),None)
+    install_bound(install,&p.root,Some(&p.id))
 }
 
 fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
@@ -566,9 +410,6 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
         return Err("installation binding changed before acknowledgement; retained".into());
     }
     if p.phase!="registered"||raw_projects(install)?.as_deref()!=Some(p.next.as_str()) {return Ok(false);}
-    if let Some(legacy)=&p.legacy {
-        if legacy.phase!="retired"||!legacy_proven(install,&p,"retired")?||!legacy.owner.retired(&crate::platform::tool(install))? {return Ok(false);}
-    }
     let owner=p.owner.as_ref().ok_or("installation native owner missing")?;
     let service=service_status(install);
     let status=crate::data::json(&crate::dot(&p.root).join("status.json"))?;
@@ -582,7 +423,7 @@ fn acknowledge(install:&Path,expected:&Pending)->Res<bool> {
 #[tracing::instrument(name="host.install",skip_all)]
 pub fn install_project(install:&Path,root:&Path)->Res<String> {
     upgrade(install,root)?;
-    install_bound(install,root,None,None)
+    install_bound(install,root,None)
 }
 
 fn receive_initial(install:&Path,p:&mut Pending)->Res<()> {
@@ -609,7 +450,7 @@ fn upgrade(install:&Path,root:&Path)->Res<bool> {
         match fs::symlink_metadata(install.join(INSTALL_PENDING)) {
             Ok(_)=>return Ok(false),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string()),
         }
-        let Some(owner)=native_owner(install,None)? else {return Ok(false)};
+        let Some(owner)=native_owner(install)? else {return Ok(false)};
         let service=service_status(install);
         let Some(running)=service["version"].as_str() else {return Ok(false)};
         if !coreq::update::newer(tool.version,running)&&upgrade_intent(install)?.is_none() {return Ok(false);}
@@ -620,14 +461,22 @@ fn upgrade(install:&Path,root:&Path)->Res<bool> {
     loop {
         let service=service_status(install);
         if service["fresh"]==true&&service["version"]==version {return Ok(true);}
-        if Instant::now()>=until {return Err(format!("current is {version}; host still runs {} (live work defers the handover); repeat service install for this root",service["version"].as_str().unwrap_or("unknown")));}
+        if Instant::now()>=until {
+            // #1601: name the waits the host retained on the receipt, not a generic promise
+            let reason=upgrade_intent(install).ok().flatten().and_then(|p|installation_status(install,Some(&p.id))["reason"].as_str().map(String::from))
+                .unwrap_or_else(||"handover waits unknown".into());
+            return Err(format!("current is {version}; host still runs {} ({reason}); repeat service install for this root",service["version"].as_str().unwrap_or("unknown")));
+        }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 }
 
 /// Under the update lock: the version the running `owner` must re-exec into, or None once it runs the candidate.
 fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,owner:&coreq::process::Identity)->Res<Option<String>> {
-    let intent=upgrade_intent(install)?.filter(|p|installation_status(install,Some(&p.id))["state"]!="observed");
+    let intent=match upgrade_intent(install)?.filter(|p|installation_status(install,Some(&p.id))["state"]!="observed") {
+        Some(p) if coreq::update::newer(tool.version,&p.version)=>{supersede_upgrade(install,&p,tool.version)?;None},
+        intent=>intent,
+    };
     let p=if let Some(p)=intent {
         if p.root!=root {return Err(format!("an upgrade to {} is pending for another root; repeat service install there",p.version));}
         p
@@ -639,18 +488,20 @@ fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,own
         let p=Pending {schema:1,id:crate::runtime::uuid(),baseline:digest(&baseline),root:root.into(),version:tool.version.into(),
             candidate:crate::platform::prepare_install(tool)?,original:edit.original.clone(),next:edit.next.clone(),phase:"initial".into(),restore:false,attach:true,
             owner:Some(InstallOwner {pid:owner.pid,started:owner.started.clone(),instance:service["instance"].as_str().ok_or("host generation missing")?.into()}),
-            command:CommandReceipt::current()?.encode(),legacy:None,activation:None};
+            command:CommandReceipt::current()?.encode(),activation:None};
         coreq::write_durable(&install.join(UPGRADE_INTENT),serde_json::to_vec(&p).map_err(|e|e.to_string())?)?;
         p
     };
     if service["fresh"]==true&&service["version"]==p.version {return Ok(None);}
-    if !crate::resources::within(install,crate::resources::WAIT,|state|Ok(state.ops.contains_key(&p.id)))? {record(install,&p,"received")?;}
+    let received=!crate::resources::within(install,crate::resources::WAIT,|state|Ok(state.ops.contains_key(&p.id)))?;
+    if received {record(install,&p,"received")?;}
     if retained(install,&p)?["state"]!="queued" {return Err("upgrade intent has an incompatible receipt; held".into());}
     if tool.version!=p.version {return Err(format!("an upgrade to {} is pending; repeat service install with that build",p.version));}
     if tool.current().as_deref()!=Some(tool.version) {crate::platform::activate_install(tool)?;}
     if !install.join("rollback-floor").exists() {coreq::launcher::set_rollback_floor(tool,service["version"].as_str().ok_or("running host version unknown")?)?;}
     coreq::write_durable(&install.join("update"),"")?;
-    retain_reason(install,&p,"host update step pending; live work hands over before the re-exec")?;
+    // a replay keeps the waits the host retained (#1601)
+    if received {retain_reason(install,&p,"host update step pending; the host names its re-exec waits here")?;}
     Ok(Some(p.version))
 }
 
@@ -666,12 +517,28 @@ pub fn stale_upgrade(install:&Path,late:bool)->Option<String> {
     Some(reason)
 }
 
+/// #1601: while the host's re-exec into a queued upgrade waits, the receipt names the real waits instead of a promise.
+/// True once retained, or when no queued upgrade waits for this image to re-exec.
+pub fn upgrade_waits(install:&Path,running:&str,waits:&str)->bool {
+    let Ok(Some(p))=upgrade_intent(install) else {return true};
+    if p.version==running||installation_status(install,Some(&p.id))["state"]!="queued" {return true;}
+    retain_reason(install,&p,&format!("host re-exec into {} waits for {waits}",p.version)).is_ok()
+}
+
+/// #1601: a newer build supersedes a queued upgrade it cannot finish (the version ran, or never will); the old
+/// receipt fails with the reason and the intent goes, so dev installs never wait on an older build by hand.
+fn supersede_upgrade(install:&Path,p:&Pending,version:&str)->Res<()> {
+    record(install,p,"failed")?;
+    retain_reason(install,p,&format!("superseded by {version}"))?;
+    fs::remove_file(install.join(UPGRADE_INTENT)).map_err(|e|e.to_string())
+}
+
 /// The attach under a host that already runs an upgrade's candidate continues that command and its receipt.
 fn adopt_upgrade(install:&Path,root:&Path,running:&str)->Res<Option<Pending>> {
     Ok(upgrade_intent(install)?.filter(|p|p.root==root&&p.version==running&&installation_status(install,Some(&p.id))["state"]=="queued"))
 }
 
-fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option<&crate::host_control::LegacyOwner>)->Res<String> {
+fn install_bound(install:&Path,root:&Path,expected:Option<&str>)->Res<String> {
     if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot install the host service".into());}
     let _update=crate::platform::update_lock(install)?;
     let root=root.canonicalize().map_err(|e|e.to_string())?;
@@ -685,27 +552,20 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
             None=>return if installation_status(install,Some(id))["state"]=="observed" {Ok(format!("Install receipt {id} already observed"))}else{Err("original installation cursor absent; recovery cannot start a command".into())},
         }
     }
-    let (edit,mut p)=if let Some(mut p)=replay {
+    let (edit,mut p)=if let Some(p)=replay {
         if !p.attach&&p.version!=tool.version {return Err("installation candidate version differs; use the original installer to reconcile".into());}
         if p.root!=root {return Err("another installation owns projects.installing; reconcile its exact root".into());}
         let lock=coreq::file_lock::try_lock(&install.join("projects.lock")).map_err(|e|format!("project registry busy: {e}"))?;
         let current=raw_projects(install)?;
         if current!=p.original&&current.as_deref()!=Some(p.next.as_str()) {return Err("installation registry changed; originals retained".into());}
-        if let Some(owner)=migration {
-            let prior=p.legacy.as_mut().ok_or("another installation owns this root; legacy authority unchanged")?;
-            if prior.owner!=*owner {return Err("legacy generation changed; reconcile retained native ownership before rebinding".into());}
-        }
         let edit=ProjectEdit {install:install.into(),original:current,next:p.next.clone(),removed:vec![root.clone()],adding:true,_lock:lock};
         (edit,p)
     } else {
         let edit=ProjectEdit::new(install,&root,true)?;
-        if let Some(legacy)=migration {verify_legacy_caller(install,legacy)?;}
-        let owner=native_owner(install,migration)?;
+        let owner=native_owner(install)?;
         let mut roots:Vec<_>=project_entries(&edit.next)?.into_iter().map(|(_,root)|root).collect();roots.sort();roots.dedup();
-        for project in roots.iter().filter(|_|migration.is_none()) {
-            if project_service(project)?.is_some_and(|pid|owner.as_ref().is_none_or(|owner|owner.pid!=pid)) {return Err("handoff: legacy project owner must drain before host installation".into());}
-            let legacy=coreq::service::unit(&tool,project,&crate::project_name(project));
-            match fs::symlink_metadata(&legacy.path) {Ok(_)=>return Err("handoff: legacy unit remains; migrate before host installation".into()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(e)=>return Err(e.to_string())}
+        for project in &roots {
+            if project_service(project)?.is_some_and(|pid|owner.as_ref().is_none_or(|owner|owner.pid!=pid)) {return Err("another live service owns a registered root; stop it before host installation".into());}
         }
         crate::host_control::install_state(&tool,owner.as_ref())?;
         let command=CommandReceipt::current()?.encode();
@@ -714,15 +574,13 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
             if service["install_protocol"]!=1||service["fresh"]!=true {return Err("running host has no compatible installation protocol; update/reconcile it before attaching a root".into());}
             let running=service["version"].as_str().ok_or("running host version unknown")?;
             let baseline=fs::read(manifest(install)).map_err(|e|format!("host installation originals missing; attach refused: {e}"))?;
-            let intent=if migration.is_none() {adopt_upgrade(install,&root,running)?}else{None};
+            let intent=adopt_upgrade(install,&root,running)?;
             let (id,command,candidate)=match intent {Some(p)=>(p.id,p.command,p.candidate),None=>(crate::runtime::uuid(),command,digest(&fs::read(tool.release_exe(running)).map_err(|e|e.to_string())?))};
             Pending {schema:1,id,baseline:digest(&baseline),root:root.clone(),version:running.into(),
                 candidate,original:edit.original.clone(),next:edit.next.clone(),
-                phase:"owned".into(),restore:false,attach:true,owner:Some(InstallOwner {pid:owner.pid,started:owner.started,instance:service["instance"].as_str().ok_or("host generation missing")?.into()}),command,
-                legacy:migration.map(|owner|Legacy {owner:owner.clone(),phase:"draining".into()}),activation:None}
+                phase:"owned".into(),restore:false,attach:true,owner:Some(InstallOwner {pid:owner.pid,started:owner.started,instance:service["instance"].as_str().ok_or("host generation missing")?.into()}),command,activation:None}
         } else {
         let mut paths=vec![install.join(tool.exe_name()),install.join("current"),install.join("previous"),crate::host_control::definition(&tool)?,install.join("projects"),install.join("rollback-floor")];
-        paths.extend(legacy_definitions(install)?);
         #[cfg(all(windows,target_env="gnu"))] paths.push(install.join("WebView2Loader.dll"));
         paths.extend(roots.iter().map(|r|crate::dot(r).join("focus")));
         for name in ["current","previous"] {
@@ -732,13 +590,11 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
             }
         }
         let first=!manifest(install).try_exists().map_err(|e|e.to_string())?;
-        let restore=migration.is_none();
         let candidate=crate::platform::prepare_install(&tool)?;
         let activation=if first {None}else{Some(capture_originals(&activation_directory(install),vec![],activation_paths(install)?)?)};
         let baseline=snapshot(install,roots,paths)?;
         let p=Pending {schema:1,id:crate::runtime::uuid(),baseline,root:root.clone(),version:tool.version.into(),candidate,
-            original:edit.original.clone(),next:edit.next.clone(),phase:"prepared".into(),restore,attach:false,owner:None,command,
-            legacy:migration.map(|owner|Legacy {owner:owner.clone(),phase:"draining".into()}),activation};
+            original:edit.original.clone(),next:edit.next.clone(),phase:"prepared".into(),restore:true,attach:false,owner:None,command,activation};
             p
         };
         let mut p=p;p.phase="initial".into();
@@ -747,7 +603,7 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
         (edit,p)
     };
     let result=(||->Res<String> {
-    verify_originals(install)?;verify_legacy_original(install,&p)?;
+    verify_originals(install)?;
     if let Some(activation)=&p.activation {verify_copies(&activation_directory(install),activation)?;}
     if p.phase=="initial" {receive_initial(install,&mut p)?;}
     let receipt=retained(install,&p)?;
@@ -782,7 +638,7 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
         retain_reason(install,&p,"native host ownership acknowledgement pending; registry admission held")?;
         let until=Instant::now()+std::time::Duration::from_secs(60);
         loop {
-            if let Some(owner)=native_owner(install,p.legacy.as_ref().map(|l|&l.owner))? {
+            if let Some(owner)=native_owner(install)? {
                 let service=service_status(install);
                 if service["fresh"]==true&&service["version"]==tool.version {
                     crate::host_control::install_state(&tool,Some(&owner))?;
@@ -798,7 +654,7 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
         }
     }
     // Past the native boundary, failure cannot restore the old topology under an owner.
-    let owner=native_owner(install,p.legacy.as_ref().map(|l|&l.owner))?.ok_or("host installation pending; native owner not observed")?;
+    let owner=native_owner(install)?.ok_or("host installation pending; native owner not observed")?;
     crate::host_control::install_state(&tool,Some(&owner))?;
     let service=service_status(install);
     if service["fresh"]!=true||service["version"]!=p.version||service["install_protocol"]!=1 {
@@ -819,7 +675,7 @@ fn install_bound(install:&Path,root:&Path,expected:Option<&str>,migration:Option
     edit.commit()?;
     #[cfg(test)] tests::interrupt(install,"registry")?;
     record(install,&p,"applied")?;
-    retain_reason(install,&p,if p.legacy.as_ref().is_some_and(|legacy|legacy.phase!="retired") {"legacy unit retirement pending; current work remains with its original daemon"}else{"project registration acknowledgement pending; host owns installation"})?;
+    retain_reason(install,&p,"project registration acknowledgement pending; host owns installation")?;
     // The host may finish the original command if this caller disappears during project recovery.
     drop(_update);
     let until=Instant::now()+std::time::Duration::from_secs(60);
@@ -879,16 +735,6 @@ mod tests {
     #[test]
     fn interrupted_restore_never_reactivates_the_failed_installation() {process_case("interrupted-restore");}
 
-    // H-A5: real legacy supervision retains work until exit, then the same command retires it and receives host acknowledgement.
-    #[cfg(target_os="macos")]
-    #[test]
-    fn legacy_handoff_preserves_active_work_before_native_retirement() {process_case("legacy-handoff");}
-
-    // A2: real install and second-root attach beside a resident legacy-budget writer.
-    #[cfg(target_os="macos")]
-    #[test]
-    fn install_receipts_bridge_a_resident_legacy_writer() {process_case("compatibility");}
-
     // H-A5 process instrument: real installer/cursor/receipt, isolated native-manager substitute.
     #[cfg(target_os="macos")]
     #[test]
@@ -901,98 +747,7 @@ mod tests {
         assert_eq!(std::env::split_paths(&std::env::var_os("PATH").unwrap()).next(),Some(base.join("bin")));
         assert!(fs::symlink_metadata(base.join("bin/launchctl")).unwrap().file_type().is_file());
         let role=std::env::var("TASKQ_INSTALL_PROCESS_ROLE").unwrap();
-        if role=="telemetry" {
-            let budget=coreq::telemetry::Budget {total:64<<20,reserved:(6<<20)+(64<<10),..crate::telemetry::budget(&install,"telemetry.sqlite3").unwrap()};
-            let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&install.join("telemetry.log/universal.sqlite3"),"taskq","4.6.19",budget).unwrap();
-            fs::write(install.join("telemetry-ready"),"").unwrap();
-            let until=Instant::now()+std::time::Duration::from_secs(120);
-            while !install.join("exit-host").exists() {assert!(Instant::now()<until);std::thread::sleep(std::time::Duration::from_millis(20));}
-            return;
-        }
-        let compatibility=std::env::var_os("TASKQ_INSTALL_COMPATIBILITY").is_some();
-        let _runtime=compatibility.then(||crate::telemetry::install_capture(&install).unwrap());
-
-        if role=="owned-work" {
-            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-            coreq::write_durable(&install.join("owned-work.json"),serde_json::to_vec(&json!({"pid":native.pid,"started":native.started})).unwrap()).unwrap();
-            let until=Instant::now()+std::time::Duration::from_secs(90);
-            while !install.join("finish-owned-work").exists() {assert!(Instant::now()<until,"owned work expired");std::thread::sleep(std::time::Duration::from_millis(20));}
-            return;
-        }
-        if role=="verify-exit" {
-            let mut forced=vec![];
-            for name in ["owned-work.json","controller-ready.json"] {
-                let Some(value)=crate::data::json(&install.join(name)).unwrap() else {continue;};
-                let native=coreq::process::Identity {pid:value["pid"].as_u64().unwrap().try_into().unwrap(),started:value["started"].as_str().unwrap().into()};
-                assert_ne!(native.pid,std::process::id());
-                let until=Instant::now()+std::time::Duration::from_secs(2);
-                while Instant::now()<until&&coreq::process::identity(native.pid).unwrap().as_ref()==Some(&native) {std::thread::sleep(std::time::Duration::from_millis(20));}
-                if coreq::process::identity(native.pid).unwrap().as_ref()==Some(&native) {
-                    coreq::process::terminate(&native).unwrap();forced.push(native.pid);
-                    let until=Instant::now()+std::time::Duration::from_secs(5);
-                    while coreq::process::identity(native.pid).unwrap().as_ref()==Some(&native) {assert!(Instant::now()<until,"owned fixture process remains");std::thread::sleep(std::time::Duration::from_millis(20));}
-                }
-            }
-            coreq::write_durable(&install.join("native-exit-readback.json"),serde_json::to_vec(&json!({"forced":forced,"all_absent":true})).unwrap()).unwrap();
-            return;
-        }
-        if role=="legacy" {
-            let root=PathBuf::from(std::env::var_os("TASKQ_INSTALL_PROCESS_ROOT").unwrap());
-            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-            coreq::write_durable(&install.join("legacy-native.json"),serde_json::to_vec(&json!({"pid":native.pid,"started":native.started,"root":root,"project":crate::project_name(&root)})).unwrap()).unwrap();
-            fs::write(install.join("legacy-active"),"").unwrap();
-            let stopping=native.clone();let folder=install.clone();
-            std::thread::spawn(move || {
-                let until=Instant::now()+std::time::Duration::from_secs(90);
-                while Instant::now()<until {
-                    if let Some(request)=crate::data::json(&folder.join("stop-legacy.json")).unwrap()
-                        &&request["pid"]==stopping.pid&&request["started"]==stopping.started {std::process::exit(0);}
-                    std::thread::sleep(std::time::Duration::from_millis(20));
-                }
-                std::process::exit(1);
-            });
-            let owner=crate::host_control::legacy_owner(&crate::platform::tool(&install)).unwrap().expect("owned legacy native binding");
-            let mut cfg=crate::tests::cfg();cfg.root=root;cfg.install=install.clone();cfg.poll=1;cfg.limits.insert("codex".into(),1);
-            let board=crate::board::Fake::default();
-            use crate::board::Board;
-            let task=board.create("Owned before handoff","",&["taskq".into()]).unwrap();
-            let attempt=board.comment(task,&format!("taskq: spawn worker codex:invented {}",cfg.me)).unwrap();
-            board.comment(task,&crate::core::entry("accepted",&[&attempt.to_string()],Some(attempt),"")).unwrap();
-            let work=std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact","host::installation::tests::installation_process_fixture","--ignored","--nocapture"])
-                .env("TASKQ_INSTALL_PROCESS_ROLE","owned-work").spawn().unwrap();
-            let until=Instant::now()+std::time::Duration::from_secs(10);
-            let child=loop {
-                if let Some(value)=crate::data::json(&install.join("owned-work.json")).unwrap() {break value;}
-                assert!(Instant::now()<until,"owned child did not become ready");std::thread::sleep(std::time::Duration::from_millis(10));
-            };
-            assert_eq!(child["pid"],work.id());
-            fs::create_dir_all(crate::dot(&cfg.root)).unwrap();
-            fs::write(crate::runtime::attempt_log(&cfg.root,"worker",task,attempt),"{\"type\":\"turn.started\"}\n").unwrap();
-            crate::write_kids(&install,&cfg.root,&[crate::data::KidLine {task,attempt,execution:attempt,runtime:"codex".into(),process:coreq::process::Identity {pid:work.id(),started:child["started"].as_str().unwrap().into()},offset:0,job:None}]).unwrap();
-            fs::write(install.join("service"),native.pid.to_string()).unwrap();
-            let (_capture,_guard)=crate::profile::tests::collecting(&install);
-            assert!(crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},None,Some(&owner)).is_ok(),"legacy loop cannot return before its exact native retirement");
-            return;
-        }
-        if role=="legacy-controller" {
-            let errors=install.join("controller-error.txt");
-            std::panic::set_hook(Box::new(move |info| {let _=fs::write(&errors,info.to_string());}));
-            let id=std::env::var("TASKQ_INSTALL_PROCESS_REQUEST").unwrap();let p=pending(&install).unwrap();
-            assert_eq!(p.id,id);let expected=context(&p).unwrap();
-            let inherited=std::env::var("COREQ_TRACE_CONTEXT").unwrap();
-            coreq::telemetry::capture::TraceContext::decode(&inherited).unwrap();
-            assert_eq!(inherited.split(' ').nth(1),expected.split(' ').nth(1),"controller must continue the original command trace");
-            let (_capture,_guard)=crate::profile::tests::collecting(&install);
-            let context=coreq::telemetry::capture::TraceContext::decode(&inherited).unwrap();let _entered=context.span().entered();
-            let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
-            coreq::write_durable(&install.join("controller-ready.json"),serde_json::to_vec(&json!({"id":id,"pid":native.pid,"started":native.started,"original_context":expected,"inherited_context":inherited})).unwrap()).unwrap();
-            let until=Instant::now()+std::time::Duration::from_secs(30);
-            while !install.join("allow-retirement").exists() {assert!(Instant::now()<until,"retirement not released");std::thread::sleep(std::time::Duration::from_millis(10));}
-            complete_legacy(&install,&id).unwrap();
-            coreq::write_durable(&install.join("controller-finished"),id.as_bytes()).unwrap();
-            return;
-        }
-        if std::env::var("TASKQ_INSTALL_PROCESS_ROLE").as_deref()==Ok("host") {
+        if role=="host" {
             let _owner=owner(&install).unwrap().expect("one fixture host");
             let native=coreq::process::identity(std::process::id()).unwrap().unwrap();
             let shared=Arc::new(Mutex::new(Host::new(Policy::read(&install))));
@@ -1013,7 +768,7 @@ mod tests {
                             cfg.poll=1;Policy::read(&cfg.install)?.apply(&mut cfg);
                             let board=crate::board::Fake::default();
                             crate::board::Board::create(&board,"Must remain ready","",&["taskq".into()])?;
-                            crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host),None)
+                            crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host))
                         }));
                     }
                 }
@@ -1034,14 +789,14 @@ mod tests {
             return;
         }
         let root=PathBuf::from(std::env::var_os("TASKQ_INSTALL_PROCESS_ROOT").expect("fixture root"));
-        let collecting=(!compatibility).then(||crate::profile::tests::collecting(&install));
+        let (capture,guard)=crate::profile::tests::collecting(&install);
         let span=tracing::info_span!("host.install");let entered=span.enter();
         let request=pending(&install).ok().map(|p|p.id);
-        let result=if std::env::var("TASKQ_INSTALL_PROCESS_ROLE").as_deref()==Ok("recover") {recover(&install)}else{install_project(&install,&root)};
+        let result=if role=="recover" {recover(&install)}else{install_project(&install,&root)};
         let operation_count=crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap();
         fs::write(install.join("installer-result.json"),serde_json::to_vec(&json!({"ok":result.is_ok(),"result":result.as_ref().ok(),"error":result.as_ref().err(),"status":installation_status(&install,request.as_deref()),"operation_count":operation_count})).unwrap()).unwrap();
         drop(entered);drop(span);
-        if let Some((capture,guard))=collecting {capture.flush().unwrap();drop(guard);drop(capture);}
+        capture.flush().unwrap();drop(guard);drop(capture);
     }
 
     fn fixture()->(PathBuf,PathBuf,Vec<PathBuf>) {
@@ -1138,13 +893,18 @@ mod tests {
             assert_eq!(upgrade_intent(&install).unwrap().unwrap().id,p.id);
         }
         assert!(installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().contains("re-exec"));
+        // #1601: the waiting host names its real re-exec waits on the receipt; a replayed install keeps them.
+        assert!(upgrade_waits(&install,"0.0.1","taskq #1580 unresolved ownership"));
+        assert_eq!(request_upgrade(&install,&tool,&root,&old,&native).unwrap(),v);
+        let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
+        assert!(reason.ends_with("waits for taskq #1580 unresolved ownership"),"{reason}");
         assert!(adopt_upgrade(&install,&root,"0.0.1").unwrap().is_none(),"the old host never binds the candidate's command");
         let new=host(crate::platform::VERSION);
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
         // #1402: the host that runs the candidate drops the pre-re-exec reason at once, before the 300 s report.
         assert!(stale_upgrade(&install,false).unwrap().contains("the waiting service install"));
         let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
-        assert!(!reason.contains("live work hands over")&&reason.contains(&p.id),"{reason}");
+        assert!(!reason.contains("re-exec waits")&&reason.contains(&p.id),"{reason}");
         assert!(stale_upgrade(&install,true).unwrap().contains("repeat service install"));
         // #1415: another host writer holding the resources lock delays the re-exec'd host's receipt instead of failing it;
         // one held past the bound is refused with the holder named.
@@ -1162,6 +922,16 @@ mod tests {
         assert_eq!((adopted.id.as_str(),adopted.command.as_str()),(p.id.as_str(),p.command.as_str()),"the attach continues the same command");
         fs::remove_file(install.join(UPGRADE_INTENT)).unwrap();
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None,"attach-only: an equal host is not upgraded");
+        assert!(upgrade_intent(&install).unwrap().is_none());
+        // #1601: a queued upgrade to an older build failed every newer install until that build repeated it by hand.
+        // The newer build supersedes it; the old receipt keeps its failure and reason.
+        let mut stale:Pending=serde_json::from_value(json!(adopted)).unwrap();stale.id=crate::runtime::uuid();stale.version="0.0.1".into();
+        coreq::write_durable(&install.join(UPGRADE_INTENT),serde_json::to_vec(&stale).unwrap()).unwrap();
+        record(&install,&stale,"received").unwrap();
+        assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
+        let old_receipt=installation_status(&install,Some(&stale.id));
+        assert_eq!(old_receipt["state"],"failed");
+        assert!(old_receipt["reason"].as_str().unwrap().contains("superseded by"),"{old_receipt}");
         assert!(upgrade_intent(&install).unwrap().is_none());
         drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
@@ -1184,7 +954,7 @@ mod tests {
         let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
         let mut p=Pending {schema:1,id:"invented-registration".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
             original:None,next:format!("{}\n",root.display()),phase:"prepared".into(),restore:true,attach:false,
-            owner:Some(InstallOwner {pid:7,started:"invented".into(),instance:"invented-host".into()}),legacy:None,activation:None,command:json!({"wire":1,"product":"taskq","version":"fixture","operation":"taskq.host.install","trace":format!("{}.1","a".repeat(32)),"span":format!("{}.2","a".repeat(32)),"parent":null,"started_ms":1}).to_string()};
+            owner:Some(InstallOwner {pid:7,started:"invented".into(),instance:"invented-host".into()}),activation:None,command:json!({"wire":1,"product":"taskq","version":"fixture","operation":"taskq.host.install","trace":format!("{}.1","a".repeat(32)),"span":format!("{}.2","a".repeat(32)),"parent":null,"started_ms":1}).to_string()};
         save(&install,&p).unwrap();assert!(registered_projects(&install).is_err());
         p.phase="registered".into();save(&install,&p).unwrap();
         assert!(registered_projects(&install).is_err(),"cursor cannot fabricate a registry commit");
@@ -1211,47 +981,16 @@ mod tests {
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
     }
 
-    // A2: Mac/Windows receipt pipeline uses actual IPC bootstrap, not a direct in-process Store.
-    #[test]
-    fn installation_receipts_use_the_legacy_writer_process() {
-        let out=std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact","host::installation::tests::installation_receipt_survives_cursor_removal_and_rejects_missing_phase_proof","--nocapture"])
-            .env("TASKQ_RECEIPT_BRIDGE","1").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT").output().unwrap();
-        assert!(out.status.success(),"{}\n{}",String::from_utf8_lossy(&out.stdout),String::from_utf8_lossy(&out.stderr));
-    }
-
-    #[test]
-    #[ignore="owned old-budget IPC writer for the install receipt process test"]
-    fn receipt_writer_probe() {
-        use std::io::Write;
-        let install=PathBuf::from(std::env::var_os("TASKQ_RECEIPT_WRITER").unwrap());
-        let budget=coreq::telemetry::Budget {total:64<<20,reserved:(6<<20)+(64<<10),..crate::telemetry::budget(&install,"telemetry.sqlite3").unwrap()};
-        let _runtime=coreq::telemetry::capture::Runtime::install_bounded(&install.join("telemetry.log/universal.sqlite3"),"taskq","4.6.19",budget).unwrap();
-        println!("READY");std::io::stdout().flush().unwrap();
-        let mut line=String::new();std::io::stdin().read_line(&mut line).unwrap();
-    }
-
     // H-A5: the original observed receipt remains queryable after the installer/cursor disappears.
     #[test]
     fn installation_receipt_survives_cursor_removal_and_rejects_missing_phase_proof() {
         let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths.clone()).unwrap();
-        use std::io::BufRead;
-        struct Writer(std::process::Child);
-        impl Drop for Writer {fn drop(&mut self) {drop(self.0.stdin.take());let _=self.0.kill();let _=self.0.wait();}}
-        let mut writer=std::env::var_os("TASKQ_RECEIPT_BRIDGE").map(|_|Writer(std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact","host::installation::tests::receipt_writer_probe","--ignored","--nocapture"])
-            .env("TASKQ_RECEIPT_WRITER",&install).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().unwrap()));
-        if let Some(writer)=writer.as_mut() {
-            let mut output=std::io::BufReader::new(writer.0.stdout.take().unwrap());
-            loop {let mut line=String::new();assert_ne!(output.read_line(&mut line).unwrap(),0);if line.trim()=="READY" {break;}}
-        }
-        let runtime=writer.as_ref().map(|_|crate::telemetry::install_capture(&install).unwrap());
-        let collecting=writer.is_none().then(||crate::profile::tests::collecting(&install));
+        let (capture,guard)=crate::profile::tests::collecting(&install);
         let span=tracing::info_span!("host.install");let entered=span.enter();
         let command=CommandReceipt::current().unwrap().encode();
         let mut p=Pending {schema:1,id:"invented-install-receipt".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
             original:None,next:format!("{}\n",root.display()),phase:"initial".into(),restore:false,attach:true,
-            owner:Some(InstallOwner {pid:7,started:"invented".into(),instance:"invented-host".into()}),command,legacy:None,activation:None};
+            owner:Some(InstallOwner {pid:7,started:"invented".into(),instance:"invented-host".into()}),command,activation:None};
         assert!(receive_initial(&install,&mut p).is_err(),"no receipt before durable intent");
         save(&install,&p).unwrap();
         receive_initial(&install,&mut p).unwrap();assert_eq!(p.phase,"owned");
@@ -1280,9 +1019,7 @@ mod tests {
         drop(second_enter);drop(second_span);p.id=first_id;p.command=first_command;
         crate::resources::with(&install,|state| {state.ops.get_mut(&p.id).unwrap().receipt.as_object_mut().unwrap().remove("observed_receipt");Ok(())}).unwrap();
         assert_eq!(installation_status(&install,Some(&p.id))["state"],"unknown");
-        drop(entered);drop(span);
-        if let Some((capture,guard))=collecting {capture.flush().unwrap();drop(guard);drop(capture);}
-        drop(runtime);drop(writer);
+        drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
     }
 
@@ -1297,7 +1034,7 @@ mod tests {
         publish_service(&install,&native,"invented-install-host").unwrap();
         let mut p=Pending {schema:1,id:"invented-detached-install".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),
             original:None,next:format!("{}\n",root.display()),phase:"registered".into(),restore:false,attach:true,
-            owner:Some(InstallOwner {pid:native.pid,started:native.started,instance:"invented-install-host".into()}),command:CommandReceipt::current().unwrap().encode(),legacy:None,activation:None};
+            owner:Some(InstallOwner {pid:native.pid,started:native.started,instance:"invented-install-host".into()}),command:CommandReceipt::current().unwrap().encode(),activation:None};
         save(&install,&p).unwrap();fs::write(install.join("projects"),&p.next).unwrap();
         fs::create_dir_all(crate::dot(&root)).unwrap();
         record(&install,&p,"received").unwrap();record(&install,&p,"applied").unwrap();
@@ -1310,41 +1047,13 @@ mod tests {
         let lock=coreq::file_lock::try_lock(&install.join("projects.lock")).unwrap();
         assert!(!acknowledge(&install,&p).unwrap(),"observer never waits on the registry owner");drop(lock);
         assert!(acknowledge(&install,&p).unwrap());assert!(acknowledge(&install,&p).unwrap(),"the other observer reads the retained outcome");
-        assert!(install_bound(&install,&root,Some(&p.id),None).unwrap().contains("already observed"));
+        assert!(install_bound(&install,&root,Some(&p.id)).unwrap().contains("already observed"));
         assert!(!install.join(INSTALL_PENDING).exists());assert_eq!(fs::read(&paths[0]).unwrap(),original);
         assert_eq!(crate::resources::with(&install,|state|Ok(state.ops.len())).unwrap(),1);
         p.id="another-installation".into();save(&install,&p).unwrap();let marker=fs::read(install.join(INSTALL_PENDING)).unwrap();
-        assert!(install_bound(&install,&root,Some("invented-detached-install"),None).unwrap_err().contains("another installation"));
+        assert!(install_bound(&install,&root,Some("invented-detached-install")).unwrap_err().contains("another installation"));
         assert_eq!(fs::read(install.join(INSTALL_PENDING)).unwrap(),marker);
         capture.flush().unwrap();drop(entered);drop(span);drop(guard);drop(capture);
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
-    }
-
-    // H-A5 model: a shaped cursor cannot authorize native Stop or installation completion without exact proof.
-    #[test]
-    fn legacy_cursor_requires_matching_drain_and_exit_proof() {
-        let (install,root,paths)=fixture();let baseline=snapshot(&install,vec![root.clone()],paths).unwrap();
-        let (capture,guard)=crate::profile::tests::collecting(&install);let span=tracing::info_span!("host.install");let entered=span.enter();
-        let native=coreq::process::identity(std::process::id()).unwrap().unwrap();publish_service(&install,&native,"invented-host").unwrap();
-        let owner=crate::host_control::LegacyOwner {root:root.clone(),project:"invented-legacy".into(),pid:native.pid,started:native.started.clone(),revision:"a".repeat(64),
-            launcher:cfg!(windows).then(||json!({"pid":native.pid,"started":native.started.clone(),"instance":"{aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee}"}))};
-        let mut p=Pending {schema:1,id:"invented-legacy-proof".into(),baseline,root:root.clone(),version:crate::platform::VERSION.into(),candidate:"a".repeat(64),original:None,next:format!("{}\n",root.display()),phase:"registered".into(),restore:false,attach:true,
-            owner:Some(InstallOwner {pid:native.pid,started:native.started,instance:"invented-host".into()}),command:CommandReceipt::current().unwrap().encode(),legacy:Some(Legacy {owner:owner.clone(),phase:"ready".into()}),activation:None};
-        fs::write(install.join("projects"),&p.next).unwrap();fs::create_dir_all(crate::dot(&root)).unwrap();
-        fs::write(crate::dot(&root).join("status.json"),json!({"pid":native.pid,"host_instance":"invented-host","host_install":p.id}).to_string()).unwrap();
-        record(&install,&p,"received").unwrap();record(&install,&p,"applied").unwrap();save(&install,&p).unwrap();let marker=fs::read(install.join(INSTALL_PENDING)).unwrap();
-        assert!(legacy_latched(&install,&owner).unwrap_err().contains("proof missing"));
-        assert!(dispatch_legacy(&install).is_err(),"unproven readiness cannot dispatch a native controller");
-        assert!(complete_legacy(&install,&p.id).unwrap_err().contains("proof missing"));
-        assert_eq!(fs::read(install.join(INSTALL_PENDING)).unwrap(),marker,"refusal leaves native intent intact");
-        assert!(!acknowledge(&install,&p).unwrap(),"project presence cannot replace old unit retirement");
-        record_legacy(&install,&p,"prepared").unwrap();assert!(legacy_latched(&install,&owner).unwrap());
-        p.legacy.as_mut().unwrap().owner.started.push_str("-different");save(&install,&p).unwrap();assert!(!legacy_proven(&install,&p,"prepared").unwrap());
-        p.legacy.as_mut().unwrap().owner=owner;p.legacy.as_mut().unwrap().phase="retired".into();save(&install,&p).unwrap();
-        assert!(!acknowledge(&install,&p).unwrap(),"retired cursor without its native proof is unknown");
-        record_legacy(&install,&p,"retired").unwrap();assert!(!acknowledge(&install,&p).unwrap(),"a still-live native identity cannot be completed by receipt shape");
-        crate::resources::with(&install,|state|{state.ops.get_mut(&p.id).unwrap().receipt.as_object_mut().unwrap().remove("applied_receipt");Ok(())}).unwrap();
-        assert!(record_legacy(&install,&p,"prepared").unwrap_err().contains("phase proof missing"),"corrupt required receipt cannot be silently rebuilt");
-        capture.flush().unwrap();drop(entered);drop(span);drop(guard);drop(capture);fs::remove_dir_all(install.parent().unwrap()).unwrap();
     }
 }

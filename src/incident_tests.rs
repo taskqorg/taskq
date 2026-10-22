@@ -82,8 +82,8 @@ fn catalog_main_and_launcher_detection_points() {
     assert!(crate::golden_selftest(&bad,false).is_err()); assert!(take_detected().is_empty());
     let mut since=None;
     crate::restart_watch(&mut since,true,0,10); crate::restart_watch(&mut since,true,19,10); assert!(take_detected().is_empty());
-    crate::restart_watch(&mut since,true,20,10); assert_eq!(take_detected(),["dispatch.reexec"]);
-    crate::restart_watch(&mut since,true,40,10); assert!(take_detected().is_empty());
+    assert!(crate::restart_watch(&mut since,true,20,10)); assert_eq!(take_detected(),["dispatch.reexec"]);
+    assert!(!crate::restart_watch(&mut since,true,40,10),"#1601: logs once"); assert!(take_detected().is_empty());
     let dir=root("launcher"); fs::create_dir_all(dir.join("releases/1.2.3")).unwrap();
     fs::write(dir.join("current"),"1.2.3").unwrap(); fs::write(dir.join("previous"),"1.2.2").unwrap();
     let t=crate::platform::tool(&dir); for _ in 0..3 { coreq::launcher::pick(&t,true).unwrap(); }

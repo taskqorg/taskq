@@ -1918,6 +1918,8 @@ struct NativeHistory {
     identity: Option<windows::Win32::Storage::FileSystem::FILE_ID_INFO>,
     offset: u64,
     boundary: Vec<u8>,
+    /// SHA-256 of bytes `..offset`: an mtime-only touch (same-length `ftruncate`) keeps the read prefix.
+    prefix: Option<ring::digest::Context>,
 }
 
 impl NativeHistory {
@@ -1954,7 +1956,14 @@ impl NativeHistory {
                 return Err("native history identity changed; reconcile original input".into());
             }
             if meta.len()<self.offset || meta.len()<old.len() {return Err("native history truncated; completion unknown".into());}
-            if meta.len()==old.len() && meta.modified().ok()!=old.modified().ok() {return Err("native history rewritten; completion unknown".into());}
+            if meta.len()==old.len() && meta.modified().ok()!=old.modified().ok() {
+                let mut hash=ring::digest::Context::new(&ring::digest::SHA256);
+                let mut rest=(&mut file).take(self.offset);let mut buf=[0u8;65536];
+                loop {let n=rest.read(&mut buf).map_err(|e|format!("native history read failed: {e}"))?;if n==0 {break;}hash.update(&buf[..n]);}
+                let old=self.prefix.clone().unwrap_or_else(||ring::digest::Context::new(&ring::digest::SHA256)).finish();
+                let same=old.as_ref()==hash.finish().as_ref();
+                if !same {return Err("native history rewritten; completion unknown".into());}
+            }
         }
         if !self.boundary.is_empty() {
             file.seek(SeekFrom::Start(self.offset-self.boundary.len() as u64)).map_err(|e|e.to_string())?;
@@ -1977,6 +1986,7 @@ impl NativeHistory {
             if !line.ends_with('\n') {return Err("native history record incomplete; retry observation".into());}
             visit(&line)?;
             self.offset+=size;consumed+=size;
+            self.prefix.get_or_insert_with(||ring::digest::Context::new(&ring::digest::SHA256)).update(line.as_bytes());
             self.boundary=line.as_bytes()[line.len().saturating_sub(64)..].to_vec();
         }
         let length=reader.get_ref().get_ref().metadata().map_err(|e|e.to_string())?.len();
@@ -3046,6 +3056,26 @@ mod tests {
         assert!(history.read(&path,0,"exact input",&root,"thread").unwrap_err().contains("boundary changed"));
         std::fs::write(&path,"x".repeat(8*1024*1024+1)).unwrap();
         assert!(AppHistory::default().read(&path,0,"exact input",&root,"thread").unwrap_err().contains("exceeds 8 MiB"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Chain: live Claude worker -> transcript mtime bumped with no new bytes (#1588) -> history read.
+    // Risk: an mtime-only touch reports Run state unknown, or a same-length rewrite passes as unchanged.
+    #[test]
+    fn native_history_mtime_touch_keeps_observation_and_same_length_rewrite_fails() {
+        let root=std::env::temp_dir().join(format!("taskq-history-touch-{}",uuid()));std::fs::create_dir_all(&root).unwrap();
+        let path=root.join("transcript.jsonl");
+        let text="{\"type\":\"user\",\"n\":1}\n{\"type\":\"assistant\",\"n\":2}\n";
+        std::fs::write(&path,text).unwrap();
+        let mut history=NativeHistory::default();let read=|h:&mut NativeHistory|h.read(&path,|_|Ok(()));
+        assert_eq!(read(&mut history),Ok(true));
+        let touch=|secs|File::options().write(true).open(&path).unwrap()
+            .set_modified(std::time::SystemTime::now()+std::time::Duration::from_secs(secs)).unwrap();
+        touch(60);
+        assert_eq!(read(&mut history),Ok(true),"an mtime-only change keeps the execution observed");
+        let mut file=File::options().write(true).open(&path).unwrap();file.write_all(b"{\"type\":\"system\"").unwrap();drop(file);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(),text.len() as u64);touch(120);
+        assert!(read(&mut history).unwrap_err().contains("rewritten"),"changed bytes of the same length fail closed");
         std::fs::remove_dir_all(root).unwrap();
     }
 
