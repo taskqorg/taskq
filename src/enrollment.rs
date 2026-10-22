@@ -32,6 +32,13 @@ pub fn destination(url: &str) -> Res<String> {
     Ok(if u.ends_with("/machine") { u.into() } else { format!("{u}/machine") })
 }
 
+/// R6 3: the DashQ progress page of an off-host session, as a prefix the task number completes (DashQ's board task
+/// row anchor); `None` without an active connection.
+pub fn progress_page(install: &Path, repo: &str) -> Option<String> {
+    let dest = active(install).ok()??["destination"].as_str()?.to_string();
+    Some(format!("{}/projects#board-{}-task-", dest.trim_end_matches("/machine"), repo.replace('/', "%2F")))
+}
+
 /// The active connection, read without creating state (coreq's first read writes a new file).
 pub fn active(install: &Path) -> Res<Option<Value>> {
     if state(install)?.is_none() { return Ok(None) }
@@ -346,6 +353,8 @@ struct TaskObservation {
     state: String,
     revision: u64,
     choices: Vec<Choice>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session: Option<Value>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -369,6 +378,26 @@ pub struct Local {
     pub service: Option<String>,
     pub ttl: u64,
     pub agents: Value,
+    /// Session progress per task of this host's live attempts ([`progress`]).
+    pub progress: BTreeMap<u64, Value>,
+}
+
+/// R6 3 off-host sessions: per live attempt on `host`, the stage, the attempt log's update time and one bounded
+/// public last worker line (as `gone` posts it); never the log, a path or a session id.
+pub fn progress(s: &Snapshot, root: &Path, host: &str) -> BTreeMap<u64, Value> {
+    let mut out = BTreeMap::new();
+    for r in s.tasks.iter().take(MAX_TASKS).filter(|r| matches!(r.task.state.name(), "doing" | "review")) {
+        let (Some(a), Some(session)) = (r.task.attempt, r.task.session.as_deref()) else { continue };
+        if session.rsplit(' ').next() != Some(host) { continue }
+        let runtime = session.split(':').next().unwrap_or_default();
+        let log = crate::runtime::attempt_log(root, r.task.role.as_deref().unwrap_or_default(), r.n, a);
+        let at = fs::metadata(&log).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+        // DashQ refuses a record holding a path-like string, so such a line is left out
+        let line = crate::runtime::last_message(&log).map(|m| crate::runtime::public_line(&m, root, 160).chars().filter(|c| !c.is_control()).collect::<String>())
+            .filter(|l| !l.is_empty() && !l.starts_with(['/', '~', '\\']) && !l.get(1..3).is_some_and(|x| x == ":\\" || x == ":/"));
+        out.insert(r.n, json!({"host": host, "runtime": runtime, "stage": r.task.state.name(), "at": at, "line": line}));
+    }
+    out
 }
 
 /// A login probe answers for two probe intervals (§ 4: at most every 5 minutes).
@@ -447,6 +476,7 @@ pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope], local:
             n: r.n, state: r.task.state.name().into(), revision: r.revision,
             choices: core::options(r.task.card.as_deref().unwrap_or_default()).into_iter()
                 .map(|(number, label, recommended)| Choice { number, label, recommended }).collect(),
+            session: local.progress.get(&r.n).cloned(),
         }).collect(),
         observations: observations(s, local),
     })
@@ -636,7 +666,7 @@ mod tests {
             // mac online, win offline (heartbeat older than ttl), fra partial (no service line), wsl unknown (no heartbeat)
             hosts: vec![beat("mac", 950, Some("aaaaaaaaaaaa")), beat("win", 600, Some("bbbbbbbbbbbb")), beat("fra", 980, None)] };
         let probe = |codex: &str| json!({"at": 990, "rows": [{"runtime": "claude", "login": "logged in"}, {"runtime": "codex", "login": codex}]});
-        let local = |agents| Local { host: "wsl".into(), service: Some("cccccccccccc".into()), ttl: 300, agents };
+        let local = |agents| Local { host: "wsl".into(), service: Some("cccccccccccc".into()), ttl: 300, agents, progress: BTreeMap::new() };
         let scope = [BoardScope::new("github", "github.com", "o/r").unwrap()];
         let obs = |s: &Snapshot, agents| project(s, &"a".repeat(64), &scope, &local(agents)).unwrap();
         let mut incomplete = base();
@@ -663,7 +693,39 @@ mod tests {
         assert!(!got.to_string().contains("x mac") && !got.to_string().contains("codex:y"), "no session ids");
     }
 
-    fn local() -> Local { Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null } }
+    // Chain: live attempt log -> R6 3 session progress -> DashQ record allowlist (#1565). Risk: another host's or an
+    // idle task's progress, the log itself, a session id or a path-like line (DashQ refuses the whole record) leaving the host.
+    #[test]
+    fn progress_carries_one_bounded_line_of_this_hosts_live_attempts() {
+        use crate::{core::{State, Task}, snapshot::Row};
+        let root = std::env::temp_dir().join(format!("taskq-progress-{}", std::process::id()));
+        fs::create_dir_all(root.join(".taskq")).unwrap();
+        let row = |n, state, session: &str| Row { n, task: Task { state, attempt: Some(n * 10), role: Some("worker".into()), session: Some(session.into()), ..Default::default() }, ..Default::default() };
+        let say = |n: u64, text: &str| fs::write(crate::runtime::attempt_log(&root, "worker", n, n * 10),
+            json!({"type": "item.completed", "item": {"type": "agent_message", "text": text}}).to_string() + "\n").unwrap();
+        say(1, &format!("Running tests\nin {}/src now {}", root.display(), "x".repeat(300)));
+        say(2, "~/secret notes");
+        say(3, "other host");
+        say(4, "done");
+        let s = Snapshot { tasks: vec![row(1, State::Doing, "codex:thread-a mac"), row(2, State::Review, "codex:- mac"), row(3, State::Doing, "codex:b win"),
+            row(4, State::Ready, "codex:c mac")], ..snap("o/r") };
+        let p = progress(&s, &root, "mac");
+        assert_eq!(p.keys().copied().collect::<Vec<_>>(), vec![1, 2], "only this host's doing or review attempts");
+        let line = p[&1]["line"].as_str().unwrap();
+        assert!(line.starts_with("Running tests in src now ") && line.chars().count() <= 160, "{line}");
+        assert_eq!((p[&1]["stage"].as_str(), p[&1]["runtime"].as_str(), p[&1]["host"].as_str()), (Some("doing"), Some("codex"), Some("mac")));
+        assert!(p[&1]["at"].as_u64().is_some(), "update time");
+        assert_eq!(p[&2]["line"], json!("<path> notes"), "a home path never leads the line");
+        let mut l = local();
+        l.progress = p;
+        let o = project(&s, &"a".repeat(64), &[BoardScope::new("github", "github.com", "o/r").unwrap()], &l).unwrap();
+        let text = serde_json::to_string(&o).unwrap();
+        assert!(!text.contains("thread-a") && !text.contains(&*root.to_string_lossy()), "no session id or path: {text}");
+        assert!(serde_json::to_value(&o).unwrap()["tasks"][2].get("session").is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn local() -> Local { Local { host: "mac".into(), service: None, ttl: 300, agents: Value::Null, progress: BTreeMap::new() } }
 
     fn snap(repo: &str) -> Snapshot {
         Snapshot { source: "host", observed: 1_700_000_000, reason: None, board: json!({"kind": "github", "host": "github.com", "repo": repo}), tasks: vec![], hosts: vec![] }
