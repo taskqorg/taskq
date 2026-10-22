@@ -133,19 +133,20 @@ impl Adopted {
 impl Proc for Adopted {
     fn exited(&mut self) -> Result<Option<i32>, String> {
         if self.ended.is_some() { return Ok(self.ended); }
-        match coreq::process::identity(self.identity.pid) {
+        // An unreaped owned child cannot reuse its PID, including while zombie; a zombie's identity read fails (#1541).
+        let unread = match coreq::process::identity(self.identity.pid) {
             Ok(identity) if identity.as_ref()!=Some(&self.identity) => { self.ended=Some(-1); return Ok(self.ended); },
-            Ok(_) => {},
-            Err(_) if self.direct => {}, // An unreaped owned child cannot reuse its PID, including while zombie.
-            Err(e) => return Err(format!("process identity unreadable: {e}; native reconciliation required")),
-        }
+            Ok(_) => None,
+            Err(_) if self.direct => None,
+            Err(e) => Some(format!("process identity unreadable: {e}; native reconciliation required")),
+        };
         let pid=self.identity.pid as i32;
         let mut st = 0;
         let r = unsafe { libc::waitpid(pid, &mut st, libc::WNOHANG) };
         match r {
             0 => { self.direct=true; Ok(None) },
             r if r == pid => { self.ended=Some(if libc::WIFEXITED(st) {libc::WEXITSTATUS(st)} else {-1}); Ok(self.ended) },
-            _ if std::io::Error::last_os_error().raw_os_error()==Some(libc::ECHILD) => { self.direct=false; Ok(None) },
+            _ if std::io::Error::last_os_error().raw_os_error()==Some(libc::ECHILD) => { self.direct=false; unread.map_or(Ok(None),Err) },
             _ => Err(format!("waitpid {pid}: {}; direct-child ownership unconfirmed",std::io::Error::last_os_error())),
         }
     }
