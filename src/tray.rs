@@ -896,6 +896,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut step = 0usize;
     // snapshot pages wider than their window (#1073): `tray --snapshot` fails naming them
     let mut overflow: Vec<String> = Vec::new();
+    let mut capture_errors:Vec<String>=Vec::new();
     let mut adding = Value::Null;
     let mut add_generation=0u64;
     let mut moved = false;
@@ -1419,6 +1420,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         eprintln!("horizontal overflow: {}", overflow.join(", "));
                         std::process::exit(1);
                     }
+                    if !capture_errors.is_empty(){eprintln!("native capture unavailable: {}",capture_errors.join("; "));std::process::exit(1);}
                     *flow = ControlFlow::Exit;
                     return;
                 };
@@ -1444,7 +1446,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 }
                 web_eval(wv,&format!("taskq.measure({})",json!(&name)),"tray.web.measure",&proxy,&mut web);
                 #[cfg(target_os="macos")]
-                if agentq_shots && let Err(error)=capture_screen(window,&dir.join(format!("screen-{name}"))){eprintln!("agentq native capture: {error}");std::process::exit(1);}
+                if agentq_shots && let Err(error)=capture_screen(window,&dir.join(format!("screen-{name}"))){capture_errors.push(format!("{name}: {error}"));}
                 step += 1;
                 capture(wv, dir.join(name), move || {
                     let _ = p.send_event(Ev::Shot);
@@ -2414,8 +2416,10 @@ mod tests {
         assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.len() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")).count() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert!(all.iter().all(|name|!name.contains("agentq-")),"invented agentq evidence is opt-in only");
         for route in ROUTES {
+            if route.starts_with("agentq-"){assert_eq!(names(&[route]).len(),4,"one state, both themes and sizes");}
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
         }
         fs::remove_dir_all(&install).ok();
