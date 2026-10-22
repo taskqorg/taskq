@@ -378,33 +378,49 @@ pub fn onboard_skipped(rt: &str, windows_ssh: bool) -> String {
     format!("Skipped: {rt} not installed. Next, only to run {rt} here: install it for this user, then run onboard again{ssh}")
 }
 
-/// Onboard `Access <scope>:` lines: grants are per folder, so each line names the folder it judged (#1546).
+/// Onboard `Access <scope>:` lines, refusals only (#1555): grants are per folder, so each line names the folder it judged (#1546).
 pub fn onboard_access(scope: &str, es: &[crate::policy::Effective]) -> Vec<String> {
-    es.iter().flat_map(|e| {
-        let mut l = vec![format!("Access {scope}: {}", e.line())];
+    es.iter().filter(|e| e.refused.is_some()).flat_map(|e| {
         // the setup folder is no project root: only a host grant (the default scope) covers it
         let how = if scope == "setup" { String::new() } else { format!(" --scope project` in {scope}; or `--scope host") };
-        if e.refused.is_some() { l.push(format!("Next: grant {0} with `taskq service permissions --runtime {0} --mode <mode>{how}`", e.runtime)); }
-        l
+        [format!("Access {scope}: {}", e.line()), format!("Next: grant {0} with `taskq service permissions --runtime {0} --mode <mode>{how}`", e.runtime)]
     }).collect()
 }
 
 /// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546).
 pub fn claude_key(p: &Path) -> String { p.display().to_string().replace('\\', "/") }
 
+/// The owner step for an untrusted folder that works while other Claude sessions run (#1555): Claude saves its own trust.
+pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
+
+/// `service install` (#1555): the new root's trust, read only; nothing when trusted or Claude has no config here.
+pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
+    let key = claude_key(root);
+    let v: serde_json::Value = match fs::read_to_string(home.join(".claude.json")) {
+        Ok(t) => match serde_json::from_str(&t) { Ok(v) => v, Err(e) => return vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")] },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
+        Err(e) => return vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")],
+    };
+    // Claude walks parent folders: a trusted parent covers the root
+    if root.ancestors().any(|p| v["projects"][claude_key(p)]["hasTrustDialogAccepted"] == true) { return vec![]; }
+    vec![format!("Trust: {key} not trusted; Claude workers cannot start here"), trust_step(&key)]
+}
+
 /// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
-/// `<home>/.claude.json`. Nothing trusted yet changes only while no Claude runs, after a backup; one line per key.
+/// `<home>/.claude.json`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
 pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
     let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
     let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
     let path = home.join(".claude.json");
     let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
     let (next, changed) = trusted(text.as_deref(), &keys)?;
-    let mut lines: Vec<String> = keys.iter().filter(|k| !changed.contains(k)).map(|k| format!("Trust: {k} unchanged")).collect();
+    let mut lines = vec![];
     if changed.is_empty() { return Ok(lines); }
-    // Claude rewrites the whole file: a running one would drop the change
+    // Claude rewrites the whole file: a running one would drop the change, so the owner lets Claude write it (#1555)
     let pids = claude_pids().map_err(|e| format!("Claude processes unknown ({e}); trust unchanged"))?;
-    if !pids.is_empty() { return Err(format!("Claude runs (pid {}); trust unchanged. Next: stop every Claude session and `claude daemon stop`, then run again", pids.join(", "))); }
+    if !pids.is_empty() {
+        return Ok(changed.iter().flat_map(|k| [format!("Trust: {k} not trusted; Claude runs (pid {}), so onboard leaves the file", pids.join(", ")), trust_step(k)]).collect());
+    }
     if let Some(t) = &text {
         let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
         let backup = home.join(format!(".claude.json.bak-onboard-{ms}"));
@@ -572,9 +588,10 @@ mod tests {
         let refused = crate::policy::resolve(&Err("x".into()), &crate::policy::Host::here(&install, &root, &install), "codex", "", &[]);
         let ok = crate::policy::Effective { refused: None, ..refused.clone() };
         let r = root.display().to_string();
+        // A2 (#1555): a working runtime prints nothing
         let lines = onboard_access(&r, &[refused.clone(), ok]);
-        assert_eq!(lines.len(), 3, "{lines:?}");
-        assert!(lines[0].starts_with(&format!("Access {r}: ")) && lines[2].starts_with(&format!("Access {r}: ")), "{lines:?}");
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].starts_with(&format!("Access {r}: ")), "{lines:?}");
         assert!(lines[1].contains("--scope project` in ") && lines[1].contains(&r), "{lines:?}");
         let setup = onboard_access("setup", &[refused]);
         assert!(setup[0].starts_with("Access setup: ") && !setup[1].contains("--scope project"), "{setup:?}");
@@ -593,8 +610,11 @@ mod tests {
         fs::set_permissions(home.join(".claude.json"), std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
         let setup = claude_key(&dir(&install));
         assert!(!setup.contains('\\'));
-        let e = trust(&install, &home, || Ok(vec!["42".into()])).unwrap_err();
-        assert!(e.starts_with("Claude runs (pid 42); trust unchanged"), "{e}");
+        // #1555: a running Claude leaves the file; each untrusted key names the step that needs no Claude to close
+        let gaps = trust(&install, &home, || Ok(vec!["42".into()])).unwrap();
+        let want: Vec<String> = [setup.as_str(), "C:/Users/a/p", "/srv/q"].iter()
+            .flat_map(|k| [format!("Trust: {k} not trusted; Claude runs (pid 42), so onboard leaves the file"), trust_step(k)]).collect();
+        assert_eq!(gaps, want);
         assert!(trust(&install, &home, || Err("no tasklist".into())).unwrap_err().contains("unknown"));
         assert_eq!(fs::read_to_string(home.join(".claude.json")).unwrap(), old);
 
@@ -611,9 +631,22 @@ mod tests {
         for p in [home.join(".claude.json"), backup.path()] { assert_eq!(std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&p).unwrap().permissions()) & 0o077, 0, "{}", p.display()); }
 
         // idempotent: nothing to change reads no processes and writes nothing
-        let again = trust(&install, &home, || panic!("process list read with nothing to change")).unwrap();
-        assert_eq!(again.len(), 3);
-        assert!(again.iter().all(|l| l.ends_with(" unchanged")), "{again:?}");
+        // A2 (#1555): a working host prints no trust line
+        assert!(trust(&install, &home, || panic!("process list read with nothing to change")).unwrap().is_empty());
+    }
+
+    // Risk (#1555, pilotq#3): `service install` registered a root Claude did not trust and said nothing.
+    #[test]
+    fn install_reports_an_untrusted_root_and_honours_a_trusted_parent() {
+        let home = tmp();
+        let root = Path::new("/srv/p/new");
+        assert!(trust_gap(&home, root).is_empty(), "no Claude config: Claude is not used here");
+        fs::write(home.join(".claude.json"), r#"{"projects": {"/srv/q": {"hasTrustDialogAccepted": true}}}"#).unwrap();
+        assert_eq!(trust_gap(&home, root), ["Trust: /srv/p/new not trusted; Claude workers cannot start here".to_string(), trust_step("/srv/p/new")]);
+        fs::write(home.join(".claude.json"), r#"{"projects": {"/srv/p": {"hasTrustDialogAccepted": true}}}"#).unwrap();
+        assert!(trust_gap(&home, root).is_empty(), "a trusted parent covers the root");
+        fs::write(home.join(".claude.json"), "{").unwrap();
+        assert!(trust_gap(&home, root)[0].contains("unknown"), "unreadable config is unknown, never trusted");
     }
     fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }
 

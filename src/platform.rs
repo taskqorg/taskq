@@ -143,16 +143,16 @@ pub fn die(msg: &str) -> ! {
 pub fn error_text(msg: &str, root: Option<&Path>) -> String {
     let next = if msg.chars().count() > 153 || msg.contains(['\r', '\n']) {
         use std::io::Write;
-        let saved = root.and_then(|root| {
+        let saved = root.ok_or_else(|| "outside a taskq project".to_string()).and_then(|root| {
             let d = crate::dot(root);
-            fs::create_dir_all(&d).ok()?;
             let p = d.join("cli-errors.log");
-            writeln!(fs::OpenOptions::new().create(true).append(true).open(&p).ok()?, "{msg}").ok()?;
-            Some(p)
+            fs::create_dir_all(&d).and_then(|_| writeln!(fs::OpenOptions::new().create(true).append(true).open(&p)?, "{msg}")).map_err(|e| format!("{}: {e}", p.display()))?;
+            Ok(p)
         });
         match saved {
-            Some(p) => format!("Read `{}`; use `taskq help` for syntax and retry.", p.display()),
-            None => return format!("Error: {msg}\nNext: Diagnostic could not be saved; check `taskq help` and retry."),
+            Ok(p) => format!("Read `{}`; use `taskq help` for syntax and retry.", p.display()),
+            // #1555: the full text is the diagnostic; say why no copy exists instead of a bare failure
+            Err(why) => return format!("Error: {msg}\nNext: the full diagnostic is above; no cli-errors.log copy ({why})."),
         }
     } else { "Check the input and board/service status, then retry; use `taskq help` for syntax.".into() };
     format!("Error: {}\nNext: {next}", crate::compact(msg, 153))

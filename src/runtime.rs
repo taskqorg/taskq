@@ -1515,6 +1515,11 @@ impl ClaudeTurn {
         let stdout=String::from_utf8_lossy(&out.stdout);
         let stderr=String::from_utf8_lossy(&out.stderr);
         let returned=stdout.lines().find_map(|line|line.strip_prefix("backgrounded · ").and_then(|s|s.split_whitespace().next())).filter(|id|native_job_id(id));
+        // #1555: Claude refuses an untrusted root before it starts anything: a definite no-start, never an unknown launch.
+        // The text reaches the board (gone, then the limit card), so it names the root, never its path.
+        if returned.is_none()&&!out.status.success()&&stderr.contains("Workspace not trusted") {
+            return Err(StartError {message:format!("access refused: Claude does not trust this project root; {}",crate::setup::trust_step("the project root")),class:"permission",reportable:false,no_start:true});
+        }
         if let Some(id)=returned {
             if !self.id.is_empty() && self.id!=id {self.launch_error=Some("Claude returned a different background job; reconcile the original input and session".into());}
             self.id=id.into();
@@ -2953,7 +2958,7 @@ mod tests {
         let root=std::env::temp_dir().join(format!("taskq-uncertain-input-{}",uuid()));
         std::fs::create_dir_all(&root).unwrap();
         let candidate="c37eb75a";
-        for case in ["timeout","response","exit","log","copy","no-start"] {
+        for case in ["timeout","response","exit","log","copy","no-start","untrusted"] {
             let log=root.join(format!("{case}.log"));
             let mut l=Launch {execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
             let (input,lock,path)=claude_input(&root,"private task body",None).unwrap();
@@ -2976,10 +2981,17 @@ mod tests {
                 "timeout"=>Err(coreq::process::Failure::Timeout),
                 "no-start"=>Err(coreq::process::Failure::Spawn(std::io::Error::new(std::io::ErrorKind::NotFound,"fixture missing launcher"))),
                 "exit"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(256),stdout:vec![],stderr:b"native launch failed".to_vec()})),
+                // #1555: Claude's own refusal of an untrusted root
+                "untrusted"=>Err(coreq::process::Failure::Exit(std::process::Output {status:std::process::ExitStatus::from_raw(256),stdout:vec![],stderr:b"Error: Workspace not trusted. Run claude here first.".to_vec()})),
                 _=>Ok(std::process::Output {status:std::process::ExitStatus::from_raw(0),stdout:if case=="response" {b"lost response".to_vec()} else {format!("backgrounded · {candidate}\n").into_bytes()},stderr:vec![]}),
             };
             let result=turn.finish_launch(output);
             if case=="no-start" {assert!(result.unwrap_err().no_start);}
+            else if case=="untrusted" {
+                let e=result.unwrap_err();
+                assert!(e.no_start&&e.message.contains("does not trust")&&e.message.contains("run `claude`"),"{}",e.message);
+                assert!(!e.message.contains(&root.display().to_string()),"board text never holds a local path");
+            }
             else {
                 assert!(result.is_ok(),"{case}: uncertain native side effect must retain its handle");
                 assert!(turn.launch_error.is_some());
