@@ -19,7 +19,7 @@ Approved: aggregate above Projects; all queue states available; Held replaces Cl
 ## Visual
 
 - Compact wrapping capsules with stable order; symbol + number, accessible state name and tooltip. Align every strip to the right edge of its content region, including the aggregate and each wrapped line. Keep the existing compact gaps; do not distribute capsules across empty width.
-- Doing mint, Ask peach, Failed muted red. Review/Ready/Blocked/Later neutral; shape carries identity.
+- Doing green, Ask amber, Failed red under [palette A](icon-summary.md#i4-marks-and-palette). Review/Ready/Blocked/Later neutral; shape carries identity.
 - Held last: neutral, like Ready/Blocked/Later; shape carries identity.
 - At large type, wrap counters together beneath the project name. Never shrink numbers or squeeze project titles into a narrow column.
 - Counter clicks are separate targets from project navigation. One project name row, then its compact strip if needed; no nested controls.

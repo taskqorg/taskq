@@ -1,94 +1,36 @@
 # Square summary icon
 
-Product selection: D11 option 1 is accepted in the [decision register](decision-register.md). Remaining candidate language below refers to implementation/calibration, not a request to reapprove that direction. No running policy changes.
-
-Summary is the built-in configuration of the [shared icon renderer](custom-icon.md), not a separately coded drawing path. Its immutable preset and Custom use the same primitives, font metrics, state transforms and validation. Edit Summary copies its configuration to a Custom draft.
-
-Approved two-level composition: ordinary numerals, square visible bounds.
-[Contract](../../taskq.md#product) · [Menu M1](menu.md#m1-appearance) · [Geometry reference](square-summary-reference.html).
-Replaces the wide strip as a design target. Runtime changes with implementation; Windows remains unqualified.
+The [owner-approved design](../reviews/visual-decisions.md) supersedes the former quadrant histogram. [Contract](../../taskq.md#product) · [M1](menu.md#m1-appearance) · [R-UI4/R-UI5](rendering-contract.md#r-ui4-cadence-data).
 
 ## I1 Composition
 
-```text
-work       answers
-ready+blocked cadence
-```
+One Rust SVG renderer owns the fixed 22 × 22 pt Summary, its counters and chart group. Menu bar and running Dock rasterize it once at target scale; picker and History embed its vector groups. All four surfaces share the selected History period, default 24 hours. Icon remains the compact Q. [Custom is removed](custom-icon.md); saved Custom resolves to Summary, preserving unrelated settings.
 
-- Work = doing + review; answers = ask; third count = ready + blocked. Fixed positions; hide each zero count without shifting other cells. Unknown still draws a dash.
-- Four elements only. Active: no background, frame, grid or labels. If all elements would be empty, show the existing compact Q; otherwise no Q/play overlay.
-- N×N container; value changes never widen it.
-- macOS: 22×22 logical points. Windows: actual slot/DPI; qualify 16/20/24/32 physical pixels, not one repeatedly resized PNG.
-- Reference grid and light/dark backing surfaces are inspection aids; export transparent assets.
+Work = doing + review, Ask = ask, third count = ready + blocked. Hide each known zero without shifting other positions; unknown is a dash. Preserve existing compact-Q fallback, pause/hold identity and overflow behavior. Current counts are not event totals.
 
 ## I2 Type
 
-- System sans serif: SF Pro/system UI on macOS; Segoe UI Variable/Segoe UI on Windows. Record the actual family in evidence.
-- Upright, weight 500. No synthetic bold, italic, condensed, monospaced, segmented or pixel font.
-- All three values share size/weight. Do not change tracking or distort glyphs.
-- Use lining numerals and actual ink bounds; tabular advance is not optical alignment.
-- Accepted macOS reference: N=22, approximately 13.5 logical px for 3/2/5. Recalibrate for another font.
-- Single-digit calibration: start at 0.72N; decrease by 0.1 until all digits 0–9 fit I3. Fix that size per platform/font/N; no per-update jitter.
-- The earlier reference fits current values for exploration. Shrinking 12/24/100 is a stress test, not an approved production overflow policy.
+System sans serif, weight 500, nominal 9 pt, baseline y = 9. Counter ink origins x = 1, 8.1, 15.4. Align measured glyph ink to fixed cells; retain ordinary lining numerals and native font curves. No per-update shrinking or container widening. Preserve the existing 9+ / + overflow fallback and exact tooltip/menu counts.
 
 ## I3 Geometry
 
-Logical coordinates, top-left origin. Ink bounds mean painted glyph edges, not advance width, DOM box or line height.
+Exactly six separated columns, oldest left. For i = 0…5: x = 1 + 3.5i, width 2.5, gap 1, baseline y = 20.5, maximum height 9 (logical points). Height = 9 × closed / peak, where peak is the maximum closed count over complete-coverage bins, ongoing included. Unknown bins never set peak; peak zero is safe. Failed, ask and blocked never change height.
 
-```text
-p = 0.5                         outer inset
-g = N >= 24 ? 1.5 : 1           cell gap
-L = p; R = N-p; C = N/2
-cellW = cellH = (N-2p-g)/2
-```
+## I4 Marks and palette
 
-- Two equal columns and rows. Each numeral fits its cell.
-- Top row shares a fixed baseline: Y = p + maximum ascent of digits 0–9 in the calibrated font.
-- Work ink left = L. Answers ink right = R.
-- Ready ink left = L, bottom = R. Invisible font side bearings do not set alignment.
-- Allocated graph X = C+g/2; right = R; bottom = R; top = ready numeral's top ink edge. Painted bars use [R-UI5](rendering-contract.md#r-ui5-cadence-raster): integer widths/gaps, residual inset on inner left; outer right/bottom stay fixed.
-- Ready and graph therefore have the same visible height; outside edges and bottom define the square.
-- Align 1/3/7/8 by ink, not advance centering. Keep the left edge of 1; do not invent a wider glyph.
-- Raster tolerance: at most 1 physical pixel from the computed edge. Do not round each element independently into asymmetric margins.
-
-Canvas, textAlign=left and alphabetic baseline:
-
-```text
-inkLeft = originX - actualBoundingBoxLeft
-inkRight = originX + actualBoundingBoxRight
-left alignment: originX = L + actualBoundingBoxLeft
-right alignment: originX = R - actualBoundingBoxRight
-bottom alignment: baselineY = R - actualBoundingBoxDescent
-```
-
-## I4 Graph and color
-
-- Stacked bars on a shared linear scale, using M6 series/order. Never stretch each bar to 100%.
-- Exploratory geometry reference: 6 bars, 0.5 logical px gaps. Production uses R-UI5 physical-pixel quantization; this reference does not approve a bin count or fractional raster gaps.
-- Earlier reference contains only close/failed. Product preserves all four M6 series; fixture simplification cannot remove data.
-- Runtime has 12 source bins. R-UI5 chooses the largest divisor that fits bars at least 4 physical px wide with 1 physical px gaps; sum adjacent bins, preserving period and every series total. Do not discard half the history.
-- Acceptance fixture has nonzero first/last bars. Real zero edges stay zero. Expose exact totals in the menu when pixels cannot resolve a segment.
-- Counts use the menu counter colors (K-A1–K-A6): work, ask and neutral ready/blocked respectively.
-- UI colors come from [visual-style.md](visual-style.md#palette). Board labels keep their separate API palette.
-- Paused: same geometry/data in gray, existing compact q/pause centered at N/2,N/2. Never substitute a new pause-button shape. Qualify overlay readability separately; partial pause does not gray everything.
+- Known zero: neutral tick at y = 20, height 0.5, column width.
+- Unknown/incomplete source: neutral mid dash at y = 15.5, height 0.75; no guessed green bar.
+- Bin containing now: separate neutral underline at y = 21, height 0.5; no underline in a completed historical range.
+- Known failed > 0: fixed red cap at y = 10.5, height 0.75, independent of green height. No ask/blocked marks.
+- Palette A light/dark: closed/work `#087F5B` / `#38E8A0`; ask `#995200` / `#FFC247`; failed `#C92641` / `#FF6378`; neutral `#536171` / `#B9C6D8`. One source supplies counters, graph and menu CSS. Board label API colors stay separate.
+- Paused: existing gray composition and centered compact Q/pause identity. Partial pause does not gray everything.
 
 ## I5 Raster and acceptance
 
-- Draw directly into N×DPR; scale geometry once. Standard antialiasing; no blur, sharpening or repeated resizing.
-- Reference DPR=2 and ×8 enlargement do not prove 16 px/DPR=1 legibility.
-- Supply natural-size and ×8 contact sheets: both themes; 16/20/22/24/32; DPR=1/2; active/paused.
-- Counts: 0/0/0, 3/2/5, 1/7/8, 9/9/9, 12/3/24, 100/12/105. Graph: empty, mixed, equal counts across series, nonzero edges. Unknown follows [unknown is never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy).
-- Check bounds and graph totals, then inspect PNGs and native trays on both platforms. Record OS, font, size, DPI and SHA.
-- Open before release: overflow, unknown rendering and Windows DPR=1. Do not silently choose tiny text, 9+, truncation or a wider container.
+Reference geometry scales to the actual menu-bar slot, then its backing scale. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins.
+
+Use the frozen day/hour fixtures linked from the approved review, plus explicitly synthetic zero-peak, failed and unknown cases. Checks retain bin identities, exact counts, heights, colors and marks at every viewport. Inspect at most ten native screens for owner acceptance: font/DPR, separated columns, counter bounds, zero vs unknown, ongoing/failed, pause and overflow. Static references and source CI are not native acceptance.
 
 ## I6 Cross-platform rendering
 
-- Both macOS and Windows expose Icon / Summary. Same fixed square composition, counter meanings, status colors and pause identity. Platform adaptation changes metrics, not semantics or available controls.
-- macOS: calibrate against actual status-item/menu-bar size and backing scale; 22 logical points is the reference, not a universal screen constant.
-- Windows: obtain notification-area small-icon metrics for the owning monitor DPI; treat 16 physical pixels at 100% as a qualification baseline, not a hardcoded slot for every machine. Supply a matching raster/HICON; re-render on DPI/theme changes and taskbar recreation. Keep stable tray identity and saved view.
-- Qualify 16/20/24/32 physical pixels (100/125/150/200% baseline), actual OS slot and light/dark. Exported PNG size alone proves neither Shell scaling nor readability. No stretch of the macOS raster.
-- Share data, layout rules and approved vector geometry; calibrate SF/Segoe ink bounds separately. Snap chart fills to physical pixels once; text retains native antialiasing.
-- Small-slot rebin: follow R-UI5 in icon and menu: largest divisor of 12 in 12/6/4/3/2/1 fitting 4 physical px bars and 1 physical px gaps. Sum all four series; menu labels its rendered bin count, time per bar and exact totals. Native size calibration still requires proof.
-- Candidate overflow: a cell uses its largest readable exact value; beyond the calibrated cell capacity, show a labelled threshold such as 9+ and exact tooltip/menu values. Unknown uses an em dash with an unavailable explanation. No per-update shrinking or widening. Threshold and native legibility require visual acceptance.
-- Windows removal of the current compact-only gate ships with native evidence; retaining that gate is not completion of MP1.
-- Reference: [Microsoft NOTIFYICONDATAW](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/ns-shellapi-notifyicondataw), [GetSystemMetricsForDpi](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getsystemmetricsfordpi). Query actual platform metrics; the prototype cannot detect the native Shell slot.
+Share vector geometry, data and palette; calibrate SF/Segoe ink and actual OS slot/DPI separately. Preserve Windows availability until native qualification. No repeated PNG resizing, width rebinning or dropped bins. Native/runtime gaps remain unknown under R12.

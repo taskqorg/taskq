@@ -292,6 +292,8 @@ Source components generate workspace-prototype.html and workspace-preview.html. 
 
 ## Custom icon and final wording review
 
+Historical evidence, superseded by [the approved six-bin renderer](../reviews/visual-decisions.md) and [Custom removal](custom-icon.md). The tests and configurations named below describe that earlier candidate, not supported controls.
+
 Accepted Custom mode and the shared Summary/Custom configuration architecture. Summary now comes from icon-summary.config.json; the integrated build uses the same paint function for built-in and saved custom configurations. Added UC-16, CI protocol/acceptance, final menu review and implementation handoff links. Accepted independent-branch continuation and deferral of monetary budgets recorded.
 
 Prototype changes: three view modes, Custom editor/copy/edit shortcut, actual-size and enlarged previews, three sample compositions, local font/gap/counter/alignment controls, draft/save/discard/revert and contextual AI handoff. Persistence here is preview widget state, not native application storage. Arbitrary AI generation, native write failure/stale revision fencing and platform font qualification remain unimplemented.

@@ -11,7 +11,7 @@ This package specifies the target; it does not authorize deployment or claim bac
 4. [Rendering contract](rendering-contract.md), [acceptance ledger/matrix](ui-acceptance.md), [report template](ui-acceptance-report.md).
 5. [Remote manager](remote-manager.md) and [FRA audit](remote-manager-audit.md), then [4.1.9 audit](release-4.1.9-ui-audit.md), [Current implementation inventory](current-menu-audit.md), [candidate](workspace-prototype.html), [verification](verification.md).
 
-Use `menu-next-variants.html`, `ai-conversations.html`, `agent-settings.html`, `agent-behavior.html` and `plans-and-decisions.html`, `custom-icon.html` and `icon-summary.config.json` as component sources. Build `workspace-prototype.html` with `build-workspace-preview.py`; `workspace-preview.html` is the standalone preview. Never edit generated output directly. Older menu/icon studies are historical; the square geometry supersedes the wide strip.
+Use `menu-next-variants.html`, `ai-conversations.html`, `agent-settings.html`, `agent-behavior.html` and `plans-and-decisions.html` as component sources. Build `workspace-prototype.html` with `build-workspace-preview.py`; `workspace-preview.html` is the standalone preview. Never edit generated output directly. Older menu/icon studies are historical; the square geometry supersedes the wide strip.
 The candidate is a simulation: marked placeholder actions and mock receipts are not backend adapters.
 
 [MP1–MP10](menu-product.md) supersede earlier open product choices; [E1–E5](emergency-recovery.md) and I6 remain explicit mechanism/raster candidates.
@@ -72,7 +72,7 @@ Builder fills every acceptance-ledger row; source pinning follows [F1](https://g
 
 ## Commands
 
-- Integrated design: `workspace-prototype.test.cjs`, `ai-conversations.test.cjs`, `agent-settings.test.cjs`, `agent-behavior.test.cjs`, `plans-and-decisions.test.cjs`, `resources-recipes.test.cjs`, `custom-icon.test.cjs`, `project-counters.test.cjs` under `docs/design/`.
+- Integrated design: `workspace-prototype.test.cjs`, `ai-conversations.test.cjs`, `agent-settings.test.cjs`, `agent-behavior.test.cjs`, `plans-and-decisions.test.cjs`, `resources-recipes.test.cjs`, `project-counters.test.cjs` under `docs/design/`.
 - Rebuild: `python3 docs/design/build-workspace-preview.py`, then `python3 <visualize-skill>/scripts/render.py <repo>/docs/design/workspace-prototype.html <repo>/docs/design/workspace-preview.html --force`.
 - Existing tests remain relevant to existing behavior, not proof of the new layout.
 - Runtime implementation: required `cargo test --locked` and `cargo run -- selftest`, plus focused adapter/native checks. Follow repository launcher instructions.
@@ -81,7 +81,7 @@ Status reports follow [specq Core](https://github.com/taskqorg/specq/blob/main/c
 
 [System change map](system-change-map.md) owns backend slices, acceptance and the remaining product questions. No design approval enables runtime policy.
 
-[Custom icon](custom-icon.md): shared Summary/Custom config renderer, agent editing protocol and CI acceptance. [Final menu review](menu-final-review.md) records wording, hierarchy and icon corrections.
+[Icon compatibility](custom-icon.md): Custom removal and saved-view fallback; [I1–I6](icon-summary.md) own the fixed Summary SVG. [Final menu review](menu-final-review.md) records wording, hierarchy and icon corrections.
 
 [Refactoring backlog](refactoring-backlog.md) defines ordered workstreams, API boundaries, dependencies and acceptance for implementation tasks.
 

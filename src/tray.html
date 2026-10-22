@@ -4,7 +4,7 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="color-scheme" content="light dark">
 <style>
 :root{color-scheme:light dark}
-body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:light-dark(#243039,#eef2f5);--surface:light-dark(#fafbfc,#252b32);--muted:light-dark(#59636e,#b9c3cd);--edge:light-dark(#dce0e5,#46505b);--work:light-dark(#246f59,#8dd2b8);--ask:light-dark(#955525,#edbc96);--ready:light-dark(#5d6874,#c8d0d9);--failed:light-dark(#a6324b,#ee96a5);background:var(--surface);-webkit-user-select:none;user-select:none;cursor:default}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:light-dark(#243039,#eef2f5);--surface:light-dark(#fafbfc,#252b32);--muted:light-dark(#59636e,#b9c3cd);--edge:light-dark(#dce0e5,#46505b);background:var(--surface);-webkit-user-select:none;user-select:none;cursor:default}
 html,body{height:100%;overflow:hidden;overscroll-behavior:none;background:transparent}
 /* a window a fraction of a pixel short of the measured width reflows instead of scrolling horizontally (#1073) */
 body{max-width:100%}
@@ -28,6 +28,11 @@ details[open]>summary:after{transform:rotate(90deg)}
 .counter{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;padding:0 5px;border-radius:999px;font-size:max(12px,.8em);font-variant-numeric:tabular-nums;font-weight:500;line-height:1}
 .counter.filled{background:color-mix(in srgb,currentColor 12%,var(--surface))}
 .counter.zero{color:var(--muted);background:light-dark(#eff1f3,#2b3138)}
+.menu .tqp{--good:var(--work);--ask:inherit;--bad:var(--failed)}
+.menu .tqp-counts button:not(.good):not(.ask):not(.danger){color:var(--ready)}
+.menu .qac{--qac-work:var(--work);--qac-ask:var(--ask);--qac-failed:var(--failed)}
+.menu .rsc{--rsc-work:var(--work);--rsc-ask:var(--ask);--rsc-failed:var(--failed)}
+.menu .tqf{--tqf-good:var(--work)}
 .work{color:var(--work)}.ask{color:var(--ask)}.ready{color:var(--ready)}.failed{color:var(--failed)}
 .options{display:flex;gap:5px;flex-wrap:wrap;padding:4px}
 .options button{flex:1 0 38px}.options [data-a^=notify]{flex-basis:auto;padding-inline:4px}
@@ -45,11 +50,14 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 .askai{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:5px;padding:4px}
 .askai textarea{font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:5px;resize:vertical;min-width:0;-webkit-user-select:text;user-select:text}
 .askai button{align-self:start;min-width:34px}
-.bars{display:flex;align-items:flex-end;justify-content:flex-start;margin:0 4px}
-.menu .hist .bars button{min-width:0;flex:none;display:flex;flex-direction:column;justify-content:flex-end;height:100%;min-height:0;padding:0;border:0;border-radius:0;background:none}
-.menu .bars button[aria-pressed=true]{background:none;outline:none}.menu .bars button:focus-visible{outline:2px solid var(--muted);outline-offset:2px}
-.bars i{display:block;flex-shrink:0}.bars i.k0{background:var(--work)}.bars i.k1{background:var(--failed)}.bars i.k2{background:var(--ask)}.bars i.k3{background:var(--ready)}
-.bars button.unknown{outline:1px dashed var(--edge);outline-offset:-1px}
+.history-plot{position:relative;height:88px;margin:4px 12px}
+.history-plot svg{display:block;width:100%;height:100%}.history-plot #counters,.history-plot #empty-q{display:none}.history-plot #summary-data{visibility:visible}
+.history-targets{position:absolute;inset:0;display:grid;grid-template-columns:repeat(6,1fr)}
+.menu .history-targets button{min-width:0;padding:0;border:0;border-radius:0;background:none}
+.menu .history-targets button[aria-pressed=true]{background:none;outline:1px solid var(--muted);outline-offset:1px}
+.menu .history-targets button:focus-visible{outline:2px solid var(--muted);outline-offset:1px}
+.summary-preview,.summary-preview svg{display:inline-block;width:18px;height:18px}
+
 .history-legend{display:flex;flex-wrap:wrap;gap:4px 12px}.history-legend span{white-space:nowrap}.history-legend i{display:inline-block;width:8px;height:8px;margin-right:4px;background:currentColor}
 .history-selection{display:inline-flex;position:relative}.history-selection select{appearance:none;font:inherit;color:inherit;background:transparent;border:1px solid var(--edge);border-radius:4px;padding:3px 2em 3px 6px}.history-selection .ui-icon{position:absolute;right:6px;top:50%;transform:translateY(-50%);pointer-events:none}
 .range{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 6px;align-items:center;padding:4px}

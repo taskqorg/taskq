@@ -5,16 +5,6 @@ const shell=require('./app-shell.js');
 const {h,Fragment}=require('preact');
 const {icon,button}=require('./ui-icons.js');
 
-// R-UI5: physical pixels, one gap, adjacent source bins summed without dropping any series.
-const {historyRaster}=execution.module('tray.history',{
- historyRaster:(bins,width)=>{
-  const count=bins.length&&[12,6,4,3,2,1].find(n=>bins.length%n===0&&5*n-1<=width);
-  if(!count)return {rows:[],bar:0};
-  const group=bins.length/count;
-  return {rows:Array.from({length:count},(_,i)=>Array.from({length:4},(_,k)=>bins.slice(i*group,(i+1)*group).reduce((sum,b)=>sum+b[k],0))),bar:Math.floor((width-count+1)/count)};
- }
-});
-
 const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {dashboard:null,popup:null,manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
@@ -267,33 +257,26 @@ custom:function(){
   return f(h('div',{class:'range'},h('label',{for:'hs'},'Start'),h('input',{id:'hs',type:'datetime-local','data-draft':'start',value:d.start}),h('label',{for:'he'},'End'),h('input',{id:'he',type:'datetime-local','data-draft':'end',value:d.end}),h('label',{for:'hz'},'Time zone'),h('select',{id:'hz','data-draft':'tz'},[['local','Local ('+zone+')'],['UTC','UTC']].map(([v,l])=>h('option',{value:v,selected:d.tz===v},l)))),
   d.error&&h('div',{class:'body alert',role:'alert'},d.error),h('button',{class:'project','data-a':'range'},'Show [start, end)'));},
 history:function(){
-  const H=view.S.history,dpr=window.devicePixelRatio||1,{rows,bar}=historyRaster(H.bins,view.historyWidth||4),n=rows.length,w=(H.end-H.start)/n;
-  const kinds=['closed','failed','ask','waiting'],colors=['work','failed','ask','ready'];
-  const {sum,named,stamp,duration}=execution.module("tray.create.history.helpers",{
-    sum:b=>b.reduce((a,x)=>a+x,0),
-    named:b=>kinds.map((k,i)=>k+' '+b[i]).join(', '),
-    stamp:t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,dateStyle:'short',timeStyle:'medium'})+' '+(H.tz==='UTC'?'UTC':zone),
-    duration:seconds=>{for(const [unit,size] of [['d',86400],['h',3600],['min',60]])if(seconds%size===0)return seconds/size+' '+unit;return (Number.isInteger(seconds)?'':'≈ ')+Number(seconds.toFixed(3))+' s';}
+  const H=view.S.history,rows=H.bins,n=rows.length;
+  const kinds=['closed','failed','ask','blocked'],colors=['work','failed','ask','ready'];
+  const {identity,stamp,quantity}=execution.module("tray.create.history.helpers",{
+    identity:b=>b.start+'/'+b.end,
+    stamp:t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',...(Number.isInteger(t)?{}:{fractionalSecondDigits:3})})+' '+(H.tz==='UTC'?'UTC':zone),
+    quantity:(count,missing)=>missing?(count?'≥'+count:'unknown (0 recorded)'):String(count)
   });
-  const tot=kinds.map((_,k)=>H.bins.reduce((a,b)=>a+b[k],0)),peak=Math.max(0,...rows.map(sum)),height=Math.round(64*dpr);
-  const none=view.S.projects.filter(p=>p.since==null).map(p=>p.name),part=none.length>0||H.since>H.start;
-  const note=H.since==null?'No history yet: unknown, not zero.':[H.since>H.start?'Incomplete: history since '+when(H.since,H.tz)+'; earlier is unknown, not zero.':'',none.length?'No history in '+none.join(', ')+'.':''].join(' ').trim();
-  const {detail}=execution.module("tray.create.history.helpers",{detail:i=>{const t=H.start+i*w,end=t+w,unknown=H.since==null||end<=H.since;
-    return '[Start: '+stamp(t)+'; End: '+stamp(end)+') · '+(unknown?'unknown':named(rows[i]))+(view.S.now<end?' · partial':'')+(!unknown&&(part||t<H.since)?' · incomplete':'');}});
-  const selected=Math.min(view.historyBar||0,n-1);
+  const selected=Math.max(0,rows.findIndex(b=>identity(b)===view.historyBin));
+  const incomplete=rows.some(b=>b.missing.length),tot=kinds.map((_,k)=>rows.reduce((a,b)=>a+b.counts[k],0));
+  const {detail}=execution.module("tray.create.history.helpers",{detail:b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(b.counts[i],b.missing.length)).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length?' · incomplete: '+b.missing.join(', '):'')});
   return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},periods[view.S.period])),
     h('div',{class:'options periods'},Object.entries(periods).map(([k,l])=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
-    view.draft&&custom(),h('div',{class:'body meta'},'Start: '+when(H.start,H.tz),h('br'),'End: '+when(H.end,H.tz)+(view.S.now<H.end?' · last bin partial':'')),
-    h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+(H.since==null?'—':tot[i])))),
-    h('div',{class:'body meta history-label'},n+' bars · '+(n?duration(w):'unknown')+' per bar · peak '+(H.since==null?'unknown':peak)+' events'),
-    h('div',{class:'bars',role:'group','aria-label':'Event history; '+n+' equal bins, oldest left'+(note?'; '+note:''),style:'transform:translateY('+(view.historyOffset||0)+'px);gap:'+1/dpr+'px;height:'+height/dpr+'px;padding-left:'+Math.floor(((view.historyWidth||4)-(n*bar+Math.max(0,n-1)))/2)/dpr+'px'},rows.map((b,i)=>{
-      const end=H.start+(i+1)*w,u=H.since==null||end<=H.since;let total=0;
-      const segments=b.map(count=>{const low=Math.round(height*total/Math.max(1,peak));total+=count;return Math.round(height*total/Math.max(1,peak))-low;});
-      return h('button',{'data-history-bin':i,'aria-label':detail(i),'aria-pressed':String(i===selected),title:detail(i),class:u?'unknown':'',style:'width:'+bar/dpr+'px'},[3,2,1,0].map(k=>h('i',{class:'k'+k,style:'height:'+(u?0:segments[k]/dpr)+'px'})));})),
-    h('div',{class:'body meta'},'0 events · oldest → newest'),
-    n>0&&h('span',{class:'history-selection'},h('select',{'aria-label':'History interval','data-history-select':'',value:String(selected)},rows.map((_,i)=>h('option',{value:String(i)},'Bar '+(i+1)+' of '+n))),icon('arrow-down')),
-    h('div',{class:'body meta history-detail',role:'status'},n?'Bar '+(selected+1)+' of '+n+' · '+detail(selected):'Graph unavailable: less than 4 physical px.'),
-    h('div',{class:'body meta'},'Ask counts events, not current questions.'),note&&h('div',{class:'body meta'},note));},
+    view.draft&&custom(),h('div',{class:'body meta'},'Start: '+when(H.start,H.tz),h('br'),'End: '+when(H.end,H.tz)),
+    h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+quantity(tot[i],incomplete)))),
+    h('div',{class:'body meta history-label'},'6 bins · peak '+(H.peak??'unknown')+' closed · failed cap · oldest → newest'),
+    h('div',{class:'history-plot'},raw(H.svg?.replace('viewBox="0 0 22 22"','viewBox="1 10.5 20 11" preserveAspectRatio="none"')),
+      h('div',{class:'history-targets',role:'group','aria-label':'Event history; six equal bins'},rows.map((b,i)=>h('button',{'data-history-bin':identity(b),'aria-label':detail(b),'aria-pressed':String(i===selected),title:detail(b)})))),
+    h('span',{class:'history-selection'},h('select',{'aria-label':'History interval','data-history-select':'',value:rows[selected]?identity(rows[selected]):''},rows.map((b,i)=>h('option',{value:identity(b)},'Bin '+(i+1)+' of 6'))),icon('arrow-down')),
+    h('div',{class:'body meta history-detail',role:'status'},rows[selected]?detail(rows[selected]):'History unavailable'),
+    h('div',{class:'body meta'},'Ask and blocked count events, not current tasks.'),incomplete&&h('div',{class:'body meta'},'Incomplete source coverage; counts are observed lower bounds. Collection start does not prove uninterrupted collection.'));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
   const up=view.S.projects.find(p=>p.update&&p.update!==p.version);
   if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive===true&&p.version===view.updating.v))return h('div',{class:'row meta'},'Updated to '+view.updating.v+': read from status.json');
@@ -325,7 +308,7 @@ bulk:function(run,held){if(!ports.workspace)return run.length||held.length?api.o
 const {state}=execution.module("tray.create.bulk.helpers",{state:p=>({run:pausing?'pause':'admitting, unchanged',paused:pausing?'paused, unchanged':'resume',watch:'observation, unchanged'}[mode(p)])});
   if(view.confirming)return f(h('div',{class:'body',role:'alert'},pausing?'Pause admission? Running tasks finish.':'Resume admission?',h('br'),lines(view.S.projects.map(p=>p.name+': '+state(p)))),h('div',{class:'options'},h('button',{'data-a':pausing?'pause-all':'resume-all'},'Confirm'),h('button',{'data-a':'cancel'},'Cancel')));
   return run.length?h('button',{class:'project','data-a':'confirm'},'Pause all…'):held.length?h('button',{class:'project','data-a':'confirm'},'Resume all…'):'';},
-views:function(){return h('div',{class:'options views'},[['icon','Icon'],['full','Summary'],['custom','Custom']].map(([v,l])=>h('button',{'data-set':'view','data-v':v,'aria-pressed':String(view.S.view===v),disabled:v==='custom'&&!view.S.icons?.custom},(view.S.icons?.[v]||v==='custom'&&view.S.icons?.full)&&h('img',{alt:'',src:view.S.icons?.[v]||view.S.icons.full}),l)),!view.S.icons?.custom&&h('p',{class:'meta'},'Custom not saved; import a validated configuration with taskq tray --icon FILE.'));},
+views:function(){return h('div',{class:'options views'},[['icon','Icon'],['full','Summary']].map(([v,l])=>h('button',{'data-set':'view','data-v':v,'aria-pressed':String(view.S.view===v)},v==='full'?h('span',{class:'summary-preview'},raw(view.S.icons?.full)):view.S.icons?.icon&&h('img',{alt:'',src:view.S.icons.icon}),l)));},
 appearance:function(){
   return f(h('div',{class:'body meta'},'Theme follows system appearance.'),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font)},n))));
 },
@@ -547,6 +530,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   if(!p&&!routes[view.page])view.page='home';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
+  for(const entry of (view.S.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
@@ -563,9 +547,6 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   (menu.querySelector('.content')||document.scrollingElement).scrollTop=view.restoreScroll??scroll;view.restoreScroll=null;
   if(firstRender)viewState.focus(view.restoreFocus);
   fit();dashboard.place();
-  const plot=menu.querySelector('.bars'),rect=plot?.getBoundingClientRect(),dpr=window.devicePixelRatio||1,width=rect&&Math.floor(rect.width*dpr);
-  const top=rect&&rect.top-(view.historyOffset||0),offset=rect&&(Math.round(top*dpr)/dpr-top);
-  if(width>0&&(width!==view.historyWidth||Math.abs(offset-(view.historyOffset||0))>.001)){view.historyWidth=width;view.historyOffset=offset;defer(tick);}
   // after fit() sets the width: a new exchange or text size opens at the newest entry; a tick keeps the reader's place;
   // a block that drops a cut line asks for the smaller height
   const bound=[...menu.querySelectorAll('[data-bound]')];
@@ -641,7 +622,7 @@ ui.listen(menu,'click',e=>{
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{const c=dashboard.criteria();if(view.page!=='home'){c.projects=id?[require('./task-views.js').identity(view.S.projects.find(p=>p.root===id))]:[];c.states=[state];navigate('home');}else dashboard.set({states:c.states.includes(state)?c.states.filter(s=>s!==state):[...c.states,state]});}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
-  if(d.historyBin!==undefined){view.historyBar=Number(d.historyBin);present();return;}
+  if(d.historyBin!==undefined){view.historyBin=d.historyBin;present();return;}
   if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null}});return;}
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
@@ -667,7 +648,7 @@ const z=t(view.draft.end);
     present();return;}
   if(api.operationAction(d))return;
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label,value:d.value});}present();});
-ui.listen(menu,'input',e=>{if(e.target.matches('[data-history-select]')){view.historyBar=Number(e.target.value);present();return;}api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'input',e=>{if(e.target.matches('[data-history-select]')){view.historyBin=e.target.value;present();return;}api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'pointerdown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))view.headerDrag={x:e.screenX,y:e.screenY};});
 ui.listen(window,'pointermove',e=>{const start=view.headerDrag;if(start&&Math.hypot(e.screenX-start.x,e.screenY-start.y)>=4){view.headerDrag=null;send({a:'drag'});}});
@@ -707,7 +688,7 @@ const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...ar
 const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
 const renderer=shell.create(menu);
 const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later',held:'Held'};
-const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'work',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
+const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'ready',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
 const periods={'5m':'5 min','1h':'Hour','1d':'Day','1w':'7 days','1mo':'30 days',custom:'Custom'};
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
 // Pages are Preact vnodes; shared module HTML enters only as an island the module owns.
@@ -777,4 +758,4 @@ return {...api,resourceSend};
 }
 });
 
-module.exports={create,createState,historyRaster};
+module.exports={create,createState};

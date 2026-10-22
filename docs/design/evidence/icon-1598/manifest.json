@@ -1,0 +1,41 @@
+{
+  "task": 1598,
+  "base": "dd8dcf3b7d1f0f88ac1b0a72faa7a701edbf02e4",
+  "environment": {
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView",
+    "dpr": 2,
+    "font": ".AppleSystemUIFontMedium",
+    "reference_font_pt": 9
+  },
+  "sourceBlobs": {
+    "src/icon.rs": "46395f38dcca4c8e46a35f6677ed4b70d4af732b",
+    "src/tray.rs": "ba75923dae192e8a1a7c63ee6d0e19d8f96d1b00",
+    "src/main.rs": "ffdfe20db0e0c4e065d1680b45eed36b30e61984",
+    "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
+    "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
+    "tests/fixtures/icon-history/capture.swift": "64ed407e07ed5b1733822ef88e1d7599b1c1be3c"
+  },
+  "bundleSha256": "e09eb26cfe9d3974ac2dc3d74303f86b9a1c6120db1456ac6a2855f3d6ad61c0",
+  "images": {
+    "native/day-dark-cadence.png": "76399b8f10e8f11805be9103b6ffb6285c86468da876b438d57cf224198b6c35",
+    "native/day-dark-tray-icon.png": "07abb03d93e3676ad3af2230b61146eeebd6ebdc67ab0539026f3fa992e06e38",
+    "native/day-light-cadence.png": "19ca6254c768f0cf66099b6e5971a16113dc8735383b70428aec3937e5f8a6f6",
+    "native/day-light-tray-icon.png": "8584becb270cf8626c6122be18be47b5bf8da16aad23713d0a1c223075c1fa07",
+    "native/hour-light-cadence.png": "75e6efa3e4134af9f439c270017230e81312e10455e6333ecb5a4242c6639e26",
+    "native/incomplete-dark-cadence.png": "a4ba9b22e213e3a373945c6d3d72d7a2203d79eb8c6183e48a5dc620d444fece",
+    "readme-before-after.png": "5d995924b0c8fa99282d635650931d2e97c33e92f9caf3a61943867ceb898e96",
+    "review-dark.png": "ca35016d21e2f9a5bff992ff0799af3d65fab7418f76bd836160db4bca764378",
+    "review-light.png": "7c38332857eab20c2d7da51abd1e037a9edae321e9040ebcdbf2050e3d51c357"
+  },
+  "readmeBefore": {
+    "commit": "d5ec8616999e2d0c6eabd4bcfa523ec183914e12",
+    "path": "docs/shots/popover-dark-project-16.png",
+    "sha256": "0f884322802be39357385d75558850271bfbfda6bf9fc4f99cf4614ae7379402"
+  },
+  "readmeAfter": {
+    "path": "docs/shots/popover-dark-project-16.png",
+    "sha256": "0b32c303e206a01b4812f55c7357208b15f981e8c9a535924dca6cb8f5383bc7"
+  }
+}

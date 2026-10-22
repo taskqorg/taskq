@@ -160,5 +160,5 @@ Re-run [scenario review](scenario-review.md) for affected cases. Runtime release
 
 ## Accepted follow-up decisions
 
-- Custom is the third tray mode; built-in Summary is configuration of the same renderer. Agent proposals stay drafts until owner approval; re-edit/revert preserves a known-good icon. [CI1–CI5](custom-icon.md).
+- Icon and fixed Summary use the [approved six-bin SVG](../reviews/visual-decisions.md). Custom and its editor/schema are removed; saved Custom resolves to Summary ([compatibility](custom-icon.md)).
 - Continue independent valid branches after a failure; hold dependants. Monetary budgets are deferred until reliable usage attribution. Real five-repository inputs remain required for qualification.

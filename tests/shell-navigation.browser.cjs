@@ -1,7 +1,7 @@
 // TW1/V02/V06/V09/V23: real bundled shells, invented snapshots, no native actions.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const project={root:'fixture-alpha',name:'Alpha',issues:'https://example.org/alpha/issues',alive:true,complete:true,age:1,focus:[],labels:[],cap_saved:{error:'Invented unavailable capacity'},tasks:Array.from({length:45},(_,i)=>({n:i+1,state:'ready',revision:1,title:'Keep navigation reachable while reading the full task title '+i}))};
-const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'fixture',projects:[project],ai:{draft:''},notify:{status:'unknown',host:{ask:'off',close:'off',failed:'off',gone:'off'},projects:{}},stop_modes:true,period:'1d',history:{start:0,end:1000,since:null,tz:'UTC',bins:Array.from({length:10},()=>[0,0,0,0])}};
+const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'fixture',projects:[project],ai:{draft:''},notify:{status:'unknown',host:{ask:'off',close:'off',failed:'off',gone:'off'},projects:{}},stop_modes:true,period:'1d',history:{start:0,end:1000,since:null,tz:'UTC',bins:Array.from({length:6},(_,i)=>({start:i*1000/6,end:(i+1)*1000/6,counts:[0,0,0,0],missing:["fixture"],ongoing:false}))}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{

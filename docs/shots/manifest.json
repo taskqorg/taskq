@@ -1,16 +1,16 @@
 {
   "version": "4.6.31",
-  "sourceCommit": "7f824f6bc41466960140a667b40ba795c3251321",
-  "binarySha256": "0cbfa095034c78c69d27f10d721495b0679af525abbd91bc35999027983c1152",
+  "sourceCommit": "6b04dd4c0dd282d104095e0c4009586eeb5b122b",
+  "binarySha256": "a938ef4f3d94479d877aa850b7ac7462a4f99b435763825b2b32a93d4bab8cfb",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "0a9ff49eb91ad9c987ad0b099d6342f088844121",
-    "src/tray.html": "ee99783ea848e8be61b6d8d01d70057288344ae2",
-    "src/tray-app.js": "13f7958b12069baff4d58b5190a853fd5ba657ae",
+    "src/tray.rs": "4991e2d9c77b07a817fcc4d3b0592691348d3a64",
+    "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
+    "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
     "src/tray-view-state.js": "35e7f59115138fd0d92b422741ef1866036c42dd",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
@@ -33,8 +33,7 @@
     "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
     "scripts/build-web.cjs": "3bbab0311b0abef5f9a7b5dd4ce55a2cb03dbde5",
-    "src/icon.rs": "4b7b82dc6dd8faeb97cc78d9abc0a0937bf53047",
-    "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
+    "src/icon.rs": "172cc8303a2ff0b2ee760bc12a472dd1499b80a8"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
@@ -44,11 +43,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "6eb9cd1dd301c2bc13494dd6b9de1242bc5fd8f6e2f06307c3bfa3a29adbf38b"
+      "sha256": "45079520040127a6ce2f9f4e6e4ed958191737e8212fccfdb334db1dc64347fb"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "0f884322802be39357385d75558850271bfbfda6bf9fc4f99cf4614ae7379402"
+      "sha256": "c37b22f427dbbe3305b93944838883b589a032ed6ef10be402c1bfaaba28078d"
     }
   ]
 }

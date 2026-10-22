@@ -46,9 +46,9 @@ enum Ev {
     Note(String),
 }
 
-/// View, text size, period and Custom icon of `<install>/tray.json`; anything else falls back to the default. A
+/// View, text size and period of `<install>/tray.json`; anything else falls back to the default. A
 /// `custom` period is `[start, end)` in epoch seconds with the time zone `local` or `UTC` it was typed in. View
-/// `full` is Summary; `custom` needs a valid `icon` configuration (custom-icon.md CI1).
+/// `full` is Summary; a legacy `custom` view resolves to Summary.
 #[derive(Clone, PartialEq)]
 struct Settings {
     view: String,
@@ -57,7 +57,6 @@ struct Settings {
     start: i64,
     end: i64,
     tz: String,
-    icon: Value,
     pin: Pin,
     /// Notification modes and cursors (`notify.rs`), kept as saved
     notify: Value,
@@ -95,12 +94,8 @@ impl Settings {
         let size = v["size"][0].as_f64().zip(v["size"][1].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 240.0 && *h >= 120.0);
         let size_anchor = v["size_anchor"].as_str().filter(|v| ["auto","fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"auto"}).to_string();
         let pin = Pin { size_anchor, attached_edge: "top".into(), auto_anchor: v["auto_anchor"].as_str().filter(|v| ["top","bottom"].contains(v)).unwrap_or("top").into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
-        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin,
+        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin,
             navigation: Value::Null, workspace_navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
-        // an invalid or corrupt saved icon falls back to Summary (CI4)
-        if icon::validate(&v["icon"]).is_empty() {
-            s.icon = v["icon"].clone();
-        }
         s.set(&v);
         s
     }
@@ -113,8 +108,8 @@ impl Settings {
         if v["workspace_navigation"].is_object() && v["workspace_navigation"]["schema"] == 1 && v["workspace_navigation"].to_string().len() <= 65536 {
             self.workspace_navigation = v["workspace_navigation"].clone();
         }
-        if let Some(x) = v["view"].as_str().filter(|x| ["icon", "full"].contains(x) || (*x == "custom" && !self.icon.is_null())) {
-            self.view = x.into();
+        if let Some(x) = v["view"].as_str().filter(|x| ["icon", "full", "custom"].contains(x)) {
+            self.view = if x == "custom" { "full" } else { x }.into();
         }
         if let Some(x) = v["font"].as_u64().filter(|x| FONTS.contains(x)) {
             self.font = x;
@@ -140,29 +135,17 @@ impl Settings {
     }
 
     fn save(&self, install: &Path) -> bool {
-        let v = json!({"view": self.view, "font": self.font, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz, "icon": self.icon,
+        let fields = json!({"view": self.view, "font": self.font, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz,
             "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "auto_anchor": self.pin.auto_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation});
         let p = install.join("tray.json");
+        let mut v = crate::data::json(&p).ok().flatten().filter(Value::is_object).unwrap_or_else(||json!({}));
+        v.as_object_mut().unwrap().remove("icon");
+        for (key,value) in fields.as_object().unwrap() { v[key]=value.clone(); }
         if crate::data::json(&p).is_err() && fs::copy(&p, install.join("tray.json.corrupt")).is_err() {
             return false;
         }
         crate::platform::write_atomic(&p, &v.to_string()).is_ok()
     }
-}
-
-/// `taskq tray --icon FILE`: a draft with any schema error is refused with every error and leaves `tray.json` (so the
-/// icon) unchanged; a valid one is saved as Custom and selected (custom-icon.md CI2 Validate/Save).
-pub fn use_icon(install: &Path, draft: &Value) -> Result<(), Vec<String>> {
-    let err = icon::validate(draft);
-    if !err.is_empty() {
-        return Err(err);
-    }
-    let mut s = Settings::load(install);
-    (s.icon, s.view) = (draft.clone(), "custom".into());
-    if !s.save(install) || Settings::load(install).icon != *draft {
-        return Err(vec!["tray.json: write or readback failed".into()]);
-    }
-    Ok(())
 }
 
 /// Draft and history of AI requests (§ 4): `<install>/tray-requests.json`, apart from the view settings.
@@ -523,7 +506,7 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
 }
 
 /// What the icon and the history show: in work, `ask`, ready, failed over all projects (one task per board and issue), whether
-/// any project admits, 12 equal bins of `[start, end)` (oldest first) counting `KINDS` and the latest `since` of the
+/// any project admits, six equal bins of `[start, end)` (oldest first) counting `KINDS` and the latest `since` of the
 /// projects that have history (None: none has).
 #[derive(Clone)]
 struct Summary {
@@ -533,28 +516,38 @@ struct Summary {
     /// Every project's snapshot is complete and fresh; else the counts are unknown, never zero (§ 4).
     known: bool,
     run: bool,
-    bins: Vec<[u32; 4]>,
+    bins: Vec<icon::Bin>,
     since: Option<i64>,
 }
 
-/// Event kinds of the history, in stacking order from the bottom (M6).
+/// Exact event count order (M6); only closed controls column height.
 const KINDS: [&str; 4] = ["close", "failed", "ask", "blocked"];
 
 fn summary(ps: &[Value], (start, end): (i64, i64)) -> Summary {
+    summary_at(ps, (start, end), now())
+}
+
+fn summary_at(ps: &[Value], (start, end): (i64, i64), now:i64) -> Summary {
     let mut seen = std::collections::HashMap::new();
     for p in ps {
         for t in p["tasks"].as_array().into_iter().flatten() {
             seen.insert(format!("{}/{}", p["issues"].as_str().unwrap_or(""), t["n"]), t["state"].as_str().unwrap_or("").to_string());
         }
     }
-    let mut bins = vec![[0; 4]; 12];
+    let mut bins:Vec<icon::Bin> = (0..6).map(|i| {
+        let a=start as f64+(end as f64-start as f64)*i as f64/6.0;
+        let b=start as f64+(end as f64-start as f64)*(i+1) as f64/6.0;
+        let mut missing:Vec<String>=ps.iter().filter(|p|p["since"].as_i64().is_none_or(|t|t as f64>a)).map(|p|p["name"].as_str().or(p["issues"].as_str()).unwrap_or("unknown source").to_string()).collect();
+        if a>now as f64 {missing.push("future interval".into());}
+        icon::Bin {start:a,end:b,counts:[0;4],missing,ongoing:a<=now as f64&&(now as f64)<b}
+    }).collect();
     let mut ev = std::collections::HashSet::new();
     for p in ps {
         for e in p["events"].as_array().into_iter().flatten() {
             let (t, kind) = (e[0].as_i64().unwrap_or(0), e[1].as_str().unwrap_or(""));
             let Some(k) = KINDS.iter().position(|x| *x == kind) else { continue };
-            if t >= start && t < end && ev.insert(format!("{} {} {kind}", p["issues"], e[2])) {
-                bins[(((t - start) * 12 / (end - start)) as usize).min(11)][k] += 1;
+            if end > start && t >= start && t < end && ev.insert(format!("{} {} {kind}", p["issues"], e[2])) {
+                bins[(((t as i128 - start as i128) * 6 / (end as i128 - start as i128)) as usize).min(5)].counts[k] += 1;
             }
         }
     }
@@ -1461,19 +1454,17 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if step==0 && agentq_shots {
                     let warning=routes.iter().find_map(|r|agentq_fixture(r)).is_some_and(|f|f["warning"]==true);
                     let empty=summary(&[],day(now()));
-                    for (name,c) in [("icon",None),("summary",Some(icon::summary())),("custom",Some(icon::summary()))] {
-                        let image=c.and_then(|c|draw(&c,&empty,true,1.0,2.0).ok()).unwrap_or_else(||compact(false,true,2.0));
+                    for (name,full) in [("icon",false),("summary",true)] {
+                        let image=full.then(||draw(&empty,true,1.0,2.0).ok()).flatten().unwrap_or_else(||compact(false,true,2.0));
                         fs::write(dir.join(format!("agentq-{name}.png")),agentq_mark(image,warning).png()).expect("write fixture icon");
                     }
                 }
                 if step == 0 && (routes.is_empty() || routes.iter().any(|r| r == "icon")) {
                     let ps: Vec<Value> = roots(&install).iter().map(|r| project(&install, r)).collect();
-                    let s = summary(&ps, day(now()));
+                    let s = summary(&ps, settings.range(now()));
                     // this Mac's menu-bar height and backing scale (A5); the names record them
                     let (k, dpr) = (menu_bar_scale(), backing_scale());
                     let size = format!("{}pt@{dpr}x", 22.0 * k);
-                    let mut views = vec![("summary", icon::summary())];
-                    views.extend((!settings.icon.is_null()).then(|| ("custom", settings.icon.clone())));
                     for (theme, d) in [("dark", true), ("light", false)] {
                         for (mode, run) in [("run", true), ("pause", false)] {
                             for n in [16u32,32,64,128,256,512,1024] {
@@ -1481,8 +1472,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             }
                             let s = Summary { run, ..s.clone() };
                             let _ = fs::write(dir.join(format!("icon-compact-{mode}-{theme}-{size}.png")), compact(run, d, k * dpr).png());
-                            for (name, c) in &views {
-                                if let Ok(img) = draw(c, &s, d, k, dpr) {
+                            for name in ["summary"] {
+                                if let Ok(img) = draw(&s, d, k, dpr) {
                                     let _ = fs::write(dir.join(format!("icon-{name}-{mode}-{theme}-{size}.png")), img.png());
                                 }
                             }
@@ -1607,17 +1598,17 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
     let messages=crate::messages::snapshot(install,&ps);
     let onboarding=snap.and_then(|(_,route)|agentq_fixture(route)).unwrap_or_else(crate::agentq::snapshot);
-    let (start, end) = s.range(now());
-    let sum = summary(&ps, (start, end));
+    let observed=now();
+    let (start, end) = s.range(observed);
+    let sum = summary_at(&ps, (start, end), observed);
     let url = |rgba: &Rgba| format!("data:image/png;base64,{}", base64(&rgba.png()));
     let mut st = json!({"platform": if cfg!(windows) { "windows" } else { "macos" }, "version": crate::platform::VERSION,
         "agentq":onboarding,"messages":messages,"navigation": s.navigation, "workspace_navigation":s.workspace_navigation, "host": ps.iter().find_map(|p| p["host"].as_str()).unwrap_or("?"), "view": s.view, "font": s.font, "period": s.period, "pinned": s.pin.pinned, "top": s.pin.top, "size": s.pin.size, "size_anchor": s.pin.size_anchor, "attached_edge": s.pin.attached_edge, "auto_anchor":s.pin.auto_anchor,
-        "now": now(), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::snapshot(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "since": sum.since},
+        "now": observed, "palette":icon::css(dark), "service":crate::host::service_status(install),"lifecycle":crate::lifecycle::status(install,None),"restart_review":crate::lifecycle::review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_review":crate::lifecycle::stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"full_stop_review":crate::lifecycle::full_stop_review(install,"review").unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})),"stop_hold":crate::lifecycle::stop_hold_status(install),"stop_modes":cfg!(target_os="macos"),"projects": ps, "notify": notify_state(&s.notify, &ps), "agents": agents(&ps), "workspace_local": requests_file(install)["answers"], "conversations":crate::conversations::snapshot(install), "ai": {"request": crate::setup::last(install, true), "runtime":owner_runtime(&ps), "root":requests_file(install)["root"], "local":requests_file(install)["local"], "error":requests_file(install)["error"], "draft": requests_file(install)["draft"], "history": requests_file(install)["history"]}, "add": add, "setup": crate::setup::last(install, false), "history": {"start": start, "end": end, "tz": s.tz, "bins": sum.bins, "peak":icon::peak(&sum.bins), "svg":icon::svg(&icon::Data {paused:false,..icon_data(&sum)},dark), "since": sum.since},
         // § 4 Data: a corrupt tray.json names its reason while the defaults show
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     {
-        let day = summary(&ps, day(now()));
-        st["icons"] = json!({"icon": url(&agentq_mark(compact(sum.run, dark, 2.0),st["agentq"]["warning"]==true)), "full": draw(&icon::summary(), &day, dark, 1.0, 2.0).map_or(Value::Null, |i| json!(url(&agentq_mark(i,st["agentq"]["warning"]==true)))), "custom": if s.icon.is_null() {Value::Null} else {draw(&s.icon,&day,dark,1.0,2.0).map_or(Value::Null, |i|json!(url(&agentq_mark(i,st["agentq"]["warning"]==true))))}});
+        st["icons"] = json!({"icon": url(&agentq_mark(compact(sum.run,dark,2.0),st["agentq"]["warning"]==true)), "full":icon::svg(&icon_data(&sum),dark)});
     }
     if let Some((theme, page)) = snap {
         st["theme"] = json!(theme);
@@ -1662,14 +1653,14 @@ fn agents(ps: &[Value]) -> Value {
     json!({"at": a["at"], "rows": a["rows"].as_array().into_iter().flatten().map(crate::runtime::agent_text).collect::<Vec<_>>()})
 }
 
-/// The last 24 h, the period of the icon histogram (icon-summary.config.json).
+/// The default 24 h Summary period.
 fn day(now: i64) -> (i64, i64) {
     rolling(now, 86400)
 }
 
-/// 12 whole epoch-aligned bins of `period / 12`, the newest holding `now` (partial): the grid moves one bin at a boundary (M6).
+/// Six whole epoch-aligned bins of `period / 6`, the newest holding `now` (partial): the grid moves one bin at a boundary (M6).
 fn rolling(now: i64, period: i64) -> (i64, i64) {
-    let w = period / 12;
+    let w = period / 6;
     let end = (now.div_euclid(w) + 1) * w;
     (end - period, end)
 }
@@ -1707,32 +1698,32 @@ fn capture_screen(window:&Window,path:&Path)->Result<(),String> {
     if !fs::read(path).is_ok_and(|b|b.starts_with(b"\x89PNG\r\n\x1a\n")){return Err("screencapture wrote no PNG".into());} Ok(())
 }
 
-/// Configuration `c` over `s` at `k` × 22 pt and `dpr` pixels per point through the shared renderer.
-fn draw(c: &Value, s: &Summary, dark: bool, k: f32, dpr: f32) -> Result<Rgba, Vec<String>> {
-    let d = icon::Data { blocked: s.known.then_some(s.blocked), counts: s.counts.map(|n| s.known.then_some(n)), bins: s.bins.clone(), paused: !s.run };
-    icon::render(c, (22.0 * k * dpr).round() as u32, dpr, &d, dark)
+fn icon_data(s:&Summary)->icon::Data {
+    icon::Data { blocked:s.known.then_some(s.blocked),counts:s.counts.map(|n|s.known.then_some(n)),bins:s.bins.clone(),paused:!s.run }
+}
+fn draw(s:&Summary,dark:bool,k:f32,dpr:f32)->Result<Rgba,String> {
+    icon::raster(&icon::svg(&icon_data(s),dark),(22.0*k*dpr).round() as u32)
 }
 
 fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>) {
     let Some(t) = tray else { return };
-    let sum = summary(st["projects"].as_array().map_or(&[][..], |v| v), day(now()));
-    let config = match s.view.as_str() {
-        "full" => Some(icon::summary()),
-        "custom" => Some(s.icon.clone()),
-        _ => None,
-    };
-    let (k, dpr) = if config.is_some() { (menu_bar_scale(), backing_scale()) } else { (1.0, 2.0) };
-    let new = format!("{} {config:?} {dark} {k} {dpr} {} {} {:?} {:?}", st["agentq"]["warning"], sum.run, sum.known, (sum.counts, sum.blocked), if config.is_some() { sum.bins.clone() } else { vec![] });
+    let observed=st["now"].as_i64().unwrap_or_else(now);
+    let sum = summary_at(st["projects"].as_array().map_or(&[][..], |v| v), s.range(observed), observed);
+    let full=s.view=="full";
+    let (k,dpr)=if full {(menu_bar_scale(),backing_scale())}else{(1.0,2.0)};
+    // Reuse the published vector: a time-bin boundary cannot split native and web surfaces.
+    let svg=full.then(||st["icons"]["full"].as_str().unwrap_or("").to_owned());
+    let new=format!("{} {dark} {k} {dpr} {} {} {:?} {svg:?}",st["agentq"]["warning"],sum.run,sum.known,(sum.counts,sum.blocked));
     if *sig == new {
         return;
     }
     let applied = crate::profile::measure("tray.render", || {
-        let rendered = config.as_ref().map(|c| draw(c, &sum, dark, k, dpr));
+        let rendered = svg.as_ref().map(|svg| icon::raster(svg,(22.0*k*dpr).round() as u32));
         let failed = rendered.as_ref().is_some_and(Result::is_err);
         let img = agentq_mark(rendered.and_then(Result::ok).unwrap_or_else(|| compact(sum.run, dark, k * dpr)),st["agentq"]["warning"]==true);
         let applied = t.set_icon(Some(rgba_icon(&img)));
         // Same configuration, state and fallback as the tray, rendered at native app-icon resolution.
-        let app = agentq_mark(config.as_ref().and_then(|c| draw(c, &sum, dark, 1.0, 256.0/22.0).ok())
+        let app = agentq_mark(svg.as_ref().and_then(|svg| icon::raster(svg,256).ok())
             .unwrap_or_else(|| compact(sum.run, dark, 256.0/22.0)),st["agentq"]["warning"]==true);
         refresh_app_icon(&app, window)?;
         if k > 1.0 { fit_status_image(k); }
@@ -2772,27 +2763,19 @@ mod tests {
         }
     }
 
-    // Chain: § 4 tray icon save. Risk: an invalid draft replaces the working icon.
+    // A7: removed Custom resolves to Summary; unrelated settings survive a subsequent save.
     #[test]
-    fn invalid_icon_draft_leaves_tray_json_unchanged() {
-        let install = std::env::temp_dir().join(format!("taskq-icon-{}", std::process::id()));
+    fn saved_custom_resolves_to_summary_without_losing_settings() {
+        let install=std::env::temp_dir().join(format!("taskq-icon-{}",std::process::id()));
         fs::create_dir_all(&install).unwrap();
-        let before = r#"{"view":"full","font":18}"#;
-        fs::write(install.join("tray.json"), before).unwrap();
-        let mut bad = icon::summary();
-        bad["version"] = json!(2);
-        bad["elements"][0]["bind"] = json!("eta");
-        assert_eq!(use_icon(&install, &bad).unwrap_err().len(), 2, "every schema error");
-        assert_eq!(fs::read_to_string(install.join("tray.json")).unwrap(), before);
-        assert_eq!(Settings::load(&install).view, "full", "the current icon stays");
-        let mut good = icon::summary();
-        good["elements"][0]["align"] = json!("center");
-        use_icon(&install, &good).unwrap();
-        let s = Settings::load(&install);
-        assert!(s.view == "custom" && s.icon == good && s.font == 18);
-        // a corrupt saved icon falls back to Summary
-        fs::write(install.join("tray.json"), r#"{"view":"custom","icon":{"version":9}}"#).unwrap();
-        assert_eq!(Settings::load(&install).view, "icon");
+        let p=install.join("tray.json");
+        for icon in [json!({"version":1}),json!({"version":99}),Value::Null] {
+            fs::write(&p,json!({"view":"custom","font":18,"period":"custom","start":5,"end":20,"tz":"UTC","icon":icon,"unrelated":{"keep":true}}).to_string()).unwrap();
+            let settings=Settings::load(&install);
+            assert_eq!(settings.view,"full");assert_eq!(settings.font,18);assert_eq!(settings.range(50),(5,20));
+            assert!(settings.save(&install));let saved:Value=serde_json::from_slice(&fs::read(&p).unwrap()).unwrap();
+            assert_eq!(saved["unrelated"],json!({"keep":true}));assert!(saved.get("icon").is_none());
+        }
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -2863,8 +2846,8 @@ mod tests {
         let s = summary(&ps, (-200, 100));
         assert_eq!(s.counts, [1, 1, 0, 0]);
         assert!(s.run && !summary(&ps[..2], (-200, 100)).run);
-        assert_eq!(s.bins.iter().map(|b| b[0]).sum::<u32>(), 2, "same attempt on two boards counts twice, on one board once");
-        assert_eq!(s.bins.iter().map(|b| b[1]).sum::<u32>(), 0, "outside the period");
+        assert_eq!(s.bins.iter().map(|b| b.counts[0]).sum::<u32>(), 2, "same attempt on two boards counts twice, on one board once");
+        assert_eq!(s.bins.iter().map(|b| b.counts[1]).sum::<u32>(), 0, "outside the period");
         assert!(!s.known, "a project without a complete snapshot makes the counts unknown");
         let mut ok = ps.clone();
         for p in &mut ok { p["complete"] = json!(true); }
@@ -2872,37 +2855,24 @@ mod tests {
         ok[0]["tasks"][0]["state"]=json!("waiting");ok[1]["tasks"][0]["state"]=json!("waiting");
         let blocked=summary(&ok,(-200,100));
         assert_eq!(blocked.blocked,1,"blocked tasks deduplicate by board and issue");
-        assert_eq!(blocked.counts[2],0,"Custom ready does not include blocked");
+        assert_eq!(blocked.counts[2],0,"ready count stays separate from blocked");
     }
 
     // Chain: M6/D11 rolling history grid and U-A6 icon. Risk: bars drift on every refresh, or a boundary loses or moves events.
     #[test]
     fn history_grid_moves_one_bin_at_a_boundary() {
-        let b = 7200 * 300_000; // a 2 h boundary of the 24 h period
-        // one event per bin before b (kinds in turn), two more in the bin closing at b, one after b
-        let mut ev: Vec<Value> = (1..12).map(|i| json!([b - i * 7200, KINDS[(i % 4) as usize], format!("e{i}")])).collect();
-        ev.extend([json!([b - 3700, "close", "late"]), json!([b - 3601, "ask", "last"]), json!([b + 30, "failed", "new"])]);
-        // the events cache at `now` holds only events up to now
-        let at = |now: i64| {
-            let seen: Vec<&Value> = ev.iter().filter(|e| e[0].as_i64().unwrap() <= now).collect();
-            summary(&[json!({"issues": "u", "tasks": [], "focus": ["all"], "events": seen, "since": 0, "complete": true})], day(now))
-        };
-        let icons = |s: &Summary| [(1.0, 2.0), (16.0 / 22.0, 1.0)].map(|(k, dpr)| draw(&icon::summary(), s, true, k, dpr).unwrap().png());
-        let frames = [b - 3600, b - 1, b, b + 31, b + 3600];
-        let sums: Vec<Summary> = frames.iter().map(|&t| at(t)).collect();
-        let pngs: Vec<_> = sums.iter().map(icons).collect();
-        for (i, j) in [(0, 1), (3, 4)] {
-            assert_eq!(sums[i].bins, sums[j].bins, "no movement inside a bin");
-            assert!(pngs[i] == pngs[j], "44 px and 16 px icons identical inside a bin");
-        }
-        let (before, after) = (&sums[1].bins, &sums[2].bins);
-        assert_eq!(after[..11], before[1..], "the whole grid moves one bin left at the boundary");
-        assert_eq!((after[11], sums[3].bins[11]), ([0; 4], [0, 1, 0, 0]), "the new partial bin starts empty and fills in place");
-        assert_eq!(before[11], [1, 1, 1, 0]);
-        let tot = |bins: &[[u32; 4]]| (0..4).map(|k| bins.iter().map(|r| r[k]).sum::<u32>()).collect::<Vec<_>>();
-        assert_eq!(tot(&after[..11]), tot(&before[1..]), "retained totals unchanged");
-        assert_eq!((before[0], tot(after)), ([0; 4], tot(before)), "an empty oldest bin leaves: every total unchanged");
-        assert!(pngs[1] != pngs[2], "the icon changes at the boundary");
+        let b = 14400 * 150_000;
+        let mut ev:Vec<Value>=(1..6).map(|i|json!([b-i*14400,KINDS[(i%4) as usize],format!("e{i}")])).collect();
+        ev.extend([json!([b-3700,"close","late"]),json!([b-3601,"ask","last"]),json!([b+30,"failed","new"])]);
+        let at=|now:i64| {let seen:Vec<&Value>=ev.iter().filter(|e|e[0].as_i64().unwrap()<=now).collect();
+            summary_at(&[json!({"issues":"u","tasks":[],"focus":["all"],"events":seen,"since":0,"complete":true})],day(now),now)};
+        let icons=|s:&Summary|[(1.0,2.0),(16.0/22.0,1.0)].map(|(k,dpr)|draw(s,true,k,dpr).unwrap().png());
+        let frames=[b-3600,b-1,b,b+31,b+3600];let sums:Vec<Summary>=frames.iter().map(|&t|at(t)).collect();let pngs:Vec<_>=sums.iter().map(icons).collect();
+        for (i,j) in [(0,1),(3,4)] {assert_eq!(sums[i].bins,sums[j].bins);assert_eq!(pngs[i],pngs[j]);}
+        let counts=|s:&Summary|s.bins.iter().map(|b|b.counts).collect::<Vec<_>>();let before=counts(&sums[1]);let after=counts(&sums[2]);
+        assert_eq!(after[..5],before[1..],"whole grid advances one bin");
+        assert_eq!((after[5],sums[3].bins[5].counts),([0;4],[0,1,0,0]));
+        assert_ne!(pngs[1],pngs[2]);
         if let Ok(dir) = std::env::var("TASKQ_FRAMES") {
             // ponytail: evidence frames on demand, `TASKQ_FRAMES=DIR cargo test history_grid`
             for (t, p) in frames.iter().zip(&pngs) {
@@ -2916,12 +2886,12 @@ mod tests {
     // Chain: § 4 tray settings input. Risk: webview input stores unknown values.
     #[test]
     fn settings_keep_only_known_values() {
-        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null };
+        let mut s = Settings { view: "icon".into(), font: 16, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null };
         s.set(&json!({"view": "full", "font": 18, "period": "1w"}));
         s.set(&json!({"view": "x", "font": 15, "period": "2y"}));
         s.set(&json!({"period": "custom", "start": 50, "end": 50, "tz": "UTC"}));
-        assert!(s == Settings { view: "full".into(), font: 18, period: "1w".into(), start: 0, end: 0, tz: "local".into(), icon: Value::Null, pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null });
-        assert_eq!(s.range(1000), (50400 - 604800, 50400), "whole 14 h bins, the newest holds now");
+        assert!(s == Settings { view: "full".into(), font: 18, period: "1w".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null });
+        assert_eq!(s.range(1000), (100800 - 604800, 100800), "whole 28 h bins, the newest holds now");
         s.set(&json!({"period": "custom", "start": 40, "end": 160, "tz": "UTC"}));
         assert_eq!((s.range(1000), s.tz.as_str()), ((40, 160), "UTC"));
     }
@@ -3002,13 +2972,63 @@ mod tests {
             [0, "ask", "9"], [30, "ask", "10"], [119, "ask", "11"], [10, "blocked", "12"], [60, "blocked", "13"], [119, "blocked", "14"], [50, "later", "15"]]);
         let p = json!([{"issues": "u", "tasks": [], "focus": ["all"], "events": ev, "since": -10}]);
         let s = summary(p.as_array().unwrap(), (0, 120));
-        assert_eq!(s.bins.len(), 12);
-        assert_eq!((s.bins[0], s.bins[6], s.bins[11]), ([2, 1, 1, 0], [0, 1, 0, 1], [1, 1, 1, 1]), "[start, end): 120 and -1 are out");
-        assert_eq!((0..4).map(|k| s.bins.iter().map(|b| b[k]).sum::<u32>()).collect::<Vec<_>>(), [3, 3, 3, 3]);
+        assert_eq!(s.bins.len(), 6);
+        assert_eq!((s.bins[0].counts, s.bins[3].counts, s.bins[5].counts), ([2, 1, 1, 1], [0, 1, 0, 1], [1, 1, 1, 1]), "[start, end): 120 and -1 are out");
+        assert_eq!((0..4).map(|k| s.bins.iter().map(|b| b.counts[k]).sum::<u32>()).collect::<Vec<_>>(), [3, 3, 3, 3]);
         assert_eq!(s.since, Some(-10));
         let ps = json!([{"issues": "u", "events": []}, {"issues": "v", "events": [], "since": 5}]);
         assert_eq!(summary(&ps.as_array().unwrap()[..1], (0, 1)).since, None, "no events cache: no since");
         assert_eq!(summary(ps.as_array().unwrap(), (0, 1)).since, Some(5));
+    }
+
+    // A8: real event identity, half-open bounds and incomplete sources feed the same renderer.
+    #[test]
+    fn approved_real_history_fixtures_use_one_six_bin_svg() {
+        let fixture:Value=serde_json::from_str(include_str!("../docs/reviews/real-data-2026-10-22.json")).unwrap();
+        let ps:Vec<Value>=fixture["projects"].as_array().unwrap().iter().map(|p|json!({"name":p["name"],"issues":p["board_issues_url"],"since":p["history_since"],"complete":true,"focus":["all"],"tasks":p["current_tasks"].as_array().unwrap().iter().map(|t|{let mut row=t.clone();row["n"]=t["number"].clone();row}).collect::<Vec<_>>(),"events":p["window_events"].as_array().unwrap().iter().map(|e|json!([e["at"],e["kind"],e["id"],e["task"]])).collect::<Vec<_>>()})).collect();
+        let captured=fixture["captured_at"].as_i64().unwrap();
+        let range=(fixture["window"]["start"].as_i64().unwrap(),fixture["window"]["end"].as_i64().unwrap());
+        let taskq=ps.iter().find(|p|p["name"]=="taskq").unwrap();
+        let day=summary_at(&[taskq.clone()],range,captured);
+        assert_eq!(day.counts,[1,0,1,0],"frozen current counters keep distinct task identities");
+        assert_eq!(day.bins.iter().map(|b|b.counts[0]).collect::<Vec<_>>(),[5,4,7,12,7,4]);
+        assert!(day.bins.iter().all(icon::Bin::complete));assert!(day.bins[5].ongoing);
+        let hour:Value=serde_json::from_str(include_str!("../docs/reviews/real-data-hour-2026-10-22.json")).unwrap();
+        let hourly=summary_at(&[taskq.clone()],(hour["window_start"].as_i64().unwrap(),hour["window_end"].as_i64().unwrap()),captured);
+        assert_eq!(hourly.bins.iter().map(|b|b.counts[0]).collect::<Vec<_>>(),[1,0,0,1,0,0]);
+        let aggregate=summary_at(&ps,range,captured);
+        assert!(aggregate.bins[..5].iter().all(|b|b.missing==["pilotq"]));assert!(aggregate.bins[5].complete());
+        #[cfg(target_os="macos")]
+        let font=unsafe {objc2_app_kit::NSFont::systemFontOfSize_weight(9.0,objc2_app_kit::NSFontWeightMedium)}.fontName().to_string();
+        #[cfg(not(target_os="macos"))]
+        let font="Segoe UI (requested; native qualification pending)".to_string();
+        let mut paused=day.clone();paused.run=false;
+        let mut zero=day.clone();zero.counts=[0;4];zero.blocked=0;
+        for b in &mut zero.bins {b.counts=[0;4];}
+        let mut failed=zero.clone();failed.bins[2].counts[1]=1;
+        let mut unknown=zero.clone();unknown.bins[0].missing=vec!["synthetic missing source".into()];unknown.bins[0].counts[0]=999;
+        for (name,s) in [("day",&day),("hour",&hourly),("incomplete",&aggregate),("paused",&paused),("synthetic-zero",&zero),("synthetic-failed",&failed),("synthetic-unknown",&unknown)] {
+            for dark in [false,true] {
+                let vector=icon::svg(&icon_data(s),dark);
+                for n in [18,22,33,44,66,256] {assert_eq!(icon::raster(&vector,n).unwrap().w,n);}
+                if std::env::var_os("TASKQ_ICON_EVIDENCE").is_none() {
+                    let theme=if dark {"dark"}else{"light"};
+                    let saved:Value=serde_json::from_slice(&fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("tests/fixtures/icon-history/{name}-{theme}.json"))).expect("canonical browser fixture")).unwrap();
+                    assert_eq!(saved["bins"],json!(s.bins),"browser/native bins and exact counts");
+                    assert_eq!(saved["peak"],icon::peak(&s.bins));assert_eq!(saved["palette"],icon::css(dark));
+                    let chart=|svg:&str|svg.split(r#"<g id="chart""#).nth(1).unwrap().split(r#"</g><g id="counters">"#).next().unwrap().to_string();
+                    assert_eq!(chart(saved["svg"].as_str().unwrap()),chart(&vector),"all surfaces retain canonical heights, colors and marks");
+                }
+                if let Ok(dir)=std::env::var("TASKQ_ICON_EVIDENCE") {
+                    let dir=Path::new(&dir);fs::create_dir_all(dir).unwrap();let theme=if dark {"dark"}else{"light"};
+                    fs::write(dir.join(format!("{name}-{theme}.svg")),&vector).unwrap();
+                    for n in [18,44,66,256] {fs::write(dir.join(format!("{name}-{theme}-{n}.png")),icon::raster(&vector,n).unwrap().png()).unwrap();}
+                    fs::write(dir.join(format!("{name}-{theme}.json")),json!({"bins":s.bins,"peak":icon::peak(&s.bins),"svg":vector,"start":s.bins[0].start,"end":s.bins[5].end,"tz":"local","since":s.since,"palette":icon::css(dark),"captured":captured,"font":font,"compact":format!("data:image/png;base64,{}",base64(&compact(s.run,dark,2.0).png()))}).to_string()).unwrap();
+                }
+            }
+        }
+        let mut duplicate=ps.clone();duplicate.push(taskq.clone());assert_eq!(summary_at(&duplicate,range,captured).bins,aggregate.bins,"same board cache never doubles events");
+        let custom=summary_at(&[taskq.clone()],(1,8),captured);assert_eq!(custom.bins[0].start,1.0);assert_eq!(custom.bins[5].end,8.0);assert!(!custom.bins.iter().any(|b|b.ongoing));
     }
 
     // Chain: R12 tray agents row. Risk: stale probe shown or missing probe shown as known.

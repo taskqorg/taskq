@@ -77,7 +77,7 @@ Native click and window-raise behavior (a tray click, Send or Reopen raising a w
 
 Blocking: wrong data/action target, duplicate side effects, lost series/features, clipped essential controls, unjustified scrolling, unreadable icon or unapproved semantics. Minor platform font antialias differences may be documented; geometry and behavior still pass.
 
-Custom icon: CI-A1–CI-A7 in [custom-icon.md](custom-icon.md), including identical Summary/Custom rendering, approval persistence and native size/state matrix.
+Summary: [I1–I6](icon-summary.md), including identical six-bin SVG groups on all surfaces, palette A, exact/incomplete detail and native size/state qualification. [Custom compatibility](custom-icon.md) retains saved settings.
 
 ## Contract detail
 

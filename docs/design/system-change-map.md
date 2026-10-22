@@ -52,6 +52,6 @@ The browser candidate still demonstrates legacy Auto/Fixed controls alongside op
 
 No prototype can certify scheduling, security, remote session access, atomic board effects or real cleanup. Report each slice as Specified / Prototyped / Implemented / Qualified; never replace these with one Done flag.
 
-Custom icon implementation: versioned shared preset/schema, capability catalogue, one renderer for Summary/Custom, agent draft/preview tools, validated atomic local preference save and re-edit/revert. See [custom-icon.md](custom-icon.md).
+Icon implementation: one fixed six-bin SVG and palette A for Summary, Dock, picker and History under [I1–I6](icon-summary.md). Custom schema/editor are removed; [compatibility](custom-icon.md) preserves unrelated preferences.
 
 [Refactoring backlog](refactoring-backlog.md) defines ordered workstreams, API boundaries, dependencies and acceptance for implementation tasks.
