@@ -118,12 +118,12 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended |
 | `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits |
 
-- `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1); an open or unknown one keeps it waiting.
+- `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1); else it stays waiting.
 - `gone` in `review` replaces only the reviewer; keeps result. ([E1–E5](docs/design/emergency-recovery.md)): § 3 hold forbids host `spawn` except E3 selected recovery; unknown liveness forbids `gone`; `service recover --apply` fences each `gone attempt` with `--op-id`/`--revision` (§ 4).
 - One retry counter: attempt `requeue` at 3 or `gone` at 2 ends in `ask`; answer goes to ready. Unless already a card, append `Problem:` with the limit, recommended `1. requeue: ...`, `2. later: ...`, and `To answer:` with `taskq answer N.K` only; reason `K. ` lines become `K) ` (N-1 folds the same card). Ready clears attempt, card, result, publication. `requeue main-moved` and `usage-limit` keep retries and add no limit card.
 - `answer K` whose option starts with `close` or `later` runs `close` (§ 7) or `later` instead, only through `taskq answer N.K`: a bare board comment `K` folds as a plain answer; an owner pick of `approve <sha7|sha> ...` approves a gated task only when that SHA matches its current result, including a bare board comment in `ask`. An attempt-bound answer cannot approve.
 - Gate states: none, `required`, `approved`, `stale`. An approval binds to the result it names: the next `result` or a move to `ready` makes it `stale`, which blocks like `required` until an `approve` of the new result. The gate blocks only `close` in `review` (its publication and the closed issue that frees `Depends on` tasks); a fold from the board after any restart keeps it (R1). Closing a `later`/`failed` task stays the owner's own act.
-- After an entry is accepted, the writer sets the `q-<state>` label; every service pass fixes labels that differ from the fold. A hand-moved label is overwritten: people change state with an entry.
+- After an accepted entry the writer sets `q-<state>`; each pass fixes labels that differ from the fold, hand-moved too (state moves by entry). Reverted next pass: other fold; leave it, log, report once, retry each 60 passes.
 ### Ask card
 `ask` writes, in order, ≤ 9 nonblank lines, without headings or blank lines:
 1. `Done: <what was checked or attempted>` -- one line, ≤ 160 characters; say `not started` when true.

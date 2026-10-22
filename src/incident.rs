@@ -12,7 +12,7 @@ pub const CATALOG: &[&str] = &[
 ];
 const CODES: &[&str] = &[
     "read", "create", "update", "delete", "other", "direct", "pr", "ready", "waiting", "doing", "review",
-    "ask", "later", "failed", "closed", "claim:rejected", "heartbeat:conflict", "passes:3", "spawn:missing",
+    "ask", "later", "failed", "closed", "claim:rejected", "heartbeat:conflict", "passes:2", "spawn:missing",
     "http:2xx", "merge:unconfirmed", "ancestry:missing", "runtime:installed", "exit:101", "reexec:failed",
     "restart:stuck", "golden:mismatch", "smoke:failed", "starts:3", "fold.json", "observed", "defect",
     "panic:stdio", "panic:unwrap", "panic:index", "panic:other",

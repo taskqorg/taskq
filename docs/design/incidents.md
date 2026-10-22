@@ -21,7 +21,7 @@ Fingerprint fields are hashed (see Report); every fault also adds `board`, `runt
 |---|---|---|---|---|
 | `invariant.double_attempt` | service pass step 4 (`Service::pass`, src/service.rs): a fresh heartbeat lists `#N <id>` newer than the attempt `fold` accepted for `#N` (a lost claim that launched), or this host runs a child whose attempt `fold` did not accept | fault, site | a lost claim (`spawn <id> lost the claim`): normal contention; a replaced (older) attempt its host lists until its next pass: heartbeat lag ([#1140](https://github.com/taskqorg/taskq/issues/1140)) | [#357](https://github.com/alexkirs/taskq/issues/357), [#607](https://github.com/alexkirs/taskq/issues/607), claim tests [#749](https://github.com/alexkirs/taskq/issues/749)–[#754](https://github.com/alexkirs/taskq/issues/754) |
 | `invariant.golden` | `selftest` folds built-in `tests/golden` (`core::golden`, src/core.rs) and one trace fails on a published release | fault, site, golden file name | selftest config or board read errors | § 2 Executable behavioral model, § 8 Release |
-| `invariant.label_loop` | service step 5 (`service::project`): the same issue needs the same label fix on 3 consecutive passes after a successful readback | fault, site, state | one fix of a hand-moved label (§ 2) | `verify_assignment` (src/board/mod.rs), [#496](https://github.com/alexkirs/taskq/issues/496) |
+| `invariant.label_loop` | service step 5 (`service::project`): the same issue needs the same label fix on 2 consecutive passes after a successful readback; the service backs off (§ 2) | fault, site, state | one fix of a hand-moved label (§ 2) | `verify_assignment` (src/board/mod.rs), [#496](https://github.com/alexkirs/taskq/issues/496) |
 | `adapter.read_after_write` | `Service::claim` (src/service.rs): the board accepted `spawn` (returned id) and the re-read comment list lacks that id | fault, site, board | an id that is present but lost to an earlier spawn | § 3 Claim `ponytail:` note |
 | `adapter.bad_json` | `Reply::json` (src/board/mod.rs): a 2xx reply whose body does not parse | fault, site, operation code | any non-2xx reply, curl failure, timeout | src/board/mod.rs `bad JSON from board` |
 | `dispatch.panic` | panic hook (new in #612, src/main.rs) and the Windows launcher seeing exit 101 of `service run` | fault, panic site in `src/`, class `panic:stdio\|unwrap\|index\|other` | a print to a closed stdout/stderr pipe (exit 141, no report); panics outside `src/` paths (dependency frames only) are reported with site `dep` | src/platform.rs launcher note on exit 101, [#804](https://github.com/alexkirs/taskq/issues/804) |
@@ -50,7 +50,7 @@ One JSON object, UTF-8, at most 4 KiB, keys only from this list; any other key, 
 | `runtime` | `claude`, `codex`, `codex-app` or `none` |
 | `os` | `macos-aarch64` etc. (`platform::target`) |
 | `site` | `src/<file>.rs:<line>` or `dep` |
-| `evidence` | up to 8 enumerated codes, e.g. `exit:101`, `passes:3`, `http:2xx`, `state:review`; no free text |
+| `evidence` | up to 8 enumerated codes, e.g. `exit:101`, `passes:2`, `http:2xx`, `state:review`; no free text |
 | `observed`, `inferred` | enumerated codes: what the detection point saw, what it concludes |
 
 Never sent: project, repository, host or machine name, task number, title or body, branch, URL, user or session id, account name, raw arguments, exception text, transcript, environment, token, absolute path. Values are replaced before hashing: hashing a private string is not redaction.

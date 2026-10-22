@@ -325,7 +325,7 @@ pub struct Service<'a> {
     delivered: HashMap<u64, u64>,
     cache: HashMap<u64, (i64, Vec<Comment>)>,
     deps: DepCache,
-    label_fixes: HashMap<u64, (String, Vec<String>, u8)>,
+    label_fixes: HashMap<u64, (String, Vec<String>, u32)>,
     cancelled_publications: HashMap<u64, u64>,
     /// Closed-task terminal rows `repair_ended` proved are not this host's (#1359).
     unowned: HashSet<(u64, u64)>,
@@ -1451,15 +1451,21 @@ impl<'a> Service<'a> {
             let mut stale: Vec<_> = v.issue.labels.iter().filter(|l| l.starts_with("q-") && **l != want).cloned().collect();
             stale.sort();
             let fix = !stale.is_empty() || !v.issue.labels.contains(&want);
-            project(self.board, &v.issue, &v.projection.task)?;
-            if fix && v.projection.task.state != State::Closed {
-                // Adapter success includes assignment readback; one hand-moved label is expected.
+            if !fix || v.projection.task.state == State::Closed {
+                project(self.board, &v.issue, &v.projection.task)?;
+            } else {
+                // Adapter success includes assignment readback; one hand-moved label is expected. The same fix again on
+                // the next pass means another writer folds differently (#1550: N-1 host): back off, log and report once.
+                // ponytail: retry every 60 passes so a fixed peer is caught up; a peer-written-label signal if that lags
                 let count = previous_fixes.get(&n).filter(|(w, old, _)| w == &want && old == &stale)
                     .map_or(1, |(_, _, count)| count.saturating_add(1));
-                self.label_fixes.insert(n, (want, stale, count));
-                if count >= 3 {
-                    crate::incident::detect("invariant.label_loop", concat!("src/service.rs:", line!()), "none", &[v.projection.task.state.name()], &["passes:3"]);
+                if count % 60 == 1 {
+                    project(self.board, &v.issue, &v.projection.task)?;
+                } else if count == 2 {
+                    log!("#{n} label {want} reverted by another writer after this host's fix; backing off (§ 2)");
+                    crate::incident::detect("invariant.label_loop", concat!("src/service.rs:", line!()), "none", &[v.projection.task.state.name()], &["passes:2"]);
                 }
+                self.label_fixes.insert(n, (want, stale, count));
             }
             if v.projection.task.state == State::Closed {
                 touched.insert(n);
@@ -3332,28 +3338,31 @@ mod tests {
         }
     }
 
-    // Chain: incident label loop. Risk: one relabel reported as a loop.
+    // Chain: incident label loop (#1550). Risk: two hosts folding one task differently (N-1 `later #N attempt`:
+    // `later` vs `waiting`) rewrite its label every pass; one relabel reported as a loop.
     #[test]
-    fn incident_label_loop_requires_consecutive_matching_successful_fixes() {
+    fn label_fix_backs_off_when_another_fold_reverts_it() {
         crate::incident::take_detected();
         let b = Fake::default();
         let n = b.create("task", "", &[TASK_LABEL.into(), "q-doing".into()]).unwrap();
         let c = cfg("local");
         let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
         s.focus.clear();
-        for pass in 1..=3 {
+        let has = |l: &str| b.issue(n).unwrap().labels.contains(&l.to_string());
+        // the other host's fold (`doing`) undoes this host's `ready` before every pass
+        for pass in 1..=61 {
             b.labels(n, &["q-doing".into()], &["q-ready".into()]).unwrap();
             s.pass().unwrap();
-            assert!(b.issue(n).unwrap().labels.contains(&"q-ready".into()));
-            assert_eq!(crate::incident::take_detected(), if pass == 3 { vec!["invariant.label_loop"] } else { vec![] });
+            assert_eq!(has("q-ready"), pass == 1 || pass == 61, "pass {pass}");
+            assert_eq!(crate::incident::take_detected(), if pass == 2 { vec!["invariant.label_loop"] } else { vec![] }, "pass {pass}");
         }
         s.pass().unwrap(); // no fix breaks the streak
         b.labels(n, &["q-doing".into()], &["q-ready".into()]).unwrap();
         s.pass().unwrap();
-        assert!(crate::incident::take_detected().is_empty());
+        assert!(has("q-ready") && crate::incident::take_detected().is_empty());
         b.labels(n, &["q-ask".into()], &["q-ready".into()]).unwrap();
         s.pass().unwrap(); // different fix also breaks the streak
-        assert!(crate::incident::take_detected().is_empty());
+        assert!(has("q-ready") && crate::incident::take_detected().is_empty());
     }
 
     // Chain: § 4 one service per host name (#933). Risk: a second install under the same host name posts `gone` for
