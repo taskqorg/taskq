@@ -636,6 +636,10 @@ const FILES: &str = "Never run gh auth login. A missing board token is an owner 
 const CI_WAIT: &str = "Board budget: poll CI at most once a minute (`gh pr checks <PR> --watch --interval 60`); never `gh run watch`\n\
      (it polls every 3 s) or `gh run view` without `--json`.\n";
 
+/// taskq.md § 7 rule 4 checks: a full suite after each edit costs minutes; the project's testing doc names the fast form.
+const DEV_LOOP: &str = "While editing, run only the filtered checks of the project's development loop (its AGENTS.md or testing doc names the fast command);\n\
+     run the full project checks once on the result candidate, after the rebase.\n";
+
 /// taskq.md § 7: a sandbox limit is unknown locally; publication still needs the section 7 CI gate.
 const SANDBOX_CHECKS: &str = "Host tests blocked by the worker sandbox: record sandbox-blocked in Checks, never as PASS; do not requeue for them.\n\
      Their Acceptance gate is green CI on the GitHub PR merge result (merge_group); private fallback uses exact-SHA CI; other routes follow taskq.md section 7 (R12).\n";
@@ -739,7 +743,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         format!(
             "Work only in `.worktrees/taskq-{n}` on branch `taskq-{n}` from origin/main (continue an existing branch).\n\
              For implementation changes, commit with the line `Task: {url}` in the message, rebase on origin/main, run the project checks, then {push}.\n\
-             Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer.\n\
+             {DEV_LOOP}Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer.\n\
              After the answer, deliver the approved outcome or file approved dependent tasks (§ 7); no commit is needed for research-only output.\n\
              Do not wait for CI: `close` checks it. {CI_WAIT}{SANDBOX_CHECKS}Then exactly one of:\n\
              - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
@@ -3930,7 +3934,7 @@ mod tests {
                     let prefix = if cfg!(windows) && rt == "codex-app" { "$env:TASKQ_TASK='7'; $env:TASKQ_ATTEMPT='42'; " } else { "env TASKQ_TASK=7 TASKQ_ATTEMPT=42 " };
                     assert_eq!(brief(&env, &l).contains(prefix), rt != "codex", "{rt} {role}: attempt identity");
                     assert!(task.contains(FILES) && task.contains(CI_WAIT));
-                    if role == "worker" { assert!(brief(&env, &l).contains(SANDBOX_CHECKS)); }
+                    if role == "worker" { assert!(brief(&env, &l).contains(SANDBOX_CHECKS) && brief(&env, &l).contains(DEV_LOOP)); }
                     assert!(brief(&env, &l).contains("later 7 --blocker #M --text") && brief(&env, &l).contains("resumes when #M closes"), "{rt} {role}: a park names its blocker task");
                     // the attempt log's evidence line
                     let log = root.join(format!(".taskq/{rt}-{role}.log"));

@@ -4,7 +4,9 @@ TaskQ applies [SpecQ testing](https://github.com/taskqorg/specq/blob/main/engine
 
 Development loop (workers and reviewers):
 
-- While editing, run only the affected checks: a filtered `cargo test --locked <module or test name>` for the changed Rust behavior, or the changed `node tests/<name>.test.cjs` for a web component.
+- While editing, run only the affected checks: `cargo test --locked --bin taskq <module or test name>` for the changed Rust behavior, or the changed `node tests/<name>.test.cjs` for a web component.
+- `--bin taskq` builds the crate once. Without it, Cargo also builds the plain binary that `tests/integration.rs` starts through `CARGO_BIN_EXE_taskq`, so the crate compiles twice. Measured after touching `src/service.rs` with a warm cache: Windows, 16 CPUs, 46 s without and 22 s with `--bin taskq`; macOS, 8 CPUs on a loaded host, 36 s without and 9-11 s with it (rustc 9.3 s, `build.rs` 1.6 s). Lower debug-info settings gave no gain.
+- Run `cargo test --locked --test integration <name>` only when the change touches CLI behavior that the integration tests cover.
 - Run `python3 scripts/check.py` once on the result candidate, after the rebase and before `result` (taskq.md § 7 step 4). A reviewer runs it once on the exact candidate under review when the candidate's evidence leaves it unknown.
 - Do not rerun the full `cargo test --locked` or `check.py --full` after each edit. A repeat full run needs a named reason: the selection changed, the edit touched shared code (build, dependencies, configuration, `core.rs`, board or runtime modules), or the previous run failed.
 - The SpecQ run policy still applies: new and previously failing checks run locally, a defect fix reruns its reproduction, and unknown impact broadens to the full relevant suite. A check that did not run is reported as not run, never as a pass.
