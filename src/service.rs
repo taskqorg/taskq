@@ -3614,7 +3614,8 @@ mod tests {
         assert!(w.execution_waits[&n].contains("termination unconfirmed"));
         let snapshot = crate::snapshot::read(&b, &cb, &json!({}), &[]);
         assert!(snapshot.tasks.iter().find(|r| r.n == n).unwrap().json()["execution_wait"].as_str().unwrap().contains("termination unconfirmed"));
-        assert!(snapshot.text(&cb, &json!({})).unwrap().contains("termination unconfirmed"));
+        let text = snapshot.text(&cb, &json!({})).unwrap();
+        assert!(text.contains("Run state unknown; see service log") && !text.contains("termination unconfirmed"), "#1524 owner text only: {text}");
         assert!(eb.borrow().is_empty());
         *ea.borrow()[0].1.borrow_mut() = Some(0);
         a.focus.clear();
