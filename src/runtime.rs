@@ -544,7 +544,7 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
     match (l.rt.as_str(), &l.resume) {
         ("claude", r) => {
-            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, l)]);
+            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l)]);
             if r.is_some() { c.args(["--resume", &l.session]) } else { c.args(["--session-id", &l.session]) };
         }
         (_, None) => {
@@ -988,12 +988,22 @@ fn pm_rules(root: &Path, phase: &str, fetch: impl FnMut(&str) -> Result<String, 
     Ok(text)
 }
 
-/// `--settings` for a Claude turn: a SessionStart hook that re-sends the rules after compaction.
-fn compact_settings(root: &Path, l: &Launch) -> String {
+/// `--settings` for a Claude turn: a SessionStart hook that re-sends the rules after compaction, and the launch's TaskQ env.
+fn compact_settings(root: &Path, install: &Path, l: &Launch) -> String {
     let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
     let exe = std::env::current_exe().unwrap_or_else(|_| "taskq".into());
     let cmd = format!("{} rules compact {} {} {} {}", q(&exe.to_string_lossy()), q(&root.to_string_lossy()), q(&l.role), l.task, l.attempt);
-    serde_json::json!({"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": cmd}]}]}}).to_string()
+    let attempt = (l.role != "operator").then_some(l);
+    serde_json::json!({"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": cmd}]}]}, "env": claude_env(install, Some(root), attempt)}).to_string()
+}
+
+/// #1531: `claude --bg` sessions run under the per-user Claude daemon, whose env is that of whoever started it;
+/// settings `env` overrides it per session and survives resume. Settings cannot unset: empty means unset (entry.rs).
+pub(crate) fn claude_env(install: &Path, root: Option<&Path>, l: Option<&Launch>) -> serde_json::Value {
+    let s = |p: Option<&Path>| p.map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+    serde_json::json!({"TASKQ_INSTALL": s(Some(install)), "TASKQ_ROOT": s(root),
+        "TASKQ_TASK": l.map(|l| l.task.to_string()).unwrap_or_default(), "TASKQ_ATTEMPT": l.map(|l| l.attempt.to_string()).unwrap_or_default(),
+        "TASKQ_ROLE": l.map(|l| l.role.clone()).unwrap_or_default()})
 }
 
 /// Current rules and turn text (§ 8 Rule delivery) for the Windows boundary qualification.
@@ -1479,7 +1489,7 @@ impl ClaudeTurn {
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
         c.current_dir(&root).arg("--bg");
         if l.resume.is_some() { c.args(["--resume", &l.session]); }
-        else { c.args(["--settings", &compact_settings(&root, l), "--remote-control", &l.title, "--permission-mode", permission_mode]); }
+        else { c.args(["--settings", &compact_settings(&root, env.install, l), "--remote-control", &l.title, "--permission-mode", permission_mode]); }
         if l.role == "operator" { for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); } }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, launch_error:None };
@@ -3625,6 +3635,12 @@ mod tests {
         assert_eq!(hook["matcher"], "compact");
         assert!(hook["hooks"][0]["command"].as_str().unwrap().ends_with(&format!(" rules compact '{}' 'worker' 7 42", root.display())));
         assert!(!args("codex").iter().any(|a| a == "--settings"), "codex gets no hook");
+        // #1531: the per-user Claude daemon spawns from its own env; settings carry this launch's values.
+        // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
+        let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
+        assert_eq!(settings["env"], want("7", "42", "worker"));
+        let operator: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &Launch { role: "operator".into(), ..launch("claude") })).unwrap();
+        assert_eq!(operator["env"], want("", "", ""), "operator: empty means unset");
         // The compact hook restores current mandatory bodies and index, without inventing a task.
         let start = turn_text(&env, &l, rule).unwrap();
         let text = compact(&root, "worker", 7, 42).unwrap();
