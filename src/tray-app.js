@@ -5,7 +5,7 @@ const shell=require('./app-shell.js');
 const {h,Fragment}=require('preact');
 
 const {createState,create}=execution.module("tray",{
-createState:function(snapshot=null){return {manualSize:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
+createState:function(snapshot=null){return {manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
 create:function(view,ports){
 const api=execution.module("tray.create",{
 
@@ -23,12 +23,21 @@ operationBody:function(context){
    case 'recovery':body=view.S.stop_modes?api.recoveryPanel():h('p',{role:'status'},'Reviewed recovery unavailable on this host.');break;
    case 'admission':{const selected=p?[p]:ps;body=[h('p',null,'Pause holds new admission; current tasks finish. Resume restores saved focus and cannot clear an emergency hold.'),selected.map(p=>h('section',{key:p.root},h('p',null,p.name+' · '+modeText(p)),admission(p))),!p&&bulk(selected.filter(p=>mode(p)==='run'),selected.filter(p=>mode(p)==='paused'))];break;}
    case 'update':body=[h('p',null,'Request the advertised update on this host. Running work is preserved; success requires the version read back from service status.'),update()];break;
+   case 'agentq':body=[api.agentq(true)];break;
    case 'setup':body=[h('p',null,'Choose a folder using the native picker. Opening or leaving this review registers nothing. Setup must confirm account, repository, visibility and exact external effects under § 6 before applying them.'),addProject(),setup()];break;
    default:body=h('p',{role:'status'},'Operation unavailable; no effect was submitted.');
   }
   return f(heading,actionNotices(),body);
 },
 operationAction:function(d){
+  if(d.a==='agentq-runtime'){view.agentqRuntime=d.runtime;present();return true;}
+  if(d.a==='agentq-dismiss'||d.a==='agentq-check'){send({a:d.a});return true;}
+  if(d.a==='agentq-setup'){
+    const A=view.S.agentq,rows=A?.runtimes||[],runtime=view.agentqRuntime||rows.find(r=>r.eligible)?.runtime;
+    if(!rows.some(r=>r.runtime===runtime&&r.eligible))return true;
+    const id=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
+    send({a:d.a,id,runtime});present();return true;
+  }
   if(d.a==='add-ask'||d.a==='add-back'){view.addConfirm=d.a==='add-ask';present();return true;}
   if(d.a==='add-install'||d.a==='add-cancel')view.addConfirm=false;
   // the pressed button is replaced: focus Cancel in the question, or the command again after it (U-A8)
@@ -298,9 +307,29 @@ views:function(){return view.S.platform==='macos'?h('div',{class:'options views'
 appearance:function(){
   return f(h('div',{class:'body meta'},'Theme follows system appearance.'),views(),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font)},n))));
 },
+agentq:function(settings=false){
+  const A=view.S.agentq;if(!A)return '';
+  if(A.kind==='running')return settings?h('div',{class:'body',role:'status'},'agentq running · '+(A.version||'version unknown')):'';
+  if(!settings&&A.kind==='shown'&&A.dismissed&&!view.agentqError)return '';
+  const rows=Array.isArray(A.runtimes)?A.runtimes:[],runtime=view.agentqRuntime||rows.find(r=>r.eligible)?.runtime,selected=rows.find(r=>r.runtime===runtime),targets=A.targets?.[runtime]||[];
+  const session=A.setup?.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(A.setup.url)?h('a',{href:'#','data-url':A.setup.url},'Open session'):null;
+  return h('section',{class:'group agentq','aria-label':A.kind==='shown'?'agentq is not installed':'agentq '+A.kind},
+    view.agentqError&&h('div',{class:'body alert',role:'alert'},view.agentqError),
+    h('div',{class:'row'},A.kind==='shown'?'Save on repeated context':A.kind==='setting-up'?'Setting up agentq…':A.kind==='stopped'?'agentq installed · service stopped':'agentq '+(A.kind==='unknown'?'status unknown':A.kind)),
+    h('div',{class:'body meta'},A.host+' · '+A.platform),
+    A.reason&&h('div',{class:'body',role:'status'},A.reason),
+    A.setup&&h('div',{class:'body',role:'status'},'Setup · '+A.setup.kind,A.setup.reason&&' · '+A.setup.reason,A.setup.next&&' · '+A.setup.next,' ',session),
+    A.kind==='shown'&&h('div',{class:'body'},'agentq can reduce repeated context and preserve cache reuse, which may lower model costs. Savings depend on your client and workload; no saving is guaranteed.'),
+    h('div',{class:'options'},rows.map(r=>h('button',{'data-a':'agentq-runtime','data-runtime':r.runtime,disabled:!r.eligible,'aria-pressed':String(runtime===r.runtime)},r.client))),
+    rows.filter(r=>!r.eligible).map(r=>h('div',{class:'body meta'},r.client+' · '+(r.reason||'unknown'))),
+    selected&&h('div',{class:'body'},'Set up agentq on this host for '+selected.client+' using '+runtime+'. This installs its verified release, engines and host service, and connects this client’s supported configuration, hooks and MCP. Existing sessions keep running. New sessions may be needed to verify the connection.'),
+    selected&&h('div',{class:'body meta'},'Approved targets: '+targets.join(', ')),
+    h('div',{class:'options'},h('button',{'data-a':'agentq-setup',disabled:!selected?.eligible||targets.length!==2},settings?'Set up agentq…':'OK — set up agentq'),A.kind==='shown'&&!A.dismissed&&h('button',{'data-a':'agentq-dismiss'},'Not now'),h('button',{'data-a':'agentq-check'},'Check again')),
+    !selected?.eligible&&h('div',{class:'body meta'},'Use an existing client: Install agentq from https://github.com/taskqorg/agentq and set it up for this client. No runtime or permissions are changed here.'));
+},
 agents:function(){
   const A=view.S.agents;
-  return f(h('div',{class:'body meta'},view.S.host+' · '+(A?'checked '+age(Math.max(0,view.S.now-A.at))+' ago':'unknown: no service probe yet')),A?A.rows.map(r=>h('div',{class:'body'},r)):h('div',{class:'body meta'},'Unknown: no status.json has agents'));
+  return f(api.agentq(true),h('div',{class:'body meta'},view.S.host+' · '+(A?'checked '+age(Math.max(0,view.S.now-A.at))+' ago':'unknown: no service probe yet')),A?A.rows.map(r=>h('div',{class:'body'},r)):h('div',{class:'body meta'},'Unknown: no status.json has agents'));
 },
 about:function(){
   return f(h('div',{class:'body'},'Tray '+view.S.version+' · '+view.S.host),view.S.projects.map(p=>h('div',{class:'body'},p.name+': '+(p.version||'version unknown'),h('span',{class:'meta'},' · '+(p.age==null?'status unknown':age(p.age)+' old')))),update());
@@ -313,7 +342,7 @@ setup:function(){
 },
 attention:function(){
   const all=unique(view.S.projects.flatMap(tasks));
-  const parts=[setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
+  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
   return parts.length?f(parts):'';
 },
 projects:function(){
@@ -389,13 +418,14 @@ runningAgents:function(){
   return h('section',{class:'group running-agents','aria-label':'Running agents'},h('div',{class:'row'},'Running agents'),out,h('details',{'data-view-key':'counts'},h('summary',null,'Reconcile counts'),counted,h('div',{class:'body meta'},'Reservations include pending or unconfirmed work. Task states differ from running processes; occupied slots can include other projects. Remote reservations: unknown.')));
 },
 home:function(){
-  const faults=[setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
+  const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
   return f(api.runningAgents(),controls(),ai(),api.messagesBadge(),
     faults.length>0&&h('section',{class:'group','aria-label':'Attention'},faults),filteredTasks(),
     h('div',{class:'group'},routeButton('projects'),routeButton('appearance')));
 },
 routeBody:function(){
   switch(view.page){
+    case 'agentq-shown':case 'agentq-setting-up':case 'agentq-running':case 'agentq-unknown':return api.agentq(view.page==='agentq-running');
     case 'projects':return projects();
     case 'attention':return attention()||h('div',{class:'body meta'},known(view.S.projects)?'No reported questions or failures':'Status incomplete; check Services');
     case 'settings':return f(h('div',{class:'row meta'},'Display and notices'),['appearance','cadence','notifications'].map(r=>routeButton(r)),h('div',{class:'row meta'},'Host and maintenance'),['agents','services','about'].map(r=>routeButton(r)),workEntry());
@@ -543,6 +573,7 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(Object.hasOwn(s,'agentqError')){view.agentqError=s.agentqError;present();return;}
   if(ports.workspace&&s.projects){view.S=s;focusReadback();api.lifecycleReadback();present();return;}
   if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
   if(s.workspaceError!==undefined){view.workspaceError=s.workspaceError;present();return;}
@@ -676,7 +707,7 @@ const actionErrors=new Map();
 
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
-const routes={recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
+const routes={'agentq-shown':'Agentq shown','agentq-setting-up':'Agentq setting up','agentq-running':'Agentq running','agentq-unknown':'Agentq unknown',recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
 const trail=renderer.entries();
 const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail,routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:['appearance','cadence','notifications','agents','services','about'].includes(page)?'settings':'home'}]))});
 

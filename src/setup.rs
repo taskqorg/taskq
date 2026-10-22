@@ -131,6 +131,12 @@ pub fn submit(install: &Path, runtime: &str, client: Option<&str>, targets: &[St
     save(install, runtime, client, targets, None, |r, id| brief(r, &dir(install).join(id)))
 }
 
+/// Agentq OK: the existing setup writer, with exact displayed targets and this click's retry identity.
+pub fn agentq(install:&Path,id:&str,runtime:&str,targets:Vec<String>)->Res<Request> {
+    if !crate::resources::id(id) || !["codex","claude"].contains(&runtime) || targets.len()!=2 || targets.iter().any(|p|!Path::new(p).is_absolute()) {return Err("invalid agentq setup scope".into());}
+    save_id(install,runtime,None,targets,None,Some((id,false)),|r,id|format!("Set up agentq from https://github.com/taskqorg/agentq on this host now.\nThe owner selected OK in TaskQ after reviewing installation of the verified agentq release, its engines and host service, and supported configuration, hooks and MCP for the selected client only.\nConsent already names these exact displayed effects and targets (including creating the absent agentq install). Do not ask again for these same effects. Ask before other effects, conflicts, legacy removal or missing access.\nDo not change TaskQ configuration, admission, runtime policy or board state.\n{}",brief(r,&dir(install).join(id))))
+}
+
 /// Tray AI request or `taskq retro`: a new `pending` session in project `root` with `task` as its brief.
 pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
     if task.trim().is_empty() { return Err("Write a request before sending".into()); }
@@ -452,6 +458,22 @@ mod tests {
         step(&t, ok).unwrap();
         link(&t, late.created + LINK_WINDOW_MS, never).unwrap();
         fs::remove_dir_all(t).unwrap();
+    }
+
+    // #1391 A3: transport retry is one request; a new OK is another session; every brief retains selected scope.
+    #[test]
+    fn agentq_clicks_reuse_shared_setup_without_replaying_installation() {
+        let i=tmp();let targets=vec![i.join("agentq").display().to_string(),i.join(".claude").display().to_string()];
+        let a=agentq(&i,"click-one","claude",targets.clone()).unwrap();
+        assert_eq!(agentq(&i,"click-one","claude",targets.clone()).unwrap(),a);
+        assert!(a.brief.contains("Consent already names these exact displayed effects"));
+        assert!(a.brief.contains("Do not kill or restart existing agent sessions"));
+        assert!(a.brief.contains("Selected client: Claude Code"));
+        assert_eq!(a.targets,targets);assert!(a.root.is_none());
+        agentq(&i,"click-two","claude",a.targets.clone()).unwrap();
+        assert_eq!(all(&i).unwrap().0.len(),2);
+        assert!(agentq(&i,"click-one","claude",vec![i.display().to_string(),i.display().to_string()]).is_err());
+        fs::remove_dir_all(i).unwrap();
     }
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
