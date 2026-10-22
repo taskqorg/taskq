@@ -813,7 +813,7 @@ impl<'a> Service<'a> {
 
     /// Recovery monitoring reads ownership only; it cannot resume ordinary task effects.
     pub fn reconcile_ownership(&mut self) -> Result<(),String> {
-        if self.ownership_known && (self.handoff_waits(false).is_empty()
+        if self.ownership_known && (self.handoff_waits(false,false).is_empty()
             || self.tasks_read.is_some_and(|at|at.elapsed().as_secs()<self.cfg.poll.max(1))) {return Ok(());}
         self.ownership_known=false;
         let (views,hosts)=views(self.board,&mut self.cache,&mut self.deps)?;
@@ -824,15 +824,16 @@ impl<'a> Service<'a> {
         Ok(())
     }
 
-    /// Handles may cross a qualified image switch; childless uncertainty cannot. `exit` (#1435): a Windows image exit
-    /// hands over no handle and the next image reads the same unresolved executions from the board, so childless board
-    /// observations and their reservations pass; held launches and release state still wait.
-    pub fn handoff_waits(&self, exit:bool) -> Vec<String> {
+    /// Handles may cross a qualified image switch; childless uncertainty cannot. `handover` (#1601): a pending re-exec
+    /// refuses every reservation, so a childless reserved or pending attempt passes to the next image, which reads it
+    /// from the board and resumes it from the inbox; held launches are released first (`release_held`) and wait until
+    /// then. `exit` (#1435): a Windows image exit hands over no handle and the next image reads the same unresolved
+    /// executions from the board, so childless board observations pass too; release state still waits.
+    pub fn handoff_waits(&self, handover:bool, exit:bool) -> Vec<String> {
         let owns=|task,attempt|self.kids.iter().any(|k|k.task==task && k.attempt==attempt);
-        let observed=|task,attempt|exit && self.observations.iter().any(|((n,_),x)|*n==task && x.attempt==attempt);
         let mut waits=BTreeSet::new();
         if !self.ownership_known {waits.insert("ownership unknown".into());}
-        for (task,attempt) in self.reserved.iter().map(|(n,a,_)|(*n,*a)).chain(self.pending.iter().copied()).filter(|(n,a)|!observed(*n,*a))
+        for (task,attempt) in self.reserved.iter().map(|(n,a,_)|(*n,*a)).chain(self.pending.iter().copied()).filter(|_|!handover)
             .chain(self.held.iter().map(|l|(l.task,l.attempt))) {
             if !owns(task,attempt) {waits.insert(format!("#{task} unresolved ownership"));}
         }
@@ -843,7 +844,28 @@ impl<'a> Service<'a> {
         waits.into_iter().collect()
     }
 
-    pub fn idle(&self) -> bool {self.kids.is_empty() && self.handoff_waits(false).is_empty()}
+    /// #1601: a pending restart refuses every reservation, so a held launch could never start and the handover would
+    /// wait on it. Its start was never called: release it `no-start` and let the next image act on the board.
+    // ponytail: a released initial claim ends as `gone` (+1 retry); a held-claim handover record would keep the retry.
+    fn release_held(&mut self) -> Vec<u64> {
+        if !self.host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart)) {return vec![];}
+        let mut released=vec![];
+        while let Some(l)=self.held.first() {
+            let (task,attempt,execution)=(l.task,l.attempt,l.execution.unwrap_or(l.attempt));
+            if let Err(e)=release_execution(self.board,task,attempt,execution,"no-start") {
+                self.log.push(format!("#{task} held launch release: {e}"));
+                break;
+            }
+            self.held.remove(0);
+            self.log.push(format!("#{task} held launch released for the restart"));
+            self.retired(task,attempt,execution,false);
+            released.push(task);
+        }
+        if !released.is_empty() {self.sync_host();}
+        released
+    }
+
+    pub fn idle(&self) -> bool {self.kids.is_empty() && self.handoff_waits(false,false).is_empty()}
 
     /// Admission of one launch (§ 3): the load gate, then under Auto a reservation from the host authority, which
     /// refuses with a reason; the request stays `requested`. Fixed admits as before.
@@ -894,7 +916,7 @@ impl<'a> Service<'a> {
     /// counts their children; a failed write only matters to Auto, whose next request refuses.
     pub fn sync_host(&mut self) {
         if let Some(host) = &self.host {
-            let recovered=self.handoff_waits(false).is_empty();
+            let recovered=self.handoff_waits(false,false).is_empty();
             let held=self.entry().held;
             match host.lock() {
                 Ok(mut h) => {
@@ -1513,6 +1535,7 @@ impl<'a> Service<'a> {
         self.reserved.retain(|r| self.held.iter().any(|l| l.task == r.0 && l.attempt == r.1) || unresolved_local.contains(r));
         (self.requested, self.refused) = (vec![], None);
         if self.host.is_some() { self.sync_host(); }
+        touched.extend(self.release_held());
         for v in &views {
             let (n, t) = (v.issue.number, &v.projection.task);
             let (Some(a), Some(h)) = (t.attempt, host_of(t)) else { continue };
@@ -2680,10 +2703,11 @@ mod tests {
         let mut s=service(&b,&c,Default::default()); s.pass().unwrap();
         assert!(s.kids.is_empty());
         assert!(s.execution_waits[&n].contains("termination unconfirmed"));
-        assert!(s.handoff_waits(false).iter().any(|w|w.contains("unresolved execution")),"handover keeps waiting");
-        assert!(s.handoff_waits(true).is_empty(),"image exit leaves the record to the next image: {:?}",s.handoff_waits(true));
+        assert!(s.handoff_waits(true,false).iter().any(|w|w.contains("unresolved execution")),"handover keeps waiting");
+        assert!(s.handoff_waits(true,true).is_empty(),"image exit leaves the record to the next image: {:?}",s.handoff_waits(true,true));
         s.pending.insert((n,1));
-        assert!(!s.handoff_waits(true).is_empty(),"an attempt without a board execution still waits");
+        assert!(s.handoff_waits(true,true).is_empty(),"#1601: a childless pending attempt passes to the next image");
+        assert!(!s.handoff_waits(false,false).is_empty(),"outside a handover it still waits");
         s.pending.remove(&(n,1));
         if cfg!(windows) {assert!(crate::lifecycle_waits(&s,false).is_empty());}
         assert!(!crate::lifecycle_waits(&s,true).is_empty(),"stop still waits");
@@ -3094,6 +3118,73 @@ mod tests {
         assert!(s.kids.is_empty() && host.lock().unwrap().prepared.contains(&root));
         assert!(core::executions(n, &entries(&b,n).unwrap()).iter().all(|x| x.release.is_some()));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #1601 A4: a pending restart refused the resume of an answered task, and the handover waited on that refused
+    // attempt ('#N unresolved ownership') forever. Risk kept: the resume is not started under the restart; the next
+    // image still finds it on the board with the inbox undelivered.
+    #[test]
+    fn refused_resume_lets_the_restart_hand_over() {
+        let root = std::env::temp_dir().join(format!("taskq-host-refused-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let p = crate::host::Policy::parse(json!({"limits": {"codex": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p))));
+        let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
+        let n = b.create("Answered", "", &[TASK_LABEL.into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:session invented").unwrap();
+        accept_execution(&b,n,a,a,None).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
+        b.comment(n, "taskq: steer\ncontinue").unwrap();
+        let mut s = service(&b, &c, Default::default()); s.host = Some(host.clone());
+        { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; }
+        assert!(handover_pass(&mut s, &host, &root), "one pass reaches the re-exec: {:?}", crate::lifecycle_waits(&s, false));
+        assert!(s.kids.is_empty() && s.pending.contains(&(n,a)), "the restart refuses the resume");
+        let t = task(&b, n);
+        assert_eq!((t.state, t.attempt, s.delivered(a)), (State::Doing, Some(a), 0), "the inbox waits for the next image");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// One project pass under the host lock protocol; true when the host may re-exec.
+    fn handover_pass(s: &mut Service, host: &crate::host::Shared, root: &PathBuf) -> bool {
+        assert!(host.lock().unwrap().begin_pass(root));
+        s.pass().unwrap(); s.sync_host();
+        let mut h = host.lock().unwrap();
+        h.busy.insert(root.clone(), !s.idle());
+        crate::report_handoff(s, &mut h, root, s.idle()).unwrap();
+        h.handoff_ready()
+    }
+
+    // #1601 class guard: a pending restart refuses every reservation (`Host::reserve`), so no handover wait may need
+    // one. Each attempt kind the refusal leaves childless is set up, the restart is requested, and one pass must
+    // reach the re-exec. Kinds: a ready claim, an answered resume, a held claim, a held resume, a held reservation.
+    // Live children, ownership reads and release writes resolve without a reservation and keep their own tests.
+    #[test]
+    fn every_handover_wait_resolves_without_a_reservation() {
+        for kind in ["claim", "resume", "held claim", "held resume", "reserved"] {
+            let root = std::env::temp_dir().join(format!("taskq-host-class-{}", crate::runtime::uuid()));
+            std::fs::create_dir_all(crate::dot(&root)).unwrap();
+            let p = crate::host::Policy::parse(json!({"limits": {"codex": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
+            let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p))));
+            let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
+            let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+            if kind.ends_with("resume") {
+                let a = b.comment(n, "taskq: spawn worker codex:session invented").unwrap();
+                accept_execution(&b,n,a,a,None).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
+                b.comment(n, "taskq: steer\ncontinue").unwrap();
+            }
+            let mut s = Service::new(&b, &c, "test", Box::new(|_| Err(crate::runtime::StartError::admission("native inventory pending"))));
+            s.focus = vec!["all".into()]; s.host = Some(host.clone());
+            host.lock().unwrap().busy.insert(root.clone(), true);
+            if kind.starts_with("held") {
+                handover_pass(&mut s, &host, &root);
+                assert_eq!(s.held.len(), 1, "{kind}: setup holds the launch");
+            }
+            if kind == "reserved" {s.pass().unwrap(); s.reserved.push((n, 99, "codex".into()));}
+            host.lock().unwrap().restart = true;
+            assert!(handover_pass(&mut s, &host, &root), "{kind}: one pass reaches the re-exec: {:?}", crate::lifecycle_waits(&s, false));
+            assert!(s.kids.is_empty() && s.held.is_empty(), "{kind}: nothing starts under the restart");
+            assert!(core::executions(n, &entries(&b,n).unwrap()).iter().all(|x| x.release.is_some()), "{kind}: no execution left open");
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     // Chain: cross-host recovery. Risk: inbox age or an unlisted lease is mistaken for exit.

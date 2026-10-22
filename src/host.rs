@@ -819,6 +819,7 @@ pub fn run(install: &Path) -> Res<()> {
     let mut native_legacy:Res<Vec<String>>=Err("native legacy inventory pending; host admission held".into());
     let mut maintenance_result:[String;2]=Default::default();
     let mut upgrade_report:Option<bool>=None;
+    let (mut waits_reported,mut stuck)=(String::new(),None);
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
     let mut tray = None;
@@ -1015,10 +1016,16 @@ pub fn run(install: &Path) -> Res<()> {
             if late {log_all(install,&roots,&reason);}
             upgrade_report=Some(late);
         }}
+        let handover=h.restart&&!h.stopping;
+        if !handover {stuck=None;}
         if h.restart {
             let wait=h.handoff_wait();
             drop(h);
             if let Err(e)=crate::lifecycle::handoff_wait(install,&instance,wait) {if reported!=e {crate::platform::log(&e);reported=e;}}
+            // #1601: the receipt and the log name what the re-exec really waits for; a stuck one is reported, never killed
+            let waits=restart_waits(&roots);
+            if waits!=waits_reported&&installation::upgrade_waits(install,crate::platform::VERSION,&waits) {waits_reported=waits.clone();}
+            if crate::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
             if h.handoff_ready() {
                 if h.stopping&&h.stop_controller.is_some() {drop(h);std::thread::sleep(std::time::Duration::from_secs(1));continue;}
@@ -1073,6 +1080,16 @@ pub fn run(install: &Path) -> Res<()> {
         // Watch <install>/poke every second; the registry is otherwise polled once a minute.
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
+}
+
+/// The restart waits each project last published in its status (§ 5), named by project folder.
+fn restart_waits(roots: &[PathBuf]) -> String {
+    let waits:Vec<String>=roots.iter().flat_map(|root| {
+        let name=root.file_name().map_or_else(||root.display().to_string(),|n|n.to_string_lossy().into_owned());
+        let status=crate::data::json(&crate::dot(root).join("status.json")).ok().flatten().unwrap_or_default();
+        status["restart_waits"].as_array().into_iter().flatten().filter_map(|w|w.as_str()).map(|w|format!("{name} {w}")).collect::<Vec<_>>()
+    }).collect();
+    if waits.is_empty() {"project passes in flight".into()} else {waits.join(", ")}
 }
 
 /// #1416: a host line goes to the service log and every project log; project `taskq`'s log is the service's stderr file, so it gets the line once.
