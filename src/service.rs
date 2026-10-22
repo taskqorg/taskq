@@ -823,12 +823,13 @@ impl<'a> Service<'a> {
         self.cap = cap;
     }
 
-    #[tracing::instrument(name="service.Service.may_launch",skip_all)]
     fn may_launch(&self,task:u64) -> bool {
         self.launch_refusal(task).is_none()
     }
 
-    /// Why no launch of `task` may start now, as a #1616 admission code and reason; the trace keeps its § 3 code.
+    /// Why no launch of `task` may start now, as a #1616 admission code and reason; the trace keeps its § 3 code
+    /// under the `may_launch` span every launch check emits.
+    #[tracing::instrument(name="service.Service.may_launch",skip_all)]
     fn launch_refusal(&self,task:u64) -> Option<(&'static str,String)> {
         let hold = self.hold.clone().filter(|_| !crate::recovery::allowed(&self.cfg.install,&self.cfg.root,task))
             .or_else(|| crate::admission::task_hold(&self.cfg.install,&self.cfg.root,task));

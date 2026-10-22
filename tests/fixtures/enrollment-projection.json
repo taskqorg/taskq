@@ -24,7 +24,13 @@
       "n": 1,
       "state": "ready",
       "revision": 0,
-      "choices": []
+      "choices": [],
+      "admission": {
+        "code": "unknown",
+        "observed": 99,
+        "host": null,
+        "reason": "no host decision"
+      }
     },
     {
       "n": 2,
@@ -47,7 +53,12 @@
       "n": 4,
       "state": "waiting",
       "revision": 0,
-      "choices": []
+      "choices": [],
+      "admission": {
+        "code": "dependency",
+        "observed": 99,
+        "host": null
+      }
     },
     {
       "n": 5,
