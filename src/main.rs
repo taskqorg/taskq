@@ -884,6 +884,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let is_installed = installed(&cfg.install);
     let began = Instant::now();
     log!("{}", incident::disclosure(Some(&cfg.root)));
+    log!("{}", runtime::build_cache_line());
     let mut checked: Option<Instant> = None;
     let mut update: Option<String> = None;
     let mut restart_empty: Option<u64> = None;

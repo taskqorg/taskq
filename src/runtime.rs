@@ -562,9 +562,10 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
     crate::platform::quiet(&mut c);
     let codex = access.codex.as_deref().unwrap_or(env.codex);
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
+    let build = build_cache_for(&l.rt, access, env);
     match (l.rt.as_str(), &l.resume) {
         ("claude", r) => {
-            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs)]);
+            c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode, "--settings", &compact_settings(env.root, env.install, l, env.jobs, build.as_deref())]);
             if r.is_some() { c.args(["--resume", &l.session]) } else { c.args(["--session-id", &l.session]) };
         }
         (_, None) => {
@@ -575,7 +576,40 @@ pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Resu
         }
     }
     environment(env, l, &mut c);
+    if let Some(p) = build { c.env("RUSTC_WRAPPER", p); }
     Ok(c)
+}
+
+/// Build cache (docs/testing.md#build-cache): `sccache` on the service's PATH, unless the service inherits
+/// `RUSTC_WRAPPER` (even empty: the owner's choice, children inherit it).
+pub(crate) fn build_cache() -> Option<PathBuf> {
+    build_cache_in(std::env::var_os("RUSTC_WRAPPER").is_some(), &std::env::var_os("PATH").unwrap_or_default())
+}
+
+fn build_cache_in(inherited: bool, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    Some(which_in("sccache", path)).filter(|p| !inherited && p.is_absolute())
+}
+
+/// The service log line naming the build cache children get.
+pub(crate) fn build_cache_line() -> String {
+    match build_cache() {
+        Some(p) => format!("build cache: RUSTC_WRAPPER={} for Claude and unsandboxed Codex children", p.display()),
+        None if std::env::var_os("RUSTC_WRAPPER").is_some() => "build cache: inherited RUSTC_WRAPPER kept; taskq adds none".into(),
+        None => "build cache: sccache not on PATH; children build unchanged".into(),
+    }
+}
+
+/// The cache for this child: taskq's Windows/Linux sandboxes and Codex's own sandbox keep the child off the user
+/// cache and the localhost sccache server, and a wrapper that cannot reach its server fails the build; they run unchanged.
+fn build_cache_for(rt: &str, access: &crate::policy::Effective, env: &Env) -> Option<PathBuf> {
+    build_cache().filter(|_| build_open(rt, access, env))
+}
+
+fn build_open(rt: &str, access: &crate::policy::Effective, env: &Env) -> bool {
+    let codex = access.codex.as_deref().unwrap_or(env.codex);
+    let open = !of(rt).codex || codex.iter().any(|a| a == "--dangerously-bypass-approvals-and-sandbox")
+        || crate::policy::codex_sandbox(codex) == Some("danger-full-access");
+    open && !access.windows && !access.linux
 }
 
 fn environment(env: &Env, l: &Launch, c: &mut Command) {
@@ -1010,13 +1044,15 @@ fn pm_rules(root: &Path, phase: &str, fetch: impl FnMut(&str) -> Result<String, 
 }
 
 /// `--settings` for a Claude turn: a SessionStart hook that re-sends the rules after compaction, and the launch's TaskQ env.
-fn compact_settings(root: &Path, install: &Path, l: &Launch, jobs: Option<usize>) -> String {
+fn compact_settings(root: &Path, install: &Path, l: &Launch, jobs: Option<usize>, build: Option<&Path>) -> String {
     let q = |s: &str| format!("'{}'", s.replace('\'', "'\\''"));
     let exe = std::env::current_exe().unwrap_or_else(|_| "taskq".into());
     let cmd = format!("{} rules compact {} {} {} {}", q(&exe.to_string_lossy()), q(&root.to_string_lossy()), q(&l.role), l.task, l.attempt);
     let attempt = (l.role != "operator").then_some(l);
     let mut env = claude_env(install, Some(root), attempt);
     if let Some(jobs) = jobs { env["CARGO_BUILD_JOBS"] = jobs.to_string().into(); }
+    // the daemon's env is not the service's: the build cache travels in settings too
+    if let Some(p) = build { env["RUSTC_WRAPPER"] = p.to_string_lossy().into(); }
     serde_json::json!({"hooks": {"SessionStart": [{"matcher": "compact", "hooks": [{"type": "command", "command": cmd}]}]}, "env": env}).to_string()
 }
 
@@ -1548,7 +1584,7 @@ impl ClaudeTurn {
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
         c.current_dir(&root).arg("--bg");
         if l.resume.is_some() { c.args(["--resume", &l.session]); }
-        else { c.args(["--settings", &compact_settings(&root, env.install, l, env.jobs), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode]); }
+        else { c.args(["--settings", &compact_settings(&root, env.install, l, env.jobs, build_cache_for(&l.rt, access, env).as_deref()), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode]); }
         if l.role == "operator" { for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); } }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, launch_error:None };
@@ -3959,9 +3995,13 @@ mod tests {
         // #1531: the per-user Claude daemon spawns from its own env; settings carry this launch's values.
         // Risk: a worker reads another launch's TASKQ_* (install, task, attempt), or an operator session gets an attempt.
         let want = |task: &str, attempt: &str, role: &str| serde_json::json!({"TASKQ_INSTALL": install.to_string_lossy(), "TASKQ_ROOT": root.to_string_lossy(), "TASKQ_TASK": task, "TASKQ_ATTEMPT": attempt, "TASKQ_ROLE": role});
-        assert_eq!(settings["env"], want("7", "42", "worker"));
-        let operator: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &Launch { role: "operator".into(), ..launch("claude") }, None)).unwrap();
+        let mut worker = want("7", "42", "worker");
+        if let Some(p) = build_cache_for("claude", &access(&env, "claude").unwrap(), &env) { worker["RUSTC_WRAPPER"] = p.to_string_lossy().into(); }
+        assert_eq!(settings["env"], worker, "a full-access Claude worker gets this host's build cache, if any");
+        let operator: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &Launch { role: "operator".into(), ..launch("claude") }, None, None)).unwrap();
         assert_eq!(operator["env"], want("", "", ""), "operator: empty means unset");
+        let cached: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &launch("claude"), None, Some(Path::new("/b/sccache")))).unwrap();
+        assert_eq!(cached["env"]["RUSTC_WRAPPER"], "/b/sccache", "the daemon's env is not the service's: settings carry the wrapper");
         // The compact hook restores current mandatory bodies and index, without inventing a task.
         let start = turn_text(&env, &l, rule).unwrap();
         let text = compact(&root, "worker", 7, 42).unwrap();
@@ -4003,10 +4043,35 @@ mod tests {
                 let got = c.get_envs().find(|(k, _)| *k == "CARGO_BUILD_JOBS").and_then(|(_, v)| v).map(|v| v.to_string_lossy().into_owned());
                 assert_eq!(got, want, "{rt} process env");
             }
-            let settings: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &launch("claude"), jobs)).unwrap();
+            let settings: serde_json::Value = serde_json::from_str(&compact_settings(&root, &install, &launch("claude"), jobs, None)).unwrap();
             assert_eq!(settings["env"]["CARGO_BUILD_JOBS"].as_str().map(String::from), want, "Claude --bg settings env");
         }
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    // Chain: build cache (docs/testing.md#build-cache), #1604. Risk: a sandboxed child gets a wrapper whose server it
+    // cannot reach and its build fails, or a host without sccache or with the owner's own wrapper gets one.
+    #[test]
+    fn build_cache_only_where_the_child_reaches_it() {
+        let dir = std::env::temp_dir().join(format!("taskq-build-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join(if cfg!(windows) { "sccache.exe" } else { "sccache" });
+        assert_eq!(build_cache_in(false, dir.as_os_str()), None, "no sccache: children unchanged");
+        std::fs::write(&bin, "").unwrap();
+        assert_eq!(build_cache_in(false, dir.as_os_str()), Some(bin.clone()));
+        assert_eq!(build_cache_in(true, dir.as_os_str()), None, "an inherited wrapper stays the owner's");
+        let env = Env { root: &dir, exe: Path::new("taskq"), install: &dir, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let seatbelt = crate::policy::Effective { runtime: String::new(), requested: String::new(), grant: String::new(), mode: "legacy".into(), enforcement: String::new(),
+            profile: Some("(version 1)".into()), linux: false, windows: false, claude: None, codex: None, refused: None };
+        assert!(build_open("claude", &seatbelt, &env), "the seatbelt profile keeps user caches writable");
+        assert!(!build_open("codex", &seatbelt, &env), "Codex defaults: its own sandbox is unknown");
+        let ws = ["--sandbox".to_string(), "workspace-write".into()];
+        assert!(!build_open("codex", &seatbelt, &Env { codex: &ws, ..env }));
+        let full = crate::policy::Effective { codex: Some(vec!["-s".into(), "danger-full-access".into()]), ..seatbelt.clone() };
+        assert!(build_open("codex", &full, &env));
+        assert!(!build_open("codex", &crate::policy::Effective { windows: true, ..full.clone() }, &env), "taskq Windows sandbox");
+        assert!(!build_open("codex", &crate::policy::Effective { linux: true, ..full }, &env), "taskq Linux sandbox");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     // Chain: § 8 rule delivery to a PM session, #1219. Risk: the PM hook gets other rules than a worker at the same pin,
