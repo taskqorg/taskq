@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.29
+
+Claude background sessions get their own launch env through `--settings` env, so a Claude daemon started by another process no longer leaks its `TASKQ_*` values into workers (#1531). The tray Back stack follows recorded Wouter history and obsolete tray and workspace shell code is gone (#1470). No board change.
+
 ## v4.6.28
 
 Queue: every new task starts held; only `taskq start` (or a person adding `taskq`) admits it (#1475). A worker parks on a blocker task with `later N --blocker #M`: the task waits with `Depends on #M` and returns to ready when the blocker closes (#1486); 4.6.27 hosts read that park as `later`. `service capacity --claim labelled` makes a host claim only its `host-<name>` tasks (#1493). Status lists tasks stuck for 2 hours without movement (#1487). Heartbeat issues of retired host names close (#1483). Idle passes poll the board three times less often (#1431). No board change.
