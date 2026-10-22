@@ -1886,7 +1886,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
     let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || k.rt=="codex-app" || k.rt=="claude"&&k.proc.native_identity().is_err()).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
-    w.extend(s.handoff_waits(cfg!(windows) && !stopping));
+    w.extend(s.handoff_waits(!stopping, cfg!(windows) && !stopping));
     w
 }
 
@@ -2397,13 +2397,14 @@ fn golden_selftest(traces: &str, published: bool) -> Res<usize> {
     result
 }
 
-fn restart_watch(since: &mut Option<u64>, empty_restart: bool, elapsed: u64, interval: u64) {
-    if !empty_restart { *since = None; return; }
+/// True once per stuck period: `stuck` held for 2 × `interval` seconds of `elapsed`.
+fn restart_watch(since: &mut Option<u64>, stuck: bool, elapsed: u64, interval: u64) -> bool {
+    if !stuck { *since = None; return false; }
     let start = *since.get_or_insert(elapsed);
-    if elapsed.saturating_sub(start) >= interval.saturating_mul(2) {
-        incident::detect("dispatch.reexec", concat!("src/main.rs:", line!()), "none", &[], &["restart:stuck"]);
-        *since = Some(u64::MAX);
-    }
+    if elapsed.saturating_sub(start) < interval.saturating_mul(2) { return false; }
+    incident::detect("dispatch.reexec", concat!("src/main.rs:", line!()), "none", &[], &["restart:stuck"]);
+    *since = Some(u64::MAX);
+    true
 }
 
 #[tracing::instrument(name="run",skip_all)]

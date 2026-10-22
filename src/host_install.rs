@@ -620,14 +620,22 @@ fn upgrade(install:&Path,root:&Path)->Res<bool> {
     loop {
         let service=service_status(install);
         if service["fresh"]==true&&service["version"]==version {return Ok(true);}
-        if Instant::now()>=until {return Err(format!("current is {version}; host still runs {} (live work defers the handover); repeat service install for this root",service["version"].as_str().unwrap_or("unknown")));}
+        if Instant::now()>=until {
+            // #1601: name the waits the host retained on the receipt, not a generic promise
+            let reason=upgrade_intent(install).ok().flatten().and_then(|p|installation_status(install,Some(&p.id))["reason"].as_str().map(String::from))
+                .unwrap_or_else(||"handover waits unknown".into());
+            return Err(format!("current is {version}; host still runs {} ({reason}); repeat service install for this root",service["version"].as_str().unwrap_or("unknown")));
+        }
         std::thread::sleep(std::time::Duration::from_millis(500));
     }
 }
 
 /// Under the update lock: the version the running `owner` must re-exec into, or None once it runs the candidate.
 fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,owner:&coreq::process::Identity)->Res<Option<String>> {
-    let intent=upgrade_intent(install)?.filter(|p|installation_status(install,Some(&p.id))["state"]!="observed");
+    let intent=match upgrade_intent(install)?.filter(|p|installation_status(install,Some(&p.id))["state"]!="observed") {
+        Some(p) if coreq::update::newer(tool.version,&p.version)=>{supersede_upgrade(install,&p,tool.version)?;None},
+        intent=>intent,
+    };
     let p=if let Some(p)=intent {
         if p.root!=root {return Err(format!("an upgrade to {} is pending for another root; repeat service install there",p.version));}
         p
@@ -644,13 +652,15 @@ fn request_upgrade(install:&Path,tool:&coreq::Tool,root:&Path,service:&Value,own
         p
     };
     if service["fresh"]==true&&service["version"]==p.version {return Ok(None);}
-    if !crate::resources::within(install,crate::resources::WAIT,|state|Ok(state.ops.contains_key(&p.id)))? {record(install,&p,"received")?;}
+    let received=!crate::resources::within(install,crate::resources::WAIT,|state|Ok(state.ops.contains_key(&p.id)))?;
+    if received {record(install,&p,"received")?;}
     if retained(install,&p)?["state"]!="queued" {return Err("upgrade intent has an incompatible receipt; held".into());}
     if tool.version!=p.version {return Err(format!("an upgrade to {} is pending; repeat service install with that build",p.version));}
     if tool.current().as_deref()!=Some(tool.version) {crate::platform::activate_install(tool)?;}
     if !install.join("rollback-floor").exists() {coreq::launcher::set_rollback_floor(tool,service["version"].as_str().ok_or("running host version unknown")?)?;}
     coreq::write_durable(&install.join("update"),"")?;
-    retain_reason(install,&p,"host update step pending; live work hands over before the re-exec")?;
+    // a replay keeps the waits the host retained (#1601)
+    if received {retain_reason(install,&p,"host update step pending; the host names its re-exec waits here")?;}
     Ok(Some(p.version))
 }
 
@@ -664,6 +674,22 @@ pub fn stale_upgrade(install:&Path,late:bool)->Option<String> {
         else {format!("upgrade {} runs {}; the waiting service install in {} finishes it",p.id,p.version,p.root.display())};
     retain_reason(install,&p,&reason).ok()?;
     Some(reason)
+}
+
+/// #1601: while the host's re-exec into a queued upgrade waits, the receipt names the real waits instead of a promise.
+/// True once retained, or when no queued upgrade waits for this image to re-exec.
+pub fn upgrade_waits(install:&Path,running:&str,waits:&str)->bool {
+    let Ok(Some(p))=upgrade_intent(install) else {return true};
+    if p.version==running||installation_status(install,Some(&p.id))["state"]!="queued" {return true;}
+    retain_reason(install,&p,&format!("host re-exec into {} waits for {waits}",p.version)).is_ok()
+}
+
+/// #1601: a newer build supersedes a queued upgrade it cannot finish (the version ran, or never will); the old
+/// receipt fails with the reason and the intent goes, so dev installs never wait on an older build by hand.
+fn supersede_upgrade(install:&Path,p:&Pending,version:&str)->Res<()> {
+    record(install,p,"failed")?;
+    retain_reason(install,p,&format!("superseded by {version}"))?;
+    fs::remove_file(install.join(UPGRADE_INTENT)).map_err(|e|e.to_string())
 }
 
 /// The attach under a host that already runs an upgrade's candidate continues that command and its receipt.
@@ -1138,13 +1164,18 @@ mod tests {
             assert_eq!(upgrade_intent(&install).unwrap().unwrap().id,p.id);
         }
         assert!(installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().contains("re-exec"));
+        // #1601: the waiting host names its real re-exec waits on the receipt; a replayed install keeps them.
+        assert!(upgrade_waits(&install,"0.0.1","taskq #1580 unresolved ownership"));
+        assert_eq!(request_upgrade(&install,&tool,&root,&old,&native).unwrap(),v);
+        let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
+        assert!(reason.ends_with("waits for taskq #1580 unresolved ownership"),"{reason}");
         assert!(adopt_upgrade(&install,&root,"0.0.1").unwrap().is_none(),"the old host never binds the candidate's command");
         let new=host(crate::platform::VERSION);
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
         // #1402: the host that runs the candidate drops the pre-re-exec reason at once, before the 300 s report.
         assert!(stale_upgrade(&install,false).unwrap().contains("the waiting service install"));
         let reason=installation_status(&install,Some(&p.id))["reason"].as_str().unwrap().to_string();
-        assert!(!reason.contains("live work hands over")&&reason.contains(&p.id),"{reason}");
+        assert!(!reason.contains("re-exec waits")&&reason.contains(&p.id),"{reason}");
         assert!(stale_upgrade(&install,true).unwrap().contains("repeat service install"));
         // #1415: another host writer holding the resources lock delays the re-exec'd host's receipt instead of failing it;
         // one held past the bound is refused with the holder named.
@@ -1162,6 +1193,16 @@ mod tests {
         assert_eq!((adopted.id.as_str(),adopted.command.as_str()),(p.id.as_str(),p.command.as_str()),"the attach continues the same command");
         fs::remove_file(install.join(UPGRADE_INTENT)).unwrap();
         assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None,"attach-only: an equal host is not upgraded");
+        assert!(upgrade_intent(&install).unwrap().is_none());
+        // #1601: a queued upgrade to an older build failed every newer install until that build repeated it by hand.
+        // The newer build supersedes it; the old receipt keeps its failure and reason.
+        let mut stale:Pending=serde_json::from_value(json!(adopted)).unwrap();stale.id=crate::runtime::uuid();stale.version="0.0.1".into();
+        coreq::write_durable(&install.join(UPGRADE_INTENT),serde_json::to_vec(&stale).unwrap()).unwrap();
+        record(&install,&stale,"received").unwrap();
+        assert_eq!(request_upgrade(&install,&tool,&root,&new,&native).unwrap(),None);
+        let old_receipt=installation_status(&install,Some(&stale.id));
+        assert_eq!(old_receipt["state"],"failed");
+        assert!(old_receipt["reason"].as_str().unwrap().contains("superseded by"),"{old_receipt}");
         assert!(upgrade_intent(&install).unwrap().is_none());
         drop(entered);drop(span);capture.flush().unwrap();drop(guard);drop(capture);
         fs::remove_dir_all(install.parent().unwrap()).unwrap();
