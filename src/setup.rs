@@ -246,7 +246,7 @@ pub fn claude_launch(own: &Path, r: &Request) -> Launched {
     let mut c = match crate::runtime::executable(bin, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
     c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
-        .args(["--bg", "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
+        .args(["--bg", "--settings", &serde_json::json!({"env": crate::runtime::claude_env(install, None, None)}).to_string(), "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
     let input = format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default());
     use coreq::process::Failure;
     let out = match coreq::process::exchange("setup.claude-launch", &mut c, input.as_bytes(), std::time::Duration::from_secs(30)) {

@@ -9,6 +9,11 @@ fn main() {
         // SAFETY: single-threaded process start
         unsafe { std::env::set_var("PATH", path) }
     }
+    // #1531: Claude settings cannot unset a variable; an operator session gets these empty, which means unset.
+    for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE", "TASKQ_ROOT"] {
+        // SAFETY: single-threaded process start
+        if std::env::var_os(k).is_some_and(|v| v.is_empty()) { unsafe { std::env::remove_var(k) } }
+    }
     // § 8 step 5: the macOS cargo runner signs local builds before they start; no telemetry, no install writes.
     #[cfg(target_os = "macos")]
     if let [cmd, paths @ ..] = &std::env::args().skip(1).collect::<Vec<_>>()[..] && cmd == "sign-local" {

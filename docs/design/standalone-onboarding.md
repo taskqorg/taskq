@@ -105,6 +105,18 @@ R1, § 3, § 4 and § 8 now name the host setup session; its rules are the [Cont
 
 Before shipping, qualify SO-01–SO-05 on native macOS and Windows, including zero-project startup, dismissal readback, stale/corrupt status, repeated OK, interrupted installation, client conflict and denied access. Capture actual-size badge/section pictures with other warnings and long host/client names for owner visual acceptance. Verify installed release and service independently; qualify client integration and savings separately. No native/UI/install checks were performed by this documentation task.
 
+### Zero-project setup run (#1409)
+
+Run outside any worker sandbox, as the host user, with a release that has #1525 and #1531. `<tmp>` is a fresh empty folder; `<taskq>` is the installed binary. The live service and its projects stay untouched.
+
+1. Unset `TASKQ_TASK`, `TASKQ_ATTEMPT`, `TASKQ_ROLE` and `TASKQ_ROOT`; then `export TASKQ_INSTALL=<tmp>; cd <tmp>` (PowerShell: `$env:TASKQ_INSTALL='<tmp>'`, from a Scheduled Task session, not ssh).
+2. `<taskq> service run` in one terminal; `<tmp>/projects` stays absent.
+3. In a second terminal with the same environment: `<taskq> service setup --runtime claude --json`.
+4. Record the request id, `<tmp>/setup/<id>.json` state and session link, the `claude agents --json` row, the host and `<taskq> --version`.
+5. Record the tray setup row (`<taskq> tray --snapshot <tmp>/shots`) and that `Open session` reaches the same session.
+6. No-start kinds: repeat step 3 with `claude` off PATH (`runtime`), logged out (`login`) and an untrusted workspace (`access`); record each kind and reason.
+7. Stop the temporary service, then the Claude background daemon if this run started it: `claude daemon status` names its origin; `claude daemon stop --any --keep-workers` keeps detached sessions running. The daemon keeps the environment of the launch that started it, and later sessions inherit whatever their settings do not override (#1531). Delete `<tmp>`.
+
 References inspected for this design: agentq [INSTALL.md](https://github.com/taskqorg/agentq/blob/main/INSTALL.md), [contract §1/§4/§5](https://github.com/taskqorg/agentq/blob/main/agentq.md) and [README](https://github.com/taskqorg/agentq). They differ on doctor availability and legacy confirmation; use the selected release's documented capabilities and retain explicit legacy consent. Do not make badge detection depend on a proposed doctor command or infer measured cache savings from service status.
 
 ## Contract detail
