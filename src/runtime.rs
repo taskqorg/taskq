@@ -49,6 +49,13 @@ pub struct Launch {
     pub resume: Option<String>,
 }
 
+/// R3 session name: `<role> #<N> <title cut to 40 characters>`.
+pub fn session_name(l: &Launch) -> String {
+    let role = match l.role.as_str() { "worker" => "work", "reviewer" => "review", _ => "setup" };
+    let title: String = l.title.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(40).collect();
+    format!("{role} #{} {}", l.task, title.trim_end())
+}
+
 /// A running child; a trait so the service can be tested with fake processes.
 pub trait Proc {
     fn job(&self)->Option<String> {None}
@@ -1241,7 +1248,7 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
             Some(_) => {
                 if let Err(message) = turn.queue() { turn.queue_error = Some(format!("{message}; submission outcome unknown")); }
             }
-            None => turn.hand = Some(start(env, l, &turn.log, HANDSHAKE, &access)?),
+            None => turn.hand = Some(start(env, l, &turn.log, &format!("{}\n{HANDSHAKE}", session_name(l)), &access)?),
         }
         return Ok(Box::new(turn));
     }
@@ -1249,6 +1256,8 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
         return ClaudeTurn::start(env, l, &log, &text, &access).map(|p| Box::new(p) as Box<dyn Proc>);
     }
     let pos = std::fs::metadata(&log).map_or(0, |m| m.len());
+    // R3: a new Codex thread takes its title from the first input line; the rules follow unchanged.
+    let text = if l.resume.is_none() && l.rt == "codex" { format!("{}\n{text}", session_name(l)) } else { text };
     let child = start(env, l, &log, &text, &access)?;
     let native=match child.native_identity() {
         Ok(identity)=>Some(identity),
@@ -1524,7 +1533,7 @@ impl ClaudeTurn {
         bind_input(log,l,&path,&input,serde_json::json!({"session":l.session,"job":expected_id,"before":before,"permission_mode":permission_mode}))?;
         c.current_dir(&root).arg("--bg");
         if l.resume.is_some() { c.args(["--resume", &l.session]); }
-        else { c.args(["--settings", &compact_settings(&root, env.install, l), "--remote-control", &l.title, "--permission-mode", permission_mode]); }
+        else { c.args(["--settings", &compact_settings(&root, env.install, l), "--name", &session_name(l), "--remote-control", &session_name(l), "--permission-mode", permission_mode]); }
         if l.role == "operator" { for k in ["TASKQ_TASK", "TASKQ_ATTEMPT", "TASKQ_ROLE"] { c.env_remove(k); } }
         let mut turn=Self { root, log: log.into(), session: if l.resume.is_some() { l.session.clone() } else { String::new() }, id: expected_id.unwrap_or_default(),
             announced: false, accepted:false, history:ClaudeHistory::default(), before, mode: permission_mode.into(), input, _input_file: input_file, pid: 0, native:None, recovery:None, done: false, failure: None, launch_error:None };
@@ -2167,6 +2176,22 @@ pub fn agents_line(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // Chain: R3 session name -> Claude `--name`/Remote Control and Codex first input line (#1564). Risk: sessions
+    // show the shared rules header or an uncut title instead of role, task and title.
+    #[test]
+    fn session_name_is_role_task_and_cut_title() {
+        let l = |role: &str, title: &str| Launch { execution: None, task: 1561, title: title.into(), attempt: 1, role: role.into(), rt: "codex".into(), session: "s".into(), url: String::new(), resume: None };
+        assert_eq!(session_name(&l("worker", "Claude handover identity")), "work #1561 Claude handover identity");
+        assert_eq!(session_name(&l("reviewer", "a\n b")), "review #1561 a b");
+        assert_eq!(session_name(&l("operator", "x")), "setup #1561 x");
+        let long = "Name worker sessions by role, task and title everywhere";
+        assert_eq!(session_name(&l("worker", long)), format!("work #1561 {}", long.chars().take(40).collect::<String>().trim_end()));
+        let cyr = "Имя сессии воркера: роль, задача и заголовок ✓ длинный хвост";
+        let name = session_name(&l("worker", cyr));
+        assert_eq!(name.strip_prefix("work #1561 ").unwrap().chars().count(), 40);
+        assert!(cyr.starts_with(name.strip_prefix("work #1561 ").unwrap()));
+    }
 
     // Chain: systemd unit PATH frozen without ~/.local/bin -> codex resolves (#1393). Risk: the service spawns a bare
     // `codex` and every attempt ends in os error 2.
