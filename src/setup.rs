@@ -372,6 +372,67 @@ pub fn link(install: &Path, now: u128, observe: Linker) -> Res<()> {
     Ok(())
 }
 
+/// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546).
+pub fn claude_key(p: &Path) -> String { p.display().to_string().replace('\\', "/") }
+
+/// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
+/// `<home>/.claude.json`. Nothing trusted yet changes only while no Claude runs, after a backup; one line per key.
+pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
+    let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
+    let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
+    let path = home.join(".claude.json");
+    let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
+    let (next, changed) = trusted(text.as_deref(), &keys)?;
+    let mut lines: Vec<String> = keys.iter().filter(|k| !changed.contains(k)).map(|k| format!("Trust: {k} unchanged")).collect();
+    if changed.is_empty() { return Ok(lines); }
+    // Claude rewrites the whole file: a running one would drop the change
+    let pids = claude_pids().map_err(|e| format!("Claude processes unknown ({e}); trust unchanged"))?;
+    if !pids.is_empty() { return Err(format!("Claude runs (pid {}); trust unchanged. Next: stop every Claude session and `claude daemon stop`, then run again", pids.join(", "))); }
+    if let Some(t) = &text {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let backup = home.join(format!(".claude.json.bak-onboard-{ms}"));
+        fs::write(&backup, t).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
+        lines.push(format!("Backup: {}", backup.display()));
+    }
+    crate::platform::write_atomic(&path, &next).map_err(|e| format!("Claude config write: {e}"))?;
+    let (_, left) = trusted(fs::read_to_string(&path).ok().as_deref(), &keys)?;
+    if !left.is_empty() { return Err(format!("Claude config readback: {} not trusted", left.join(", "))); }
+    lines.extend(changed.iter().map(|k| format!("Trust: {k} trusted")));
+    Ok(lines)
+}
+
+/// The config with every key trusted, and the keys that were not.
+fn trusted(text: Option<&str>, keys: &[String]) -> Res<(String, Vec<String>)> {
+    let mut v: serde_json::Value = match text { Some(t) => serde_json::from_str(t).map_err(|e| format!("Claude config unreadable: {e}"))?, None => serde_json::json!({}) };
+    let projects = v.as_object_mut().ok_or("Claude config is not an object")?.entry("projects").or_insert_with(|| serde_json::json!({}));
+    let projects = projects.as_object_mut().ok_or("Claude config projects is not an object")?;
+    let mut changed = vec![];
+    for k in keys {
+        let p = projects.entry(k.clone()).or_insert_with(|| serde_json::json!({})).as_object_mut().ok_or(format!("Claude config project {k} is not an object"))?;
+        if p.get("hasTrustDialogAccepted") != Some(&serde_json::Value::Bool(true)) {
+            p.insert("hasTrustDialogAccepted".into(), true.into());
+            changed.push(k.clone());
+        }
+    }
+    Ok((serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, changed))
+}
+
+/// Running Claude processes of this user's machine; an unreadable list is an error, never none (R12).
+pub fn claude_pids() -> Res<Vec<String>> {
+    let out = if cfg!(windows) {
+        std::process::Command::new("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
+    } else {
+        // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
+        std::process::Command::new("pgrep").args(["-x", "claude"]).output()
+    }.map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    if cfg!(windows) {
+        if !out.status.success() { return Err(format!("tasklist exit {:?}", out.status.code())); }
+        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with("\"claude.exe\"")).map(String::from)).collect());
+    }
+    match out.status.code() { Some(0) => Ok(text.split_whitespace().map(String::from).collect()), Some(1) => Ok(vec![]), c => Err(format!("pgrep exit {c:?}")) }
+}
+
 const MISSING: &str = "runtime missing:";
 const LOGIN: &str = "sign-in needed:";
 const ACCESS: &str = "access refused:";
@@ -477,6 +538,35 @@ mod tests {
     }
 
     fn tmp() -> PathBuf { let p = std::env::temp_dir().join(format!("taskq-setup-{}", crate::runtime::uuid())); fs::create_dir(&p).unwrap(); p }
+
+    #[test]
+    fn onboarding_trusts_forward_slash_keys_once_with_no_claude_running() {
+        let (install, home) = (tmp(), tmp());
+        fs::write(install.join("projects"), "C:\\Users\\a\\p\n/srv/q\n").unwrap();
+        // the hand-made backslash key never matched on Windows; it stays as it was
+        let old = r#"{"numStartups": 3, "projects": {"C:\\Users\\a\\p": {"hasTrustDialogAccepted": true}, "/srv/q": {"allowedTools": ["x"]}}}"#;
+        fs::write(home.join(".claude.json"), old).unwrap();
+        let setup = claude_key(&dir(&install));
+        assert!(!setup.contains('\\'));
+        let e = trust(&install, &home, || Ok(vec!["42".into()])).unwrap_err();
+        assert!(e.starts_with("Claude runs (pid 42); trust unchanged"), "{e}");
+        assert!(trust(&install, &home, || Err("no tasklist".into())).unwrap_err().contains("unknown"));
+        assert_eq!(fs::read_to_string(home.join(".claude.json")).unwrap(), old);
+
+        let lines = trust(&install, &home, || Ok(vec![])).unwrap();
+        assert!(lines.iter().any(|l| l.starts_with("Backup: ")), "{lines:?}");
+        let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(home.join(".claude.json")).unwrap()).unwrap();
+        for k in [setup.as_str(), "C:/Users/a/p", "/srv/q"] { assert_eq!(v["projects"][k]["hasTrustDialogAccepted"], true, "{k}"); }
+        assert_eq!(v["projects"]["/srv/q"]["allowedTools"][0], "x");
+        assert_eq!(v["numStartups"], 3);
+        let backup = fs::read_dir(&home).unwrap().flatten().find(|e| e.file_name().to_string_lossy().starts_with(".claude.json.bak-onboard-")).unwrap();
+        assert_eq!(fs::read_to_string(backup.path()).unwrap(), old);
+
+        // idempotent: nothing to change reads no processes and writes nothing
+        let again = trust(&install, &home, || panic!("process list read with nothing to change")).unwrap();
+        assert_eq!(again.len(), 3);
+        assert!(again.iter().all(|l| l.ends_with(" unchanged")), "{again:?}");
+    }
     fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }
 
     // Chain: service setup to host launch (A2). Risk: a repeat returns an old session or a request launches twice.
