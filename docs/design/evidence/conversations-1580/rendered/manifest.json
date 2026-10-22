@@ -1,0 +1,212 @@
+{
+  "bundle_sha256": "fe7823175203f0fad1792ec48dd879e28af2ae90b6f2f9b88bcdff903790e2d3",
+  "fixture_sha256": "07ce3663e8a59bc1f5133cb95137e991909a9eaa226ddc50cc8661099056af34",
+  "reference_sha256": "9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04",
+  "environment": {
+    "renderer": "Playwright Chromium headless",
+    "version": "156.0.8078.4",
+    "os": "darwin",
+    "arch": "arm64",
+    "scale": 1,
+    "font": "system UI",
+    "native": "Not tested"
+  },
+  "cells": [
+    {
+      "name": "draft-files-dark-16",
+      "state": "draft",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720,
+      "file": "draft-files-dark-16.png",
+      "sha256": "ffb1b9d55d499e52a2d134f379e962b6aeb288acd1f6d51d4721ee16a7b8f2fc",
+      "geometry": {
+        "client": 900,
+        "scroll": 900,
+        "heading": 9,
+        "composer": {
+          "x": 265.515625,
+          "y": 389.6875,
+          "width": 626.484375,
+          "height": 267,
+          "top": 389.6875,
+          "right": 892,
+          "bottom": 656.6875,
+          "left": 265.515625
+        },
+        "send": {
+          "x": 336.78125,
+          "y": 564.6875,
+          "width": 53.25,
+          "height": 32,
+          "top": 564.6875,
+          "right": 390.03125,
+          "bottom": 596.6875,
+          "left": 336.78125
+        }
+      },
+      "result": "Pass: browser geometry only"
+    },
+    {
+      "name": "launched-dark-16",
+      "state": "launched",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720,
+      "file": "launched-dark-16.png",
+      "sha256": "855a1ddc12ed73df696b22f18ce155a7c8ec1dca15131657b4000ed4315b4209",
+      "geometry": {
+        "client": 900,
+        "scroll": 900,
+        "heading": 9,
+        "composer": {
+          "x": 265.515625,
+          "y": 421.6875,
+          "width": 626.484375,
+          "height": 235,
+          "top": 421.6875,
+          "right": 892,
+          "bottom": 656.6875,
+          "left": 265.515625
+        },
+        "send": {
+          "x": 336.78125,
+          "y": 564.6875,
+          "width": 125.40625,
+          "height": 32,
+          "top": 564.6875,
+          "right": 462.1875,
+          "bottom": 596.6875,
+          "left": 336.78125
+        }
+      },
+      "result": "Pass: browser geometry only"
+    },
+    {
+      "name": "interrupted-dark-16",
+      "state": "interrupted",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720,
+      "file": "interrupted-dark-16.png",
+      "sha256": "e351269a15deaab72b5d305e7a61a44a6f645f7f8cc7193bced419d6e1c35255",
+      "geometry": {
+        "client": 900,
+        "scroll": 900,
+        "heading": 9,
+        "composer": {
+          "x": 265.515625,
+          "y": 421.6875,
+          "width": 626.484375,
+          "height": 235,
+          "top": 421.6875,
+          "right": 892,
+          "bottom": 656.6875,
+          "left": 265.515625
+        },
+        "send": {
+          "x": 336.78125,
+          "y": 564.6875,
+          "width": 125.40625,
+          "height": 32,
+          "top": 564.6875,
+          "right": 462.1875,
+          "bottom": 596.6875,
+          "left": 336.78125
+        }
+      },
+      "result": "Pass: browser geometry only"
+    },
+    {
+      "name": "deletion-incomplete-dark-16",
+      "state": "deleting",
+      "theme": "dark",
+      "font": 16,
+      "width": 900,
+      "height": 720,
+      "file": "deletion-incomplete-dark-16.png",
+      "sha256": "7b64cff6628b548afff41ed1c8829385490d03b14a129a90368a019a0fba5c02",
+      "geometry": {
+        "client": 900,
+        "scroll": 900,
+        "heading": 9,
+        "composer": {
+          "x": 265.515625,
+          "y": 389.6875,
+          "width": 626.484375,
+          "height": 267,
+          "top": 389.6875,
+          "right": 892,
+          "bottom": 656.6875,
+          "left": 265.515625
+        },
+        "send": {
+          "x": 336.78125,
+          "y": 564.6875,
+          "width": 53.25,
+          "height": 32,
+          "top": 564.6875,
+          "right": 390.03125,
+          "bottom": 596.6875,
+          "left": 336.78125
+        }
+      },
+      "result": "Pass: browser geometry only"
+    },
+    {
+      "name": "unavailable-narrow-light-20",
+      "state": "unavailable",
+      "theme": "light",
+      "font": 20,
+      "width": 350,
+      "height": 560,
+      "file": "unavailable-narrow-light-20.png",
+      "sha256": "0586d1c048c3cb2583e23d3bad0dca6a93405528b801167a8e8b694837913809",
+      "geometry": {
+        "client": 350,
+        "scroll": 350,
+        "heading": 4,
+        "composer": {
+          "x": 8,
+          "y": 243.265625,
+          "width": 334,
+          "height": 249.34375,
+          "top": 243.265625,
+          "right": 342,
+          "bottom": 492.609375,
+          "left": 8
+        },
+        "send": {
+          "x": 89.1875,
+          "y": 436.265625,
+          "width": 61.296875,
+          "height": 35,
+          "top": 436.265625,
+          "right": 150.484375,
+          "bottom": 471.265625,
+          "left": 89.1875
+        }
+      },
+      "result": "Pass: browser geometry only"
+    },
+    {
+      "name": "empty-light-16",
+      "state": "empty",
+      "theme": "light",
+      "font": 16,
+      "width": 700,
+      "height": 500,
+      "file": "empty-light-16.png",
+      "sha256": "8e3641cf110a30827aae9c146e4dafb3050ea64ad3dd4fd12b1dea6dfc6574d1",
+      "geometry": {
+        "client": 700,
+        "scroll": 700,
+        "heading": 9
+      },
+      "result": "Pass: browser geometry only"
+    }
+  ]
+}
