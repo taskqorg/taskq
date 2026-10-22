@@ -78,7 +78,7 @@ def main():
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
-        found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text())]
+        found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
             raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
         if scope != 'docs':
