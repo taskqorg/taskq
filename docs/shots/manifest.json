@@ -1,28 +1,28 @@
 {
   "version": "4.6.30",
-  "sourceCommit": "6beb9d2122adffb57ad446c57f61e5173ad6907a",
-  "binarySha256": "c8bd9bf28c95fd1722bb1cae3ba38a98211075c0f772cf1312658a287d3a2aaf",
+  "sourceCommit": "bdf5010b284fd6ff7849631ceb6c183b388aea70",
+  "binarySha256": "95355628eef8c5df4f91a729ea4be3cfe2d7e83bd1fb97a74b21f00b93da44ba",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "b0fb42c70dc00d9279337619094a01d6f7365928",
+    "src/tray.rs": "d36c300379f29f1520c7120f62d4933e9c29c279",
     "src/tray.html": "ee99783ea848e8be61b6d8d01d70057288344ae2",
-    "src/tray-app.js": "13f7958b12069baff4d58b5190a853fd5ba657ae",
+    "src/tray-app.js": "709896b6ed59168c50c7321d6ae3af0cca2123ef",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
-    "src/tray-view-state.js": "35e7f59115138fd0d92b422741ef1866036c42dd",
+    "src/tray-view-state.js": "a0eb498c1a0fe83f23ec19cf1330bf7da0e05b37",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "e38799f4c404e27a1fbaab61d2f1a9c9c8abdd64",
     "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
-    "src/task-dashboard.js": "baeba3d919fe372672aaec5df7c80f58eab71b8f",
+    "src/task-dashboard.js": "cfc17665e8829ec45628f14badf3bbcfca8b432b",
     "src/task-dashboard.css": "4a6b721fc8e5ae7e8c5a75fa3e09f1d699d805b2",
-    "src/task-views.js": "cf8dc17d504e67d0317f875ca8e9ad436236064c",
+    "src/task-views.js": "cb72b42862892e40402fe6ea4d0c82385fc24547",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "fbd352c056366bc454a8998000ac51c2e136ceea",
     "src/ui-icons.json": "47d956d146dc84f21e3009c8bbde80064f230c7e",
-    "src/project-blocks.js": "829308d8a88e93af21fadd1982cf87d2e5a24401",
+    "src/project-blocks.js": "12d97cf8ca7525d9146de7afeb878c448fd573ff",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/workspace.js": "4c4b40a1b1086d1d293b52510f2558ab89f855f7",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
@@ -40,11 +40,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "34d36da324301d198d7218feda0de385a9281941704ed2bb6413a36d496d114d"
+      "sha256": "ddecbee07e1b15b928c36294936243aa15e6de16d9c66e3d259766bfaec30a75"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "0f884322802be39357385d75558850271bfbfda6bf9fc4f99cf4614ae7379402"
+      "sha256": "9cd18cc08177aa6ace6790e18a4dd7eb35897141f8283cb8335399709d30770f"
     }
   ]
 }
