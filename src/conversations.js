@@ -130,7 +130,7 @@ module.exports=execution.module('conversations',{
     else if(action==='list'){listOnly=!listOnly;api.nav();draw();}
     else if(action==='recent'||action==='archive-list'){selection[list]=selected;list=action==='recent'?'recent':'archive';selected=selection[list]||api.visible()[0]?.id||null;listOnly=true;api.nav();draw();}
     else if(action==='clear-search'){search='';api.nav();draw();}
-    else if(action==='history'&&api.editable(c)){c.text=snapshot.ai.history[Number(b.dataset.index)];c.caret=[0,0];c.version=(c.version||0)+1;api.save(c);focusDraft=true;draw();}
+    else if(action==='history'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.text=snapshot.ai.history[Number(b.dataset.index)];c.caret=[0,0];c.version=(c.version||0)+1;api.save(c);focusDraft=true;draw();}
     else if(action==='clear-history'){ui.send({a:'ai-clear'});snapshot.ai.history=[];draw();}
     else if(action==='undo'){selected=undo;api.action('restore');}
     else if(action==='delete-review'){confirmDelete=true;draw();}

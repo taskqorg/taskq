@@ -144,9 +144,10 @@ fn fork(install:&Path,id:&str,to:&str,revision:Option<u64>)->Res<String> {
     if !crate::setup::owner_id(to)||id==to {return Err("Invalid new draft identity".into());}
     crate::setup::locked(install,||{
         if crate::messages::request_deleted(install,id)? {return Err("Deleted history cannot be copied".into());}
-        if crate::messages::request_deleted(install,to)?||crate::messages::plain(&crate::setup::dir(install).join(format!("{to}.json")))? {return Err("New draft ID is already used or deleted; original kept".into());}
+        if crate::messages::request_deleted(install,to)? {return Err("New draft ID was deleted; original kept".into());}
         let mut p=preferences(install)?;let mut drafts=rows(&p)?;
         if let Some(existing)=drafts.get(to){return if existing.parent.as_deref()==Some(id){Ok(to.into())}else{Err("New draft ID belongs to different input; original kept".into())};}
+        if crate::messages::plain(&crate::setup::dir(install).join(format!("{to}.json")))? {return Err("New draft ID belongs to a native request; original kept".into());}
         let source=drafts.get(id).ok_or("Source draft unavailable")?;
         if Some(source.revision)!=revision||source.deleting {return Err("Draft changed; refresh before creating a new request".into());}
         let draft=Draft{revision:1,parent:Some(id.into()),root:source.root.clone(),text:source.text.clone(),caret:source.caret,files:copy_files(install,id,to,&source.files)?,..Draft::default()};
