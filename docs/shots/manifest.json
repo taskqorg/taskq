@@ -1,14 +1,14 @@
 {
   "version": "4.6.31",
-  "sourceCommit": "c4b30069679ff787719008233c113f1c06441ebe",
-  "binarySha256": "17001b60ff9225344ba0e1ea3f18429491f700c4d87d0d1f876a7d61df9b7de1",
+  "sourceCommit": "46f30ad43d036c5957bf3703d244ca5ef8d362bc",
+  "binarySha256": "2a1e4b2eea48891ca4c11a831b836b27122792eba57b5f35daa4d110d6cabd75",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "8250de5301f4fbdd021732ef4df5076982d64ef6",
+    "src/tray.rs": "278ccfdc65c05b2f27bbe63e71ce9a1a8a2bb6b4",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
     "src/tray-app.js": "fd7846b418895481d1ee51408528327470bec07a",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
@@ -43,7 +43,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "4f3f75b50f0e7b18bdfd0fdbfd6141175479168666d64e87ee64fb48dce3783d"
+      "sha256": "63d8025b002b581fc322a4410a3970300f854143c4045c32292513a9b2701eb4"
     },
     {
       "file": "popover-dark-project-16.png",
