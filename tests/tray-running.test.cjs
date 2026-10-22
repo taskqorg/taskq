@@ -3,7 +3,7 @@ const assert=require('node:assert/strict');
 // #1591: `alive`, `tasks_live` and row `live` come from the Rust ttl rule (tray.rs `liveness`); the page compares no age.
 const execution=(id,host,runtime,role,state='running')=>({id,attempt:id,host,runtime,role,state,observed:990,live:true});
 const project={root:'p',issues:'https://example.org/p',host:'mac',age:1,tasks_age_seconds:0,alive:true,tasks_live:true,complete:true,observed:1000,
- hosts:[{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'old',updated:690,live:false},{name:'idle',updated:990,live:true}],
+ hosts:[{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'old',updated:690,live:false,age:310,age_text:'5m'},{name:'idle',updated:990,live:true}],
  tasks:[{n:1,state:'doing',executions:[execution(11,'mac','claude','worker')]},
  {n:2,state:'review',executions:[execution(12,'mac','codex','reviewer')]},
  {n:3,state:'doing',executions:[execution(13,'win','codex','worker')]},
@@ -14,7 +14,7 @@ let html=c.runningAgents();
 assert(html.includes('claude: 1 worker · 0 reviewers'));
 assert(html.includes('codex: 0 workers · 1 reviewer'));
 assert(html.includes('codex: 1 worker · 0 reviewers'));
-assert(html.includes('old</strong> · unknown · 5 min old'));
+assert(html.includes('old</strong> · unknown · 5m old'));
 assert(html.includes('idle</strong> · idle'));
 assert(html.includes('Reservations: claude 1'));
 assert(html.includes('Occupied slots: claude 2 · codex 1'));

@@ -84,13 +84,7 @@ pub struct Post {
 }
 
 pub fn label(kind: &str) -> &'static str {
-    match kind {
-        "ask" => "Question",
-        "close" => "Closed",
-        "failed" => "Failed",
-        "gone" => "Attempt gone",
-        _ => "Event",
-    }
+    crate::display::NOTIFY.iter().find(|k| k.0 == kind).map_or("Event", |k| k.1)
 }
 
 /// Events of the tray's projects (`root`, `name`, `tasks`, `events` lines `[time, kind, attempt, n]`) after each

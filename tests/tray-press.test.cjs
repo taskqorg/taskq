@@ -5,8 +5,8 @@ const context={render:()=>renders++,setTimeout:f=>timers.push(f),performance:{no
  document:{fonts:{ready:Promise.resolve()},addEventListener(){}},
  menu:{addEventListener:(t,f)=>(on[t]??=[]).push(f)},addEventListener:(t,f)=>(win[t]??=[]).push(f)};
 const app=require('./tray-harness.cjs').install(context);app.mount();
-// § 4 Tray: mount starts the in-place row age ticker; it never renders.
-assert.equal(timers.length,1);timers.shift()();assert.equal(renders,0);assert.equal(timers.length,1);timers.shift();
+// #1592: row ages come from the Rust display model on each push; mount starts no page age ticker and never renders.
+assert.equal(timers.length,0);assert.equal(renders,0);
 const event={button:0,target:{closest:()=>null}};
 const fire=(surface,type)=>{for(const fn of surface[type])fn(event);};
 app.refresh(0);assert.equal(renders,1);

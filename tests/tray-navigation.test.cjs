@@ -17,7 +17,7 @@ assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['revie
 (context.back());assert.equal(context.page,'project');assert.equal(context.taskFilter,null);
 (context.back(),context.back());assert.equal(context.page,'home');
 // Render all five categories from the same snapshot, including empty and unknown states.
-context.S={platform:'windows',font:20,host:'mac',now:1000,version:'candidate',projects:[],agents:null};
+context.S={platform:'windows',font:20,host:'mac',now:1000,version:'candidate',projects:[],agents:null,display:require('./fixtures/display-model.json').display};
 context.page='settings';let h=(context.routeBody());
 for(const route of ['appearance','cadence','notifications','agents','services','about'])assert(h.includes('data-route="'+route+'"'));
 context.page='appearance';assert((context.routeBody()).includes('Text size · 20 px'));
@@ -37,7 +37,7 @@ h=(context.notifyGroup({root:'/p'}));
 assert(h.includes('data-kind="close" data-root="/p" data-v="banner" aria-pressed="true"'));assert(h.includes('data-kind="ask" data-root="/p" data-v="inherit" aria-pressed="true"'));
 // M14 click on a closed task: no open row, so the project page shows its card from the notification until navigation
 Object.assign(context,{TaskqProjectBlocks:require('../src/project-blocks.js'),CSS:{escape:s=>s},blockProject:p=>({name:p.name,board:{kind:'github',url:p.issues}}),
-  S:{projects:[{root:'/p',name:'p',issues:'https://x/issues',tasks:[]}]}});
+  S:{display:context.S.display,projects:[{root:'/p',name:'p',issues:'https://x/issues',tasks:[]}]}});
 (context.page='home',context.openCard({root:'/p',n:8,kind:'close',title:'Ship it'}));
 assert.equal(context.page,'/p');h=(context.notedCard(context.S.projects[0]));
 assert(h.includes('data-card="https://x/issues/8"'));assert(h.includes('Closed'));assert(h.includes('Ship it'));assert(h.includes('href="https://x/issues/8"'));
