@@ -1589,6 +1589,12 @@ impl ClaudeTurn {
             if self.native.as_ref().is_some_and(|n|n.pid!=pid) {return Err("Claude native process changed; reconcile original execution".into());}
             let current=coreq::process::identity(pid).map_err(|e|format!("Claude process identity unreadable: {e}"))?.ok_or("Claude reported process absent; retry native readback")?;
             if self.native.as_ref().is_some_and(|n|*n!=current) {return Err("Claude PID incarnation changed; original identity retained".into());}
+            // #1561: a process another task's record holds is never this job's identity; the next readback retries.
+            if let (None,Some(r))=(&self.native,&self.recovery) {
+                if let Some(other)=crate::kids_file(&r.install,&r.root)?.iter().find(|k|k.task!=r.task&&k.process==current) {
+                    return Err(format!("Claude reported the process recorded for #{}; retry native readback",other.task));
+                }
+            }
             self.native=Some(current);
             self.pid=pid;
         }
@@ -3275,6 +3281,68 @@ mod tests {
         assert_eq!(log.matches("\"result\":\"owned final\"").count(),1,"answer kept once");
         crate::save_kids(&s,&root).unwrap();assert!(crate::kids_file(&c.install,&root).unwrap().is_empty());
         std::fs::write(root.join("verified"),"no resubmission; kept answer; exit after native exit").unwrap();
+    }
+
+    // #1561 Chain: two Claude jobs launched apart -> native rows -> recovery records.
+    // Defect: the later job's record held the earlier job's process; its exit then failed every handover pass.
+    // Retained: each record carries its own job's process; a process another task's record holds is refused.
+    #[cfg(unix)]
+    #[test]
+    fn claude_records_carry_their_own_process() {
+        let root=std::env::temp_dir().join(format!("taskq-claude-own-{}",uuid()));
+        let install=root.join("install");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut first=Command::new("sleep").arg("30").spawn().unwrap();
+        let mut second=Command::new("sleep").arg("30").spawn().unwrap();
+        let turn=|task:u64,id:&str|ClaudeTurn { root:root.clone(), log:root.join(format!("{task}.log")), session:String::new(),
+            id:id.into(), announced:false, accepted:true, history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(),
+            input:"input".into(), _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:None,
+            recovery:Some(Recovery {install:install.clone(),root:root.clone(),task,attempt:task*10,execution:task*10}), done:false, failure:None, launch_error:None };
+        let row=|id:&str,pid:u32|serde_json::json!({"id":id,"state":"working","pid":pid});
+        let mut a=turn(1557,"c2fc6503");
+        a.capture_identity(&row("c2fc6503",first.id())).unwrap();a.persist().unwrap();
+        let mut b=turn(1558,"90d3662a");
+        let refused=b.capture_identity(&row("90d3662a",first.id())).unwrap_err();
+        assert!(refused.contains("#1557"),"the earlier job's process is not this job's identity: {refused}");
+        assert!(b.native.is_none(),"a refused readback keeps no identity");
+        b.capture_identity(&row("90d3662a",second.id())).unwrap();b.persist().unwrap();
+        let records:Vec<_>=crate::kids_file(&install,&root).unwrap().into_iter().map(|k|(k.task,k.process.pid)).collect();
+        assert_eq!(records,[(1557,first.id()),(1558,second.id())],"each record carries its own job's process");
+        let mut stolen=crate::kids_file(&install,&root).unwrap()[0].clone();stolen.task=1559;
+        assert!(crate::checkpoint_kid(&install,&root,stolen).unwrap_err().contains("#1557"),"no record takes another task's process");
+        for c in [&mut first,&mut second] {c.kill().unwrap();c.wait().unwrap();}
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #1561 Chain: live Claude handle -> recorded process exits -> handover pass -> board exit -> handover.
+    // Defect: every pass failed with "child identity changed during handover" and the pending update never ran.
+    // Retained: before the board exit the record stays and one error names the execution; after it the handover completes.
+    #[cfg(unix)]
+    #[test]
+    fn exited_process_resolves_from_board_exit_at_handover() {
+        use crate::board::Board;
+        let root=std::env::temp_dir().join(format!("taskq-exited-{}",uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let b=crate::board::Fake::default();let n=b.create("T","",&[crate::service::TASK_LABEL.into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+        let c=crate::service::Config {root:root.clone(),install:root.clone(),..crate::tests::cfg()};
+        let mut child=Command::new("sleep").arg("30").spawn().unwrap();
+        let native=coreq::process::identity(child.id()).unwrap().unwrap();
+        crate::checkpoint_kid(&root,&root,crate::data::KidLine {task:n,attempt:a,runtime:"claude".into(),process:native.clone(),execution:a,offset:0,job:None}).unwrap();
+        child.kill().unwrap();child.wait().unwrap();
+        let turn=ClaudeTurn { root:root.clone(), log:root.join("attempt.log"), session:String::new(), id:"c37eb75a".into(), announced:false, accepted:true,
+            history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(), input:"input".into(),
+            _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(native), recovery:None, done:false, failure:None, launch_error:None };
+        let mut s=crate::service::Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
+        s.kids.push(crate::service::Kid {unknown:None,stopping:false,session_url:None,execution:a,task:n,attempt:a,rt:"claude".into(),proc:Box::new(turn)});
+        let path=crate::kids_path(&root,&root).unwrap();
+        let saved=std::fs::read_to_string(&path).unwrap();
+        assert_eq!(crate::save_kids(&s,&root).unwrap_err(),format!("#{n} execution {a}: recorded native process exited; handover waits for its board release"));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(),saved,"an unreleased record stays");
+        b.comment(n,&format!("taskq: released {a} exit attempt {a}\nop-id: release-{a}")).unwrap();
+        crate::save_kids(&s,&root).unwrap();
+        assert!(crate::kids_file(&root,&root).unwrap().is_empty(),"board exit resolves the record; handover completes");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Chain: native job schema -> observation -> release fence.

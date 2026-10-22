@@ -1267,6 +1267,10 @@ fn write_kids(install:&Path,root:&Path,kids:&[data::KidLine])->Res<()> {
 
 fn checkpoint_kid(install:&Path,root:&Path,kid:data::KidLine)->Res<()> {
     let mut kids=kids_file(install,root)?;
+    // #1561: one native process backs one execution; a record never takes another task's process.
+    if let Some(other)=kids.iter().find(|k|k.task!=kid.task&&k.process==kid.process) {
+        return Err(format!("native process already recorded for #{}; retry native readback",other.task));
+    }
     if let Some(old)=kids.iter_mut().find(|k|k.task==kid.task) {
         if *old==kid { return Ok(()) }
         if old.execution>=kid.execution { return Err("execution already has different or newer native recovery identity; file kept".into()); }
@@ -1288,17 +1292,24 @@ fn retire_kid(cfg:&Config,task:u64,attempt:u64,execution:u64)->Res<()> {
 }
 
 fn save_kids(s: &Service, root: &Path) -> Res<()> {
+    let exited=|task:u64,attempt:u64,execution:u64,runtime:&str|->Res<bool> {
+        let log=board::entries(s.board,task)?;
+        Ok(core::executions(task,&log).iter().any(|x|x.id==execution && x.attempt==attempt && x.host==s.cfg.me && x.runtime==runtime && x.release==Some(core::Release::Exit)))
+    };
     let mut kids=vec![];
     for k in &s.kids {
         let process=k.proc.native_identity()?;
-        if coreq::process::identity(process.pid).map_err(|e|e.to_string())?.as_ref()!=Some(&process) { return Err("child identity changed during handover; reconcile before retry".into()); }
+        if coreq::process::identity(process.pid).map_err(|e|e.to_string())?.as_ref()!=Some(&process) {
+            // #1561: a recorded process that exited resolves from its board exit; until then one error names the wait.
+            if exited(k.task,k.attempt,k.execution,&k.rt)? { continue; }
+            return Err(format!("#{} execution {}: recorded native process exited; handover waits for its board release",k.task,k.execution));
+        }
         kids.push(data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()});
     }
     let mut kept=vec![];
     for old in kids_file(&s.cfg.install,root)? {
         if kids.contains(&old) { continue; }
-        let log=board::entries(s.board,old.task)?;
-        if !core::executions(old.task,&log).iter().any(|x|x.id==old.execution && x.attempt==old.attempt && x.host==s.cfg.me && x.runtime==old.runtime && x.release==Some(core::Release::Exit)) {
+        if !exited(old.task,old.attempt,old.execution,&old.runtime)? {
             // #1435: a Windows exit keeps the record for the next image instead of holding the update on it
             if !cfg!(windows) { return Err("unresolved native recovery record cannot be discarded during handover".into()); }
             kept.push(old);
