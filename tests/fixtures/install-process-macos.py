@@ -21,26 +21,18 @@ def manager():
     assert install.parent.name.startswith('taskq-install-process-')
     args = sys.argv[2:]
     active = install / 'manager-active'
-    legacy = json.loads((install / 'legacy-native.json').read_text()) if (install / 'legacy-native.json').exists() else None
-    legacy_active = install / 'legacy-active'
-    legacy_label = 'com.taskq.' + legacy['project'] if legacy else None
     if args[0] == 'print':
         service = json.loads((install / 'service').read_text()) if (install / 'service').exists() else {}
         pid = service.get('pid', 0) if isinstance(service, dict) else 0
         if args[1].count('/') == 1:
             if active.exists():
                 print(f'{pid} 0 com.taskq.service')
-            if legacy and legacy_active.exists():
-                print(f"{legacy['pid']} 0 {legacy_label}")
         else:
             label = args[1].split('/', 2)[2]
-            is_legacy = legacy and label == legacy_label and legacy_active.exists()
-            if not is_legacy and not (label == 'com.taskq.service' and active.exists()):
+            if not (label == 'com.taskq.service' and active.exists()):
                 return 0
-            root = legacy['root'] if is_legacy else str(install)
-            pid = legacy['pid'] if is_legacy else pid
             definition = pathlib.Path(os.environ['HOME']) / ('Library/LaunchAgents/' + label + '.plist')
-            print(f'program = {install}/taskq\nworking directory = {root}\npath = {definition}\npid = {pid}\narguments = {{\n{install}/taskq\nservice\nrun\n}}')
+            print(f'program = {install}/taskq\nworking directory = {install}\npath = {definition}\npid = {pid}\narguments = {{\n{install}/taskq\nservice\nrun\n}}')
         return 0
     if args[0] in ('bootstrap', 'kickstart'):
         with (install / 'native-submissions').open('a') as stream:
@@ -48,22 +40,6 @@ def manager():
         active.touch()
         return 0
     if args[0] == 'bootout':
-        if legacy and (args[-1].endswith('/' + legacy_label) or pathlib.Path(args[-1]).name == legacy_label + '.plist'):
-            if legacy_active.exists():
-                legacy_active.unlink()
-                temporary = install / 'stop-legacy.pending'
-                temporary.write_text(json.dumps(legacy))
-                temporary.replace(install / 'stop-legacy.json')
-            # The fixture parent must reap its child before acknowledging native Stop.
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                exited = install / 'legacy-exited.json'
-                if exited.exists():
-                    observed = json.loads(exited.read_text())
-                    assert observed == {'pid': legacy['pid'], 'started': legacy['started'], 'exit': 0}
-                    return 0
-                time.sleep(.02)
-            raise RuntimeError('owned legacy native exit unconfirmed')
         active.unlink(missing_ok=True)
         return 0
     raise RuntimeError('unexpected substituted native action: ' + repr(args))
@@ -121,7 +97,7 @@ def run_case(phase):
         logs.append(path)
         return child
 
-    host, legacy_actor = None, None
+    host = None
     rollback_case = phase in ('later-rollback', 'later-private-rollback', 'foreign-rollback', 'interrupted-restore')
 
     def selection(version, previous, label):
@@ -136,8 +112,6 @@ def run_case(phase):
 
     def ensure_host():
         nonlocal host
-        if legacy_actor is not None:
-            legacy_actor.poll()
         if host is None and (install / 'manager-active').exists():
             host = start('host')
 
@@ -145,13 +119,6 @@ def run_case(phase):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             ensure_host()
-            if legacy_actor is not None and legacy_actor.poll() is not None:
-                native = json.loads((install / 'legacy-native.json').read_text())
-                assert native['pid'] == legacy_actor.pid
-                if not (install / 'legacy-exited.json').exists():
-                    pending = install / 'legacy-exited.pending'
-                    pending.write_text(json.dumps({'pid': native['pid'], 'started': native['started'], 'exit': legacy_actor.returncode}))
-                    pending.replace(install / 'legacy-exited.json')
             if predicate():
                 return
             if actor is not None and actor.poll() is not None:
@@ -160,69 +127,6 @@ def run_case(phase):
         raise TimeoutError('fixture completion signal expired')
 
     try:
-        if phase == 'compatibility':
-            environment['TASKQ_INSTALL_COMPATIBILITY'] = '1'
-            writer = start('telemetry')
-            until(lambda: (install / 'telemetry-ready').exists(), actor=writer)
-            phase = 'applied'
-        if phase == 'legacy-handoff':
-            definition = home / ('Library/LaunchAgents/com.taskq.' + root.name + '.plist')
-            definition.write_bytes(plistlib.dumps({'Label': 'com.taskq.' + root.name, 'WorkingDirectory': str(root), 'ProgramArguments': [str(install / 'taskq'), 'service', 'run']}))
-            (install / 'taskq').write_bytes(b'owned original legacy launcher')
-            (root / 'taskq.json').write_text('{"limits":{"codex":1}}\n')
-            legacy_actor = start('legacy')
-            cursor = install / 'projects.installing'
-            until(lambda: cursor.exists() and json.loads(cursor.read_text())['phase'] == 'registered', actor=legacy_actor)
-            pending = json.loads(cursor.read_text())
-            baseline = json.loads((install / 'host-policy-migration/install.json').read_text())
-            floor = [saved for saved in baseline['files'] if saved['path'] == str(install / 'rollback-floor')]
-            assert len(floor) == 1 and floor[0]['digest'] is None, 'pre-host rollback-floor absence was not preserved'
-            original_id = pending['id']
-            child = json.loads((install / 'owned-work.json').read_text())
-            until(lambda: (root / '.taskq/status.json').exists() and bool(json.loads((root / '.taskq/status.json').read_text()).get('kids')), actor=legacy_actor)
-            before = json.loads((root / '.taskq/status.json').read_text())
-            assert before['pid'] == legacy_actor.pid and before['kids'][0]['pid'] == child['pid']
-            assert pending['legacy']['phase'] == 'draining' and not (install / 'controller-ready.json').exists()
-            assert host is not None and host.poll() is None and host.pid != legacy_actor.pid
-            until(lambda: json.loads((root / '.taskq/status.json').read_text())['at'] > before['at'], actor=legacy_actor)
-            during = json.loads((root / '.taskq/status.json').read_text())
-            assert during['pid'] == legacy_actor.pid and during['kids'][0]['pid'] == child['pid']
-            assert not during.get('host_install') and not (install / 'controller-ready.json').exists()
-            assert json.loads(cursor.read_text())['legacy']['phase'] == 'draining'
-            item['owned_work_preserved_during_host_start'] = child
-            item['work_before'] = before
-            item['work_during'] = during
-            (install / 'finish-owned-work').touch()
-            until(lambda: (install / 'controller-ready.json').exists(), actor=legacy_actor)
-            assert json.loads((install / 'controller-ready.json').read_text())['id'] == original_id
-            assert json.loads(cursor.read_text())['legacy']['phase'] == 'ready'
-            prepared = json.loads((root / '.taskq/status.json').read_text())
-            assert prepared['pid'] == legacy_actor.pid and not prepared['kids']
-            assert not prepared.get('host_install') and definition.exists()
-            item['prepared_status'] = prepared
-            item['controller'] = json.loads((install / 'controller-ready.json').read_text())
-            (install / 'allow-retirement').touch()
-            until(lambda: (install / 'controller-finished').exists())
-            item['legacy_native_exit'] = json.loads((install / 'legacy-exited.json').read_text())
-            assert item['legacy_native_exit'] == {'pid': legacy_actor.pid, 'started': pending['legacy']['owner']['started'], 'exit': 0}
-            until(lambda: legacy_actor.poll() is not None)
-            assert legacy_actor.returncode == 0
-            until(lambda: json.loads((root / '.taskq/status.json').read_text()).get('pid') == host.pid)
-            recovered = start('recover')
-            until(lambda: recovered.poll() is not None)
-            outcome = json.loads((install / 'installer-result.json').read_text())
-            assert outcome['ok'] and outcome['status']['id'] == original_id and outcome['status']['state'] == 'observed', outcome
-            assert not cursor.exists() and not definition.exists() and not (install / 'legacy-active').exists()
-            item['new_host_status'] = json.loads((root / '.taskq/status.json').read_text())
-            item.update(original_command=original_id, outcome=outcome, native_submission_count=len((install / 'native-submissions').read_text().splitlines()), passed=True)
-            assert item['native_submission_count'] == 1
-            # A service pass reading the wake signal holds its shared lock; host drain must not depend on that wake.
-            with (root / '.taskq/poke').open('rb') as signal:
-                fcntl.flock(signal, fcntl.LOCK_SH)
-                (install / 'exit-host').touch()
-                until(lambda: host.poll() is not None)
-            assert host.returncode == 0, 'host drain failed while the wake signal was busy'
-            return item
         if rollback_case:
             selection('3.0.0', '2.0.0', 'first')
         if phase == 'interrupted-restore':
@@ -357,15 +261,19 @@ def run_case(phase):
                 assert statuses[1]['host_install'] == attach_id
                 item['project_statuses'] = statuses
                 item['second_root_attach_without_reload'] = True
+                # A service pass reading the wake signal holds its shared lock; host drain must not depend on that wake.
+                with (root / '.taskq/poke').open('rb') as signal:
+                    fcntl.flock(signal, fcntl.LOCK_SH)
+                    (install / 'exit-host').touch()
+                    until(lambda: host.poll() is not None)
+                assert host.returncode == 0, 'host drain failed while the wake signal was busy'
         item['passed'] = True
     except BaseException as error:
         item['passed'] = False
         item['error'] = repr(error)
         item['traceback'] = traceback.format_exc()[-6000:]
-        item['failure_snapshot'] = {str(path.relative_to(base)): path.read_text(errors='replace')[-16000:] for path in (install / 'projects.installing', root / '.taskq/status.json', install / 'controller-error.txt', install / 'resource-state/state.json') if path.is_file()}
+        item['failure_snapshot'] = {str(path.relative_to(base)): path.read_text(errors='replace')[-16000:] for path in (install / 'projects.installing', root / '.taskq/status.json', install / 'resource-state/state.json') if path.is_file()}
     finally:
-        (install / 'finish-owned-work').touch()
-        (install / 'allow-retirement').touch()
         (install / 'exit-host').touch()
         for child in children:
             if child.poll() is None:
@@ -374,15 +282,6 @@ def run_case(phase):
                 except subprocess.TimeoutExpired:
                     child.kill()
                     child.wait(timeout=5)
-        native_expected = (install / 'owned-work.json').exists() or (install / 'controller-ready.json').exists()
-        if native_expected:
-            verifier = start('verify-exit')
-            verifier.wait(timeout=20)
-            readback = json.loads((install / 'native-exit-readback.json').read_text()) if (install / 'native-exit-readback.json').exists() else None
-            item['native_exit_readback'] = readback
-            if not readback or readback['forced']:
-                item['passed'] = False
-                item['native_cleanup_error'] = 'owned native exit was not observed without forced teardown'
         item['actor_exits'] = [child.returncode for child in children]
         item['actors'] = [{'role': role, 'exit': child.returncode, 'expected_exit': -9 if child.pid in interrupted else 0} for role, child in zip(roles, children)]
         unexpected = [actor for actor in item['actors'] if actor['exit'] != actor['expected_exit']]
@@ -390,8 +289,7 @@ def run_case(phase):
             item['passed'] = False
             item['teardown_error'] = 'unexpected actor exit: ' + repr(unexpected)
         item['logs'] = {path.name: path.read_text(errors='replace')[-6000:] for path in logs}
-        if not native_expected or (item.get('native_exit_readback') or {}).get('all_absent', False):
-            shutil.rmtree(base)
+        shutil.rmtree(base)
         item['fixture_storage_removed'] = not base.exists()
         item['elapsed_seconds'] = round(time.monotonic() - started, 3)
     return item

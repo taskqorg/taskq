@@ -844,7 +844,7 @@ fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
     Ok(())
 }
 
-fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::LegacyOwner>) -> Res<()> {
+fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let cfg = &c.cfg;
     let exe = launcher(&cfg.install);
     let board_env = cfg.board.worker_env(&platform::tool(&cfg.install), &cfg.web_host)?;
@@ -860,7 +860,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         } else { runtime::spawn(&env, l) }
     };
     let mut s = Service::new(c.board.as_ref(), cfg, platform::VERSION, Box::new(start));
-    s.legacy_handoff=legacy.is_some();
     s.recover = Some(Box::new(|task, execution| runtime::recover(&cfg.root, &cfg.install, task, execution)));
     s.host = host.clone();
     s.instance = enrollment::installation_id(&cfg.install).map(|id| service_id(&id))?;
@@ -879,8 +878,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }
         std::thread::sleep(Duration::from_secs(cfg.poll.max(1)));
     }
-    let mut adoption=adopt(&mut s, &cfg.install, &cfg.root);
-    if legacy.is_none() {adoption.as_ref().map_err(Clone::clone)?;}
+    adopt(&mut s, &cfg.install, &cfg.root)?;
     let is_installed = installed(&cfg.install);
     let began = Instant::now();
     log!("{}", incident::disclosure(Some(&cfg.root)));
@@ -888,7 +886,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut update: Option<String> = None;
     let mut restart_empty: Option<u64> = None;
     let mut waits_logged = String::new();
-    if legacy.is_none() {let _ = fs::remove_file(d.join("restart"));}
+    let _ = fs::remove_file(d.join("restart"));
     let mut tray = None;
     let project = project_name(&cfg.root);
     let issues = c.board.url(0).strip_suffix("/0").unwrap_or_default().to_string();
@@ -910,10 +908,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
     let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
     let mut panics = host::Panics::default();
-    let mut legacy_installation:Option<std::thread::JoinHandle<Res<String>>>=None;
-    let mut legacy_controller:Option<host_control::Control>=None;
-    let mut legacy_retry:Option<Instant>=None;
-    let mut legacy_error:Option<String>=None;
     let pokes = [d.join("poke"), cfg.install.join("poke")];
     let mut observed_poke = None;
     let mut observed_command = None;
@@ -929,14 +923,10 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         let poke_start = poke_times(&pokes);
         telemetry::diagnostic::poll(&cfg.install);
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Res<()> {
-        if legacy.is_some()&&adoption.is_err() {adoption=adopt(&mut s,&cfg.install,&cfg.root);}
-        let latch=legacy.map(|owner|host::legacy_latched(&cfg.install,owner)).transpose();
-        if matches!(latch,Ok(Some(true))) {s.legacy_prepared=true;}
-        let handoff_error=adoption.as_ref().err().cloned().or_else(||legacy.and_then(|owner|owner.verify(&platform::tool(&cfg.install)).err())).or_else(||latch.err());
         let control = control::snapshot(&cfg.root,&mut observed_poke,&mut observed_command);
         let command=match &control {Ok(snapshot)=>snapshot.command.clone(),Err(e)=>json!({"state":"unknown","reason":e})};
         let wakeup = control.as_ref().ok().and_then(|s|s.link.as_ref()).map(|link| link.span().entered());
-        let reduced = panics.quarantined() || began.elapsed().as_secs() < panics.until||handoff_error.is_some()||s.legacy_prepared;
+        let reduced = panics.quarantined() || began.elapsed().as_secs() < panics.until;
         // § 3: capacity reloads before each admission decision; children are untouched
         let cap = fs::read_to_string(cfg.root.join("taskq.json")).map_err(|e| e.to_string())
             .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| format!("taskq.json: {e}")))
@@ -983,7 +973,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             if let Ok(h) = host.lock() { if h.draining.contains(&cfg.root) { s.focus.clear(); } }
         }
         s.focus_error = focus_error.clone();
-        let r = if s.legacy_prepared {s.reduced()}else if reduced { s.reduced().and_then(|_| Err(handoff_error.clone().or_else(||panics.reason.clone()).unwrap_or_default())) } else { s.pass() };
+        let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else { s.pass() };
         s.sync_host();
         for l in s.log.drain(..) {
             log!("{l}");
@@ -1045,7 +1035,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
-        if !reduced && legacy.is_none() && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
+        if !reduced && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
             dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));
@@ -1071,25 +1061,21 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         {
             status[k] = v;
         }
-        if let Some(owner)=legacy {
-            status["handoff"]=json!({"state":if handoff_error.is_some()||legacy_error.is_some() {"unknown"}else if s.legacy_prepared {"prepared"}else{"draining"},"owner":owner,
-                "reason":handoff_error.as_ref().or(legacy_error.as_ref()),"waits":lifecycle_waits(&s, true)});
-        }
         status["diagnostics"] = s.service_diagnostics();
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
         drop(wakeup);
-        if host.is_none() && legacy.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
+        if host.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
             let h = cfg.install.join("releases").join(platform::VERSION).join("healthy");
             if !h.exists() {
                 if let Err(e) = fs::write(h, "") { log!("release health unknown: {e}"); }
             }
         }
         // § 4 step 7: a not installed service only reports a newer version; `<root>/.taskq/update` checks at once
-        let asked = legacy.is_none()&&fs::remove_file(d.join("update")).is_ok();
+        let asked = fs::remove_file(d.join("update")).is_ok();
         // § 8 step 3: a pending restart already goes to `current`; repeating the check would only repeat its log line
         let pending = is_installed && d.join("restart").exists();
         if host.is_some() && (asked || pending) { touch(&cfg.install.join(if asked { "update" } else { "restart" })); }
-        if host.is_none() && legacy.is_none() && !pending && (asked || checked.is_none_or(|t| t.elapsed().as_secs() >= cfg.update_every)) {
+        if host.is_none() && !pending && (asked || checked.is_none_or(|t| t.elapsed().as_secs() >= cfg.update_every)) {
             checked = Some(Instant::now());
             if is_installed {
                 match platform::service_update(&cfg.install) {
@@ -1111,7 +1097,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             }
         }
         restart_watch(&mut restart_empty, cfg!(windows) && d.join("restart").exists() && s.kids.is_empty(), began.elapsed().as_secs(), cfg.update_every);
-        if host.is_none() && legacy.is_none() && is_installed && d.join("restart").exists() {
+        if host.is_none() && is_installed && d.join("restart").exists() {
             // Windows re-exec waits for the live children; the request stays until it can go
             let waits = lifecycle_waits(&s, false).join(", ");
             if waits.is_empty() {
@@ -1131,7 +1117,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 log!("{l}");
             }
         }
-        if host.is_none() && legacy.is_none() && is_installed {
+        if host.is_none() && is_installed {
             keep_tray(&cfg.install, &mut tray);
         }
         if let Some(host) = &host {
@@ -1143,31 +1129,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
             if let Err(e) = report_handoff(&s, &mut h, &cfg.root, drained) { log!("handoff unknown: {e}"); }
             }
         }
-        if let Some(owner)=legacy {
-            if legacy_installation.as_ref().is_some_and(|job|job.is_finished()) {
-                let outcome=legacy_installation.take().unwrap().join().unwrap_or_else(|_|Err("legacy installation owner panicked; original transition retained".into()));
-                if let Err(reason)=outcome {if legacy_error.as_ref()!=Some(&reason) {log!("legacy installation: {reason}");}legacy_error=Some(reason);}
-            }
-            if !s.legacy_prepared&&legacy_installation.is_none()&&legacy_retry.is_none_or(|at|at.elapsed().as_secs()>=5) {
-                legacy_retry=Some(Instant::now());let install=cfg.install.clone();let owner=owner.clone();
-                match std::thread::Builder::new().name("taskq-legacy-install".into()).spawn(coreq::telemetry::capture::bind(move ||host::legacy_install(&install,&owner))) {
-                    Ok(job)=>legacy_installation=Some(job),Err(e)=>legacy_error=Some(format!("legacy installation not started: {e}")),
-                }
-            }
-            if (!reduced||s.legacy_prepared)&&handoff_error.is_none()&&error.is_none()&&s.idle() {
-                match host::prepare_legacy(&cfg.install,owner) {
-                    Ok(true)=>{s.legacy_prepared=true;legacy_error=None;},Ok(false)=>{},Err(e)=>legacy_error=Some(e),
-                }
-            }
-            if let Some(outcome)=legacy_controller.as_mut().and_then(host_control::Control::poll) {
-                legacy_controller=None;if let Err(e)=outcome {legacy_error=Some(e);}
-            }
-            if s.legacy_prepared&&legacy_controller.is_none() {
-                match host::dispatch_legacy(&cfg.install) {Ok(control)=>legacy_controller=Some(control),Err(e)=>legacy_error=Some(e)}
-            }
-        }
         // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
-        let wait = if reduced&&handoff_error.is_none() {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
+        let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             if sampled.is_some_and(|t| t.elapsed().as_secs() < 30) {
@@ -1195,10 +1158,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
         }));
         match outcome {
             Ok(Ok(())) => {}
-            Ok(Err(e)) if legacy.is_some()=>{log!("legacy supervision: {e}; ownership retained");std::thread::sleep(Duration::from_secs(1));},
             Ok(Err(e)) => return Err(e),
             Err(payload) => {
-                if host.is_none()&&legacy.is_none() { std::panic::resume_unwind(payload); }
+                if host.is_none() { std::panic::resume_unwind(payload); }
                 if panics.quarantined()&&let Some(host)=&host {
                     // Stop the board loop, retaining its handles solely for safe exit/update monitoring (R11).
                     s.unready();
@@ -1219,27 +1181,6 @@ fn service_run(c: &Ctx, host: Option<host::Shared>,legacy:Option<&host_control::
                 publish_status(&platform::tool(&cfg.install), &cfg.root, &status, host.as_ref());
             }
         }
-    }
-}
-
-fn legacy_service(install:&Path,owner:&host_control::LegacyOwner)->Res<()> {
-    PROJECT_ROOT.set(Some(owner.root.clone()));
-    platform::project_log(install.join(format!("{}.log",owner.project)));
-    let mut reported=String::new();
-    loop {
-        let outcome=(|| {
-            owner.verify(&platform::tool(install))?;
-            // The host policy cannot change the permissions/capacity of an owner still draining its old unit.
-            let (cfg,raw)=project_config(&owner.root)?;
-            if cfg.install.canonicalize().ok()!=Some(install.canonicalize().map_err(|e|e.to_string())?) {
-                return Err("legacy installation scope differs; ownership retained".into());
-            }
-            let board=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&platform::tool(install))?;
-            service_run(&Ctx {cfg,raw,board},None,Some(owner))
-        })();
-        let error=outcome.err().unwrap_or_else(||"legacy supervision ended; ownership retained".into());
-        if reported!=error {log!("{error}; legacy handoff waiting");reported=error;}
-        std::thread::sleep(Duration::from_secs(1));
     }
 }
 
@@ -1978,7 +1919,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"complete-legacy"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2005,11 +1946,10 @@ fn service(args: &Args) -> Res<()> {
         return onboard_cmd(&platform::default_install());
     }
     if sub == "channel" {return channel_cmd(args);}
-    if matches!(sub,"complete-stop"|"complete-legacy") {
+    if sub=="complete-stop" {
         platform::service_log();
         if args.pos.len()!=2||args.all("request").len()!=1||args.flags.keys().any(|key|!["request","json"].contains(&key.as_str())) {return Err("usage: taskq service complete-stop --request ID [--json]".into());}
-        let result=if sub=="complete-legacy" {host::complete_legacy(&platform::default_install(),args.need("request")?)?;json!({"id":args.need("request")?,"state":"legacy-retired"})}
-            else{lifecycle::complete_stop(&platform::default_install(),args.need("request")?)?};
+        let result=lifecycle::complete_stop(&platform::default_install(),args.need("request")?)?;
         if args.flags.contains_key("json") {println!("{result}");}return Ok(());
     }
     if matches!(sub,"restart"|"stop"|"uninstall") {
@@ -2049,15 +1989,6 @@ fn service(args: &Args) -> Res<()> {
     if sub == "run" {
         if std::env::var_os("TASKQ_ATTEMPT").is_some() {return Err("a worker cannot run the host service".into());}
         let install=platform::default_install();
-        let mut reported=String::new();
-        loop {
-            match host_control::legacy_owner(&platform::tool(&install)) {
-                Ok(Some(owner))=>return legacy_service(&install,&owner),
-                Ok(None)=>break,
-                Err(error)=>if reported!=error {log!("{error}; native service scope unknown, launches held");reported=error;},
-            }
-            std::thread::sleep(Duration::from_secs(1));
-        }
         let in_install=std::env::current_dir().and_then(|p|p.canonicalize()).ok()
             .zip(install.canonicalize().ok()).is_some_and(|(cwd,install)|cwd==install);
         if !in_install {
@@ -2482,12 +2413,9 @@ fn run(argv: &[String]) -> Res<()> {
                 println!("board: unknown (no project config found; no board read)");
             }
             let capture=coreq::telemetry::capture::qualify().map_err(|e|format!("telemetry: FAIL {e}"))?;
-            match telemetry::handover() {
-                // #1419: entry.rs gave the offline (staged release) selftest a private store.
-                _ if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some()=>println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]),
-                Some(reason)=>println!("telemetry: compatibility capture committed {} observations (running writer incompatible: {reason})",capture["committed"]),
-                None=>println!("telemetry: local capture committed {} observations",capture["committed"]),
-            }
+            // #1419: entry.rs gave the offline (staged release) selftest a private store.
+            if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some() {println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]);}
+            else {println!("telemetry: local capture committed {} observations",capture["committed"]);}
             Ok(())
         }
         "update" => {

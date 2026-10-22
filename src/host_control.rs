@@ -2,9 +2,6 @@
 use crate::{Res,lifecycle};
 use coreq::process::{Identity,Failure};
 use std::{fs,path::{Path,PathBuf},process::Command,time::{Duration,Instant}};
-#[path="legacy.rs"]
-mod legacy;
-pub use legacy::{Owner as LegacyOwner,owner as legacy_owner};
 
 pub struct Control {pub id:String,worker:Option<std::thread::JoinHandle<Res<()>>>}
 impl Control {
@@ -23,49 +20,6 @@ pub(crate) fn definition(tool:&coreq::Tool)->Res<PathBuf> {
     Ok(PathBuf::from(home).join(if cfg!(target_os="macos") {format!("Library/LaunchAgents/com.{}.service.plist",tool.name)}else{format!(".config/systemd/user/{}.service",tool.name)}))
 }
 pub fn revision(install:&Path)->Res<String> {revision_for(&crate::platform::tool(install))}
-
-#[cfg(target_os="macos")]
-fn launchd_bindings<'a>(text:&'a str,prefix:&str)->Vec<(u32,&'a str)> {
-    text.lines().filter_map(|line| {
-        let pid=line.split_whitespace().next()?.parse().ok()?;
-        let label=line.get(line.find(prefix)?..)?.trim().trim_end_matches('"');
-        Some((pid,label))
-    }).collect()
-}
-
-/// Loaded legacy units remain an admission barrier even if their saved definition disappeared.
-pub(crate) fn legacy_inventory(tool:&coreq::Tool,controllers:&[String])->Res<Vec<String>> {
-    #[cfg(target_os="macos")] let (text,prefix,host,suffix)={
-        let domain=format!("gui/{}",unsafe {libc::geteuid()});
-        let native=output("host.legacy.inventory",Command::new("launchctl").args(["print",&domain]))?;
-        (String::from_utf8(native.stdout).map_err(|e|e.to_string())?,format!("com.{}.",tool.name),format!("com.{}.service",tool.name),"")
-    };
-    #[cfg(target_os="linux")] let (text,prefix,host,suffix)={
-        let native=output("host.legacy.inventory",Command::new("systemctl").args(["--user","list-units","--all","--plain","--no-legend","--no-pager"]))?;
-        (String::from_utf8(native.stdout).map_err(|e|e.to_string())?,format!("{}-",tool.name),format!("{}.service",tool.name),".service")
-    };
-    #[cfg(windows)] let (text,prefix,host,suffix)={
-        let code="$ErrorActionPreference='Stop';[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$s=New-Object -ComObject 'Schedule.Service';$s.Connect();foreach($t in $s.GetFolder('\\').GetTasks(1)){$t.Name}";
-        let native=output("host.legacy.inventory",&mut powershell(code))?;
-        (String::from_utf8(native.stdout).map_err(|e|e.to_string())?,format!("{}-",tool.title),tool.title.to_string(),"")
-    };
-    #[cfg(any(target_os="macos",target_os="linux",windows))] {
-        let mut names=std::collections::BTreeSet::new();
-        for line in text.lines() {
-            #[cfg(target_os="macos")] let fields:Vec<_>=launchd_bindings(line,&prefix).into_iter().map(|(_,label)|label).collect();
-            #[cfg(target_os="linux")] let fields:Vec<_>=line.split_whitespace().take(1).collect();
-            #[cfg(windows)] let fields=vec![line.trim()];
-            for field in fields {
-                let name=field.trim_matches('"');
-                if name==host||!name.starts_with(&prefix)||!name.ends_with(suffix) {continue;}
-                if controllers.iter().any(|id|name==format!("{}-Stop-{id}",tool.title)||name==format!("{}-stop-{id}.service",tool.name)) {continue;}
-                names.insert(name.to_string());
-            }
-        }
-        return Ok(names.into_iter().collect());
-    }
-    #[cfg(not(any(target_os="macos",target_os="linux",windows)))] Err("native legacy inventory unsupported".into())
-}
 
 /// Read native scope before install attaches a root; a daemon projection alone cannot authorize a unit edit.
 #[derive(Clone,Copy,Debug,PartialEq)]
@@ -254,19 +208,12 @@ fn controller_command(exe:&Path)->Command {
 }
 
 pub(crate) fn dispatch_command(install:&Path,id:&str,action:&str,context:&str)->Res<Control> {
-    if std::env::var_os("TASKQ_ATTEMPT").is_some()||!crate::resources::id(id)||!matches!(action,"complete-stop"|"complete-legacy") {return Err("native controller scope refused".into());}
+    if std::env::var_os("TASKQ_ATTEMPT").is_some()||!crate::resources::id(id)||action!="complete-stop" {return Err("native controller scope refused".into());}
     coreq::telemetry::capture::TraceContext::decode(context)?;
     let exe=std::env::current_exe().map_err(|e|e.to_string())?;
     #[cfg(target_os="macos")] {
         let mut command=controller_command(&exe);
-        #[cfg(test)] let fixture=std::env::var_os("TASKQ_INSTALL_PROCESS_CASE").as_deref()==Some(install.as_os_str())
-            &&std::env::var("TASKQ_INSTALL_PROCESS_ROLE").as_deref()==Ok("legacy")&&action=="complete-legacy"
-            &&install.parent().and_then(Path::file_name).is_some_and(|name|name.to_string_lossy().starts_with("taskq-install-process-"));
-        #[cfg(not(test))] let fixture=false;
-        if fixture {
-            command.args(["--exact","host::installation::tests::installation_process_fixture","--ignored","--nocapture"])
-                .env("TASKQ_INSTALL_PROCESS_ROLE","legacy-controller").env("TASKQ_INSTALL_PROCESS_REQUEST",id);
-        } else {command.args(["service",action,"--request",id]);}
+        command.args(["service",action,"--request",id]);
         command.current_dir(install)
             .env("TASKQ_INSTALL",install).env("COREQ_TRACE_CONTEXT",&context).env_remove("TASKQ_ROOT").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK");
         let context=context.to_string();
@@ -454,10 +401,11 @@ pub fn retire_controller(install:&Path,id:&str)->Res<()> {
     Ok(())
 }
 
-pub(crate) fn retire_command(install:&Path,id:&str,action:&str,context:&str)->Res<()> {
-    if !crate::resources::id(id)||!matches!(action,"complete-stop"|"complete-legacy") {return Err("native controller retirement scope refused".into());}
+#[cfg(windows)]
+fn retire_command(install:&Path,id:&str,action:&str,context:&str)->Res<()> {
+    if !crate::resources::id(id)||action!="complete-stop" {return Err("native controller retirement scope refused".into());}
     coreq::telemetry::capture::TraceContext::decode(context)?;
-    #[cfg(windows)] {
+    {
         let args=controller_args(install,id,action,context,&std::env::current_exe().map_err(|e|e.to_string())?)?;
         let code=format!(r#"$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\');$name={name}
 try{{$t=$r.GetTask($name)}}catch{{if(($_.Exception.GetBaseException()).HResult -ne -2147024894){{throw}};$t=$null}}
@@ -467,7 +415,6 @@ exit 0"#,name=quote(&format!("TaskQ-Stop-{id}")),args=quote(&args),cwd=quote(&in
         let code=format!("{}\n{code}",coreq::service::windows_path_identity());
         output("host.stop.controller.retire",&mut powershell(&code))?;
     }
-    #[cfg(not(windows))] let _=install;
     Ok(())
 }
 
@@ -524,13 +471,6 @@ mod tests {
         if let Some(started)=fixture["started"].as_str() {assert_eq!(native.started,started);}
         let revision=revision_for(&tool).unwrap();let definition=definition(&tool).unwrap();let original=fs::read(&definition).unwrap();
         if std::env::var_os("TASKQ_NATIVE_INSTALL_VERIFY").is_some() {
-            #[cfg(windows)] {
-                let inventory_tool=coreq::Tool {title:"TaskQ-Stop-Probe",name,repo:"fixture/unused",version:tool.version,install:install.clone(),fault:None};
-                assert!(legacy_inventory(&inventory_tool,&[]).unwrap().iter().any(|value|value==title),"hidden registered units must remain admission barriers");
-                let bound=legacy::read(&inventory_tool,&native).unwrap().expect("hidden native parent must bind the original scope");
-                assert_eq!(bound.project,nonce);assert_eq!(bound.pid,native.pid);assert_eq!(bound.started,native.started);
-                assert_eq!(bound.root,install.canonicalize().unwrap());assert_eq!(bound.revision,revision);
-            }
             assert_eq!(install_state(&tool,Some(&native)).unwrap(),InstallState::Loaded);
             assert!(install_state(&tool,None).is_err(),"an unattributed native daemon is never idle");
             let mut wrong=native.clone();wrong.started.push_str("-wrong");
