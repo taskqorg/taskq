@@ -1694,6 +1694,7 @@ mod tests {
     }
 
     // #1297 A1/A2: the defect was one detailed row per identity and status poll (63 MB/h live against 0.56 MB/h).
+    // #1548: the tray tick's push, render and fit resize still stored two rows each (7 MB/h live); the tray tick fixture adds them.
     // Retained protection: six projects' hour of those polls through the bounded store stays under 384 MiB/720
     // inside repeating roots, the unmarked control fails the same gate, and no event is lost.
     // Span rows use the real clock, so the hour spans one or two of its four 15-minute windows: the gate scales the
@@ -1713,6 +1714,11 @@ mod tests {
             let dispatch=tracing::Dispatch::new(tracing_subscriber::registry().with(capture.clone()));
             let window=crate::telemetry::diagnostic::HEALTH_WINDOW_MS;
             let (first,simulated)=(crate::profile::now_ms().unwrap(),crate::profile::now_ms().unwrap()/window*window);
+            // The tray module builds only on macOS and Windows; Linux hosts run no tray, so their hour has no tick rows.
+            #[cfg(any(target_os = "macos", windows))]
+            let mut tray=crate::tray::steady_tick();
+            #[cfg(not(any(target_os = "macos", windows)))]
+            let mut tray=||();
             tracing::dispatcher::with_default(&dispatch,|| for tick in 0..1800 {
                 if tick%30==0 {
                     for project in 0..6 {
@@ -1724,6 +1730,7 @@ mod tests {
                 }
                 let _repeating=tracing::info_span!("tray.refresh",coreq_repeating=folded).entered();
                 assert!(!crate::hostname().is_empty());assert_eq!(service_status(&install)["state"],"running");
+                tray();
             });
             // #1339: folded aggregates persist only through finish() or the last Capture drop; another thread's
             // tracing interest rebuild can briefly own a Dispatch clone, so `late` makes that drop order deterministic.
@@ -1748,6 +1755,8 @@ mod tests {
                 assert_eq!(rows.iter().filter(|r|r["kind"]!="method.aggregate").count(),health*3,"{page}");
                 let calls=|op:&str|rows.iter().filter(|r|r["operation"]==op).filter_map(|r|r["calls"].as_u64()).sum::<u64>();
                 assert_eq!((calls("taskq.tray.refresh"),calls("taskq.service.loop")+passes),(1800,360),"aggregates keep every poll");
+                let counts=|op:&str|rows.iter().filter(|r|r["operation"]==op).filter_map(|r|r["counts"]["calls"].as_u64()).sum::<u64>();
+                if cfg!(any(target_os = "macos", windows)) {assert_eq!((calls("taskq.operation.tray.web.tick"),counts("js.ui.render.tick")),(1800,1800),"{page}");}
             }
             drop(late);drop(store);fs::remove_dir_all(&install).unwrap();
         }

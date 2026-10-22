@@ -698,7 +698,10 @@ impl WebCalls {
     fn begin(&mut self, name: &'static str, now: Instant) -> Option<u64> {
         if self.pending.len()>=64 || self.next==u64::MAX {self.fault("pending-limit");return None;}
         let id=self.next;self.next+=1;
-        self.pending.insert(id,(now,coreq::telemetry::capture::detached_span(name)));
+        // #1548: an unchanged tick push folds into one aggregate per window; a failed one keeps its rows.
+        let span=if name==TICK {tracing::info_span!(parent: None,"operation",coreq_operation=name,coreq_repeating=true,coreq_result="unclassified",coreq_error=tracing::field::Empty)}
+            else {coreq::telemetry::capture::detached_span(name)};
+        self.pending.insert(id,(now,span));
         Some(id)
     }
     fn fault(&mut self, reason: &'static str) {
@@ -798,6 +801,18 @@ fn web_result(value: &str) -> &'static str {
 fn web_script(script: &str) -> String {
     // eval catches syntax errors too; the callback contains only a fixed result code.
     format!("(()=>{{try{{(0,eval)({});return 'ok';}}catch(_){{try{{window.taskqWebFault('evaluation');}}catch(_){{}}return 'script-error';}}}})()",json!(script))
+}
+const TICK: &str = "tray.web.tick";
+/// #1548 fixture: one steady tray tick's own rows (push, its JS render summary, the fit resize); the host hour test owns the gate.
+#[cfg(test)]
+pub(crate) fn steady_tick() -> impl FnMut() {
+    let mut calls=WebCalls::new();calls.pending.clear();
+    move || {
+        let id=calls.begin(TICK,Instant::now()).expect("tick push");calls.finish(id,"ok");
+        let render=json!({"operation":"js.ui.render.tick","kind":"method.aggregate","started_ms":crate::profile::now_ms().unwrap(),"counts":{"calls":1,"finished":1,"failed":0,"unknown":0},"outcome":"ok","error":"none"});
+        assert!(!calls.metadata(&render)&&!calls.failed);
+        let _=coreq::telemetry::capture::poll("tray.window.resize",0,||Ok::<_,&str>(()),|_|"observed");
+    }
 }
 fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_loop::EventLoopProxy<Ev>, calls: &mut WebCalls) {
     if calls.pending.contains_key(&0) {calls.fault("page-not-ready");return;}
@@ -916,7 +931,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
             Event::WindowEvent{event:WindowEvent::CloseRequested,..}=>Some("tray.window.close"),
             Event::RedrawRequested(_)=>Some("tray.window.redraw-request"),_=>None,
         };
-        if let Some(name)=native {let _=coreq::telemetry::capture::operation(name,||Ok::<_,&str>(()),|error|*error);}
+        // #1548: a fit after each tick render resizes the window; unchanged native events fold per window.
+        if let Some(name)=native {let _=coreq::telemetry::capture::poll(name,0,||Ok::<_,&str>(()),|_|"observed");}
 
         web.expire(Instant::now());
         if let Some(calls)=&mut workspace_web {
@@ -1048,11 +1064,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
-                    if sig!=workspace_shown && !calls.failed && !calls.pending.contains_key(&0) {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),"tray.web.receive",&proxy,calls);}
+                    if sig!=workspace_shown && !calls.failed && !calls.pending.contains_key(&0) {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
                 if sig != shown && !web.pending.contains_key(&0) {
                     shown = sig;
-                    push(&mut web,&ui, &st);
+                    if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
                 }
             }
             Event::UserEvent(Ev::Click(rect)) => {

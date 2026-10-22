@@ -565,7 +565,7 @@ const {cut}=execution.module("tray.create.wholeLines.helpers",{cut:edge=>Math.mi
   else if(head<top){const d=Math.min(...lines().filter(l=>l.top>=top).map(l=>l.top))-top;if(d<c.clientHeight){shrink(d);c.scrollTop+=d;}}
   const bottom=top+c.clientHeight,tail=cut(bottom);if(tail>top&&tail<bottom)shrink(bottom-tail);},
 settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeight='';c.scrollTop=s;wholeLines(c);fit();},
-refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}present();},
+refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}tick();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
   if(Object.hasOwn(s,'agentqError')){view.agentqError=s.agentqError;present();return;}
@@ -656,8 +656,8 @@ ui.listen(menu,'keydown',e=>{if(!e.target.closest('.grip')||!['ArrowLeft','Arrow
 ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&view.rowMenu){const key=view.rowMenu;view.rowMenu=null;present();menu.querySelector('[data-a="row-menu"][data-key="'+CSS.escape(key)+'"]')?.focus();return;}if(e.key==='Escape'){const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}viewState.flush();send({a:'hide'});}if(e.altKey&&e.key==='ArrowLeft'){e.preventDefault();if(view.page!=='home'||view.taskFilter||view.working)back();}});
 ui.listen(menu,'toggle',()=>fit(),true);
 // § 4 Tray: row ages tick in place while the menu is open; a redraw would move the reading position
-const {ages}=execution.module("tray.create.mount.ages",{ages:()=>{if(view.S){const now=view.S.now+Math.round((performance.now()-view.receivedAt)/1000);for(const e of menu.querySelectorAll('[data-since]'))e.textContent=TaskqProjectBlocks.age(now-Number(e.dataset.since));}defer(ages,30000);}});
-defer(ages,30000);
+const {ages}=execution.module("tray.create.mount.ages",{ages:()=>{if(view.S){const now=view.S.now+Math.round((performance.now()-view.receivedAt)/1000);for(const e of menu.querySelectorAll('[data-since]'))e.textContent=TaskqProjectBlocks.age(now-Number(e.dataset.since));}repeat(ages,30000);}});
+repeat(ages,30000);
 ui.effect('ui.fonts',()=>document.fonts.ready,()=>{if(view.S)fit();});
 send({a:'ready'});
 }
@@ -676,11 +676,12 @@ function resourceSend(g,op){
     resourceRequests.set(key,{resolve,timer:defer(()=>{resourceRequests.delete(key);resolve({state:'unknown',reason:'no answer from the tray within 20 s; check the limits shown, then retry'});},20000)});
     send(resourcePayloads.get(g.key));});}
 const window=ports.window||globalThis,document=ports.document||window.document,menu=ports.menu||document?.querySelector('.menu');
-const {defer,cancel}=ports.timers||ui;
+const {defer,cancel,repeat=defer}=ports.timers||ui;
 const TaskqAnswerCard=require('./answer-card.js'),TaskqResources=require('./resource-controls.js'),TaskqProjectBlocks=require('./project-blocks.js'),TaskqTaskControls=require('./task-controls.js');
 const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
+const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
 const renderer=shell.create(menu);
 const names={doing:'In work',review:'Review',ask:'Waiting for answer',failed:'Failed',ready:'Ready',waiting:'Dependencies',later:'Later',held:'Held'};
 const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'work',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
