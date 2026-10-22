@@ -1,0 +1,26 @@
+{
+  "before": {
+    "x": 8,
+    "y": 4,
+    "width": 32,
+    "height": 32
+  },
+  "scrolled": {
+    "x": 8,
+    "y": 4,
+    "width": 32,
+    "height": 32
+  },
+  "large": {
+    "x": 262,
+    "y": 4,
+    "width": 50,
+    "height": 50
+  },
+  "backLarge": {
+    "x": 8,
+    "y": 4,
+    "width": 50,
+    "height": 50
+  }
+}

@@ -2,6 +2,8 @@
 
 R1/R6/R8/R12/R13 and taskq.md §7 apply. This report separates supported UI behavior, board-stage data, native geometry and unqualified platform effects. No deployment, service restart, grant, model or admission change is part of this candidate.
 
+Current rebased candidate: [rebase acceptance](rebase/report.md). The original artifact identities below remain historical.
+
 ## Source and reference
 
 - Baseline: main `21742cea80e5ac90c0e9e375169fecaae8e09773`; the primary dirty design checkout was preserved. Implementation uses the isolated `taskq-1578` branch.

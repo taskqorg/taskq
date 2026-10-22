@@ -1,0 +1,381 @@
+{
+  "sourceCommit": "2655b78d823a576552168f410fca454e6982c4f1",
+  "mainBase": "ab57340d2088f0bdf22c52f675ae1bc19e87b993",
+  "previousResult": "4232c5e7636f0ef547c00c9de1d1d3664106fa35",
+  "rules": [
+    "R6",
+    "R8",
+    "R12",
+    "R13",
+    "section 7",
+    "UI06",
+    "R-UI5"
+  ],
+  "referenceSha256": "9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04",
+  "environment": {
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "nativeRenderer": "WKWebView",
+    "fonts": [
+      16,
+      20
+    ],
+    "themes": [
+      "dark",
+      "light"
+    ]
+  },
+  "artifact": {
+    "file": "target/release/taskq",
+    "sha256": "7d8f87d01e61d97f1386fd25d3862f9cd21b5a71e68fa91fc518ac32a86c8c2a",
+    "selftestSha256": "7d8f87d01e61d97f1386fd25d3862f9cd21b5a71e68fa91fc518ac32a86c8c2a",
+    "readmeArtifactSha256": "b421104ff15360ab0e6070691c9fe77a594d9f12776ae4b385323118efed89aa",
+    "isolation": "Temporary fixture installation and a separate temporary offline-selftest installation; the running service/store was not used."
+  },
+  "uiSourceBlobs": {
+    "src/tray.rs": "dec513ef0cbfafd4955b7f85c67a3f98660a99a3",
+    "src/tray.html": "ee99783ea848e8be61b6d8d01d70057288344ae2",
+    "src/tray-app.js": "d320df54aa2f7948bcdef8c8cee5593284aeeb65",
+    "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
+    "src/tray-view-state.js": "35e7f59115138fd0d92b422741ef1866036c42dd",
+    "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
+    "src/app-shell.js": "e38799f4c404e27a1fbaab61d2f1a9c9c8abdd64",
+    "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
+    "src/task-dashboard.js": "baeba3d919fe372672aaec5df7c80f58eab71b8f",
+    "src/task-dashboard.css": "4a6b721fc8e5ae7e8c5a75fa3e09f1d699d805b2",
+    "src/task-views.js": "cf8dc17d504e67d0317f875ca8e9ad436236064c",
+    "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
+    "src/ui-icons.js": "fbd352c056366bc454a8998000ac51c2e136ceea",
+    "src/ui-icons.json": "47d956d146dc84f21e3009c8bbde80064f230c7e",
+    "src/project-blocks.js": "829308d8a88e93af21fadd1982cf87d2e5a24401",
+    "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
+    "src/workspace.js": "4c4b40a1b1086d1d293b52510f2558ab89f855f7",
+    "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
+    "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
+    "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
+    "scripts/build-web.cjs": "4cda0aabf65ac6ed4263e9a3b9f35555183c705e",
+    "src/icon.rs": "4b7b82dc6dd8faeb97cc78d9abc0a0937bf53047",
+    "docs/design/icon-summary.config.json": "31b91c31accda780065ccf782d2cd30cc8efe22b"
+  },
+  "checks": [
+    {
+      "command": "git rebase origin/main",
+      "before": "conflicts in src/tray-app.js and docs/shots/manifest.json",
+      "after": "completed; ab57340d2088f0bdf22c52f675ae1bc19e87b993 is an ancestor"
+    },
+    {
+      "command": "python3 scripts/check.py --base ab57340d2088f0bdf22c52f675ae1bc19e87b993",
+      "result": "sandbox-blocked",
+      "passed": 481,
+      "blocked": 18,
+      "ignored": 34,
+      "elapsedSeconds": 39.24,
+      "sourceCommit": "11e614937b6ff7fc198d35e385b35fa7ca3281d8",
+      "scope": "Rebased Rust source; later changes only affect history UI, its checks and evidence. Worker host-policy guards remain intact."
+    },
+    {
+      "command": "cargo test --locked --test integration",
+      "result": "sandbox-blocked",
+      "passed": 19,
+      "blocked": 1,
+      "ignored": 1,
+      "reason": "sandbox-exec: sandbox_apply: Operation not permitted"
+    },
+    {
+      "command": "cargo test --locked --bin taskq core::tests",
+      "result": "PASS",
+      "passed": 9,
+      "goldenTraces": 97
+    },
+    {
+      "command": "node tests/*.test.cjs (each separately)",
+      "result": "PASS",
+      "instruments": 21
+    },
+    {
+      "command": "sh docs/shots/check.test.sh; sh .github/release-tag.test.sh; python3 .github/release-check.test.py",
+      "result": "PASS"
+    },
+    {
+      "command": "node tests/{task-dashboard,tray-history,messages,project-blocks,shell-navigation,tray-panels,tray-state-filter,tray-task-list,tray-view-state,tray-window,workspace-communication,workspace-operations}.browser.cjs (each separately)",
+      "result": "PASS",
+      "instruments": 12,
+      "sharedComparisons": 64,
+      "sourceCommit": "2655b78d823a576552168f410fca454e6982c4f1"
+    },
+    {
+      "command": "cargo run --release --locked -- tray --snapshot docs/design/evidence/dashboard-1578/rebase/native --route home,cadence",
+      "result": "PASS",
+      "images": 8,
+      "horizontalOverflow": false
+    },
+    {
+      "command": "TASKQ_SELFTEST_OFFLINE=1 target/release/taskq selftest",
+      "result": "PASS",
+      "goldenTraces": 97,
+      "formats": "PASS",
+      "committedObservations": 9,
+      "board": "unknown: offline; no board read"
+    },
+    {
+      "command": "sh docs/shots/update.sh; sh docs/shots/check.sh",
+      "result": "PASS"
+    }
+  ],
+  "visualReview": {
+    "native": [
+      "native-before-select/popover-dark-cadence-16.png",
+      "native/popover-dark-cadence-16.png",
+      "native/popover-light-cadence-20.png",
+      "native/popover-dark-home-16.png"
+    ],
+    "browser": [
+      "history/after-real-menu-2x.png",
+      "browser/dark-16-long.png",
+      "browser/light-20-long-editor.png"
+    ],
+    "readme": [
+      "docs/shots/popover-dark-project-16.png"
+    ],
+    "observation": "Full-sized select fixes the native small control; titles, exact history, anchored editor, footer and resize remain visible without overlap/clipping."
+  },
+  "limits": [
+    "merge_group CI pending; no merge or deployment",
+    "Windows native/DPI and physical drag/Snap unverified",
+    "native popup keyboard interaction, screen reader/IME and live effects unverified",
+    "native click/raise remains owner-observed"
+  ],
+  "images": {
+    "browser/dark-16-long-editor.png": {
+      "sha256": "e6e95b72e13fb585f2c8b53068a323ee18a444b967ef28e7e9eb7da4aa8d1486",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/dark-16-long.png": {
+      "sha256": "c3c341d956699d2d2a78fb8a7663dd2f97a2ffe73719e6e4c383099acba64c70",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/dark-16-short-editor.png": {
+      "sha256": "744e3d2e02d3e919eb5f186731230e158adccb3aa06dcf83d2d30af8b5354c93",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/dark-16-short.png": {
+      "sha256": "e6d077e356e057e9e83f097520dc01aaaa3f5051adfba15e19e79402537fce89",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/dark-20-long-editor.png": {
+      "sha256": "466d73b08a886648a3743a6f5ff8280e5873ccdabc58091d02edf59dddcd40a3",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/dark-20-long.png": {
+      "sha256": "a5c6060cf4b4e2e32bce2571271f129b2c6263106414670aa9843b1e1f52ec98",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/dark-20-short-editor.png": {
+      "sha256": "030f6ddd15b1aabbd42ee7cc148e2e950000610bf2995d15e5cf000b73283839",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/dark-20-short.png": {
+      "sha256": "8ae5a7f5b3e6ad06fbc36f92b8019a37fe390c50a0c4668cc131f5b1886403c5",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/light-16-long-editor.png": {
+      "sha256": "6a06142cafb819a4aa962fdda6d8af2c70e1956b3e5a0b8b6c84887ae6d1ff81",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/light-16-long.png": {
+      "sha256": "eb2993aed8bee7912162038830031b6593b54ca6261f45c5195ab169a97bc280",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/light-16-short-editor.png": {
+      "sha256": "1463e10102a7c814de08dcca335bbbadf43399298eed37d5c5de91869eb2e56d",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/light-16-short.png": {
+      "sha256": "58674bdd14c4e7111b9b02dec75e65aa0ef1dda99b03b0da4e7369283ad8057e",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/light-20-long-editor.png": {
+      "sha256": "4431eea011ed8f8ed11a8111fcef2d4ca4c7cf3a0c044ec029201cfa46b5af13",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/light-20-long.png": {
+      "sha256": "538467e65807a1a5dccfbfd84fc331f0f17d2ed78c9599b60a176ad1edaaa047",
+      "pixels": [
+        320,
+        700
+      ]
+    },
+    "browser/light-20-short-editor.png": {
+      "sha256": "324a2a165832f6cf6d38bc0497528ea34d9abb95d8ddecb1436245d66088d3fa",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "browser/light-20-short.png": {
+      "sha256": "a4733422d962b32c74631456aab7ba392e7b6487090d8adf24b42a51bdddcce1",
+      "pixels": [
+        320,
+        300
+      ]
+    },
+    "history/after-real-menu-1x.png": {
+      "sha256": "343e65faddfd302307f4b95a786e2be9149b042dabb5e6f338dbf17a46886c96",
+      "pixels": [
+        320,
+        760
+      ]
+    },
+    "history/after-real-menu-2x.png": {
+      "sha256": "4f9301d21529645579ac40caab90743b6f415a53267dd811fe5042b0ba812642",
+      "pixels": [
+        640,
+        1520
+      ]
+    },
+    "native/popover-dark-cadence-16.png": {
+      "sha256": "efc043b9870a8f7e3c92134d34ee71bccaf285832e7eac1735e239d42a9183b7",
+      "pixels": [
+        640,
+        1282
+      ]
+    },
+    "native/popover-dark-cadence-20.png": {
+      "sha256": "e520b34856cc04a96e08a0498eee8024c2667d92a7f79f9ab69d2a977edd608a",
+      "pixels": [
+        720,
+        1416
+      ]
+    },
+    "native/popover-dark-home-16.png": {
+      "sha256": "5c5bb80422b9fa4e57e70c1ef5205830fc19cdfd61ed9a26542da9de8190ca37",
+      "pixels": [
+        640,
+        1774
+      ]
+    },
+    "native/popover-dark-home-20.png": {
+      "sha256": "11c28c2e90bb0ff53963f7181702e6122125d6e6d550f1c4bb3af118538001f6",
+      "pixels": [
+        720,
+        1782
+      ]
+    },
+    "native/popover-light-cadence-16.png": {
+      "sha256": "34dbf44c1a6a22f6a4a23808982a9f8b38a2eed231f789acd6eeafcf9a497ed8",
+      "pixels": [
+        640,
+        1282
+      ]
+    },
+    "native/popover-light-cadence-20.png": {
+      "sha256": "67feac93f5174ad84628ecd7deae02aea705cabf42f8ba0bc9013ceb46bc1b89",
+      "pixels": [
+        720,
+        1416
+      ]
+    },
+    "native/popover-light-home-16.png": {
+      "sha256": "b4f97f0f673ac89b898fb0d02e4276154275857661bab5a487adfb5540862967",
+      "pixels": [
+        640,
+        1774
+      ]
+    },
+    "native/popover-light-home-20.png": {
+      "sha256": "5b8af5f685930f00e53b4bc2b3b3834fa891600cf6f8d8ac5d3d6a9723d5ab9a",
+      "pixels": [
+        720,
+        1782
+      ]
+    },
+    "native-before-select/popover-dark-cadence-16.png": {
+      "sha256": "4e3094549002d221e0c2b0c42466dea3a7558988a33446cfc06cfefcd89d826b",
+      "pixels": [
+        640,
+        1260
+      ]
+    },
+    "native-before-select/popover-dark-cadence-20.png": {
+      "sha256": "4e659c390f0a613e11867e525020bd37f121b00dbc74d6f531e148a6eb646ee8",
+      "pixels": [
+        720,
+        1400
+      ]
+    },
+    "native-before-select/popover-light-cadence-16.png": {
+      "sha256": "77ea22e5e52507ff0903c33e8652139955f535cd6d825bf6dd952f740223dfd4",
+      "pixels": [
+        640,
+        1260
+      ]
+    },
+    "native-before-select/popover-light-cadence-20.png": {
+      "sha256": "0fab9b63320988fb9b1122a0fe2f4db555e1760ef1bf34da0d183c0d7d18f197",
+      "pixels": [
+        720,
+        1400
+      ]
+    },
+    "shell/200pct.png": {
+      "sha256": "c346130b92b6f19a307a37b167d9bcb77a487697c5607a1c8fb9228ed4c27041",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    "shell/scrolled.png": {
+      "sha256": "17af50c5756e8edfaaa521d984aca37d249a52337e39ce8b04990705453ee6b6",
+      "pixels": [
+        320,
+        600
+      ]
+    },
+    "shell/workspace.png": {
+      "sha256": "3b2e5fe948fa4ccc344facf964e0dc110b05aca9125fcc33f12778681b1b8465",
+      "pixels": [
+        320,
+        600
+      ]
+    }
+  }
+}
