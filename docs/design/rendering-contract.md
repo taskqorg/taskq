@@ -54,23 +54,27 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 
 ## R-UI5 Cadence raster
 
-For an approved rendered bin count B and physical allocated width W:
+Keep 12 equal source bins for every period. For physical allocated width W, choose the largest B in `12, 6, 4, 3, 2, 1` that fits `4*B + (B-1) <= W`. Sum each adjacent group of `12/B` bins across all four series; preserve the full period and exact totals. If W < 4, show the graph as unavailable rather than painting narrower bars.
+
+At a given width and scale, every preset and custom range uses the same B, bar width, gap, colors, stack order, scale algorithm and labels. Only the time covered by a bar changes. Geometry:
 
 ```
-g = approved integer physical gap, at least 1
+g = 1 physical px
 b = floor((W - (B-1)*g) / B)
 plotWidth = B*b + (B-1)*g
 x0 = rightEdge - plotWidth
 x(i) = x0 + i*(b+g)
 ```
 
-- `b >= 1`; all bars exactly b wide, gaps exactly g, one integer baseline. Remainder stays at the inner left edge of the graph cell; outer right/bottom remain aligned with the square. Menu graph may center its residual inset.
+- `b >= 4 physical px`; all bars exactly b wide, gaps exactly g, one integer baseline. Remainder stays at the inner left edge of the graph cell; outer right/bottom remain aligned with the square. Menu graph may center its residual inset.
 - This refines I3's allocated graph origin into a physical painted origin; never stretch the final bar to consume remainder. Round shared outer bounds once.
 - Segment boundaries: round `plotHeight × cumulativeCount / peak`; derive adjacent segment heights by subtraction. No independent rounding that creates holes or exceeds peak height. Quantization may change equal segment heights by at most 1 physical pixel; cumulative boundaries remain exact after rounding.
 - Snap fills, not font curves. No border radius, stroke, blur, gradient or line interpolation on cadence bars.
 - A positive segment smaller than a pixel may be unresolved; preserve exact labelled totals. Never add an artificial minimum height and pretend it remains quantitative.
 - An all-zero bin retains its empty slot. Unknown bin is explicitly unavailable per [unknown is never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy); no fabricated event.
-- If B cannot fit, the renderer cannot pass. Preserve 12 source bins; approve a divisor rebin count and sum adjacent bins across EVERY series. I5's 6/12/native-size decision is still open; no nearest-neighbor sample dropping or silent reduction.
+- Menu: allocate 64 logical px of plot height, rounded once to physical pixels; center the integer residual inset. Label the exact period start/end and timezone, B and duration per bar, zero baseline and peak stacked event count (0 for empty known history). Colors and bottom-to-top order stay closed/work green, failed red, ask peach, waiting/ready gray, using the existing theme tokens. Show the four colored legend entries with exact period totals; ask counts events, not current questions.
+- Each menu bar has a hover title and keyboard/click access to its exact half-open time range and all four counts. Keep the selected bar detail visible below the plot; mark partial newest bins and incomplete/unknown history explicitly. Unknown slots have a dashed outline, never fabricated zero counts. Preset/custom selection does not change geometry or legend order.
+- No nearest-neighbor sample dropping or silent reduction.
 - Production tiny icons render directly at native size/DPI; no CSS/OS post-scaling assumption. Test the actual OS icon after installation as well as exported pixels.
 
 ## R-UI6 Feature parity and improvements

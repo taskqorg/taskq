@@ -12,7 +12,7 @@ Approved layout; unimplemented capabilities remain design targets. Runtime follo
 - Work is mint, questions peach, ready neutral, failures muted red. Unknown is explicit with cause; incomplete sums remain marked.
 - Menu font options 14/16/18/20, default 16; typography and bounded-window behavior follow visual-style.md. Icon sizing is independent.
 - HTML popover in wry (WKWebView/WebView2) with a Rust state/action bridge; no OpenAI widget dependency in production. Product content is English under R7.
-- Overflow, unknown icon representation, bin count and Windows legibility remain I5 decisions, not permission to shrink arbitrarily.
+- Overflow, unknown icon representation and Windows legibility remain I5 decisions, not permission to shrink arbitrarily.
 
 Center the square Q body horizontally and vertically, excluding its descending tail; keep the whole tail inside the canvas. Apply this geometry to compact, empty-fallback and paused-overlay Qs at tray and app sizes.
 
@@ -84,10 +84,11 @@ Local capacity remains a separate observation: show occupied slots and held/requ
 - Source: service-local `.taskq/events` cache; event time, task, kind and attempt ID (or comment ID for ask/blocked without attempt). Deduplicate IDs. Repeated failure after requeue is a new event.
 - No board replay. Cache loss means incomplete history; show collection start and gaps. Unknown follows [unknown is never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy).
 - Equal time bins, oldest left; presets use 12 whole epoch-aligned bins, the newest holding now and marked partial; the grid steps one bin at a boundary, never drifts. One linear scale across series and bins. Equal counts have equal heights; scale by the largest stacked sum, never 100% per bar.
+- Menu geometry, colors, stack order, scale and labels follow R-UI5 for every preset and custom range. Show start/end, peak, rendered bin count and duration per bar; legend totals and selectable bar details expose exact counts and time ranges.
 - Default 24 hours; presets 5 min/hour/day/7 days/30 days/custom. Custom start < end, explicit timezone and half-open range [start,end); persist choice.
 - Shipped: stacked from the bottom closes green, failed red, `ask` peach, waiting gray; custom `[start, end)` is typed in local time or UTC and start >= end is refused; the icon's 24 h uses the same 12-bin grid. Before the latest `since` and in projects without `events` the history says unknown.
 - Period never changes scope or the current failed count. Expose precise totals/peak when small segments cannot resolve.
-- Acceptance fixtures have nonzero first/last bars; real zero edges stay empty. Runtime keeps 12 source bins; the icon sums adjacent bins to the largest fitting divisor of 12 (I4/I6, D11). Evidence: [icon shift](evidence/icon-shift/README.md).
+- Acceptance fixtures have nonzero first/last bars; real zero edges stay empty. Runtime keeps 12 source bins; icon and menu sum adjacent bins to the largest divisor fitting at least 4 physical px per bar and 1 physical px gaps ([R-UI5](rendering-contract.md#r-ui5-cadence-raster)). Evidence: [icon shift](evidence/icon-shift/README.md).
 
 ## M7 AI entry
 
