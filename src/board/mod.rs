@@ -858,6 +858,17 @@ mod tests {
         *api.label_schema.borrow_mut() = schema;
         (kind.board)(api)
     }
+    /// A recorded GitHub response; tests/fixtures/github-merge-queue/README.md says how to re-record.
+    fn recorded(name: &str) -> Value {
+        macro_rules! files { ($($n:literal),*) => { match name {
+            $($n => include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/github-merge-queue/", $n, ".json")),)*
+            _ => panic!("no recording {name}"),
+        } } }
+        serde_json::from_str(files!("queue-open", "queue-enqueued", "queue-merged", "removal-merge-conflict", "removal-failed-checks", "removal-manual",
+            "enqueue-admitted", "enqueue-conflict", "enqueue-already-queued", "readback-enqueued", "readback-none", "ready-for-review",
+            "cancel-queued", "cancel-open", "cancel-merged", "dequeue-done", "node-not-found", "rules-merge-queue", "rules-none", "repo-public",
+            "pulls-open", "runs-green", "runs-failed", "runs-checks-queued", "runs-none", "checks-green", "checks-failed", "checks-queued", "status-none")).unwrap()
+    }
     fn publication_board(kind: &'static Kind, mode: &str, first_merged: bool, second_merged: Option<bool>, ancestry: Option<bool>) -> (Box<dyn Board>, std::rc::Rc<RefCell<Vec<(String, String)>>>) {
         let calls = std::rc::Rc::new(RefCell::new(vec![]));
         let captured = calls.clone();
@@ -954,74 +965,86 @@ mod tests {
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     #[test]
     fn github_queue_qualifies_the_merge_result_and_preserves_unknowns() {
-        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict", "merged-flag-lag"] {
-            let admitted = std::rc::Rc::new(RefCell::new(false));
-            let queued = admitted.clone();
+        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict", "enqueue-race", "merged-flag-lag"] {
+            // #1595: every body is a recorded GitHub response; invented removal reasons once hid GitHub's lowercase codes.
+            let merged = scenario == "merged" || scenario.starts_with("merge-");
+            let mut state = recorded(if scenario == "waiting" { "queue-enqueued" } else if merged { "queue-merged" } else { "queue-open" });
+            // Overlay: GitHub keeps no unmerged PR after a removal, so the open PR takes a recorded removal timeline.
+            let removal = match scenario { "conflict" => Some(recorded("removal-merge-conflict")), "failed" => Some(recorded("removal-failed-checks")),
+                "removed" => Some(recorded("removal-manual")), "merged-flag-lag" => Some(recorded("queue-merged")), _ => None };
+            if let Some(r) = removal { state["data"]["node"]["timelineItems"] = r["data"]["node"]["timelineItems"].clone(); }
+            let (runs, mut checks) = match scenario {
+                "merge-ci-missing" => (recorded("runs-none"), Value::Null),
+                "merge-ci-failed" => (recorded("runs-failed"), recorded("checks-failed")),
+                "merge-ci-pending" => (recorded("runs-checks-queued"), recorded("checks-queued")),
+                _ => (recorded("runs-green"), recorded("checks-green")),
+            };
+            // Overlay: the merge result is the commit the CI recording ran on.
+            if let (true, Some(sha)) = (merged, runs["workflow_runs"][0]["head_sha"].as_str()) { state["data"]["node"]["mergeCommit"]["oid"] = sha.into(); }
+            // Overlay: #1343 the push suite still running after the merge; #1413 a failed push retest never holds close; a failed merge_group check does.
+            let flip = match scenario { "merge-push-pending" => Some(("build", "in_progress", Value::Null)), "merge-push-failed" => Some(("build", "completed", json!("failure"))),
+                "merge-check-failed" => Some(("plan", "completed", json!("failure"))), _ => None };
+            if let Some((name, status, conclusion)) = flip {
+                let run = checks["check_runs"].as_array_mut().unwrap().iter_mut().find(|c| c["name"] == name).unwrap();
+                run["status"] = status.into();
+                run["conclusion"] = conclusion;
+            }
+            let head = state["data"]["node"]["headRefOid"].as_str().unwrap().to_string();
+            let merge = state["data"]["node"]["mergeCommit"]["oid"].as_str().unwrap_or_default().to_string();
+            // Overlay: the PR list names the recorded PR state's head.
+            let mut pulls = recorded("pulls-open");
+            pulls[0]["head"]["sha"] = head.clone().into();
+            pulls[0]["draft"] = (scenario == "draft").into();
+            let pr = pulls[0]["node_id"].clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
             let captured = writes.clone();
             let rules = std::rc::Rc::new(RefCell::new(0));
             let ruled = rules.clone();
+            let sent = head.clone();
             let h = http(&github::KIND, None, Box::new(move |method, url, body| {
-                let (head, merge) = ("a".repeat(40), "b".repeat(40));
                 if method != "GET" { captured.borrow_mut().push(body.clone().unwrap_or_default()); }
-                let value = if url.contains("/compare/") { json!({"status": if url.ends_with(&merge) { "identical" } else { "diverged" }}) }
-                    else if url.ends_with("/rules/branches/main") { *ruled.borrow_mut() += 1; if scenario == "rules-unknown" { return Err("HTTP 403".into()); } if scenario == "public" { json!([]) } else { json!([{"type": "merge_queue"}]) } }
-                    else if url.ends_with("/repos/o/r") { assert_eq!(scenario, "public"); json!({"private": false}) }
-                    else if url.contains("/pulls?") { json!([{"number": 7, "node_id": "PR_7", "draft": scenario == "draft", "head": {"sha": head}}]) }
+                let value = if url.contains("/compare/") { json!({"status": if !merge.is_empty() && url.ends_with(&merge) { "identical" } else { "diverged" }}) }
+                    else if url.ends_with("/rules/branches/main") { *ruled.borrow_mut() += 1; if scenario == "rules-unknown" { return Err("HTTP 403".into()); } recorded(if scenario == "public" { "rules-none" } else { "rules-merge-queue" }) }
+                    else if url.ends_with("/repos/o/r") { assert_eq!(scenario, "public"); recorded("repo-public") }
+                    else if url.contains("/pulls?") { pulls.clone() }
                     else if url.ends_with("/graphql") {
                         let body = body.unwrap();
                         let query = body["query"].as_str().unwrap();
-                        assert_eq!(body["variables"]["id"], "PR_7");
-                        if scenario == "graphql" { json!({"errors": [{"message": "unavailable"}]}) }
+                        assert_eq!(body["variables"]["id"], pr);
+                        if scenario == "graphql" { recorded("node-not-found") }
                         else if query.contains("enqueuePullRequest") {
                             assert_eq!(body["variables"]["sha"], head);
-                            if scenario == "enqueue-conflict" { return Ok(Reply { status: 200, headers: vec![], body: json!({"data": {"enqueuePullRequest": null}, "errors": [{"type": "UNPROCESSABLE", "message": "Pull request has merge conflicts"}]}).to_string(), operation: operation(method) }); }
-                            *queued.borrow_mut() = true;
-                            json!({"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQ_7"}}}})
-                        } else if query.contains("markPullRequestReadyForReview") {
-                            json!({"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": false}}}})
-                        } else {
-                            let entry = if scenario == "waiting" || *queued.borrow() && scenario != "readback" { json!({"id": "MQ_7"}) } else { Value::Null };
-                            let reason = match scenario { "conflict" => "merge conflict with base branch", "failed" => "required checks failed", "removed" => "removed by owner", "merged" | "merged-flag-lag" => "MERGED", _ => "" };
-                            json!({"data": {"node": {"headRefOid": head, "merged": scenario == "merged" || scenario.starts_with("merge-"), "mergeCommit": {"oid": merge}, "mergeQueueEntry": entry,
-                                "timelineItems": {"nodes": if reason.is_empty() { json!([]) } else { json!([{"reason": reason}]) }}}}})
-                        }
+                            recorded(match scenario { "enqueue-conflict" => "enqueue-conflict", "enqueue-race" => "enqueue-already-queued", _ => "enqueue-admitted" })
+                        } else if query.contains("markPullRequestReadyForReview") { recorded("ready-for-review") }
+                        else if !query.contains("timelineItems") { recorded(if scenario == "readback" { "readback-none" } else { "readback-enqueued" }) }
+                        else { state.clone() }
                     }
-                    else if url.contains("/actions/runs?") { assert!(url.contains(&merge)); json!({"workflow_runs": if scenario == "merge-ci-missing" { json!([]) } else { json!([{"head_sha": merge, "event": "merge_group", "check_suite_id": 1, "status": if scenario == "merge-ci-pending" { "in_progress" } else { "completed" }, "conclusion": if scenario == "merge-ci-failed" { "failure" } else { "success" }},
-                        {"head_sha": merge, "event": "push", "check_suite_id": 2, "status": "in_progress", "conclusion": null}]) }}) }
-                    else if url.contains("/check-runs") {
-                        assert!(url.contains(&merge));
-                        // #1343: the main push run retests the merged tree and is still running when the queue merges.
-                        let gate = if scenario == "merge-check-failed" { "failure" } else { "success" };
-                        json!({"check_runs": [{"status": "completed", "conclusion": gate, "app": {"slug": "github-actions"}, "check_suite": {"id": 1}},
-                            // #1413: a failed push run (a flaky retest) never holds close
-                            if scenario == "merge-push-failed" { json!({"name": "tests", "status": "completed", "conclusion": "failure", "app": {"slug": "github-actions"}, "check_suite": {"id": 2}}) }
-                            else { json!({"status": "in_progress", "conclusion": null, "app": {"slug": "github-actions"}, "check_suite": {"id": 2}}) }]})
-                    }
-                    else if url.ends_with("/status") { assert!(url.contains(&merge)); json!({"total_count": 0}) }
+                    else if url.contains("/actions/runs?") { assert!(url.contains(&merge)); runs.clone() }
+                    else if url.contains("/check-runs") { assert!(url.contains(&merge)); checks.clone() }
+                    else if url.ends_with("/status") { assert!(url.contains(&merge)); recorded("status-none") }
                     else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
-            let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict");
-            let got = h.resume_publication(1, &"a".repeat(40), "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
+            let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race");
+            let got = h.resume_publication(1, &sent, "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
             match scenario {
                 "new" | "draft" | "waiting" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
                 "merged" | "merge-push-pending" => assert!(matches!(&got, Publish::Done(m) if !m.contains("push CI")), "{scenario}: {got:?}"),
-                "merge-push-failed" => assert!(matches!(&got, Publish::Done(m) if m.ends_with("merge-result CI green; push CI tests failure ignored")), "{got:?}"),
+                "merge-push-failed" => assert!(matches!(&got, Publish::Done(m) if m.ends_with("merge-result CI green; push CI build failure ignored")), "{got:?}"),
                 // #1413: merged with failed merge-result CI or removed from the queue: only the owner can unblock it
                 "merge-ci-failed" | "merge-check-failed" | "removed" => assert!(matches!(got, Publish::Blocked(_)), "{scenario}: {got:?}"),
                 "conflict" | "enqueue-conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{scenario}: {got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
-                // #1489: reason merged before the merged flag rereads next pass instead of asking
+                // #1489: reason merged before the merged flag rereads next pass instead of asking; an enqueue race rereads too
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),
             }
             if scenario == "waiting" {
                 // #1359: a waiting publication polls the queue each pass; main rules stay read once per process.
-                assert!(matches!(h.resume_publication(1, &"a".repeat(40), "title", "Task: invented", std::path::Path::new("missing-worktree"), prior), Publish::Enqueued(_)));
+                assert!(matches!(h.resume_publication(1, &sent, "title", "Task: invented", std::path::Path::new("missing-worktree"), prior), Publish::Enqueued(_)));
                 assert_eq!(*rules.borrow(), 1, "main rules reread");
             }
             assert!(!writes.borrow().iter().any(|b| b.get("merge_method").is_some()), "queue never calls REST merge");
-            assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback" | "enqueue-conflict")), "{scenario}: one enqueue call");
+            assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback" | "enqueue-conflict" | "enqueue-race")), "{scenario}: one enqueue call");
         }
     }
 
@@ -1115,21 +1138,23 @@ exit 0
         for scenario in ["cancel", "absent", "merged", "unknown", "lost-readback"] {
             let removed = std::rc::Rc::new(RefCell::new(false));
             let done = removed.clone();
+            let pulls = recorded("pulls-open");
+            let head = pulls[0]["head"]["sha"].as_str().unwrap().to_string();
             let h = http(&github::KIND, None, Box::new(move |method, url, body| {
-                let value = if url.contains("/pulls?") { json!([{"head": {"sha": "a".repeat(40)}, "node_id": "PR_7"}]) }
+                let value = if url.contains("/pulls?") { pulls.clone() }
                     else if url.ends_with("/graphql") {
                         if body.as_ref().unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest") {
                             // #1472: GitHub's DequeuePullRequestInput names the PR `id`; `pullRequestId` fails missingRequiredInputObjectAttribute.
                             assert!(body.as_ref().unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest(input: {id: $id})"), "{body:?}");
-                            assert_eq!(body.as_ref().unwrap()["variables"]["id"], "PR_7");
+                            assert_eq!(body.as_ref().unwrap()["variables"]["id"], pulls[0]["node_id"]);
                             *done.borrow_mut() = true;
-                            json!({"data": {"dequeuePullRequest": {"clientMutationId": null}}})
-                        } else if scenario == "unknown" { json!({"data": {"node": null}}) }
-                        else { json!({"data": {"node": {"merged": scenario == "merged", "mergeQueueEntry": if scenario == "absent" || *done.borrow() && scenario != "lost-readback" { Value::Null } else { json!({"id": "MQ_7"}) }}}}) }
+                            recorded("dequeue-done")
+                        } else if scenario == "unknown" { recorded("node-not-found") }
+                        else { recorded(match scenario { "merged" => "cancel-merged", "absent" => "cancel-open", _ if *done.borrow() && scenario != "lost-readback" => "cancel-open", _ => "cancel-queued" }) }
                     } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
-            let result = h.cancel_publication(1, &"a".repeat(40));
+            let result = h.cancel_publication(1, &head);
             assert_eq!(result.is_ok(), matches!(scenario, "cancel" | "absent"), "{scenario}: {result:?}");
             assert_eq!(*removed.borrow(), matches!(scenario, "cancel" | "lost-readback"));
         }
@@ -1148,19 +1173,19 @@ exit 0
                 seen.borrow_mut().push(format!("{method} {}", url.rsplit_once("/o/r").map_or(url, |x| x.1)));
                 let value = if url.contains("/pulls?") {
                     assert!(url.contains("head=o:taskq-1&state=open") && !url.contains("base="), "{url}");
-                    if scenario == "closed" { json!([]) } else { json!([{"number": 7, "node_id": "PR_7"}]) }
+                    if scenario == "closed" { json!([]) } else { recorded("pulls-open") }
                 } else if url.ends_with("/graphql") {
                     if body.as_ref().unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest") {
                         *queued.borrow_mut() = false;
-                        json!({"data": {"dequeuePullRequest": {"clientMutationId": null}}})
-                    } else if scenario == "unknown" { json!({"data": {"node": null}}) }
-                    else { json!({"data": {"node": {"merged": scenario == "merged", "mergeQueueEntry": if *queued.borrow() { json!({"id": "MQ_7"}) } else { Value::Null }}}}) }
-                } else if url.contains("/issues/7/comments") && method == "GET" {
+                        recorded("dequeue-done")
+                    } else if scenario == "unknown" { recorded("node-not-found") }
+                    else { recorded(if scenario == "merged" { "cancel-merged" } else if *queued.borrow() { "cancel-queued" } else { "cancel-open" }) }
+                } else if url.contains("/issues/1590/comments") && method == "GET" {
                     if scenario == "commented" { json!([{"id": 1, "body": "Task #1 closed without merging this PR: earlier"}]) } else { json!([]) }
-                } else if url.contains("/issues/7/comments") {
+                } else if url.contains("/issues/1590/comments") {
                     assert!(body.as_ref().unwrap()["body"].as_str().unwrap().starts_with("Task #1 closed without merging this PR: superseded\nBranch `taskq-1` kept. Task: https://github.com/o/r/issues/1"));
                     json!({"id": 2})
-                } else if url.ends_with("/pulls/7") && method == "PATCH" {
+                } else if url.ends_with("/pulls/1590") && method == "PATCH" {
                     assert_eq!(body.as_ref().unwrap(), &json!({"state": "closed"}));
                     json!({"state": "closed", "merged": false})
                 } else { panic!("unexpected {method} {url}") };
@@ -1171,7 +1196,7 @@ exit 0
             let count = |p: &str| calls.iter().filter(|c| c.starts_with(p)).count();
             assert_eq!(result.is_ok(), ok, "{scenario}: {result:?}");
             let graphql = count("POST") - count("POST /issues");
-            assert_eq!((count("PATCH /pulls/7"), count("POST /issues/7/comments"), graphql), (closed, posted, match (scenario, dequeued) { ("closed", _) => 0, (_, true) => 3, _ => 1 }), "{scenario}: {calls:?}");
+            assert_eq!((count("PATCH /pulls/1590"), count("POST /issues/1590/comments"), graphql), (closed, posted, match (scenario, dequeued) { ("closed", _) => 0, (_, true) => 3, _ => 1 }), "{scenario}: {calls:?}");
             assert!(!calls.iter().any(|c| c.starts_with("DELETE")), "{scenario}: branch never deleted");
         }
     }

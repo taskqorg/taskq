@@ -1,0 +1,14 @@
+{
+  "total_count": 1,
+  "workflow_runs": [
+    {
+      "id": 39790402735,
+      "name": "tests",
+      "event": "merge_group",
+      "head_sha": "ab57340d2088f0bdf22c52f675ae1bc19e87b993",
+      "status": "completed",
+      "conclusion": "success",
+      "check_suite_id": 107839587373
+    }
+  ]
+}
