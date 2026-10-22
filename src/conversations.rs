@@ -280,6 +280,7 @@ fn valid_navigation(v:&Value)->bool {
         &&(v["search"].is_null()||v["search"].as_str().is_some_and(|s|s.chars().count()<=512))
         &&(v["selected"].is_null()||v["selected"].as_str().is_some_and(crate::setup::owner_id))
         &&(v["listOnly"].is_null()||v["listOnly"].is_boolean())
+        &&(v["scrolls"].is_null()||v["scrolls"].as_object().is_some_and(|map|map.iter().all(|(k,v)|["recent","archive"].contains(&k.as_str())&&v.as_u64().is_some_and(|n|n<=u32::MAX as u64))))
         &&(v["selection"].is_null()||v["selection"].as_object().is_some_and(|map|map.iter().all(|(k,v)|["recent","archive"].contains(&k.as_str())&&(v.is_null()||v.as_str().is_some_and(crate::setup::owner_id)))))
 }
 
@@ -302,6 +303,8 @@ mod tests {
     // C-A1/4/5/6/7: real preference/byte/setup chain. Context, sent bytes and IDs must survive crossed/partial receipts.
     #[test]
     fn drafts_files_and_launches_keep_immutable_identity_through_failure_and_restart() {
+        assert!(valid_navigation(&json!({"scrolls":{"recent":240,"archive":0}})));
+        for scrolls in [json!("invalid"),json!({"recent":-1}),json!({"other":12})] {assert!(!valid_navigation(&json!({"scrolls":scrolls})));}
         let f=Fixture::new();
         assert_eq!(f.save("first","first draft")["state"],"accepted");
         assert_eq!(f.save("second","independent draft")["state"],"accepted");
