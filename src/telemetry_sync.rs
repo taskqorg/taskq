@@ -31,10 +31,11 @@ fn cursor_path(install: &Path) -> PathBuf {
 }
 
 /// The cursor of `destination`: the last accepted row `seq`, counted `gap_rows`, `last_synced` and the `pending`
-/// last seq of a block sent without a receipt, so a retry rebuilds the same block and event id. Another
+/// last seq of a block sent without a receipt with its `pending_status`, so a retry rebuilds the same block, status
+/// and event id. Another
 /// destination's cursor starts over; an unreadable one is unknown and kept.
 fn load(install: &Path, destination: &str) -> Res<Value> {
-    let fresh = json!({"destination": destination, "seq": 0, "gap_rows": 0, "last_synced": null, "pending": null});
+    let fresh = json!({"destination": destination, "seq": 0, "gap_rows": 0, "last_synced": null, "pending": null, "pending_status": null});
     let c: Value = match fs::read_to_string(cursor_path(install)) {
         Ok(t) => serde_json::from_str(&t).map_err(|_| "cursor-unreadable")?,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(fresh),
@@ -137,23 +138,31 @@ fn run(install: &Path, wire: &mut dyn Wire, backoff: &mut Backoff, deadline: Ins
         if r.gap > 0 || r.base != c["seq"].as_i64().unwrap_or(0) {
             c["gap_rows"] = json!(c["gap_rows"].as_u64().unwrap_or(0) + r.gap);
             c["seq"] = json!(r.base);
-            c["pending"] = Value::Null;
+            (c["pending"], c["pending_status"]) = (Value::Null, Value::Null);
             if save(install, &c).is_err() { return unknown("cursor-unwritable") }
         }
         let backlog = |c: &Value, sent: usize| (r.retained_last - c["seq"].as_i64().unwrap_or(0),
             r.end.then(|| r.blocks.iter().map(|b| b.raw).sum::<usize>() - sent));
         if r.blocks.is_empty() { return (status("idle", &c, Some((0, Some(0))), None), IDLE) }
         let mut sent = 0;
-        for b in &r.blocks {
-            c["pending"] = json!(b.last);
+        for (i, b) in r.blocks.iter().enumerate() {
+            // DashQ D11 `status`: counters after this block. A retry repeats the stored ones, since other content
+            // under the same event id is `replay_mismatch`; a block pending from a release without them sends none.
+            let st = if c["pending"] == json!(b.last) { c["pending_status"].clone() } else {
+                json!({"backlog_rows": r.retained_last - b.last, "gap_rows": c["gap_rows"],
+                    "backlog_bytes": r.end.then(|| r.blocks[i + 1..].iter().map(|b| b.raw).sum::<usize>())})
+            };
+            (c["pending"], c["pending_status"]) = (json!(b.last), st.clone());
             if save(install, &c).is_err() { return unknown("cursor-unwritable") }
-            let rec = match enroll::stamp(&d, SCHEMA, &b.event_id, b.observed, b.payload.clone()) {
+            let mut payload = b.payload.clone();
+            if st.is_object() { payload["status"] = st }
+            let rec = match enroll::stamp(&d, SCHEMA, &b.event_id, b.observed, payload) {
                 Ok(rec) => rec,
                 Err(e) => return (status("stopped", &c, Some(backlog(&c, sent)), Some(&e)), STOP),
             };
             match enroll::deliver(&d, &[rec], backoff, wire) {
                 Ok(x) if x[0]["state"] == "accepted" => {
-                    (c["seq"], c["pending"], c["last_synced"]) = (json!(b.last), Value::Null, json!(now()));
+                    (c["seq"], c["pending"], c["pending_status"], c["last_synced"]) = (json!(b.last), Value::Null, Value::Null, json!(now()));
                     if save(install, &c).is_err() { return unknown("cursor-unwritable") }
                     sent += b.raw;
                 }
@@ -230,9 +239,11 @@ mod tests {
             let r = &body["records"][0];
             self.sent.push(r["event_id"].as_str().unwrap().into());
             if let Some(code) = self.fail { return Ok((code, json!({"protocol": 1, "error": "revoked", "retry_after": 7}))) }
-            self.stored.entry(r["event_id"].as_str().unwrap().into()).or_insert(r["payload"].clone());
+            let kept = self.stored.entry(r["event_id"].as_str().unwrap().into()).or_insert(r["payload"].clone());
+            let receipt = if *kept == r["payload"] { json!({"event_id": r["event_id"], "state": "accepted"}) }
+                else { json!({"event_id": r["event_id"], "state": "rejected", "reason": "replay_mismatch"}) };
             if std::mem::take(&mut self.lose) { return Err("reply lost".into()) }
-            Ok((200, json!({"protocol": 1, "receipts": [{"event_id": r["event_id"], "state": "accepted"}]})))
+            Ok((200, json!({"protocol": 1, "receipts": [receipt]})))
         }
         fn now(&self) -> u64 { 0 }
         fn sleep(&mut self, _: u64) {}
@@ -297,6 +308,7 @@ mod tests {
         assert_eq!((s["state"].as_str(), s["backlog_rows"].as_i64()), (Some("retrying"), Some(500)), "lost reply: cursor waits");
         let lost = d.sent.last().cloned().unwrap();
         append(&store, 10);
+        // the retry repeats the lost block's status although the backlog grew: other content is replay_mismatch
         assert_eq!(go(&install, &mut d).0["state"], "idle");
         assert_eq!(d.sent.iter().filter(|e| **e == lost).count(), 2, "the retry repeats the pending block's event id");
         assert_eq!(seqs(&d), (1..=3510).collect::<Vec<_>>(), "no duplicate or missing row");
@@ -339,6 +351,121 @@ mod tests {
         assert_eq!(go(&install, &mut d).0, json!({"state": "unknown", "last_error": "cursor-unreadable"}));
         assert_eq!(fs::read_to_string(cursor_path(&install)).unwrap(), "x");
         fs::remove_dir_all(install).unwrap();
+    }
+
+    /// The published wire fixture (A2): DashQ D11 conformance input, released as `taskq-<v>-telemetry-sync-fixtures.json`.
+    const FIXTURE: &str = include_str!("../tests/fixtures/telemetry-sync.json");
+
+    /// DashQ stand-in that answers each record with the next queued receipt state and reason, `accepted` when none.
+    #[derive(Default)]
+    struct Capture { records: Vec<Value>, replies: Vec<(&'static str, Option<&'static str>)>, lose: bool }
+    impl Wire for Capture {
+        fn post(&mut self, _: &str, route: &str, _: Option<&str>, body: &Value) -> Result<(u16, Value), String> {
+            assert_eq!(route, "/ingest");
+            let r = body["records"][0].clone();
+            self.records.push(r.clone());
+            if std::mem::take(&mut self.lose) { return Err("reply lost".into()) }
+            let (state, reason) = if self.replies.is_empty() { ("accepted", None) } else { self.replies.remove(0) };
+            Ok((200, json!({"protocol": 1, "receipts": [{"event_id": r["event_id"], "state": state, "reason": reason}]})))
+        }
+        fn now(&self) -> u64 { 0 }
+        fn sleep(&mut self, _: u64) {}
+        fn show(&mut self, _: &str, _: &str) {}
+    }
+
+    /// Fixture store rows: fixed ids and receipt clocks, operation and stage observations (a Claude stage with model
+    /// and output tokens, a Codex stage whose runtime reports no model).
+    fn rows() -> Vec<Value> {
+        (1..=11).map(|seq: i64| {
+            let base = json!({"product": "taskq", "version": "4.6.31", "trace": null, "span": null, "started_ms": 1_792_000_000_000i64 + seq * 1000,
+                "outcome": "ok", "error": "none", "unknown": {"version": "not-recorded", "trace": "not-recorded", "span": "not-recorded"}});
+            let mut o = match seq % 3 {
+                1 => json!({"kind": "operation", "operation": "service.pass", "duration_us": 1200}),
+                2 => json!({"kind": "stage", "operation": "build", "task": 1614, "attempt": seq, "runtime": "claude", "duration_us": 9_000_000,
+                    "calls": 2, "tokens": 230, "model": "claude-opus-5-5", "output_tokens": 6}),
+                _ => json!({"kind": "stage", "operation": "build", "task": 1614, "attempt": seq, "runtime": "codex", "duration_us": 5_000_000,
+                    "tokens": 700, "model": null, "output_tokens": 9}),
+            };
+            for (k, v) in base.as_object().unwrap() { o[k] = v.clone() }
+            if o["runtime"] == "codex" { o["unknown"]["model"] = json!("not-reported") }
+            let id = coreq::telemetry::Event::identified("taskq.fixture", &seq.to_string(), o.clone()).unwrap().id().to_string();
+            json!({"seq": seq, "id": id, "received_ms": 1_792_000_000_000i64 + seq * 1000, "observation": o})
+        }).collect()
+    }
+
+    // Chain: store rows -> run() blocks with status -> DashQ receipts (accepted, replay after a lost reply,
+    // replay_mismatch, payload reject). Risk: the published fixture drifting from what the sender posts, a retry
+    // changing content under one event id, a refused block advancing the cursor (#1614 A1, A2, A5).
+    // `TASKQ_TELEMETRY_FIXTURE=1` rewrites the fixture after an intended wire change.
+    #[test]
+    fn sender_posts_the_published_fixture() {
+        let (install, store) = setup("fixture", json!([enrollment::SCHEMA, SCHEMA]));
+        let rows = rows();
+        let import = |from: usize, to: usize, prev: Option<&str>, next: &str| {
+            let r = &rows[from - 1..to];
+            let events: Vec<_> = r.iter().map(|r| coreq::telemetry::Event::identified("taskq.fixture", &r["seq"].to_string(), r["observation"].clone()).unwrap()).collect();
+            store.import_history("fixture", prev, next, &events, &r.iter().map(|r| r["received_ms"].as_i64().unwrap()).collect::<Vec<_>>()).unwrap();
+        };
+        // last_synced is the sender's clock: the fixture leaves it out
+        let mut c = Capture::default();
+        let mut go = |c: &mut Capture| { let mut s = go_with(&install, c); s.as_object_mut().unwrap().remove("last_synced"); s };
+        // blocks: seq 1..3, 4..5, then retention prunes through 7 (6..7 before upload: gap 2), 8..9
+        import(1, 3, None, "p1");
+        let s1 = go(&mut c);
+        import(4, 5, Some("p1"), "p2");
+        let s2 = go(&mut c);
+        import(6, 9, Some("p2"), "p3");
+        let db = rusqlite::Connection::open(install.join("telemetry.log/universal.sqlite3")).unwrap();
+        db.execute("DELETE FROM events WHERE seq <= 7", []).unwrap();
+        drop(db);
+        let s3 = go(&mut c);
+        let records = std::mem::take(&mut c.records);
+        // replay: the reply is lost, the retry posts the same record, DashQ returns the stored receipt
+        import(10, 10, Some("p3"), "p4");
+        c.lose = true;
+        let lost = go(&mut c);
+        let replay_after = go(&mut c);
+        assert_eq!(c.records[0], c.records[1], "a retry repeats event id and content");
+        let replay = json!({"case": "replay", "record": c.records[0], "receipts": ["lost", {"state": "accepted"}], "status_after": [lost, replay_after]});
+        // mismatch: DashQ holds other content under the next block's event id; reject: DashQ refuses the payload.
+        // Either stops the sender with the cursor before the block, and the retry repeats it unchanged.
+        import(11, 11, Some("p4"), "p5");
+        c.records.clear();
+        c.replies = vec![("rejected", Some("replay_mismatch")), ("rejected", Some("payload"))];
+        let (mismatch_after, reject_after) = (go(&mut c), go(&mut c));
+        assert_eq!(c.records[0], c.records[1]);
+        let mut stored = c.records[0]["payload"].clone();
+        stored.as_object_mut().unwrap().remove("status");
+        let cases = json!([replay,
+            {"case": "mismatch", "record": c.records[0], "stored": stored, "receipts": [{"state": "rejected", "reason": "replay_mismatch"}], "status_after": [mismatch_after]},
+            {"case": "reject", "record": c.records[1], "receipts": [{"state": "rejected", "reason": "payload"}], "status_after": [reject_after]}]);
+        let got = json!({"schema": SCHEMA, "installation": "i", "source": "src/telemetry_sync.rs sender_posts_the_published_fixture",
+            "rows": rows, "pruned_through": 7, "gap": [6, 7], "records": records, "status_after": [s1, s2, s3], "cases": cases});
+        if std::env::var("TASKQ_TELEMETRY_FIXTURE").is_ok_and(|v| v == "1") {
+            fs::write(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/telemetry-sync.json"), serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap();
+        }
+        assert_eq!(got, serde_json::from_str::<Value>(FIXTURE).unwrap(), "sender drifted from the published fixture; rerun with TASKQ_TELEMETRY_FIXTURE=1 after an intended change");
+        // the fixture's own invariants, as DashQ D11 reads them
+        for r in got["records"].as_array().unwrap().iter().chain([&got["cases"][0]["record"], &got["cases"][2]["record"]]) {
+            let p = &r["payload"];
+            let id = ring::digest::digest(&ring::digest::SHA256, format!("i\0{}\0{}", p["first"]["id"].as_str().unwrap(), p["last"]["id"].as_str().unwrap()).as_bytes());
+            assert_eq!(r["event_id"], format!("t-{}", id.as_ref()[..16].iter().map(|x| format!("{x:02x}")).collect::<String>()));
+            let gz = base64::engine::general_purpose::STANDARD.decode(p["gzip"].as_str().unwrap()).unwrap();
+            let mut text = String::new();
+            flate2::read::GzDecoder::new(&gz[..]).read_to_string(&mut text).unwrap();
+            let lines: Vec<Value> = text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+            assert_eq!((p["rows"].as_u64(), p["bytes"].as_u64()), (Some(lines.len() as u64), Some(text.len() as u64)));
+            assert_eq!((&lines[0]["seq"], &lines[0]["id"], &lines[lines.len() - 1]["seq"]), (&p["first"]["seq"], &p["first"]["id"], &p["last"]["seq"]));
+            let st = p["status"].as_object().unwrap();
+            assert!(st.len() == 3 && ["backlog_rows", "backlog_bytes", "gap_rows"].iter().all(|k| st[*k].is_u64() || st[*k].is_i64() || st[*k].is_null()), "{st:?}");
+        }
+        assert_eq!(got["records"][2]["payload"]["status"]["gap_rows"], 2, "pruned rows count as gap");
+        drop(store);
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    fn go_with(install: &Path, w: &mut dyn Wire) -> Value {
+        run(install, w, &mut Backoff::default(), Instant::now() + Duration::from_secs(60)).0
     }
 
     struct Slow;

@@ -215,7 +215,8 @@ pub fn attempt_log(root: &Path, role: &str, task: u64, attempt: u64) -> PathBuf 
 }
 
 /// Model use of the attempt log after byte `pos` (§ 4 Profiling): Claude assistant messages (calls, input tokens
-/// with cache reads and writes), Codex `turn.completed` input tokens (cached included; calls not reported).
+/// with cache reads and writes, output tokens, the model of most calls), Codex `turn.completed` input tokens (cached
+/// included) and output tokens (calls and model not reported).
 pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     use crate::profile::Usage;
     use std::io::{Read, Seek, SeekFrom};
@@ -224,6 +225,7 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     let Ok(mut f) = File::open(log) else { return Usage::Unknown("log-unreadable") };
     if f.seek(SeekFrom::Start(pos)).and_then(|_| f.read_to_string(&mut text)).is_err() { return Usage::Unknown("log-unreadable"); }
     let (mut ids, mut tokens, mut turns, mut missing) = (std::collections::HashSet::new(), 0u64, false, false);
+    let (mut output, mut no_output, mut models) = (0u64, false, std::collections::BTreeMap::<String, u64>::new());
     for v in text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
         let u = if v["type"] == "assistant" { &v["message"]["usage"] } else { &v["usage"] };
         let sum = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].iter().filter_map(|k| u[k].as_u64()).sum::<u64>();
@@ -234,11 +236,18 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
             Some("turn.completed") => { turns = true; true }
             _ => false,
         };
-        if counted { if u["input_tokens"].is_u64() { tokens += sum } else { missing = true } }
+        if !counted { continue }
+        if u["input_tokens"].is_u64() { tokens += sum } else { missing = true }
+        match u["output_tokens"].as_u64() { Some(n) => output += n, None => no_output = true }
+        // a model id is a short identifier (DashQ metadata allowlist); anything else stays unreported
+        if let Some(m) = v["message"]["model"].as_str().filter(|m| m.len() <= 64 && m.chars().all(|c| c.is_ascii_alphanumeric() || "-._@".contains(c))) {
+            *models.entry(m.into()).or_default() += 1;
+        }
     }
-    let tokens = (!missing).then_some(tokens);
-    if !ids.is_empty() { Usage::Known { calls: Some(ids.len() as u64), tokens } }
-    else if turns { Usage::Known { calls: None, tokens } }
+    let (tokens, output) = ((!missing).then_some(tokens), (!no_output).then_some(output));
+    let model = models.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|m| m.0);
+    if !ids.is_empty() { Usage::Known { calls: Some(ids.len() as u64), tokens, model, output } }
+    else if turns { Usage::Known { calls: None, tokens, model, output } }
     else { Usage::Unknown("no-usage") }
 }
 

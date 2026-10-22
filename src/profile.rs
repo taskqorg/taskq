@@ -146,8 +146,8 @@ const RUNTIMES: [&str; 4] = { let r = crate::runtime::RUNTIMES; [r[0], r[1], r[2
 const UNKNOWN: [&str; 6] = ["no-model", "no-usage", "log-unreadable", "app-turn", "adopted", "open-stage"];
 
 /// Model use of one stage: service stages run no model; a runtime that reports none reads unknown, never zero;
-/// `tokens` is `None` when any counted call lacked usage.
-pub enum Usage { NoModel, Unknown(&'static str), Known { calls: Option<u64>, tokens: Option<u64> } }
+/// `tokens` and `output` are `None` when any counted call lacked them; `model` is the model of most calls.
+pub enum Usage { NoModel, Unknown(&'static str), Known { calls: Option<u64>, tokens: Option<u64>, model: Option<String>, output: Option<u64> } }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -172,6 +172,10 @@ pub(crate) struct Stage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     unknown: Option<String>,
 }
 
@@ -191,7 +195,7 @@ pub(crate) fn now_ms() -> Option<u64> {
 pub fn open(install: &Path, project: &str, host: &str, task: u64, attempt: u64, rt: &str, reviewer: bool) {
     let r = Stage { project: Some(project.into()), host: Some(host.into()), open: true,
         stage: if reviewer { "review" } else { "build" }.into(), task, attempt, rt: RUNTIMES.into_iter().find(|r| *r == rt).unwrap_or("other").into(),
-        us: None, outcome: "unknown".into(), error: "none".into(), at_ms: now_ms(), calls: None, tokens: None, unknown: Some("open-stage".into()) };
+        us: None, outcome: "unknown".into(), error: "none".into(), at_ms: now_ms(), calls: None, tokens: None, model: None, output_tokens: None, unknown: Some("open-stage".into()) };
     write_stage(&install.join("taskq.log"), &r);
 }
 
@@ -241,7 +245,7 @@ pub fn repair(install: &Path, project: &str, host: &str, task: u64, attempt: u64
     if !rows.iter().any(|r| r.project.as_deref() == Some(project) && r.task == task && r.attempt == attempt) { return; }
     let r = Stage { project: Some(project.into()), host: Some(host.into()), open: false,
         stage: if reviewer { "review" } else { "build" }.into(), task, attempt, rt: RUNTIMES.into_iter().find(|r| *r == rt).unwrap_or("other").into(), us: None,
-        outcome: "failed".into(), error: "exit".into(), at_ms: now_ms(), calls: None, tokens: None, unknown: Some("adopted".into()) };
+        outcome: "failed".into(), error: "exit".into(), at_ms: now_ms(), calls: None, tokens: None, model: None, output_tokens: None, unknown: Some("adopted".into()) };
     write_stage(&install.join("taskq.log"), &r);
 }
 
@@ -285,6 +289,7 @@ pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, boar
         r.us = None;
         r.calls = None;
         r.tokens = None;
+        (r.model, r.output_tokens) = (None, None);
         r.unknown = Some("adopted".into());
         write_stage(&install.join("taskq.log"), &r);
         if let Some((_, rows)) = UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner()).get_mut(install) { rows.retain(|f| !same(f, &r)); }
@@ -361,13 +366,13 @@ pub fn stage(name: &'static str, task: u64, attempt: u64, rt: &str, took: Option
 
 #[allow(clippy::too_many_arguments)]
 fn stage_at(path: Option<&Path>, name: &'static str, task: u64, attempt: u64, rt: &str, took: Option<std::time::Duration>, outcome: &'static str, err: &'static str, usage: Usage) {
-    let (calls, tokens, unknown) = match usage {
-        Usage::NoModel => (None, None, Some("no-model")),
-        Usage::Unknown(r) => (None, None, Some(r)),
-        Usage::Known { calls, tokens } => (calls, tokens, tokens.is_none().then_some("no-usage")),
+    let (calls, tokens, model, output_tokens, unknown) = match usage {
+        Usage::NoModel => (None, None, None, None, Some("no-model")),
+        Usage::Unknown(r) => (None, None, None, None, Some(r)),
+        Usage::Known { calls, tokens, model, output } => (calls, tokens, model, output, tokens.is_none().then_some("no-usage")),
     };
     let r = Stage { host: HOST.with_borrow(Clone::clone), open: false, project: PROJECT.with_borrow(Clone::clone), stage: name.into(), task, attempt, rt: RUNTIMES.into_iter().find(|k| *k == rt).unwrap_or("other").into(),
-        us: took.map(|d| d.as_micros().min(u64::MAX as u128) as u64), outcome: outcome.into(), error: err.into(), at_ms: now_ms(), calls, tokens, unknown: unknown.map(Into::into) };
+        us: took.map(|d| d.as_micros().min(u64::MAX as u128) as u64), outcome: outcome.into(), error: err.into(), at_ms: now_ms(), calls, tokens, model, output_tokens, unknown: unknown.map(Into::into) };
     if path.is_none() {return;}
     if let Err(e) = crate::telemetry::record(crate::telemetry::Sample::Stage(r)) {
         let _ = writeln!(std::io::stderr().lock(), "Profiling: unknown ({})", append_error(&e));
@@ -693,15 +698,19 @@ pub fn report(install: &Path) -> String {
     format!("{legacy}\n{actions}")
 }
 
-/// § 5 `taskq profile export` columns, in order; every row has each of them, null where its kind has none.
-const COLUMNS: [&str; 19] = ["kind", "at_ms", "project", "task", "attempt", "entry", "name", "from", "to", "runtime", "host", "us", "prev_s",
-    "outcome", "error", "remaining", "calls", "tokens", "unknown"];
+/// § 5 `taskq profile export` columns, in order; every row has each of them, null where its kind has none. A new
+/// column is a new [`EXPORT`] schema.
+const COLUMNS: [&str; 21] = ["kind", "at_ms", "project", "task", "attempt", "entry", "name", "from", "to", "runtime", "host", "us", "prev_s",
+    "outcome", "error", "remaining", "calls", "tokens", "model", "output_tokens", "unknown"];
+/// Export schema: 2 added `model` and `output_tokens`.
+const EXPORT: u64 = 2;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct Row { kind: String, at_ms: Option<u64>, project: Option<String>, task: Option<u64>, attempt: Option<u64>, entry: Option<u64>,
     name: Option<String>, from: Option<String>, to: Option<String>, runtime: Option<String>, host: Option<String>, us: Option<u64>,
-    prev_s: Option<u64>, outcome: Option<String>, error: Option<String>, remaining: Option<u64>, calls: Option<u64>, tokens: Option<u64>, unknown: Option<String> }
+    prev_s: Option<u64>, outcome: Option<String>, error: Option<String>, remaining: Option<u64>, calls: Option<u64>, tokens: Option<u64>,
+    model: Option<String>, output_tokens: Option<u64>, unknown: Option<String> }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -714,7 +723,8 @@ fn row_sample(sample:&Sample) -> Option<Option<Row>> {
         Sample::Operation(r)=>Row {kind: "operation".into(), at_ms: r.at_ms, name: s(&r.op), us: Some(r.us), outcome: s(if r.error == "none" { "ok" } else { "failed" }), error: s(&r.error), ..Default::default()},
         Sample::Stage(r)=>{let r=r.clone();Row {
             kind: "stage".into(), at_ms: r.at_ms, project: r.project, task: Some(r.task), attempt: Some(r.attempt), name: Some(r.stage), runtime: Some(r.rt),
-            host: r.host, us: r.us, outcome: Some(r.outcome), error: Some(r.error), calls: r.calls, tokens: r.tokens, unknown: r.unknown, ..Default::default() }},
+            host: r.host, us: r.us, outcome: Some(r.outcome), error: Some(r.error), calls: r.calls, tokens: r.tokens, model: r.model,
+            output_tokens: r.output_tokens, unknown: r.unknown, ..Default::default() }},
         Sample::Board(r)=>Row {kind: "board".into(), at_ms: r.at_ms, name: Some(r.op.clone()), us: Some(r.us), outcome: Some(r.outcome.clone()), error: Some(r.error.clone()), remaining: r.remaining, ..Default::default()},
         Sample::Transition(r)=>{let r=r.clone();Row {
             kind: "transition".into(), at_ms: r.at_ms, project: r.project, task: Some(r.task), entry: Some(r.entry), from: Some(r.from), to: Some(r.to),
@@ -741,7 +751,7 @@ pub(crate) fn legacy_reports(text: &str, now: u64) -> Result<Vec<String>,String>
 struct Projection {header:Header,rows:[Vec<Row>;3],selected:Option<&'static str>}
 impl Projection {
     fn new(since_ms:Option<u64>,selected:Option<&'static str>)->Self {
-        Self {header:Header {schema:1,columns:COLUMNS.map(String::from).to_vec(),since_ms,window_ms:None,samples:0,corrupt:0},rows:Default::default(),selected}
+        Self {header:Header {schema:EXPORT,columns:COLUMNS.map(String::from).to_vec(),since_ms,window_ms:None,samples:0,corrupt:0},rows:Default::default(),selected}
     }
     fn push(&mut self,lane:usize,sample:Sample) {
         match row_sample(&sample) {
@@ -772,7 +782,7 @@ fn export(text:&str,since_ms:Option<u64>)->String {
 #[cfg(test)]
 fn read_export(export: &str) -> Result<(Header, Vec<Row>), &'static str> {
     let mut lines = export.lines();
-    let h: Header = lines.next().and_then(|l| serde_json::from_str(l).ok()).filter(|h: &Header| h.schema == 1 && h.columns == COLUMNS).ok_or("export header unreadable")?;
+    let h: Header = lines.next().and_then(|l| serde_json::from_str(l).ok()).filter(|h: &Header| h.schema == EXPORT && h.columns == COLUMNS).ok_or("export header unreadable")?;
     let rows = lines.map(|l| serde_json::from_str(l).map_err(|_| "export row unreadable")).collect::<Result<Vec<Row>, _>>()?;
     Ok((h, rows))
 }
@@ -1141,7 +1151,7 @@ pub(crate) mod tests {
         let o = b.comment(open, "taskq: spawn worker codex:w mac").unwrap();
         for (task, attempt) in [(closed, a), (open, o)] {
             write_stage(&dir.join("taskq.log"), &Stage { project: Some("o/r".into()), host: None, open: true, stage: "build".into(), task, attempt,
-                rt: "codex".into(), us: None, outcome: "unknown".into(), error: "none".into(), at_ms: Some(1), calls: None, tokens: None, unknown: Some("open-stage".into()) });
+                rt: "codex".into(), us: None, outcome: "unknown".into(), error: "none".into(), at_ms: Some(1), calls: None, tokens: None, model: None, output_tokens: None, unknown: Some("open-stage".into()) });
         }
         capture.flush().unwrap();
         let (listed, mut unowned) = (std::collections::HashSet::from([open]), std::collections::HashSet::new());
@@ -1238,11 +1248,21 @@ pub(crate) mod tests {
         fs::create_dir_all(&dir).unwrap(); let (_capture,_guard)=collecting(&dir);
         let (path, attempt) = (dir.join("taskq.log"), dir.join("attempt.log"));
         assert!(report(&dir).contains("Attempt stages: unknown (no observations)"));
-        let claude = r#"{"type":"assistant","message":{"id":"m1","usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":5}}}"#;
+        let claude = r#"{"type":"assistant","message":{"id":"m1","model":"claude-opus-5-5","usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":5,"output_tokens":3}}}"#;
         let codex = r#"{"type":"turn.completed","usage":{"input_tokens":700,"cached_input_tokens":600,"output_tokens":9}}"#;
         // one Claude message spans several lines with one id; a second id is a second call; lines before launch are skipped
         let before = format!("{}\n", claude.replace("m1", "m0"));
         fs::write(&attempt, format!("{before}{claude}\n{claude}\n{}\n", claude.replace("m1", "m2"))).unwrap();
+        // gap G3: model of most calls and output tokens; Codex reports output tokens but no model; a path-like
+        // model id or a call without output tokens stays unknown, never a guess or a smaller sum
+        let got = |log: &Path, pos, rt| match crate::runtime::usage(log, pos, rt) { Usage::Known { calls, tokens, model, output } => (calls, tokens, model, output), _ => panic!("{rt}") };
+        assert_eq!(got(&attempt, before.len() as u64, "claude"), (Some(2), Some(230), Some("claude-opus-5-5".into()), Some(6)));
+        let odd = dir.join("odd.log");
+        let bad = claude.replace("claude-opus-5-5", "/home/x/model");
+        fs::write(&odd, format!("{bad}\n{}\n", bad.replace("m1", "m2").replace(r#","output_tokens":3"#, ""))).unwrap();
+        assert_eq!(got(&odd, 0, "claude"), (Some(2), Some(230), None, None));
+        fs::write(&odd, format!("{codex}\n")).unwrap();
+        assert_eq!(got(&odd, 0, "codex"), (None, Some(700), None, Some(9)));
         let ms = |m| Some(std::time::Duration::from_millis(m));
         stage_at(Some(&path), "build", 7, 1, "claude", ms(9), "ok", "none", crate::runtime::usage(&attempt, before.len() as u64, "claude"));
         fs::write(&attempt, format!("{codex}\n{codex}\n")).unwrap();
@@ -1251,7 +1271,7 @@ pub(crate) mod tests {
         stage_at(Some(&path), "review", 7, 4, "codex-app", ms(2), "ok", "none", crate::runtime::usage(&attempt, 0, "codex-app"));
         stage_at(Some(&path), "claim", 7, 1, "private-rt", ms(3), "failed", class("HTTP 502 secret /host/path"), Usage::NoModel);
         // a Claude call with empty usage keeps the call count and makes tokens unknown, never 0; an adopted child is untimed
-        fs::write(&attempt, format!("{}\n", claude.replace(r#""usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":5}"#, r#""usage":{}"#))).unwrap();
+        fs::write(&attempt, format!("{}\n", claude.replace(r#""usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":5,"output_tokens":3}"#, r#""usage":{}"#))).unwrap();
         stage_at(Some(&path), "review", 7, 5, "claude", ms(4), "ok", "none", crate::runtime::usage(&attempt, 0, "claude"));
         stage_at(Some(&path), "review", 7, 6, "claude", None, "ok", "none", Usage::Unknown("adopted"));
         // a child stopped after its result or requeue keeps that outcome; a live child exiting without one failed;
@@ -1356,15 +1376,15 @@ Changed: x"))];
             format!("{BOARD_PREFIX}{{\"op\":\"lunch\"}}\n"),
             format!("{PREFIX}{}\n", serde_json::to_string(&Record { op: "spawn".into(), us: 7, error: "none".into(), at_ms: Some(140), trace: None }).unwrap()),
             format!("{STAGE_PREFIX}{}\n", serde_json::to_string(&Stage { host: None, open: false, project: Some("o/a".into()), stage: "build".into(), task: 5, attempt: 9, rt: "codex".into(),
-                us: Some(5), outcome: "ok".into(), error: "none".into(), at_ms: Some(150), calls: None, tokens: Some(3), unknown: None }).unwrap()),
+                us: Some(5), outcome: "ok".into(), error: "none".into(), at_ms: Some(150), calls: None, tokens: Some(3), model: None, output_tokens: Some(2), unknown: None }).unwrap()),
         ].concat();
         let text = export(&log, Some(100));
         let mut lines = text.lines();
-        assert_eq!(lines.next().unwrap(), format!(r#"{{"schema":1,"columns":{},"since_ms":100,"window_ms":[100,150],"samples":16,"corrupt":1}}"#, serde_json::to_string(&COLUMNS).unwrap()));
+        assert_eq!(lines.next().unwrap(), format!(r#"{{"schema":2,"columns":{},"since_ms":100,"window_ms":[100,150],"samples":16,"corrupt":1}}"#, serde_json::to_string(&COLUMNS).unwrap()));
         let first: serde_json::Map<String, serde_json::Value> = serde_json::from_str(lines.next().unwrap()).unwrap();
         assert_eq!(first.keys().collect::<Vec<_>>(), COLUMNS.iter().collect::<Vec<_>>());
         assert_eq!(serde_json::Value::Object(first), serde_json::json!({"kind":"transition","at_ms":100,"project":"o/a","task":5,"attempt":null,"entry":100,"name":null,
-            "from":"ready","to":"doing","runtime":"claude","host":"mac","us":null,"prev_s":10,"outcome":null,"error":null,"remaining":null,"calls":null,"tokens":null,"unknown":null}));
+            "from":"ready","to":"doing","runtime":"claude","host":"mac","us":null,"prev_s":10,"outcome":null,"error":null,"remaining":null,"calls":null,"tokens":null,"model":null,"output_tokens":null,"unknown":null}));
         assert!(text.contains(r#""kind":"stage","at_ms":150,"project":"o/a","task":5,"attempt":9,"entry":null,"name":"build""#), "{text}");
         assert!(!text.contains("999"), "a record before the window is not exported");
         let tasks = render_tasks(&text).unwrap();
