@@ -101,7 +101,7 @@ fn canon(p: &Path) -> PathBuf {
 }
 
 /// Codex chooses its own sandbox with these: it cannot run inside taskq's (Seatbelt does not nest).
-fn codex_sandbox(args: &[String]) -> Option<&str> {
+pub(crate) fn codex_sandbox(args: &[String]) -> Option<&str> {
     args.iter().enumerate().find_map(|(i, a)| match a.as_str() {
         "-s" | "--sandbox" => args.get(i + 1).map(String::as_str),
         "--full-auto" => Some("workspace-write"),
