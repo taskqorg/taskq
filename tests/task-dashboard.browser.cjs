@@ -59,7 +59,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    assert(geometry.overflow<=0&&geometry.contentOverflow<=0,'no horizontal overflow '+JSON.stringify(geometry));assert(geometry.head<=geometry.content+.5&&geometry.bottom<=geometry.footer+.5&&geometry.last<=geometry.viewport+.5,'fixed chrome never overlaps content');
    await p.locator('[data-a=view-editor]').click();const popup=await editor().boundingBox();assert(popup.x>=0&&popup.y>=0&&popup.x+popup.width<=320.5&&popup.y+popup.height<=geometry.viewport+.5,'bounded anchored editor');
    if(out){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/'+theme+'-'+font+'-'+variant+'-editor.png'});}
-   await p.keyboard.press('Escape');if(out)await p.screenshot({path:out+'/'+theme+'-'+font+'-'+variant+'.png'});
+   if(variant==='short'){const done=editor().getByRole('button',{name:'Done',exact:true});await done.scrollIntoViewIfNeeded();const end=await done.boundingBox();assert(end.y>=0&&end.y+end.height<=geometry.viewport+.5,'last overlay control remains reachable in short windows');await done.click();assert.equal(await editor().count(),0);}else await p.keyboard.press('Escape');if(out)await p.screenshot({path:out+'/'+theme+'-'+font+'-'+variant+'.png'});
    if(variant==='long'){const t=p.locator('[data-a=task-detail]').first();await t.click();assert.match(await editor().innerText(),/elapsed unknown/);await p.keyboard.press('Escape');}
    else {assert.equal((await p.locator('.filter-header').innerText()).includes('?'),true,'partial never zero');}
    observations.push({theme,font,variant,...geometry});await p.close();

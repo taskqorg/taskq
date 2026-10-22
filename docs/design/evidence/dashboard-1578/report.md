@@ -40,6 +40,7 @@ Fixtures are invented and token-free. `tests/task-dashboard.browser.cjs` covers 
 | O3 Back | Filtered dashboard initially hid Back after returning from a project | Back uses recorded shell history; per-view context stays local | Navigation/restart/scroll tests pass |
 | O1 Escape | Focus restoration reopened the transient preview | Suppress only that restoration's preview event | Escape closes and returns focus without reopening |
 | Profiling capacity | Eagerly loaded unused editors exceeded CoreQ's 256-method limit | Load existing answer/resource editors on use; collection limits/inventory unchanged | Menu and operational route checks pass |
+| M13 native preview labels | Summary overflowed by 2 CSS px in both themes at 16/20px; [failed images](native-before/manifest.json) retained | Actual-size previews above intrinsic labels; type/icon settings separated; no threshold relaxed | All 24 final WKWebView captures report no overflow; 16/20/40px preview browser check passes |
 | M13 growth | Baseline fixed/top/bottom cycle; no actual-anchor Auto/drag-to-Pin | Preserve old explicit values; actual native placement computes Auto; drag threshold then native Pin | Geometry/model/persistence and browser controls pass |
 
 [Before](browser/before-dark-16.png) and [after](browser/after-dark-16.png) use the same invented two-task fixture. Browser matrix measurements are in [browser.json](browser/browser.json). Native captures and image hashes are indexed by `candidate.json`.
@@ -68,3 +69,13 @@ Final command outcomes and exact artifact identity are recorded in `candidate.js
 | A8 | Pass (bounded browser/Mac package); Not tested (Windows native/accessibility devices) | Source/model/geometry and theme/type/adverse fixtures; click/raise owner-observed; exact observations in candidate.json |
 
 The first canonical gate exposed the contract size and missing added snapshot fields; both were fixed without changing the limits or deleting existing expected fields. Host-policy/installation/lifecycle tests invoked under this worker's real task identity remain `sandbox-blocked`, not PASS. Publication still requires green merge-result CI under R12/§7; no local environment workaround grants host authority.
+
+## Final observations
+
+- Implementation source: `c4c2663217fc337fbd957922225c600c9586ca74`. [Candidate index](candidate.json) pins each UI blob, artifact, fixture boundary, image and command result. Later evidence/test-only commits keep these source blobs unchanged.
+- Full Rust run: 478 passed, 18 worker-host authority cases `sandbox-blocked`, 34 ignored. Integration: 19 passed, one `sandbox-exec: sandbox_apply: Operation not permitted`, one ignored. The two own failures (contract size and additive stage fixture) passed after their fixes; no host guard or expected field was removed.
+- All 20 Node component checks and 11 affected browser instruments passed. Shared component protection retains 64 parent/browser/tray comparisons; the current product separately exercises identity actions and scoped All. Short overlays reach and activate their last control; growth has temporal and reduced-motion proof.
+- Native Mac: 24 WKWebView captures, dark/light and 16/20px, six changed routes, zero overflow reports. Visual inspection covered Home, Settings, Window and Tray icon plus long/short anchored browser editors. The failed 2px Summary images remain separate.
+- Main display: 1470×956 AppKit points, visible 1470×922, scale 2; coordinates are independently read from NSScreen. Physical drag/Snap and mixed-DPI behavior remain Not tested.
+- The exact final signed native artifact also passed direct offline selftest: 97 golden traces, format checks and nine committed capture observations. No board read is claimed. Cargo's runner re-signs each launch; README and F5 hashes therefore identify separate signatures of identical pinned source, as recorded in candidate.json.
+- `docs/shots/update.sh` produced the README images from the pinned release build; `sh docs/shots/check.sh` passed. Publication still needs merge-result CI and reviewer action; nothing was deployed.
