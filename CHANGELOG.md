@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.30
+
+`taskq service onboard` readies a host's Claude folder trust in one command (#1546). Closed tasks release worktrees held by foreign or rebooted executions (#1549). A label fix that another host's fold reverts backs off, is logged and reported once (#1550). Steady tray tick telemetry folds into aggregates, so the store keeps its full retention (#1548). Codex setup sessions open through the host service (#1534); the tray warns when agentq is missing and setup sessions need one OK (#1544). The service never dequeues a newer publication of the same SHA and reaps an adopted zombie child (#1537, #1543). Tray and status task rows show only owner texts; the tasks list gains a per-row menu and chip-order sort; the workspace shell runs as Preact route components (#1524, #1523, #1538). CoreQ v0.14.6. No board change.
+
 ## v4.6.29
 
 Claude background sessions get their own launch env through `--settings` env, so a Claude daemon started by another process no longer leaks its `TASKQ_*` values into workers (#1531). The tray Back stack follows recorded Wouter history and obsolete tray and workspace shell code is gone (#1470). No board change.
