@@ -66,7 +66,11 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   }
   const preview='data:image/png;base64,'+fs.readFileSync('docs/shots/icon-summary-run-dark.png').toString('base64');
   for(const font of [16,20,40]){p=await open({...state,font,icons:{icon:preview,full:preview,custom:preview}},{width:320,height:700});await p.locator('[data-route=settings]').click();await p.locator('[data-route=tray-icon]').click();assert.equal(await p.locator('.views button').count(),3);assert.deepEqual(await p.locator('.views button').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.textContent)),[],'actual-size previews keep complete labels at '+font+'px');await p.close();}
-  p=await open();await p.emulateMedia({reducedMotion:'reduce'});await p.locator('[data-route=settings]').click();await p.locator('[data-route=window]').click();assert.equal(await p.locator('.growth-miniature i').first().evaluate(e=>getComputedStyle(e).animationName),'none');await p.close();
+  p=await open();await p.locator('[data-route=settings]').click();await p.locator('[data-route=window]').click();
+  const start=await p.locator('.growth-miniature[data-growth=top] i').evaluate(e=>e.getBoundingClientRect().height);
+  await p.waitForFunction(start=>Math.abs(document.querySelector('.growth-miniature[data-growth=top] i').getBoundingClientRect().height-start)>2,start,{timeout:2500});
+  assert.equal(await p.locator('.growth-miniature[data-growth=fixed] i').evaluate(e=>getComputedStyle(e).animationName),'none');
+  await p.emulateMedia({reducedMotion:'reduce'});assert.equal(await p.locator('.growth-miniature i').first().evaluate(e=>getComputedStyle(e).animationName),'none');await p.close();
   if(out)fs.writeFileSync(out+'/browser.json',JSON.stringify({browser:browser.version(),observations},null,2)+'\n');
   console.log('PASS #1578 O1/O2/O3 views, scoped counts, same comparator, Save/Reset/restart, accessible anchored details/actions, window controls and both themes 16/20 narrow/short/long/partial');
  }finally{await browser.close();}
