@@ -10,7 +10,9 @@ function page(broken=false){
  install(context);return {handlers,timers,sent,nodes,context,win:context};
 }
 const p=page();p.handlers.error({target:p.win,message:'SECRET',filename:'/private/secret',error:Error('SECRET')});
-assert.equal(p.sent.length,1);assert.deepEqual(p.sent[0],{a:'web-error',counts:[1,0,0,0],saturated:false});
+// #1680 A3: the first error's class and code site travel; its message and file path do not
+assert.equal(p.sent.length,1);assert.equal(p.sent[0].a,'web-error');assert.deepEqual(p.sent[0].counts,[1,0,0,0]);assert.equal(p.sent[0].error,'Error');
+assert.match(p.sent[0].site,/^[\w$.]+(:\d+:\d+)?$/);
 for(let i=0;i<100;i++)p.handlers.error({target:p.win});
 p.handlers.unhandledrejection({reason:'SECRET'});p.handlers.error({target:{src:'SECRET'}});p.context.taskqWebFault('evaluation');
 assert.equal(p.sent.length,1);assert.equal(p.timers.length,1);
@@ -20,4 +22,8 @@ assert(p.nodes.some(x=>x.textContent.includes('.menu')));assert(p.nodes.some(x=>
 p.timers.shift()();assert.equal(p.timers.length,0,'idle observer keeps no recurring timer');
 const b=page(true);assert.doesNotThrow(()=>b.handlers.error({target:b.win}));assert(b.nodes.some(x=>x.role==='alert'));
 assert.equal(b.timers.length,1,'broken reporter did not recurse');
+const {site}=require('../src/tray-web.js');
+assert.deepEqual(site({name:'TypeError',stack:'TypeError: secret text\n    at title (taskq://localhost/private/x:1:7034)\n'}),{error:'TypeError',site:'title:1:7034'});
+assert.deepEqual(site({name:'TypeError',stack:'title@taskq://localhost/secret:1:7034\nbody@x:1:9'}),{error:'TypeError',site:'title:1:7034'});
+assert.deepEqual(site({name:'secret text',stack:'nothing'}),{error:'unknown',site:'anonymous'});
 console.log('PASS early page failure, bounded counters, no raw content, independent notice and broken bridge');

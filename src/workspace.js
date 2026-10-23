@@ -80,12 +80,21 @@ const {create}=execution.module('workspace',{
     const icons=require('./ui-icons.js');
     const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Inbox'],['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
     renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='messages',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
-     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?(pages[view.page]||pages.messages)():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
+     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
     const field=menu.querySelector('[data-c-field=answer]');if(field&&field!==answerField){answerField=field;const t=view.answer&&view.S?.projects.find(p=>p.issues===view.answer.board)?.tasks?.find(t=>t.n===view.answer.task),c=t&&answers.answerCompose(view.answer.board,t);if(Array.isArray(c?.caret))field.setSelectionRange(...c.caret);}
     conversations.afterDraw();state.flush();
+   },
+   // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
+   route:function(){
+    try{return (pages[view.page]||pages.messages)();}
+    catch(error){
+     const d=require('./tray-web.js').site(error),key=view.page+' '+d.site;
+     if(view.routeFault!==key){view.routeFault=key;ui.send({a:'route-error',route:view.page,...d});}
+     return h('p',{role:'alert'},'This page could not be shown. Home, Back and Close still work; refresh status before retrying a command.');
+    }
    },
    navigate:function(page,context){
     // #1662 A3: the removed New AI request route opens a new Conversations draft for its project
@@ -118,7 +127,8 @@ const {create}=execution.module('workspace',{
     const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
-    const request=s.ai?.request;view.notice=request?'Native request: '+(request.kind||'unknown')+(request.reason?'. '+request.reason:''):'Workspace status received.';
+    // #1680 A4: request status lives on its conversation (handoff), never on other pages
+    view.notice='Workspace status received.';
     answers.answerReadback();api.draw();if(first)state.focus(view.restoreFocus);
    },
    mount:function(){

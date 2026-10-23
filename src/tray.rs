@@ -699,10 +699,11 @@ struct WebCalls {
     failed: bool,
     notified: bool,
     metadata_unknown: bool,
+    logged: u8,
 }
 impl WebCalls {
     fn new() -> Self {
-        let mut calls=Self{workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false};
+        let mut calls=Self{workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -757,6 +758,7 @@ impl WebCalls {
         let Some(saturated)=message["saturated"].as_bool() else {self.fault("invalid-error-report");return;};
         for (i,class) in ["script-error","unhandled-rejection","resource-error","evaluation-error"].iter().enumerate() {
             let delta=counts[i]-self.counts[i];
+            if delta>0 && let Some((error,site))=web_site(message) {self.log(format_args!("interface error ({class}) {error} at {site}"));}
             if delta>0 {
                 // Page-wide counts have no reliable initiating click; do not invent a parent.
                 let span=coreq::telemetry::capture::detached_span("tray.web.error");
@@ -772,6 +774,31 @@ impl WebCalls {
         }
         else if counts.iter().any(|n|*n>0) {self.fault("page-error");}
     }
+}
+
+// #1680 A3: a failing workspace route keeps its shell; log its class and site without faulting the window.
+impl WebCalls {
+    fn route(&mut self, message: &Value) {
+        let route=message["route"].as_str().filter(|r|!r.is_empty()&&r.len()<=20&&r.bytes().all(|b|b.is_ascii_lowercase()));
+        let (Some(route),Some((error,site)))=(route,web_site(message)) else {self.log(format_args!("workspace route failed; report invalid"));return;};
+        let _=coreq::telemetry::capture::operation("tray.web.route",||Err::<(),_>("route-error"),|code|*code);
+        self.log(format_args!("workspace route {route} failed: {error} at {site}; Home and Close stay available"));
+    }
+    // A broken page can repeat one error each draw; stderr keeps the first few.
+    fn log(&mut self, line: std::fmt::Arguments) {
+        if self.logged<8 {self.logged+=1;eprintln!("taskq tray: {line}");}
+    }
+}
+
+/// The web guard's error class and code site; both are identifiers (no message text or URL), else none.
+fn web_site(message: &Value) -> Option<(&str,&str)> {
+    let ident=|s:&str|s.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'$'||b==b'.');
+    let error=message["error"].as_str().filter(|e|!e.is_empty()&&e.len()<=40&&ident(e))?;
+    let site=message["site"].as_str().filter(|s|!s.is_empty()&&s.len()<=80)?;
+    let mut parts=site.split(':');
+    parts.next().filter(|n|!n.is_empty()&&ident(n))?;
+    let at:Vec<&str>=parts.collect();
+    (at.is_empty()||at.len()==2&&at.iter().all(|n|!n.is_empty()&&n.len()<=9&&n.bytes().all(|b|b.is_ascii_digit()))).then_some((error,site))
 }
 
 // Accept only metadata named by the actual bundled modules; the WebView supplies no content fields.
@@ -1183,6 +1210,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
                 if m["a"]=="web-error" {calls.errors(&m);return;}
                 if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
+                if m["a"]=="route-error" {calls.route(&m);return;}
                 let context=match m["context"].as_str(){Some(text)=>match coreq::telemetry::capture::TraceContext::decode(text){Ok(context)=>Some(context),Err(_)=>{calls.fault("invalid-web-context");return;}},None=>None};
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if calls.failed {return;}
@@ -2434,6 +2462,26 @@ mod tests {
             assert!(errors.iter().all(|r|r["outcome"]=="failed"));
             assert_eq!(web_result("true"),"invalid-ack");assert_eq!(web_result("\"ok\""),"ok");
         });
+    }
+
+    // #1680 A3: route and page errors log an identifier-only class and site; text, URLs or paths are dropped and a
+    // failing route leaves the window usable. Risk: stderr carries page content, or a route error trips the fence.
+    #[test]
+    fn web_error_site_is_identifiers_only_and_route_errors_keep_the_window() {
+        assert_eq!(web_site(&json!({"error":"TypeError","site":"title:1:7034"})),Some(("TypeError","title:1:7034")));
+        assert_eq!(web_site(&json!({"error":"TypeError","site":"anonymous"})),Some(("TypeError","anonymous")));
+        for bad in [json!({"error":"TypeError: secret","site":"x:1:2"}),json!({"error":"TypeError","site":"/private/x.js:1:2"}),
+            json!({"error":"TypeError","site":"x:1"}),json!({"error":"TypeError","site":"x:a:2"}),json!({"site":"x:1:2"}),json!({"error":"E","site":""})] {
+            assert_eq!(web_site(&bad),None,"{bad}");
+        }
+        let mut calls=WebCalls::new();
+        calls.route(&json!({"a":"route-error","route":"conversations","error":"TypeError","site":"title:1:7034"}));
+        calls.route(&json!({"a":"route-error","route":"../x","error":"TypeError","site":"title:1:7034"}));
+        assert!(!calls.failed,"a failing route must not fault the window");
+        for _ in 0..20 {calls.route(&json!({"route":"messages","error":"TypeError","site":"x"}));}
+        assert_eq!(calls.logged,8,"stderr lines stay bounded");
+        calls.errors(&json!({"counts":[1,0,0,0],"saturated":false,"error":"TypeError","site":"title:1:2"}));
+        assert!(calls.failed,"page-wide errors keep the unknown-outcome fence");
     }
 
     // Chain: bounded UI submission -> owned worker -> same-trace receipt -> stale registration refusal.
