@@ -41,6 +41,11 @@ const remoteClaude=q.task(p,{...row,runtime:'claude',local_session:false,session
 assert(remoteClaude.includes('href="https://claude.ai/code/session_014abc"'));
 assert(remoteClaude.indexOf('data-icon="network"')<remoteClaude.indexOf('data-icon="claude"')&&!remoteClaude.includes('Remote session'));
 assert(!q.task(p,row).includes('data-icon="network"'),'local rows carry no remote mark');
+// #1681 R05: the compact runtime mark is the direct session action, with the same safe-target boundary.
+const compact=q.task(p,row,false,true);
+assert.match(compact,/class="tqp-mark"[^>]*href="codex:\/\/threads\//,'verified local mark opens its session');
+for(const session_url of [null,'javascript:alert(1)'])assert.match(q.task(p,{...row,session_url,session_reason:'No verified session'},false,true),/aria-disabled="true"[^>]*title="No verified session"/);
+assert(!q.task(p,{...row,local_session:false},false,true).includes('codex://'),'remote Codex cannot open locally');
 // Chain: M3 shared task row -> metadata/independent links -> full title block in every consumer.
 // Risk: a long title is truncated or pushes the session control into the title line.
 const splitRow=q.task(p,{...row,title:'Complete title '.repeat(30)},true);

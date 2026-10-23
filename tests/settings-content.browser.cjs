@@ -33,22 +33,23 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    const widgets=await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>({label:e.children[1].textContent,meta:e.querySelector('.meta').textContent,cut:[...e.children].some(c=>c.scrollWidth>c.clientWidth+1)})));
    assert.deepEqual(widgets.map(w=>w.label),['Appearance','Notifications','Activity history','Hosts and resources','Work mode','Agents and access','Projects','Delivery','Services and support','Emergency stop','Recovery','About and updates']);
    assert.deepEqual(widgets.filter(w=>w.cut).map(w=>w.label),[],'no clipped widget text');
-   assert.equal(widgets.find(w=>w.label==='Hosts and resources').meta,'3 hosts · Runs unknown','a global count is never one host');
+   assert.equal(widgets.find(w=>w.label==='Hosts and resources').meta,'fra · Claude ? · Codex ?; mac · Claude 1 · Codex 1; win · Claude 0 · Codex 1','a global count is never one host');
    assert.equal(widgets.find(w=>w.label==='Agents and access').meta,'Claude signed in · Codex expired');
    assert.equal(widgets.find(w=>w.label==='Delivery').meta,'auto-merge (3)','equal values group');
-   assert.equal(widgets.find(w=>w.label==='Work mode').meta,'3 admitting · capacity unavailable','R32: admission first, capacity apart');
+   assert.equal(widgets.find(w=>w.label==='Work mode').meta,'Unknown: all 3 projects · Intake: 3 configured · capacity unavailable','R32: admission first, capacity apart');
    await shot('settings');
    // R16/R17: one line per host, Claude and Codex apart; stale never 0; this host's expansion holds units and age
    await go('hosts');
    const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>e.textContent));
    assert.deepEqual(lines,['fra · runs unknown · 5m old','mac · Claude 1 · Codex 1 · Codex expired','win · Claude 0 · Codex 1']);
    await p.locator('.host-line > summary',{hasText:'mac'}).click();
-   assert.match(await text(),/CPU 42% busy · memory 62% available · sampled 2m ago/);
+   assert.equal(await p.locator('.resource-meter meter').count(),2);
+   assert.match(await p.locator('.resource-meters').innerText(),/CPU busy.*42%[\s\S]*Memory available.*62%/s);
    await shot('hosts');
    // R18/R19/R29: account, not method; expiry; the sign-in route; access effective per project; no placeholder
    await go('agents');
    const t=await text();
-   for(const s of ['Claude · Signed in · owner@example.org','Codex · Expired · account unknown','win · sign-in unknown until this host reports','Access unknown for Beta','taskq service permissions'])assert(t.includes(s),s);
+   for(const s of ['Claude 2.1.3 · Signed in · owner@example.org','Codex 0.48.0 · Expired · account unknown','win · clients / access unknown','fra · clients / access unknown','Access unknown for Beta','taskq service permissions'])assert(t.includes(s),s);
    assert.equal(await p.locator('.content [data-route=agents]').count(),0,'no circular placeholder');
    await p.locator('.agent-signin > summary').nth(1).click();await p.locator('details.access > summary').first().click();
    await shot('agents');

@@ -12,12 +12,13 @@ const c={S:{now:1000,host:'mac',period:'1d',history:require('./fixtures/icon-his
  agents:{at:700,age:'5m',fresh:true,rows:[row('claude','signed-in',{account:'owner@example.org',method:'Claude subscription',expires:4102444800}),row('codex','check-failed',{method:'ChatGPT',reason:'probe output unreadable'})]}}};
 require('./tray-harness.cjs').install(c);
 c.page='agents';let html=c.routeBody();
-assert(html.includes('Claude · <span class="">Signed in</span><span class="meta"> · owner@example.org</span>'),'account, not method, beside the state');
+assert(html.includes('Claude 2.1 · <span class="">Signed in</span><span class="meta"> · owner@example.org</span>'),'account, not method, beside the state');
 assert(html.includes('Method: Claude subscription'),'the method stays in the details');
-assert(html.includes('Codex · <span class="alert">Check failed</span><span class="meta"> · account unknown</span>'),'ChatGPT is a method, never the account');
+assert(html.includes('Codex 2.1 · <span class="alert">Check failed</span><span class="meta"> · account unknown</span>'),'ChatGPT is a method, never the account');
 assert(html.includes('Expiry unknown'),'no expiry is invented');assert(html.includes('Expires '),'a supplied expiry is shown');
 assert(html.includes('Runtime client 2.1 · checked 5m ago'));assert(html.includes('Tray 4.1.0 · service 4.1.0 (2)'),'worker service versions apart from the runtime client');
-assert(html.includes('<strong>win</strong> · sign-in unknown until this host reports'),'a remote host stays unknown until seen');
+assert(html.includes('win · clients / access unknown'),'a remote host stays unknown until seen');
+assert(html.includes('Codex app · version unknown · sign-in unknown · access unknown'));
 assert(html.includes('Claude: requested workspace-write · saved grant workspace-write · applied workspace-write · sandbox'));
 assert(html.includes('Codex: refused: host grant missing'));assert(html.includes('Access unknown for beta: no access in status.json'),'a missing access file names one reason');
 assert(!html.includes('data-route="agents"'),'R29: no circular Agents placeholder');
@@ -29,7 +30,7 @@ for(const [state,label] of [['expired','Expired'],['rejected','Rejected'],['sign
 }
 // AS5 Checking: a probe in progress reads Checking apart from every result, the prior result kept as a detail
 c.S.agents={at:700,age:'5m',fresh:true,checking:true,rows:[row('claude','expired')]};html=c.routeBody();
-assert(html.includes('Claude · <span class="">Checking</span>'),'a probe in progress is not its prior result');
+assert(html.includes('Claude 2.1 · <span class="">Checking</span>'),'a probe in progress is not its prior result');
 assert(html.includes('Last result: Expired'));assert(html.includes('sign-in checking now · checked 5m ago'));
 c.page='settings';assert(c.routeBody().includes('checking sign-in'));c.page='agents';
 c.S.agents={at:null,checking:true,rows:[]};assert(c.routeBody().includes('Checking: no earlier result'));
@@ -39,7 +40,13 @@ c.page='services';html=c.routeBody();assert.equal(html.split('Host service: runn
 // R31: equal service versions form one group
 c.page='about';html=c.routeBody();assert(html.includes('Service 4.1.0<span class="meta"> · 2 projects'));assert(html.includes('Service 4.0.9<span class="meta"> · 1 project'));
 // R32: admission comes first; projects without a reported mode never read as none
-assert.equal(c.admissionText(),'admission unknown');c.S.projects[0].mode='paused';assert.equal(c.admissionText(),'1 paused');delete c.S.projects[0].mode;
+assert.match(c.admissionText(),/^Unknown: all 3 projects.*Intake: 3 unknown/);c.S.projects[0].mode='paused';assert.match(c.admissionText(),/Intake: 1 paused · 2 unknown/);delete c.S.projects[0].mode;
+const original=c.S.projects;c.S.projects=[{...original[0],mode:'run',capacity:{gate:'open',reasons:[{code:'access',text:'claude: host grant missing'}]}},{...original[1],mode:'run',capacity:{gate:'open',reasons:[]}}];
+assert.match(c.admissionText(),/^Mixed: alpha \(access\) · beta \(no reported blockers\).*Intake: 2 configured/,'a load-ready gate cannot hide access-blocked work, or block every host runtime');
+c.S.projects[1].alive=false;assert.match(c.admissionText(),/^Unknown:/,'stale never ready');
+c.S.projects=original;
+c.S.agents={at:900,fresh:true,rows:[row('codex','signed-in'),row('codex-app','signed-in',{version:'3.2'})]};
+c.S.projects[0].access.push({runtime:'codex-app',effective:'workspace'});c.page='agents';html=c.routeBody();assert(html.includes('Codex app 3.2 · <span'));assert(html.includes('Codex app 3.2 workspace'));assert(html.includes('Codex 2.1 refused'));
 // R32: Work mode shows the access facts themselves after admission, not a pointer to Agents
 const wm={operationController:true,S:c.S};require('./tray-harness.cjs').install(wm);html=wm.workPage();
 assert(html.indexOf('Admission · ')<html.indexOf('Codex: refused: host grant missing'),'admission first, then access');

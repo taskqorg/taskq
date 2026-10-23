@@ -1,6 +1,7 @@
 'use strict';
 const {h,render,options}=require('preact');
 const {signal}=require('@preact/signals');
+const {useLayoutEffect,useRef}=require('preact/hooks');
 const {Router,Route,useLocation}=require('wouter-preact');
 const {memoryLocation}=require('wouter-preact/memory-location');
 const ui=require('./ui-runtime.js'),{execution}=ui;
@@ -20,7 +21,19 @@ const api=execution.module('shell',{
   head.removeAttribute('data-title-below');
   if(title.scrollWidth>title.clientWidth+1)head.setAttribute('data-title-below','');
  },
- Frame:function({frame}){const [route]=useLocation();return h(Route,{path:frame.route},h('div',{'class':'shell','data-shell-route':route,'data-shell-depth':frame.depth},frame.nodes));},
+ Frame:function({frame}){
+  const [route]=useLocation(),element=useRef();
+  useLayoutEffect(()=>{api.fitTitle(element.current);});
+  useLayoutEffect(()=>{
+   const el=element.current;let width;
+   // R07: native resize and font loading happen after render; measuring the pre-commit title misses both.
+   const observer=new ResizeObserver(()=>{const next=el.clientWidth;if(next!==width){width=next;api.fitTitle(el);}});
+   observer.observe(el);
+   ui.effect('shell.fonts',()=>document.fonts.ready,()=>{if(el.isConnected)api.fitTitle(el);});
+   return ()=>observer.disconnect();
+  },[]);
+  return h(Route,{path:frame.route},h('div',{ref:element,'class':'shell','data-shell-route':route,'data-shell-depth':frame.depth},frame.nodes));
+ },
  create:function(container){
   // A3: the recorded Wouter history is the shell's Back stack; entries[i] keeps history[i]'s scroll, disclosures and focus.
   // ponytail: entries restored from native Settings carry no path; their route comes back on the next draw.

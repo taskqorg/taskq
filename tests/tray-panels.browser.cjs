@@ -29,6 +29,11 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    assert.equal(await page.locator('.tqp-task-title').evaluate(e=>e.scrollHeight<=e.clientHeight&&getComputedStyle(e).whiteSpace!=='nowrap'),true);
   }
   await page.evaluate(s=>taskq.receive(s),{...snapshot,page:'home',projects:[{...project,error:'Fixture urgent fault'}]});
+  const collapsed=await page.locator('.dashboard-status>summary').innerText();
+  assert.match(collapsed,/mac · Claude 0 · Codex 1/,'R16: attention never replaces runtime counters');
+  assert.match(collapsed,/Attention/);
+  await page.getByRole('link',{name:'Open codex session',exact:true}).click();
+  assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture','R05: runtime activation opens the verified target directly');
   assert.match(await page.locator('.content').innerText(),/Fixture urgent fault/);
   assert(await page.locator('.alert').first().evaluate(e=>e.compareDocumentPosition(document.querySelector('[data-card]'))&Node.DOCUMENT_POSITION_FOLLOWING));
   // A stale process source never turns Doing into a running figure.
@@ -39,7 +44,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   await page.locator('[data-a="task-detail"]').click();await page.locator('[data-page="answer"]').click();
   assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open),{page:'answer',operation:null,root:project.root,board:project.issues,task:1,revision:9});
   assert.equal(await page.locator('[data-card]').count(),1,'question appears once');
-  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['workspace','size','ready','web-observation'].includes(m.a)&&!(m.a==='set'&&m.navigation))),[],'panels/navigation apply no policy or retry');
+  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>!['open','workspace','size','ready','web-observation'].includes(m.a)&&!(m.a==='set'&&m.navigation))),[],'panels/navigation apply no policy or retry');
   console.log('PASS R6/R12 TW3 G05/G06: panels before complete tasks, one identity/Board, no empty Attention, urgent faults, unknown reason, W launch, wrapped title; dark/light 16/20 px at 320 px');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

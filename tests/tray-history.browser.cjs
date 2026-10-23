@@ -18,15 +18,16 @@ const base={display:require('./fixtures/display-model.json').display,page:'caden
     assert.equal(await page.locator('.history-plot img, .history-plot canvas').count(),0);
     for(const [i,b] of H.bins.entries()){
      const target=targets.nth(i);await target.focus();await target.press('Enter');
-     const detail=await page.locator('.history-detail').innerText();
-     for(const [k,j] of [['closed',0],['failed',1],['ask',2],['blocked',3]])assert(detail.includes(k+' '+(b.missing.length?(b.counts[j]?'≥'+b.counts[j]:'unknown (0 recorded)'):b.counts[j])),detail);
+     const detail=await page.locator('.history-exact').textContent();
+     for(const [k,j] of [['closed',0],['failed',1],['ask',2],['blocked',3]])assert(detail.includes(k+' '+(b.missing.length?(b.counts[j]?'≥'+b.counts[j]:'? (0 observed)'):b.counts[j])),detail);
      assert(detail.includes('[')&&detail.includes(')')&&detail.includes('UTC')||detail.includes('Asia/'),detail);
      if(b.ongoing)assert(detail.includes('ongoing'));
      if(b.missing.length)assert(detail.includes('incomplete')&&b.missing.every(source=>detail.includes(source)));
      if(!b.missing.length&&!b.counts[0])assert.equal(await chart.locator('[data-start]').nth(i).locator('[data-mark=zero]').evaluate(e=>getComputedStyle(e).visibility),'visible');
     }
     const selected=H.bins[4].start+'/'+H.bins[4].end;
-    await page.getByRole('combobox',{name:'History interval'}).selectOption(selected);
+    assert.equal(await page.locator('[data-history-select]').count(),0,'one interval selector: the six chart bins');
+    await page.locator('[data-history-bin]').nth(4).click();
     await page.evaluate(s=>taskq.receive(s),s);
     assert.equal(await page.locator('[data-history-bin][aria-pressed=true]').getAttribute('data-history-bin'),selected);
     if(name==='day'){
