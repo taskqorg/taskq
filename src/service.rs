@@ -33,6 +33,8 @@ pub struct Config {
     pub poll: u64,
     pub update_every: u64,
     pub rollback_after: u64,
+    /// `workspace: external` (§ 9): the hourly tidy runs only its registry prune and root step.
+    pub external: bool,
 }
 
 pub const HOST_LABEL: &str = "taskq-host";
@@ -182,7 +184,7 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
-    coreq::process::output("cleanup.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60)).ok().map(|o| o.stdout)
+    coreq::process::output("seed.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60)).ok().map(|o| o.stdout)
 }
 
 /// #1620 (docs/testing.md#build-cache): before a worker's first start, create `.worktrees/taskq-<N>` (§ 7 rule 2) and
@@ -235,61 +237,6 @@ fn clone_dir(_: &std::path::Path, _: &std::path::Path) -> Result<(), String> {
 }
 
 /// Fold every open task (heartbeat issues and untrusted authors excluded).
-/// Remove `.worktrees/taskq-<N>` of closed tasks and their merged local branch (§ 7, R11). Without `force` git refuses
-/// dirty worktrees, so those stay; with it the uncommitted work goes to `.taskq/trash/taskq-<N>.patch` first. Commits
-/// stay in the branch: `git branch -d` keeps an unmerged one. `ponytail:` a squash-merged branch stays until a manual
-/// `git branch -D`. #1549: only this host's executions (its name or OS hostname) hold its worktree; a boot after intent
-/// releases them (#1386), else the line names the owner step.
-pub fn cleanup(board: &dyn Board, root: &std::path::Path, me: &str, boot: fn() -> Result<i64, String>, mut skip: impl FnMut(u64) -> bool, force: bool) -> Vec<String> {
-    let mut log = vec![];
-    let Ok(dir) = std::fs::read_dir(root.join(".worktrees")) else { return log };
-    for e in dir.flatten() {
-        let name = e.file_name().to_string_lossy().into_owned();
-        let Some(n) = name.strip_prefix("taskq-").and_then(|n| n.parse::<u64>().ok()) else { continue };
-        if skip(n) || !board.issue(n).is_ok_and(|i| !i.open) {
-            continue; // a fresh read must show the issue closed (R12)
-        }
-        let comments = match board.comments(n) {
-            Ok(c) => c,
-            Err(e) => { log.push(format!("#{n} worktree kept: board read failed: {e}")); continue }
-        };
-        let entries: Vec<_> = comments.iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
-        let mut held = None;
-        for x in core::executions(n, &entries).into_iter().filter(|x| x.release.is_none() && (x.host == me || x.host == crate::hostname())) {
-            let intent = comments.iter().find(|c| c.id == x.id).map(|c| c.created).filter(|t| *t > 0);
-            let ended = intent.zip(boot().ok()).map(|(intent, at)| crate::snapshot::verdict(&crate::snapshot::Signals { local: true, boot: Some((at, intent)), ..Default::default() }));
-            let released = match ended {
-                Some(("ended", proof)) => {
-                    release_execution_text(board, n, x.attempt, x.id, "exit", &proof).map(|_| log.push(format!("#{n} released {} exit: {proof}", x.id)))
-                }
-                _ => Err(format!("execution {} on {} termination unknown; stop its process or reboot this host", x.id, x.host)),
-            };
-            if let Err(e) = released { held.get_or_insert(e); }
-        }
-        if let Some(e) = held {
-            log.push(format!("#{n} worktree kept: {e}"));
-            continue;
-        }
-        let wt = format!(".worktrees/{name}");
-        let removed = if force {
-            let trash = root.join(".taskq/trash");
-            let saved = git(&e.path(), &["add", "-A"]).and_then(|_| git(&e.path(), &["diff", "--cached", "--binary"])).is_some_and(|patch| {
-                patch.is_empty() || std::fs::create_dir_all(&trash).and_then(|_| std::fs::write(trash.join(format!("{name}.patch")), &patch)).is_ok()
-            });
-            saved && git(root, &["worktree", "remove", "--force", &wt]).is_some()
-        } else {
-            git(root, &["worktree", "remove", &wt]).is_some()
-        };
-        if removed {
-            git(root, &["branch", "-d", &name]);
-            log.push(format!("#{n} worktree removed"));
-        } else {
-            log.push(format!("#{n} worktree removal unconfirmed: {}", if force { "patch save or Git command failed; inspect the worktree" } else { "Git refused or failed; inspect uncommitted work before `taskq cleanup --force`" }));
-        }
-    }
-    log
-}
-
 pub fn views(board: &dyn Board, cache: &mut HashMap<u64, (i64, Vec<Comment>)>, deps: &mut DepCache) -> Result<(Vec<View>, Vec<Issue>), String> {
     let issues = board.issues(None)?;
     let open: HashSet<u64> = issues.iter().map(|i| i.number).collect();
@@ -320,7 +267,7 @@ fn release_execution(board: &dyn Board, task: u64, attempt: u64, execution: u64,
     release_execution_text(board, task, attempt, execution, proof, "")
 }
 
-fn release_execution_text(board: &dyn Board, task: u64, attempt: u64, execution: u64, proof: &str, text: &str) -> Result<(), String> {
+pub(crate) fn release_execution_text(board: &dyn Board, task: u64, attempt: u64, execution: u64, proof: &str, text: &str) -> Result<(), String> {
     let expected = match proof { "exit" => core::Release::Exit, "no-start" => core::Release::NoStart, _ => return Err("invalid release proof".into()) };
     let released = |log: &[core::Entry]| core::executions(task, log).into_iter()
         .find(|x| x.id == execution && x.attempt == attempt).map(|x| x.release);
@@ -389,8 +336,8 @@ pub struct Service<'a> {
     cancelled_publications: HashMap<u64, u64>,
     /// Closed-task terminal rows `repair_ended` proved are not this host's (#1359).
     unowned: HashSet<(u64, u64)>,
-    /// Worktrees of closed tasks already tried once by `prune`.
-    pruned: HashSet<u64>,
+    /// The last worktree tidy (docs/design/worktrees.md); `None` runs one on the next pass.
+    tidied: Option<std::time::Instant>,
     start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>,
     pub recover: Option<Box<dyn FnMut(u64, &core::Execution) -> Result<Box<dyn Proc>, String> + 'a>>,
     /// Host boot in Unix seconds (#1386); tests replace the OS read.
@@ -695,7 +642,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> R
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), pruned: HashSet::new(), start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1528,7 +1475,7 @@ impl<'a> Service<'a> {
 
         let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
         crate::profile::repair_ended(&self.cfg.install, &self.cfg.root, &self.cfg.repo, &me, self.board, &open, &mut self.unowned);
-        self.prune(&by_n);
+        self.tidy(&by_n);
 
         // 5. projected labels
         for v in &views {
@@ -1860,23 +1807,35 @@ impl<'a> Service<'a> {
         self.stuck.retain(|n, _| stuck.contains_key(n));
     }
 
-    fn prune(&mut self, open: &HashMap<u64, &View>) {
-        let tried = &mut self.pruned;
+    /// docs/design/worktrees.md: one tidy on the first pass after start, then at most hourly. A child this service
+    /// runs keeps its worktree; an open task's state comes from this pass's read.
+    fn tidy(&mut self, open: &HashMap<u64, &View>) {
+        if self.tidied.is_some_and(|t| t.elapsed().as_secs() < crate::tidy::EVERY) { return; }
+        self.tidied = Some(std::time::Instant::now());
         let kids: Vec<u64> = self.kids.iter().map(|k| k.task).collect();
-        let skip = |n: u64| open.contains_key(&n) || kids.contains(&n) || !tried.insert(n);
-        let lines = cleanup(self.board, &self.cfg.root, &self.cfg.me, self.boot, skip, false);
-        if lines.is_empty() { return; }
-        // #1549: a kept worktree logs once per changed line, across restarts; `.taskq/cleanup` is a cache (R1)
+        let states: HashMap<u64, State> = open.iter().map(|(n, v)| (*n, v.projection.task.state)).collect();
+        let t = crate::tidy::Tidy { board: self.board, root: &self.cfg.root, me: &self.cfg.me, boot: self.boot, external: self.cfg.external, force: false };
+        let o = crate::profile::measure_counted("service.tidy", || {
+            let o = t.run(&mut |n| kids.contains(&n), &|n| states.get(&n).copied());
+            let counts = o.counts.clone();
+            (o, counts)
+        });
+        let skipped = o.report["outcome"].as_str().is_some_and(|s| s.starts_with("skipped"));
+        // #1549: a refusal or stale root logs once per changed line, across restarts; `.taskq/cleanup` is a cache (R1)
         let path = crate::dot(&self.cfg.root).join("cleanup");
-        let mut last: BTreeMap<String, String> = std::fs::read_to_string(&path).unwrap_or_default().lines()
-            .filter_map(|l| l.split_once(' ').map(|(n, _)| (n.to_string(), l.to_string()))).collect();
-        for line in lines {
-            let n = line.split_once(' ').map_or(line.clone(), |(n, _)| n.to_string());
-            if last.get(&n) == Some(&line) { continue; }
-            if line.contains(" worktree kept: ") || line.contains(" worktree removal unconfirmed: ") { last.insert(n, line.clone()); } else { last.remove(&n); }
+        let last: BTreeSet<String> = std::fs::read_to_string(&path).unwrap_or_default().lines().map(String::from).collect();
+        let sticky = |l: &String| [" kept: ", " unconfirmed: ", "root stale: ", "tidy skipped: "].iter().any(|k| l.contains(k));
+        let mut next: BTreeSet<String> = if skipped { last.clone() } else { BTreeSet::new() };
+        for line in o.log {
+            if sticky(&line) {
+                next.insert(line.clone());
+                if last.contains(&line) { continue; }
+            }
             self.log.push(line);
         }
-        if let Err(e) = std::fs::create_dir_all(crate::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path,last.into_values().map(|l| l + "\n").collect::<String>())) { self.log.push(format!("cleanup cache: {e}")); }
+        if next != last && let Err(e) = std::fs::create_dir_all(crate::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path, next.into_iter().map(|l| l + "\n").collect::<String>())) {
+            self.log.push(format!("cleanup cache: {e}"));
+        }
     }
 
     fn reviewer_free(&self, v: &View) -> Result<String, (&'static str, String)> {
@@ -2564,6 +2523,7 @@ mod tests {
             poll: 60,
             update_every: 900,
             rollback_after: 600,
+            external: false,
         }
     }
 
@@ -5602,10 +5562,11 @@ mod tests {
         let mut restarted = service(&b, &c, Default::default());
         restarted.pass().unwrap();
         assert_eq!(kept(&restarted), 0, "a restart with the same outcome logs nothing: {:?}", restarted.log);
-        cleanup(&b, &root, "mac", no_boot, |_| false, true);
+        let cleanup = |boot, force| crate::tidy::Tidy { board: &b, root: &root, me: "mac", boot, external: false, force }.run(&mut |_| false, &|_| None).log;
+        cleanup(no_boot, true);
         assert_eq!((wt("2"), wt("3")), (false, true), "force removes dirty closed; open stays");
         assert!(wt("4"), "even forced cleanup preserves an unresolved execution's worktree");
-        let log = cleanup(&b, &root, "mac", booted, |_| false, false);
+        let log = cleanup(booted, false);
         assert!(!wt("4"), "a boot after intent releases and permits cleanup: {log:?}");
         assert!(core::executions(4, &crate::board::entries(&b, 4).unwrap()).iter().all(|x| x.id != execution || x.release == Some(core::Release::Exit)));
         assert!(std::fs::read_to_string(root.join(".taskq/trash/taskq-2.patch")).unwrap().contains("wip"), "dirty work saved");

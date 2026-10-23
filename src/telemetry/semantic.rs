@@ -63,7 +63,7 @@ fn canonical(line: &str) -> Res<Value> {
 }
 fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
     Ok(match kind {
-        "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms")],
+        "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms"),("counts","counts")],
         "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("input_tokens","input_tokens"),("cache_read_tokens","cache_read_tokens"),("cache_write_tokens","cache_write_tokens"),("model","model"),("output_tokens","output_tokens"),("unknown","usage_status")],
         "board" => &[("op","operation"),("us","duration_us"),("outcome","outcome"),("error","error"),("remaining","remaining"),("at_ms","started_ms")],
         "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms")],
@@ -187,6 +187,8 @@ mod tests {
     fn all_semantic_kinds_roundtrip_through_the_shared_store() {
         let source=[
             r#"taskq-profile {"op":"spawn","us":18446744073709551615,"error":"none","at_ms":null,"trace":{"run":null,"process":42,"span":0,"parent":0}}"#,
+            // #1654: a tidy pass keeps its counts through the store
+            r#"taskq-profile {"op":"service.tidy","us":9,"error":"none","at_ms":7,"counts":{"foreign":2,"removed":1,"task_bytes":18446744073709551615}}"#,
             r#"taskq-stage {"host":"win","open":true,"project":"group/nested/repo","stage":"build","task":1230,"attempt":6185426441,"rt":"codex","us":null,"outcome":"unknown","error":"none","at_ms":null,"unknown":"open-stage"}"#,
             r#"taskq-stage {"stage":"claim","task":1230,"attempt":9,"rt":"other","us":20,"outcome":"ok","error":"none","at_ms":1000,"unknown":"no-model"}"#,
             r#"taskq-stage {"stage":"build","task":1230,"attempt":9,"rt":"codex","us":30,"outcome":"ask","error":"none","at_ms":1001,"calls":0,"tokens":null,"unknown":"no-usage"}"#,
