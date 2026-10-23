@@ -24,6 +24,7 @@ mod platform;
 mod service_versions;
 mod policy;
 mod resources;
+mod pm;
 mod lifecycle;
 mod recovery;
 #[cfg(target_os = "linux")]
@@ -85,6 +86,7 @@ const USAGE: &str = "taskq agents
  taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
+ taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
  taskq tray [--snapshot DIR [--route R,..]] | taskq selftest
 Writes to a task take [--op-id ID] [--revision R] [--json] (taskq.md section 5).
 Text templates and limits: taskq.md sections 1, 2, 5, 7.";
@@ -910,6 +912,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let mut dashq = enrollment::Sender::default();
     let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
+    let mut pm_exchange = pm::Exchanger::default();
     let mut panics = host::Panics::default();
     let pokes = [d.join("poke"), cfg.install.join("poke")];
     let mut observed_poke = None;
@@ -1035,6 +1038,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
         if !reduced { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        if !reduced { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
@@ -1517,6 +1521,23 @@ fn resources_cmd(root: &Path, a: &Args) -> Res<()> {
     Ok(())
 }
 
+fn pm_cmd(root:&Path,a:&Args)->Res<()> {
+    if a.pos.len()!=2||a.flags.keys().any(|k|!["grant","actor","hours","project","runtime","revoke","json"].contains(&k.as_str()))
+        ||["grant","actor","hours","revoke","json"].iter().any(|k|a.all(k).len()>1)
+        ||a.one("grant").is_none()&&["actor","hours","project","runtime"].iter().any(|k|a.flags.contains_key(*k))
+        ||a.one("grant").is_some()&&a.one("revoke").is_some(){return Err("Usage: taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]".into());}
+    let (cfg,_)=load(root)?;
+    let now=SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_err(|_|"PM clock unknown")?.as_secs();
+    if let Some(id)=a.one("grant") {pm::grant(&cfg.install,id,a.need("actor")?,&a.all("project"),&a.all("runtime"),a.need("hours")?.parse().map_err(|_|"PM hours invalid")?,now)?;}
+    if let Some(id)=a.one("revoke") {pm::revoke(&cfg.install,id)?;}
+    let report=pm::report(&cfg.install,now)?;
+    if a.flags.contains_key("json"){println!("{report}");}else {
+        let action=if let Some(id)=a.one("grant"){format!("PM grant {id} saved")}else if let Some(id)=a.one("revoke"){format!("PM grant {id} revoked")}else{format!("PM requests: {} authorized targets; {} recorded operations",report["targets"].as_array().map_or(0,Vec::len),report["receipts"].as_array().map_or(0,Vec::len))};
+        println!("{action} · taskq {}",platform::VERSION);
+    }
+    Ok(())
+}
+
 /// `taskq service capacity` (§ 5).
 fn capacity_cmd(a: &Args) -> Res<()> {
     let install=platform::default_install();
@@ -1922,7 +1943,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2041,6 +2062,7 @@ fn service(args: &Args) -> Res<()> {
         }
         "permissions" => permissions_cmd(&root, args),
         "resources" => resources_cmd(&root, args),
+        "pm" => pm_cmd(&root,args),
         "hold" | "release" => hold_cmd(sub == "hold", args.one("text")),
         "recover" => {
             if args.flags.contains_key("apply") && lifecycle::stop_hold_status(&platform::default_install()).is_object() {return Err("reviewed Stop requires a selected recovery request; bulk apply refused".into());}

@@ -1,7 +1,7 @@
 {
   "version": "4.6.32",
-  "sourceCommit": "1baa9f419357d823b2cc0bca1ee855905f3815d9",
-  "binarySha256": "d2d01ca75d1fd523727bfc26029d16e749621898a46a197db59937be215907ee",
+  "sourceCommit": "1e64750d2fd401af623beb55a73e1b899f9590c1",
+  "binarySha256": "fe55949d5047d8aceed220e0f7d0e54acace614ce46cf8dd612589e567f425d7",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
@@ -25,14 +25,15 @@
     "src/project-blocks.js": "829308d8a88e93af21fadd1982cf87d2e5a24401",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/conversations.rs": "7781a5ebaf3f9e60e46eb64f7063b6945e030ba2",
-    "src/conversations.js": "9d66985b9789bce23d5be51722dd245b403a7314",
+    "src/conversations.js": "73929ba168ef8646f27b6d18671d34000b37ed48",
     "src/conversations.css": "1c6118f384b68ab1a98523c1b86ca9a6956ef2af",
+    "src/pm-composer.js": "9196f04531a2b539fa028405547a4db0b25a4a7b",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
     "src/workspace.js": "814d07e9aff5e02521cca249501f473553e2cdbe",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
-    "scripts/build-web.cjs": "3bbab0311b0abef5f9a7b5dd4ce55a2cb03dbde5",
+    "scripts/build-web.cjs": "4921d80611fccd8ba2533e1d7564c9ce140921e0",
     "src/icon.rs": "172cc8303a2ff0b2ee760bc12a472dd1499b80a8"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
@@ -43,11 +44,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "63d8025b002b581fc322a4410a3970300f854143c4045c32292513a9b2701eb4"
+      "sha256": "c61441941376c61d28fd4af87e2378963169a18e44d90510b61faa82defdba51"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "6595a425fa7d5bc64d5268dee777d4a0c7e8f322e19241e84e60c52770dc58e9"
+      "sha256": "7a842def6d030fbdffc90a160ea3542ed2c356152a6f79a984a363abcaccb15e"
     }
   ]
 }

@@ -3,7 +3,7 @@
 # copy the dark images here and write manifest.json (shape of docs/design/evidence/4.1.9/manifest.json).
 set -eu
 cd "$(dirname "$0")/../.."
-ui='src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/task-dashboard.js src/task-dashboard.css src/task-views.js src/anchored-popover.js src/ui-icons.js src/ui-icons.json src/project-blocks.js src/project-blocks.css src/conversations.rs src/conversations.js src/conversations.css src/ui-runtime.js src/workspace.js src/workspace-entry.js src/workspace-answers.js src/answer-card.js scripts/build-web.cjs src/icon.rs'
+ui='src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/task-dashboard.js src/task-dashboard.css src/task-views.js src/anchored-popover.js src/ui-icons.js src/ui-icons.json src/project-blocks.js src/project-blocks.css src/conversations.rs src/conversations.js src/conversations.css src/pm-composer.js src/ui-runtime.js src/workspace.js src/workspace-entry.js src/workspace-answers.js src/answer-card.js scripts/build-web.cjs src/icon.rs'
 # the images must come from sourceCommit, so UI sources must be committed
 git diff --quiet HEAD -- $ui || { echo "update.sh: commit UI source changes first: $ui" >&2; exit 1; }
 cargo build --release --locked

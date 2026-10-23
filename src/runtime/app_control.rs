@@ -153,7 +153,7 @@ mod tests {
     // Risk: stale/foreign responses, partial I/O or a silent peer release or stall an execution.
     #[test]
     fn cancellation_is_owner_bound_bounded_and_never_replays_work() {
-        for case in ["ok","client","owner","turn","null","method","refused","oversize","broadcast","malformed","drop","timeout","unrelated","directory-mode","socket-mode","symlink"] {
+        for case in ["ok","client","owner","turn","null","method","refused","oversize","broadcast","malformed","drop","timeout","timeout-before-init","unrelated","directory-mode","socket-mode","symlink"] {
             let root=std::env::temp_dir().join(format!("qipc-{}",super::super::uuid()));fs::create_dir(&root).unwrap();
             #[cfg(target_os="macos")]
             let path=root.join("s");
@@ -177,12 +177,13 @@ mod tests {
                 fs::remove_dir_all(root).unwrap();continue;
             }
             let (finished,completion)=std::sync::mpsc::channel();
-            let server=std::thread::spawn(move|| {
+            let server=std::thread::spawn(move|| ->std::io::Result<()> {
                 let (mut stream,_)=listener.accept().unwrap();stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
                 stream.set_write_timeout(Some(Duration::from_secs(2))).unwrap();
+                if case=="timeout-before-init" {completion.recv_timeout(Duration::from_secs(5)).unwrap();}
                 for method in ["initialize","thread-owner-discovery","thread-follower-interrupt-turn"] {
-                    let mut size=[0;4];stream.read_exact(&mut size).unwrap();let size=u32::from_le_bytes(size) as usize;assert!(size<=4096);
-                    let mut bytes=vec![0;size];stream.read_exact(&mut bytes).unwrap();let request:Value=serde_json::from_slice(&bytes).unwrap();
+                    let mut size=[0;4];stream.read_exact(&mut size)?;let size=u32::from_le_bytes(size) as usize;assert!(size<=4096);
+                    let mut bytes=vec![0;size];stream.read_exact(&mut bytes)?;let request:Value=serde_json::from_slice(&bytes).unwrap();
                     assert_eq!(request["method"],method,"cancellation never queues or resumes a turn");
                     let mut result=match method {
                         "initialize"=>json!({"clientId":"client"}),
@@ -199,31 +200,36 @@ mod tests {
                             "null"=>reply["result"]["interruptedTurnId"]=Value::Null,
                             "method"=>reply["method"]="foreign".into(),
                             "refused"=>{reply["resultType"]="error".into();reply["error"]="request-version-mismatch".into();},
-                            "oversize"=>{stream.write_all(&(1024u32*1024+1).to_le_bytes()).unwrap();return;},
+                            "oversize"=>{stream.write_all(&(1024u32*1024+1).to_le_bytes())?;return Ok(());},
                             "broadcast"=>{
                                 let body=serde_json::to_vec(&json!({"type":"broadcast","event":"changed"})).unwrap();
-                                stream.write_all(&(body.len() as u32).to_le_bytes()).unwrap();stream.write_all(&body).unwrap();
+                                stream.write_all(&(body.len() as u32).to_le_bytes())?;stream.write_all(&body)?;
                             },
-                            "malformed"=>{stream.write_all(&[1,0,0,0,b'{']).unwrap();return;},
-                            "drop"=>return,
-                            "timeout"=>{let _=completion.recv_timeout(Duration::from_secs(5));return;},
+                            "malformed"=>{stream.write_all(&[1,0,0,0,b'{'])?;return Ok(());},
+                            "drop"=>return Ok(()),
+                            "timeout"=>{let _=completion.recv_timeout(Duration::from_secs(5));return Ok(());},
                             "unrelated"=>reply["requestId"]="another-request".into(),
                             _=>{},
                         }
                     }
-                    let body=serde_json::to_vec(&reply).unwrap();stream.write_all(&(body.len() as u32).to_le_bytes()).unwrap();
+                    let body=serde_json::to_vec(&reply).unwrap();stream.write_all(&(body.len() as u32).to_le_bytes())?;
                     // Fragmentation cannot turn one frame into another response.
-                    for chunk in body.chunks(7) {stream.write_all(chunk).unwrap();}
-                    if case=="client" {return;}
+                    for chunk in body.chunks(7) {stream.write_all(chunk)?;}
+                    if case=="client" {return Ok(());}
                 }
                 let _=stream.read(&mut [0]);
+                Ok(())
             });
-            let began=Instant::now();let budget=if case=="timeout" {Duration::from_millis(150)} else {Duration::from_secs(3)};
+            let began=Instant::now();let budget=if case.starts_with("timeout") {Duration::from_millis(150)} else {Duration::from_secs(3)};
             let outcome=cancel_at(&path,"thread","turn",began+budget);
             let _=finished.send(());
             assert_eq!(outcome.is_ok(),matches!(case,"ok"|"broadcast"),"{case}: {outcome:?}");assert!(began.elapsed()<budget+Duration::from_secs(1));
             if case=="refused" {assert!(outcome.as_ref().unwrap_err().contains("request-version-mismatch"));}
-            server.join().unwrap();fs::remove_dir_all(root).unwrap();
+            if let Err(e)=server.join().unwrap() {
+                // A deadline may close the peer during any fixture I/O, before its interrupt request.
+                assert!(case.starts_with("timeout") && matches!(e.kind(),std::io::ErrorKind::BrokenPipe|std::io::ErrorKind::ConnectionReset|std::io::ErrorKind::UnexpectedEof|std::io::ErrorKind::TimedOut),"{case}: fixture I/O: {e}");
+            }
+            fs::remove_dir_all(root).unwrap();
         }
     }
 }
