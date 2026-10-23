@@ -15,39 +15,14 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   await page.evaluate(s=>taskq.receive({...s,ai:{...s.ai,request:{id:'new',kind:'starting',next:'Starting native session'}}}),snapshot);
   assert.equal(await page.evaluate(()=>document.activeElement.dataset.a),'refresh','G08: changed update retains Refresh focus');
   assert(await page.locator('[role=status][aria-live=polite]').count(),'G08: routine changes announced politely');
+  // #1662 A3: the legacy New AI request route kept a second request composer beside Conversations. Risk kept: a stale
+  // link or tray button reaching a removed form. An old request link opens a new Conversations draft for its project.
   await page.evaluate(()=>taskq.receive({open:{page:'request',root:'fixture-alpha'}}));
-  const text=page.locator('[data-field=request]'),send=page.locator('[data-a=request-send]');
-  assert(await send.isDisabled());assert.match(await page.locator('#request-reason').innerText(),/Write a request/);
-  await text.fill('Keep my native request');await text.focus();await text.evaluate(e=>e.setSelectionRange(3,6));
-  await text.dispatchEvent('select');const original=await text.elementHandle();
-  await page.evaluate(s=>taskq.receive({...s,now:1001}),snapshot);
-  assert(await original.evaluate(e=>e.isConnected&&document.activeElement===e));
-  assert.deepEqual(await text.evaluate(e=>[e.selectionStart,e.selectionEnd]),[3,6]);
-  assert.equal(await send.isDisabled(),false);
-  if(evidence)await page.screenshot({path:evidence+'/request-ready-dark-16.png'});
-  await text.press('Shift+Enter');assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').length),0,'Shift+Enter does not send');
-  await text.dispatchEvent('keydown',{key:'Enter',isComposing:true});assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').length),0,'IME does not send');
-  await text.fill('Keep my native request');await text.press('Enter');
-  const sent=await page.evaluate(()=>messages.filter(m=>m.a==='ai-send'));assert.equal(sent.length,1);assert.equal(sent[0].root,'fixture-alpha');assert.equal(sent[0].text,'Keep my native request');
-  await text.press('Enter');assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').length),1,'one in flight');
-  await page.evaluate(()=>taskq.receive({open:{page:'request',root:'another-project'}}));assert.equal(await page.locator('[data-field=project]').inputValue(),'fixture-alpha','a pending request retains its original project');assert.match(await page.locator('[data-status=workspace]').innerText(),/original project/);
-  await page.evaluate(()=>taskq.receive({aiReceipt:{id:'foreign',state:'accepted'}}));assert.equal(await text.inputValue(),'Keep my native request','foreign receipt cannot clear draft');
-  await page.evaluate(id=>taskq.receive({aiReceipt:{id,state:'unknown',reason:'fixture: receipt lost'}}),sent[0].id);
-  if(evidence)await page.screenshot({path:evidence+'/request-unknown-dark-16.png'});
-  await page.locator('[data-a=request-retry]').click();
-  assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').map(({context,reconcile,...op})=>op)),sent.map(({context,reconcile,...op})=>op).concat(sent.map(({context,reconcile,...op})=>op)),'same-ID retry keeps immutable input');
-  await page.evaluate(id=>taskq.receive({aiReceipt:{id,state:'accepted'}}),sent[0].id);assert.equal(await text.inputValue(),'');
-  // Restart preserves request and answer drafts/op identity through the existing native adapter, no auto-replay.
-  await text.fill('restart draft');await text.evaluate(e=>e.setSelectionRange(2,5));await text.dispatchEvent('select');
-  const saved=await page.evaluate(()=>({local:messages.filter(m=>m.a==='ai-draft').at(-1).local,navigation:messages.filter(m=>m.a==='workspace-set').at(-1).navigation}));
-  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
-  await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
-  await page.evaluate(({s,saved})=>taskq.receive({...s,workspace_navigation:saved.navigation,ai:{...s.ai,local:saved.local}}),{s:snapshot,saved});
-  assert.equal(await text.inputValue(),'restart draft');
-  assert.deepEqual(await text.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,5]);
-  await page.evaluate(s=>taskq.receive({...s,projects:[{...s.projects[0],alive:false}]}),snapshot);assert(await send.isDisabled());assert.match(await page.locator('#request-reason').innerText(),/unavailable or stale/);
-  assert.equal(await text.inputValue(),'restart draft');
-  await page.evaluate(s=>taskq.receive(s),snapshot);assert.equal(await send.isDisabled(),false);
+  assert.equal(await page.locator('h1').innerText(),'Conversations');
+  assert.equal(await page.locator('[data-a=request-send], [data-field=request]').count(),0,'no legacy request form remains');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'conversation-draft','New focuses the new draft');
+  assert.equal(await page.locator('[data-c-field=root]').inputValue(),'fixture-alpha');
+  assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='ai-send').length),0,'opening a draft sends nothing');
   // Unavailable context stays explicit, never routes an answer to another project.
   await page.evaluate(()=>taskq.receive({open:{page:'answer',board:'https://missing.example/issues',task:1}}));
   if(evidence)await page.screenshot({path:evidence+'/task-unavailable-dark-16.png'});
@@ -57,7 +32,7 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8')),row=fx.cases.find(c=>c.name.startsWith('stale')).rows[0],board=project.issues;
   const question={...snapshot,projects:[{...project,tasks:[row]}]};
   await page.evaluate(s=>taskq.receive(s),question);await page.evaluate(c=>taskq.receive({open:c}),{page:'answer',board,task:row.n,revision:row.revision});
-  await page.locator('.qac-other summary').click();const answer=page.locator('.qac textarea');
+  const answer=page.locator('[data-c-field=answer]');
   await answer.fill('answer draft after restart');await answer.evaluate(e=>e.setSelectionRange(4,9));await answer.dispatchEvent('select');
   const savedAnswer=await page.evaluate(()=>({local:messages.filter(m=>m.a==='answer-local').at(-1),navigation:messages.filter(m=>m.a==='workspace-set').at(-1).navigation}));
   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
@@ -74,6 +49,6 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'unknown');assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='answer').length),0);
   await page.locator('[data-qac=retry]').click();await page.waitForFunction(()=>messages.some(m=>m.a==='answer'));
   assert.deepEqual(await page.evaluate(()=>messages.find(m=>m.a==='answer').op),operation,'restart reconciliation retains exact ID/revision/payload');
-  assert.deepEqual(errors,[]);console.log('PASS A3/A4/A6/A7: Refresh/input focus and caret, polite status, Send/Enter/IME, immutable retry, native draft reload, stale/unavailable recovery');
+  assert.deepEqual(errors,[]);console.log('PASS A3/A4/A6/A7: Refresh focus, polite status, request route opens Conversations, answer composer draft and caret reload, immutable retry, unavailable recovery');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

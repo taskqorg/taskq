@@ -27,6 +27,11 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   assert.equal(await page.evaluate(()=>sent.some(m=>['ai-send','answer','message-action'].includes(m.a))),false,'navigation launches/sends nothing');
   await page.evaluate(()=>taskq.receive({open:{page:'messages'}}));
   assert.equal(await page.locator('[data-a=message-open]').count(),3);
+  // #1662 A1: rows showed host, request id and raw state inline. Risk kept: correlation ids in the compact row.
+  assert.equal(await page.locator('[data-a=message-open]').filter({hasText:'native-live'}).count(),0,'ids stay out of the row');
+  assert.match(await page.locator('.content').innerText(),/Launched in the native session/,'the row states delivery in plain words');
+  const ids=page.locator('details[data-view-key="ids:'+r+'"]');assert.equal(await ids.evaluate(d=>d.open),false);
+  await ids.locator('summary').click();assert.match(await ids.innerText(),/request native-live/,'ids disclose on demand');
   if(evidence)await page.screenshot({path:evidence+'/messages-dark-16.png'});
   await page.locator('[data-field=message-filter]').selectOption('pending');
   assert.equal(await page.locator('[data-a=message-open]').count(),2);
@@ -54,8 +59,10 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.evaluate(({s,navigation})=>taskq.receive({...s,workspace_navigation:navigation}),{s:archived,navigation:saved});
   assert.equal(await page.locator('[data-field=message-filter]').inputValue(),'archived','restart retains list/filter');
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='message-action'||m.a==='ai-send').length),0,'rehydration replays no effects');
-  await page.locator('.content [data-route=request]').click();
-  assert.equal(await page.locator('[data-field=request]').inputValue(),'preserved composer draft','archive never clears composer drafts');
+  // #1662 A3: New request opens a fresh Conversations draft; Archive never touches drafts
+  await page.locator('.content [data-a=new-request]').click();
+  assert.equal(await page.locator('h1').innerText(),'Conversations');
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'conversation-draft');
   await page.keyboard.press('Alt+ArrowLeft');
   const mixed=structuredClone(archived);mixed.messages.entries[2].archived=true;
   await page.evaluate(s=>taskq.receive(s),mixed);

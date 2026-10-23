@@ -19,13 +19,14 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       await page.evaluate(()=>{window.mutations=0;new MutationObserver(l=>mutations+=l.length).observe(document.body,{subtree:true,childList:true,attributes:true,characterData:true});});
       await page.evaluate(s=>taskq.receive(s),state);
       assert.equal(await page.evaluate(()=>mutations),0,'an unchanged refresh changes no DOM');
-      await page.locator('.qac-other summary').click();const text=page.locator('.qac textarea'),typed=await text.elementHandle();await typed.focus();
+      // #1662 A3: the answer is typed in the shared composer below the card
+      const text=page.locator('[data-c-field=answer]'),typed=await text.elementHandle();await typed.focus();
       for(const ch of 'yes'){await page.keyboard.type(ch);await page.evaluate(s=>taskq.receive(s),state);}
       assert(await typed.evaluate(t=>t.isConnected&&document.activeElement===t&&t.value==='yes'),'refreshes keep the node being typed in');
-      assert.equal(await page.locator('.qac button[type=submit]').isDisabled(),false,'Send enables for a valid answer');
+      assert.equal(await page.locator('[data-a=answer-send]').isDisabled(),false,'Send enables for a valid answer');
       // #1456: a custom answer over the § 5 answer limits (4 lines, 240 characters) disabled Send with an empty card,
       // so the owner could not tell why. Risk kept: Send disabled while the card shows no reason.
-      const why=()=>page.locator('.qac-hint').textContent(),send=page.locator('.qac button[type=submit]');
+      const why=()=>page.locator('#answer-draft-reason').textContent(),send=page.locator('[data-a=answer-send]');
       await text.fill('');await typed.focus();
       for(const line of ['1. one','2. two','3. three','4. four','5. five']){await page.keyboard.type(line);await page.keyboard.press('Shift+Enter');await page.evaluate(s=>taskq.receive(s),state);}
       assert(await send.isDisabled());assert.match(await why(),/At most 4 lines/,'a disabled Send states why');
@@ -46,10 +47,10 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       state.projects[0].tasks=[rows[1]];await page.evaluate(s=>taskq.receive(s),state);
       assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'stale');
       assert.equal(await text.inputValue(),'keep draft');
-      assert(await page.locator('.qac button[type=submit]').isDisabled());
+      assert(await send.isDisabled());
       assert.match(await page.locator('.qac-receipt').textContent(),/question changed/,'a stale card states why Send is off');
       await page.locator('[data-qac=review]').click();await text.fill('2');
-      await page.locator('.qac button[type=submit]').click();
+      await send.click();
       await page.waitForFunction(()=>messages.some(m=>m.a==='answer'));
       const op=await page.evaluate(()=>messages.find(m=>m.a==='answer').op);
       assert.equal(op.text,'2');assert.equal(op.choice,undefined);assert.equal(op.revision,rows[1].revision);
@@ -75,7 +76,7 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await page.locator('.toast').evaluate(e=>getComputedStyle(e).position),'fixed');
       assert.equal(await rowTop(),before,'a receipt must not move task rows');
       assert.equal(await page.locator('.qac').count(),0);
-      assert.equal(await page.locator('.qac textarea').count(),0);
+      assert.equal(await page.locator('.qac textarea, [data-c-field=answer]').count(),0);
       assert.equal(await page.locator('.answered a[data-url]').first().getAttribute('href'),board+'/'+rows[1].n);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       // #1148 M3: Answered starts collapsed on Attention, whose other groups open; an explicit toggle survives refresh and Back.
@@ -131,6 +132,28 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'accepted','late native receipt must update the mounted card without retry');
       assert.equal(await page.locator('[data-qac="retry"]').count(),0);
       assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='answer').length),6,'late receipt writes nothing');
+      // #1662 A4: a receipt named only its state, so two answers in flight read alike. Risk kept: a receipt without its choice.
+      assert.match(await page.locator('.qac-receipt').textContent(),/#61 answer 1\. Keep v1 until both move · Answer accepted/);
+      // #1662 A4: an owner action (Problem, no options) had no text field in the tray. Risk kept: an ask the owner cannot answer.
+      const own={...rows[1],n:70,title:'Board token missing',revision:1,card:'Problem: add the board token',question:{...rows[1].question,text:'Problem: add the board token',done:null,problem:'add the board token',choices:[]}};
+      state.projects[0].tasks=[own];await page.evaluate(s=>taskq.receive(s),state);
+      await page.evaluate(c=>taskq.receive({open:c}),{page:'answer',board,task:70});
+      assert.equal(await page.locator('.qac [data-qac=choose]').count(),0);
+      await text.fill('Token added');await page.evaluate(s=>taskq.receive(s),state);
+      await page.getByRole('textbox',{name:'Your answer'}).press('Enter');
+      await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===7);
+      const action=await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op);
+      assert.equal(action.text,'Token added');assert.equal(action.action,undefined);
+      // #1662 A4: a bridge refusal before dispatch read as delivery unknown. Risk kept: unsent read as maybe sent, or a new id on retry.
+      await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:action.id,state:'failed',reason:'Answer queue is full',next:'Nothing reached the board; send again'});
+      assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'failed');
+      assert.match(await page.locator('.qac-receipt').textContent(),/#70 text answer · Not sent/);
+      await page.locator('.qac [data-qac=retry]').click();
+      await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===8);
+      assert.deepEqual(await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op),action,'Send again keeps the operation id and payload');
+      // the composer repaints on the next tick after the card saves
+      await page.waitForFunction(()=>['send','requeue'].every(a=>document.querySelector('[data-a=answer-'+a+']').disabled),null,{timeout:2000});
+      if(process.env.TASKQ_EVIDENCE_1662&&font===16)await page.screenshot({path:process.env.TASKQ_EVIDENCE_1662+'/owner-action-'+theme+'.png'});
       assert.deepEqual(errors,[]);
       console.log('PASS tray HTML draft/focus, stale review, literal text, sending refresh, same-ID retry, accepted readback, board link;',theme,font+'px');
       await page.close();

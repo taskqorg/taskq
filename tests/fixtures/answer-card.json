@@ -1307,6 +1307,214 @@
           "sent": 2
         }
       ]
+    },
+    {
+      "name": "owner action answers with text",
+      "board": "github.com/o/r",
+      "capability": {
+        "answer": true
+      },
+      "rows": [
+        {
+          "n": 870,
+          "title": "Board token missing",
+          "state": "ask",
+          "url": "https://github.com/o/r/issues/870",
+          "revision": 2,
+          "card": "Done: tried the release\nProblem: add the board token, then answer what you did",
+          "question": {
+            "parsed": true,
+            "text": "Done: tried the release\nProblem: add the board token, then answer what you did",
+            "done": "tried the release",
+            "problem": "add the board token, then answer what you did",
+            "evidence": [],
+            "choices": [],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "check",
+          "status": "actionable",
+          "has": [
+            "<summary>Answer</summary>",
+            "placeholder=\"What you did\""
+          ],
+          "not": [
+            "data-qac=\"choose\""
+          ]
+        },
+        {
+          "type": "input",
+          "text": "Token added"
+        },
+        {
+          "type": "submit"
+        },
+        {
+          "type": "check",
+          "status": "sending",
+          "sent": 1,
+          "op": {
+            "text": "Token added"
+          }
+        },
+        {
+          "type": "receipt",
+          "state": "accepted"
+        },
+        {
+          "type": "check",
+          "status": "accepted",
+          "has": [
+            "#870 text answer</span> · Answer accepted on the board"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "failed delivery keeps the operation",
+      "board": "github.com/o/r",
+      "capability": {
+        "answer": true
+      },
+      "rows": [
+        {
+          "n": 841,
+          "title": "Keep the old API?",
+          "state": "ask",
+          "url": "https://github.com/o/r/issues/841",
+          "revision": 4,
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "question": {
+            "parsed": true,
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "done": "compared both clients",
+            "problem": "Keep compatibility?",
+            "evidence": [],
+            "choices": [
+              {
+                "id": 1,
+                "text": "Keep compatibility",
+                "recommended": true,
+                "consequential": false
+              },
+              {
+                "id": 2,
+                "text": "Remove the old API",
+                "recommended": false,
+                "consequential": false
+              }
+            ],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "choose",
+          "id": 2
+        },
+        {
+          "type": "submit"
+        },
+        {
+          "type": "receipt",
+          "state": "failed",
+          "reason": "Answer queue is full"
+        },
+        {
+          "type": "check",
+          "status": "failed",
+          "sent": 1,
+          "has": [
+            "Not sent: nothing reached the board: Answer queue is full",
+            ">Send again<"
+          ]
+        },
+        {
+          "type": "retry"
+        },
+        {
+          "type": "check",
+          "status": "sending",
+          "sent": 2,
+          "same_op": true
+        }
+      ]
+    },
+    {
+      "name": "partial delivery names the choice",
+      "board": "github.com/o/r",
+      "capability": {
+        "answer": true
+      },
+      "rows": [
+        {
+          "n": 841,
+          "title": "Keep the old API?",
+          "state": "ask",
+          "url": "https://github.com/o/r/issues/841",
+          "revision": 4,
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "question": {
+            "parsed": true,
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "done": "compared both clients",
+            "problem": "Keep compatibility?",
+            "evidence": [],
+            "choices": [
+              {
+                "id": 1,
+                "text": "Keep compatibility",
+                "recommended": true,
+                "consequential": false
+              },
+              {
+                "id": 2,
+                "text": "Remove the old API",
+                "recommended": false,
+                "consequential": false
+              }
+            ],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "choose",
+          "id": 1
+        },
+        {
+          "type": "submit"
+        },
+        {
+          "type": "receipt",
+          "state": "partial",
+          "reason": "Parked; close not verified"
+        },
+        {
+          "type": "check",
+          "status": "partial",
+          "sent": 1,
+          "has": [
+            "#841 answer 1. Keep compatibility</span> · Partly applied",
+            "Open on board",
+            ">Check delivery<"
+          ]
+        }
+      ]
     }
   ]
 }

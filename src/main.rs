@@ -4583,6 +4583,12 @@ mod tests {
         assert_eq!((q["parsed"].clone(), q["problem"].clone(), q["evidence"][1]["url"].clone(), q["choices"][0]["consequential"].clone()), (json!(true), json!("p more"), json!("https://x/s.png"), json!(true)));
         assert_eq!(snapshot::question("1. a ★\n2. b")["parsed"], json!(false), "no Problem: read only");
         assert_eq!(snapshot::question("Problem: p\n1. a\n2. b")["parsed"], json!(false), "no star: read only");
+        // #1662 A4: a repeated or skipped number names no single option, so the card stays read only
+        for card in ["Problem: p\n1. a ★\n1. b", "Problem: p\n1. a ★\n3. b", "Problem: p\n2. a ★\n1. b"] {
+            assert_eq!(snapshot::question(card)["parsed"], json!(false), "{card}");
+        }
+        let owner = snapshot::question("Problem: add the board token\nTo answer: `taskq answer 7 --text <done>`");
+        assert_eq!((owner["parsed"].clone(), owner["choices"].clone()), (json!(true), json!([])), "an owner action takes a text answer");
     }
 
     // Chain: canonical board read -> approved projection.
