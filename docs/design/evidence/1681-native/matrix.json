@@ -1,5 +1,5 @@
 {
-  "source": "ba3909ce52a05713f72d26000aff8d9fdd69a3ee",
+  "source": "a87509c15486135cd55f8c2c2060cf907c5d93f2",
   "capture": "macOS 27.0.1 arm64 WKWebView via Wry; signed cargo example; 18px; invented Settings/resource fixtures; effects discarded",
   "reviewScreens": {
     "agents-dark.png": "c1e1412ce3ea263ab2c683980e005ed831ce1d59049fcd66819e420ce945e8eb",
@@ -14,8 +14,8 @@
     "workspace-dark.png": "7248dcc0e4494d49f43f05e342409ca74da8d6336ba54dfdbbc37be105662446"
   },
   "uiAssets": {
-    "tray.html": "e4b322cf4c8ce0b7c0856c1cbfe6d5573c597b4563fe29ec735e3af5baab3477",
-    "workspace.html": "c084e3883f0e9a516a6958a2928e79baf48d9fca0f9dff006d411d11eb496eff"
+    "tray.html": "d9b8eab74e2d16eb4c2a98b2fa148b168ef6a87d7e5a57ebcbb86b960559a622",
+    "workspace.html": "0cd7749238075ed7958678ccb1b8646e3641c9582a2a05426448e1bf731b31dc"
   },
   "matrix": [
     {

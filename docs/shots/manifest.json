@@ -1,14 +1,14 @@
 {
   "version": "4.6.38",
-  "sourceCommit": "ba3909ce52a05713f72d26000aff8d9fdd69a3ee",
-  "binarySha256": "d2d998ded14ff8644267c1a8368562f237469857eabe3a02046914e0c2073076",
+  "sourceCommit": "a87509c15486135cd55f8c2c2060cf907c5d93f2",
+  "binarySha256": "5539ceb8853de8daad8e8cadff1306942118983451575f95621ef12162977cd8",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "28c35ea907bab838e89ccbd9bc1dff15df750a65",
+    "src/tray.rs": "2ed33943318d85054b9193c8725f30f685cc09aa",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
     "src/tray-app.js": "efa841f3c5e4cf8e61df34a35a44a4d632e57c07",
     "src/tray-entry.js": "8231d269085366b914b96f027f702a83ec32a7fb",
@@ -18,7 +18,7 @@
     "src/tray-web.js": "5f8ac6545d2df180f384d78cb9f6ccc5b09b0973",
     "src/app-shell.js": "4d64e24457854633e2724716a5270fa2ed6de6cf",
     "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
-    "src/task-dashboard.js": "6682e8d8eb9957323c43e43c95cc75443de65977",
+    "src/task-dashboard.js": "60c80989669b7cc61f516e0bccf604fd4df671ea",
     "src/task-dashboard.css": "07230ef9563af453b251fe36b9049c5ac1429e2b",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
