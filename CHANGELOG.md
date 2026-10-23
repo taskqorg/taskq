@@ -5,6 +5,8 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+`taskq profile health` shows live WAL bytes next to the WAL file size, read without the writer lock or a checkpoint; taskq pins coreq v0.14.9 (#1640). No board change.
+
 ## v4.6.33
 
 CLI, tray page, icon summary and notifications read one display model for counts, state names, order, ages and labels (#1592). A recovered Claude job that restarted on a new process resolves instead of staying fenced as unknown on Windows (#1638). The service logs exit reasons, shows stale hosts and restarts an exited Windows host (#1628). PM requests are shared through one composer, and native-session dispatch is fenced (#1615, #1636). taskq pins coreq v0.14.8: GitLab boards read `<install>/gitlab-token`, and WAL checkpoints are bounded (#1637). No board change.
