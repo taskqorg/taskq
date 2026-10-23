@@ -117,19 +117,22 @@ fn registry(root: &Path) -> Result<Vec<Entry>, String> {
     }).collect())
 }
 
-/// Total file bytes and newest modification (Unix seconds) under `dir`; symlinks are not followed.
+/// Total file bytes and newest modification (Unix seconds) under `dir`, else of `dir` itself; symlinks are not followed.
 /// `ponytail:` a full walk each hour (a 32 GB Windows `.worktrees` of 55k files took 3 s); a size cache is the upgrade.
 fn walk(dir: &Path) -> (u64, u64) {
+    let secs = |m: &std::fs::Metadata| m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     let (mut bytes, mut newest) = (0, 0);
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&d) else { continue };
         for e in entries.flatten() {
             let Ok(m) = e.metadata() else { continue };
-            newest = newest.max(m.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs()));
+            newest = newest.max(secs(&m));
             if m.is_dir() { stack.push(e.path()); } else { bytes += m.len(); }
         }
     }
+    // an empty leftover directory has no entry to age it
+    if newest == 0 { newest = std::fs::metadata(dir).map_or(0, |m| secs(&m)); }
     (bytes, newest)
 }
 
@@ -566,6 +569,11 @@ mod tests {
         b.comment(6, &core::entry("close", &[], Some(attempt), "ok\ndelivery auto-merge r0: merged #9 as abcdef1; merge-result CI green")).unwrap();
         let o = pass(&r.tidy(&b, false));
         assert!(!branch("taskq-6") && !r.wt("taskq-2"), "{:?}", o.log);
+
+        // Defect (live Windows pass): an empty leftover directory reported its age since 1970. It stays, aged by its own time.
+        std::fs::create_dir_all(r.root.join(".worktrees/taskq-8")).unwrap();
+        let o = pass(&r.tidy(&b, false));
+        assert!(r.wt("taskq-8") && o.report["task"]["count"] == 1 && o.report["task"]["oldest_s"].as_u64() < Some(86400), "{}", o.report);
     }
 
     // Chain: tidy step 3. Risk protected: removing recent or dirty unowned work.
