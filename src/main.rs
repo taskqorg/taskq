@@ -39,6 +39,8 @@ mod tidy;
 mod runtime;
 mod service;
 mod setup;
+mod dialogue;
+mod transcript;
 mod messages;
 mod conversations;
 mod snapshot;

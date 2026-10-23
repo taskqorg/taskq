@@ -1,7 +1,7 @@
 {
   "version": "4.6.36",
-  "sourceCommit": "9f7bf7f74ccb96c85e5919cd7061fcbd12a9996f",
-  "binarySha256": "bac1fd4f7aecd4440e1f539896e2efeb26a36a835225c520cecb5aecbb5d2906",
+  "sourceCommit": "9fb83b908b65d9cf1790c99b53812c9979d495f3",
+  "binarySha256": "da525ed812b967c12433b4015af9186ed30e20c07536d2ea3fa47231924948c0",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -26,7 +26,7 @@
     "src/ui-icons.json": "fe01b24d446fff96e8e756ed87d55780502d17a1",
     "src/project-blocks.js": "12d97cf8ca7525d9146de7afeb878c448fd573ff",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
-    "src/conversations.rs": "7781a5ebaf3f9e60e46eb64f7063b6945e030ba2",
+    "src/conversations.rs": "b1bd9783442e631b122c1f57a5bbb615781f0b99",
     "src/conversations.js": "73929ba168ef8646f27b6d18671d34000b37ed48",
     "src/conversations.css": "1c6118f384b68ab1a98523c1b86ca9a6956ef2af",
     "src/pm-composer.js": "9196f04531a2b539fa028405547a4db0b25a4a7b",
@@ -50,7 +50,7 @@
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "4144d0a928cd71db635423ba65bff169f2d9b0c81bffa9bd7bb27e5bba31a272"
+      "sha256": "1cb9a26ecec0ff90988919a1b2408207dda55d4e49d087e32fe8951efab60b04"
     }
   ]
 }

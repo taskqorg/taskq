@@ -901,6 +901,11 @@ pub fn run(install: &Path) -> Res<()> {
         if let Err(e)=crate::setup::step(install,crate::setup::launch) {
             if reported!=e {crate::platform::log(&e);reported=e;}
         }
+        // D2/D6 workspace dialogue: owner turns and watches; a holder probe runs only when a turn is pending.
+        let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_millis());
+        if let Err(e)=crate::dialogue::tick(install,now,&crate::dialogue::NATIVE) {
+            if reported!=e {crate::platform::log(&e);reported=e;}
+        }
         // Missing setup links: one native read per 10 s, not per pass.
         if linked.elapsed()>=std::time::Duration::from_secs(10) {
             linked=std::time::Instant::now();
