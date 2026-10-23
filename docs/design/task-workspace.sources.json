@@ -22,7 +22,7 @@
     "src/answer-card.css": "8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc",
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
     "src/resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
-    "src/app-shell.css": "74b1ebe9386a8589c7f4064f436e9d85a3eb1f865be593e71dca53a6ba610a85",
+    "src/app-shell.css": "1c802f725c06457a459c8d58e4bc0341209aa028685859c9221f1a87dc36d418",
     "src/task-dashboard.css": "e46a632813fffcd01ef9b4b8445fa07ce610b06374cd5ced3709b59aa8a2c20d",
     "tests/fixtures/task-workspace.json": "4cbb1c89400f91b4450af154b82c73c700e728f1609f4364f502758a6b8f64d8"
   },
