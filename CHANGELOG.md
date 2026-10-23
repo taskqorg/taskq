@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.37
+
+`host.json` `default_runtime` (`claude` or `codex`, absent means `claude`) routes reviewers and workers without a `run-*` label to that runtime; `taskq service capacity --default-runtime` saves it and `service status` prints it (#1668). The workspace dialogue backend adds the owner turn, transcript reader and per-conversation watch (#1664). No board change.
+
 ## v4.6.36
 
 The service tidies each root hourly and on `taskq cleanup`: closed-task worker and reviewer worktrees and merged branches go, a root on `main` fast-forwards only, every refusal names Git's first error line, and `taskq profile health` prints one tidy line per root; Windows removes deep `target/` paths via `core.longpaths` (#1654). No board change.
