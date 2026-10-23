@@ -164,7 +164,8 @@ fn revision_for(tool:&coreq::Tool)->Res<String> {
     fs::read(path).map(|bytes|ring::digest::digest(&ring::digest::SHA256,&bytes).as_ref().iter().map(|b|format!("{b:02x}")).collect()).map_err(|e|e.to_string())
 }
 fn output(name:&'static str,command:&mut Command)->Res<std::process::Output> {
-    match coreq::process::output(name,command,Duration::from_secs(30)) {
+    // ponytail: test runs share a loaded CI runner, where cold PowerShell starts passed 30 s (#1673, #1678 merge_group); product keeps 30 s.
+    match coreq::process::output(name,command,Duration::from_secs(if cfg!(test) {120} else {30})) {
         Ok(output)=>Ok(output),Err(Failure::Exit(output))=>Err(format!("{name}: {}: {}",output.status,String::from_utf8_lossy(&output.stderr))),Err(error)=>Err(format!("{name}: {error}")),
     }
 }
