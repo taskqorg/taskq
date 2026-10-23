@@ -110,17 +110,17 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   const attachedBefore=await page.evaluate(()=>sent.filter(m=>m.action==='attach').length);
   await page.locator('[data-c-field=files]').setInputFiles({name:'local.png',mimeType:'image/png',buffer:Buffer.from(png,'base64')});
   await page.waitForFunction(n=>sent.filter(m=>m.action==='attach').length>n,attachedBefore);await drain();
-  await page.locator('[data-c=preview]').click();await drain();await page.locator('.conversation-record img').waitFor({state:'visible'});
-  assert.equal(await page.locator('.conversation-record img').evaluate(e=>e.naturalWidth),2);await page.locator('[data-c=preview-close]').click();
+  await page.locator('[data-c=preview]').click();await drain();await page.locator('[aria-label="Local file preview"] img').waitFor({state:'visible'});
+  assert.equal(await page.locator('[aria-label="Local file preview"] img').evaluate(e=>e.naturalWidth),2);await page.locator('[data-c=preview-close]').click();
   const nextFiles=structuredClone(second.files);await page.locator('[data-c=from-draft]').click();await drain();
   const forked=state.conversations.items.at(-1);assert.notEqual(forked.id,second.id);assert.equal(await input.inputValue(),'Next draft while launch waits');assert.deepEqual(forked.files,nextFiles);assert.equal(forked.sent,undefined);
   assert.equal(second.sent.text,'Review the attached text');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'draft transfer never launches');
   await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();
-  // Interrupted/partial readback preserves next drafting and exposes same-ID reconciliation.
-  await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();await page.locator('[data-c=reconcile]').click();
-  const pending=await drain('reconcile');
-  await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:pending.id,state:'unknown',reason:'Fixture: setup saved, history readback failed',snapshot:state.conversations});
-  assert.match(await page.locator('.conversation-status').innerText(),/history readback failed/);assert.equal(await input.inputValue(),'Next draft while launch waits');await capture('partial-dark-16');
+  // #1665 D3: a launched item replies in place; a refused turn shows its reason and keeps the next draft.
+  await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();await page.locator('[data-c=reply]').click();
+  const pending=await drain('reply');
+  await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:pending.id,state:'unknown',reason:'working',snapshot:state.conversations});
+  assert.match(await page.locator('.conversation-status').innerText(),/Not sent: working\. Draft kept/);assert.equal(await input.inputValue(),'Next draft while launch waits');await capture('partial-dark-16');
   await page.setViewportSize({width:350,height:560});state.font=20;state.theme='light';await page.evaluate(s=>taskq.receive(s),state);
   assert(await page.locator('[data-c=new]').isVisible());assert(await page.locator('[data-c=list]').isVisible());assert(await input.isVisible());
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal page scrolling');

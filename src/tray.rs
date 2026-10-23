@@ -46,6 +46,8 @@ enum Ev {
     /// Add project: the generation fences a late picker or install result.
     Added(u64, Value),
     Answer(Value),
+    /// D4/D7 dialogue read receipt for one workspace surface.
+    Dialogue(String, Value),
     /// A notification click: its request identifier (M14)
     Note(String),
 }
@@ -1141,6 +1143,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 web.finish(id,result);
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
+            Event::UserEvent(Ev::Dialogue(surface,receipt)) => {
+                let script=format!("taskq.receive({})",json!({"dialogueReceipt":receipt}));
+                if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
+                else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
+            }
             Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
             Event::UserEvent(Ev::Workspace(surface,message)) => {
                 let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
@@ -1206,6 +1213,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
                         shown.clear();workspace_shown.clear();
+                    }
+                    Some("conversation-dialogue")=>{
+                        // Reads only, off the event loop: the D3 holder probe starts the runtime CLI.
+                        let (p,install,surface,m)=(proxy.clone(),install.clone(),surface.clone(),m.clone());
+                        std::thread::spawn(move||{let receipt=crate::conversations::dialogue(&install,&m);let _=coreq::telemetry::capture::operation("tray.dialogue.report",||p.send_event(Ev::Dialogue(surface,receipt)),|_|"ui-closed");});
                     }
                     Some("message-action") => {
                         let ps:Vec<Value>=roots(&install).iter().map(|r|project(&install,r)).collect();
