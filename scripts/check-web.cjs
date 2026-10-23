@@ -47,6 +47,9 @@ if(require.main===module){
  const infrastructure=new Set(['ui-runtime.js','tray-web.js','tray-entry.js','tray-guard.js']);
  for(const file of fs.readdirSync(path.join(root,'src'),{recursive:true}).filter(file=>file.endsWith('.js')&&!infrastructure.has(file)))
   for(const operation of inventory(fs.readFileSync(path.join(root,'src',file),'utf8'),file))operations.add(operation);
+ // R43: every literal icon name in UI sources resolves to a bundled asset; an unknown name fails the build.
+ const names=new Set(require(path.join(root,'src/ui-icons.js')).names());
+ for(const file of fs.readdirSync(path.join(root,'src')).filter(f=>f.endsWith('.js')))for(const [,name] of fs.readFileSync(path.join(root,'src',file),'utf8').matchAll(/\b(?:icon|button)\('([a-z0-9-]+)'/g))if(!names.has(name))throw Error(file+': unknown icon '+name);
  const out=process.argv[2];if(out){fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'operations.json'),JSON.stringify([...operations].sort()));}
  else console.log('PASS UI module/effect inventory: '+operations.size+' operations');
 }

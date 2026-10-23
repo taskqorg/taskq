@@ -503,7 +503,7 @@ head:function(){
   const p=view.S.projects?.find(p=>p.root===view.page),title=view.working?'Work mode':p?p.name:routes[view.page]||'Unavailable';
   const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):['appearance','tray-icon','window','delivery','cadence','notifications','agents','services','about'].includes(view.page)?h('a',{href:'#','data-route':'settings'},'Settings'):'';
   const m=view.S.messages,inbox=m?.complete===true&&Number.isSafeInteger(m.count)?'Inbox · '+m.count:'Inbox · unknown';
-  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),button('inbox',inbox,{'data-a':'workspace','data-page':'messages'}),button('messages-square','Conversations',{'data-a':'workspace','data-page':'conversations'}),button('settings','Settings',{'data-route':'settings'}),view.S.stop_modes&&button('circle-pause','Emergency stop',{'data-a':'stop-review'}),button(view.S.pinned?'pin-off':'pin',view.S.pinned?'Unpin window':'Pin window',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)})];
+  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),button('inbox',inbox,{'data-a':'workspace','data-page':'messages'}),button('messages-square','Conversations',{'data-a':'workspace','data-page':'conversations'}),button('settings','Settings',{'data-route':'settings'}),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),button(view.S.pinned?'pin-off':'pin',view.S.pinned?'Unpin window':'Pin window',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)})];
   return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows:button('x','Close window',{'data-a':'hide'})});
 },
 draw:function(navigating=false){
@@ -568,6 +568,8 @@ receive:function(s){
     return;
   }
   if(s.aiError){view.aiSending=false;view.aiError=s.aiError;present();return;}
+  // MP14: one board history page for the Completed view (tray `completed` read).
+  if(s.completed){dashboard?.receive(s.completed);return;}
   if(!ports.workspace&&['action_error','focus_receipt','resources_receipt','capmsg','aiError'].some(k=>s[k]))return;
   if(s.action_error){actionReceipt(s.action_error);return;}
   if(s.focus_receipt){focusReceipt(s.focus_receipt);return;}

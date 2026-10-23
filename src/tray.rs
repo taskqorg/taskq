@@ -613,7 +613,7 @@ impl ActionQueue {
         let operation=if allowed.contains(&"capacity") {"tray.capacity.execute"}else{"tray.focus.execute"};
         let worker=std::thread::Builder::new().name(operation.into()).spawn(move || {
             while let Ok(job)=receiver.recv() {
-                let operation=match job.message["a"].as_str() {Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
+                let operation=match job.message["a"].as_str() {Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("completed")=>"tray.history.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
                 tracing::dispatcher::with_default(&job.dispatch,|| {
                     let _context=job.context.as_ref().map(|c|c.span().entered());
                     let result=coreq::telemetry::capture::operation(operation,||std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -631,7 +631,7 @@ impl ActionQueue {
     }
     fn submit(&self,message:&Value) -> crate::Res<()> {
         let action=message["a"].as_str().unwrap_or("");let id=message["id"].as_str().unwrap_or("");
-        let name=match action {"answer"=>"tray.answer.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
+        let name=match action {"answer"=>"tray.answer.dispatch","completed"=>"tray.history.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
         coreq::telemetry::capture::operation(name,|| {
             if !self.allowed.contains(&action) {return Err(("invalid-command","Unsupported queued command"));}
             if id.is_empty() || id.len()>64 || !id.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'.')) {
@@ -667,6 +667,13 @@ fn queued_focus(_install:&Path,root:&Path,message:&Value)->crate::Res<Value> {
 }
 fn queued_answer(install:&Path,_root:&Path,message:&Value)->crate::Res<Value> {Ok(answer(install,message))}
 fn queued_resources(_install:&Path,_root:&Path,_message:&Value)->crate::Res<Value> {resources()}
+/// MP14 Completed: one board history page through the owner CLI; the tray itself stays token-free.
+fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
+    let mut c=owner_command(root)?;c.args(["status","--closed","--page",&m["page"].as_u64().unwrap_or(1).max(1).to_string()]);
+    if let Some(t)=m["since"].as_i64() {c.args(["--since",&t.to_string()]);}
+    let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
+    serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
+}
 fn answer_reply(root:PathBuf,id:String,result:crate::Res<Value>)->Value {result.unwrap_or_else(|error|json!({"answerReceipt":{"root":root,"id":id,"state":"unknown","reason":error,"next":"Check delivery with the same operation"}}))}
 fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!({"resources_receipt":{"state":"submitted","reason":"Resources terminal submitted"}}),Err(reason)=>json!({"resources_receipt":{"state":"unknown","reason":reason}})}}
 
@@ -888,6 +895,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let resources_actions=ActionQueue::start(install.clone(),&["resources"],false,queued_resources,move |_root,_id,result| {
         let receipt=resources_reply(result);
         let _=coreq::telemetry::capture::operation("tray.resources.report",||replies.send_event(Ev::Answer(receipt)),|_|"ui-closed");
+    })?;
+    let replies=proxy.clone();
+    let history_reads=ActionQueue::start(install.clone(),&["completed"],true,queued_history,move |root,id,result| {
+        let mut page=result.unwrap_or_else(|reason|json!({"tasks":[],"more":false,"reason":reason}));page["root"]=json!(root);page["id"]=json!(id);
+        let _=coreq::telemetry::capture::operation("tray.history.report",||replies.send_event(Ev::Answer(json!({"completed":page}))),|_|"ui-closed");
     })?;
     let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
     let mut ui: Option<(Window, WebView)> = None;
@@ -1323,6 +1335,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         w.set_focus();
                         reply!(&state(&install, &settings, dark, None, &adding));
                         if m["a"]=="drag" { let _=w.drag_window(); }
+                    }
+                    "completed" => {
+                        let page=if snapshot.is_some() {Some(json!({"tasks":[],"more":false,"reason":"snapshot: no board read"}))} else {history_reads.submit(&m).err().map(|reason|json!({"tasks":[],"more":false,"reason":reason}))};
+                        if let Some(mut page)=page {page["root"]=m["root"].clone();page["id"]=m["id"].clone();reply!(&json!({"completed":page}));}
                     }
                     "resources" => {
                         let id=format!("resources-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()));

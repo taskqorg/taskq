@@ -7,6 +7,8 @@ use std::cell::RefCell;
 use std::process::Command;
 
 pub type Result<T> = std::result::Result<T, String>;
+/// Closed tasks per Completed page; each costs one comment read (§ 4 budget).
+pub const CLOSED_PAGE: usize = 10;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Issue {
@@ -42,6 +44,9 @@ pub trait Board {
     /// Open issues; with `since` (board seconds) every issue, closed too, updated at or after it.
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>>;
     fn issue(&self, n: u64) -> Result<Issue>;
+    /// One page (from 1) of closed `taskq` issues, most recently updated first, with each close time and whether another
+    /// page follows: the Completed view reads board history on demand, never a local task store (MP14).
+    fn closed_tasks(&self, _page: u32, _since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { Err("closed task history unsupported on this board".into()) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>>;
     fn comment(&self, n: u64, body: &str) -> Result<u64>;
     /// Edits comment `id` of issue `n`: an edited entry is ignored by `fold` (§ 2).
@@ -138,6 +143,7 @@ impl Board for Profiled {
     fn ensure_labels(&self, names: &[String]) -> Result<()> { self.op("label", |b| b.ensure_labels(names)) }
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> { self.op("list", |b| b.issues(since)) }
     fn issue(&self, n: u64) -> Result<Issue> { self.op("read", |b| b.issue(n)) }
+    fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { self.op("list", |b| b.closed_tasks(page, since)) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>> { self.op("inbox", |b| b.comments(n)) }
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.op(if body.starts_with("taskq: spawn ") { "claim" } else { "comment" }, |b| b.comment(n, body))
@@ -629,6 +635,12 @@ impl Fake {
 
 #[cfg(test)]
 impl Board for Fake {
+    fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
+        let mut all: Vec<Issue> = self.state.borrow().issues.iter().filter(|i| !i.open && since.is_none_or(|t| i.updated >= t)).cloned().collect();
+        all.sort_by_key(|i| std::cmp::Reverse(i.updated));
+        let start = (page.max(1) as usize - 1) * CLOSED_PAGE;
+        Ok((all.iter().skip(start).take(CLOSED_PAGE).map(|i| (i.clone(), i.updated)).collect(), all.len() > start + CLOSED_PAGE))
+    }
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
         if let Some(lists) = &self.state.borrow().lists { lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
         Ok(self.state.borrow().issues.iter().filter(|i| since.map_or(i.open, |t| i.updated >= t)).cloned().collect())
