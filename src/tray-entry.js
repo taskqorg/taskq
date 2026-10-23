@@ -1,6 +1,6 @@
-// Preserve the public component APIs exposed by the original tray page.
-Object.defineProperty(globalThis,'TaskqAnswerCard',{get:()=>require('./answer-card.js')});
-globalThis.TaskqProjectBlocks=require('./project-blocks.js');
-Object.defineProperty(globalThis,'TaskqResources',{get:()=>require('./resource-controls.js')});
-const tray=require('./tray-app.js');
-tray.create(tray.createState(),{}).mount();
+// The tray mounts the published task workspace bundle (TaskqTaskWorkspace, loaded first) and keeps its public globals.
+const w=globalThis.TaskqTaskWorkspace;
+globalThis.TaskqAnswerCard=w.answerCard;
+globalThis.TaskqProjectBlocks=w.projectBlocks;
+globalThis.TaskqResources=w.resources;
+w.create(w.createState(),{}).mount();
