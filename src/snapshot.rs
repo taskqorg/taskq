@@ -514,24 +514,22 @@ fn session_link(cfg: &Config, raw: &Value, r: &Row) -> (String, String) {
     let (t, n) = (&r.task, r.n);
     let Some((rt, id)) = t.session.as_deref().and_then(|s| s.split(' ').next()).and_then(|s| s.split_once(':')) else { return (String::new(), String::new()) };
     let host = t.session.as_deref().and_then(|s| s.rsplit(' ').next()).unwrap_or_default();
-    let mut id = id.to_string();
-    if (id == "-" || runtime::of(rt).remote) && host == cfg.me
-        && let Some(a) = t.attempt
-    {
-        let l = runtime::Launch { execution: None, task: n, title: String::new(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: id.clone(), url: String::new(), resume: None };
-        id = runtime::codex_thread(&runtime::log_path(&cfg.root, &l)).unwrap_or(id);
-    }
+    let own = host == cfg.me;
+    let (id, url) = runtime::session_link(&cfg.root, own, rt, id, n, t.attempt.unwrap_or(0), t.role.as_deref().unwrap_or_default(), r.session_url.clone());
     let host = cell(host);
     let link = match rt {
         _ if id == "-" && r.accepted => format!("{host}: running"),
         _ if id == "-" => format!("{host}: starting"),
-        _ if runtime::of(rt).remote => runtime::claude_remote(&id).filter(|_| host == cell(&cfg.me)).or_else(|| r.session_url.clone()).map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
+        _ if runtime::of(rt).remote => url.map_or_else(|| format!("{host}: Remote Control unknown"), |url| format!("[{host}]({url})")),
         // R6 3: a Codex thread opens only on its own host; elsewhere the DashQ progress page, else the host alone
-        _ if host != cell(&cfg.me) => crate::enrollment::progress_page(&cfg.install, &cfg.repo).map_or_else(|| host.clone(), |p| format!("[{host}]({p}{n})")),
-        _ if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).codex && runtime::of(&c).child) => format!("[{host}]({})", runtime::thread_url(&id)),
-        _ => match raw["pages"].as_str() {
-            Some(p) => format!("[{host}]({}/open.html#{})", p.trim_end_matches('/'), runtime::thread_url(&id)),
-            None => format!("{host}: `{}`", runtime::thread_url(&id)),
+        _ if !own => crate::enrollment::progress_page(&cfg.install, &cfg.repo).map_or_else(|| host.clone(), |p| format!("[{host}]({p}{n})")),
+        _ => match url {
+            None => host.clone(),
+            Some(url) if std::env::var("TASKQ_CLIENT").is_ok_and(|c| runtime::of(&c).codex && runtime::of(&c).child) => format!("[{host}]({url})"),
+            Some(url) => match raw["pages"].as_str() {
+                Some(p) => format!("[{host}]({}/open.html#{url})", p.trim_end_matches('/')),
+                None => format!("{host}: `{url}`"),
+            },
         },
     };
     (rt.to_string(), link)

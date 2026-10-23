@@ -110,7 +110,7 @@ fn observe(install:&Path,o:&Op)->Value {
         match setup::read(&setup::dir(install).join(format!("{}.json",o.request_id))) {
             Ok(r) if r.runtime==o.runtime_id=>{
                 out["outcome"]=json!("accepted");out["reason"]=Value::Null;out["request_id"]=json!(o.request_id);
-                let url=r.url.filter(|u|crate::runtime::remote_url(u)||crate::runtime::thread_of(u).is_some_and(resources::id));
+                let url=r.url.filter(|u|crate::runtime::link_ok(u));
                 out["native"]=json!({"state":r.state,"host":r.host,"runtime":r.runtime,"session":r.session,"url":url});
             },
             _=>{out["outcome"]=json!("unknown");out["reason"]=json!("Native request readback unavailable; never resend with a new ID");}

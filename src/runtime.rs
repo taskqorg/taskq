@@ -7,6 +7,7 @@ use std::process::{Child, Command};
 
 #[cfg(any(target_os="macos",windows))]
 mod app_control;
+pub mod owner;
 
 #[cfg(windows)]
 pub mod windows_process;
@@ -1204,6 +1205,33 @@ pub fn refused_launch(root:&Path,task:u64,x:&crate::core::Execution)->Option<Str
     None
 }
 
+/// Service start: the native handle of a saved kid. Claude reconnects to its background job; a CLI child is its saved
+/// process with the attempt log read from the saved offset.
+pub fn adopt(root:&Path,install:&Path,k:&crate::data::KidLine,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
+    if of(&k.runtime).remote {return recover(root,install,k.task,x);}
+    #[cfg(windows)]
+    let native:Box<dyn Proc>=Box::new(windows_process::Execution::recover(k.process.clone(),k.job.as_deref().ok_or("legacy Windows execution has no native job scope; file kept")?)?);
+    #[cfg(unix)]
+    let native:Box<dyn Proc>={
+        if k.job.is_some() {return Err("Windows native scope cannot be adopted on Unix; file kept".into());}
+        Box::new(Adopted::new(k.process.clone()))
+    };
+    let worker=attempt_log(root,"worker",k.task,k.attempt);
+    let reviewer=attempt_log(root,"reviewer",k.task,k.attempt);
+    let log=match (worker.is_file(),reviewer.is_file()) {
+        (true,false)=>worker,(false,true)=>reviewer,
+        _=>return Err("kids: native attempt log missing or ambiguous; file kept".into()),
+    };
+    Ok(Box::new(CliTurn {proc:native,log,pos:k.offset,start:k.offset,stopping:false,accepted:false,read_error:None,native:Some(k.process.clone()),recovery:None}))
+}
+
+/// § 8 step 3 outside Windows: a Codex app turn waits for a re-exec, and so does a Claude turn without a saved native
+/// identity (#1407); CLI children pass over.
+pub fn handover_waits(rt:&str,p:&dyn Proc)->bool {
+    let a=of(rt);
+    a.app || a.remote&&p.native_identity().is_err()
+}
+
 /// Reconnect observation only. This path cannot submit a prompt, queue a turn or change access.
 pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Result<Box<dyn Proc>,String> {
     if x.release.is_some() {return Err("released execution cannot be recovered as live".into());}
@@ -1630,7 +1658,7 @@ impl ClaudeTurn {
             if let Err(e)=File::options().append(true).open(&self.log).and_then(|mut file|writeln!(file,"{record}")) {log!("Claude refused launch not recorded: {e}");}
             // #1555: the board text names the root and its remedy, never its path.
             if stderr.contains("Workspace not trusted") {
-                return Err(StartError {message:format!("access refused: Claude does not trust this project root; {}",crate::setup::trust_step("the project root")),class:"permission",reportable:false,no_start:true});
+                return Err(StartError {message:format!("access refused: Claude does not trust this project root; {}",owner::trust_step("the project root")),class:"permission",reportable:false,no_start:true});
             }
             return Err(StartError {message:format!("Claude background launch refused: {}",public_line(&refusal,&self.root,200)),class:"other",reportable:false,no_start:true});
         }
@@ -1786,6 +1814,45 @@ pub fn remote_url(u: &str) -> bool {
     u.strip_prefix("https://claude.ai/code/session_").is_some_and(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric()))
 }
 
+/// A session link this host may open (A2): a canonical Remote Control URL or a plain Codex app thread; a thread id
+/// reaches a shell on Windows, so only a plain one.
+pub fn link_ok(u: &str) -> bool { remote_url(u) || thread_of(u).is_some_and(plain_thread) }
+
+/// The one session link resolver (A2, native adapter M3): board session `<rt>:<id>` of a task attempt. On its own host
+/// the attempt log resolves the id (Codex `-`, Claude's pre-launch alias); a Codex thread links only there; a Claude
+/// URL is account-scoped, so the owning host's transcript, else `published` (the owner's heartbeat). Returns the
+/// resolved id and the link, None when unknown.
+pub fn session_link(root: &Path, own: bool, rt: &str, id: &str, task: u64, attempt: u64, role: &str, published: Option<String>) -> (String, Option<String>) {
+    let a = of(rt);
+    let id = if own && (id == "-" || a.remote) {
+        let l = Launch { execution: None, task, title: String::new(), attempt, role: role.into(), rt: rt.into(), session: id.into(), url: String::new(), resume: None };
+        codex_thread(&log_path(root, &l)).unwrap_or_else(|| id.into())
+    } else { id.into() };
+    let url = if id == "-" || !plain_thread(&id) { None }
+        else if a.codex { own.then(|| thread_url(&id)) }
+        else if a.remote { own.then(|| claude_remote(&id)).flatten().or(published.filter(|u| remote_url(u))) }
+        else { None };
+    (id, url)
+}
+
+/// The one opener (A2): a session link, web page or folder in this host's default app. `wait` bounds the opener's
+/// exit for callers that act on the open (Codex app queue); the tray only spawns it.
+pub fn open_link(arg: &str, wait: bool) -> Result<(), String> {
+    let mut c = Command::new(if cfg!(windows) { "explorer" } else { "open" });
+    crate::platform::quiet(c.arg(arg));
+    if !wait { return c.spawn().map(|_| ()).map_err(|e| e.to_string()); }
+    match coreq::process::output("runtime.open-link", &mut c, std::time::Duration::from_secs(10)) {
+        Err(coreq::process::Failure::Exit(out)) if !opened(cfg!(windows), out.status.code()) => Err(format!("open exited {:?}", out.status.code())),
+        Err(coreq::process::Failure::Exit(_)) | Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Windows `explorer` exits 1 after it opened the link; only `open`'s 0 is success elsewhere.
+fn opened(windows: bool, code: Option<i32>) -> bool {
+    code == Some(0) || windows && code == Some(1)
+}
+
 /// Only a URL registered by the native session is a Remote Control link.
 pub fn claude_remote(session: &str) -> Option<String> {
     let path=claude_transcript(session)?;let mut reader=NativeHistory::default();let mut found=None;
@@ -1851,9 +1918,7 @@ impl AppTurn {
 /// Show `thread` in the Codex app and queue `text` on it (§ 8 Codex app); the caller has checked the id.
 pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
     let ok = |c: &mut Command| coreq::process::output("runtime.app-submit", c, std::time::Duration::from_secs(10)).is_ok();
-    let url = thread_url(thread);
-    let opened = if cfg!(windows) { ok(Command::new("cmd").args(["/C", "start", "", &url])) } else { ok(Command::new("open").arg(&url)) };
-    if !opened || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
+    if open_link(&thread_url(thread), true).is_err() || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
         return Err(format!("codex queue failed for thread {thread}"));
     }
     Ok(())
@@ -2259,6 +2324,11 @@ pub fn of(rt: &str) -> &'static Adapter {
 
 /// Owner sessions run Claude Code.
 pub const OWNER: &str = RUNTIMES[0];
+/// § 4 Filter default for a worker without `run-*`: a lone legacy `prefer-codex` is Codex, else the owner runtime.
+pub fn preferred(prefer: &[&str]) -> &'static str { if prefer == [RUNTIMES[1]] { RUNTIMES[1] } else { OWNER } }
+
+/// The host config key that holds Codex CLI arguments.
+pub const CODEX_ARGS: &str = "codex";
 
 /// Runtimes a setup request may name, Codex first as the Connect list shows them.
 pub fn setup_runtimes() -> impl Iterator<Item = &'static str> {
@@ -2327,6 +2397,13 @@ pub fn agents_line(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // Risk: Windows `explorer` exits 1 after a successful open, so a Codex app queue reads it as a failed open (#1593).
+    #[test]
+    fn open_exit_rule() {
+        assert!(opened(true, Some(0)) && opened(true, Some(1)) && opened(false, Some(0)));
+        assert!(!opened(false, Some(1)) && !opened(true, Some(2)) && !opened(true, None));
+    }
 
     // Chain: R3 session name -> Claude `--name`/Remote Control and Codex first input line (#1564). Risk: sessions
     // show the shared rules header or an uncut title instead of role, task and title.

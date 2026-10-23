@@ -51,7 +51,7 @@ impl Policy {
         let me = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty())
             .or_else(|| v["hosts"][hostname].as_str().map(String::from)).unwrap_or_else(|| hostname.into());
         let has = if v["has"][&me].is_null() { vec![] } else { strings(&v["has"][&me], "has")? };
-        let codex = if v["codex"].is_null() { vec!["-s".into(), "danger-full-access".into()] } else { strings(&v["codex"], "codex")? };
+        let codex = if v[crate::runtime::CODEX_ARGS].is_null() { vec!["-s".into(), "danger-full-access".into()] } else { strings(&v[crate::runtime::CODEX_ARGS], crate::runtime::CODEX_ARGS)? };
         let permission_mode = match &v["permission_mode"] {
             Value::Null => "dontAsk".into(), Value::String(s) if !s.is_empty() => s.clone(),
             _ => return Err("host.json: permission_mode must be a nonempty string".into()),
@@ -1281,13 +1281,13 @@ fn migrate_locked(install: &Path, roots: &[PathBuf],hostname:&str) -> Res<()> {
             if !cap.auto { return Err(format!("migration owner choice: {} uses Fixed; originals unchanged", v["repo"].as_str().unwrap_or("project"))); }
             let mut policy = cap.json();
             policy["admission"].as_object_mut().unwrap().remove("mode");
-            for (key, default) in [("hosts", json!({})), ("has", json!({})), ("codex", json!(["-s", "danger-full-access"])),
+            for (key, default) in [("hosts", json!({})), ("has", json!({})), (crate::runtime::CODEX_ARGS, json!(["-s", "danger-full-access"])),
                 ("permission_mode", json!("dontAsk")), ("update_every", json!(60)), ("rollback_after", json!(600))] {
                 policy[key] = v.get(key).cloned().unwrap_or(default);
             }
             Policy::parse(policy.clone(), hostname)?;
             policies.push((v["repo"].as_str().unwrap_or("project").to_string(), policy));
-            for key in ["capacity_hosts", "admission", "load_gate", "hosts", "has", "codex", "permission_mode", "update_every", "rollback_after"] {
+            for key in ["capacity_hosts", "admission", "load_gate", "hosts", "has", crate::runtime::CODEX_ARGS, "permission_mode", "update_every", "rollback_after"] {
                 v.as_object_mut().ok_or("migration input is not an object")?.remove(key);
             }
             // Identical effective policies need no project cap; top-level limits may be overridden locally.

@@ -24,14 +24,15 @@ def selection(paths):
 
 
 # docs/runtime-qualification.md#runtime-adapters: only these files may name a runtime
-ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/main.rs', 'src/labels.rs', 'src/host.rs'}
-RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)(:[^"]*)?"')
+ADAPTER_EXCEPTIONS = {'src/runtime.rs', 'src/linux_sandbox.rs', 'src/windows_sandbox.rs'}
+# Runtime names, bare or name-prefixed, and the native names only the adapter may know (#1593).
+RUNTIME_NAME = re.compile(r'"(claude|codex|codex-app)(:[^"]*)?"|claude\.exe|\.claude\.json|CODEX_HOME|CODEX_THREAD_ID')
 TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(pub(\([\w:]+\))?\s+)?mod\s+\w+\s*\{')
 
 
 def runtime_names(path, text):
     """Runtime name literals, bare or name-prefixed, in non-test Rust outside the runtime adapter and the named exceptions."""
-    if path in ADAPTER_EXCEPTIONS or path.startswith('src/runtime/') or path.endswith('_tests.rs'):
+    if path in ADAPTER_EXCEPTIONS or path.startswith(('src/runtime/', 'src/windows_sandbox/')) or path.endswith('_tests.rs'):
         return []
     # Blank only `#[cfg(test)] mod x { .. }` bodies, keeping line numbers; other code stays scanned.
     # ponytail: a module ends at its first column-0 `}`; an early end only adds hits, never hides one

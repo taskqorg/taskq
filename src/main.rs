@@ -203,7 +203,7 @@ fn project_config(root:&Path)->Res<(Config,Value)> {
     let me = std::env::var("TASKQ_HOST").ok().filter(|s| !s.is_empty()).or_else(|| v["hosts"][&h].as_str().map(String::from)).unwrap_or(h);
     let has = v["has"][&me].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(String::from)).collect();
     let limits: BTreeMap<String, u32> = v["limits"].as_object().into_iter().flatten().map(|(k, n)| (k.clone(), n.as_u64().unwrap_or(0) as u32)).collect();
-    let codex = match v["codex"].as_array() {
+    let codex = match v[runtime::CODEX_ARGS].as_array() {
         Some(a) => a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
         None => vec!["-s".into(), "danger-full-access".into()],
     };
@@ -609,7 +609,7 @@ fn formats_selftest() -> Res<String> {
     result_text(1, "Changed: x\nOpen: none", &checks, &[], None, &[])?;
     close_verdict("Changed: x\nChecks: A1 ok; CI green on the SHA\nOpen: none", "A1. y")?;
     let card = ask_card(1, "Done: not started\nProblem: pick one", &["left".into(), "right".into()], Some("2"), &[])?;
-    let log: Vec<Entry> = [entry("spawn", &["worker", "claude:s", "mac"], None, ""), entry("ask", &[], Some(1), &card), "taskq answer 2".into()]
+    let log: Vec<Entry> = [entry("spawn", &["worker", &format!("{}:s", runtime::OWNER), "mac"], None, ""), entry("ask", &[], Some(1), &card), "taskq answer 2".into()]
         .into_iter().enumerate().map(|(i, body)| Entry { id: i as u64 + 1, body, edited: false }).collect();
     match (fold(1, &log, false).state, core::delivery(1, &log, 3)) {
         (State::Doing, d) if d == "right" => Ok("formats: ask card, result, close verdict PASS".into()),
@@ -817,26 +817,8 @@ fn adopt(s: &mut Service, install:&Path, root: &Path) -> Res<()> {
             Some(core::Release::NoStart)=>return Err("board no-start contradicts a recorded native process; file kept".into()),
             None=>{},
         }
-        if k.runtime=="claude" {
-            let proc=runtime::recover(root,install,k.task,&execution)?;
-            s.adopt(Kid { unknown:None, stopping:false, session_url:None,execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc})?;
-            continue;
-        }
-        #[cfg(windows)]
-        let native:Box<dyn runtime::Proc>=Box::new(runtime::windows_process::Execution::recover(k.process.clone(),k.job.as_deref().ok_or("legacy Windows execution has no native job scope; file kept")?)?);
-        #[cfg(unix)]
-        let native:Box<dyn runtime::Proc>={
-            if k.job.is_some() {return Err("Windows native scope cannot be adopted on Unix; file kept".into());}
-            Box::new(runtime::Adopted::new(k.process.clone()))
-        };
-        let worker=runtime::attempt_log(root,"worker",k.task,k.attempt);
-        let reviewer=runtime::attempt_log(root,"reviewer",k.task,k.attempt);
-        let log=match (worker.is_file(),reviewer.is_file()) {
-            (true,false)=>worker,(false,true)=>reviewer,
-            _=>return Err("kids: native attempt log missing or ambiguous; file kept".into()),
-        };
-        let proc=runtime::CliTurn {proc:native,log,pos:k.offset,start:k.offset,stopping:false,accepted:false,read_error:None,native:Some(k.process),recovery:None};
-        s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc:Box::new(proc) })?;
+        let proc=runtime::adopt(root,install,&k,&execution)?;
+        s.adopt(Kid { unknown:None, stopping:false, session_url:None, execution:k.execution,task:k.task,attempt:k.attempt,rt:k.runtime,proc })?;
     }
     Ok(())
 }
@@ -1845,7 +1827,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 /// § 8 step 3: what a pending re-exec waits for. Windows waits for every live child; elsewhere CLI children and
 /// Claude background turns with a saved native identity pass over (#1407); codex-app turns wait.
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
-    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || k.rt=="codex-app" || k.rt=="claude"&&k.proc.native_identity().is_err()).map(|k| format!("#{}", k.task)).collect();
+    let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || runtime::handover_waits(&k.rt,k.proc.as_ref())).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
     w.extend(s.handoff_waits(!stopping, cfg!(windows) && !stopping));
     w
@@ -1956,7 +1938,7 @@ fn service(args: &Args) -> Res<()> {
         if args.pos.len()!=2||args.all("runtime").len()>1||args.all("client").len()>1||args.flags.keys().any(|key|!["runtime","client","target","json"].contains(&key.as_str())) {
             return Err("usage: taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]".into());
         }
-        let r=setup::submit(&platform::default_install(),args.one("runtime").unwrap_or("claude"),args.one("client"),&args.all("target"))?;
+        let r=setup::submit(&platform::default_install(),args.one("runtime").unwrap_or(runtime::OWNER),args.one("client"),&args.all("target"))?;
         if args.flags.contains_key("json") {println!("{}",serde_json::to_string(&r).map_err(|e|e.to_string())?);}
         else {println!("Setup: {} {}{}",r.id,r.state,r.url.as_deref().map(|u|format!(" {u}")).unwrap_or_default());if let Some(reason)=&r.reason {println!("Reason: {reason}");}}
         return Ok(());
@@ -2078,7 +2060,7 @@ fn service(args: &Args) -> Res<()> {
             println!("{}",host::install_project(&cfg.install,&root)?);
             // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
             if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-                for l in setup::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
+                for l in runtime::owner::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
             }
             Ok(())
         }
@@ -2096,14 +2078,14 @@ fn onboard_cmd(install: &Path) -> Res<()> {
         match r["login"].as_str() {
             Some("logged in") => {}
             // a codex-only host is valid: a missing runtime is skipped, not a failure
-            Some("not installed") => { claude &= rt != "claude"; gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
+            Some("not installed") => { claude &= !runtime::of(rt).remote; gaps.push(setup::onboard_skipped(rt, cfg!(windows) && std::env::var_os("SSH_CONNECTION").is_some())) }
             _ => gaps.extend([format!("Login: {}", runtime::agent_text(r)), format!("Next: {}", runtime::relogin(rt))]),
         }
     }
     let p = host::Policy::read_for_hostname(install, hostname);
     let (mode, codex, has) = p.map_or(("dontAsk".to_string(), vec![], vec![]), |p| (p.permission_mode, p.codex, p.has));
     // codex-app is opt-in (§ 9): its refusal is a gap only where `has` lists it
-    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| e.runtime != "codex-app" || has.iter().any(|h| h == "codex-app")).collect::<Vec<_>>();
+    let opted = |es: Vec<policy::Effective>| es.into_iter().filter(|e| !runtime::of(&e.runtime).app || has.contains(&e.runtime)).collect::<Vec<_>>();
     // Access is per folder: the setup folder for owner sessions, each registered root for its workers
     gaps.extend(setup::onboard_access("setup", &opted(policy::report(install, &setup::dir(install), &mode, &[]))));
     let roots = match host::projects(install) {
@@ -2113,7 +2095,7 @@ fn onboard_cmd(install: &Path) -> Res<()> {
     for root in &roots { gaps.extend(setup::onboard_access(&root.display().to_string(), &opted(policy::report(install, root, &mode, &codex)))); }
     if claude {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
-        gaps.extend(setup::trust(install, &home, setup::claude_pids)?);
+        gaps.extend(runtime::owner::trust(install, &home, runtime::owner::claude_pids)?);
     }
     if gaps.is_empty() { gaps.push(format!("Ready: {} project(s) on {}; logins, access and trust in place", roots.len(), hostname())); }
     for l in gaps {println!("{l}");}
@@ -2236,7 +2218,7 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
         body += "\n";
         body += &t.deps.iter().map(|d| format!("Depends on #{d}\n")).collect::<String>();
     }
-    for (flag, v, allowed) in [("type", &t.kind, &["code", "docs", "research", "asset"][..]), ("runtime", &t.runtime, &["codex", "claude", "codex-app"][..]), ("priority", &t.priority, &["0", "1", "2"][..])] {
+    for (flag, v, allowed) in [("type", &t.kind, &["code", "docs", "research", "asset"][..]), ("runtime", &t.runtime, &runtime::RUNTIMES[..]), ("priority", &t.priority, &["0", "1", "2"][..])] {
         if v.as_deref().is_some_and(|v| !allowed.contains(&v)) {
             return Err(format!("--{flag} requires one of {}", allowed.join("|")));
         }
