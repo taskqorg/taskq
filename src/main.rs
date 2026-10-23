@@ -1224,7 +1224,9 @@ fn checkpoint_kid(install:&Path,root:&Path,kid:data::KidLine)->Res<()> {
     }
     if let Some(old)=kids.iter_mut().find(|k|k.task==kid.task) {
         if *old==kid { return Ok(()) }
-        if old.execution>=kid.execution { return Err("execution already has different or newer native recovery identity; file kept".into()); }
+        // #1638: the same execution may move to a new process only after its recorded one exited (checked below).
+        let same=old.execution==kid.execution && old.attempt==kid.attempt && old.runtime==kid.runtime && old.job==kid.job;
+        if old.execution>kid.execution || old.execution==kid.execution && !same { return Err("execution already has different or newer native recovery identity; file kept".into()); }
         if runtime::execution_live(old)? {
             return Err("previous native execution still present; recovery identity kept".into());
         }

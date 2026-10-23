@@ -1700,7 +1700,13 @@ impl ClaudeTurn {
             return Err("Claude process locator differs from the original native job".into());
         }
         if let Some(pid)=claude_pid(row)? {
-            if self.native.as_ref().is_some_and(|n|n.pid!=pid) {return Err("Claude native process changed; reconcile original execution".into());}
+            if let Some(old)=self.native.as_ref().filter(|n|n.pid!=pid) {
+                // #1638: a restart can leave the same job and conversation on a new process. Only an exited recorded
+                // process and an accepted readback of this job's own input let the new process stand in for it.
+                let gone=coreq::process::identity(old.pid).map_err(|e|format!("Claude process identity unreadable: {e}"))?.as_ref()!=Some(old);
+                if !gone || !self.accepted || self.session.is_empty() {return Err("Claude native process changed; reconcile original execution".into());}
+                self.native=None;
+            }
             let current=coreq::process::identity(pid).map_err(|e|format!("Claude process identity unreadable: {e}"))?.ok_or("Claude reported process absent; retry native readback")?;
             if self.native.as_ref().is_some_and(|n|*n!=current) {return Err("Claude PID incarnation changed; original identity retained".into());}
             // #1561: a process another task's record holds is never this job's identity; the next readback retries.
@@ -3623,6 +3629,39 @@ mod tests {
         let mut stolen=crate::kids_file(&install,&root).unwrap()[0].clone();stolen.task=1559;
         assert!(crate::checkpoint_kid(&install,&root,stolen).unwrap_err().contains("#1557"),"no record takes another task's process");
         for c in [&mut first,&mut second] {c.kill().unwrap();c.wait().unwrap();}
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #1638 Chain: recorded Claude process -> service restart -> native job reports a new process -> recovered readback.
+    // Defect: the recovered turn compared the new pid with the record and fenced the execution as unknown forever.
+    // Retained: a live recorded process, an unproved input or an unknown conversation still refuse the new process.
+    #[cfg(unix)]
+    #[test]
+    fn recovered_claude_job_on_a_new_process_resolves() {
+        let root=std::env::temp_dir().join(format!("taskq-claude-moved-{}",uuid()));
+        let install=root.join("install");
+        std::fs::create_dir_all(&root).unwrap();
+        let mut old=Command::new("sleep").arg("30").spawn().unwrap();
+        let mut new=Command::new("sleep").arg("30").spawn().unwrap();
+        let recorded=coreq::process::identity(old.id()).unwrap().unwrap();
+        crate::checkpoint_kid(&install,&root,crate::data::KidLine {task:1592,attempt:10,runtime:"claude".into(),process:recorded.clone(),execution:11,offset:0,job:None}).unwrap();
+        let turn=|accepted:bool,session:&str|ClaudeTurn { root:root.clone(), log:root.join("1592.log"), session:session.into(),
+            id:"c37eb75a".into(), announced:false, accepted, history:ClaudeHistory::default(), before:0, mode:"dontAsk".into(),
+            input:"input".into(), _input_file:coreq::file_lock::try_lock_shared_file(File::open(std::env::current_exe().unwrap()).unwrap()).unwrap(), pid:0, native:Some(recorded.clone()),
+            recovery:Some(Recovery {install:install.clone(),root:root.clone(),task:1592,attempt:10,execution:11}), done:false, failure:None, launch_error:None };
+        let session="0b6c3f4e-8f2a-4c1d-9e7b-5a2d1c3b4e6f";
+        let row=serde_json::json!({"id":"c37eb75a","sessionId":session,"state":"working","pid":new.id()});
+        let fenced=|mut t:ClaudeTurn|{let e=t.capture_identity(&row).unwrap_err();assert!(e.contains("process changed"),"{e}");assert_eq!(t.native.as_ref(),Some(&recorded));};
+        fenced(turn(true,session));
+        old.kill().unwrap();old.wait().unwrap();
+        fenced(turn(false,session));
+        fenced(turn(true,""));
+        let mut t=turn(true,session);
+        t.capture_identity(&row).unwrap();t.persist().unwrap();
+        assert_eq!(t.id(),new.id(),"the job's new process stands in for the exited one");
+        let records:Vec<_>=crate::kids_file(&install,&root).unwrap().into_iter().map(|k|(k.task,k.execution,k.process.pid)).collect();
+        assert_eq!(records,[(1592,11,new.id())],"the record follows the same execution to its new process");
+        new.kill().unwrap();new.wait().unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
