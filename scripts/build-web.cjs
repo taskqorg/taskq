@@ -10,13 +10,14 @@ if(revisions.length!==2||revisions[0]!==revisions[1]||dependency!=='https://code
 
 fs.mkdirSync(out,{recursive:true});
 require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'check-web.cjs'),out],{stdio:'inherit'});
-const components={'answer-card':'TaskqAnswerCard','resource-controls':'TaskqResources','project-blocks':'TaskqProjectBlocks','finding-composer':'TaskqFindingComposer','task-controls':'TaskqTaskControls','pm-composer':'TaskqPmComposer'};
+const components={'answer-card':'TaskqAnswerCard','resource-controls':'TaskqResources','project-blocks':'TaskqProjectBlocks','finding-composer':'TaskqFindingComposer','task-controls':'TaskqTaskControls','pm-composer':'TaskqPmComposer','task-workspace':'TaskqTaskWorkspace'};
 for(const [name,globalName] of Object.entries(components))esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',globalName,outfile:path.join(out,name+'.js'),target:'es2022'});
-for(const name of ['tray-guard','tray-entry','workspace-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
-let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8');
-for(const name of ['answer-card','project-blocks','resource-controls'])html=html.replace('{{'+name.toUpperCase().replaceAll('-','_')+'_CSS}}',fs.readFileSync(path.join(root,'src',name+'.css'),'utf8'));
-html=html.replace('</head>','<style>'+fs.readFileSync(path.join(root,'src/app-shell.css'),'utf8')+fs.readFileSync(path.join(root,'src/task-dashboard.css'),'utf8')+'</style></head>');
+for(const name of ['tray-guard','workspace-entry'])esbuild.buildSync({entryPoints:[path.join(root,'src',name+'.js')],bundle:true,platform:'browser',format:'iife',outfile:path.join(out,name+'.js'),target:'es2022'});
+// One task workspace stylesheet: the tray embeds it and the release publishes the same file (docs/design/task-workspace.md).
+fs.writeFileSync(path.join(out,'task-workspace.css'),['task-workspace','answer-card','project-blocks','resource-controls','app-shell','task-dashboard'].map(name=>fs.readFileSync(path.join(root,'src',name+'.css'),'utf8')).join('\n'));
+let html=fs.readFileSync(path.join(root,'src/tray.html'),'utf8').replace('{{TASK_WORKSPACE_CSS}}',fs.readFileSync(path.join(out,'task-workspace.css'),'utf8'));
 html=html.replace('{{GUARD_JS}}',fs.readFileSync(path.join(out,'tray-guard.js'),'utf8').replaceAll('</script','<\/script'));
+fs.writeFileSync(path.join(out,'tray-entry.js'),fs.readFileSync(path.join(out,'task-workspace.js'),'utf8')+';\n'+fs.readFileSync(path.join(root,'src/tray-entry.js'),'utf8'));
 for(const name of ['tray','workspace']){
  const page=html.replace('{{APP_JS}}',fs.readFileSync(path.join(out,name+'-entry.js'),'utf8').replaceAll('</script','<\/script')).replace('class="menu" role="menu"','class="menu'+(name==='workspace'?' workspace':'')+'"').replace('</head>',name==='workspace'?'<style>'+fs.readFileSync(path.join(root,'src/conversations.css'),'utf8')+'</style></head>':'</head>');
  if(/\{\{[A-Z_]+\}\}/.test(page))throw Error('Unresolved web asset');

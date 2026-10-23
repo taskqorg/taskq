@@ -1,0 +1,571 @@
+{
+ "schema": "taskq.task-workspace/1",
+ "host": "Invented data. Load task-workspace.css and task-workspace.js into a page with <div class=\"menu\">, set window.ipc, call TaskqTaskWorkspace.create(TaskqTaskWorkspace.createState(),{}).mount(), then taskq.receive(state) with the journey font.",
+ "state": {
+  "platform": "macos",
+  "font": 16,
+  "theme": "dark",
+  "host": "fixture",
+  "now": 200000,
+  "version": "fixture",
+  "size_anchor": "auto",
+  "attached_edge": "top",
+  "top": true,
+  "service": {
+   "state": "running"
+  },
+  "projects": [
+   {
+    "name": "a",
+    "root": "a",
+    "issues": "https://github.com/o/r/issues",
+    "board_kind": "github",
+    "complete": true,
+    "focus": [],
+    "saved": true,
+    "tasks": [
+     {
+      "n": 7,
+      "title": "T7",
+      "state": "doing",
+      "labels": [],
+      "url": "https://github.com/o/r/issues/7",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "stop",
+       "later"
+      ],
+      "since": 199940,
+      "created": null,
+      "steps": [],
+      "stuck": false,
+      "key": "github:https://github.com/o/r/issues/7",
+      "state_name": "Doing",
+      "age": "1m",
+      "total_age": null,
+      "dup": false,
+      "rank": 0
+     },
+     {
+      "n": 9,
+      "title": "T9",
+      "state": "ask",
+      "labels": [],
+      "url": "https://github.com/o/r/issues/9",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "stop",
+       "later"
+      ],
+      "since": 191000,
+      "created": null,
+      "steps": [],
+      "stuck": true,
+      "age_s": 9000,
+      "key": "github:https://github.com/o/r/issues/9",
+      "state_name": "Ask",
+      "age": "2h",
+      "total_age": null,
+      "dup": false,
+      "rank": 1
+     },
+     {
+      "n": 8,
+      "title": "T8",
+      "state": "ready",
+      "labels": [
+       "p0"
+      ],
+      "url": "https://github.com/o/r/issues/8",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "stop",
+       "later"
+      ],
+      "since": 199970,
+      "created": null,
+      "steps": [],
+      "stuck": false,
+      "key": "github:https://github.com/o/r/issues/8",
+      "state_name": "Ready",
+      "age": "<1m",
+      "total_age": null,
+      "dup": false,
+      "rank": 2
+     },
+     {
+      "n": 3,
+      "title": "T3",
+      "state": "ready",
+      "labels": [
+       "p1"
+      ],
+      "url": "https://github.com/o/r/issues/3",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "stop",
+       "later"
+      ],
+      "since": 199700,
+      "created": null,
+      "steps": [],
+      "stuck": false,
+      "key": "github:https://github.com/o/r/issues/3",
+      "state_name": "Ready",
+      "age": "5m",
+      "total_age": null,
+      "dup": false,
+      "rank": 3
+     },
+     {
+      "n": 5,
+      "title": "T5",
+      "state": "ready",
+      "labels": [],
+      "url": "https://github.com/o/r/issues/5",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "stop",
+       "later"
+      ],
+      "since": 192800,
+      "created": null,
+      "steps": [],
+      "stuck": false,
+      "key": "github:https://github.com/o/r/issues/5",
+      "state_name": "Ready",
+      "age": "2h",
+      "total_age": null,
+      "dup": false,
+      "rank": 4
+     },
+     {
+      "n": 4,
+      "title": "T4",
+      "state": "later",
+      "labels": [],
+      "url": "https://github.com/o/r/issues/4",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "retry"
+      ],
+      "since": 199400,
+      "created": null,
+      "steps": [],
+      "stuck": false,
+      "key": "github:https://github.com/o/r/issues/4",
+      "state_name": "Later",
+      "age": "10m",
+      "total_age": null,
+      "dup": false,
+      "rank": 5
+     },
+     {
+      "n": 2,
+      "title": "T2",
+      "state": "held",
+      "labels": [],
+      "url": "https://github.com/o/r/issues/2",
+      "revision": 0,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+       "start"
+      ],
+      "since": 110000,
+      "created": null,
+      "steps": [],
+      "stuck": false,
+      "key": "github:https://github.com/o/r/issues/2",
+      "state_name": "Held",
+      "age": "1d",
+      "total_age": null,
+      "dup": false,
+      "rank": 6
+     }
+    ],
+    "age_text": null,
+    "mode": "paused",
+    "counts": [
+     {
+      "state": "doing",
+      "name": "Doing",
+      "n": 1
+     },
+     {
+      "state": "review",
+      "name": "Review",
+      "n": 0
+     },
+     {
+      "state": "ask",
+      "name": "Ask",
+      "n": 1
+     },
+     {
+      "state": "failed",
+      "name": "Failed",
+      "n": 0
+     },
+     {
+      "state": "ready",
+      "name": "Ready",
+      "n": 3
+     },
+     {
+      "state": "waiting",
+      "name": "Blocked",
+      "n": 0
+     },
+     {
+      "state": "later",
+      "name": "Later",
+      "n": 1
+     },
+     {
+      "state": "held",
+      "name": "Held",
+      "n": 1
+     }
+    ],
+    "partial": [],
+    "open": 7
+   }
+  ],
+  "display": {
+   "states": [
+    {
+     "id": "doing",
+     "name": "Doing"
+    },
+    {
+     "id": "review",
+     "name": "Review"
+    },
+    {
+     "id": "ask",
+     "name": "Ask"
+    },
+    {
+     "id": "failed",
+     "name": "Failed"
+    },
+    {
+     "id": "ready",
+     "name": "Ready"
+    },
+    {
+     "id": "waiting",
+     "name": "Blocked"
+    },
+    {
+     "id": "later",
+     "name": "Later"
+    },
+    {
+     "id": "held",
+     "name": "Held"
+    }
+   ],
+   "series": [
+    {
+     "id": "close",
+     "name": "Closed"
+    },
+    {
+     "id": "failed",
+     "name": "Failed"
+    },
+    {
+     "id": "ask",
+     "name": "Ask"
+    },
+    {
+     "id": "blocked",
+     "name": "Blocked"
+    }
+   ],
+   "notify": [
+    {
+     "id": "ask",
+     "name": "Question"
+    },
+    {
+     "id": "close",
+     "name": "Closed"
+    },
+    {
+     "id": "failed",
+     "name": "Failed"
+    },
+    {
+     "id": "gone",
+     "name": "Attempt gone"
+    }
+   ],
+   "periods": [
+    {
+     "id": "5m",
+     "name": "5 min"
+    },
+    {
+     "id": "1h",
+     "name": "Hour"
+    },
+    {
+     "id": "1d",
+     "name": "Day"
+    },
+    {
+     "id": "1w",
+     "name": "7 days"
+    },
+    {
+     "id": "1mo",
+     "name": "30 days"
+    },
+    {
+     "id": "custom",
+     "name": "Custom"
+    }
+   ],
+   "all": {
+    "counts": [
+     {
+      "state": "doing",
+      "name": "Doing",
+      "n": 1
+     },
+     {
+      "state": "review",
+      "name": "Review",
+      "n": 0
+     },
+     {
+      "state": "ask",
+      "name": "Ask",
+      "n": 1
+     },
+     {
+      "state": "failed",
+      "name": "Failed",
+      "n": 0
+     },
+     {
+      "state": "ready",
+      "name": "Ready",
+      "n": 3
+     },
+     {
+      "state": "waiting",
+      "name": "Blocked",
+      "n": 0
+     },
+     {
+      "state": "later",
+      "name": "Later",
+      "n": 1
+     },
+     {
+      "state": "held",
+      "name": "Held",
+      "n": 1
+     }
+    ],
+    "partial": [],
+    "open": 7
+   },
+   "run": false
+  },
+  "ai": {
+   "draft": ""
+  },
+  "notify": {
+   "projects": {}
+  },
+  "stop_modes": true,
+  "messages": {
+   "complete": true,
+   "count": 1
+  }
+ },
+ "journeys": [
+  {
+   "id": "narrow",
+   "viewport": [
+    320,
+    640
+   ],
+   "font": 16,
+   "steps": [
+    {
+     "expect": {
+      "count": {
+       "[data-a=task-detail]": 7
+      },
+      "fits": true,
+      "open": false
+     }
+    },
+    {
+     "click": "[data-a=view-editor]"
+    },
+    {
+     "expect": {
+      "open": true,
+      "fits": true
+     }
+    },
+    {
+     "click": "#taskq-popover [data-facet=states][data-value=doing]"
+    },
+    {
+     "expect": {
+      "count": {
+       "[data-a=task-detail]": 1
+      }
+     }
+    },
+    {
+     "press": "Escape"
+    },
+    {
+     "expect": {
+      "open": false,
+      "focus": "[data-a=view-editor]"
+     }
+    }
+   ]
+  },
+  {
+   "id": "large-text",
+   "viewport": [
+    360,
+    760
+   ],
+   "font": 20,
+   "steps": [
+    {
+     "expect": {
+      "count": {
+       "[data-a=task-detail]": 7
+      },
+      "fits": true
+     }
+    },
+    {
+     "click": "[data-a=task-detail]"
+    },
+    {
+     "expect": {
+      "open": true,
+      "text": {
+       "#taskq-popover": "T7"
+      },
+      "fits": true
+     }
+    },
+    {
+     "click": "#taskq-popover [data-a=control][data-control=stop]"
+    },
+    {
+     "expect": {
+      "sent": "answer"
+     }
+    }
+   ]
+  },
+  {
+   "id": "keyboard",
+   "viewport": [
+    360,
+    760
+   ],
+   "font": 16,
+   "steps": [
+    {
+     "press": "Tab",
+     "until": "[data-a=task-detail]",
+     "max": 40
+    },
+    {
+     "expect": {
+      "open": true
+     }
+    },
+    {
+     "press": "Enter"
+    },
+    {
+     "expect": {
+      "open": true,
+      "focus": "#taskq-popover"
+     }
+    },
+    {
+     "press": "Escape"
+    },
+    {
+     "expect": {
+      "open": false,
+      "focus": "[data-a=task-detail]"
+     }
+    }
+   ]
+  }
+ ]
+}

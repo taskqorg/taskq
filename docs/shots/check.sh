@@ -6,7 +6,7 @@
 set -eu
 cd "$(dirname "$0")/../.."
 m=docs/shots/manifest.json
-ui='src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/task-dashboard.js src/task-dashboard.css src/task-views.js src/anchored-popover.js src/ui-icons.js src/ui-icons.json src/project-blocks.js src/project-blocks.css src/conversations.rs src/conversations.js src/conversations.css src/pm-composer.js src/ui-runtime.js src/workspace.js src/workspace-entry.js src/workspace-answers.js src/answer-card.js scripts/build-web.cjs src/icon.rs'
+ui='src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/task-workspace.js src/task-workspace.css src/tray-view-state.js src/tray-web.js src/app-shell.js src/app-shell.css src/task-dashboard.js src/task-dashboard.css src/task-views.js src/anchored-popover.js src/ui-icons.js src/ui-icons.json src/project-blocks.js src/project-blocks.css src/conversations.rs src/conversations.js src/conversations.css src/pm-composer.js src/ui-runtime.js src/workspace.js src/workspace-entry.js src/workspace-answers.js src/answer-card.js scripts/build-web.cjs src/icon.rs'
 # parse the whole manifest first: a malformed one fails even when its sourceCommit line looks valid
 python3 -c 'import json, re, sys; m = json.load(open(sys.argv[1])); sys.exit(not re.fullmatch("[0-9a-f]{40}", m["sourceCommit"]))' $m 2>/dev/null ||
   { echo "check.sh: $m is missing, malformed or has no sourceCommit" >&2; exit 1; }
