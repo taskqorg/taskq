@@ -373,8 +373,8 @@ mod tests {
         fn show(&mut self, _: &str, _: &str) {}
     }
 
-    /// Fixture store rows: fixed ids and receipt clocks, operation and stage observations (a Claude stage with model
-    /// and output tokens, a Codex stage whose runtime reports no model).
+    /// Fixture store rows: fixed ids and receipt clocks, operation and stage observations (a Claude stage with model,
+    /// context split and output tokens, a Codex stage whose runtime reports no model and no cache writes).
     fn rows() -> Vec<Value> {
         (1..=11).map(|seq: i64| {
             let base = json!({"product": "taskq", "version": "4.6.31", "trace": null, "span": null, "started_ms": 1_792_000_000_000i64 + seq * 1000,
@@ -382,9 +382,10 @@ mod tests {
             let mut o = match seq % 3 {
                 1 => json!({"kind": "operation", "operation": "service.pass", "duration_us": 1200}),
                 2 => json!({"kind": "stage", "operation": "build", "task": 1614, "attempt": seq, "runtime": "claude", "duration_us": 9_000_000,
-                    "calls": 2, "tokens": 230, "model": "claude-opus-5-5", "output_tokens": 6}),
+                    "calls": 2, "tokens": 230, "input_tokens": 20, "cache_read_tokens": 200, "cache_write_tokens": 10,
+                    "model": "claude-opus-5-5", "output_tokens": 6}),
                 _ => json!({"kind": "stage", "operation": "build", "task": 1614, "attempt": seq, "runtime": "codex", "duration_us": 5_000_000,
-                    "tokens": 700, "model": null, "output_tokens": 9}),
+                    "tokens": 700, "input_tokens": 100, "cache_read_tokens": 600, "cache_write_tokens": 0, "model": null, "output_tokens": 9}),
             };
             for (k, v) in base.as_object().unwrap() { o[k] = v.clone() }
             if o["runtime"] == "codex" { o["unknown"]["model"] = json!("not-reported") }

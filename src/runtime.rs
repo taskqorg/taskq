@@ -217,7 +217,8 @@ pub fn attempt_log(root: &Path, role: &str, task: u64, attempt: u64) -> PathBuf 
 
 /// Model use of the attempt log after byte `pos` (§ 4 Profiling): Claude assistant messages (calls, input tokens
 /// with cache reads and writes, output tokens, the model of most calls), Codex `turn.completed` input tokens (cached
-/// included) and output tokens (calls and model not reported).
+/// included) and output tokens (calls and model not reported). Context tokens split into uncached input, cache reads
+/// and cache writes; Codex's `input_tokens` include its `cached_input_tokens`, and Codex reports no cache writes.
 pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     use crate::profile::Usage;
     use std::io::{Read, Seek, SeekFrom};
@@ -225,12 +226,12 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     let mut text = String::new();
     let Ok(mut f) = File::open(log) else { return Usage::Unknown("log-unreadable") };
     if f.seek(SeekFrom::Start(pos)).and_then(|_| f.read_to_string(&mut text)).is_err() { return Usage::Unknown("log-unreadable"); }
-    let (mut ids, mut tokens, mut turns, mut missing) = (std::collections::HashSet::new(), 0u64, false, false);
-    let (mut output, mut no_output, mut models) = (0u64, false, std::collections::BTreeMap::<String, u64>::new());
+    let (mut ids, mut turns, mut models) = (std::collections::HashSet::new(), false, std::collections::BTreeMap::<String, u64>::new());
+    // tokens, input, cache read, cache write, output: a counted call without one makes its sum unknown, never smaller
+    let mut sums = [Some(0u64); 5];
     for v in text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
         let u = if v["type"] == "assistant" { &v["message"]["usage"] } else { &v["usage"] };
         let sum = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].iter().filter_map(|k| u[k].as_u64()).sum::<u64>();
-        // a call without input tokens makes the stage's tokens unknown, never a smaller known sum
         let counted = match v["type"].as_str() {
             // one message spans several lines with the same id and usage
             Some("assistant") => v["message"]["id"].as_str().is_some_and(|id| ids.insert(id.to_string())),
@@ -238,17 +239,24 @@ pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
             _ => false,
         };
         if !counted { continue }
-        if u["input_tokens"].is_u64() { tokens += sum } else { missing = true }
-        match u["output_tokens"].as_u64() { Some(n) => output += n, None => no_output = true }
+        let codex = v["type"] == "turn.completed";
+        let input = u["input_tokens"].as_u64();
+        let read = u[if codex { "cached_input_tokens" } else { "cache_read_input_tokens" }].as_u64();
+        let call = [input.map(|_| sum),
+            if codex { input.zip(read).and_then(|(i, r)| i.checked_sub(r)) } else { input },
+            read,
+            if codex { Some(0) } else { u["cache_creation_input_tokens"].as_u64() },
+            u["output_tokens"].as_u64()];
+        for (s, c) in sums.iter_mut().zip(call) { *s = s.zip(c).map(|(a, b)| a + b) }
         // a model id is a short identifier (DashQ metadata allowlist); anything else stays unreported
         if let Some(m) = v["message"]["model"].as_str().filter(|m| m.len() <= 64 && m.chars().all(|c| c.is_ascii_alphanumeric() || "-._@".contains(c))) {
             *models.entry(m.into()).or_default() += 1;
         }
     }
-    let (tokens, output) = ((!missing).then_some(tokens), (!no_output).then_some(output));
+    let [tokens, input, cache_read, cache_write, output] = sums;
     let model = models.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|m| m.0);
-    if !ids.is_empty() { Usage::Known { calls: Some(ids.len() as u64), tokens, model, output } }
-    else if turns { Usage::Known { calls: None, tokens, model, output } }
+    let calls = (!ids.is_empty()).then_some(ids.len() as u64);
+    if calls.is_some() || turns { Usage::Known { calls, tokens, model, input, cache_read, cache_write, output } }
     else { Usage::Unknown("no-usage") }
 }
 
