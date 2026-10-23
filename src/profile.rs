@@ -922,17 +922,16 @@ fn health_lines(label:&str,health:&Result<(serde_json::Value,u64,u64),String>)->
 }
 
 /// Installation store size against its budget shares; unreadable sizes or limits are unknown.
+/// #1640: a read-only snapshot (no writer lock, no checkpoint) adds live WAL bytes, so a high-water WAL file is not read as full.
 fn store_line(install:&Path)->String {
-    let path=install.join("telemetry.log/universal.sqlite3");
-    let size=|suffix:&str| match fs::metadata(format!("{}{suffix}",path.display())) {
-        Ok(m)=>Ok(m.len()),Err(e) if !suffix.is_empty()&&e.kind()==std::io::ErrorKind::NotFound=>Ok(0),Err(e)=>Err(e.to_string()),
-    };
     let read=|| -> Result<String,String> {
         let budget=crate::telemetry::budget(install,"telemetry.sqlite3")?;
-        let (db,wal)=(size("")?,size("-wal")?+size("-shm")?);
+        let s=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))?.storage()?;
+        let n=|k:&str|s[k].as_u64().ok_or(format!("storage has no {k}"));
+        let (db,wal,live)=(n("database_bytes")?,n("wal_bytes")?+n("shm_bytes")?,n("wal_live_bytes")?);
         let (db_max,wal_max)=(budget.database_bytes()? as u64,budget.wal_bytes()?);
         let mib=|b:u64|format!("{:.1} MiB",b as f64/1048576.0);
-        Ok(format!("Telemetry store: database {} of {} · WAL {} of {} · budget {}\n",mib(db),mib(db_max),mib(wal),mib(wal_max),
+        Ok(format!("Telemetry store: database {} of {} · WAL file {} (live {}) of {} · budget {}\n",mib(db),mib(db_max),mib(wal),mib(live),mib(wal_max),
             if db<=db_max&&wal<=wal_max {"within"} else {"over"}))
     };
     read().unwrap_or_else(|e|format!("Telemetry store: unknown ({e})\n"))
@@ -1094,6 +1093,29 @@ pub(crate) mod tests {
         assert!(health_lines("CLI telemetry",&Ok((lost,7,now))).contains("unknown (collector lost records or failed batches)"));
         let missing=serde_json::json!({"state":"unknown","scope":"this-process","reason":"collector-snapshot-unavailable"});
         assert_eq!(health_lines("CLI telemetry",&Ok((missing,7,now))),"CLI telemetry: unknown (collector-snapshot-unavailable) · scope this-process · pid 7 · at 2027-01-15 08:00 UTC\n");
+    }
+
+    // #1640 A2-A3: the store line showed WAL file size only, so a high-water file read as a full WAL. Retained protection:
+    // live WAL bytes come from a read-only snapshot taken while the writer lock is held, and the read checkpoints nothing.
+    #[test]
+    fn profile_health_shows_live_wal_without_writer_lock_or_checkpoint() {
+        let dir=std::env::temp_dir().join(format!("taskq-store-line-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        let (capture,_guard)=collecting(&dir);
+        append_line(&dir.join("taskq.log"),r#"taskq-profile {"op":"spawn","us":1,"error":"none","at_ms":1}"#).unwrap();
+        capture.flush().unwrap();
+        let db=dir.join("telemetry.log/universal.sqlite3");
+        let storage=||coreq::telemetry::Reader::open(&db).unwrap().storage().unwrap();
+        let before=storage();let live=before["wal_live_bytes"].as_u64().unwrap();
+        assert!(live>0,"{before}");
+        let write=OpenOptions::new().create(true).truncate(false).write(true).open(dir.join("telemetry.log/universal.sqlite3.write.lock")).unwrap();write.lock().unwrap();
+        let line=store_line(&dir);
+        drop(write);
+        assert!(line.contains(&format!(" (live {:.1} MiB) of ",live as f64/1048576.0)),"{line}");
+        assert!(line.starts_with("Telemetry store: database ")&&line.ends_with("budget within\n"),"{line}");
+        assert!(line.chars().count()<=160,"{line}");
+        assert_eq!(storage(),before,"profile health checkpointed or changed the store");
+        drop(_guard);drop(capture);fs::remove_dir_all(dir).unwrap();
     }
 
     // Chain: producers enqueue without file I/O; the shared budget lock serializes the eventual commit.
