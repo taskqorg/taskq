@@ -61,7 +61,7 @@ gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();cons
 natural:function(){const c=menu.querySelector('.content'),b=c&&c.querySelector('.content-body'),all=menu.getBoundingClientRect().height;if(!b)return Math.ceil(all);const cs=getComputedStyle(c),edges=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(cs[k])||0),0);return Math.ceil(all-c.getBoundingClientRect().height+b.getBoundingClientRect().height+edges);},
 fit:function(){if(ports.workspace)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
-actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const {alert}=execution.module("tray.create.actionNotices",{alert:text=>h('div',{class:'body alert',role:'alert'},text)});
+actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const alert=text=>h('div',{class:'body alert',role:'alert'},text);
   const items=[view.aiError&&alert(view.aiError),view.workspaceError&&alert(view.workspaceError),...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
   return items.length?f(items):'';},
 lifecycleStart:function(root,action='restart',mode='drain'){
@@ -257,14 +257,10 @@ custom:function(){
 history:function(){
   const H=view.S.history,rows=H.bins,n=rows.length;
   const kinds=view.S.display.series.map(x=>x.name.toLowerCase()),colors=['work','failed','ask','ready'];
-  const {identity,stamp,quantity}=execution.module("tray.create.history.helpers",{
-    identity:b=>b.start+'/'+b.end,
-    stamp:t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',...(Number.isInteger(t)?{}:{fractionalSecondDigits:3})})+' '+(H.tz==='UTC'?'UTC':zone),
-    quantity:(count,missing)=>missing?(count?'≥'+count:'unknown (0 recorded)'):String(count)
-  });
+  const identity=b=>b.start+'/'+b.end,stamp=t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',...(Number.isInteger(t)?{}:{fractionalSecondDigits:3})})+' '+(H.tz==='UTC'?'UTC':zone),quantity=(count,missing)=>missing?(count?'≥'+count:'unknown (0 recorded)'):String(count);
   const selected=Math.max(0,rows.findIndex(b=>identity(b)===view.historyBin));
   const incomplete=rows.some(b=>b.missing.length),tot=kinds.map((_,k)=>rows.reduce((a,b)=>a+b.counts[k],0));
-  const {detail}=execution.module("tray.create.history.helpers",{detail:b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(b.counts[i],b.missing.length)).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length?' · incomplete: '+b.missing.join(', '):'')});
+  const detail=b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(b.counts[i],b.missing.length)).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length?' · incomplete: '+b.missing.join(', '):'');
   return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,'▥ History ',h('span',{class:'meta'},view.S.display.periods.find(x=>x.id===view.S.period)?.name)),
     h('div',{class:'options periods'},view.S.display.periods.map(({id:k,name:l})=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
     view.draft&&custom(),h('div',{class:'body meta'},'Start: '+when(H.start,H.tz),h('br'),'End: '+when(H.end,H.tz)),
@@ -303,7 +299,7 @@ addProject:function(){if(!ports.workspace)return api.operationLauncher('setup',n
   return f(out,h('button',{class:'project','data-a':'add-cancel'},A.state==='installing'?'Hide result; install continues':A.state==='installed'?'Done':'Cancel'));},
 bulk:function(run,held){if(!ports.workspace)return run.length||held.length?api.operationLauncher('admission',null,'Review admission…'):'';
   const pausing=run.length>0;
-const {state}=execution.module("tray.create.bulk.helpers",{state:p=>({run:pausing?'pause':'admitting, unchanged',paused:pausing?'paused, unchanged':'resume',watch:'observation, unchanged'}[mode(p)])});
+const state=p=>({run:pausing?'pause':'admitting, unchanged',paused:pausing?'paused, unchanged':'resume',watch:'observation, unchanged'}[mode(p)]);
   if(view.confirming)return f(h('div',{class:'body',role:'alert'},pausing?'Pause admission? Running tasks finish.':'Resume admission?',h('br'),lines(view.S.projects.map(p=>p.name+': '+state(p)))),h('div',{class:'options'},h('button',{'data-a':pausing?'pause-all':'resume-all'},'Confirm'),h('button',{'data-a':'cancel'},'Cancel')));
   return run.length?h('button',{class:'project','data-a':'confirm'},'Pause all…'):held.length?h('button',{class:'project','data-a':'confirm'},'Resume all…'):'';},
 views:function(){return h('div',{class:'options views'},[['icon','Icon'],['full','Summary']].map(([v,l])=>h('button',{'data-set':'view','data-v':v,'aria-pressed':String(view.S.view===v)},v==='full'?h('span',{class:'summary-preview'},raw(view.S.icons?.full)):view.S.icons?.icon&&h('img',{alt:'',src:view.S.icons.icon}),l)));},
@@ -480,14 +476,14 @@ notifications:function(){
 },
 notifyGroup:function(p){
   const N=view.S.notify.projects[p.root];if(!N)return '';
-  const {name}=execution.module("tray.create.notifyGroup",{name:v=>modes.find(m=>m[0]===v)[1]});
+  const name=v=>modes.find(m=>m[0]===v)[1];
   return h('details',{class:'group','data-view-key':'notifications:'+p.root},h('summary',null,'◉ Notifications ',h('span',{class:'meta'},view.S.display.notify.map(x=>[x.id,x.name]).map(([k])=>name(N[k][1])).join(' · '))),view.S.display.notify.map(x=>[x.id,x.name]).map(([k,l])=>[h('div',{class:'body'},l+' ',h('span',{class:'meta'},'· '+name(N[k][1]))),h('div',{class:'options'},[['inherit','Inherit'],...modes].map(([v,m])=>h('button',{'data-a':'notify','data-kind':k,'data-root':p.root,'data-v':v,'aria-pressed':String((N[k][0]||'inherit')===v)},m)))]));
 },
 openCard:function(o){
   const p=view.S&&view.S.projects.find(p=>p.root===o.root);if(!p)return;
   if(view.page!==p.root||view.working||view.taskFilter)navigate(p.root);
   const key=p.issues+'/'+o.n;
-const {find}=execution.module("tray.create.openCard.helpers",{find:()=>o.n!=null&&(menu.querySelector('[data-card="'+CSS.escape(key)+'"]'))});
+const find=()=>o.n!=null&&(menu.querySelector('[data-card="'+CSS.escape(key)+'"]'));
   if(o.n!=null&&!find()){view.noted={root:p.root,n:o.n,key,url:key,title:o.title||'',state:o.kind==='close'?'closed':o.kind,state_name:[...view.S.display.states,...view.S.display.notify].find(x=>x.id===o.kind)?.name};present(true);}
   const el=find();
   if(el){el.scrollIntoView({block:'center'});(el.querySelector('textarea,button,a')||el).focus({preventScroll:true});}
@@ -517,7 +513,7 @@ draw:function(navigating=false){
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
   const focusKey=!navigating&&active&&menu.contains(active)?JSON.stringify(active.dataset):null;
   // a refresh rebuilds the menu: refocus the same control, link or heading, by tag, data and position (U-A4)
-  const {same}=execution.module("tray.create.draw.helpers",{same:e=>e.tagName===active.tagName&&JSON.stringify(e.dataset)===focusKey});
+  const same=e=>e.tagName===active.tagName&&JSON.stringify(e.dataset)===focusKey;
 const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).indexOf(active):-1;
   const focusedSummary=!navigating&&active?.tagName==='SUMMARY'?[...menu.querySelectorAll('summary')].indexOf(active):-1;
   const open=navigating||view.restoreScroll!=null?view.disclosures:viewState.groups(),p=view.S.projects.find(p=>p.root===view.page);
@@ -550,10 +546,10 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
 wholeLines:function(c){
   if(c.scrollHeight<=c.clientHeight)return;
   const top=c.getBoundingClientRect().top+c.clientTop;
-const {lines}=execution.module("tray.create.wholeLines.helpers",{lines:()=>{const r=document.createRange(),w=document.createTreeWalker(c,NodeFilter.SHOW_TEXT),a=[];
-    for(let n;(n=w.nextNode());){r.selectNodeContents(n);a.push(...r.getClientRects());}return a;}});
-  const {shrink}=execution.module("tray.create.wholeLines.helpers",{shrink:d=>c.style.maxHeight=c.offsetHeight-d+'px'});
-const {cut}=execution.module("tray.create.wholeLines.helpers",{cut:edge=>Math.min(...lines().filter(l=>l.top<edge&&l.bottom>edge).map(l=>l.top))});
+const lines=()=>{const r=document.createRange(),w=document.createTreeWalker(c,NodeFilter.SHOW_TEXT),a=[];
+    for(let n;(n=w.nextNode());){r.selectNodeContents(n);a.push(...r.getClientRects());}return a;};
+  const shrink=d=>c.style.maxHeight=c.offsetHeight-d+'px';
+const cut=edge=>Math.min(...lines().filter(l=>l.top<edge&&l.bottom>edge).map(l=>l.top));
   const head=cut(top);
   if(head<top&&c.scrollTop+c.clientHeight<c.scrollHeight-1)c.scrollTop-=top-head;
   else if(head<top){const d=Math.min(...lines().filter(l=>l.top>=top).map(l=>l.top))-top;if(d<c.clientHeight){shrink(d);c.scrollTop+=d;}}
@@ -634,7 +630,7 @@ ui.listen(menu,'click',e=>{
   if(d.set==='period'&&d.v==='custom'){const H=view.S.history;view.draft={start:local(H.start,H.tz),end:local(H.end,H.tz),tz:H.tz,error:''};present();return;}
   if(d.set){view.S[d.set]=d.set==='font'?Number(d.v):d.v;if(d.set==='period')view.draft=null;send({a:'set',[d.set]:view.S[d.set]});present();return;}
   if(d.a==='range'){
-    const {t}=execution.module("tray.create.mount.helpers",{t:v=>v?Date.parse(view.draft.tz==='UTC'?v+'Z':v)/1000:NaN});
+    const t=v=>v?Date.parse(view.draft.tz==='UTC'?v+'Z':v)/1000:NaN;
 const a=t(view.draft.start);
 const z=t(view.draft.end);
     view.draft.error=!(a<z)?'Refused: start must be before end.':'';
@@ -643,7 +639,7 @@ const z=t(view.draft.end);
   if(api.operationAction(d))return;
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label,value:d.value});}present();});
 ui.listen(menu,'input',e=>{if(e.target.matches('[data-history-select]')){view.historyBin=e.target.value;present();return;}api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
-ui.listen(menu,'focusout',e=>{const {f}=execution.module("tray.create.mount.focusout",{f:x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence))});if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
+ui.listen(menu,'focusout',e=>{const f=x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence));if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'pointerdown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))view.headerDrag={x:e.screenX,y:e.screenY};});
 ui.listen(window,'pointermove',e=>{const start=view.headerDrag;if(start&&Math.hypot(e.screenX-start.x,e.screenY-start.y)>=4){view.headerDrag=null;send({a:'drag'});}});
 for(const event of ['pointerup','pointercancel'])ui.listen(window,event,()=>{view.headerDrag=null;});
@@ -678,10 +674,10 @@ const performance=window.performance||globalThis.performance,crypto=window.crypt
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
 const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
 const renderer=shell.create(menu);
-const {color}=execution.module("tray.create",{color:st=>({doing:'work',review:'ready',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted')});
+const color=st=>({doing:'work',review:'ready',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted');
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
 // Pages are Preact vnodes; shared module HTML enters only as an island the module owns.
-const {f,raw,lines}=execution.module("tray.create",{f:(...children)=>h(Fragment,null,...children),raw:html=>html?h('div',{style:'display:contents',dangerouslySetInnerHTML:{__html:html}}):'',lines:items=>items.flatMap((x,i)=>i?[h('br'),x]:[x])});
+const f=(...children)=>h(Fragment,null,...children),raw=html=>html?h('div',{style:'display:contents',dangerouslySetInnerHTML:{__html:html}}):'',lines=items=>items.flatMap((x,i)=>i?[h('br'),x]:[x]);
 
 // measure at the target width: after a font change the window still has the old width, so text wraps differently
 // g: this renderer's scrollbar width; a menu taller than its window scrolls and the window adds it (#1073)
@@ -722,7 +718,7 @@ const cutover='https://github.com/taskqorg/taskq/blob/main/taskq.md#9-config-and
 
 // Capacity (taskq.md § 4): the shared resource controls (docs/design/shared-resource-controls.md) over the tray's
 // taskq.resources/1 projection; this adapter only maps an operation onto `service capacity` and its receipt
-const {workPageFor}=execution.module('tray.operations',{workPageFor:p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.')});
+const workPageFor=p=>p.resources?.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('p',{role:'status'},'Legacy capacity editor unavailable; refresh host status.');
 const resourceCards=new Map(),resourceRequests=new Map(),resourcePayloads=new Map();
 
 // Work mode (menu M12): the shared editor over this host's projects; only the explicitly selected ones change

@@ -5,7 +5,7 @@ Target for native implementation. Apply [shared F1–F6](https://github.com/task
 
 ## R-UI1 Reference ownership
 
-- `final-prototype.html`: interaction/layout candidate. `final-menu.html`: generated preview. Neither is production code.
+- `final-prototype.html`: interaction/layout candidate, not production code.
 - Approved composition and feature decisions survive implementation. Candidate demo shortcuts do not: fixed demo heights, sample totals, synthetic links, simulated windows, static permission details.
 - Compact q assets and I1–I5 own icon identity. Use ordinary system numerals; no seven-segment substitute. Match ink bounds and pause overlay, not a rough silhouette.
 - Each acceptance report applies [F1](https://github.com/taskqorg/specq/blob/main/design/implementation-fidelity.md#f1-source-and-change-control). Implementation must identify pending I5 decisions instead of silently selecting an overflow or bin policy.

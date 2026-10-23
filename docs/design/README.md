@@ -13,7 +13,7 @@ App architecture: [selected foundation and migration](app-foundation.md) records
 
 Give the next agent this directory and [implementation brief](implementation-brief.md). Read the root contract first, then plan system and application work using the [ordered backlog](refactoring-backlog.md); the current batch order, development loop and owner decisions are in the [implementation plan](implementation-plan.md). No chat transcript or temporary visualization folder is required.
 
-The current visual reference is [workspace-preview.html](workspace-preview.html); its editable/generated-source relationship is defined in the brief. Keep the entire directory, including `assets/`, `shots/`, `evidence/`, JSON fixtures/configuration and component sources. Historical alternatives are labeled below and are not competing final designs.
+The current visual reference is [workspace-prototype.html](workspace-prototype.html); its editable/generated-source relationship is defined in the brief. Keep the entire directory, including `assets/`, `shots/`, `evidence/`, JSON fixtures/configuration and component sources. Historical alternatives are labeled below and are not competing final designs.
 
 The package includes the remote PM scenario (UC-17), not only the desktop menu. The owner accepted all six shared workflow refinements and AI-assisted controls. Compatible shared rules: [specq 9f82cc6](https://github.com/taskqorg/specq/tree/9f82cc6). Use this revision or a compatible successor; an older copy may lack the accepted changes.
 
@@ -49,7 +49,6 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 | [Emergency recovery](emergency-recovery.md) | Stop/interlock/reconciliation proposal and E checks |
 | [Host service](host-service.md) | Proposed one service process per host: taskq.md diff, migration, rollback, panic isolation, task split |
 | [Next variants](menu-next-variants.html) | Historical comparison; Workspace review selected |
-| [Standalone candidate](final-menu.html) | Inspect menu, AI conversations/sessions, settings, icons and scenario states |
 | [Editable fragment](final-prototype.html) | Earlier full candidate; integrated workspace takes precedence |
 | [Menu](menu.md) | M1–M12 behavior and M-A1–M-A21 acceptance |
 | [Tray and workspace placement](tray-workspace.md) | Approved TW1–TW8: one nav bar, panels then tasks in the menu, dialogue/reviews in the workspace, any-runtime AI requests, messages count, archive and permanent delete |

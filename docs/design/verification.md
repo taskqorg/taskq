@@ -127,7 +127,7 @@ The HTML uses English and a small state/action bridge target instead of OpenAI w
 ## Checks for this package
 
 Run `cargo test --locked`, `cargo run -- selftest`, and `git diff --check` before handoff.
-The prototype tests (`node docs/design/<name>.test.cjs`, Playwright's chromium headless shell through `tests/browser.cjs`; `PLAYWRIGHT_CHANNEL` outside a worker only) are development instruments per R12: run one when its prototype changes; they are not a handoff gate.
+The prototype tests named in this record were development instruments that no check ran; #1599 removed them. The [frozen package](evidence/frozen-1573-package.json) keeps them; product regressions are covered by `tests/*.test.cjs` and Cargo checks.
 Cargo checks establish current-product regression evidence, not implementation of the target menu.
 
 Observed for this package: both Node commands pass (19 menu fixture checks; icon model, render and pause checks).

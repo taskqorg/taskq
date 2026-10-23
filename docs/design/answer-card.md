@@ -49,7 +49,7 @@ B4 parent-to-child map, design `cf46e637`:
 | Parent | Child | Placement differences | Evidence |
 |---|---|---|---|
 | [visual-style.md](visual-style.md) palette | `.qac` tokens and the tray body tokens | none | `tests/answer-card.parent.cjs` computed colors |
-| `question()` in [plans-and-decisions.html](plans-and-decisions.html), `qcard` CSS of [workspace-preview.html](workspace-preview.html) | `render()` and `src/answer-card.css` | Head flows `? #N title` per M3; host/runtime stay on the tray row above; fixture state preview omitted | divider, mark, choice fill/shape/numbers, wrap, Other answer and Checked & context disclosures equal |
+| `question()` in [plans-and-decisions.html](plans-and-decisions.html), `qcard` CSS of [workspace-prototype.html](workspace-prototype.html) | `render()` and `src/answer-card.css` | Head flows `? #N title` per M3; host/runtime stay on the tray row above; fixture state preview omitted | divider, mark, choice fill/shape/numbers, wrap, Other answer and Checked & context disclosures equal |
 | Q1 states | `STATES` receipts | Recorded is "Answer accepted on the board" after readback | fixtures, `tests/tray-answer.browser.cjs` |
 | K-A8 project strip | tray project header | unchanged tray counters | right edge, order, no overflow at counts 0/1/12/100 |
 

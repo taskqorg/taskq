@@ -11,7 +11,7 @@ This package specifies the target; it does not authorize deployment or claim bac
 4. [Rendering contract](rendering-contract.md), [acceptance ledger/matrix](ui-acceptance.md), [report template](ui-acceptance-report.md).
 5. [Remote manager](remote-manager.md) and [FRA audit](remote-manager-audit.md), then [4.1.9 audit](release-4.1.9-ui-audit.md), [Current implementation inventory](current-menu-audit.md), [candidate](workspace-prototype.html), [verification](verification.md).
 
-Use `menu-next-variants.html`, `ai-conversations.html`, `agent-settings.html`, `agent-behavior.html` and `plans-and-decisions.html` as component sources. Build `workspace-prototype.html` with `build-workspace-preview.py`; `workspace-preview.html` is the standalone preview. Never edit generated output directly. Older menu/icon studies are historical; the square geometry supersedes the wide strip.
+Use `menu-next-variants.html`, `ai-conversations.html`, `agent-settings.html`, `agent-behavior.html` and `plans-and-decisions.html` as component sources. Build `workspace-prototype.html` with `build-workspace-preview.py`; a standalone preview is generated on demand and not committed. Never edit generated output directly. Older menu/icon studies are historical; the square geometry supersedes the wide strip.
 The candidate is a simulation: marked placeholder actions and mock receipts are not backend adapters.
 
 [MP1–MP10](menu-product.md) supersede earlier open product choices; [E1–E5](emergency-recovery.md) and I6 remain explicit mechanism/raster candidates.
@@ -72,8 +72,7 @@ Builder fills every acceptance-ledger row; source pinning follows [F1](https://g
 
 ## Commands
 
-- Integrated design: `workspace-prototype.test.cjs`, `ai-conversations.test.cjs`, `agent-settings.test.cjs`, `agent-behavior.test.cjs`, `plans-and-decisions.test.cjs`, `resources-recipes.test.cjs`, `project-counters.test.cjs` under `docs/design/`.
-- Rebuild: `python3 docs/design/build-workspace-preview.py`, then `python3 <visualize-skill>/scripts/render.py <repo>/docs/design/workspace-prototype.html <repo>/docs/design/workspace-preview.html --force`.
+- Rebuild: `python3 docs/design/build-workspace-preview.py`. A standalone preview, when needed: `python3 <visualize-skill>/scripts/render.py <repo>/docs/design/workspace-prototype.html <temp>/workspace-preview.html --force`; do not commit it.
 - Existing tests remain relevant to existing behavior, not proof of the new layout.
 - Runtime implementation: required `cargo test --locked` and `cargo run -- selftest`, plus focused adapter/native checks. Follow repository launcher instructions.
 
@@ -114,7 +113,7 @@ For each row: reconcile current code and board work, amend the owning contract/m
 
 Accepted: product direction, six shared workflow refinements, and AI-assisted controls. Planning can proceed without reopening those decisions. Native/service implementation is not complete. Remote PM is specified and audited, not prototyped as a separate chat product. Concrete multi-repository inputs, resource/font calibration and current adapter capability qualification remain implementation inputs.
 
-The current final browser reference is workspace-preview.html, assembled from the component sources above. It remains an interactive simulation. Publication must include the matching specq revision and all TaskQ source components, assets, configuration, fixtures and evidence; transfer the package through version control rather than temporary chat paths.
+The current final browser reference is workspace-prototype.html, assembled from the component sources above. It remains an interactive simulation. Publication must include the matching specq revision and all TaskQ source components, assets, configuration, fixtures and evidence; transfer the package through version control rather than temporary chat paths.
 
 Installation handoff: [S1–S5](setup-and-project-locations.md) requires a real documented command per supported shell, shared setup without a running AI agent, host-owned Projects folder, exact launch/resume roots and no home discovery. Include S-A1–S-A8 in streams 1/6/9/11; audit the reported macOS prompts before attributing their cause.
 
