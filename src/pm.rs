@@ -346,9 +346,12 @@ mod tests {
         }
     }
     // A4: observe real captured PM methods before asserting that no request/brief content entered telemetry.
+    // #1659: a parallel test's first `pm.exchange` registration could store `never` after `diagnose` rebuilt
+    // interest (tracing-core), so capture missed it on Windows CI; a warm-up call registers PM callsites first.
     #[test]
     fn captured_exchange_never_exports_owner_text() {
         crate::with_test_capture(|store,_| {
+            let warm=Fixture::new();exchange(&warm.install,&warm.active,&mut Dash{requests:vec![],posts:vec![],at:warm.now,offline:false,cut:None},warm.now).unwrap();
             let t=Fixture::new();let mut dash=Dash{requests:vec![t.r.clone()],posts:vec![],at:t.now,offline:false,cut:None};
             let capture=tracing::dispatcher::get_default(|d|d.downcast_ref::<coreq::telemetry::capture::Capture>().unwrap().clone());
             capture.diagnose("pm.",std::time::Duration::from_secs(60),256).unwrap();
