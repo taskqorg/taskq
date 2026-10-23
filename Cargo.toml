@@ -1,6 +1,6 @@
 [package]
 name = "taskq"
-version = "4.6.36"
+version = "4.6.37"
 edition = "2024"
 publish = false
 # #1376: tests/*.rs are modules of tests/integration.rs
