@@ -1684,6 +1684,12 @@ mod tests {
             let mut tray=||();
             tracing::dispatcher::with_default(&dispatch,|| for tick in 0..1800 {
                 if tick%30==0 {
+                    // The hour runs in seconds: let the writer catch up each simulated minute, as real pacing would, so a
+                    // loaded runner never meets CoreQ's 8192-event queue cap (merge_group flake on Windows).
+                    let until=std::time::Instant::now()+std::time::Duration::from_secs(60);
+                    while capture.health()["queued_events"].as_u64().unwrap()>1024 {
+                        assert!(std::time::Instant::now()<until,"writer stalled: {}",capture.health());std::thread::sleep(std::time::Duration::from_millis(1));
+                    }
                     for project in 0..6 {
                         let project=format!("owner/project{project}");
                         let _repeating=tracing::info_span!("service.loop",coreq_repeating=folded,project=project.as_str()).entered();

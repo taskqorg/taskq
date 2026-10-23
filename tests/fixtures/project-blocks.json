@@ -9,12 +9,27 @@
     "name": "project-with-a-long-name-that-remains-readable",
     "board": {"kind": "github", "url": "https://github.com/example/project/issues"},
     "complete": true,
+    "counts": [
+      {"state": "doing", "name": "Doing", "n": 0},
+      {"state": "review", "name": "Review", "n": 0},
+      {"state": "ask", "name": "Ask", "n": 0},
+      {"state": "failed", "name": "Failed", "n": 0},
+      {"state": "ready", "name": "Ready", "n": 0},
+      {"state": "waiting", "name": "Blocked", "n": 0},
+      {"state": "later", "name": "Later", "n": 0},
+      {"state": "held", "name": "Held", "n": 0}
+    ],
+    "partial": [],
+    "open": 0,
     "tasks": []
   },
   "row": {
     "n": 938,
     "revision": 4,
     "state": "doing",
+    "state_name": "Doing",
+    "since": 1000,
+    "age": "5m",
     "title": "A long project task title continues across the full flowing block without a narrow title column or lost actions",
     "url": "https://github.com/example/project/issues/938",
     "host": "WIN",

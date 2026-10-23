@@ -3,22 +3,31 @@ const assert=require('node:assert/strict');
 // #1591: `alive`, `tasks_live` and row `live` come from the Rust ttl rule (tray.rs `liveness`); the page compares no age.
 const execution=(id,host,runtime,role,state='running')=>({id,attempt:id,host,runtime,role,state,observed:990,live:true});
 const project={root:'p',issues:'https://example.org/p',host:'mac',age:1,tasks_age_seconds:0,alive:true,tasks_live:true,complete:true,observed:1000,
- hosts:[{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'old',updated:690,live:false},{name:'idle',updated:990,live:true}],
+ hosts:[{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'old',updated:690,live:false,age:310,age_text:'5m'},{name:'idle',updated:990,live:true}],
  tasks:[{n:1,state:'doing',executions:[execution(11,'mac','claude','worker')]},
  {n:2,state:'review',executions:[execution(12,'mac','codex','reviewer')]},
  {n:3,state:'doing',executions:[execution(13,'win','codex','worker')]},
  {n:4,state:'review',executions:[]},{n:5,state:'doing',executions:[execution(15,'old','claude','worker','unknown')]}],
  capacity:{host_runtime_used:{claude:2,codex:1},reservations:[{task:1,attempt:11,rt:'claude',state:'held'},{task:6,attempt:16,rt:'claude',state:'held'}]}};
-const c={S:{now:1000,host:'mac',projects:[project]}};require('./tray-harness.cjs').install(c);
+// #1592: rows carry the display model `key` (display.rs `model`: board kind, board url, number) and the Tasks line reads
+// the model's all-projects counts, so the page neither counts states nor dedupes boards itself.
+const fx=require('./fixtures/display-model.json');
+const counts=n=>({counts:fx.display.states.map(s=>({state:s.id,name:s.name,n:n===null?null:n[s.id]??0}))});
+const keyed=ps=>ps.map(p=>Array.isArray(p?.tasks)?{...p,tasks:p.tasks.map(t=>({...t,key:'github:'+p.issues+'/'+t.n}))}:p);
+const c={S:{now:1000,host:'mac',projects:[project],display:{...fx.display,all:counts({doing:3,review:2})}}};require('./tray-harness.cjs').install(c);
+const running=c.runningAgents;c.runningAgents=(...a)=>{c.S.projects=keyed(c.S.projects);return running(...a);};
 let html=c.runningAgents();
 assert(html.includes('claude: 1 worker · 0 reviewers'));
 assert(html.includes('codex: 0 workers · 1 reviewer'));
 assert(html.includes('codex: 1 worker · 0 reviewers'));
-assert(html.includes('old</strong> · unknown · 5 min old'));
+assert(html.includes('old</strong> · unknown · 5m old'));
 assert(html.includes('idle</strong> · idle'));
 assert(html.includes('Reservations: claude 1'));
 assert(html.includes('Occupied slots: claude 2 · codex 1'));
 assert(html.includes('Tasks: Doing 3 · Review 2'));
+c.S.display.all=counts({doing:7,review:0});assert(c.runningAgents().includes('Tasks: Doing 7 · Review 0'),'the line reads model counts, not rows');
+c.S.display.all=counts(null);assert(c.runningAgents().includes('Tasks unknown'),'unknown model counts never read zero');
+c.S.display.all=counts({doing:3,review:2});
 const single=html;c.S.projects.push({...project,root:'duplicate'});assert.equal(c.runningAgents(),single,'duplicate board must not double count');
 c.S.projects=[{...project,complete:false}];html=c.runningAgents();assert(!html.includes(' · idle'));assert(!html.includes('claude: 1 worker'));
 c.S.projects=[{...project,age:301,alive:false,tasks_live:false}];html=c.runningAgents();assert(!html.includes('claude: 1 worker'));assert(html.includes('Capacity unknown'));
