@@ -5,7 +5,9 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
-`taskq profile health` shows live WAL bytes next to the WAL file size, read without the writer lock or a checkpoint; taskq pins coreq v0.14.9 (#1640). No board change.
+## v4.6.34
+
+Releases ship the task workspace (menu, detail and views) as `taskq.task-workspace/1` js, css, fixtures and sources under SHA256SUMS, and the tray embeds the same bytes (#1645). `taskq profile health` shows live WAL bytes next to the WAL file size, read without the writer lock or a checkpoint; taskq pins coreq v0.14.9 (#1640). Runtime knowledge lives only in the adapter, enforced by check.py (#1593). Unrun previews and prototype tests, the unused enrollment reader and one-lambda wrappers are gone (#1599). No board change.
 
 ## v4.6.33
 
