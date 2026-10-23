@@ -44,7 +44,8 @@ For `build` and `review`, a `taskq-stage` line holds the context tokens (model i
 - Codex: `turn.completed` input; calls are not reported.
 - A call without usage makes the stage's tokens unknown.
 - Model and output tokens: Claude reports `message.model` and `usage.output_tokens`; the stage keeps the most-used model id (at most 64 characters of `[A-Za-z0-9-._@]`, else none) and sums output tokens (a counted call without them makes the sum none). Codex reports output tokens, not the model.
-- In the shared observation a missing `model` or `output_tokens` is `null`, with its reason under `unknown` (the stage's usage reason, else `not-reported`): gap G3.
+- Context split (#1647): `input_tokens` (uncached input), `cache_read_tokens` and `cache_write_tokens` sum to `tokens`, so each is priced at the stage `model`'s rate; a stage of mixed models counts under its most-used one. Claude reports `input_tokens`, `cache_read_input_tokens` and `cache_creation_input_tokens`. Codex's `input_tokens` include its `cached_input_tokens`: input is their difference, cache read the cached part, cache write 0 (Codex reports none). A counted call without a part, or a Codex count whose cached part exceeds its input, makes that sum none.
+- In the shared observation a missing `model`, `output_tokens` or split field is `null`, with its reason under `unknown` (the stage's usage reason, else `not-reported`): gap G3.
 - `codex-app`, unreadable logs and children adopted across a re-exec read unknown with reason; their duration too.
 
 ## Board kinds
@@ -79,12 +80,12 @@ Each call of the board adapter is one `taskq-board` line with one kind:
 
 The shared `Reader` reads the existing universal store without write permission, migration, checkpoint or pruning. The transitional legacy view takes a read-only shared profile lock and reads its existing SQLite snapshot; it validates the text checkpoint and refuses undrained/lost history instead of importing or hiding it. Legacy rows use the existing typed migration mapping; their absent immutable ids and pruning counters remain unknown. The universal Reader stays pinned while the archive is filtered by that snapshot’s committed source cursor. Imported positions are excluded even after normal universal retention; remaining archive positions appear once. Missing/replaced identity or unimported removals refuse the view as unknown. Compatibility reports order the version-unknown historical prefix, then unimported archive rows, then versioned live observations; a newer terminal repair cannot be overwritten by the imported prefix. This is local import consistency, not an atomic fleet view. This adapter is removed when the one-store cutover retires the archive. Corruption or unavailable sources fail the export before any JSON is printed. Snapshots and locks are released before stdout output. Export boundary spans are captured; internal telemetry decoding is excluded from recursive collection.
 
-Task/board reports read the internal compatibility projection below. Schema 2 adds the stage columns `model` and `output_tokens`; a reader checks the schema, so an older reader refuses a schema 2 header instead of misreading it.
+Task/board reports read the internal compatibility projection below. Schema 2 adds the stage columns `model` and `output_tokens`; schema 3 adds `input_tokens`, `cache_read_tokens` and `cache_write_tokens`. A reader checks the schema, so an older reader refuses a newer header instead of misreading it.
 
 JSON lines. The first line is a header:
 
 ```json
-{"schema":2,"columns":[...],"since_ms":N,"window_ms":[first,last],"samples":N,"corrupt":N}
+{"schema":3,"columns":[...],"since_ms":N,"window_ms":[first,last],"samples":N,"corrupt":N}
 ```
 
 - `window_ms` holds the first and last observation time in the window, or `null` when the window is empty.
@@ -106,6 +107,7 @@ Then one object per observation, with exactly the header columns in this order. 
 | `outcome`, `error` | outcome and error class |
 | `remaining` | lowest rate-limit `remaining` after a board call |
 | `calls`, `tokens` | model calls and context tokens of a stage |
+| `input_tokens`, `cache_read_tokens`, `cache_write_tokens` | context tokens split into uncached input, cache reads and cache writes; they sum to `tokens` |
 | `model`, `output_tokens` | model id and output tokens of a stage |
 | `unknown` | reason a value is unknown |
 
@@ -144,7 +146,7 @@ All these records hold fixed codes and numbers only (`TASKQ_PROFILE_TRACE=1` add
 
 | Command | Does |
 |---|---|
-| `taskq profile [export\|tasks\|board] [--since 30m\|24h\|7d]` | no board; this host's retained log, all projects ([detail](profiling.md)). Bare: § 4. `export`: JSON lines, a header (columns, window, samples), one row per observation: `kind at_ms project task attempt entry name from to runtime host us prev_s outcome error remaining calls tokens model output_tokens unknown` (schema 2). `tasks`: time in state (`Project Task State Runtime Host Count Total p50/p95/max`). `board`: operations (`Operation Count p50/p95/max Failed% Errors Lowest-remaining`). Unknown reads unknown with reason, never zero |
+| `taskq profile [export\|tasks\|board] [--since 30m\|24h\|7d]` | no board; this host's retained log, all projects ([detail](profiling.md)). Bare: § 4. `export`: JSON lines, a header (columns, window, samples), one row per observation: `kind at_ms project task attempt entry name from to runtime host us prev_s outcome error remaining calls tokens input_tokens cache_read_tokens cache_write_tokens model output_tokens unknown` (schema 3). `tasks`: time in state (`Project Task State Runtime Host Count Total p50/p95/max`). `board`: operations (`Operation Count p50/p95/max Failed% Errors Lowest-remaining`). Unknown reads unknown with reason, never zero |
 
 ## Coverage and delivery
 

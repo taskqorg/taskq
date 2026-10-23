@@ -64,7 +64,7 @@ fn canonical(line: &str) -> Res<Value> {
 fn fields(kind: &str) -> Res<&'static [(&'static str,&'static str)]> {
     Ok(match kind {
         "operation" => &[("op","operation"),("us","duration_us"),("error","error"),("at_ms","started_ms")],
-        "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("model","model"),("output_tokens","output_tokens"),("unknown","usage_status")],
+        "stage" => &[("host","host"),("open","open"),("project","project"),("stage","operation"),("task","task"),("attempt","attempt"),("rt","runtime"),("us","duration_us"),("outcome","outcome"),("error","error"),("at_ms","started_ms"),("calls","calls"),("tokens","tokens"),("input_tokens","input_tokens"),("cache_read_tokens","cache_read_tokens"),("cache_write_tokens","cache_write_tokens"),("model","model"),("output_tokens","output_tokens"),("unknown","usage_status")],
         "board" => &[("op","operation"),("us","duration_us"),("outcome","outcome"),("error","error"),("remaining","remaining"),("at_ms","started_ms")],
         "transition" => &[("project","project"),("task","task"),("entry","entry"),("from","from"),("to","to"),("prev_s","previous_seconds"),("rt","runtime"),("host","host"),("at_ms","started_ms")],
         "requests" => &[("at_ms","started_ms")],
@@ -90,8 +90,8 @@ pub(super) fn encode(kind:&str,original:Value)->Res<Value> {
     for name in ["duration_us","remaining","previous_seconds","calls","tokens"] {
         if value.get(name).is_some_and(Value::is_null) {value["unknown"][name]=original.get("unknown").cloned().unwrap_or(json!("not-recorded"));}
     }
-    // gap G3: a stage without model or output tokens says why (its usage status, else the runtime reported none)
-    if kind=="stage" {for name in ["model","output_tokens"] {
+    // gap G3: a stage without model, output tokens or a context split says why (its usage status, else the runtime reported none)
+    if kind=="stage" {for name in ["model","output_tokens","input_tokens","cache_read_tokens","cache_write_tokens"] {
         if value[name].is_null() {value[name]=Value::Null;value["unknown"][name]=original.get("unknown").cloned().unwrap_or(json!("not-reported"));}
     }}
     if kind=="operation" {value["outcome"]=json!(if value["error"]=="none" {"ok"} else {"failed"});}
@@ -207,13 +207,16 @@ mod tests {
     // Chain: runtime usage -> stage observation (gap G3). Risk: a missing model or output count read as zero or
     // dropped without a reason; a known one lost.
     #[test]
-    fn stage_model_and_output_tokens_are_known_or_null_with_reason() {
-        let known=observation(r#"taskq-stage {"stage":"build","task":1,"attempt":2,"rt":"claude","us":4,"outcome":"ok","error":"none","at_ms":5,"calls":2,"tokens":9,"model":"claude-opus-5-5","output_tokens":7}"#).unwrap();
+    fn stage_model_and_token_split_are_known_or_null_with_reason() {
+        let known=observation(r#"taskq-stage {"stage":"build","task":1,"attempt":2,"rt":"claude","us":4,"outcome":"ok","error":"none","at_ms":5,"calls":2,"tokens":9,"input_tokens":1,"cache_read_tokens":6,"cache_write_tokens":2,"model":"claude-opus-5-5","output_tokens":7}"#).unwrap();
         assert_eq!((&known["model"],&known["output_tokens"],known["unknown"].get("model")),(&json!("claude-opus-5-5"),&json!(7),None));
+        // #1647: the context split survives the observation; a record from before the split has it null with a reason
+        assert_eq!((&known["input_tokens"],&known["cache_read_tokens"],&known["cache_write_tokens"],known["unknown"].get("cache_read_tokens")),(&json!(1),&json!(6),&json!(2),None));
         let codex=observation(r#"taskq-stage {"stage":"build","task":1,"attempt":2,"rt":"codex","us":4,"outcome":"ok","error":"none","at_ms":5,"tokens":9,"output_tokens":7}"#).unwrap();
         assert_eq!((&codex["model"],&codex["unknown"]["model"],&codex["output_tokens"]),(&Value::Null,&json!("not-reported"),&json!(7)));
+        assert_eq!((&codex["input_tokens"],&codex["unknown"]["input_tokens"],&codex["unknown"]["cache_write_tokens"]),(&Value::Null,&json!("not-reported"),&json!("not-reported")));
         let service=observation(r#"taskq-stage {"stage":"claim","task":1,"attempt":2,"rt":"other","us":4,"outcome":"ok","error":"none","at_ms":5,"unknown":"no-model"}"#).unwrap();
-        assert_eq!((&service["unknown"]["model"],&service["unknown"]["output_tokens"]),(&json!("no-model"),&json!("no-model")));
+        assert_eq!((&service["unknown"]["model"],&service["unknown"]["output_tokens"],&service["unknown"]["cache_read_tokens"]),(&json!("no-model"),&json!("no-model"),&json!("no-model")));
     }
     #[test]
     #[ignore="read-only archive qualification; requires TASKQ_SEMANTIC_SOURCE snapshot"]

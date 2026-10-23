@@ -146,8 +146,10 @@ const RUNTIMES: [&str; 4] = { let r = crate::runtime::RUNTIMES; [r[0], r[1], r[2
 const UNKNOWN: [&str; 6] = ["no-model", "no-usage", "log-unreadable", "app-turn", "adopted", "open-stage"];
 
 /// Model use of one stage: service stages run no model; a runtime that reports none reads unknown, never zero;
-/// `tokens` and `output` are `None` when any counted call lacked them; `model` is the model of most calls.
-pub enum Usage { NoModel, Unknown(&'static str), Known { calls: Option<u64>, tokens: Option<u64>, model: Option<String>, output: Option<u64> } }
+/// `tokens` (context: input with cache reads and writes), its split `input`, `cache_read`, `cache_write`, and `output`
+/// are `None` when any counted call lacked them; `model` is the model of most calls.
+pub enum Usage { NoModel, Unknown(&'static str), Known { calls: Option<u64>, tokens: Option<u64>, model: Option<String>,
+    input: Option<u64>, cache_read: Option<u64>, cache_write: Option<u64>, output: Option<u64> } }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -176,6 +178,12 @@ pub(crate) struct Stage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cache_read_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cache_write_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     unknown: Option<String>,
 }
 
@@ -195,7 +203,7 @@ pub(crate) fn now_ms() -> Option<u64> {
 pub fn open(install: &Path, project: &str, host: &str, task: u64, attempt: u64, rt: &str, reviewer: bool) {
     let r = Stage { project: Some(project.into()), host: Some(host.into()), open: true,
         stage: if reviewer { "review" } else { "build" }.into(), task, attempt, rt: RUNTIMES.into_iter().find(|r| *r == rt).unwrap_or("other").into(),
-        us: None, outcome: "unknown".into(), error: "none".into(), at_ms: now_ms(), calls: None, tokens: None, model: None, output_tokens: None, unknown: Some("open-stage".into()) };
+        us: None, outcome: "unknown".into(), error: "none".into(), at_ms: now_ms(), calls: None, tokens: None, model: None, output_tokens: None, input_tokens: None, cache_read_tokens: None, cache_write_tokens: None, unknown: Some("open-stage".into()) };
     write_stage(&install.join("taskq.log"), &r);
 }
 
@@ -245,7 +253,7 @@ pub fn repair(install: &Path, project: &str, host: &str, task: u64, attempt: u64
     if !rows.iter().any(|r| r.project.as_deref() == Some(project) && r.task == task && r.attempt == attempt) { return; }
     let r = Stage { project: Some(project.into()), host: Some(host.into()), open: false,
         stage: if reviewer { "review" } else { "build" }.into(), task, attempt, rt: RUNTIMES.into_iter().find(|r| *r == rt).unwrap_or("other").into(), us: None,
-        outcome: "failed".into(), error: "exit".into(), at_ms: now_ms(), calls: None, tokens: None, model: None, output_tokens: None, unknown: Some("adopted".into()) };
+        outcome: "failed".into(), error: "exit".into(), at_ms: now_ms(), calls: None, tokens: None, model: None, output_tokens: None, input_tokens: None, cache_read_tokens: None, cache_write_tokens: None, unknown: Some("adopted".into()) };
     write_stage(&install.join("taskq.log"), &r);
 }
 
@@ -289,7 +297,7 @@ pub fn repair_ended(install: &Path, root: &Path, project: &str, host: &str, boar
         r.us = None;
         r.calls = None;
         r.tokens = None;
-        (r.model, r.output_tokens) = (None, None);
+        (r.model, r.output_tokens, r.input_tokens, r.cache_read_tokens, r.cache_write_tokens) = (None, None, None, None, None);
         r.unknown = Some("adopted".into());
         write_stage(&install.join("taskq.log"), &r);
         if let Some((_, rows)) = UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner()).get_mut(install) { rows.retain(|f| !same(f, &r)); }
@@ -366,13 +374,16 @@ pub fn stage(name: &'static str, task: u64, attempt: u64, rt: &str, took: Option
 
 #[allow(clippy::too_many_arguments)]
 fn stage_at(path: Option<&Path>, name: &'static str, task: u64, attempt: u64, rt: &str, took: Option<std::time::Duration>, outcome: &'static str, err: &'static str, usage: Usage) {
-    let (calls, tokens, model, output_tokens, unknown) = match usage {
-        Usage::NoModel => (None, None, None, None, Some("no-model")),
-        Usage::Unknown(r) => (None, None, None, None, Some(r)),
-        Usage::Known { calls, tokens, model, output } => (calls, tokens, model, output, tokens.is_none().then_some("no-usage")),
+    let none = (None, None, None, None, None, None, None);
+    let ((calls, tokens, model, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens), unknown) = match usage {
+        Usage::NoModel => (none, Some("no-model")),
+        Usage::Unknown(r) => (none, Some(r)),
+        Usage::Known { calls, tokens, model, input, cache_read, cache_write, output } =>
+            ((calls, tokens, model, input, cache_read, cache_write, output), tokens.is_none().then_some("no-usage")),
     };
     let r = Stage { host: HOST.with_borrow(Clone::clone), open: false, project: PROJECT.with_borrow(Clone::clone), stage: name.into(), task, attempt, rt: RUNTIMES.into_iter().find(|k| *k == rt).unwrap_or("other").into(),
-        us: took.map(|d| d.as_micros().min(u64::MAX as u128) as u64), outcome: outcome.into(), error: err.into(), at_ms: now_ms(), calls, tokens, model, output_tokens, unknown: unknown.map(Into::into) };
+        us: took.map(|d| d.as_micros().min(u64::MAX as u128) as u64), outcome: outcome.into(), error: err.into(), at_ms: now_ms(), calls, tokens, model, output_tokens,
+        input_tokens, cache_read_tokens, cache_write_tokens, unknown: unknown.map(Into::into) };
     if path.is_none() {return;}
     if let Err(e) = crate::telemetry::record(crate::telemetry::Sample::Stage(r)) {
         let _ = writeln!(std::io::stderr().lock(), "Profiling: unknown ({})", append_error(&e));
@@ -700,17 +711,18 @@ pub fn report(install: &Path) -> String {
 
 /// § 5 `taskq profile export` columns, in order; every row has each of them, null where its kind has none. A new
 /// column is a new [`EXPORT`] schema.
-const COLUMNS: [&str; 21] = ["kind", "at_ms", "project", "task", "attempt", "entry", "name", "from", "to", "runtime", "host", "us", "prev_s",
-    "outcome", "error", "remaining", "calls", "tokens", "model", "output_tokens", "unknown"];
-/// Export schema: 2 added `model` and `output_tokens`.
-const EXPORT: u64 = 2;
+const COLUMNS: [&str; 24] = ["kind", "at_ms", "project", "task", "attempt", "entry", "name", "from", "to", "runtime", "host", "us", "prev_s",
+    "outcome", "error", "remaining", "calls", "tokens", "input_tokens", "cache_read_tokens", "cache_write_tokens", "model", "output_tokens", "unknown"];
+/// Export schema: 2 added `model` and `output_tokens`; 3 the context split `input_tokens`, `cache_read_tokens`, `cache_write_tokens`.
+const EXPORT: u64 = 3;
 
 #[derive(Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 struct Row { kind: String, at_ms: Option<u64>, project: Option<String>, task: Option<u64>, attempt: Option<u64>, entry: Option<u64>,
     name: Option<String>, from: Option<String>, to: Option<String>, runtime: Option<String>, host: Option<String>, us: Option<u64>,
     prev_s: Option<u64>, outcome: Option<String>, error: Option<String>, remaining: Option<u64>, calls: Option<u64>, tokens: Option<u64>,
-    model: Option<String>, output_tokens: Option<u64>, unknown: Option<String> }
+    input_tokens: Option<u64>, cache_read_tokens: Option<u64>, cache_write_tokens: Option<u64>, model: Option<String>, output_tokens: Option<u64>,
+    unknown: Option<String> }
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -724,6 +736,7 @@ fn row_sample(sample:&Sample) -> Option<Option<Row>> {
         Sample::Stage(r)=>{let r=r.clone();Row {
             kind: "stage".into(), at_ms: r.at_ms, project: r.project, task: Some(r.task), attempt: Some(r.attempt), name: Some(r.stage), runtime: Some(r.rt),
             host: r.host, us: r.us, outcome: Some(r.outcome), error: Some(r.error), calls: r.calls, tokens: r.tokens, model: r.model,
+            input_tokens: r.input_tokens, cache_read_tokens: r.cache_read_tokens, cache_write_tokens: r.cache_write_tokens,
             output_tokens: r.output_tokens, unknown: r.unknown, ..Default::default() }},
         Sample::Board(r)=>Row {kind: "board".into(), at_ms: r.at_ms, name: Some(r.op.clone()), us: Some(r.us), outcome: Some(r.outcome.clone()), error: Some(r.error.clone()), remaining: r.remaining, ..Default::default()},
         Sample::Transition(r)=>{let r=r.clone();Row {
@@ -1173,7 +1186,7 @@ pub(crate) mod tests {
         let o = b.comment(open, "taskq: spawn worker codex:w mac").unwrap();
         for (task, attempt) in [(closed, a), (open, o)] {
             write_stage(&dir.join("taskq.log"), &Stage { project: Some("o/r".into()), host: None, open: true, stage: "build".into(), task, attempt,
-                rt: "codex".into(), us: None, outcome: "unknown".into(), error: "none".into(), at_ms: Some(1), calls: None, tokens: None, model: None, output_tokens: None, unknown: Some("open-stage".into()) });
+                rt: "codex".into(), us: None, outcome: "unknown".into(), error: "none".into(), at_ms: Some(1), calls: None, tokens: None, model: None, output_tokens: None, input_tokens: None, cache_read_tokens: None, cache_write_tokens: None, unknown: Some("open-stage".into()) });
         }
         capture.flush().unwrap();
         let (listed, mut unowned) = (std::collections::HashSet::from([open]), std::collections::HashSet::new());
@@ -1277,14 +1290,23 @@ pub(crate) mod tests {
         fs::write(&attempt, format!("{before}{claude}\n{claude}\n{}\n", claude.replace("m1", "m2"))).unwrap();
         // gap G3: model of most calls and output tokens; Codex reports output tokens but no model; a path-like
         // model id or a call without output tokens stays unknown, never a guess or a smaller sum
-        let got = |log: &Path, pos, rt| match crate::runtime::usage(log, pos, rt) { Usage::Known { calls, tokens, model, output } => (calls, tokens, model, output), _ => panic!("{rt}") };
+        let got = |log: &Path, pos, rt| match crate::runtime::usage(log, pos, rt) { Usage::Known { calls, tokens, model, output, .. } => (calls, tokens, model, output), _ => panic!("{rt}") };
+        // #1647: context tokens split into uncached input, cache read and cache write, which sum to `tokens`;
+        // Codex's input includes its cached tokens and Codex reports no cache writes
+        let split = |log: &Path, pos, rt| match crate::runtime::usage(log, pos, rt) { Usage::Known { input, cache_read, cache_write, .. } => (input, cache_read, cache_write), _ => panic!("{rt}") };
         assert_eq!(got(&attempt, before.len() as u64, "claude"), (Some(2), Some(230), Some("claude-opus-5-5".into()), Some(6)));
+        assert_eq!(split(&attempt, before.len() as u64, "claude"), (Some(20), Some(200), Some(10)));
         let odd = dir.join("odd.log");
         let bad = claude.replace("claude-opus-5-5", "/home/x/model");
         fs::write(&odd, format!("{bad}\n{}\n", bad.replace("m1", "m2").replace(r#","output_tokens":3"#, ""))).unwrap();
         assert_eq!(got(&odd, 0, "claude"), (Some(2), Some(230), None, None));
         fs::write(&odd, format!("{codex}\n")).unwrap();
         assert_eq!(got(&odd, 0, "codex"), (None, Some(700), None, Some(9)));
+        assert_eq!(split(&odd, 0, "codex"), (Some(100), Some(600), Some(0)));
+        // a Codex count whose cached part exceeds its input is inconsistent: input unknown, never wrapped
+        fs::write(&odd, format!("{}
+", codex.replace("700", "500"))).unwrap();
+        assert_eq!(split(&odd, 0, "codex"), (None, Some(600), Some(0)));
         let ms = |m| Some(std::time::Duration::from_millis(m));
         stage_at(Some(&path), "build", 7, 1, "claude", ms(9), "ok", "none", crate::runtime::usage(&attempt, before.len() as u64, "claude"));
         fs::write(&attempt, format!("{codex}\n{codex}\n")).unwrap();
@@ -1294,6 +1316,7 @@ pub(crate) mod tests {
         stage_at(Some(&path), "claim", 7, 1, "private-rt", ms(3), "failed", class("HTTP 502 secret /host/path"), Usage::NoModel);
         // a Claude call with empty usage keeps the call count and makes tokens unknown, never 0; an adopted child is untimed
         fs::write(&attempt, format!("{}\n", claude.replace(r#""usage":{"input_tokens":10,"cache_read_input_tokens":100,"cache_creation_input_tokens":5,"output_tokens":3}"#, r#""usage":{}"#))).unwrap();
+        assert_eq!(split(&attempt, 0, "claude"), (None, None, None));
         stage_at(Some(&path), "review", 7, 5, "claude", ms(4), "ok", "none", crate::runtime::usage(&attempt, 0, "claude"));
         stage_at(Some(&path), "review", 7, 6, "claude", None, "ok", "none", Usage::Unknown("adopted"));
         // a child stopped after its result or requeue keeps that outcome; a live child exiting without one failed;
@@ -1398,16 +1421,17 @@ Changed: x"))];
             format!("{BOARD_PREFIX}{{\"op\":\"lunch\"}}\n"),
             format!("{PREFIX}{}\n", serde_json::to_string(&Record { op: "spawn".into(), us: 7, error: "none".into(), at_ms: Some(140), trace: None }).unwrap()),
             format!("{STAGE_PREFIX}{}\n", serde_json::to_string(&Stage { host: None, open: false, project: Some("o/a".into()), stage: "build".into(), task: 5, attempt: 9, rt: "codex".into(),
-                us: Some(5), outcome: "ok".into(), error: "none".into(), at_ms: Some(150), calls: None, tokens: Some(3), model: None, output_tokens: Some(2), unknown: None }).unwrap()),
+                us: Some(5), outcome: "ok".into(), error: "none".into(), at_ms: Some(150), calls: None, tokens: Some(3), input_tokens: Some(1), cache_read_tokens: Some(2), cache_write_tokens: Some(0), model: None, output_tokens: Some(2), unknown: None }).unwrap()),
         ].concat();
         let text = export(&log, Some(100));
         let mut lines = text.lines();
-        assert_eq!(lines.next().unwrap(), format!(r#"{{"schema":2,"columns":{},"since_ms":100,"window_ms":[100,150],"samples":16,"corrupt":1}}"#, serde_json::to_string(&COLUMNS).unwrap()));
+        assert_eq!(lines.next().unwrap(), format!(r#"{{"schema":3,"columns":{},"since_ms":100,"window_ms":[100,150],"samples":16,"corrupt":1}}"#, serde_json::to_string(&COLUMNS).unwrap()));
         let first: serde_json::Map<String, serde_json::Value> = serde_json::from_str(lines.next().unwrap()).unwrap();
         assert_eq!(first.keys().collect::<Vec<_>>(), COLUMNS.iter().collect::<Vec<_>>());
         assert_eq!(serde_json::Value::Object(first), serde_json::json!({"kind":"transition","at_ms":100,"project":"o/a","task":5,"attempt":null,"entry":100,"name":null,
-            "from":"ready","to":"doing","runtime":"claude","host":"mac","us":null,"prev_s":10,"outcome":null,"error":null,"remaining":null,"calls":null,"tokens":null,"model":null,"output_tokens":null,"unknown":null}));
+            "from":"ready","to":"doing","runtime":"claude","host":"mac","us":null,"prev_s":10,"outcome":null,"error":null,"remaining":null,"calls":null,"tokens":null,"input_tokens":null,"cache_read_tokens":null,"cache_write_tokens":null,"model":null,"output_tokens":null,"unknown":null}));
         assert!(text.contains(r#""kind":"stage","at_ms":150,"project":"o/a","task":5,"attempt":9,"entry":null,"name":"build""#), "{text}");
+        assert!(text.contains(r#""tokens":3,"input_tokens":1,"cache_read_tokens":2,"cache_write_tokens":0,"model":null,"output_tokens":2"#), "{text}");
         assert!(!text.contains("999"), "a record before the window is not exported");
         let tasks = render_tasks(&text).unwrap();
         assert!(tasks.contains("Window: 100..150 Unix ms (since 100); 16 samples, 1 corrupt skipped; earlier/pruned history unknown
