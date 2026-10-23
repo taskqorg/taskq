@@ -1,7 +1,7 @@
 'use strict';
 const {h,Fragment}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
 const views=require('./task-views.js'),blocks=require('./project-blocks.js'),popover=require('./anchored-popover.js'),{icon,button}=require('./ui-icons.js');
-// MP14: closure outcome labels; a success with a PR link is the confirmed merged result (git-merge, Review purple).
+// MP14: closure outcome labels; only a success with a sourced merge receipt reads Merged (git-merge, Review purple).
 const outcomes={success:['circle-check','','Completed'],not_planned:['circle-slash','','Not planned'],unknown:['circle-question-mark','','Outcome unknown']};
 module.exports=execution.module('taskDashboard',{
  create:function(view,{menu,present,send,app,window=globalThis,document=window.document}){
@@ -48,7 +48,7 @@ module.exports=execution.module('taskDashboard',{
     const entries=view.completed?.entries||[];return {entries,rows:entries.flatMap(e=>e.tasks.map(t=>({...t,project:e.name,kind:e.kind,ref:e.identity+'#'+t.n})))};
    },
    receive:function(page){const e=view.completed?.entries.find(e=>e.id===page.id&&e.root===page.root);if(!e)return;e.loading=false;if(page.reason){e.reason=page.reason;e.more=false;}else{e.page=page.page||e.page+1;e.more=page.more===true;e.tasks.push(...(page.tasks||[]).filter(t=>!e.tasks.some(x=>x.n===t.n)));}present();},
-   outcome:function(t){return t.outcome==='success'&&t.pr?['git-merge','review','Merged']:outcomes[t.outcome]||outcomes.unknown;},
+   outcome:function(t){return t.outcome==='success'&&typeof t.merged==='string'&&t.merged?['git-merge','review','Merged']:outcomes[t.outcome]||outcomes.unknown;},
    completed:function(){const c=api.criteria(),{entries,rows}=api.history(),pinned=new Set(api.model().pins.map(p=>p.ref));
     const shown=rows.filter(t=>!pinned.has(t.ref)&&views.matches(t,c.query)&&(!c.outcomes.length||c.outcomes.includes(t.outcome in outcomes?t.outcome:'unknown'))).sort((a,b)=>(b.closed??0)-(a.closed??0)||b.n-a.n);
     const loading=entries.some(e=>e.loading),more=entries.filter(e=>e.more&&!e.loading);
