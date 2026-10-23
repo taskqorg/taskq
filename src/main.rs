@@ -771,8 +771,13 @@ fn kids_file(install:&Path,root: &Path) -> Res<Vec<data::KidLine>> {
 
 /// A process that started before this boot cannot still run; its board attempt recovers like any lost heartbeat.
 fn pre_boot(k:&data::KidLine)->bool {
-    platform::started_before_boot(&k.process.started).unwrap_or(false)
-        && matches!(coreq::process::identity(k.process.pid), Ok(x) if x.as_ref()!=Some(&k.process))
+    platform::started_before_boot(&k.process.started).unwrap_or(false) && recorded(k).0=="ended"
+}
+
+/// #1594 the verdict on a recorded native process: its identity read now against the record.
+fn recorded(k:&data::KidLine)->(&'static str,String) {
+    let now=coreq::process::identity(k.process.pid).map_err(|e|e.to_string());
+    snapshot::verdict(&snapshot::Signals {local:true,process:Some((&k.process,now)),..Default::default()})
 }
 
 /// Power loss (#1445): drop a torn `.pending` and retire kids from a previous boot before adoption.
@@ -996,7 +1001,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let kids: Vec<Value> = s.kids.iter().map(|k| {
             let unknown = k.unknown.as_ref();
-            json!({"task": k.task, "attempt": k.attempt, "rt": k.rt, "pid": k.proc.id(), "live": if unknown.is_some() { "unknown" } else { "running" }, "reason": unknown})
+            let child = snapshot::Child { unknown: unknown.map(String::as_str), ..Default::default() };
+            let live = if snapshot::verdict(&snapshot::Signals { local: true, child: Some(child), ..Default::default() }).0 == "unknown" { "unknown" } else { "running" };
+            json!({"task": k.task, "attempt": k.attempt, "rt": k.rt, "pid": k.proc.id(), "live": live, "reason": unknown})
         }).collect();
         let request = fs::read_to_string(d.join("focus.request")).ok();
         // § 4: runtime probes at most every 5 minutes
@@ -1227,13 +1234,14 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
     };
     let mut kids=vec![];
     for k in &s.kids {
-        let process=k.proc.native_identity()?;
-        if coreq::process::identity(process.pid).map_err(|e|e.to_string())?.as_ref()!=Some(&process) {
+        let line=data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process:k.proc.native_identity()?,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()};
+        match recorded(&line) {
+            ("running",_)=>{},
             // #1561: a recorded process that exited resolves from its board exit; until then one error names the wait.
-            if exited(k.task,k.attempt,k.execution,&k.rt)? { continue; }
-            return Err(format!("#{} execution {}: recorded native process exited; handover waits for its board release",k.task,k.execution));
+            ("ended",_) if exited(k.task,k.attempt,k.execution,&k.rt)? => continue,
+            (_,why)=>return Err(format!("#{} execution {}: {why}; handover waits for its board release",k.task,k.execution)),
         }
-        kids.push(data::KidLine {task:k.task,attempt:k.attempt,runtime:k.rt.clone(),process,execution:k.execution,offset:k.proc.input_offset()?,job:k.proc.job()});
+        kids.push(line);
     }
     let mut kept=vec![];
     for old in kids_file(&s.cfg.install,root)? {
@@ -4118,6 +4126,40 @@ mod tests {
         assert_eq!(runtime::liveness(pid),Ok(false),"waitpid reaped the zombie");
         assert!(core::executions(n,&board::entries(&b,n).unwrap()).iter().any(|x|x.id==a && x.release==Some(core::Release::Exit)));
         save_kids(&s,&root).unwrap(); assert!(kids_file(&root,&root).unwrap().is_empty(),"handover completes");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // #1594 A3: the recorded-process verdict reaches pre-boot retirement and the handover checkpoint unchanged.
+    // Risk: save_kids or pre_boot re-derive exit from identity and drift from snapshot::verdict (#1561, #1445).
+    #[cfg(unix)]
+    #[test]
+    fn recorded_process_verdict_through_pre_boot_and_handover() {
+        let root = std::env::temp_dir().join(format!("taskq-verdict-{}", runtime::uuid()));
+        fs::create_dir_all(dot(&root)).unwrap();
+        let b=Fake::default(); let (n,m)=(b.create("T","",&[service::TASK_LABEL.into()]).unwrap(),b.create("U","",&[service::TASK_LABEL.into()]).unwrap());
+        let (live,ended)=(b.comment(n,"taskq: spawn worker codex:a mac").unwrap(),b.comment(m,"taskq: spawn worker codex:b mac").unwrap());
+        let c=Config {root:root.clone(),install:root.clone(),..cfg()};
+        let spawn=||std::process::Command::new("sleep").arg("30").spawn().unwrap();
+        let kid=|task,attempt,mut child:std::process::Child,exit:bool| {
+            let native=coreq::process::identity(child.id()).unwrap();
+            if exit {child.kill().unwrap();child.wait().unwrap();}
+            Kid {unknown:None,stopping:false,session_url:None,execution:attempt,task,attempt,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
+                proc:Box::new(child),log:root.join("log"),pos:0,start:0,stopping:false,accepted:false,read_error:None,native,recovery:None})}
+        };
+        let mut s=Service::new(&b,&c,"test",Box::new(|_|unreachable!()));
+        fs::write(root.join("log"),"").unwrap();
+        s.kids=vec![kid(n,live,spawn(),false),kid(m,ended,spawn(),true)];
+        let line=|k:&Kid|data::KidLine {task:k.task,attempt:k.attempt,runtime:"codex".into(),process:k.proc.native_identity().unwrap(),execution:k.execution,offset:0,job:None};
+        let (a,e)=(line(&s.kids[0]),line(&s.kids[1]));
+        assert_eq!(recorded(&a).0,"running");
+        assert_eq!(recorded(&e),("ended","recorded native process exited".into()));
+        assert!(!pre_boot(&a) && !pre_boot(&e),"a process of this boot is never retired as pre-boot");
+        let held=save_kids(&s,&root).unwrap_err();
+        assert!(held.contains("recorded native process exited; handover waits"),"{held}");
+        b.comment(m,&format!("taskq: released {ended} exit attempt {ended}")).unwrap();
+        save_kids(&s,&root).unwrap();
+        assert_eq!(kids_file(&root,&root).unwrap(),vec![a],"the ended record resolves from its board exit; the live one is kept");
+        for k in &mut s.kids {let _=runtime::stop(k.proc.as_mut());}
         let _ = fs::remove_dir_all(&root);
     }
 

@@ -257,9 +257,9 @@ pub fn cleanup(board: &dyn Board, root: &std::path::Path, me: &str, boot: fn() -
         let mut held = None;
         for x in core::executions(n, &entries).into_iter().filter(|x| x.release.is_none() && (x.host == me || x.host == crate::hostname())) {
             let intent = comments.iter().find(|c| c.id == x.id).map(|c| c.created).filter(|t| *t > 0);
-            let released = match (intent, boot()) {
-                (Some(intent), Ok(at)) if at > intent => {
-                    let proof = format!("host booted {} after intent {}", crate::board::stamp(at), crate::board::stamp(intent));
+            let ended = intent.zip(boot().ok()).map(|(intent, at)| crate::snapshot::verdict(&crate::snapshot::Signals { local: true, boot: Some((at, intent)), ..Default::default() }));
+            let released = match ended {
+                Some(("ended", proof)) => {
                     release_execution_text(board, n, x.attempt, x.id, "exit", &proof).map(|_| log.push(format!("#{n} released {} exit: {proof}", x.id)))
                 }
                 _ => Err(format!("execution {} on {} termination unknown; stop its process or reboot this host", x.id, x.host)),
@@ -748,9 +748,10 @@ impl<'a> Service<'a> {
                 Ok(Some(code))=>Ok(code),
                 _=>crate::runtime::stop(k.proc.as_mut()),
             };
-            let (state,reason)=match observed {
-                Ok(_)=>("stopped",Some("native exit observed; board release checked separately".to_owned())),
-                Err(reason)=>{k.unknown=Some(reason.clone());("unknown",Some(reason))},
+            let child=crate::snapshot::Child {exited:observed.is_ok(),unknown:observed.as_ref().err().map(String::as_str),stopping:true};
+            let (state,reason)=match crate::snapshot::verdict(&crate::snapshot::Signals {local:true,child:Some(child),..Default::default()}) {
+                ("ended",_)=>("stopped",Some("native exit observed; board release checked separately".to_owned())),
+                (_,reason)=>{k.unknown=Some(reason.clone());("unknown",Some(reason))},
             };
             self.stop_progress.push(json!({"task":k.task,"attempt":k.attempt,"execution":k.execution,"rt":k.rt,"state":state,"reason":reason}));
         }
@@ -769,25 +770,28 @@ impl<'a> Service<'a> {
                 k.unknown=Some("native observation deferred; reduced pass budget exhausted".into());return true;
             }
             let status = crate::runtime::observe_until(until,||k.proc.exited());
-            let mut acceptance_unknown = false;
+            let mut acceptance = None;
             match crate::runtime::observe_until(until,||k.proc.accepted()) {
                 Ok(true) => match accept_execution(self.board,k.task,k.attempt,k.execution,None) {
                     Ok(through) => { self.delivered.entry(k.attempt).and_modify(|v| *v = (*v).max(through)).or_insert(through); },
                     Err(e) => { k.unknown=Some(e); return true; }
                 },
                 Ok(false) => {},
-                Err(e) => { acceptance_unknown = true; k.unknown=Some(e); }
+                Err(e) => acceptance = Some(e),
             }
-            match status {
-            Ok(Some(_)) => match release_execution(self.board,k.task,k.attempt,k.execution,"exit") {
+            // #1594: a failed exit read, then a failed acceptance read, then a cancellation's earlier failure stays unknown
+            let unknown = status.as_ref().err().or(acceptance.as_ref()).or(k.unknown.as_ref().filter(|_| k.stopping)).cloned();
+            let child = crate::snapshot::Child { exited: matches!(status, Ok(Some(_))), unknown: unknown.as_deref(), stopping: k.stopping };
+            match crate::snapshot::verdict(&crate::snapshot::Signals { local: true, child: Some(child), ..Default::default() }) {
+            ("ended", _) => match release_execution(self.board,k.task,k.attempt,k.execution,"exit") {
                 Ok(())=>{
                     retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
                     false
                 },
                 Err(e)=>{k.unknown=Some(e);true}
             },
-            Ok(None) => { if !k.stopping && !acceptance_unknown { k.unknown=None; } true }
-            Err(e) => { k.unknown=Some(e); true }
+            ("unknown", e) => { k.unknown=Some(e); true }
+            _ => { k.unknown=None; true }
             }
         });
         for (task,attempt,execution,native) in retired { self.retired(task,attempt,execution,native); }
@@ -911,8 +915,10 @@ impl<'a> Service<'a> {
             .chain(self.held.iter().map(|l|(l.task,l.attempt))) {
             if !owns(task,attempt) {waits.insert(format!("#{task} unresolved ownership"));}
         }
-        for ((task,id),_) in self.observations.iter().filter(|_|!exit) {
-            if !self.kids.iter().any(|k|k.task==*task && k.execution==*id) {waits.insert(format!("#{task} unresolved execution {id}"));}
+        // #1594: a child of this process hands over through the runtime adapter (lifecycle_waits); the rest wait on the verdict
+        for ((task,id),x) in self.observations.iter().filter(|_|!exit) {
+            let signals=self.signals(*task,x);
+            if signals.child.is_none() && crate::snapshot::verdict(&signals).0!="ended" {waits.insert(format!("#{task} unresolved execution {id}"));}
         }
         for (task,_,_) in &self.pending_releases {waits.insert(format!("#{task} release unconfirmed"));}
         waits.into_iter().collect()
@@ -1147,18 +1153,22 @@ impl<'a> Service<'a> {
         self.board.comment(n, &body)
     }
 
+    /// #1594 the signals this host holds for one of its executions.
+    fn signals(&self, task:u64, x:&core::Execution)->crate::snapshot::Signals<'_> {
+        let child=self.kids.iter().find(|k|k.execution==x.id && k.task==task && k.attempt==x.attempt);
+        crate::snapshot::Signals {local:true,
+            child:child.map(|k|crate::snapshot::Child {unknown:k.unknown.as_deref(),stopping:k.stopping,..Default::default()}),
+            held:self.held.iter().any(|l|l.task==task && l.attempt==x.attempt),
+            wait:self.execution_waits.get(&task).map(String::as_str),
+            input_pending:self.delivered(x.attempt)<x.through,
+            ask:self.snapshot.as_ref().is_some_and(|s|s.tasks.iter().any(|r|r.n==task && r.task.state==State::Ask)),
+            ..Default::default()}
+    }
+
     fn execution_statuses(&self)->Vec<crate::snapshot::ExecutionStatus> {
         self.observations.iter().map(|((task,_),x)| {
-            let child=self.kids.iter().find(|k|k.execution==x.id && k.task==*task && k.attempt==x.attempt);
-            let (state,reason)=if let Some(e)=child.and_then(|k|k.unknown.as_ref()) {("unknown",e.clone())}
-                else if child.is_some_and(|k|k.stopping) {("waiting","cancellation pending; awaiting native termination".into())}
-                else if self.held.iter().any(|l|l.task==*task && l.attempt==x.attempt) {("waiting","launch held by admission gate".into())}
-                else if child.is_none() {("unknown",self.execution_waits.get(task).cloned().unwrap_or("native observation unavailable; restore owning runtime".into()))}
-                else if self.delivered(x.attempt)<x.through {("waiting","native input acceptance pending".into())}
-                else if self.snapshot.as_ref().is_some_and(|s|s.tasks.iter().any(|r|r.n==*task && r.task.state==State::Ask)) {("waiting","owner answer required".into())}
-                else {("running","native execution observed; termination pending".into())};
-            crate::snapshot::ExecutionStatus {task:*task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),
-                reason:reason.chars().map(|c|if c.is_control() {' '} else {c}).take(240).collect()}
+            let (state,reason)=crate::snapshot::verdict(&self.signals(*task,x));
+            crate::snapshot::ExecutionStatus {task:*task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason}
         }).collect()
     }
 
@@ -1250,8 +1260,7 @@ impl<'a> Service<'a> {
                 if self.kids.iter().any(|k| k.execution == x.id) { continue; }
                 let Some(intent) = v.comments.iter().find(|c| c.id == x.id && c.trusted).map(|c| c.created).filter(|t| *t > 0) else { continue };
                 let Ok(at) = *boot.get_or_insert_with(self.boot) else { continue };
-                if at <= intent { continue; }
-                let proof = format!("host booted {} after intent {}", crate::board::stamp(at), crate::board::stamp(intent));
+                let ("ended", proof) = crate::snapshot::verdict(&crate::snapshot::Signals { local: true, boot: Some((at, intent)), ..Default::default() }) else { continue };
                 match release_execution_text(self.board, v.issue.number, x.attempt, x.id, "exit", &proof) {
                     Ok(()) => { wrote = true; self.log.push(format!("#{} released {} exit: {proof}", v.issue.number, x.id)); }
                     Err(e) => self.log.push(format!("#{} boot release: {e}", v.issue.number)),
@@ -1362,15 +1371,12 @@ impl<'a> Service<'a> {
                     accept_execution(self.board, k.task, k.attempt, k.execution, None).map(Some).inspect_err(|_| { pending_acceptance.insert(k.attempt); })
                 } else { Ok(None) })
             };
-            let acceptance_unknown = accepted.is_err();
-            match accepted {
-                Ok(Some(through)) => { self.delivered.entry(k.attempt).and_modify(|v| *v = (*v).max(through)).or_insert(through); self.cache.remove(&k.task); },
-                Ok(None) => {},
-                Err(e) => { k.unknown=Some(e); },
-            }
-            match status {
-            Ok(Some(code)) => {
-                if pending_acceptance.contains(&k.attempt) { return true; }
+            if let Ok(Some(through)) = accepted { self.delivered.entry(k.attempt).and_modify(|v| *v = (*v).max(through)).or_insert(through); self.cache.remove(&k.task); }
+            // #1594: an exit counts once input acceptance is resolved; failed reads, then a cancellation's earlier failure, stay unknown
+            let unknown = status.as_ref().err().or(accepted.as_ref().err()).or(k.unknown.as_ref().filter(|_| k.stopping)).cloned();
+            let child = crate::snapshot::Child { exited: matches!(status, Ok(Some(_))) && !pending_acceptance.contains(&k.attempt), unknown: unknown.as_deref(), stopping: k.stopping };
+            match (crate::snapshot::verdict(&crate::snapshot::Signals { local: true, child: Some(child), ..Default::default() }), status) {
+            (("ended", _), Ok(Some(code))) => {
                 let hold = by_n.get(&k.task).and_then(|v| {
                     let log = crate::runtime::attempt_log(&self.cfg.root, v.projection.task.role.as_deref().unwrap_or_default(), k.task, k.attempt);
                     crate::runtime::usage_limit(&log)
@@ -1382,14 +1388,8 @@ impl<'a> Service<'a> {
                 exited.push((k.task, k.attempt, code, k.proc.exit_error()));
                 false
             }
-            Ok(None) => {
-                if !k.stopping && !acceptance_unknown { k.unknown=None; }
-                true
-            }
-            Err(e) => {
-                k.unknown=Some(e);
-                true
-            }
+            (("unknown", e), _) => { k.unknown=Some(e); true }
+            _ => { k.unknown=None; true }
             }
         });
         for (task,attempt,execution,native) in retired.drain(..) { self.retired(task,attempt,execution,native); }
@@ -1428,16 +1428,18 @@ impl<'a> Service<'a> {
                     deferred.get_or_insert(k.execution);
                     k.unknown=Some("native observation deferred; cancellation pending".into());return true;
                 }
-                match crate::runtime::observe_until(native_until,||crate::runtime::stop(k.proc.as_mut())) {
-                    Ok(_) if pending_acceptance.contains(&k.attempt) => return true,
-                    Ok(_) => match release_execution(self.board,k.task,k.attempt,k.execution,"exit") {
+                let stop=crate::runtime::observe_until(native_until,||crate::runtime::stop(k.proc.as_mut()));
+                let child=crate::snapshot::Child {exited:stop.is_ok(),unknown:stop.as_ref().err().map(String::as_str),stopping:true};
+                match crate::snapshot::verdict(&crate::snapshot::Signals {local:true,child:Some(child),..Default::default()}) {
+                    _ if stop.is_ok() && pending_acceptance.contains(&k.attempt) => return true,
+                    ("ended",_) => match release_execution(self.board,k.task,k.attempt,k.execution,"exit") {
                         Ok(())=>{
                             retired.push((k.task,k.attempt,k.execution,crate::runtime::of(&k.rt).child));
                             released.insert(k.execution);stopped.push((k.task,k.attempt));
                         },
                         Err(e)=>{k.unknown=Some(e);return true;}
                     },
-                    Err(e) => { k.unknown=Some(e); return true; }
+                    (_,e) => { k.unknown=Some(e); return true; }
                 }
             }
             current
@@ -2810,6 +2812,9 @@ mod tests {
         let mut s=service(&b,&c,Default::default()); s.pass().unwrap();
         assert!(s.kids.is_empty());
         assert!(s.execution_waits[&n].contains("termination unconfirmed"));
+        // #1594 A3 (#947): the published heartbeat row and the handover wait read the same childless verdict
+        let row=&s.execution_statuses()[0];
+        assert_eq!((row.state.as_str(),row.reason.as_str()),("unknown",s.execution_waits[&n].as_str()));
         assert!(s.handoff_waits(true,false).iter().any(|w|w.contains("unresolved execution")),"handover keeps waiting");
         assert!(s.handoff_waits(true,true).is_empty(),"image exit leaves the record to the next image: {:?}",s.handoff_waits(true,true));
         s.pending.insert((n,1));
