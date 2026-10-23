@@ -1,16 +1,16 @@
 {
   "version": "4.6.37",
-  "sourceCommit": "9fb83b908b65d9cf1790c99b53812c9979d495f3",
-  "binarySha256": "da525ed812b967c12433b4015af9186ed30e20c07536d2ea3fa47231924948c0",
+  "sourceCommit": "b9f7dd844f7779f6212202092ac315852d65e0d1",
+  "binarySha256": "9dc5906bb866de63129315aeec4372075e3700115c39e82ebc8cf84dcf032076",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "5a10583c43877b6913f750da3bf07f33205298b9",
+    "src/tray.rs": "2a5626253d4a171c0085ad00088623cff6f3389e",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "fb083fd656ee74b4d70489c5d820df6ea3b1f502",
+    "src/tray-app.js": "764a223777d6c2bc9e43ec33d98cbd512f8ce076",
     "src/tray-entry.js": "f318bd5a545b06c70c2287f4ebbe3796265a7d9a",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "9a594279112e44fc78c06f128091bd84fa005492",
@@ -18,13 +18,13 @@
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "e38799f4c404e27a1fbaab61d2f1a9c9c8abdd64",
     "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
-    "src/task-dashboard.js": "cfc17665e8829ec45628f14badf3bbcfca8b432b",
-    "src/task-dashboard.css": "4a6b721fc8e5ae7e8c5a75fa3e09f1d699d805b2",
-    "src/task-views.js": "cb72b42862892e40402fe6ea4d0c82385fc24547",
+    "src/task-dashboard.js": "6682e8d8eb9957323c43e43c95cc75443de65977",
+    "src/task-dashboard.css": "16b06067f420b74fb9d90fb17651c69766957b4e",
+    "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
-    "src/ui-icons.js": "fbd352c056366bc454a8998000ac51c2e136ceea",
-    "src/ui-icons.json": "fe01b24d446fff96e8e756ed87d55780502d17a1",
-    "src/project-blocks.js": "12d97cf8ca7525d9146de7afeb878c448fd573ff",
+    "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
+    "src/ui-icons.json": "56af409ea7d395073d815afae66836f1262630ba",
+    "src/project-blocks.js": "37d936b908429b284267c59fb73dc6adc7a85082",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/conversations.rs": "b1bd9783442e631b122c1f57a5bbb615781f0b99",
     "src/conversations.js": "73929ba168ef8646f27b6d18671d34000b37ed48",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "9d6b23c8cdb33e8fe3e8fa3f18966f02f7fd6e72cee30e60f7e46f6a688f5dca"
+      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "1cb9a26ecec0ff90988919a1b2408207dda55d4e49d087e32fe8951efab60b04"
+      "sha256": "83be3a2236abfb90eab9c36b886aa8d91ef9456e6187a5df05e7de6176292f06"
     }
   ]
 }
