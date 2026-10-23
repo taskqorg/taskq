@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.38
+
+The task menu opens details on click only, keeps global task pins and per-view working state with saved views and one Undo, adds a Completed view read from board history (`taskq status --closed`) and uses the accepted state icons and colors (#1671). Settings is its own window with a stable header, Home and one Conversations entry (#1672). Settings shows hosts, agent sign-in and services as compact route widgets (#1673). PM requests and task answers share one composer, delivery state reads plainly and the ask parser rejects bad option numbering (#1674). The workspace dialogue gets the reply composer, transcript view and watch status (#1675). No board change.
+
 ## v4.6.37
 
 `host.json` `default_runtime` (`claude` or `codex`, absent means `claude`) routes reviewers and workers without a `run-*` label to that runtime; `taskq service capacity --default-runtime` saves it and `service status` prints it (#1668). The workspace dialogue backend adds the owner turn, transcript reader and per-conversation watch (#1664). No board change.
