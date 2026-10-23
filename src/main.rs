@@ -110,7 +110,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -660,7 +660,7 @@ fn inbox(b: &dyn Board, n: u64) -> Res<String> {
     Ok(out.join("\n\n"))
 }
 
-/// MP14 Completed: one board page of closed tasks with their sourced outcome, result line and last PR link; no store.
+/// MP14 Completed: one board page of closed tasks with their sourced outcome, result line, last PR link and merge receipt; no store.
 fn closed_history(b: &dyn Board, page: u32, since: Option<i64>, gitlab: bool) -> Res<Value> {
     let (issues, more) = b.closed_tasks(page, since)?;
     let tasks: Vec<Value> = issues.iter().filter(|(_, closed)| since.is_none_or(|t| *closed >= t)).map(|(i, closed)| {
@@ -672,9 +672,18 @@ fn closed_history(b: &dyn Board, page: u32, since: Option<i64>, gitlab: bool) ->
             let pr = log.iter().flat_map(|e| e.body.split_whitespace()).filter(|w| w.starts_with("https://") && (w.contains("/pull/") || w.contains("/merge_requests/"))).last();
             (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
         });
-        json!({"n": i.number, "title": i.title, "url": b.url(i.number), "closed": closed, "outcome": outcome, "result": result, "pr": pr, "error": log.err()})
+        let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
+        json!({"n": i.number, "title": i.title, "url": b.url(i.number), "closed": closed, "outcome": outcome, "result": result, "pr": pr, "merged": merged, "error": log.err()})
     }).collect();
     Ok(json!({"schema": 1, "source": "board", "page": page.max(1), "more": more, "tasks": tasks}))
+}
+
+/// #1679: the PR/MR merge `close` read back (§ 7 `delivery <preset> r<R>: merged #P ..`, GitLab `merged !P`); none stays unknown.
+/// Issue closure, a PR link or a direct fast-forward is no merge evidence.
+fn merge_receipt(log: &[Entry]) -> Option<String> {
+    log.iter().rev().filter(|e| !e.edited && e.body.lines().next().is_some_and(|h| h.trim() == "taskq: close" || h.trim().starts_with("taskq: close attempt ")))
+        .flat_map(|e| e.body.lines().filter_map(|l| l.trim().strip_prefix("delivery ")?.split_once(": ").map(|(_, r)| r.trim())))
+        .find(|r| r.starts_with("merged #") || r.starts_with("merged !")).map(String::from)
 }
 
 // ---------- wait ----------
@@ -4789,5 +4798,56 @@ mod tests {
         assert_eq!((last["tasks"].as_array().unwrap().len(), last["more"].clone()), (2, json!(false)));
         assert_eq!(closed_history(&b, 1, None, true).unwrap()["tasks"][1]["outcome"], "success", "§ 1: a closed GitLab issue is done");
         assert_eq!(closed_history(&b, 1, Some(110), false).unwrap()["tasks"].as_array().unwrap().len(), 3, "period keeps closes at or after since");
+    }
+
+    // Chain: #1679 A1 § 5 `status --closed [--page N]`. Risk: `--closed` eats `--page` as its value (before: `unused
+    // positional arguments: 1`), so the tray Completed view never loads.
+    #[test]
+    fn status_closed_is_a_flag_and_pages() {
+        let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        for v in [&["status", "--closed", "--page", "1"][..], &["status", "--closed"], &["status", "--page", "2", "--closed", "--since", "5"]] {
+            let a = parse(v).unwrap();
+            assert!(a.flags.contains_key("closed") && a.pos == ["status"], "{v:?}");
+        }
+        assert_eq!(parse(&["status", "--closed", "--page", "2"]).unwrap().one("page"), Some("2"));
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        for v in [&["status", "--closed", "--page", "1"][..], &["status", "--closed"]] {
+            command(&c, "status", &parse(v).unwrap()).unwrap();
+        }
+    }
+
+    // Chain: #1679 A3/A4 MP14 Merged. Risk: a closed issue with a PR link, a direct fast-forward or an edited close
+    // reads as a confirmed merge; only a PR/MR merge receipt on a `close` entry is evidence.
+    #[test]
+    fn completed_merge_evidence_comes_only_from_a_close_receipt() {
+        let b = Fake::default();
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let bodies = [
+            format!("taskq: close attempt 9
+Changed: x
+delivery auto-merge r0: merged #7 as {sha}; merge-result CI green"),
+            "taskq: close
+delivery auto-merge r0: merged !3".to_string(),
+            "taskq: result abc attempt 9
+Changed: https://github.com/o/r/pull/7".to_string(),
+            format!("taskq: close
+delivery direct r0: main fast-forwarded to {sha}"),
+            "taskq: requeue
+delivery auto-merge r0: merged #7 as x".to_string(),
+        ];
+        for (k, body) in bodies.iter().enumerate() {
+            let n = k as u64 + 1;
+            b.create(&format!("t{n}"), "", &["taskq".into()]).unwrap();
+            b.comment(n, body).unwrap();
+            b.close(n).unwrap();
+        }
+        b.create("t6", "", &["taskq".into()]).unwrap();
+        b.raw(6, &bodies[0], true, true);
+        b.close(6).unwrap();
+        let page = closed_history(&b, 1, None, false).unwrap();
+        let merged = |n: u64| page["tasks"].as_array().unwrap().iter().find(|t| t["n"] == n).unwrap()["merged"].clone();
+        assert_eq!(merged(1), json!(format!("merged #7 as {sha}; merge-result CI green")));
+        assert_eq!(merged(2), json!("merged !3"));
+        for n in 3..=6 { assert_eq!(merged(n), Value::Null, "#{n}: no merge evidence stays unknown"); }
     }
 }

@@ -677,10 +677,14 @@ fn queued_answer(install:&Path,_root:&Path,message:&Value)->crate::Res<Value> {O
 fn queued_resources(_install:&Path,_root:&Path,_message:&Value)->crate::Res<Value> {resources()}
 /// MP14 Completed: one board history page through the owner CLI; the tray itself stays token-free.
 fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
-    let mut c=owner_command(root)?;c.args(["status","--closed","--page",&m["page"].as_u64().unwrap_or(1).max(1).to_string()]);
-    if let Some(t)=m["since"].as_i64() {c.args(["--since",&t.to_string()]);}
+    let mut c=owner_command(root)?;c.args(history_args(m));
     let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
     serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
+}
+fn history_args(m:&Value)->Vec<String> {
+    let mut a=vec!["status".into(),"--closed".into(),"--page".into(),m["page"].as_u64().unwrap_or(1).max(1).to_string()];
+    if let Some(t)=m["since"].as_i64() {a.extend(["--since".into(),t.to_string()]);}
+    a
 }
 /// One answer operation as the queue sees it: correlated by its op id, its draft side channel already saved apart.
 /// #1662 A1: a readback or Check delivery resend omits or changes `local`; with it the same op read as id-mismatch.
@@ -2365,6 +2369,15 @@ mod tests {
         for y in 0..marked.h as usize {assert_eq!(&marked.px[y*marked.w as usize*4..y*marked.w as usize*4+width as usize*4],&original[y*width as usize*4..(y+1)*width as usize*4]);}
         for (route,kind,warning) in [("agentq-shown","shown",true),("agentq-setting-up","setting-up",true),("agentq-running","running",false),("agentq-unknown","unknown",true)] {
             let f=agentq_fixture(route).unwrap();assert_eq!(f["kind"],kind);assert_eq!(f["warning"],warning);
+        }
+    }
+
+    // #1679 A2: the exact Completed read parses as `status --closed` with its page; before, `--closed` ate `--page`.
+    #[test]
+    fn history_read_is_a_parsable_status_closed_page() {
+        for (m,page,since) in [(json!({}),"1",None),(json!({"page":0}),"1",None),(json!({"page":3,"since":42}),"3",Some("42"))] {
+            let a=crate::Args::parse(&history_args(&m)).unwrap();
+            assert_eq!((a.pos.as_slice(),a.flags.contains_key("closed"),a.one("page"),a.one("since")),(&["status".to_string()][..],true,Some(page),since),"{m}");
         }
     }
 
