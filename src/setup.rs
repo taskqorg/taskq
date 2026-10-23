@@ -9,6 +9,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 type Res<T> = Result<T, String>;
+pub use crate::runtime::owner::{claude_link, launch, Launched};
+use crate::runtime::owner::{ACCESS, LOGIN, MISSING};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -220,8 +222,6 @@ pub fn recover(install: &Path) -> Res<()> {
     })
 }
 
-pub enum Launched { Job { job: String, session: Option<String>, url: Option<String> }, NoStart(String), Unknown(String) }
-
 /// #1580: cancel only a not-yet-dispatched owner request. Launch and cancel share the same lock.
 pub(crate) fn cancel_pending(install:&Path,id:&str)->Res<()> {
     if !crate::resources::id(id){return Err("Invalid owner request ID".into());}
@@ -275,115 +275,6 @@ pub fn step(install: &Path, launch: Launcher) -> Res<()> {
     })
 }
 
-/// The request's runtime adapter (§ 8 table).
-pub fn launch(own: &Path, r: &Request) -> Launched {
-    if crate::runtime::of(&r.runtime).codex { codex_launch(own, r) } else { claude_launch(own, r) }
-}
-
-/// The brief is a file in the session folder; the first message only points at it.
-fn read_brief(path: &Path) -> String {
-    format!("Before any work, use Read to read {} in full. It is this session's brief; follow it.", serde_json::to_string(&path.to_string_lossy()).unwrap_or_default())
-}
-
-/// Codex app thread (§ 8 Codex app, #1522): a `codex exec` handshake turn in the session folder creates the thread, then
-/// the app shows it and gets the brief. Access is the `codex-app` grant, as for app workers; nothing falls back (R9).
-pub fn codex_launch(own: &Path, r: &Request) -> Launched {
-    let a = crate::runtime::of(&r.runtime);
-    let bin = crate::runtime::which(a.bin);
-    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
-    if crate::runtime::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
-    let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
-    let exe = std::env::current_exe().unwrap_or_default();
-    let env = crate::runtime::Env { root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
-    let access = match crate::runtime::access(&env, a.setup) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
-    let path = own.join("brief.txt");
-    if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
-    let mut c = match crate::runtime::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
-    crate::platform::quiet(&mut c);
-    c.current_dir(own).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
-        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
-        // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
-        .args(["exec", "--json", "--skip-git-repo-check"]).args(access.codex.as_deref().unwrap_or(&codex)).arg("-C").arg(own).arg("-");
-    use coreq::process::Failure;
-    let out = match coreq::process::exchange("setup.codex-launch", &mut c, crate::runtime::HANDSHAKE.as_bytes(), std::time::Duration::from_secs(60)) {
-        Ok(out) | Err(Failure::Exit(out)) => out,
-        Err(e @ (Failure::InvalidDeadline | Failure::Capacity | Failure::Owner(_) | Failure::Spawn(_) | Failure::InputLimit)) => return Launched::NoStart(format!("Codex launch: {e}")),
-        Err(e) => return Launched::Unknown(format!("Codex launch outcome unknown: {e}")),
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
-    codex_thread(&stdout, &stderr, out.status.code(), |thread| crate::runtime::app_submit(thread, &read_brief(&path)))
-}
-
-/// The handshake's answer: no thread is a definite no-start; a thread whose brief is not queued is unknown.
-fn codex_thread(stdout: &str, stderr: &str, code: Option<i32>, submit: impl FnOnce(&str) -> Res<()>) -> Launched {
-    let thread = stdout.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .find(|v| v["type"] == "thread.started").and_then(|v| v["thread_id"].as_str().map(String::from));
-    let Some(thread) = thread else {
-        let text = format!("{stdout}{stderr}").to_lowercase();
-        if text.contains("401") || text.contains("login") || text.contains("log in") { return Launched::NoStart(format!("{LOGIN} Codex asked for login")); }
-        return Launched::NoStart(format!("Codex handshake started no thread (exit {})", code.map_or("unknown".into(), |c| c.to_string())));
-    };
-    // the id reaches the app URL and, on Windows, a shell: only a plain id
-    if !crate::runtime::plain_thread(&thread) { return Launched::Unknown(format!("Codex returned thread {thread:?}; outcome unknown")); }
-    match submit(&thread) {
-        Ok(()) => Launched::Job { job: thread.clone(), session: Some(thread.clone()), url: Some(crate::runtime::thread_url(&thread)) },
-        Err(e) => Launched::Unknown(format!("{e}; brief delivery unknown, inspect Codex thread {thread}")),
-    }
-}
-
-/// Claude background session with Remote Control (§ 8 table); access and permission mode come from § 8 Access.
-pub fn claude_launch(own: &Path, r: &Request) -> Launched {
-    let workdir = r.root.as_deref().map_or(own, Path::new);
-    let a = crate::runtime::of(&r.runtime);
-    let bin = crate::runtime::which(a.bin);
-    if !bin.is_absolute() { return Launched::NoStart(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
-    if crate::runtime::login_state(a.bin, &bin) == "not logged in" { return Launched::NoStart(format!("{LOGIN} {} is not logged in on this host", a.client)); }
-    let install = own.parent().and_then(Path::parent).unwrap_or(own);
-    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
-    let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
-    let exe = std::env::current_exe().unwrap_or_default();
-    let env = crate::runtime::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
-    let access = match crate::runtime::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
-    let path = own.join("brief.txt");
-    if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
-    let mut c = match crate::runtime::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(e) };
-    c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
-        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
-        .args(["--bg", "--settings", &serde_json::json!({"env": crate::runtime::claude_env(install, None, None)}).to_string(), "--remote-control", if r.root.is_some() { "taskq request" } else { "taskq setup" }, "--permission-mode", access.claude.as_deref().unwrap_or(&mode)]);
-    let input = read_brief(&path);
-    use coreq::process::Failure;
-    let out = match coreq::process::exchange("setup.claude-launch", &mut c, input.as_bytes(), std::time::Duration::from_secs(30)) {
-        Ok(out) | Err(Failure::Exit(out)) => out,
-        Err(e @ (Failure::InvalidDeadline | Failure::Capacity | Failure::Owner(_) | Failure::Spawn(_) | Failure::InputLimit)) => return Launched::NoStart(format!("Claude launch: {e}")),
-        Err(e) => return Launched::Unknown(format!("Claude launch outcome unknown: {e}")),
-    };
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let _ = fs::write(own.join("launch.log"), format!("{stdout}\n{stderr}"));
-    // Claude refuses before it starts anything: a definite no-start, never `interrupted`.
-    if !out.status.success() && stderr.contains("Workspace not trusted") { return Launched::NoStart(format!("{ACCESS} Claude workspace not trusted: {}", workdir.display())); }
-    if !out.status.success() && (stderr.contains("/login") || stderr.contains("Not logged in")) { return Launched::NoStart(format!("{LOGIN} Claude Code asked for login")); }
-    match stdout.lines().find_map(|l| l.strip_prefix("backgrounded · ").and_then(|s| s.split_whitespace().next())) {
-        // One link read at launch, never after: the Claude session manager owns the session from here.
-        Some(id) if out.status.success() && crate::runtime::native_job_id(id) => {
-            let (session, url) = claude_link(workdir, id);
-            Launched::Job { job: id.into(), session, url }
-        }
-        _ => Launched::Unknown("Claude returned no background job; outcome unknown, inspect native sessions".into()),
-    }
-}
-
-/// A launched job's native session and Remote Control link, each unknown until Claude publishes it.
-pub fn claude_link(workdir: &Path, job: &str) -> (Option<String>, Option<String>) {
-    let session = crate::runtime::claude_agents(workdir).ok()
-        .and_then(|rows| rows.iter().find(|v| v["id"] == job).and_then(|v| v["sessionId"].as_str().map(String::from)));
-    let url = session.as_deref().and_then(crate::runtime::claude_remote);
-    (session, url)
-}
-
 /// The native read, replaceable in tests.
 pub type Linker = fn(&Path, &str) -> (Option<String>, Option<String>);
 
@@ -424,96 +315,6 @@ pub fn onboard_access(scope: &str, es: &[crate::policy::Effective]) -> Vec<Strin
     }).collect()
 }
 
-/// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546).
-pub fn claude_key(p: &Path) -> String { p.display().to_string().replace('\\', "/") }
-
-/// The owner step for an untrusted folder that works while other Claude sessions run (#1555): Claude saves its own trust.
-pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
-
-/// `service install` (#1555): the new root's trust, read only; nothing when trusted or Claude has no config here.
-pub fn trust_gap(home: &Path, root: &Path) -> Vec<String> {
-    let key = claude_key(root);
-    let v: serde_json::Value = match fs::read_to_string(home.join(".claude.json")) {
-        Ok(t) => match serde_json::from_str(&t) { Ok(v) => v, Err(e) => return vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")] },
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return vec![],
-        Err(e) => return vec![format!("Trust: {key} unknown (Claude config unreadable: {e})")],
-    };
-    // Claude walks parent folders: a trusted parent covers the root
-    if root.ancestors().any(|p| v["projects"][claude_key(p)]["hasTrustDialogAccepted"] == true) { return vec![]; }
-    vec![format!("Trust: {key} not trusted; Claude workers cannot start here"), trust_step(&key)]
-}
-
-/// Onboarding trust (#1546): `<install>/setup` and every registered root get `hasTrustDialogAccepted` in
-/// `<home>/.claude.json`. Nothing trusted yet changes only while no Claude runs, after a backup; gap lines only.
-pub fn trust(install: &Path, home: &Path, claude_pids: impl FnOnce() -> Res<Vec<String>>) -> Res<Vec<String>> {
-    let roots = fs::read_to_string(install.join("projects")).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(String::new()) } else { Err(format!("project registry unreadable: {e}")) })?;
-    let keys: Vec<String> = std::iter::once(dir(install)).chain(roots.lines().filter(|l| !l.trim().is_empty()).map(PathBuf::from)).map(|p| claude_key(&p)).collect();
-    let path = home.join(".claude.json");
-    let text = match fs::read_to_string(&path) { Ok(t) => Some(t), Err(e) if e.kind() == std::io::ErrorKind::NotFound => None, Err(e) => return Err(format!("Claude config unreadable: {e}")) };
-    let (next, changed) = trusted(text.as_deref(), &keys)?;
-    let mut lines = vec![];
-    if changed.is_empty() { return Ok(lines); }
-    // Claude rewrites the whole file: a running one would drop the change, so the owner lets Claude write it (#1555)
-    let pids = claude_pids().map_err(|e| format!("Claude processes unknown ({e}); trust unchanged"))?;
-    if !pids.is_empty() {
-        return Ok(changed.iter().flat_map(|k| [format!("Trust: {k} not trusted; Claude runs (pid {}), so onboard leaves the file", pids.join(", ")), trust_step(k)]).collect());
-    }
-    if let Some(t) = &text {
-        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
-        let backup = home.join(format!(".claude.json.bak-onboard-{ms}"));
-        // copy keeps the config's owner-only mode; a plain write would leave it world-readable
-        fs::copy(&path, &backup).map_err(|e| format!("Claude config backup: {e}; trust unchanged"))?;
-        lines.push(format!("Backup: {}", backup.display()));
-    }
-    let tmp = home.join(".claude.json.onboard-tmp");
-    let mut open = fs::OpenOptions::new();
-    open.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
-    if text.is_some() { fs::copy(&path, &tmp).map_err(|e| format!("Claude config write: {e}"))?; }
-    std::io::Write::write_all(&mut open.open(&tmp).map_err(|e| format!("Claude config write: {e}"))?, next.as_bytes()).map_err(|e| format!("Claude config write: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("Claude config write: {e}"))?;
-    let (_, left) = trusted(fs::read_to_string(&path).ok().as_deref(), &keys)?;
-    if !left.is_empty() { return Err(format!("Claude config readback: {} not trusted", left.join(", "))); }
-    lines.extend(changed.iter().map(|k| format!("Trust: {k} trusted")));
-    Ok(lines)
-}
-
-/// The config with every key trusted, and the keys that were not.
-fn trusted(text: Option<&str>, keys: &[String]) -> Res<(String, Vec<String>)> {
-    let mut v: serde_json::Value = match text { Some(t) => serde_json::from_str(t).map_err(|e| format!("Claude config unreadable: {e}"))?, None => serde_json::json!({}) };
-    let projects = v.as_object_mut().ok_or("Claude config is not an object")?.entry("projects").or_insert_with(|| serde_json::json!({}));
-    let projects = projects.as_object_mut().ok_or("Claude config projects is not an object")?;
-    let mut changed = vec![];
-    for k in keys {
-        let p = projects.entry(k.clone()).or_insert_with(|| serde_json::json!({})).as_object_mut().ok_or(format!("Claude config project {k} is not an object"))?;
-        if p.get("hasTrustDialogAccepted") != Some(&serde_json::Value::Bool(true)) {
-            p.insert("hasTrustDialogAccepted".into(), true.into());
-            changed.push(k.clone());
-        }
-    }
-    Ok((serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, changed))
-}
-
-/// Running Claude processes of this user's machine; an unreadable list is an error, never none (R12).
-pub fn claude_pids() -> Res<Vec<String>> {
-    let out = if cfg!(windows) {
-        std::process::Command::new("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
-    } else {
-        // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
-        std::process::Command::new("pgrep").args(["-x", crate::runtime::of(crate::runtime::OWNER).bin]).output()
-    }.map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    if cfg!(windows) {
-        if !out.status.success() { return Err(format!("tasklist exit {:?}", out.status.code())); }
-        return Ok(text.lines().filter_map(|l| l.split("\",\"").nth(1).filter(|_| l.starts_with("\"claude.exe\"")).map(String::from)).collect());
-    }
-    match out.status.code() { Some(0) => Ok(text.split_whitespace().map(String::from).collect()), Some(1) => Ok(vec![]), c => Err(format!("pgrep exit {c:?}")) }
-}
-
-const MISSING: &str = "runtime missing:";
-const LOGIN: &str = "sign-in needed:";
-const ACCESS: &str = "access refused:";
 
 /// What the tray shows (A1): one distinct kind per actionable state and the owner's next step.
 pub fn view(r: &Request) -> serde_json::Value {
@@ -546,6 +347,7 @@ pub fn last(install: &Path, project: bool) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::owner::{claude_key, codex_thread, trust, trust_gap, trust_step, trusted};
 
     fn ok(_: &Path, _: &Request) -> Launched { Launched::Job { job: "abcd1234".into(), session: None, url: None } }
     fn unknown(_: &Path, _: &Request) -> Launched { Launched::Unknown("timeout".into()) }

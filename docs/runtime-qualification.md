@@ -318,10 +318,11 @@ Contract detail of `taskq.md` § 9 (R8, R13). Each agent runtime (`claude`, `cod
 - The adapter owns everything that differs by runtime: launch and resume, the command line, policy and sandbox arguments, the session link, process identity, auth and login hints.
 - The runtime module keeps that code; other modules ask the adapter (binary, client name, home, CLI child, Remote Control session, app turn, Codex family, setup access) and never compare runtime names.
 - `crate::runtime::RUNTIMES` is the only runtime list; setup runtimes, profiles and the service derive from it.
-- Setup sessions start through the runtime launch (`crate::runtime::cli`), never a copy of it.
-- `crate::runtime::thread_url`, `plain_thread` and `remote_url` are the only session-link builder and checks.
-- Allowed exceptions: CLI parsing of `--runtime` (`src/main.rs`), `run-*` and legacy `prefer-*` labels with reviewer routing (`src/labels.rs`), runtime keys in `host.json` (`src/host.rs`), and tests.
-- `scripts/check.py` refuses a runtime name literal anywhere else in non-test Rust.
+- Owner sessions (`service setup`, tray AI requests, `retro`) launch, link and get Claude trust through `crate::runtime::owner`; `src/setup.rs` keeps only the request state machine.
+- `crate::runtime::session_link` is the only session-link resolver and `crate::runtime::open_link` the only opener; `thread_url`, `plain_thread`, `remote_url` and `link_ok` are the only link builder and checks.
+- Kid adoption (`crate::runtime::adopt`), handover waits (`handover_waits`), the worker default runtime (`preferred`) and the Claude process lookup go through the adapter.
+- Allowed exceptions: the sandbox files (`src/linux_sandbox.rs`, `src/windows_sandbox*`) and tests.
+- `scripts/check.py` refuses, anywhere else in non-test Rust including `src/main.rs`, a runtime name literal and the native names `claude.exe`, `.claude.json`, `CODEX_HOME` and `CODEX_THREAD_ID`.
 - Behavior does not change with the move: golden traces and existing tests stay unchanged.
 
 ## Contract detail

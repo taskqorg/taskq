@@ -21,5 +21,10 @@ assert names('src/x.rs', '#[cfg(test)]\nmod t {\n    fn f() { "claude"; }\n}\nle
 assert names('src/x.rs', '#[cfg(test)]\npub(crate) mod tests {\n"codex";\n}') == []
 # Name-prefixed literals count.
 assert names('src/x.rs', 's.starts_with("claude:")') == ['src/x.rs:1: s.starts_with("claude:")']
-assert names('src/runtime.rs', 'rt == "codex-app"') == names('src/labels.rs', '"claude"') == []
+assert names('src/runtime.rs', 'rt == "codex-app"') == names('src/runtime/owner.rs', '".claude.json"') == []
+assert names('src/windows_sandbox.rs', '"codex"') == names('src/windows_sandbox/acl.rs', '"claude"') == names('src/linux_sandbox.rs', 'CODEX_HOME') == []
+# #1593: a planted bypass in main.rs or a former exception fails, native names included
+for planted in ['if k.runtime=="claude" {}', 'tasklist claude.exe', 'home.join(".claude.json")', 'env("CODEX_HOME", h)', 'env_remove("CODEX_THREAD_ID")']:
+    for path in ['src/main.rs', 'src/labels.rs', 'src/host.rs', 'src/setup.rs']:
+        assert names(path, planted) == [f'{path}:1: {planted}'], (path, planted)
 print('PASS runtime names stay in the adapter')

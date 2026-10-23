@@ -10,9 +10,9 @@ pub fn canonical(name: &str) -> &str {
 /// § 4 Filter: reviewers `claude`; workers `run-*`, else a lone legacy `prefer-codex` as `run-codex`, else `claude`.
 /// The task waits for a slot of this runtime; it never moves to another.
 pub fn route(labels: &[String], reviewer: bool) -> String {
-    if reviewer { return "claude".into(); }
+    if reviewer { return crate::runtime::OWNER.into(); }
     let prefer: Vec<&str> = labels.iter().filter_map(|l| l.strip_prefix("prefer-")).collect();
-    labels.iter().find_map(|l| l.strip_prefix("run-").map(String::from)).unwrap_or_else(|| if prefer == ["codex"] { "codex" } else { "claude" }.into())
+    labels.iter().find_map(|l| l.strip_prefix("run-").map(String::from)).unwrap_or_else(|| crate::runtime::preferred(&prefer).into())
 }
 
 pub fn matches(labels: &[String], filter: &str) -> bool {

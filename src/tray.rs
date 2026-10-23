@@ -496,15 +496,8 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
         }
         return;
     }
-    let id = if own && ((id == "-" && a.codex && a.child) || a.remote) {
-        let l = crate::runtime::Launch { execution: None, task: row["n"].as_u64().unwrap_or(0), title: String::new(), attempt: row["attempt"].as_u64().unwrap_or(0),
-            role: row["role"].as_str().unwrap_or("").into(), rt: rt.into(), session: id.into(), url: String::new(), resume: None };
-        crate::runtime::codex_thread(&crate::runtime::log_path(root, &l)).unwrap_or_else(|| id.into())
-    } else { id.into() };
-    if id == "-" || !crate::runtime::plain_thread(&id) { return }
-    row["session_url"] = if a.codex { json!(crate::runtime::thread_url(&id)) }
-        else if a.remote { json!(own.then(|| crate::runtime::claude_remote(&id)).flatten().or(published)) }
-        else { Value::Null };
+    let (_, url) = crate::runtime::session_link(root, own, rt, id, row["n"].as_u64().unwrap_or(0), row["attempt"].as_u64().unwrap_or(0), row["role"].as_str().unwrap_or(""), published);
+    row["session_url"] = json!(url);
 }
 
 /// What the icon and the history show: in work, `ask`, ready, failed over all projects (one task per board and issue), whether
@@ -2060,15 +2053,13 @@ fn capacity(install:&Path,root: &Path,m: &Value) -> crate::Res<Value> {
     crate::host::local_capacity(install,&policy.me,&request)
 }
 
-/// Web links and Codex app threads (setup sessions, #1522); the id reaches a shell on Windows, so only a plain id.
+/// Web links and Codex app threads (setup sessions, #1522).
 fn openable(u: &str) -> bool {
-    u.starts_with("https://") || u.starts_with("http://")
-        || crate::runtime::thread_of(u).is_some_and(crate::runtime::plain_thread)
+    u.starts_with("https://") || u.starts_with("http://") || crate::runtime::link_ok(u)
 }
 
 fn open(arg: &str) {
-    let opener = if cfg!(windows) { "explorer" } else { "open" };
-    let _ = coreq::telemetry::capture::operation("tray.open-request",||crate::platform::quiet(std::process::Command::new(opener).arg(arg)).spawn().map(|_|()),|_|"spawn");
+    let _ = coreq::telemetry::capture::operation("tray.open-request",||crate::runtime::open_link(arg),|_|"open");
 }
 
 /// The menu bar's theme: macOS follows the app appearance; the Windows taskbar has its own setting.
