@@ -56,3 +56,6 @@
 .resource-meter meter{width:100%;min-width:0}.resource-meter>span:last-child{justify-self:end}
 .menu .tqp a.tqp-mark{display:inline-flex;align-items:center;justify-content:center;padding:0}
 .tqp-mark[aria-disabled=true]{opacity:.65}
+/* Long host/admission summaries get the row width instead of a narrow trailing column. */
+.menu .settings-widget.project:is([data-route=hosts],[data-a=work],[data-operation=admission]){display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px}
+.menu .settings-widget.project:is([data-route=hosts],[data-a=work],[data-operation=admission])>.meta{grid-column:2;margin-left:0;text-align:left}

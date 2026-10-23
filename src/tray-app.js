@@ -615,7 +615,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   view.drawn=true;
   if(navigating)menu.querySelector('.shell-overflow')?.removeAttribute('open');
   mountResources();
-  menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)').forEach(d=>d.open=!d.classList.contains('answered')&&['cadence','attention'].includes(view.page));
+  menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)').forEach(d=>d.open=!d.classList.contains('answered')&&(view.page==='attention'||view.page==='cadence'&&d.classList.contains('hist')));
   viewState.restore(open);
   if(view.S.page!==undefined&&(navigating||firstRender))menu.querySelectorAll('.hist,.agents,.service,.incident-notice').forEach(d=>d.open=!(p&&d.classList.contains('service')));
   if(!navigating){const target=focusedSummary>=0?menu.querySelectorAll('summary')[focusedSummary]:focusKey&&active.tagName==='H1'?menu.querySelector('h1'):focusKey&&focusKey!=='{}'?[...menu.querySelectorAll(active.tagName)].filter(same)[focusAt]:null;target?.focus({preventScroll:true});}
