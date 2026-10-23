@@ -95,17 +95,17 @@ fn rrect(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> impl Fn(f32, f32) -> boo
 }
 
 pub struct Palette {
-    pub ink: [u8;4], pub work: [u8;4], pub ask: [u8;4], pub muted: [u8;4], pub failed: [u8;4],
+    pub ink: [u8;4], pub work: [u8;4], pub ask: [u8;4], pub muted: [u8;4], pub failed: [u8;4], pub review: [u8;4],
 }
 pub fn palette(dark: bool) -> Palette {
-    if dark { Palette { ink:[236,239,242,255], work:[56,232,160,255], ask:[255,194,71,255], muted:[185,198,216,255], failed:[255,99,120,255] } }
-    else { Palette { ink:[37,41,48,255], work:[8,127,91,255], ask:[153,82,0,255], muted:[83,97,113,255], failed:[201,38,65,255] } }
+    if dark { Palette { ink:[236,239,242,255], work:[56,232,160,255], ask:[255,194,71,255], muted:[185,198,216,255], failed:[255,99,120,255], review:[188,163,235,255] } }
+    else { Palette { ink:[37,41,48,255], work:[8,127,91,255], ask:[153,82,0,255], muted:[83,97,113,255], failed:[201,38,65,255], review:[130,80,223,255] } }
 }
 fn hex(c:[u8;4])->String { format!("#{:02X}{:02X}{:02X}",c[0],c[1],c[2]) }
 /// The same semantic tokens supply menu counters and chart colors; no CSS color table.
 pub fn css(dark:bool)->String {
     let p=palette(dark);
-    format!("--work:{};--ask:{};--failed:{};--ready:{};--muted:{}",hex(p.work),hex(p.ask),hex(p.failed),hex(p.muted),hex(p.muted))
+    format!("--work:{};--ask:{};--failed:{};--ready:{};--muted:{};--review:{}",hex(p.work),hex(p.ask),hex(p.failed),hex(p.muted),hex(p.muted),hex(p.review))
 }
 
 /// The angular q (18·z pt, stroke 1.8·z, tail bottom right) at `(x0, y0)` with ▶ (admits) or Ⅱ inside.
@@ -419,9 +419,10 @@ mod tests {
             for n in [16,18,22,33,44,66,256] {let image=raster(&svg,n).unwrap();assert_eq!((image.w,image.h),(n,n));assert!(image.px.chunks_exact(4).any(|p|p[3]>0));}
         }
         assert_eq!(peak(&data.bins),12,"incomplete 999 cannot set the scale");
-        for (dark,expected) in [(false,[[8,127,91,255],[153,82,0,255],[201,38,65,255],[83,97,113,255]]),(true,[[56,232,160,255],[255,194,71,255],[255,99,120,255],[185,198,216,255]])] {
-            let p=palette(dark);assert_eq!([p.work,p.ask,p.failed,p.muted],expected,"approved palette A");
+        for (dark,expected) in [(false,[[8,127,91,255],[153,82,0,255],[201,38,65,255],[83,97,113,255],[130,80,223,255]]),(true,[[56,232,160,255],[255,194,71,255],[255,99,120,255],[185,198,216,255],[188,163,235,255]])] {
+            let p=palette(dark);assert_eq!([p.work,p.ask,p.failed,p.muted,p.review],expected,"approved palette A");
         }
+        assert!(css(false).ends_with(";--review:#8250DF")&&css(true).ends_with(";--review:#BCA3EB"),"Review accent token");
         let before=svg(&data,false);data.bins[0].counts=[4,8,7,6];
         let after=svg(&data,false);
         assert!(after.contains(r#"data-mark="failed""#));

@@ -747,7 +747,7 @@ const performance=window.performance||globalThis.performance,crypto=window.crypt
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
 const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
 const renderer=shell.create(menu);
-const color=st=>({doing:'work',review:'ready',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted');
+const color=st=>({doing:'work',review:'review',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted');
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;
 // Pages are Preact vnodes; shared module HTML enters only as an island the module owns.
 const f=(...children)=>h(Fragment,null,...children),raw=html=>html?h('div',{style:'display:contents',dangerouslySetInnerHTML:{__html:html}}):'',lines=items=>items.flatMap((x,i)=>i?[h('br'),x]:[x]);

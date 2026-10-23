@@ -24,11 +24,11 @@ details[open]>summary:after{transform:rotate(90deg)}
 .counter.filled{background:color-mix(in srgb,currentColor 12%,var(--surface))}
 .counter.zero{color:var(--muted);background:light-dark(#eff1f3,#2b3138)}
 .menu .tqp{--good:var(--work);--ask:inherit;--bad:var(--failed)}
-.menu .tqp-counts button:not(.good):not(.ask):not(.danger){color:var(--ready)}
+.menu .tqp-counts button:not(.good):not(.ask):not(.danger):not(.review){color:var(--ready)}
 .menu .qac{--qac-work:var(--work);--qac-ask:var(--ask);--qac-failed:var(--failed)}
 .menu .rsc{--rsc-work:var(--work);--rsc-ask:var(--ask);--rsc-failed:var(--failed)}
 .menu .tqf{--tqf-good:var(--work)}
-.work{color:var(--work)}.ask{color:var(--ask)}.ready{color:var(--ready)}.failed{color:var(--failed)}
+.work{color:var(--work)}.ask{color:var(--ask)}.ready{color:var(--ready)}.review{color:var(--review)}.failed{color:var(--failed)}
 .options{display:flex;gap:5px;flex-wrap:wrap;padding:4px}
 .options button{flex:1 0 38px}.options [data-a^=notify]{flex-basis:auto;padding-inline:4px}
 .options button.rec{border-color:var(--work);font-weight:600}

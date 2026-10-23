@@ -1,6 +1,6 @@
 /* #1573 conversation-walkthrough: task-dominant dashboard, shared tokens and anchored controls. */
 /* #1659 R06/R41: dividers are Text 8% over Surface; the popover is opaque and raised with its own edge and shadow. */
-.menu{--divider:color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,var(--surface));--popover:light-dark(#ffffff,#323b45);--popover-edge:#8996a2;--review:light-dark(#8250df,#bca3eb)}
+.menu{--divider:color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,var(--surface));--popover:light-dark(#ffffff,#323b45);--popover-edge:#8996a2}
 .ui-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:1em;height:1em;vertical-align:-.12em}
 .ui-icon svg{width:100%;height:100%}.ui-icon svg:not([fill]){fill:currentColor}
 .menu:not(.workspace) .head{gap:3px}
