@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.33
+
+CLI, tray page, icon summary and notifications read one display model for counts, state names, order, ages and labels (#1592). A recovered Claude job that restarted on a new process resolves instead of staying fenced as unknown on Windows (#1638). The service logs exit reasons, shows stale hosts and restarts an exited Windows host (#1628). PM requests are shared through one composer, and native-session dispatch is fenced (#1615, #1636). taskq pins coreq v0.14.8: GitLab boards read `<install>/gitlab-token`, and WAL checkpoints are bounded (#1637). No board change.
+
 ## v4.6.32
 
 Claude executions recovered after a Windows service restart resolve instead of staying unknown, so tasks blocked on them move again (#1629). The update re-exec waits a bounded time for the update lock (#1626); taskq ends on Windows without ExitProcess hangs or lost exit telemetry (#1574). Each ready task publishes a reason-coded admission state (#1632). Telemetry sync status and stage model fields are sent, with a published wire fixture (#1631), and request count keys are DashQ-valid (#1624). DashQ session progress carries host, runtime, stage and age only; worker line text no longer leaves the host (#1617). New task worktrees start from a cloned target/debug, task children share a host build cache, and concurrent cargo builds are bounded per host (#1623, #1619, #1618). The Summary SVG is shared and Custom icons are gone (#1611). No board change.
