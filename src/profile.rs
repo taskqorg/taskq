@@ -9,7 +9,7 @@ use std::sync::{OnceLock, atomic::{AtomicU64, Ordering}};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::telemetry::Sample;
 
-pub const OPS: [&str; 6] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render"];
+pub const OPS: [&str; 7] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy"];
 #[cfg(test)] const PREFIX: &str = "taskq-profile ";
 const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
 static LOG: OnceLock<PathBuf> = OnceLock::new();
@@ -47,6 +47,9 @@ pub(crate) struct Record {
     at_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     trace: Option<Trace>,
+    /// Per-pass counts of an operation that reports them (`service.tidy`); never paths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    counts: Option<BTreeMap<String, u64>>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -124,16 +127,28 @@ fn measure_at<T, E: std::fmt::Display>(path: Option<&Path>, detailed: bool, op: 
 }
 
 fn observe<T,E>(path:Option<&Path>,detailed:bool,op:&'static str,f:impl FnOnce()->Result<T,E>,class:impl FnOnce(&E)->&'static str)->Result<T,E> {
+    let mut observation = begin(path, detailed, op);
+    let result = f();
+    observation.record.error = result.as_ref().err().map_or("none", class).into();
+    result
+}
+
+fn begin<'a>(path: Option<&'a Path>, detailed: bool, op: &'static str) -> Observation<'a> {
     let trace = detailed.then(|| {
         let span = SPAN.fetch_add(1, Ordering::Relaxed);
         Trace { run: *RUN.get_or_init(|| SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|d| d.as_nanos().try_into().ok())),
             process: std::process::id(), span, parent: PARENT.replace(span) }
     });
-    let mut observation = Observation { path, began: Instant::now(), record: Record { op: op.into(), us: 0, error: "panic".into(),
-        at_ms: now_ms(), trace } };
-    let result = f();
-    observation.record.error = result.as_ref().err().map_or("none", class).into();
-    result
+    Observation { path, began: Instant::now(), record: Record { op: op.into(), us: 0, error: "panic".into(), at_ms: now_ms(), trace, counts: None } }
+}
+
+/// [`measure`] of an infallible operation that also records its counts.
+pub fn measure_counted<T>(op: &'static str, f: impl FnOnce() -> (T, BTreeMap<String, u64>)) -> T {
+    let mut observation = begin(LOG.get().map(PathBuf::as_path), TRACE.get().copied().unwrap_or(false), op);
+    let (out, counts) = f();
+    observation.record.error = "none".into();
+    observation.record.counts = Some(counts);
+    out
 }
 
 /// § 4 Profiling attempt stages; the behavioral model (§ 2) names where each starts and ends.
@@ -894,7 +909,14 @@ fn health(install:&Path)->String {
     let service=statuses.and_then(|s|service_health(&s,now,crate::runtime::alive));
     let mut out=health_lines("CLI telemetry",&Ok((crate::telemetry::diagnostic::health(),std::process::id() as u64,now)));
     out+=&health_lines("Service telemetry",&service);
-    out+&store_line(install)
+    out+=&store_line(install);
+    // docs/design/worktrees.md: one line per root from its last tidy report
+    for root in crate::host::projects(install).unwrap_or_default() {
+        let tidy=crate::data::json(&crate::dot(&root).join("tidy.json")).ok().flatten().unwrap_or_default();
+        out+=&crate::tidy::health_line(&root.file_name().map_or("project".into(),|n|n.to_string_lossy().into_owned()),&tidy,now);
+        out.push('\n');
+    }
+    out
 }
 
 /// The freshest status (under 60 s, live pid) among registered projects; anything else is unknown with its reason (R12).
@@ -1214,7 +1236,7 @@ pub(crate) mod tests {
         assert!(report(&dir).contains("unknown (no observations)"));
         fs::write(&path, "normal taskq diagnostic\n").unwrap();
         for (op, times, err) in [("spawn", vec![1000, 3000], "none"), ("forge.call", vec![2000, 2000], "http5xx")] {
-            for us in times { append(&path, &Record { op: op.into(), us, error: err.into(), at_ms: Some(us), trace: None }).unwrap(); }
+            for us in times { append(&path, &Record { op: op.into(), us, error: err.into(), at_ms: Some(us), trace: None, counts: None }).unwrap(); }
         }
         // board operations (#1173): ranked by p95; failures keep only their class; no remaining reads unknown
         for (op, us, err, remaining) in [("list", 4000, None, Some(4900)), ("list", 1000, Some("HTTP 502 secret /host/path"), Some(4800)), ("claim", 2000, None, None)] {
@@ -1267,7 +1289,7 @@ pub(crate) mod tests {
         // Concurrent producer admission is covered by concurrent_appenders_keep_records; rotation shares the budget lock.
         OpenOptions::new().append(true).open(&path).unwrap().write_all("normal log\n".repeat(crate::data::LOG_MAX as usize / 11 + 1).as_bytes()).unwrap();
         assert!(crate::data::trim_tail(&path, crate::data::LOG_MAX));
-        append(&path, &Record { op: "spawn".into(), us: 1, error: "none".into(), at_ms: Some(1), trace: None }).unwrap();
+        append(&path, &Record { op: "spawn".into(), us: 1, error: "none".into(), at_ms: Some(1), trace: None, counts: None }).unwrap();
         let records = read_log(&dir).unwrap().lines().filter(|l| l.starts_with(PREFIX)).count();
         assert_eq!(records, before + 1);
         assert!(!report(&dir).starts_with("Profile: unknown"));
@@ -1419,7 +1441,7 @@ Changed: x"))];
             t(Some("o/b"), 5, "ready", "doing", Some(20), Some("codex"), Some("win"), 110),
             b("list", 4000, None, Some(4900), 100), b("list", 2000, Some("http5xx"), Some(4100), 101), b("claim", 1000, None, None, 102),
             format!("{BOARD_PREFIX}{{\"op\":\"lunch\"}}\n"),
-            format!("{PREFIX}{}\n", serde_json::to_string(&Record { op: "spawn".into(), us: 7, error: "none".into(), at_ms: Some(140), trace: None }).unwrap()),
+            format!("{PREFIX}{}\n", serde_json::to_string(&Record { op: "spawn".into(), us: 7, error: "none".into(), at_ms: Some(140), trace: None, counts: None }).unwrap()),
             format!("{STAGE_PREFIX}{}\n", serde_json::to_string(&Stage { host: None, open: false, project: Some("o/a".into()), stage: "build".into(), task: 5, attempt: 9, rt: "codex".into(),
                 us: Some(5), outcome: "ok".into(), error: "none".into(), at_ms: Some(150), calls: None, tokens: Some(3), input_tokens: Some(1), cache_read_tokens: Some(2), cache_write_tokens: Some(0), model: None, output_tokens: Some(2), unknown: None }).unwrap()),
         ].concat();

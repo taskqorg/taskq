@@ -35,6 +35,7 @@ mod windows_sandbox;
 mod profile;
 mod telemetry;
 mod telemetry_sync;
+mod tidy;
 mod runtime;
 mod service;
 mod setup;
@@ -228,6 +229,7 @@ fn project_config(root:&Path)->Res<(Config,Value)> {
         poll: secs("poll", 60),
         update_every: secs("update_every", 60),
         rollback_after: secs("rollback_after", 600),
+        external: v["workspace"].as_str() == Some("external"),
     };
     if cfg.repo.is_empty() {
         return Err("taskq.json: repo is required".into());
@@ -1047,7 +1049,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             ("stop_progress",json!(s.stop_progress)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
-            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health())]
+            ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health()),
+            ("tidy", fs::read_to_string(d.join("tidy.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null))]
         {
             status[k] = v;
         }
@@ -2799,7 +2802,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             // a child the local service still runs keeps its worktree, whatever the board says
             let st: Value = fs::read_to_string(dot(root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
             let live: Vec<u64> = st["kids"].as_array().into_iter().flatten().filter_map(|k| k["task"].as_u64()).collect();
-            let log = service::cleanup(b, root, &cfg.me, platform::boot_time, |n| live.contains(&n), a.flags.contains_key("force"));
+            let t = tidy::Tidy { board: b, root, me: &cfg.me, boot: platform::boot_time, external: cfg.external, force: a.flags.contains_key("force") };
+            let log = t.run(&mut |n| live.contains(&n), &|_| None).log;
             println!("{}", if log.is_empty() { "nothing to clean".into() } else { log.join("\n") });
             Ok(())
         }
@@ -3116,6 +3120,7 @@ mod tests {
             poll: 60,
             update_every: 900,
             rollback_after: 600,
+            external: false,
         }
     }
 
