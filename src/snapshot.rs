@@ -35,12 +35,86 @@ pub struct ExecutionStatus {
     pub reason: String,
 }
 
+/// #1594 every signal one execution's state rests on. [`verdict`] is the only code that turns signals into
+/// `running`, `waiting`, `unknown` or `ended`; service, CLI status, tray (via `status.json`), cleanup and the
+/// handover wait read its result.
+#[derive(Default)]
+pub struct Signals<'a> {
+    /// This host owns the execution; otherwise only the owner's heartbeat row speaks for it.
+    pub local: bool,
+    /// Host boot time and the execution's intent time (#1386): a later boot proves the process ended.
+    pub boot: Option<(i64, i64)>,
+    /// This host's child process of the execution.
+    pub child: Option<Child<'a>>,
+    /// The launch waits at the admission gate.
+    pub held: bool,
+    /// The pass's recovery reason for a local execution without a child.
+    pub wait: Option<&'a str>,
+    /// Native input acceptance is still pending.
+    pub input_pending: bool,
+    /// The task waits for the owner's answer.
+    pub ask: bool,
+    /// The owner's matching heartbeat row, only from a heartbeat within the ttl (§ 3 lease).
+    pub beat: Option<&'a ExecutionStatus>,
+    /// A recorded native process (handover and boot records) and the identity read at its pid now.
+    pub process: Option<(&'a coreq::process::Identity, Result<Option<coreq::process::Identity>, String>)>,
+}
+
+#[derive(Default)]
+pub struct Child<'a> {
+    /// The native process exit is observed (or the process started before this boot).
+    pub exited: bool,
+    /// The native observation failed with this reason.
+    pub unknown: Option<&'a str>,
+    /// Cancellation was requested; native termination is not yet confirmed.
+    pub stopping: bool,
+}
+
+const STALE: &str = "termination unconfirmed; status missing or stale; restore owning service";
+
+/// The one execution verdict (§ 3 Recovery): state and a public reason of at most 240 characters.
+pub fn verdict(s: &Signals) -> (&'static str, String) {
+    let (state, reason): (&'static str, String) = if let Some((at, intent)) = s.boot.filter(|(at, intent)| *intent > 0 && at > intent) {
+        ("ended", format!("host booted {} after intent {}", board::stamp(at), board::stamp(intent)))
+    } else if s.child.as_ref().is_some_and(|c| c.exited) {
+        ("ended", "native exit observed".into())
+    } else if let Some((recorded, now)) = &s.process {
+        match now {
+            Err(e) => ("unknown", format!("recorded native process identity unknown: {e}")),
+            Ok(now) if now.as_ref() != Some(*recorded) => ("ended", "recorded native process exited".into()),
+            Ok(_) => ("running", "recorded native process observed".into()),
+        }
+    } else if !s.local {
+        match s.beat {
+            Some(row) if !row.reason.is_empty() && row.reason.chars().count() <= 240 && !row.reason.chars().any(char::is_control) => {
+                match row.state.as_str() {
+                    "running" => ("running", row.reason.clone()),
+                    "waiting" => ("waiting", row.reason.clone()),
+                    "unknown" => ("unknown", row.reason.clone()),
+                    _ => ("unknown", STALE.into()),
+                }
+            }
+            _ => ("unknown", STALE.into()),
+        }
+    } else {
+        match &s.child {
+            Some(Child { unknown: Some(e), .. }) => ("unknown", e.to_string()),
+            Some(c) if c.stopping => ("waiting", "cancellation pending; awaiting native termination".into()),
+            _ if s.held => ("waiting", "launch held by admission gate".into()),
+            None => ("unknown", s.wait.unwrap_or("native observation unavailable; restore owning runtime").into()),
+            _ if s.input_pending => ("waiting", "native input acceptance pending".into()),
+            _ if s.ask => ("waiting", "owner answer required".into()),
+            _ => ("running", "native execution observed; termination pending".into()),
+        }
+    };
+    (state, reason.chars().map(|c| if c.is_control() { ' ' } else { c }).take(240).collect())
+}
+
 /// Board identity and terminal evidence fence every advisory heartbeat observation.
 /// A host row counts within the project ttl (§ 3 lease); older reads unknown.
 pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[board::Issue], now:i64, ttl:i64)->Value {
-    let mut status=ExecutionStatus {task,attempt:x.attempt,id:x.id,through:x.through,state:"unknown".into(),reason:"termination unconfirmed; status missing or stale; restore owning service".into()};
     let owners:Vec<_>=hosts.iter().filter(|h|h.trusted && h.title==format!("taskq host {}",x.host)).collect();
-    let mut observed=None;
+    let mut beat=None;
     if let [host]=owners[..] {
         if live(now-host.updated,ttl) {
             let rows=host.body.lines().filter_map(|l|l.strip_prefix("execution ")).map(|text| {
@@ -48,16 +122,14 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
                 serde_json::from_str::<ExecutionStatus>(text).map_err(|e|e.to_string())
             }).collect::<Result<Vec<_>,_>>();
             if let Ok(rows)=rows {
-                let matching:Vec<_>=rows.iter().filter(|r|r.task==task && r.attempt==x.attempt && r.id==x.id && r.through==x.through).collect();
-                if let [row]=matching[..] {
-                    if matches!(row.state.as_str(),"running"|"waiting"|"unknown") && !row.reason.is_empty()
-                        && row.reason.chars().count()<=240 && !row.reason.chars().any(char::is_control) {
-                        status=row.clone();observed=Some(host.updated);
-                    }
-                }
+                let matching:Vec<_>=rows.into_iter().filter(|r|r.task==task && r.attempt==x.attempt && r.id==x.id && r.through==x.through).collect();
+                if let [row]=&matching[..] {beat=Some((row.clone(),host.updated));}
             }
         }
     }
+    let (state,reason)=verdict(&Signals {beat:beat.as_ref().map(|b|&b.0),..Default::default()});
+    let observed=beat.filter(|_|state!="unknown" || reason!=STALE).map(|b|b.1);
+    let status=ExecutionStatus {task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason};
     let mut value=serde_json::to_value(status).unwrap();
     value["host"]=json!(x.host);value["runtime"]=json!(x.runtime);value["observed"]=json!(observed);value
 }
@@ -729,5 +801,46 @@ mod tests {
         assert_eq!(v["state"], "unknown");
         assert_eq!(v["reason"], "termination unconfirmed; status missing or stale; restore owning service");
         assert!(v["observed"].is_null());
+    }
+
+    // #1594 A3: the owner's verdict, published in its heartbeat and read by another host or the tray, stays the same;
+    // only a childless verdict other than `ended` holds a handover. Risk: a caller re-derives liveness and a fix lands
+    // in one place only (#947 foreign or childless execution, #1036 exited child, #1386 boot proof, #1481/#1491
+    // heartbeat ttl, #1551 cleanup after reboot).
+    #[test]
+    fn one_verdict_through_every_caller() {
+        let (done, failed, stopping) = (Child { exited: true, ..Default::default() }, Child { unknown: Some("io"), ..Default::default() }, Child { stopping: true, ..Default::default() });
+        let (rec, reused) = (coreq::process::Identity { pid: 9, started: "1-0".into() }, coreq::process::Identity { pid: 9, started: "2-0".into() });
+        let cases: Vec<(&str, Signals, &str, &str)> = vec![
+            ("#947 childless", Signals { local: true, ..Default::default() }, "unknown", "native observation unavailable; restore owning runtime"),
+            ("#947 recovery wait", Signals { local: true, wait: Some("termination unconfirmed"), ..Default::default() }, "unknown", "termination unconfirmed"),
+            ("#1036 exited", Signals { local: true, child: Some(done), ..Default::default() }, "ended", "native exit observed"),
+            ("#1036 observation failed", Signals { local: true, child: Some(failed), ..Default::default() }, "unknown", "io"),
+            ("stopping", Signals { local: true, child: Some(stopping), ..Default::default() }, "waiting", "cancellation pending; awaiting native termination"),
+            ("running", Signals { local: true, child: Some(Child::default()), ..Default::default() }, "running", "native execution observed; termination pending"),
+            ("input", Signals { local: true, child: Some(Child::default()), input_pending: true, ..Default::default() }, "waiting", "native input acceptance pending"),
+            ("ask", Signals { local: true, child: Some(Child::default()), ask: true, ..Default::default() }, "waiting", "owner answer required"),
+            ("held", Signals { local: true, held: true, ..Default::default() }, "waiting", "launch held by admission gate"),
+            ("#1386/#1551 boot after intent", Signals { local: true, boot: Some((200, 100)), ..Default::default() }, "ended", "host booted 1970-01-01T00:03:20Z after intent 1970-01-01T00:01:40Z"),
+            ("#1386 boot before intent", Signals { local: true, boot: Some((100, 200)), ..Default::default() }, "unknown", "native observation unavailable; restore owning runtime"),
+            ("#1481 no heartbeat", Signals::default(), "unknown", STALE),
+            ("#1561 recorded process exited", Signals { local: true, process: Some((&rec, Ok(None))), ..Default::default() }, "ended", "recorded native process exited"),
+            ("#1561 recorded pid reused", Signals { local: true, process: Some((&rec, Ok(Some(reused.clone())))), ..Default::default() }, "ended", "recorded native process exited"),
+            ("#1561 recorded process live", Signals { local: true, process: Some((&rec, Ok(Some(rec.clone())))), ..Default::default() }, "running", "recorded native process observed"),
+            ("#1561 identity read failed", Signals { local: true, process: Some((&rec, Err("io".into()))), ..Default::default() }, "unknown", "recorded native process identity unknown: io"),
+        ];
+        for (name, s, state, reason) in cases {
+            let (got, why) = verdict(&s);
+            assert_eq!((got, why.as_str()), (state, reason), "{name}");
+            if got == "ended" { continue; }
+            // the owner publishes `execution_statuses` rows; the reader and the tray read them back through `execution_status`
+            let row = ExecutionStatus { task: 1, attempt: 5, id: 7, through: 7, state: got.into(), reason: why.clone() };
+            let issue = board::Issue { body: format!("execution {}", serde_json::to_string(&row).unwrap()), ..host(10) };
+            let v = execution_status(1, &exec(), &[issue.clone()], 1000, 300);
+            assert_eq!((v["state"].as_str(), v["reason"].as_str()), (Some(got), Some(why.as_str())), "{name} via heartbeat");
+            // #1491: the same row past the ttl reads unknown
+            let v = execution_status(1, &exec(), &[issue], 1301, 300);
+            assert_eq!((v["state"].as_str(), v["reason"].as_str()), (Some("unknown"), Some(STALE)), "{name} stale");
+        }
     }
 }
