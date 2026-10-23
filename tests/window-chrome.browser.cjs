@@ -5,6 +5,8 @@ const out=process.env.CHROME_EVIDENCE;
 const task=(n,state)=>({n,state,title:'Keep the task title readable '+n,revision:n+50,since:900,created:500,steps:[{state,start:900,end:null,complete:false}],controls:['stop','later']});
 const long={root:'/fixture/long',name:'Infrastructure provisioning and observability pipeline',host:'fixture',issues:'https://example.org/org/long/issues',board_kind:'github',alive:true,complete:true,age:1,focus:['all'],labels:[],tasks:[task(1,'ready'),task(2,'doing')],delivery:{preset:'auto-merge',revision:0}};
 const state={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,version:'9.9.9',size_anchor:'auto',attached_edge:'top',top:false,pinned:false,service:{state:'running'},projects:[long],ai:{draft:''},notify:{projects:{}},stop_modes:false,display:require('./fixtures/display-model.json').display,messages:{complete:true,count:3}};
+// icon::css, the palette the native menu injects
+const palette={dark:'--work:#38E8A0;--ask:#FFC247;--failed:#FF6378;--ready:#B9C6D8;--muted:#B9C6D8',light:'--work:#087F5B;--ask:#995200;--failed:#C92641;--ready:#536171;--muted:#536171'};
 const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.replace('<head>','<head><script>window.taskqSurface=\'settings\';</script>');
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
@@ -12,12 +14,17 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   const open=async(width,s={...state,theme},source=html)=>{const p=await browser.newPage({viewport:{width,height:640}});p.on('pageerror',e=>{throw e;});await p.setContent(source);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await p.evaluate(s=>taskq.receive(s),s);return p;};
   // right edge of each first-row control: an icon that moves between pages fails here
   const row=p=>p.evaluate(()=>[...document.querySelectorAll('.head .nav-home,.head .nav-actions>*,.head .window-controls>*')].map(e=>{const r=e.getBoundingClientRect();return [e.getAttribute('aria-label'),Math.round(r.top),Math.round(innerWidth-r.right)];}));
+  // the Conversations count stays readable: an opaque fill with WCAG AA contrast to its digits, injected palette or not
+  const badge=p=>p.locator('.head .badge').evaluate(e=>{const rgb=c=>{const x=document.createElement('canvas').getContext('2d');x.fillStyle=c;x.fillRect(0,0,1,1);return [...x.getImageData(0,0,1,1).data];};const cs=getComputedStyle(e),lum=c=>c.slice(0,3).map(v=>(v/=255)<=.03928?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0),[a,b]=[lum(rgb(cs.backgroundColor)),lum(rgb(cs.color))];return {alpha:rgb(cs.backgroundColor)[3],ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};});
+  const readable=async(p,why)=>{const b=await badge(p);assert.equal(b.alpha,255,'badge fill is opaque '+why);assert(b.ratio>=4.5,'badge contrast '+b.ratio.toFixed(2)+' '+why);};
   const words=p=>p.evaluate(()=>{const t=document.querySelector('.head h1'),cs=getComputedStyle(t);return {wrap:cs.overflowWrap,brk:cs.wordBreak,hyphens:cs.hyphens,cut:t.scrollWidth>t.clientWidth+1};});
   for(const width of [320,360,800]){
    const p=await open(width);const home=await row(p);
    assert.deepEqual(home.map(r=>r[0]),['Home','Conversations · 3 new','Settings','Keep menu open','Always on top','Close menu'],'one Conversations entry, distinct window names, Close last');
    assert.equal(new Set(home.map(r=>r[1])).size,1,'frequent actions share the first row at '+width);
    assert.equal(await p.locator('.head [data-a=workspace]').count(),1);assert.equal(await p.locator('.head .badge').textContent(),'3');
+   await readable(p,'without a palette at '+width+' '+theme);
+   if(width===360){const q=await open(width,{...state,theme,palette:palette[theme]});await readable(q,'with the injected palette '+theme);await q.close();}
    assert.equal(await p.locator('.menu [aria-label*=Enlarge]').count(),0,'menu has no Enlarge');
    assert.deepEqual(await p.locator('.status-footer>*').evaluateAll(es=>es.map(e=>e.textContent||e.getAttribute('aria-label'))),['TaskQ v9.9.9','Resize window with arrow keys'],'footer is the version and the grip');
    await p.locator('.head [data-a=workspace]').click();assert.deepEqual(await p.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open.page),'messages','new events open their section');
