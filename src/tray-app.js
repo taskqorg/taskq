@@ -20,7 +20,7 @@ operationBody:function(context){
   let body;
   switch(c.operation){
    case 'service':body=[h('button',{class:'project','data-a':'resources'},'Open resource monitor'),view.resourceNotice&&h('p',{role:'status'},view.resourceNotice.reason),api.hostService(),p?[service(p,false),capacity(p),workEntry(p.root)]:ps.map(p=>service(p,false))];break;
-   case 'resources':{const target=p||ps.find(p=>p.resources);body=target?[h('p',null,'Host limits affect every registered project; project ceilings remain read-only.'),workPageFor(target)]:h('p',{role:'status'},'Capacity unavailable: no supported host projection.');break;}
+   case 'resources':{const target=p||ps.find(p=>p.resources);body=target?[h('p',null,'Host limits affect every registered project; project ceilings remain read-only.'),api.workPage(target.root)]:h('p',{role:'status'},'Capacity unavailable: no supported host projection.');break;}
    case 'stop':body=view.S.stop_modes?api.stopPanel():h('p',{role:'status'},'Emergency stop unavailable on this host. Normal stop is under Services.');break;
    case 'recovery':body=view.S.stop_modes?api.recoveryPanel():h('p',{role:'status'},'Reviewed recovery unavailable on this host.');break;
    case 'admission':{const selected=p?[p]:ps;body=[h('p',{class:'body',role:'status'},api.admissionText(selected)),h('p',null,'Pause holds new admission; current tasks finish. Resume restores saved focus and cannot clear an emergency hold.'),selected.map(p=>h('section',{key:p.root},h('p',null,p.name+' · '+modeText(p)),admission(p))),!p&&bulk(selected.filter(p=>mode(p)==='run'),selected.filter(p=>mode(p)==='paused'))];break;}
@@ -489,7 +489,7 @@ capacity:function(p){if(!ports.workspace)return p.resources?api.operationLaunche
   if(!p.resources)return '';
   return h('details',{class:'group','data-view-key':'capacity:'+p.root},h('summary',null,icon('square'),'Capacity ',h('span',{class:'meta'},(p.cap_host||'this host')+' · '+require('./resource-controls.js').headline(resourceGroup(p),view.S.now))),h('div',{'data-resources':p.root}));},
 workEntry:function(root){return view.S.projects.some(p=>p.resources)?h('button',{class:'project','data-a':'work','data-root':root||null},icon('sliders-horizontal'),'Work mode…'):'';},
-workPage:function(){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0],run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
+workPage:function(root){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>p.root===root||view.working?.[p.root])||ps[0],run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
   return f(h('div',{class:'body',role:'status'},'Admission · '+api.admissionText()),bulk(run,held),api.resourceMeters(p),h('details',{'data-view-key':'admission-reasons'},h('summary',null,'Admission details'),view.S.projects.map(p=>h('div',{class:'body meta'},p.name+': '+(p.capacity?.reasons?.map(r=>r.text||r.code).join(' · ')||'No reported reasons')))),p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''}),api.accessFacts());},
 admissionText:function(ps=view.S.projects){
   if(!ps.length)return 'No projects';
@@ -507,7 +507,7 @@ admissionText:function(ps=view.S.projects){
   return lead+': '+scope+' · Intake: '+intake.join(' · ');
 },
 resourceMeters:function(p){
-  const c=p?.capacity,known=p?.alive===true&&!!p.sample_age_text;
+  const c=p?.capacity,known=p?.alive===true&&!!p.sample_age_text&&!c?.reasons?.some(r=>r.code==='sample');
   return h('div',{class:'resource-meters'},[['CPU busy',c?.cpu_percent],['Memory available',c?.memory_available_percent]].map(([label,value])=>{
     const valid=known&&Number.isFinite(value)&&value>=0&&value<=100;
     return h('div',{class:'resource-meter'},h('span',null,label),valid&&h('meter',{min:0,max:100,value,'aria-label':label}),h('span',null,valid?Math.round(value)+'%':'Unknown'));
