@@ -24,11 +24,21 @@
 .saved-view{display:flex;gap:4px}.saved-view>button:first-child{flex:1;text-align:left;border:0}.anchored-popover label{display:block;font-size:.85em;margin-block:6px}.anchored-popover input{font:inherit;display:block;width:100%;background:transparent;color:inherit;border:1px solid var(--edge);padding:5px}
 .detail-title{display:block!important;text-align:left!important;font-weight:600}.task-card-text{white-space:pre-wrap;font-size:.85em;user-select:text}.task-steps{font-size:.85em;margin:4px;padding-left:24px}.row-actions{display:flex;gap:4px;flex-wrap:wrap}.row-actions .task-controls,.row-actions>span{display:contents}
 .settings-section{padding-block:4px}.settings-section+.settings-section{border-top:1px solid var(--divider)}
+/* #1661 R28: a Settings widget is one line, its live summary trails and wraps whole words */
+.menu .settings-widget{align-items:center}.settings-widget>span:not(.ui-icon):not(.meta){flex:none}.settings-widget>.meta{margin-left:auto;text-align:right;min-width:0;overflow-wrap:break-word}
+.host-line>summary .alert{color:var(--failed)}
+/* #1661 R30: a summary with mixed text keeps its words in reading order and wraps whole, never a one-letter column */
+.menu summary.line{display:block}
+.menu summary.line>.ui-icon{vertical-align:middle;margin-right:6px}
+.menu summary.line>.meta{white-space:normal;overflow:visible;max-width:none}
+.menu summary.line:after{float:right;padding-left:6px}
+.agent-signin>summary .alert{color:var(--failed)}
 .growth-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}.growth-options>button{display:flex;flex-direction:column;align-items:center;gap:5px;padding:4px 0;font-size:.85em}
 .growth-miniature{display:block;width:42px;height:40px;position:relative;border-top:2px solid var(--muted)}.growth-miniature>i{position:absolute;left:5px;right:5px;top:5px;height:15px;border:1px solid var(--muted);border-radius:3px;animation:window-grow 1.6s ease-in-out infinite alternate}
 .growth-miniature[data-growth=bottom]{border-top:0;border-bottom:2px solid var(--muted)}.growth-miniature[data-growth=bottom]>i,.growth-miniature[data-growth=auto][data-opening=up]>i{top:auto;bottom:5px}.growth-miniature[data-growth=fixed]>i{animation:none;height:25px}
 @keyframes window-grow{from{height:12px}to{height:28px}}
-@media(prefers-reduced-motion:reduce){.growth-miniature>i{animation:none;height:25px}}
+/* R20: with reduced motion each preview is a still dashed outline with its growth arrow */
+@media(prefers-reduced-motion:reduce){.growth-miniature>i{animation:none;height:25px;border-style:dashed}.growth-miniature>i::after{content:'\2193';position:absolute;inset:0;display:grid;place-items:center;font-style:normal;font-size:12px;line-height:1;color:var(--muted)}.growth-miniature[data-growth=bottom]>i::after,.growth-miniature[data-growth=auto][data-opening=up]>i::after{content:'\2191'}.growth-miniature[data-growth=fixed]>i{border-style:solid}.growth-miniature[data-growth=fixed]>i::after{content:none}}
 
 @media(pointer:coarse){.menu .head .nav-actions{grid-row:2;grid-column:1/-1;justify-content:flex-end}.menu .head:is(.title-below,[data-title-below]) .nav-title{grid-row:3}.menu .status-footer .grip{width:44px;height:44px;min-height:44px}}
 

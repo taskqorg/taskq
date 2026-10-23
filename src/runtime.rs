@@ -2388,6 +2388,33 @@ pub fn agent_text(r: &serde_json::Value) -> String {
     format!("{rt} {} · {tail}", r["version"].as_str().unwrap_or("unknown"))
 }
 
+/// The Settings view of a row ([AS5](../docs/design/agent-settings.md#as5-version-and-sign-in)): `state` is `signed-in`,
+/// `sign-in-required`, `rejected`, `expired`, `check-failed`, `not-installed` or `unknown`; `account` only when the probe
+/// names one (an email), the method (`ChatGPT`, `an API key`, `claude.ai max`) apart; `expires` only when supplied;
+/// `refreshed` is the last refresh, never an expiry.
+pub fn agent_view(r: &serde_json::Value) -> serde_json::Value {
+    let account = r["account"].as_str().filter(|a| a.contains('@'));
+    let method = r["kind"].as_str().or(r["account"].as_str().filter(|a| !a.contains('@')));
+    let expires = r["expires"].as_i64();
+    let state = match r["login"].as_str() {
+        Some("logged in") if expires.is_some_and(|e| e <= now()) => "expired",
+        Some("logged in") => "signed-in",
+        Some("not logged in") if r["reason"].is_string() => "rejected",
+        Some("not logged in") => "sign-in-required",
+        Some("not installed") => "not-installed",
+        // the probe ran and its answer did not parse
+        Some("unknown") if r["path"].is_string() => "check-failed",
+        _ => "unknown",
+    };
+    // a check never signs in: a needed sign-in names the native route (docs/relogin.md)
+    let next = ["expired", "rejected", "sign-in-required"].contains(&state).then(|| relogin(r["runtime"].as_str().unwrap_or("")));
+    serde_json::json!({"runtime": r["runtime"], "version": r["version"], "state": state, "account": account, "method": method, "expires": expires, "refreshed": r["refreshed"], "reason": r["reason"], "next": next})
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
 /// One `taskq agents` line (§ 5): runtime, path, version, login, kind and last refresh; unread values read unknown (R12).
 pub fn agents_line(r: &serde_json::Value) -> String {
     let s = |k: &str, none: &str| r[k].as_str().unwrap_or(none).to_string();
@@ -2938,6 +2965,20 @@ mod tests {
         let off = serde_json::json!({"runtime": "codex", "path": "/bin/codex", "version": "0.1", "login": "not logged in", "account": "a@b.c", "reason": "refresh token rejected"});
         assert_eq!(agent_text(&off), "codex 0.1 · not logged in (refresh token rejected)");
         assert!(agents_line(&off).contains("  not logged in (refresh token rejected)  "), "{}", agents_line(&off));
+        // #1661 A2: Settings states stay distinct; a method is never shown as the account
+        let view = |r: serde_json::Value| { let v = agent_view(&r); (v["state"].as_str().unwrap().to_string(), v["account"].clone(), v["method"].clone()) };
+        assert_eq!(view(off.clone()), ("rejected".into(), "a@b.c".into(), serde_json::Value::Null));
+        assert_eq!(view(row("logged in", "ChatGPT".into())), ("signed-in".into(), serde_json::Value::Null, "ChatGPT".into()));
+        assert_eq!(view(serde_json::json!({"login": "logged in", "account": "a@b.c", "kind": "claude.ai max", "expires": 1})), ("expired".into(), "a@b.c".into(), "claude.ai max".into()));
+        assert_eq!(view(serde_json::json!({"login": "logged in", "expires": now() + 3600})).0, "signed-in");
+        assert_eq!(view(serde_json::json!({"login": "not logged in"})).0, "sign-in-required");
+        assert_eq!(view(serde_json::json!({"login": "unknown", "path": "/bin/codex"})).0, "check-failed");
+        assert_eq!(view(serde_json::json!({"login": "not installed", "path": null})).0, "not-installed");
+        assert_eq!(view(serde_json::json!({})).0, "unknown");
+        // an old last refresh is not an expiry; only a needed sign-in names the native route
+        let fresh = agent_view(&serde_json::json!({"runtime": "codex", "login": "logged in", "refreshed": "2020-01-01T00:00:00Z"}));
+        assert_eq!((fresh["state"].as_str(), fresh["next"].as_str()), (Some("signed-in"), None));
+        assert!(agent_view(&off)["next"].as_str().is_some_and(|n| n.contains("codex login")));
     }
 
     // Chain: #1446 A1/A3. Risk: Codex's dead refresh token reads logged in and burns retries, worker output that

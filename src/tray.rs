@@ -449,7 +449,7 @@ fn project(install: &Path, root: &str) -> Value {
         "complete": crate::snapshot::complete(&s) && live,
         "error": bad.map(Value::from).or_else(|| [&s["error"], &s["focus_error"]].into_iter().find(|e| e.is_string()).cloned()).unwrap_or(Value::Null), "focus": s["focus"].as_array().cloned().unwrap_or_default(), "saved": saved, "labels": crate::status_labels(r),
         "focus_command": s["focus_command"],"service_pid":s["pid"],"host_instance":s["host_instance"],"restart_waits":s["restart_waits"],"stop_progress":s["stop_progress"],"uninstall_review":crate::lifecycle::uninstall_review(install,"review",Some(r)).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})), "request": s["request"], "since": since, "events": events, "tasks": tasks, "host": s["host"], "version": s["version"], "update": s["update"],
-        "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"],
+        "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"], "access": s["access"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO})
 }
@@ -1639,7 +1639,7 @@ const ANSWERS: [(&str, &str); 4] = [
     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
 ];
-const ROUTES: [&str; 23] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "window", "tray-icon", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown"];
+const ROUTES: [&str; 22] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1675,7 +1675,10 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let observed=now();
     let display = crate::display::model(&mut ps, observed);
     let mut seen = agents(&ps);
-    if let Some(at) = seen["at"].as_i64() { seen["age"] = json!(crate::display::age(observed - at)); }
+    // AS5: a probe older than one probe cycle plus a minute reads "Signed in at <time>", never current
+    if let Some(at) = seen["at"].as_i64() { seen["age"] = json!(crate::display::age(observed - at)); seen["fresh"] = json!((0..=360).contains(&(observed - at))); }
+    // a probe runs at most 40 s (2 clients × 2 probes × 10 s); an older mark is a pass that never finished, not Checking
+    if !seen.is_null() { seen["checking"] = json!(seen["checking"].as_i64().is_some_and(|c| (0..=60).contains(&(observed - c)))); }
     let messages=crate::messages::snapshot(install,&ps);
     let onboarding=snap.and_then(|(_,route)|agentq_fixture(route)).unwrap_or_else(crate::agentq::snapshot);
     let (start, end) = s.range(observed);
@@ -1727,10 +1730,14 @@ fn notes(install: &Path, s: &mut Settings, st: &Value, asked: &mut bool, bursts:
     }
 }
 
-/// Host-level `Agents` (§ 4): the rows of the freshest probe in any `status.json`, as menu lines; null when none has one.
+/// Host-level `Agents` (§ 4): the rows of the freshest probe in any `status.json` in the AS5 view; null when none has one.
 fn agents(ps: &[Value]) -> Value {
-    let Some(a) = ps.iter().map(|p| &p["agents"]).filter(|a| a["at"].is_u64()).max_by_key(|a| a["at"].as_u64()) else { return Value::Null };
-    json!({"at": a["at"], "rows": a["rows"].as_array().into_iter().flatten().map(crate::runtime::agent_text).collect::<Vec<_>>()})
+    // AS5 Checking: a service marks a due probe before it runs; a probe read after the mark ends it
+    let checking = ps.iter().filter_map(|p| p["agents"]["checking"].as_u64()).max();
+    let Some(a) = ps.iter().map(|p| &p["agents"]).filter(|a| a["at"].is_u64()).max_by_key(|a| a["at"].as_u64()) else {
+        return checking.map_or(Value::Null, |c| json!({"at": null, "checking": c, "rows": []}));
+    };
+    json!({"at": a["at"], "checking": checking.filter(|c| a["at"].as_u64().is_some_and(|at| *c >= at)), "rows": a["rows"].as_array().into_iter().flatten().map(crate::runtime::agent_view).collect::<Vec<_>>()})
 }
 
 /// The default 24 h Summary period.
@@ -3114,8 +3121,14 @@ mod tests {
     fn agents_come_from_the_freshest_probe_or_are_unknown() {
         let row = |v: &str| json!({"runtime": "claude", "path": "/c", "version": v, "login": "not logged in", "account": null});
         let ps = [json!({"agents": {"at": 10, "rows": [row("1")]}}), json!({"agents": {"at": 20, "rows": [row("2")]}}), json!({})];
-        assert_eq!(agents(&ps), json!({"at": 20, "rows": ["claude 2 · not logged in"]}));
+        assert_eq!(agents(&ps), json!({"at": 20, "checking": null, "rows": [{"runtime": "claude", "version": "2", "state": "sign-in-required", "account": null, "method": null, "expires": null, "refreshed": null, "reason": null, "next": "run `claude auth login` with the PM (docs/relogin.md)"}]}));
         assert_eq!(agents(&ps[2..]), Value::Null);
+        // #1661 A2: a probe in progress reads Checking over its prior rows; a probe read after the mark ends it
+        let ps = [json!({"agents": {"at": 20, "checking": 30, "rows": [row("2")]}}), json!({"agents": {"at": 25, "rows": [row("3")]}})];
+        assert_eq!((agents(&ps)["checking"].clone(), agents(&ps)["rows"][0]["version"].clone()), (json!(30), json!("3")));
+        let ps = [json!({"agents": {"at": 20, "checking": 30, "rows": []}}), json!({"agents": {"at": 40, "rows": []}})];
+        assert_eq!(agents(&ps)["checking"], Value::Null);
+        assert_eq!(agents(&[json!({"agents": {"checking": 30}})]), json!({"at": null, "checking": 30, "rows": []}));
     }
 
     // Chain: § 6 Add project from the tray. Risk: a folder is classified wrong and set up wrong.

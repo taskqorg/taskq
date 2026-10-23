@@ -1,7 +1,7 @@
 // #1598 A4/A6/A8: native-generated SVG -> bundled menu; exact accessible detail and time-identity selection.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const fixtures=process.env.TASKQ_ICON_EVIDENCE||'tests/fixtures/icon-history';
-const base={page:'cadence',font:16,size:[360,760],size_anchor:'fixed',period:'1d',projects:[{root:'fixture',name:'TaskQ frozen capture',tasks:[],focus:[],labels:[],alive:true}],ai:{draft:''}};
+const base={display:require('./fixtures/display-model.json').display,page:'cadence',font:16,size:[360,760],size_anchor:'fixed',period:'1d',projects:[{root:'fixture',name:'TaskQ frozen capture',tasks:[],focus:[],labels:[],alive:true}],ai:{draft:''}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
@@ -31,7 +31,7 @@ const base={page:'cadence',font:16,size:[360,760],size_anchor:'fixed',period:'1d
     assert.equal(await page.locator('[data-history-bin][aria-pressed=true]').getAttribute('data-history-bin'),selected);
     if(name==='day'){
      const originalChart=await chart.innerHTML();
-     await page.evaluate(s=>taskq.receive({...s,page:'tray-icon'}),s);
+     await page.evaluate(s=>taskq.receive({...s,page:'appearance'}),s);
      assert.equal(await page.getByRole('button',{name:'Custom',exact:true}).count(),0);
      assert.equal(await page.getByRole('button',{name:'Icon',exact:true}).locator('img').count(),1,'compact picker identity remains visible');
      assert.equal(await page.locator('.summary-preview svg #chart').innerHTML(),originalChart);

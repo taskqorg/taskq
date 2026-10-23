@@ -74,7 +74,7 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   for(const hasTouch of [false,true]){
    const context=await browser.newContext({viewport:{width:320,height:600},hasTouch});
    const p=await context.newPage();p.on('pageerror',e=>errors.push(e.message));await p.setContent(fs.readFileSync('build/web/tray.html','utf8'));
-   for(const route of ['home','projects',project.root,'attention','settings','appearance','window','tray-icon','delivery','cadence','notifications','agents','services','about','stop','recovery']){
+   for(const route of ['home','projects',project.root,'attention','settings','appearance','hosts','delivery','cadence','notifications','agents','services','about','stop','recovery']){
     await p.evaluate(s=>taskq.receive(s),{...snapshot,page:route});
     assert.equal(await p.locator('h1').count(),1);assert.equal(await p.locator('.head h1').count(),1,route+' has a single fixed title');
     const small=await p.evaluate(min=>{
@@ -124,10 +124,10 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   assert.match(await workspace.locator('.content').innerText(),/opens only on other-host/);
   await workspace.getByText('Open recorded session',{exact:true}).click();assert.equal(await workspace.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture-thread');
   await workspace.locator('[data-a=back]').click();assert.equal(await workspace.evaluate(()=>document.activeElement.dataset.route),'sessions');
-  await workspace.locator('.content [data-route=agents]').click();
+  await workspace.locator('.shell-overflow > summary').click();await workspace.locator('.overflow-actions [data-route=request]').click();
   const saved=await workspace.evaluate(()=>messages.filter(m=>m.a==='workspace-set').at(-1).navigation);
   await workspace.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await workspace.evaluate(s=>taskq.receive(s),{...snapshot,workspace_navigation:saved});
-  assert.equal(await workspace.locator('h1').innerText(),'Agent settings');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Inbox');
+  assert.equal(await workspace.locator('h1').innerText(),'New AI request');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Inbox');
   assert.deepEqual(errors,[]);await workspace.close();
   console.log('PASS TW1/V06/V09: route titles, invoker focus, stable bar, keyboard Back, fine/coarse targets and independent workspace reload/Back');
  }finally{await browser.close();}

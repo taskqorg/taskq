@@ -20,8 +20,12 @@ let html=c.runningAgents();
 assert(html.includes('claude: 1 worker · 0 reviewers'));
 assert(html.includes('codex: 0 workers · 1 reviewer'));
 assert(html.includes('codex: 1 worker · 0 reviewers'));
-assert(html.includes('old</strong> · unknown · 5m old'));
-assert(html.includes('idle</strong> · idle'));
+assert(html.includes('old</strong> · runs unknown · 5m old'));
+assert(html.includes('idle</strong> · Claude 0 · Codex 0'));
+// #1661 R16/R17: one line per named host, Claude and Codex apart; this host's expansion holds its resources, a remote one names what is not collected
+assert(html.includes('mac</strong> · Claude 1 · Codex 1'));assert(html.includes('win</strong> · Claude 0 · Codex 1'));
+assert(html.includes('CPU and memory: not collected for remote hosts'));assert(html.includes('CPU and memory: no sample; sampled only while the load gate is on'));
+assert.deepEqual(c.runningAgents(true),{label:'4 hosts',meta:'Runs unknown'},'a global count is never labelled as one host');
 assert(html.includes('Reservations: claude 1'));
 assert(html.includes('Occupied slots: claude 2 · codex 1'));
 assert(html.includes('Tasks: Doing 3 · Review 2'));
@@ -29,16 +33,16 @@ c.S.display.all=counts({doing:7,review:0});assert(c.runningAgents().includes('Ta
 c.S.display.all=counts(null);assert(c.runningAgents().includes('Tasks unknown'),'unknown model counts never read zero');
 c.S.display.all=counts({doing:3,review:2});
 const single=html;c.S.projects.push({...project,root:'duplicate'});assert.equal(c.runningAgents(),single,'duplicate board must not double count');
-c.S.projects=[{...project,complete:false}];html=c.runningAgents();assert(!html.includes(' · idle'));assert(!html.includes('claude: 1 worker'));
+c.S.projects=[{...project,complete:false}];html=c.runningAgents();assert(!html.includes('idle</strong> · Claude 0'));assert(!html.includes('claude: 1 worker'));
 c.S.projects=[{...project,age:301,alive:false,tasks_live:false}];html=c.runningAgents();assert(!html.includes('claude: 1 worker'));assert(html.includes('Capacity unknown'));
 c.S.projects=[{...project,age:0,tasks_age_seconds:301,tasks_live:false}];assert(!c.runningAgents().includes('claude: 1 worker'),'capacity refresh cannot freshen old task observations');
-c.S.projects=[{...project,tasks_age_seconds:null,tasks_live:false}];assert(!c.runningAgents().includes(' · idle'));
-c.S.projects=[{...project,hosts:null}];assert(!c.runningAgents().includes(' · idle'));
+c.S.projects=[{...project,tasks_age_seconds:null,tasks_live:false}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
+c.S.projects=[{...project,hosts:null}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
 c.S.projects=[{...project,hosts:[{name:'mac',updated:1100,live:false}]}];assert(!c.runningAgents().includes('claude: 1 worker'));
-c.S.projects=[{...project,tasks:[{n:1,state:'doing',executions:[{...execution(11,'mac','claude','worker'),role:null}]}]}];assert(c.runningAgents().includes('mac</strong> · unknown'));
+c.S.projects=[{...project,tasks:[{n:1,state:'doing',executions:[{...execution(11,'mac','claude','worker'),role:null}]}]}];assert(c.runningAgents().includes('mac</strong> · runs unknown'));
 c.S.projects=[{...project,hosts:[{name:'<img>',updated:990,live:true}],tasks:[]}];assert(c.runningAgents().includes('&lt;img&gt;'));assert(!c.runningAgents().includes('<img>'));
-for(const hosts of [{},[null],[{name:3}]]){c.S.projects=[{...project,hosts}];assert(!c.runningAgents().includes(' · idle'));}
-c.S.projects=[{...project,tasks:[{n:1,executions:{}}]}];assert(!c.runningAgents().includes(' · idle'));
+for(const hosts of [{},[null],[{name:3}]]){c.S.projects=[{...project,hosts}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));}
+c.S.projects=[{...project,tasks:[{n:1,executions:{}}]}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
 // A2: the same board/task/execution observed twice is one process; task/board identities remain distinct.
 c.S.projects=[{...project,hosts:[{name:'mac',updated:990,live:true}],tasks:[{n:1,state:'doing',executions:[execution(11,'mac','codex','worker'),execution(11,'mac','codex','worker')]}]}];
 assert(c.runningAgents().includes('codex: 1 worker · 0 reviewers'),'duplicate execution must not double count');
@@ -49,5 +53,12 @@ assert(c.runningAgents().includes('codex: 2 workers · 2 reviewers'),'board is p
 c.S.projects=[{...project,age:301,alive:false,tasks_live:false}];assert(c.runningAgents().includes('stale task observation'),'A3: unknown names its reason');
 // #1591 A3: a 61-299 s old observation the Rust rule calls live is live in the tray too.
 c.S.projects=[{...project,age:250}];assert(c.runningAgents().includes('claude: 1 worker'),'no false unknown within ttl');
+// #1661 R16-R19: a lone fresh host names itself with both counts; a load sample shows units and age; sign-in alerts reach the line
+c.S.projects=[{...project,hosts:[{name:'mac',updated:990,live:true}],tasks:[{n:1,state:'doing',executions:[execution(11,'mac','claude','worker')]}],age_text:'<1m',sample_age_text:'2m',capacity:{...project.capacity,cpu_percent:41.6,memory_available_percent:62.2}}];
+assert.deepEqual(c.runningAgents(true),{label:'mac',meta:'Claude 1 · Codex 0'});
+assert(c.runningAgents().includes('CPU 42% busy · memory 62% available · sampled 2m ago'));
+c.S.agents={at:900,fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};
+assert(c.runningAgents().includes('<span class="alert"> · Codex expired</span>'),'an expired sign-in shows on the host line');
+c.S.projects=[];assert.deepEqual(c.runningAgents(true),{label:'mac',meta:'Runs unknown'},'this host without an observation is unknown, never zero');
 module.exports={project};
 console.log('PASS running agents: roles, runtimes, hosts, stale/partial, reservations, deduplication and escaping');
