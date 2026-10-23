@@ -1,0 +1,242 @@
+{
+  "source": "a87509c15486135cd55f8c2c2060cf907c5d93f2",
+  "capture": "macOS 27.0.1 arm64 WKWebView via Wry; signed cargo example; 18px; invented Settings/resource fixtures; effects discarded",
+  "reviewScreens": {
+    "agents-dark.png": "c1e1412ce3ea263ab2c683980e005ed831ce1d59049fcd66819e420ce945e8eb",
+    "cadence-light.png": "82531110e0db376b6a5ab8c71294c8b966be1385cb1f4422136f0963b64726d1",
+    "home-dark.png": "3e7ef4bb0470bc19df7277519b7057bb832259cdf11d3a4dcf9dfcbe390a9565",
+    "hosts-light.png": "25ef2f2157169a1ba11685e5b92a218339220cbb3e88b87c016149cde362262c",
+    "recovery-dark.png": "5d9b0d0689d6fa8429044cbf370f37dbb32cdf6e5d15240a79f47e5421821828",
+    "services-dark.png": "71a5c3cf2eb0a3b7bc095772d5ca45bd2b315bf19526e97e81cea9cbbf9f2aab",
+    "settings-light.png": "de90fc85aa5b8c0834d08fea9311763d5f86c5c65c5c70cc6148f227d59dbcea",
+    "workmode-light.png": "c499a767974be4276fcfb48701b0222555bb1054527a7992ed0270c3af60090c",
+    "workspace-before-dark.png": "e8f5b845748e8e171ed67a9dc0eb0893c30f33b44cbde4dabdcbb9e87ea76339",
+    "workspace-dark.png": "7248dcc0e4494d49f43f05e342409ca74da8d6336ba54dfdbbc37be105662446"
+  },
+  "uiAssets": {
+    "tray.html": "d9b8eab74e2d16eb4c2a98b2fa148b168ef6a87d7e5a57ebcbb86b960559a622",
+    "workspace.html": "0cd7749238075ed7958678ccb1b8646e3641c9582a2a05426448e1bf731b31dc"
+  },
+  "matrix": [
+    {
+      "route": "home",
+      "theme": "light",
+      "title": "Tasks",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 2,
+      "sessionLinks": 2,
+      "disabledSessions": 1
+    },
+    {
+      "route": "hosts",
+      "theme": "light",
+      "title": "Hosts and resources",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 2,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "agents",
+      "theme": "light",
+      "title": "Agents",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "settings",
+      "theme": "light",
+      "title": "Settings",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "services",
+      "theme": "light",
+      "title": "Services",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "workmode",
+      "theme": "light",
+      "title": "Operation review",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 2,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "admission",
+      "theme": "light",
+      "title": "Operation review",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "recovery",
+      "theme": "light",
+      "title": "Operation review",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "cadence",
+      "theme": "light",
+      "title": "Activity history",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "workspace",
+      "theme": "light",
+      "title": "Inbox",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "home",
+      "theme": "dark",
+      "title": "Tasks",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 2,
+      "sessionLinks": 2,
+      "disabledSessions": 1
+    },
+    {
+      "route": "hosts",
+      "theme": "dark",
+      "title": "Hosts and resources",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 2,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "agents",
+      "theme": "dark",
+      "title": "Agents",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "settings",
+      "theme": "dark",
+      "title": "Settings",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "services",
+      "theme": "dark",
+      "title": "Services",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "workmode",
+      "theme": "dark",
+      "title": "Operation review",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 2,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "admission",
+      "theme": "dark",
+      "title": "Operation review",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "recovery",
+      "theme": "dark",
+      "title": "Operation review",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "cadence",
+      "theme": "dark",
+      "title": "Activity history",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    },
+    {
+      "route": "workspace",
+      "theme": "dark",
+      "title": "Inbox",
+      "titleCut": false,
+      "overflow": false,
+      "errors": [],
+      "meters": 0,
+      "sessionLinks": 0,
+      "disabledSessions": 0
+    }
+  ]
+}

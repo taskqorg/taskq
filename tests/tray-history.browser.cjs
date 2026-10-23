@@ -12,21 +12,24 @@ const base={display:require('./fixtures/display-model.json').display,page:'caden
     const H=JSON.parse(fs.readFileSync(path.join(fixtures,name+'-'+theme+'.json')));
     const s={...base,theme,palette:H.palette,now:H.captured,history:H,icons:{full:H.svg,icon:H.compact}};
     await page.evaluate(s=>taskq.receive(s),s);
+    assert.equal(await page.locator('.hist>summary>.meta').evaluate(e=>e.getBoundingClientRect().right<=e.parentNode.getBoundingClientRect().right),true,'History period stays inside its summary beside the bundled icon');
+    assert.equal(await page.locator('[data-view-key=history-source]').evaluate(e=>e.open),false,'R34: exact timestamps and source diagnostics start disclosed');
     const targets=page.locator('[data-history-bin]');await targets.first().waitFor();assert.equal(await targets.count(),6);
     const chart=page.locator('.history-plot #chart');assert.equal(await chart.locator('[data-start]').count(),6);
     // DOM paints the original groups, not JS-created rectangles or a resized bitmap.
     assert.equal(await page.locator('.history-plot img, .history-plot canvas').count(),0);
     for(const [i,b] of H.bins.entries()){
      const target=targets.nth(i);await target.focus();await target.press('Enter');
-     const detail=await page.locator('.history-detail').innerText();
-     for(const [k,j] of [['closed',0],['failed',1],['ask',2],['blocked',3]])assert(detail.includes(k+' '+(b.missing.length?(b.counts[j]?'≥'+b.counts[j]:'unknown (0 recorded)'):b.counts[j])),detail);
+     const detail=await page.locator('.history-exact').textContent();
+     for(const [k,j] of [['closed',0],['failed',1],['ask',2],['blocked',3]])assert(detail.includes(k+' '+(b.missing.length?(b.counts[j]?'≥'+b.counts[j]:'? (0 observed)'):b.counts[j])),detail);
      assert(detail.includes('[')&&detail.includes(')')&&detail.includes('UTC')||detail.includes('Asia/'),detail);
      if(b.ongoing)assert(detail.includes('ongoing'));
      if(b.missing.length)assert(detail.includes('incomplete')&&b.missing.every(source=>detail.includes(source)));
      if(!b.missing.length&&!b.counts[0])assert.equal(await chart.locator('[data-start]').nth(i).locator('[data-mark=zero]').evaluate(e=>getComputedStyle(e).visibility),'visible');
     }
     const selected=H.bins[4].start+'/'+H.bins[4].end;
-    await page.getByRole('combobox',{name:'History interval'}).selectOption(selected);
+    assert.equal(await page.locator('[data-history-select]').count(),0,'one interval selector: the six chart bins');
+    await page.locator('[data-history-bin]').nth(4).click();
     await page.evaluate(s=>taskq.receive(s),s);
     assert.equal(await page.locator('[data-history-bin][aria-pressed=true]').getAttribute('data-history-bin'),selected);
     if(name==='day'){

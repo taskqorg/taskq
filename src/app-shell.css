@@ -50,3 +50,15 @@
 .head .conversations-entry{position:relative}
 /* the count keeps its own fill and digits: the injected palette may be absent and --surface is a body token */
 .head .conversations-entry .badge{position:absolute;top:0;right:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--ask,light-dark(#995200,#FFC247));color:light-dark(#fafbfc,#252b32);font-size:10px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}
+/* R17/R28: units stay beside their meters; definitions and exact targets disclose below. */
+.resource-meters{display:grid;gap:4px;padding:4px}
+.resource-meter{display:grid;grid-template-columns:minmax(0,1fr) minmax(40px,1fr) auto;align-items:center;gap:6px;font-size:.85em}
+.resource-meter meter{width:100%;min-width:0}.resource-meter>span:last-child{justify-self:end}
+.menu .tqp a.tqp-mark{display:inline-flex;align-items:center;justify-content:center;padding:0}
+.tqp-mark[aria-disabled=true]{opacity:.65}
+/* Long host/admission summaries get the row width instead of a narrow trailing column. */
+.menu .settings-widget.project:is([data-route=hosts],[data-a=work],[data-operation=admission]){display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px}
+.menu .settings-widget.project:is([data-route=hosts],[data-a=work],[data-operation=admission])>.meta{grid-column:2;margin-left:0;text-align:left}
+/* The workspace overflow belongs to the header, so its menu cannot extend left of a narrow window. */
+.menu.workspace .head{position:relative}.menu.workspace .shell-overflow{position:static}
+.menu.workspace .overflow-actions{inset-inline-end:var(--outer)}

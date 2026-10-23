@@ -25,7 +25,7 @@ assert(html.includes('idle</strong> · Claude 0 · Codex 0'));
 // #1661 R16/R17: one line per named host, Claude and Codex apart; this host's expansion holds its resources, a remote one names what is not collected
 assert(html.includes('mac</strong> · Claude 1 · Codex 1'));assert(html.includes('win</strong> · Claude 0 · Codex 1'));
 assert(html.includes('CPU and memory: not collected for remote hosts'));assert(html.includes('CPU and memory: no sample; sampled only while the load gate is on'));
-assert.deepEqual(c.runningAgents(true),{label:'4 hosts',meta:'Runs unknown'},'a global count is never labelled as one host');
+assert.deepEqual(c.runningAgents(true),{label:'idle · Claude 0 · Codex 0; mac · Claude 1 · Codex 1; old · Claude ? · Codex ?; win · Claude 0 · Codex 1',meta:''},'R16: every host and both counters survive collapse, including unknown');
 assert(html.includes('Reservations: claude 1'));
 assert(html.includes('Occupied slots: claude 2 · codex 1'));
 assert(html.includes('Tasks: Doing 3 · Review 2'));
@@ -55,10 +55,11 @@ c.S.projects=[{...project,age:301,alive:false,tasks_live:false}];assert(c.runnin
 c.S.projects=[{...project,age:250}];assert(c.runningAgents().includes('claude: 1 worker'),'no false unknown within ttl');
 // #1661 R16-R19: a lone fresh host names itself with both counts; a load sample shows units and age; sign-in alerts reach the line
 c.S.projects=[{...project,hosts:[{name:'mac',updated:990,live:true}],tasks:[{n:1,state:'doing',executions:[execution(11,'mac','claude','worker')]}],age_text:'<1m',sample_age_text:'2m',capacity:{...project.capacity,cpu_percent:41.6,memory_available_percent:62.2}}];
-assert.deepEqual(c.runningAgents(true),{label:'mac',meta:'Claude 1 · Codex 0'});
+assert.deepEqual(c.runningAgents(true),{label:'mac · Claude 1 · Codex 0',meta:''});
 assert(c.runningAgents().includes('CPU 42% busy · memory 62% available · sampled 2m ago'));
+c.S.projects[0].tasks.push({n:9,key:'github:p/9',executions:[execution(19,'mac','codex-app','worker')]});assert.equal(c.runningAgents(true).label,'mac · Claude 1 · Codex 1','Codex app stays in the Codex family counter');
 c.S.agents={at:900,fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};
 assert(c.runningAgents().includes('<span class="alert"> · Codex expired</span>'),'an expired sign-in shows on the host line');
-c.S.projects=[];assert.deepEqual(c.runningAgents(true),{label:'mac',meta:'Runs unknown'},'this host without an observation is unknown, never zero');
+c.S.projects=[];assert.deepEqual(c.runningAgents(true),{label:'mac · Claude ? · Codex ?',meta:''},'this host without an observation is unknown, never zero');
 module.exports={project};
 console.log('PASS running agents: roles, runtimes, hosts, stale/partial, reservations, deduplication and escaping');

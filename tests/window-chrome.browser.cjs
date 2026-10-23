@@ -18,6 +18,19 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   const badge=p=>p.locator('.head .badge').evaluate(e=>{const rgb=c=>{const x=document.createElement('canvas').getContext('2d');x.fillStyle=c;x.fillRect(0,0,1,1);return [...x.getImageData(0,0,1,1).data];};const cs=getComputedStyle(e),lum=c=>c.slice(0,3).map(v=>(v/=255)<=.03928?v/12.92:((v+.055)/1.055)**2.4).reduce((s,v,i)=>s+v*[.2126,.7152,.0722][i],0),[a,b]=[lum(rgb(cs.backgroundColor)),lum(rgb(cs.color))];return {alpha:rgb(cs.backgroundColor)[3],ratio:(Math.max(a,b)+.05)/(Math.min(a,b)+.05)};});
   const readable=async(p,why)=>{const b=await badge(p);assert.equal(b.alpha,255,'badge fill is opaque '+why);assert(b.ratio>=4.5,'badge contrast '+b.ratio.toFixed(2)+' '+why);};
   const words=p=>p.evaluate(()=>{const t=document.querySelector('.head h1'),cs=getComputedStyle(t);return {wrap:cs.overflowWrap,brk:cs.wordBreak,hyphens:cs.hyphens,cut:t.scrollWidth>t.clientWidth+1};});
+  // #1681 R07: layout can commit after receive; native width changes without a new route must remeasure.
+  const titlePage=await open(800,{...state,theme,font:18,stop_modes:true});
+  await titlePage.evaluate(()=>document.querySelector('.menu').style.width='280px');
+  await titlePage.waitForFunction(()=>document.querySelector('.head').hasAttribute('data-title-below'),{},{timeout:3000});
+  assert.equal((await words(titlePage)).cut,false,'Tasks never reads Tas… at 18px');
+  const controlsBefore=await row(titlePage);
+  await titlePage.evaluate(()=>document.querySelector('.menu').style.width='800px');
+  await titlePage.waitForFunction(()=>!document.querySelector('.head').hasAttribute('data-title-below'),{},{timeout:3000});
+  assert.equal((await words(titlePage)).cut,false);
+  await titlePage.evaluate(()=>document.querySelector('.menu').style.width='280px');
+  await titlePage.waitForFunction(()=>document.querySelector('.head').hasAttribute('data-title-below'),{},{timeout:3000});
+  assert.deepEqual(await row(titlePage),controlsBefore,'the title moves, the actions do not');
+  await titlePage.close();
   for(const width of [320,360,800]){
    const p=await open(width);const home=await row(p);
    assert.deepEqual(home.map(r=>r[0]),['Home','Conversations · 3 new','Settings','Keep menu open','Always on top','Close menu'],'one Conversations entry, distinct window names, Close last');
@@ -70,6 +83,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   await p.close();
   // the Conversations window keeps Enlarge and Close (R26)
   p=await open(360,{...state,theme},fs.readFileSync('build/web/workspace.html','utf8'));
+  await p.locator('.shell-overflow>summary').click();
+  const overflow=await p.locator('.overflow-actions').boundingBox();assert(overflow.x>=0&&overflow.x+overflow.width<=360,'R43: the bundled overflow action keeps its full menu inside the native-width window');
+  assert.equal(await p.locator('.shell-overflow>summary svg').count(),1,'bundled vector, never a Unicode glyph');
   await p.evaluate(()=>taskq.receive({open:{page:'conversations'}}));assert.equal(await p.locator('.head h1').textContent(),'Conversations');
   assert.equal(await p.locator('.head [aria-label="Enlarge window"]').count(),1,'Conversations keeps Enlarge');
   await p.close();
