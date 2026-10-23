@@ -13,7 +13,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
   for(const [selector,action] of [['[data-a=pin]','pin'],['[data-a=hide]','hide']]){const b=page.locator(selector);assert(await b.getAttribute('aria-label'));assert(await b.getAttribute('title'));await b.click();assert(await page.evaluate(a=>messages.some(m=>m.a===a),action));}
   await page.locator('[data-route=settings]').click();await page.locator('[data-route=window]').click();
   for(const mode of ['auto','top','bottom','fixed']){const b=page.locator('[data-a=size-anchor][data-value='+mode+']');await b.click();assert(await page.evaluate(value=>messages.some(m=>m.a==='size-anchor'&&m.value===value),mode));}
-  await page.locator('[data-a=top]').click();assert(await page.evaluate(()=>messages.some(m=>m.a==='top')));
+  await page.locator('.content [data-a=top]').click();assert(await page.evaluate(()=>messages.some(m=>m.a==='top')));
   await page.locator('[data-resize]').focus();await page.keyboard.press('ArrowDown');assert(await page.evaluate(()=>messages.some(m=>m.a==='resize')&&messages.some(m=>m.a==='resize-end')));
   await page.setViewportSize({width:320,height:800});await page.evaluate(s=>taskq.receive(s),{...state,page:'settings',size_anchor:'top'});assert(await page.evaluate(()=>messages.filter(m=>m.a==='size').at(-1).h<800),'content-fit shrinks on shorter routes');
   await page.close();

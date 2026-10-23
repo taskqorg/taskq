@@ -3,4 +3,5 @@ const w=globalThis.TaskqTaskWorkspace;
 globalThis.TaskqAnswerCard=w.answerCard;
 globalThis.TaskqProjectBlocks=w.projectBlocks;
 globalThis.TaskqResources=w.resources;
-w.create(w.createState(),{}).mount();
+// R22: the Settings window loads this page as its own surface.
+w.create(w.createState(),{settings:globalThis.taskqSurface==='settings'}).mount();

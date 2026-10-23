@@ -19,6 +19,8 @@ use crate::notify;
 
 const HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/tray.html"));
 const WORKSPACE_HTML: &str = include_str!(concat!(env!("OUT_DIR"),"/web/workspace.html"));
+/// R22: the Settings window's web surface; `#` keeps it apart from detached conversation ids.
+const SETTINGS_SURFACE: &str = "#settings";
 const FONTS: [u64; 4] = [14, 16, 18, 20];
 use crate::display::PERIODS;
 
@@ -34,6 +36,8 @@ enum Ev {
     Tick,
     Ipc(String),
     Workspace(String, String),
+    /// R22: IPC from the one Settings window (the tray page as its `settings` surface).
+    Settings(String),
     WorkspaceEvaluated(String, u64, &'static str),
     Evaluated(u64, &'static str),
     Click(Rect),
@@ -908,6 +912,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut detached:std::collections::BTreeMap<String,(Window,WebView,WebCalls)>=Default::default();
     let mut workspace_handoff=false;
     let mut workspace_open=Value::Null;
+    let mut settings_window: Option<(Window, WebView)> = None;
+    let mut settings_web: Option<WebCalls> = None;
+    let mut settings_open=Value::Null;
+    let mut settings_shown=String::new();
     let mut tray: Option<TrayIcon> = None;
     let (mut shown, mut icon_sig, mut dark) = (String::new(), String::new(), true);
     let mut workspace_shown=String::new();
@@ -969,6 +977,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if let Some((w,_))=&workspace {w.set_visible(false);}
             }
             Event::WindowEvent {window_id,..} if workspace.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
+            Event::WindowEvent {window_id,event:WindowEvent::CloseRequested,..} if settings_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {
+                if let Some((w,_))=&settings_window {w.set_visible(false);}
+            }
+            Event::WindowEvent {window_id,..} if settings_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
                     .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
@@ -1074,6 +1086,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
                     if sig!=workspace_shown && !calls.failed && !calls.pending.contains_key(&0) {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
+                if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) {
+                    if sig!=settings_shown && !calls.failed && !calls.pending.contains_key(&0) {settings_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
+                }
                 for (_,wv,calls) in detached.values_mut(){if sig!=shown && !calls.failed && !calls.pending.contains_key(&0){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
                 if sig != shown && !web.pending.contains_key(&0) {
                     shown = sig;
@@ -1121,7 +1136,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 web.finish(id,result);
                 if web.pending.is_empty() && let Some(next)=shot_wait.take() {let _=proxy.send_event(next);}
             }
-            Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
+            Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
             Event::UserEvent(Ev::Workspace(surface,message)) => {
                 let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
                 if input["a"]=="conversation-window" {
@@ -1134,7 +1149,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         let valid=saved["items"].as_array().is_some_and(|rows|rows.iter().any(|c|c["id"]==id&&c["revision"]==input["revision"]));
                         if !valid {return;}
                         let p=proxy.clone();let source=id.to_string();
-                        let built=WindowBuilder::new().with_title("TaskQ Request").with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
+                        let built=WindowBuilder::new().with_title("TaskQ Request").with_decorations(false).with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
                             WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(source.clone(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                         });
                         match built {
@@ -1163,7 +1178,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     Some("ready") | Some("refresh") => {
                         calls.finish(0,"ok");
                         web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
-                        if surface=="main" && !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                        if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
                         let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()})),"tray.web.receive",&proxy,calls);
                         let script=if surface=="main" {format!("taskq.receive({})",json!({"workspaceOwner":own}))}else{format!("taskq.receive({});taskq.receive({})",json!({"open":{"page":"conversations"}}),json!({"workspaceOwner":own}))};
@@ -1173,6 +1188,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     Some("workspace-window")=>{
                         match m["action"].as_str().unwrap_or("") {
                             "pin"=>{let pin=!w.is_always_on_top();w.set_always_on_top(pin);if surface=="main" {if let Ok(mut p)=requests_file_checked(&install){p["workspace_pin"]=json!(pin);let _=crate::platform::write_atomic(&install.join("tray-requests.json"),&p.to_string());}}web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":pin})),"tray.web.receive",&proxy,calls);}
+                            "drag"=>{let _=w.drag_window();}
                             "enlarge"=>{let enlarged=!w.is_maximized();w.set_maximized(enlarged);web_eval(wv,&format!("taskq.receive({})",json!({"workspaceMaximized":enlarged})),"tray.web.receive",&proxy,calls);},
                             "size"=>{if let (Some(width),Some(height))=(m["width"].as_f64(),m["height"].as_f64()){if width.is_finite()&&height.is_finite(){let area=w.current_monitor().map(|m|work_area(&m));let scale=w.scale_factor();let max_w=area.map_or(2000.0,|(_,_,w,_)|f64::from(w)/scale).max(320.0);let max_h=area.map_or(1600.0,|(_,_,_,h)|f64::from(h)/scale).max(240.0);w.set_inner_size(LogicalSize::new(width.clamp(320.0,max_w),height.clamp(240.0,max_h)));}}}
                             _=>{}
@@ -1221,6 +1237,37 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     _ => calls.fault("unsupported-workspace-action"),
                 }
             }
+            // R22: Settings is one undecorated window over the tray page; window chrome stays here and every other
+            // action takes the menu's path, so the Window page still configures the menu.
+            Event::UserEvent(Ev::Settings(message)) => {
+                let (Some((sw,swv)),Some(calls))=(&settings_window,&mut settings_web) else {return};
+                let Ok(m)=serde_json::from_str::<Value>(&message) else {calls.fault("invalid-ipc");return};
+                if m["a"]=="web-error" {calls.errors(&m);return;}
+                if m["a"]=="web-observation" {calls.metadata(&m["row"]);return;}
+                if calls.failed {return;}
+                let chrome=|w:&Window|json!({"settingsWindow":{"top":w.is_always_on_top(),"maximized":w.is_maximized()}});
+                match m["a"].as_str().unwrap_or("") {
+                    "ready" => {
+                        calls.finish(0,"ok");
+                        web_eval(swv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
+                        web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);
+                        if !settings_open.is_null() {web_eval(swv,&format!("taskq.receive({})",json!({"settingsOpen":settings_open.take()})),"tray.web.receive",&proxy,calls);}
+                    }
+                    "hide" => sw.set_visible(false),
+                    "drag" => {let _=sw.drag_window();}
+                    "settings-top" => {
+                        let top=!sw.is_always_on_top();sw.set_always_on_top(top);
+                        if let Ok(mut r)=requests_file_checked(&install){r["settings_top"]=json!(top);let _=crate::platform::write_atomic(&install.join("tray-requests.json"),&r.to_string());}
+                        web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);
+                    }
+                    "settings-enlarge" => {sw.set_maximized(!sw.is_maximized());web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);}
+                    "resize" => {if let (Some(width),Some(height))=(m["w"].as_f64(),m["h"].as_f64()){if width.is_finite()&&height.is_finite(){let area=sw.current_monitor().map(|m|work_area(&m));let scale=sw.scale_factor();let max_w=area.map_or(2000.0,|(_,_,w,_)|f64::from(w)/scale).max(320.0);let max_h=area.map_or(1600.0,|(_,_,_,h)|f64::from(h)/scale).max(240.0);sw.set_inner_size(LogicalSize::new(width.clamp(320.0,max_w),height.clamp(240.0,max_h)));}}}
+                    // the menu's own geometry and navigation are not this window's
+                    "size" | "resize-end" | "overflow" | "pin" => {}
+                    "set" if m.get("navigation").is_some() => {}
+                    _ => {let _=proxy.send_event(Ev::Ipc(message));}
+                }
+            }
             Event::UserEvent(Ev::Ipc(m)) => {
                 let Ok(m) = serde_json::from_str::<Value>(&m) else {web.fault("invalid-ipc");return;};
                 let Some((w, _)) = &ui else { return };
@@ -1238,7 +1285,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     ($value:expr) => {{
                         let value=$value;
                         push(&mut web,&ui,value);
-                        if (value["projects"].is_array() || ["capmsg","focus_receipt","action_error","resources_receipt","aiError","agentqError","answerReceipt"].iter().any(|key|value.get(*key).is_some())) && let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
+                        if value["projects"].is_array() || ["capmsg","focus_receipt","action_error","resources_receipt","aiError","agentqError","answerReceipt"].iter().any(|key|value.get(*key).is_some()) {
+                            if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
+                            if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) && !calls.failed {web_eval(wv,&format!("taskq.receive({value})"),"tray.web.receive",&proxy,calls);}
+                        }
                     }};
                 }
                 match m["a"].as_str().unwrap_or("") {
@@ -1247,7 +1297,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         if workspace_open["page"]=="conversations" {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
                             let p=proxy.clone();
-                            let built=WindowBuilder::new().with_title("TaskQ Workspace").with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                            let built=WindowBuilder::new().with_title("TaskQ Workspace").with_decorations(false).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
                                 WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace("main".into(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
@@ -1256,10 +1306,27 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             }
                         }
                         if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
-                            if !calls.pending.contains_key(&0) && !workspace_open.is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
+                            if !calls.pending.contains_key(&0) && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
                         }
                         workspace_handoff=w.is_visible() && !settings.pin.pinned;
                         if let Some((window,_))=&workspace {window.set_visible(true);window.set_focus();}
+                        reply!(&json!({"workspaceError":Value::Null}));
+                    }
+                    "settings-open" if snapshot.is_none() => {
+                        settings_open=if m["page"].is_string() {json!({"page":m["page"]})} else {Value::Null};
+                        if settings_window.is_none() {
+                            let p=proxy.clone();
+                            let built=WindowBuilder::new().with_title("TaskQ Settings").with_decorations(false).with_always_on_top(requests_file(&install)["settings_top"]==true).with_inner_size(LogicalSize::new(420.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                                WebViewBuilder::new().with_html(HTML).with_initialization_script("window.taskqSurface='settings';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Settings(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                            });
+                            match built {
+                                Ok(window)=>{settings_window=Some(window);let mut calls=WebCalls::new();calls.workspace=true;calls.surface=SETTINGS_SURFACE.into();settings_web=Some(calls);settings_shown.clear();}
+                                Err(error)=>{reply!(&json!({"workspaceError":format!("Settings unavailable: {error}")}));return;}
+                            }
+                        }
+                        if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) && !calls.pending.contains_key(&0) && !settings_open.is_null() {web_eval(wv,&format!("taskq.receive({})",json!({"settingsOpen":settings_open.take()})),"tray.web.receive",&proxy,calls);}
+                        workspace_handoff=w.is_visible() && !settings.pin.pinned;
+                        if let Some((window,_))=&settings_window {window.set_visible(true);window.set_focus();}
                         reply!(&json!({"workspaceError":Value::Null}));
                     }
                     "answer" if snapshot.is_none() && crate::snapshot::CONTROLS.iter().any(|c| m["op"]["action"]==c.0) => {
@@ -1274,6 +1341,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                             return;
                         }
                         reply!(&state(&install, &settings, dark, None, &adding));
+                        // R22: Settings opens its own window; a snapshot keeps it in the menu
+                        push(&mut web,&ui,&json!({"settingsWindow":true}));
                     }
                     "size" | "resize" => {
                         let Some((width, height)) = m["w"].as_f64().zip(m["h"].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite()) else { return };

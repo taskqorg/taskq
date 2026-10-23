@@ -1,29 +1,29 @@
 {
   "version": "4.6.37",
-  "sourceCommit": "b9f7dd844f7779f6212202092ac315852d65e0d1",
-  "binarySha256": "9dc5906bb866de63129315aeec4372075e3700115c39e82ebc8cf84dcf032076",
+  "sourceCommit": "fbb0bddf99073f39242835ddd8297597eda95d22",
+  "binarySha256": "88f39f4aefd188c7a182609bfb0fc7ed020ed3be6e1108e38cc04054492336fb",
   "environment": {
-    "os": "macOS 27.0.1",
-    "arch": "arm64",
-    "renderer": "WKWebView snapshot"
+    "os": "Windows",
+    "arch": "x86_64",
+    "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "2a5626253d4a171c0085ad00088623cff6f3389e",
+    "src/tray.rs": "18a517c5c1c7ebe3f426ca9de58270995d3d33f2",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "764a223777d6c2bc9e43ec33d98cbd512f8ce076",
-    "src/tray-entry.js": "f318bd5a545b06c70c2287f4ebbe3796265a7d9a",
+    "src/tray-app.js": "3e5de22a7ce232655d0e190a5ab4431fdc6b8a3d",
+    "src/tray-entry.js": "8231d269085366b914b96f027f702a83ec32a7fb",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "9a594279112e44fc78c06f128091bd84fa005492",
     "src/tray-view-state.js": "a0eb498c1a0fe83f23ec19cf1330bf7da0e05b37",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
-    "src/app-shell.js": "e38799f4c404e27a1fbaab61d2f1a9c9c8abdd64",
-    "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
+    "src/app-shell.js": "eeaf648b583be528eb7ab4dd23dbaab34d80ef5d",
+    "src/app-shell.css": "dc80d3281d1628e08e0b37f7ba40ac2f1c6777c5",
     "src/task-dashboard.js": "6682e8d8eb9957323c43e43c95cc75443de65977",
-    "src/task-dashboard.css": "16b06067f420b74fb9d90fb17651c69766957b4e",
+    "src/task-dashboard.css": "b20bfe24bb1e548df231fa348ecf1660b0d743f4",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
-    "src/ui-icons.json": "56af409ea7d395073d815afae66836f1262630ba",
+    "src/ui-icons.json": "41b812657ac84f198058adab9d4d9f90969d3a51",
     "src/project-blocks.js": "37d936b908429b284267c59fb73dc6adc7a85082",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/conversations.rs": "b1bd9783442e631b122c1f57a5bbb615781f0b99",
@@ -31,7 +31,7 @@
     "src/conversations.css": "1c6118f384b68ab1a98523c1b86ca9a6956ef2af",
     "src/pm-composer.js": "9196f04531a2b539fa028405547a4db0b25a4a7b",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
-    "src/workspace.js": "814d07e9aff5e02521cca249501f473553e2cdbe",
+    "src/workspace.js": "1bfa35aca798f31fe87fccd9b8697ff81011b628",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "6284528e7b0af6eea16c68f1937b18eda273fb61",
     "src/answer-card.js": "9e04cb1a67fb2ad7cac7a45c25476b9638de37a3",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
+      "sha256": "63d8025b002b581fc322a4410a3970300f854143c4045c32292513a9b2701eb4"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "83be3a2236abfb90eab9c36b886aa8d91ef9456e6187a5df05e7de6176292f06"
+      "sha256": "1e39bcab8670281aaeabc3f7a894c1913d2a7df8827b649e28b3b0a90aa212d2"
     }
   ]
 }
