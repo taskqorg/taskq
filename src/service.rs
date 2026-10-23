@@ -27,6 +27,8 @@ pub struct Config {
     pub has: Vec<String>,
     /// host.json `claim` `labelled` (§ 9): new claims need this host's `host-<me>` label.
     pub labelled: bool,
+    /// host.json `default_runtime` (§ 9): the runtime of reviewers and of workers without `run-*` (§ 4).
+    pub default_runtime: String,
     pub permission_mode: String,
     pub codex: Vec<String>,
     pub ttl: i64,
@@ -102,8 +104,8 @@ fn label(i: &Issue, prefix: &str) -> Option<String> {
     i.labels.iter().find_map(|l| l.strip_prefix(prefix).map(String::from))
 }
 
-fn route(i: &Issue, reviewer: bool) -> String {
-    crate::labels::route(&i.labels, reviewer)
+fn route(i: &Issue, reviewer: bool, default: &str) -> String {
+    crate::labels::route(&i.labels, reviewer, default)
 }
 
 pub fn priority(i: &Issue) -> u8 {
@@ -1246,7 +1248,7 @@ impl<'a> Service<'a> {
                 || label(&v.issue, "host-").is_some_and(|h| h != me)
                 || t.attempt.is_some() && host_of(t) != Some(me.as_str())
                 || self.kids.iter().any(|k| k.task == v.issue.number) { continue; }
-            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).unwrap_or_else(|| route(&v.issue, t.state == State::Review));
+            let rt = rt_of(t).map(|(rt, _)| rt.to_string()).unwrap_or_else(|| route(&v.issue, t.state == State::Review, &self.cfg.default_runtime));
             if let Some(reason) = self.gui_reason(&v.issue, Some(&rt)) {
                 self.waits.insert(v.issue.number, reason);
             }
@@ -1645,7 +1647,7 @@ impl<'a> Service<'a> {
         }
         // reviews before ready tasks, then priority and number within each (§ 4 step 6)
         queue.sort_by_key(|v| (v.projection.task.state != State::Review, priority(&v.issue), v.issue.number));
-        let ready = queue.iter().any(|v| self.free(&route(&v.issue, v.projection.task.state == State::Review), needs_gui(&v.issue)).is_some());
+        let ready = queue.iter().any(|v| self.free(&route(&v.issue, v.projection.task.state == State::Review, &self.cfg.default_runtime), needs_gui(&v.issue)).is_some());
         if let Some(host) = &self.host {
             if let Ok(mut h) = host.lock() { h.ready(&self.cfg.root, ready); }
         }
@@ -1839,14 +1841,14 @@ impl<'a> Service<'a> {
     }
 
     fn reviewer_free(&self, v: &View) -> Result<String, (&'static str, String)> {
-        self.admit_runtime(&route(&v.issue, true), needs_gui(&v.issue))
+        self.admit_runtime(&route(&v.issue, true, &self.cfg.default_runtime), needs_gui(&v.issue))
     }
 
     fn worker_free(&mut self, v: &View) -> Result<String, (&'static str, String)> {
         if label(&v.issue, "run-").is_none() && v.issue.labels.iter().filter(|l| l.starts_with("prefer-")).count() > 1 {
             self.log.push(format!("#{}: conflicting prefer-* labels; preference ignored", v.issue.number));
         }
-        self.admit_runtime(&route(&v.issue, false), needs_gui(&v.issue))
+        self.admit_runtime(&route(&v.issue, false, &self.cfg.default_runtime), needs_gui(&v.issue))
     }
 
     fn free(&self, rt: &str, gui: bool) -> Option<String> {
@@ -2517,6 +2519,7 @@ mod tests {
             limits: BTreeMap::from([("claude".to_string(), 1)]),
             has: vec![],
             labelled: false,
+            default_runtime: "claude".into(),
             permission_mode: "dontAsk".into(),
             codex: vec![],
             ttl: 300,
@@ -4291,6 +4294,45 @@ mod tests {
                     assert_eq!(task(&b, n).attempt, None);
                 }
             }
+        }
+    }
+
+    // Chain: § 4 Filter, host.json `default_runtime` codex (#1668) -> worker and reviewer claims -> verdict -> close.
+    // Risk: a host without claude routes its reviews or unlabelled work to claude and waits forever, a full codex
+    // review moves to a free claude slot, or a codex review takes another path to close.
+    #[test]
+    fn codex_default_host_runs_work_and_review_on_codex() {
+        for (labels, codex, worker, expected) in [
+            (vec![], 1, "codex", Some("codex")),
+            (vec!["run-claude".to_string()], 1, "claude", Some("codex")),
+            (vec!["run-claude".to_string()], 0, "claude", None),
+        ] {
+            let b = Fake::default();
+            let n = b.create("T", "", &[vec!["taskq".to_string()], labels.clone()].concat()).unwrap();
+            let mut c = Config { default_runtime: "codex".into(), ..cfg("fra") };
+            c.limits = BTreeMap::from([("claude".into(), 1), ("codex".into(), codex)]);
+            let e: Exits = Default::default();
+            let mut s = service(&b, &c, e.clone());
+            s.pass().unwrap();
+            let t = task(&b, n);
+            assert_eq!(rt_of(&t).unwrap().0, worker, "{labels:?}: run-* wins, else the host default");
+            b.comment(n, &core::entry("result", &["0123456789abcdef0123456789abcdef01234567"], t.attempt, "ok")).unwrap();
+            *e.borrow()[0].1.borrow_mut() = Some(0);
+            s.pass().unwrap();
+            s.pass().unwrap();
+            let t = task(&b, n);
+            assert_eq!(t.state, State::Review);
+            assert_eq!((t.role.as_deref() == Some("reviewer")).then(|| rt_of(&t).unwrap().0), expected, "{labels:?}, codex {codex}: claude stays free");
+            if expected.is_none() { continue; }
+            let verdict = "Changed: codex review
+Checks: Task fit A1 ok; merge-result CI ok
+Open: none";
+            b.comment(n, &core::entry("publish", &[], t.attempt, verdict)).unwrap();
+            *e.borrow().last().unwrap().1.borrow_mut() = Some(0);
+            s.pass().unwrap();
+            s.pass().unwrap();
+            assert_eq!(task(&b, n).state, State::Closed, "{labels:?}");
+            assert!(b.comments(n).unwrap().iter().any(|e| e.body.starts_with("taskq: close") && e.body.contains(verdict)));
         }
     }
 

@@ -345,6 +345,15 @@ Contract detail for taskq.md section8.
 
 The § 4 exception applies only to Stop on an upgraded service advertising protocol 2. Exhausted legacy protocol-1 Stop is refused before intent is written; automatic recovery covers the budget mismatch, not an unavailable or exhausted legacy store. A missing collector may supply an identity descriptor without claiming a telemetry commit. Received/applied/observed commits run beside the lifecycle step and never block it (#1351); a commit that does not land is unknown in the host log. The `telemetry_unknown` record field stays readable for older records. This never substitutes for native ownership, project drain, registry locks, unit revision or attributed exit. Restart and Uninstall retain mandatory telemetry receipts; a Restart whose CLI has no collector instead writes the untracked `<install>/restart` file and reports `untracked`, `telemetry: unknown`. Old readers refuse the extended degraded record, so the service must be upgraded before it can complete that path; no old process is forcibly retired.
 
+## Default runtime
+
+Detail for taskq.md sections 4 and 9 (#1668). Owner decision 2026-10-23 ([specq#89](https://github.com/taskqorg/specq/pull/89)): FRA runs without claude for now; work and review there run on codex. A host the owner runs without claude therefore sets host.json `default_runtime` to `codex`; hosts with claude keep the current rule.
+
+- Values: `claude` or `codex`; an absent key reads `claude`. Any other value makes host policy invalid, which reads unknown and holds launches (section 9).
+- Route: a reviewer always uses the host's default runtime. A worker uses its `run-*` label; without one, a lone legacy `prefer-codex` still routes to `codex`, and otherwise the worker uses the default runtime. The task waits for a free slot of that runtime and never moves to another.
+- Review: a codex reviewer gets the same review rules, `.worktrees/review-<N>` worktree, access grant check and verdict path (close, requeue, ask) as a claude reviewer; nothing in the review flow branches on the runtime name.
+- Command: `taskq service capacity --host H --default-runtime claude|codex` writes the key through the same atomic host policy operation as the other capacity edits and prints `Default runtime: <rt>`; an unknown runtime is refused with the valid names. A read prints the same line, and `taskq service status` shows it per project as `Default runtime: <rt> (host <name>)`.
+
 ## Dev install
 
 Detail for taskq.md section 8 item 1 (#1388). Applies only on macOS, only with host.json `channel` `dev`, only in the project thread whose `repo` is `taskqorg/taskq` (#1406). The root's working tree needs no `scripts/dev-install.sh` and stays untouched: a root checked out before the script existed installs too. Channel `live`, Windows and Linux hosts do nothing new; a `dev` host still logs `channel dev: release <v> not applied` once per skipped release.
