@@ -36,7 +36,7 @@ Ten browser captures at 320 px CSS width, written by `SETTINGS_EVIDENCE=docs/des
 | [hosts-320-dark.png](hosts-320-dark.png) | Same, dark | `1baa5ad32b77260b052b794da2d94766bc12e1e12480822fd0149376dc5147fb` |
 | [agents-320-light.png](agents-320-light.png) | Sign-in per runtime, Expired expanded, access expanded | `fc05af30682baadbbfe380d0a5f781fa8e85f1e800652634aa89a9e8f1c87ff7` |
 | [agents-320-dark.png](agents-320-dark.png) | Same, dark | `fe21c78f086eb4a27ac774b450c8bfc68bb5d4a317e479c2c6520c7c419f99c8` |
-| [appearance-320-light.png](appearance-320-light.png) | Text size, tray icon and window growth previews | `9b0ec304cee32f83f43afb60421f79bbb58bf0504da608813c767298fde7d279` |
-| [appearance-320-dark.png](appearance-320-dark.png) | Same, dark, reduced motion: still outlines with arrows | `59d9fde58c8ad77160f9e5a437cbe28e3f9fcd2d077756e0d936be0025a7f124` |
+| [appearance-320-light.png](appearance-320-light.png) | Text size, tray icon and window growth previews | `372db9237013b79fbb1e027714ae08fb0e8ec23830805f76fd0b38253ad5e567` |
+| [appearance-320-dark.png](appearance-320-dark.png) | Same, dark, reduced motion: still outlines with arrows | `9fe3f1bcc38da4723713c1e5fc9f7a09011fab7a91c30e818205645753908722` |
 | [services-320-light.png](services-320-light.png) | One host service line, project rows with status age | `0c4d42fe84339548034ec33611012c61ca5ddfcc5256596bed9efae624f8b051` |
 | [services-320-dark.png](services-320-dark.png) | Same, dark | `eb7000e77403cead385ded96f7f1526d5d93a5f8a790ede4d224bc185771cbf4` |
