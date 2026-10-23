@@ -7,12 +7,14 @@ pub fn canonical(name: &str) -> &str {
     match name { "q-waiting" => "q-blocked", "priority-1" => "p1", "priority-2" => "p2", _ => name }
 }
 
-/// § 4 Filter: reviewers `claude`; workers `run-*`, else a lone legacy `prefer-codex` as `run-codex`, else `claude`.
-/// The task waits for a slot of this runtime; it never moves to another.
-pub fn route(labels: &[String], reviewer: bool) -> String {
-    if reviewer { return crate::runtime::OWNER.into(); }
+/// § 4 Filter: reviewers the host's `default_runtime`; workers `run-*`, else a lone legacy `prefer-codex` as `run-codex`,
+/// else `default_runtime`. The task waits for a slot of this runtime; it never moves to another.
+pub fn route(labels: &[String], reviewer: bool, default: &str) -> String {
+    if reviewer { return default.into(); }
     let prefer: Vec<&str> = labels.iter().filter_map(|l| l.strip_prefix("prefer-")).collect();
-    labels.iter().find_map(|l| l.strip_prefix("run-").map(String::from)).unwrap_or_else(|| crate::runtime::preferred(&prefer).into())
+    let legacy = crate::runtime::preferred(&prefer);
+    labels.iter().find_map(|l| l.strip_prefix("run-").map(String::from))
+        .unwrap_or_else(|| if legacy == crate::runtime::OWNER { default } else { legacy }.into())
 }
 
 pub fn matches(labels: &[String], filter: &str) -> bool {
@@ -79,5 +81,22 @@ mod tests {
             assert!(validate(&pair.map(String::from)).is_err());
         }
         assert!(validate(&["needs-a".into(), "needs-b".into()]).is_ok());
+    }
+
+    // Chain: § 4 Filter -> host.json `default_runtime` -> admitted runtime. Risk: a host without claude
+    // routes its reviews or unlabelled work to claude and waits forever, or the default overrides `run-*`.
+    #[test]
+    fn route_uses_the_host_default_runtime_unless_run_names_one() {
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        for default in ["claude", "codex"] {
+            assert_eq!(route(&l(&["p1"]), true, default), default, "reviewer");
+            assert_eq!(route(&l(&["run-claude"]), true, default), default, "reviewer ignores run-*");
+            assert_eq!(route(&l(&[]), false, default), default, "worker without run-*");
+            assert_eq!(route(&l(&["prefer-claude"]), false, default), default);
+            assert_eq!(route(&l(&["prefer-codex", "prefer-claude"]), false, default), default);
+            assert_eq!(route(&l(&["prefer-codex"]), false, default), "codex");
+            assert_eq!(route(&l(&["run-claude"]), false, default), "claude", "run-* wins");
+            assert_eq!(route(&l(&["run-codex-app", "prefer-codex"]), false, default), "codex-app");
+        }
     }
 }

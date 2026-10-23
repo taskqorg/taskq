@@ -4063,6 +4063,22 @@ mod tests {
         format!("https://raw.githubusercontent.com/taskqorg/specq/{SPECQ_REVISION}/{file}")
     }
 
+    // Chain: § 4 reviewer on a host with `default_runtime` codex (#1668). Risk: a codex reviewer gets other review rules,
+    // access check or verdict commands (close, requeue, ask) than a claude reviewer.
+    #[test]
+    fn codex_reviewer_brief_matches_the_claude_reviewer() {
+        let root = rules_root("codex-review");
+        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let l = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "reviewer".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        // Only the command prefix differs: the native Claude session runs in its host's environment (§ 8).
+        let host_env = format!("env TASKQ_TASK=7 TASKQ_ATTEMPT=42 TASKQ_ROLE=reviewer TASKQ_ROOT={} ", root.display());
+        let (claude, codex) = (brief(&env, &l("claude")), brief(&env, &l("codex")));
+        assert!(claude.contains(&host_env));
+        assert_eq!(claude.replace(&host_env, ""), codex);
+        for verdict in ["close 7", "requeue 7", "ask 7"] { assert!(codex.contains(verdict), "{verdict}"); }
+        std::fs::remove_dir_all(&root).ok();
+    }
+
     // Chain: § 8 rule delivery, #1156. Risk: a new/resumed worker or reviewer misses the contract, a core rule or the index,
     // or a continuation retains obsolete mandatory bodies.
     #[test]

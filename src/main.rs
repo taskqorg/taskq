@@ -87,7 +87,7 @@ const USAGE: &str = "taskq agents
  taskq service onboard
  taskq service stop [--mode drain|full] (macOS)
  taskq service focus [all|off|<label..>] [--request TEXT]
- taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]
+ taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex]
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
@@ -225,6 +225,7 @@ fn project_config(root:&Path)->Res<(Config,Value)> {
         limits,
         has,
         labelled: false,
+        default_runtime: crate::runtime::OWNER.into(),
         permission_mode: str_or("permission_mode", "dontAsk"),
         codex,
         ttl: secs("ttl", TTL as u64) as i64,
@@ -1299,6 +1300,8 @@ struct CapEdit {
     memory_min: Option<u32>,
     /// host.json `claim`: `labelled` (true) or `any` (false), § 9
     claim: Option<bool>,
+    /// host.json `default_runtime`, § 9
+    default_runtime: Option<String>,
 }
 
 impl CapEdit {
@@ -1328,11 +1331,17 @@ impl CapEdit {
             Some("labelled") => Some(true),
             Some(x) => return Err(format!("--claim: any or labelled, not {x}")),
         };
+        e.default_runtime = match a.one("default-runtime") {
+            None => None,
+            Some(rt) if host::DEFAULT_RUNTIMES.contains(&rt) => Some(rt.into()),
+            Some(x) => return Err(format!("--default-runtime: {}, not {x}", host::DEFAULT_RUNTIMES.join(" or "))),
+        };
         Ok(e)
     }
 
     fn is_empty(&self) -> bool {
         self.mode.is_none() && self.max.is_none() && self.limits.is_empty() && self.unset.is_empty() && self.gate.is_none() && self.cpu_max.is_none() && self.memory_min.is_none() && self.claim.is_none()
+            && self.default_runtime.is_none()
     }
 }
 
@@ -1548,14 +1557,14 @@ fn capacity_cmd(a: &Args) -> Res<()> {
     };
     let e = CapEdit::from_args(a)?;
     if e.is_empty() {
-        let claim=policy.as_ref().ok().filter(|p|p.me==host).map(|p|p.labelled);
+        let own=policy.as_ref().ok().filter(|p|p.me==host).map(|p|(p.labelled,p.default_runtime.clone()));
         let saved = policy.and_then(|policy| {
             if policy.me!=host {return Err("no local policy for remote host".into());}
             Ok(policy.cap)
         });
         if let Err(reason)=&saved {println!("Saved host policy: unknown ({reason})");}
         println!("Capacity on {host}");
-        if let Some(l)=claim {println!("Claim: {}",claim_name(l));}
+        if let Some((l,rt))=own {println!("Claim: {}",claim_name(l));println!("Default runtime: {rt}");}
         let c = status().and_then(|st|service::host_capacity(&st["capacity"])).filter(|_|host==me);
         let limits = c.as_ref().map(|c| c["limits"].clone()).or_else(|| saved.as_ref().ok().map(|s| s.json()["limits"].clone())).unwrap_or_default();
         let mut rts: std::collections::BTreeSet<String> = RUNTIMES.iter().map(|rt|rt.to_string()).collect();
@@ -1589,7 +1598,9 @@ fn capacity_cmd(a: &Args) -> Res<()> {
     let (old,saved,command)=host::write_capacity(&install,&host,&e,None)?;
     println!("Receipt: {}",command.event_id("observed")?);
     let mut changes=cap_changes(&old,&saved);
-    if let Some(l)=e.claim {changes=if changes=="no change" {format!("Claim {}",claim_name(l))} else {format!("{changes}, Claim {}",claim_name(l))};}
+    let mut add=|c:String| changes=if changes=="no change" {c} else {format!("{changes}, {c}")};
+    if let Some(l)=e.claim {add(format!("Claim {}",claim_name(l)));}
+    if let Some(rt)=&e.default_runtime {println!("Default runtime: {rt}");add(format!("Default runtime {rt}"));}
     let mut unknown=None;
     for _ in 0..20 {
         match host::capacity_observed(&install,&command) {
@@ -1861,8 +1872,8 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
         Err(e) => out.push(format!("Focus: unknown ({e})")),
     }
     match host::Policy::read(&platform::default_install()) {
-        Ok(p) => out.push(format!("Claim: {} (host {})", claim_name(p.labelled), p.me)),
-        Err(e) => out.push(format!("Claim: unknown ({e})")),
+        Ok(p) => out.extend([format!("Claim: {} (host {})", claim_name(p.labelled), p.me), format!("Default runtime: {} (host {})", p.default_runtime, p.me)]),
+        Err(e) => out.extend([format!("Claim: unknown ({e})"), "Default runtime: unknown".into()]),
     }
     if let Err(e) = &status {
         out.push(format!("Status: unknown ({e})"));
@@ -3116,6 +3127,7 @@ mod tests {
             limits: BTreeMap::new(),
             has: vec![],
             labelled: false,
+            default_runtime: "claude".into(),
             permission_mode: "dontAsk".into(),
             codex: vec![],
             ttl: 300,
@@ -3141,6 +3153,22 @@ mod tests {
         assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(true));
         let bad = parse(&["service", "capacity", "--claim", "some"]).unwrap();
         assert!(CapEdit::from_args(&bad).is_err());
+    }
+
+    // Chain: § 5 `service capacity --default-runtime` -> host.json `default_runtime` (#1668). Risk: a typo or
+    // `codex-app` reaches host policy, or the flag alone reads as an empty edit and nothing is saved.
+    #[test]
+    fn capacity_default_runtime_accepts_claude_or_codex_only() {
+        let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        for rt in ["claude", "codex"] {
+            let e = CapEdit::from_args(&parse(&["service", "capacity", "--host", "fra", "--default-runtime", rt]).unwrap()).unwrap();
+            assert_eq!(e.default_runtime.as_deref(), Some(rt));
+            assert!(!e.is_empty(), "the flag alone is a write");
+        }
+        for bad in ["codex-app", "gpt"] {
+            let a = parse(&["service", "capacity", "--host", "fra", "--default-runtime", bad]).unwrap();
+            assert_eq!(CapEdit::from_args(&a).err().unwrap(), format!("--default-runtime: claude or codex, not {bad}"));
+        }
     }
 
     // Chain: § 5 CLI arguments. Risk: stray words or a consumed scope/JSON flag change the requested command.
@@ -4567,7 +4595,7 @@ mod tests {
         run(&["close".into(), "12".into(), "--help".into()]).unwrap();
         assert!(USAGE.contains("--recommend K"));
         assert!(USAGE.contains("--snapshot DIR"));
-        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled]"));
+        assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();
         let e = platform::error_text("#7 is ready", None);
         assert!(e.starts_with("Error: #7 is ready\nNext: "));

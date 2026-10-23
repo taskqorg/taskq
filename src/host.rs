@@ -13,6 +13,9 @@ pub fn enter(root: &Path, install: &Path) {
     crate::platform::project_log(project_log(install, root));
 }
 
+/// host.json `default_runtime` values (§ 9); `codex-app` stays opt-in per task.
+pub const DEFAULT_RUNTIMES: [&str; 2] = [crate::runtime::RUNTIMES[0], crate::runtime::RUNTIMES[1]];
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Policy {
     pub raw: Value,
@@ -21,6 +24,8 @@ pub struct Policy {
     pub has: Vec<String>,
     /// `claim` `labelled`: this host claims only tasks labelled `host-<me>` (§ 9).
     pub labelled: bool,
+    /// `default_runtime`: reviewers and workers without `run-*` run on it (§ 4, § 9).
+    pub default_runtime: String,
     pub codex: Vec<String>,
     pub permission_mode: String,
     pub update_every: u64,
@@ -30,6 +35,7 @@ pub struct Policy {
 impl Policy {
     pub fn apply(&self, cfg: &mut service::Config) {
         cfg.me = self.me.clone(); cfg.has = self.has.clone(); cfg.labelled = self.labelled; cfg.codex = self.codex.clone();
+        cfg.default_runtime = self.default_runtime.clone();
         cfg.permission_mode = self.permission_mode.clone(); cfg.update_every = self.update_every; cfg.rollback_after = self.rollback_after;
     }
     pub fn parse(v: Value, hostname: &str) -> Res<Self> {
@@ -61,6 +67,11 @@ impl Policy {
             Some("any") => false, Some("labelled") => true,
             _ => return Err("host.json: claim must be any or labelled".into()),
         };
+        let default_runtime = match v["default_runtime"].as_str() {
+            _ if v["default_runtime"].is_null() => crate::runtime::OWNER.to_string(),
+            Some(rt) if DEFAULT_RUNTIMES.contains(&rt) => rt.to_string(),
+            _ => return Err(format!("host.json: default_runtime must be {}", DEFAULT_RUNTIMES.join(" or "))),
+        };
         let timer = |k: &str, d| if v[k].is_null() { Ok(d) } else { v[k].as_u64().filter(|n| *n > 0).ok_or(format!("host.json: {k} must be positive seconds")) };
         let (update_every, rollback_after) = (timer("update_every", 60)?, timer("rollback_after", 600)?);
         crate::platform::channel_of(&v)?;
@@ -83,7 +94,7 @@ impl Policy {
                 if cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("host.json: projects.{root}.limits.{rt} raises host ceiling")); }
             }
         }
-        let policy=Self { raw: v, cap, me, has, labelled, codex, permission_mode, update_every, rollback_after };
+        let policy=Self { raw: v, cap, me, has, labelled, default_runtime, codex, permission_mode, update_every, rollback_after };
         policy.command()?;
         Ok(policy)
     }
@@ -221,6 +232,7 @@ fn write_capacity_locked(install:&Path, host:&str, edit:&crate::CapEdit, expect:
             if let Some(value)=edit.memory_min {next["load_gate"]["memory_min"]=json!(value);}
         }
         if let Some(labelled)=edit.claim {next["claim"]=json!(if labelled {"labelled"} else {"any"});}
+        if let Some(rt)=&edit.default_runtime {next["default_runtime"]=json!(rt);}
         let candidate=Policy::parse(next,&hostname)?;
         let command=CommandReceipt::current()?;
         crate::telemetry::receipt(&command,"received")?;
@@ -1747,6 +1759,18 @@ mod tests {
         assert!(Policy::parse(json!({"claim": "labelled"}), "invented").unwrap().labelled);
         assert!(!Policy::parse(json!({"claim": "any"}), "invented").unwrap().labelled);
         assert!(Policy::parse(json!({"claim": "label"}), "invented").is_err());
+    }
+    // Chain: § 9 `default_runtime` (#1668). Risk: a host without the key stops running reviews on claude,
+    // or a typo or `codex-app` silently becomes the runtime of every review on the host.
+    #[test]
+    fn default_runtime_parses_claude_or_codex_only() {
+        assert_eq!(policy().default_runtime, "claude", "missing key: claude");
+        for rt in ["claude", "codex"] {
+            assert_eq!(Policy::parse(json!({"default_runtime": rt}), "invented").unwrap().default_runtime, rt);
+        }
+        for bad in [json!("codex-app"), json!("Codex"), json!(""), json!(1)] {
+            assert_eq!(Policy::parse(json!({"default_runtime": bad}), "invented").unwrap_err(), "host.json: default_runtime must be claude or codex");
+        }
     }
     fn policy() -> Policy {
         Policy::parse(json!({"limits": {"codex": 2}, "admission": {"max": 2}, "load_gate": {"enabled": false}}), "invented").unwrap()
