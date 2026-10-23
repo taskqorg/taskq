@@ -31,6 +31,7 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 | Surface | Fixed | Scroll only when needed |
 |---|---|---|
 | Home | view/admission/pause/Controls; Settings/AI footer | Work mode, attention, composer, aggregate, projects |
+| Menu task list | window header row, version/resize footer | one shared scroll: host summary, global pins first, filters, task rows or Completed; no separately scrolling subpanels (P-W1) |
 | Project / filtered tasks | Back, project/Board, current filter | task rows; all required states reachable |
 | Settings detail | Back/title, contextual commit/cancel where present | settings groups, validation and detailed effects |
 | AI conversation | window controls, context, composer | transcript; conversation list independent when side by side |

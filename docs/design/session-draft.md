@@ -2,6 +2,37 @@
 
 This is working context, not a blanket product approval or implementation plan. Explicit selections are linked below; other proposals remain exploratory. The final owner request authorizes one PM handoff task and PM creation of implementation tasks; it does not start implementation or application rollout.
 
+## Current owner acceptance and live-settings review
+
+Owner answers on #1657: P-V1 option A is accepted as written; native-only dialogue is reversed, so workspace dialogue follows [D1–D8](ai-workspace.md#workspace-dialogue-d1d8) (#1663). Both supersede conflicting lines below.
+
+The owner accepts the presented icon set/colors and requests one complete correction package and one TaskQ PM handoff. [review-handoff.md](review-handoff.md) owns final R01–R44 remark coverage and bounded remaining choices. Deliver references and evidence, then message the existing PM with that task. PM may reconcile/create held tasks; this request does not start implementation or native rollout.
+
+Current icon review: the owner reports mismatched symbols, especially Blocked resembling merge, and requests one cross-platform set. Source confirms the connected draft differs from the bundled implementation in five task states. Reconcile the eight-state mapping in [visual-style](visual-style.md#task-state-icons) before presenting the corrected sheet. The owner accepts the Lucide glyph mapping and colors on 2026-10-23; this is now the canonical set. The owner requests purple for Review and awaiting merge; this changes their UI accent only. A confirmed merged PR remains a distinct result, not a new TaskQ lifecycle state. The frozen reference is unchanged; its incorrect Blocked symbol is recorded as a baseline defect.
+
+Owner adds worker/runtime version and login control: per host/profile show version, account, sign-in state, expiry when supplied, and probe freshness. The Agents view now distinguishes authentication from runtime access and running work. Existing captured Mac sign-in observations may be displayed with capture-time labels; expiry and exact Codex account remain unknown. [Worker/runtime sign-in requirement](agent-settings.md#as5-version-and-sign-in) owns semantics; widget geometry remains for review. Source already probes basic login/kind/refresh/rejection, but tray flattens it to text and supplies no expiry field.
+
+
+Current gap: saved-view deletion was not worked through. Resume the existing chooser, not a new Settings screen. [P-V1](menu-product.md#saved-view-deletion-p-v1) proposes direct custom-view deletion, active/inactive behavior and named Undo restoring saved and working context. Candidate [saved-view management](exploration/review-control-panels.html) shows a labelled custom-view fixture, direct Delete and Undo; active/inactive removal, reload and later-edit cases passed in the prototype. Review these cases before treating the proposal as approved. Global task pins and the twelve-screen Settings sheet remain unchanged.
+
+Current iteration: show all principal Settings surfaces simultaneously using the observations in the live-settings review. Build a two-column review sheet with natural-height windows and no nested scrolling: Settings, Appearance, Hosts/resources, Work mode, Agents/Access, Projects, Delivery, Services, Notifications, Activity, Recovery, About. Values retain capture-time scope/freshness; no synthetic runtime totals, effective grants, recovery outcomes or completed-task records. These compact widget proposals await owner review; existing accepted views, palette, assets and one workspace entry remain unchanged. Candidate: [all Settings screens](exploration/settings-review.html); evidence stays in the existing [revision review](exploration/review-control-panels-review.md).
+
+The owner confirms the latest review views with two amendments: one menu icon for the Conversations/workspace window, routing to the section with pending Inbox or Conversations events; no Enlarge control in the task menu (corner resize retained). These supersede prior direct Inbox/Conversations shortcuts and identical enlarge controls across all three windows. Source-backed event identity/acknowledgement and native-only dialogue remain authoritative.
+
+A fresh native read-only pass inspected installed TaskQ `4.6.36-dev.1792731555` on this Mac. [Live-settings findings](exploration/live-settings-review.md) separates actual observations from proposed compact widgets, source correlations and untested operations. It is not acceptance of native implementation or permission to execute fixes/service changes.
+
+## Current window/pin review
+
+Owner accepts separate Settings windows and corrects P-W1: task pins form a global watchlist, visible across saved views, projects, state filters and search. Rows stay compact and click-only; Pin closes details. Latest owner correction: host names and separate Claude/Codex counters are visible together in one compact expandable line; resources/freshness disclose below. The menu uses one shared content scroll for hosts, pins, filters and tasks. Pins remain first across filters but scroll with the rest; independently scrolling watch/results panels are withdrawn. No overlap or duplicate rows. Filters/counts retain their original scope; the watchlist is explicitly global. Per-view pins and hidden-by-filter behavior are withdrawn. Preserve P-W2/P-W3 custom chrome and separate window lifetimes. Next review: compact host counters, expansion and shared scrolling, preserving filter/pin continuity.
+
+Source inspection found that current popup-pin latches details, view-pin pins a preset, and workspace-pin toggles native always-on-top. None is task promotion. The source workspace constructor does not explicitly disable decorations; native implementation remains unqualified.
+
+## Active implementation-review session
+
+The owner rejects the isolated navigation comparison because it changed approved colors, icons and row geometry. Continue the frozen control-panels visual system with all [review refinements](menu-product.md#dashboard-decisions-1573), not a new theme or one-icon branch. Canonical requirements are updated before the connected candidate. Review task dashboard/completed history, click-only details/questions, named-host/runtime/resource overview, unified Appearance, operational Settings and shared input across Inbox/drafts. Later native-only dialogue and retired Custom remain authoritative.
+
+Candidate: [connected review](exploration/review-control-panels.html). Evidence: [revision review](exploration/review-control-panels-review.md). They are review-only simulations; no implementation, task dispatch, service/policy changes or deployment is authorized here. Prior material below is historical unless explicitly retained above. The owner has not accepted incidental candidate details.
+
 ## Current outcome and phase
 
 Design exploration and the closing Conversations walkthrough have converged. The owner says the result looks good and requests a complete final package delivered in one TaskQ task to Project Manager, who will form implementation tasks. The existing implementation brief now owns the handoff; preserve bounded unresolved product choices and native/backend evidence gaps.
@@ -24,9 +55,9 @@ The owner explicitly selected the left filter-editor variant: a separate overlay
 
 The owner selected direct Inbox/Conversations and an extensible Settings menu ([MP12](menu-product.md#decisions)); only essential actions belong in the header. The owner also requested an always-accessible Close control and dragging from unpinned mode that enables Pin on the first actual drag, with the last chosen mode retained ([M13](menu.md#m13-pinned-window)). The consolidated-menu alternative is historical. Taxonomy and counter semantics remain open.
 
-The owner requested multi-selection of task states/projects and visible choices or previews instead of dropdowns for short option sets ([MP13](menu-product.md#decisions)). The default sort should be understandable from the filter order; exact sorting policy is being explored. Preserve both combined and project-grouped task views. Pinned-window growth choices (down/up/fixed) and visual tray-icon settings are next settings explorations, not selected defaults.
+The owner requested multi-selection of task states/projects and visible choices or previews instead of dropdowns for short option sets ([MP11](menu-product.md#dashboard-decisions-1573)). The default sort should be understandable from the filter order; exact sorting policy is being explored. Preserve both combined and project-grouped task views. Pinned-window growth choices (down/up/fixed) and visual tray-icon settings are next settings explorations, not selected defaults.
 
-The owner accepted the corrected filter: All with a scoped total, fixed state order, single-column state choices and no reorder mechanism. MP13 records this scope. Acceptance does not add approval for every sort, save or persistence policy shown in earlier prototypes.
+The owner accepted the corrected filter: All with a scoped total, fixed state order, single-column state choices and no reorder mechanism. MP11 records this scope. Acceptance does not add approval for every sort, save or persistence policy shown in earlier prototypes.
 
 ## Rule and artifact pointers
 
@@ -82,7 +113,7 @@ Local browser checks cover Pin, Close/Escape, outside click in either mode, reop
 - State buttons support multiple choices immediately. Project choices also combine; OR within a facet, AND across facets. Empty selection means All; quick search remains separate working context.
 - The overlay offers visible project/state choices, three sort options and combined/project-grouped display. State choices now use one column with no reorder controls. Changes preview immediately; Done closes the overlay, Save updates the preset separately. Exact save/preview behavior remains proposed.
 - Owner correction: changing state order was never requested. The two-column arrow editor was an agent scope error and a misleading spatial sequence. It is removed, including stored custom order. Do not replace it with hover arrows or drag handles unless the owner explicitly reopens that need.
-- State order is fixed under MP13; the candidate retains attention first, then Doing/Review/Ready/Blocked, with priority and issue number as tie-breakers. Time in stage and Total time remain explicit alternatives. Both display modes use the same comparator; the full default-sort policy is not approved.
+- State order is fixed under MP11; the candidate retains attention first, then Doing/Review/Ready/Blocked, with priority and issue number as tie-breakers. Time in stage and Total time remain explicit alternatives. Both display modes use the same comparator; the full default-sort policy is not approved.
 - All now shows the total for current projects/search before state selection; per-state counts use the same scope. These are stable filter options, including zero matches, not the global K status summary. Legacy prototype filters/search/grouping are retained while custom order is discarded.
 - Appearance demonstrates visible font/tray-layout buttons. Actual native tray-icon previews and the full settings redesign are not delivered by this round.
 

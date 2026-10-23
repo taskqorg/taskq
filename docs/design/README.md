@@ -17,6 +17,8 @@ The current visual reference is [workspace-prototype.html](workspace-prototype.h
 
 The package includes the remote PM scenario (UC-17), not only the desktop menu. The owner accepted all six shared workflow refinements and AI-assisted controls. Compatible shared rules: [specq 9f82cc6](https://github.com/taskqorg/specq/tree/9f82cc6). Use this revision or a compatible successor; an older copy may lack the accepted changes.
 
+2026-10-23 interface review: [handoff](review-handoff.md) maps owner remarks R01–R44 to [MP11–MP15, P-V1 and P-W1–P-W3](menu-product.md#dashboard-decisions-1573), [task-state icons and the revision contract](visual-style.md#task-state-icons), [AS5 sign-in](agent-settings.md#as5-version-and-sign-in) and [C3/C5](ai-workspace.md#native-dialogue-workspace-c1c9). Previews: [control panels](exploration/review-control-panels.html), [Settings routes](exploration/settings-review.html), [icons](exploration/icon-review.html); review-only simulations, not shipped behavior.
+
 [Shared blocks](shared-blocks.md): parent ownership, compact consumer variants and cross-product fidelity.
 
 [Tasks from findings](finding-tasks.md): shared reviewed creation, operation receipts and independent source verification.
