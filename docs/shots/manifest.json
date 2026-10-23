@@ -1,7 +1,7 @@
 {
   "version": "4.6.37",
-  "sourceCommit": "0c3db991ed7dc215cb954ec4145254577150cef6",
-  "binarySha256": "7f4d84db8e55938863c094c61fda80ea38aefb372631b346b6d67c264b1c8c9f",
+  "sourceCommit": "fbb0bddf99073f39242835ddd8297597eda95d22",
+  "binarySha256": "88f39f4aefd188c7a182609bfb0fc7ed020ed3be6e1108e38cc04054492336fb",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
@@ -17,7 +17,7 @@
     "src/tray-view-state.js": "a0eb498c1a0fe83f23ec19cf1330bf7da0e05b37",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "eeaf648b583be528eb7ab4dd23dbaab34d80ef5d",
-    "src/app-shell.css": "b7be0a1da599e617fe84be8d1d1dcb65cffed197",
+    "src/app-shell.css": "dc80d3281d1628e08e0b37f7ba40ac2f1c6777c5",
     "src/task-dashboard.js": "6682e8d8eb9957323c43e43c95cc75443de65977",
     "src/task-dashboard.css": "b20bfe24bb1e548df231fa348ecf1660b0d743f4",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",

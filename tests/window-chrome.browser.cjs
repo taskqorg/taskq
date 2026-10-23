@@ -68,5 +68,10 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   assert(await p.evaluate(()=>messages.some(m=>m.a==='drag')),'header drag');
   assert.equal(await p.evaluate(()=>messages.filter(m=>m.a==='size'||m.a==='set'&&m.navigation).length),0,'no menu size or navigation writes');
   await p.close();
- }console.log('PASS #1660 stable header row at 320/360/800, whole-word titles, Home/Back, one Conversations entry, version-only footer, Settings surface in both themes');}finally{await browser.close();}
+  // the Conversations window keeps Enlarge and Close (R26)
+  p=await open(360,{...state,theme},fs.readFileSync('build/web/workspace.html','utf8'));
+  await p.evaluate(()=>taskq.receive({open:{page:'conversations'}}));assert.equal(await p.locator('.head h1').textContent(),'Conversations');
+  assert.equal(await p.locator('.head [aria-label="Enlarge window"]').count(),1,'Conversations keeps Enlarge');
+  await p.close();
+ }console.log('PASS #1660 stable header row at 320/360/800, whole-word titles, Home/Back, one Conversations entry, version-only footer, Settings surface, Conversations Enlarge, readable badge in both themes');}finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1});
