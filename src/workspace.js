@@ -37,7 +37,8 @@ const {create}=execution.module('workspace',{
     return [h('p',null,r.title||'Message'),h('p',{class:'meta'},api.plain(r.state)),api.ids(r),
      h('p',null,request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.'),
      session(url)&&h('a',{'data-url':url,href:url},'Open native session'),
-     h('p',null,'Replies stay in the native runtime. Opening this record never sends a request.'),h('div',{class:'options'},api.messageButtons(r))];
+     request?.state==='launched'&&h('button',{'data-c':'reply-open','data-id':r.id},'Reply in Conversations'),
+     h('p',null,request?.state==='launched'?'Replies go to this native session from its conversation. Opening this record never sends a request.':'Replies open in Conversations after the native launch. Opening this record never sends a request.'),h('div',{class:'options'},api.messageButtons(r))];
    },
    answer:function(){
     const c=view.answer,p=view.S.projects.find(p=>p.issues===c?.board&&(!c.root||p.root===c.root)),t=p?.tasks?.find(t=>t.n===c.task);

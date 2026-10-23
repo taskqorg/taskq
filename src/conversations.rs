@@ -1,4 +1,4 @@
-//! #1580: native-owned drafts and immutable file handoff; dialogue stays in the runtime (R3/§4).
+//! #1580/#1665: native-owned drafts, immutable file handoff and the launched-session dialogue (D1-D8).
 use std::{collections::BTreeMap, fs, io::Write, path::{Path, PathBuf}};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -198,7 +198,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             let f=d.files.iter().chain(d.sent.iter().flat_map(|s|&s.files)).find(|f|m["file"]==f.id).ok_or("Attachment unavailable")?;
             return Ok(json!({"file":f,"data":STANDARD.encode(bytes(install,id,f)?)}));
         }
-        // D2/D4/D6/D7 workspace dialogue of a launched conversation; the draft stays until the workspace clears it.
+        // D2/D6 workspace dialogue writes of a launched conversation; the draft stays until the workspace clears it.
         match action {
             "reply"=>{
                 let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
@@ -206,11 +206,6 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                 if d.archived||d.deleting||d.text.trim().is_empty() {return Err("Restore the draft and write a message before sending".into());}
                 return crate::dialogue::send(install,id,&task(install,id,&d.text,&d.files)?,&crate::dialogue::NATIVE).map(|_|Value::Null);
             }
-            "status"=>{
-                let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
-                return Ok(crate::dialogue::status(install,&r,true,&crate::dialogue::NATIVE));
-            }
-            "transcript"=>return crate::dialogue::transcript(install,id,m["before"].as_u64(),m["after"].as_u64()),
             "watch"=>{
                 let events:Vec<String>=serde_json::from_value(m["events"].clone()).map_err(|_|"Watch events must be a list")?;
                 let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_millis());
@@ -289,6 +284,24 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
     match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value,"snapshot":snapshot(install)}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason,"snapshot":snapshot(install)})}
 }
 
+/// D4/D5/D7 reads for an open dialogue view: no draft lock and no snapshot, so the 2 s transcript poll never waits
+/// behind a save and never rebuilds the conversation list.
+pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
+    let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
+    let result=(||->Res<Value>{
+        if !crate::setup::owner_id(id){return Err("Invalid or reserved draft identity".into());}
+        match action {
+            "status"=>{
+                let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
+                Ok(crate::dialogue::status(install,&r,true,&crate::dialogue::NATIVE))
+            }
+            "transcript"=>crate::dialogue::transcript(install,id,m["before"].as_u64(),m["after"].as_u64()),
+            _=>Err("Unsupported dialogue read".into()),
+        }
+    })();
+    match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason})}
+}
+
 fn request_marks(install:&Path,id:&str,action:&str)->Res<()> {
     let s=crate::messages::snapshot(install,&[]);
     let keys:Vec<String>=s["entries"].as_array().into_iter().flatten().filter(|r|r["id"]==id&&(action!="delete"||r["archived"]==true)).filter_map(|r|r["key"].as_str().map(String::from)).collect();
@@ -328,6 +341,26 @@ mod tests {
         fn attach(&self,id:&str,name:&str,mime:&str,data:&[u8])->Value {self.act(id,"attach",json!({"file":{"id":"invented-file","name":name,"mime":mime,"hash":"0".repeat(64),"bytes":data.len()},"data":STANDARD.encode(data)}))}
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+
+    // #1665 D4/D5: view reads of a launched conversation whose native transcript is missing stay unknown, never empty,
+    // idle or done, and never take the draft lock or rebuild the snapshot.
+    #[test]
+    fn dialogue_reads_of_a_missing_transcript_are_unknown_never_empty() {
+        let f=Fixture::new();let id="dialogue-1665";
+        let r=crate::setup::Request{schema:2,id:id.into(),created:1,host:"h".into(),platform:"p".into(),client:"c".into(),runtime:"codex".into(),targets:vec![],brief:"b".into(),
+            state:"launched".into(),job:None,session:Some(crate::runtime::uuid()),url:None,reason:None,root:None,pm:false};
+        fs::create_dir_all(crate::setup::dir(&f.0).join(id)).unwrap();
+        fs::write(crate::setup::dir(&f.0).join(format!("{id}.json")),serde_json::to_string(&r).unwrap()).unwrap();
+        let read=|action:&str|dialogue(&f.0,&json!({"id":"read","conversation":id,"action":action}));
+        let status=read("status");
+        assert_eq!(status["state"],"accepted","{status}");assert!(status.get("snapshot").is_none());
+        assert_eq!(status["value"]["state"],"unknown");assert_eq!(status["value"]["watch"],"no watch");assert!(status["value"]["reason"].is_string());
+        let transcript=read("transcript");
+        assert_eq!(transcript["state"],"unknown","{transcript}");assert!(transcript["value"].is_null());assert!(transcript["reason"].is_string());
+        assert_eq!(read("reply")["state"],"unknown","a read never sends a turn");
+        assert_eq!(dialogue(&f.0,&json!({"id":"read","conversation":"../x","action":"status"}))["state"],"unknown");
+        assert!(!f.0.join("tray-requests.json").exists(),"reads never create draft storage");
+    }
 
     // C-A1/4/5/6/7: real preference/byte/setup chain. Context, sent bytes and IDs must survive crossed/partial receipts.
     #[test]
