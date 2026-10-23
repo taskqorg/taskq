@@ -7,8 +7,18 @@ const ui=require('./ui-runtime.js'),{execution}=ui;
 // Framework-scheduled product work keeps the initiating CoreQ execution context.
 options.debounceRendering=callback=>ui.defer(callback);
 const api=execution.module('shell',{
- bar:function({title,back,crumbs,actions,windows}){
-  return h('header',{class:'head'},h('div',{class:'nav-back'},back&&h('button',{'data-a':'back',title:'Back','aria-label':'Back'},require('./ui-icons.js').icon('arrow-left'))),h('div',{class:'nav-title'},crumbs&&h('nav',{class:'breadcrumbs','aria-label':'Breadcrumb'},crumbs),h('h1',{tabindex:'-1',title},title)),h('div',{class:'nav-actions'},actions),h('div',{class:'window-controls','aria-label':'Window controls'},windows));
+ // R07/P-W3: one action row per window (Home, actions, window controls) whose icons never move; Back, breadcrumbs and
+ // a title that does not fit take the row below.
+ bar:function({title,back,home,crumbs,actions,windows}){
+  const icons=require('./ui-icons.js');
+  return h('header',{class:'head'+(back||crumbs?' title-below':'')},home&&h('button',{class:'nav-home','data-a':'home',title:home,'aria-label':home},icons.icon('house')),h('div',{class:'nav-title'},back&&h('button',{class:'nav-back','data-a':'back',title:'Back','aria-label':'Back'},icons.icon('arrow-left')),crumbs&&h('nav',{class:'breadcrumbs','aria-label':'Breadcrumb'},crumbs),h('h1',{tabindex:'-1',title},title)),h('div',{class:'nav-actions'},actions),h('div',{class:'window-controls','aria-label':'Window controls'},windows));
+ },
+ // A short title shares the action row; one that would be cut moves below, whole words only.
+ fitTitle:function(container){
+  const head=container.querySelector('.head'),title=head?.querySelector('h1');
+  if(!title||head.classList.contains('title-below'))return;
+  head.removeAttribute('data-title-below');
+  if(title.scrollWidth>title.clientWidth+1)head.setAttribute('data-title-below','');
  },
  Frame:function({frame}){const [route]=useLocation();return h(Route,{path:frame.route},h('div',{'class':'shell','data-shell-route':route,'data-shell-depth':frame.depth},frame.nodes));},
  create:function(container){
@@ -25,6 +35,7 @@ const api=execution.module('shell',{
     frame.value={route,depth:location.history.length,nodes};
     if(location.history.at(-1)!==route)location.navigate(route,{replace:true});
     render(h(Router,{hook:location.hook},h(api.Frame,{frame:frame.value})),container);
+    api.fitTitle(container);
    }
   });
   return instance;

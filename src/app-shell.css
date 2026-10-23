@@ -4,12 +4,17 @@
 .shell{display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden}
 .menu .content{padding:var(--outer);scroll-padding-block:var(--outer)}
 .menu .group{margin-top:var(--section);padding-top:var(--section);border-top-width:1px}
-.menu .head{display:grid;grid-template-columns:var(--target) minmax(0,1fr) auto auto;align-items:center;gap:var(--related);padding:4px var(--outer);flex:none;cursor:grab}
-.head .nav-back{min-width:var(--target);align-self:start}
-.head h1{font-size:1.1em;font-weight:600;line-height:1.25;margin:0;overflow-wrap:anywhere;min-width:0;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+/* R07: row 1 is Home, the flexible title slot, actions and window controls; Back, breadcrumbs and a long title use row 2. */
+.menu .head{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:var(--related);padding:4px var(--outer);flex:none;cursor:grab}
+.head .nav-home{grid-column:1;grid-row:1}
+.head .nav-title{grid-column:2;grid-row:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:0 var(--related)}
+.head:is(.title-below,[data-title-below]) .nav-title{grid-column:1/-1;grid-row:2;flex-wrap:nowrap}
+.head .nav-actions{grid-column:3;grid-row:1}.head .window-controls{grid-column:4;grid-row:1}
+.head h1{font-size:1.1em;font-weight:600;line-height:1.25;margin:0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.head:is(.title-below,[data-title-below]) h1{flex:1 1 0;white-space:normal;overflow-wrap:normal;word-break:normal;hyphens:manual;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .head h1:focus{outline:none}
-.head .nav-title{min-width:0}
-.head .nav-actions,.head .window-controls{display:flex;align-items:center;gap:var(--related);align-self:start}
+.head .breadcrumbs::after{content:"›";margin-inline-start:4px}
+.head .nav-actions,.head .window-controls{display:flex;align-items:center;gap:var(--related)}
 .head .window-controls{border-inline-start:1px solid var(--edge);padding-inline-start:var(--related)}
 .head button{display:inline-flex;align-items:center;justify-content:center;padding:4px;flex-shrink:0}
 .menu :is(button,summary,select,input:not([type=checkbox]),textarea,[role=button]),.menu a{min-width:var(--target);min-height:var(--target)}
@@ -41,3 +46,6 @@
 .workspace [data-form=request] textarea{display:block;width:100%;box-sizing:border-box;font:inherit;line-height:1.4;resize:vertical}
 .workspace [data-form=request] .options{justify-content:flex-end}
 .workspace [data-a=request-send]{flex:none}
+/* R09: the Conversations count sits on its icon, so the icon keeps its place whatever the count. */
+.head .conversations-entry{position:relative}
+.head .conversations-entry .badge{position:absolute;top:0;right:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--ask);color:var(--surface);font-size:10px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}

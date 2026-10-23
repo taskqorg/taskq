@@ -59,7 +59,7 @@ operationInput:function(e){const d=e.target.dataset;if(d.recoveryTask||d.recover
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
 // #1523: the window's own layout (header, chips, summary, list, footer, any new panel) with the scroll area at full content height.
 natural:function(){const c=menu.querySelector('.content'),b=c&&c.querySelector('.content-body'),all=menu.getBoundingClientRect().height;if(!b)return Math.ceil(all);const cs=getComputedStyle(c),edges=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(cs[k])||0),0);return Math.ceil(all-c.getBoundingClientRect().height+b.getBoundingClientRect().height+edges);},
-fit:function(){if(ports.workspace)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
+fit:function(){if(ports.workspace||ports.settings)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
 actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const alert=text=>h('div',{class:'body alert',role:'alert'},text);
   const items=[view.aiError&&alert(view.aiError),view.workspaceError&&alert(view.workspaceError),...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
@@ -191,6 +191,9 @@ focusReadback:function(){
 remember:function(){return {...viewState.capture(),workCard:view.workCard};},
 navigate:function(next,filter=null,work=null){
   view.popup=null;
+  // R22: from the menu, Settings opens or raises its own window; plain Settings keeps that window's section
+  if(view.settingsWindow&&!ports.settings&&settingsPages.includes(next)){viewState.flush();send({a:'settings-open',page:next==='settings'?null:next});return;}
+  if(ports.settings&&next==='home')next='settings';
   if(!ports.workspace&&(work||['stop','recovery'].includes(next))){send({a:'workspace',open:{page:'operations',operation:work?'resources':next,root:work?Object.keys(work)[0]||null:null}});return;}
   renderer.push(remember());view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
   view.unavailable=null;
@@ -198,7 +201,7 @@ navigate:function(next,filter=null,work=null){
   menu.querySelector('h1')?.focus();
 },
 back:function(){
-  const prior=renderer.pop()||{page:['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'settings':view.S?.projects.some(p=>p.root===view.page)?view.taskFilter||view.working?view.page:'projects':'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
+  const prior=renderer.pop()||{page:ports.settings||['appearance','cadence','notifications','agents','services','about'].includes(view.page)?'settings':view.S?.projects.some(p=>p.root===view.page)?view.taskFilter||view.working?view.page:'projects':'home',taskFilter:null,working:null,workCard:null,scroll:0,open:{}};
   ({page:view.page,taskFilter:view.taskFilter,working:view.working,workCard:view.workCard}=prior);view.noted=null;view.disclosures=prior.open;view.aiRoot=prior.aiRoot;view.restoreScroll=prior.scroll;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=prior.scroll;
   viewState.focus(prior.focus);
@@ -498,13 +501,18 @@ project:function(p){
 filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=require('./task-views.js').normalize(null,{taskFilter:view.taskFilter});require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}return dashboard.list();},
 settings:function(){const sections=[['Display',[['appearance','Appearance','sliders-horizontal'],['tray-icon','Tray icon','square'],['window','Window','panels-top-left'],['notifications','Notifications','bell'],['cadence','Activity history','activity']]],['Host and projects',[['projects','Projects','folder'],['agents','Agents and Access','shield'],['delivery','Delivery','git-pull-request'],['services','Services and support','settings'],['about','About and updates','info']]]];
  return f(sections.map(([label,rows])=>h('section',{class:'settings-section'},h('div',{class:'meta'},label),rows.map(([route,label,mark])=>h('button',{class:'project','data-route':route},icon(mark),label)))),workEntry(),api.operationLauncher('admission',null,'Review Work mode scope…'),view.S.stop_modes&&api.operationLauncher('stop',null,'Emergency stop…'),view.S.stop_modes&&api.operationLauncher('recovery',null,'Recovery…'));},
-windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin',view.S.pinned?'Unpin window':'Pin window',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('copy','Keep above other windows',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
+windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Menu always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
 head:function(){
   const p=view.S.projects?.find(p=>p.root===view.page),title=view.working?'Work mode':p?p.name:routes[view.page]||'Unavailable';
-  const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):['appearance','tray-icon','window','delivery','cadence','notifications','agents','services','about'].includes(view.page)?h('a',{href:'#','data-route':'settings'},'Settings'):'';
-  const m=view.S.messages,inbox=m?.complete===true&&Number.isSafeInteger(m.count)?'Inbox · '+m.count:'Inbox · unknown';
-  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),button('inbox',inbox,{'data-a':'workspace','data-page':'messages'}),button('messages-square','Conversations',{'data-a':'workspace','data-page':'conversations'}),button('settings','Settings',{'data-route':'settings'}),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),button(view.S.pinned?'pin-off':'pin',view.S.pinned?'Unpin window':'Pin window',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)})];
-  return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows:button('x','Close window',{'data-a':'hide'})});
+  const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):settingsPages.includes(view.page)&&view.page!=='settings'?h('a',{href:'#','data-route':'settings'},'Settings'):'';
+  // R07/A4: a stable action row; Close is always last, Keep open, Always on top and the task pin have distinct names
+  if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
+  // R09/MP12: one Conversations entry; its count is the deduplicated actionable events, unknown never reads as zero
+  const m=view.S.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null;
+  const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':count?'messages':'',title:'Conversations · '+(count===null?'unknown':count+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':count):'');
+  const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),conversations,button('settings','Settings',{'data-route':'settings'})];
+  const windows=[button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)}),button('x','Close menu',{'data-a':'hide'})];
+  return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
 },
 draw:function(navigating=false){
   if(!view.S||view.resizing)return;
@@ -518,13 +526,14 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const focusedSummary=!navigating&&active?.tagName==='SUMMARY'?[...menu.querySelectorAll('summary')].indexOf(active):-1;
   const open=navigating||view.restoreScroll!=null?view.disclosures:viewState.groups(),p=view.S.projects.find(p=>p.root===view.page);
   if(!p&&!routes[view.page])view.page='home';
+  if(ports.settings&&view.page==='home')view.page='settings';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
   for(const entry of (view.S.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  const tree=[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,view.S.host||'Host unknown',' · ',view.S.service?.state||'service unknown'),h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
+  const tree=[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
@@ -558,6 +567,8 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}tick();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(Object.hasOwn(s,'settingsWindow')){if(ports.settings)view.settingsChrome=s.settingsWindow;else view.settingsWindow=s.settingsWindow===true;if(view.S)present();return;}
+  if(s.settingsOpen){if(ports.settings&&view.S&&s.settingsOpen.page!==view.page)navigate(s.settingsOpen.page);return;}
   if(Object.hasOwn(s,'agentqError')){view.agentqError=s.agentqError;present();return;}
   if(ports.workspace&&s.projects){view.S=s;focusReadback();api.lifecycleReadback();present();return;}
   if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
@@ -577,7 +588,7 @@ receive:function(s){
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
-  viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
+  if(!ports.settings)viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.popup=null;view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;renderer.clear();view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
@@ -619,7 +630,8 @@ ui.listen(menu,'click',e=>{
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'messages',operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null}});return;}
+  if(d.a==='home'){const root=ports.settings?'settings':'home';if(view.page!==root||view.taskFilter||view.working)navigate(root);return;}
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page===''?null:d.page||'messages',operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}
@@ -688,6 +700,8 @@ const actionErrors=new Map();
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
 const routes={window:'Window','tray-icon':'Tray icon',delivery:'Delivery','agentq-shown':'Agentq shown','agentq-setting-up':'Agentq setting up','agentq-running':'Agentq running','agentq-unknown':'Agentq unknown',recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
+const settingsPages=['settings','appearance','tray-icon','window','delivery','cadence','notifications','agents','services','about'];
+if(ports.settings)view.page='settings';
 const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail:renderer.entries(),routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:['appearance','tray-icon','window','delivery','cadence','notifications','agents','services','about'].includes(page)?'settings':'home'}]))});
 
 // Task answers: the native bridge owns credentials and canonical dispatch/readback.

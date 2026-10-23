@@ -13,7 +13,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover');
   assert.equal(await p.locator('[data-a=view-editor]').count(),1,'before: approved overlay editor missing; after: reachable');
   assert.equal(await list().count(),6,'canonical duplicate registrations count once');
-  assert.equal(await p.getByRole('button',{name:'Inbox · 1',exact:true}).count(),1);assert.equal(await p.getByRole('button',{name:'Conversations',exact:true}).count(),1);
+  assert.equal(await p.getByRole('button',{name:'Conversations · 1 new',exact:true}).count(),1);assert.equal(await p.getByRole('button',{name:/^Inbox/}).count(),0);
   await p.locator('[data-a=view-editor]').click();assert(await editor().evaluate(e=>e.matches(':popover-open')));
   const before=await list().first().boundingBox();
   await editor().locator('[data-facet=projects][data-value="github://example.org/org/alpha"]').click();
@@ -78,7 +78,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await p.locator('[data-route=settings]').click();await p.locator('[data-route=window]').click();
   for(const mode of ['auto','top','bottom','fixed']){await p.locator('[data-a=size-anchor][data-value='+mode+']').click();assert(await p.evaluate(mode=>messages.some(m=>m.a==='size-anchor'&&m.value===mode),mode));}
   await p.locator('[data-resize]').focus();await p.keyboard.press('ArrowRight');assert(await p.evaluate(()=>messages.some(m=>m.a==='resize')));
-  await p.getByRole('button',{name:'Close window',exact:true}).click();assert(await p.evaluate(()=>messages.some(m=>m.a==='hide')));
+  await p.getByRole('button',{name:'Close menu',exact:true}).click();assert(await p.evaluate(()=>messages.some(m=>m.a==='hide')));
   assert.equal(await p.evaluate(()=>messages.some(m=>['focus','pause','resume','capacity','ai-send'].includes(m.a))),false,'view/window controls have no admission/grant/send effects');
   await p.close();
   p=await open({...state,projects:[alpha,{...alpha,root:'/fixture/conflict',partial:['Alpha'],tasks:alpha.tasks.map(t=>({...t,title:'Changed title',revision:t.revision+1}))}]});
