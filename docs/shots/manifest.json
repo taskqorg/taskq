@@ -1,28 +1,28 @@
 {
   "version": "4.6.32",
-  "sourceCommit": "1e64750d2fd401af623beb55a73e1b899f9590c1",
-  "binarySha256": "fe55949d5047d8aceed220e0f7d0e54acace614ce46cf8dd612589e567f425d7",
+  "sourceCommit": "c3eaf605e959f944c2a248a6734b5c42420e9af3",
+  "binarySha256": "34adea1d47e6551e144b4233844537320c0c70a69d97f4841997941019979cd3",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "e85a6a5cccd33a5462c75e9ed3321e782d779bcb",
+    "src/tray.rs": "278ccfdc65c05b2f27bbe63e71ce9a1a8a2bb6b4",
     "src/tray.html": "1d9293ecbf841fa03f8c8575ee6897ee94b2c5db",
-    "src/tray-app.js": "b6b5dbf9162bd706eb01a9ba4176db597d42c2b8",
+    "src/tray-app.js": "fd7846b418895481d1ee51408528327470bec07a",
     "src/tray-entry.js": "23cb2c12974c5a3395d9abc020a00d41ccee3b30",
-    "src/tray-view-state.js": "35e7f59115138fd0d92b422741ef1866036c42dd",
+    "src/tray-view-state.js": "a0eb498c1a0fe83f23ec19cf1330bf7da0e05b37",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "e38799f4c404e27a1fbaab61d2f1a9c9c8abdd64",
     "src/app-shell.css": "fa22bcca2d0558aece8ae453547f8f4abd0f604b",
-    "src/task-dashboard.js": "baeba3d919fe372672aaec5df7c80f58eab71b8f",
+    "src/task-dashboard.js": "cfc17665e8829ec45628f14badf3bbcfca8b432b",
     "src/task-dashboard.css": "4a6b721fc8e5ae7e8c5a75fa3e09f1d699d805b2",
-    "src/task-views.js": "cf8dc17d504e67d0317f875ca8e9ad436236064c",
+    "src/task-views.js": "cb72b42862892e40402fe6ea4d0c82385fc24547",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "fbd352c056366bc454a8998000ac51c2e136ceea",
     "src/ui-icons.json": "fe01b24d446fff96e8e756ed87d55780502d17a1",
-    "src/project-blocks.js": "829308d8a88e93af21fadd1982cf87d2e5a24401",
+    "src/project-blocks.js": "12d97cf8ca7525d9146de7afeb878c448fd573ff",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/conversations.rs": "7781a5ebaf3f9e60e46eb64f7063b6945e030ba2",
     "src/conversations.js": "73929ba168ef8646f27b6d18671d34000b37ed48",
@@ -44,11 +44,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "c61441941376c61d28fd4af87e2378963169a18e44d90510b61faa82defdba51"
+      "sha256": "d13212f54666b34f88056406cd8252e1e9f0ca17d7c5d7c6a4997611f54045a7"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "7a842def6d030fbdffc90a160ea3542ed2c356152a6f79a984a363abcaccb15e"
+      "sha256": "bc86a2fd4b8460e6ae6a1f9982751ecbb7df2fbeade3064441e9abb1b3cc9c9e"
     }
   ]
 }
