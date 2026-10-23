@@ -1645,6 +1645,30 @@ exit 0
         assert_eq!(crate::core::fold(0, &e, false).state, crate::core::State::Ready);
     }
 
+    // Chain: § 9 GitLab token lookup (coreq v0.14.8 `<install>/gitlab-token`) -> board read. Risk: a GitLab host with only
+    // the install token file finds no token, or the GitHub `token` file goes to GitLab.
+    #[test]
+    fn gitlab_board_reads_install_token_file() {
+        if std::env::var_os("GITLAB_TOKEN").is_some() { return; }
+        let install = std::env::temp_dir().join(format!("taskq-gitlab-token-{}", std::process::id()));
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::write(install.join("token"), "invented-github-token\n").unwrap();
+        std::fs::write(install.join("gitlab-token"), "invented-gitlab-token\n").unwrap();
+        let tool = coreq::Tool { install: install.clone(), ..coreq::Tool::new("taskqgitlabtokentest", "TaskQ", "fixture/unused", "1.2.3") };
+        let token = (gitlab::KIND.token)(&tool, "gitlab.example").unwrap();
+        assert_eq!(token, "invented-gitlab-token");
+        assert_eq!(gitlab::KIND.worker_env(&tool, "gitlab.example").unwrap(), vec![("GITLAB_TOKEN".into(), token.clone())]);
+        let mut api = (gitlab::KIND.api)("gitlab.example", "o/r", &token);
+        assert_eq!(api.auth, "Authorization: Bearer invented-gitlab-token");
+        api.transport = Some(Box::new(|_, url, _| {
+            assert!(url.starts_with("https://gitlab.example/api/v4/projects/o%2Fr/"), "{url}");
+            let body = if url.ends_with("/issues/7") { r#"{"iid":7,"title":"t","state":"opened"}"# } else { r#"{"access_level":30}"# };
+            Ok(Reply { status: 200, headers: vec![], body: body.into(), operation: "read" })
+        }));
+        assert_eq!((gitlab::KIND.board)(api).issue(7).unwrap().number, 7);
+        std::fs::remove_dir_all(install).unwrap();
+    }
+
     // Chain: board token boundary. Risk: the token is sent to another host.
     #[test]
     fn token_goes_only_to_the_board_api() {
