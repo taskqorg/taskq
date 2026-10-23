@@ -2897,7 +2897,9 @@ fn with_test_capture<T>(run: impl FnOnce(&coreq::telemetry::Store, &Path) -> T) 
     let capture=coreq::telemetry::capture::Capture::new(store.clone(),"taskq","fixture").unwrap();
     let result=tracing::subscriber::with_default(tracing_subscriber::registry().with(capture.clone()),||run(&store, &dir));
     telemetry::settle(Duration::from_secs(30));capture.flush().unwrap();
-    drop(capture);drop(store);fs::remove_dir_all(dir).unwrap();
+    drop(capture);drop(store);
+    // #1640: Windows can keep a just-closed store file busy (os error 32) for a moment; a lasting hold still fails.
+    for left in (0..50).rev() {match fs::remove_dir_all(&dir) {Err(e) if left>0&&e.raw_os_error()==Some(32)=>std::thread::sleep(Duration::from_millis(100)),other=>{other.unwrap();break}}}
     result
 }
 
