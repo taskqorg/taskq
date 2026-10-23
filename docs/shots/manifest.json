@@ -1,25 +1,25 @@
 {
   "version": "4.6.38",
-  "sourceCommit": "554c7ffb75e1bbe98582919b35df8b1cd6a72430",
-  "binarySha256": "15d3965e32f09e8dfeddaa5ef9453fa8c7000d9661fb2894901d1500071da31d",
+  "sourceCommit": "2ce9ca51a7a6ac8f25f775511aff17f5a8c7684f",
+  "binarySha256": "2865db98d0bf721d96ebfb385e6e61be24c7f5edb02008e7bb3c5cbfc274db68",
   "environment": {
-    "os": "Windows",
-    "arch": "x86_64",
-    "renderer": "WebView2 snapshot"
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot"
   },
   "uiSources": {
     "src/tray.rs": "1924aeb1f255a863684c6ee2521e4dda4017a24e",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "45aea25cf4f82ff25fc02b34727203162476dd3d",
+    "src/tray-app.js": "b246a523d809d81d8dfe90fda47700b15058b8dc",
     "src/tray-entry.js": "8231d269085366b914b96f027f702a83ec32a7fb",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
-    "src/task-workspace.css": "9a594279112e44fc78c06f128091bd84fa005492",
+    "src/task-workspace.css": "0d38245af5d24e8c4b1839ee98e0538b29c17975",
     "src/tray-view-state.js": "a0eb498c1a0fe83f23ec19cf1330bf7da0e05b37",
     "src/tray-web.js": "66ff2e924f2058f5580533b814282c3e65131cf4",
     "src/app-shell.js": "eeaf648b583be528eb7ab4dd23dbaab34d80ef5d",
     "src/app-shell.css": "dc80d3281d1628e08e0b37f7ba40ac2f1c6777c5",
     "src/task-dashboard.js": "6682e8d8eb9957323c43e43c95cc75443de65977",
-    "src/task-dashboard.css": "88e65c89f60c67cd31217758a5b9a648618ce1a3",
+    "src/task-dashboard.css": "07230ef9563af453b251fe36b9049c5ac1429e2b",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
@@ -36,7 +36,7 @@
     "src/workspace-answers.js": "507c60f6fa8d180c984411b1c2a673024930cd4e",
     "src/answer-card.js": "866d5cf7b7a2d8bc4e9674c11d734164e735eee9",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
-    "src/icon.rs": "172cc8303a2ff0b2ee760bc12a472dd1499b80a8"
+    "src/icon.rs": "940a48e7f4cc526638bb126c532e83344051aef3"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "4f3f75b50f0e7b18bdfd0fdbfd6141175479168666d64e87ee64fb48dce3783d"
+      "sha256": "9d6b23c8cdb33e8fe3e8fa3f18966f02f7fd6e72cee30e60f7e46f6a688f5dca"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "6c8af20d057f0e36dc8cb9b5a68e49054cea101ab2d02b582d5b2d15da9da3fe"
+      "sha256": "1319bc12ce92d95bc09560f9d062f500b0a5e6766b533019abf3abc62a1f8926"
     }
   ]
 }

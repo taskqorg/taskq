@@ -6,7 +6,7 @@ const task=(n,state)=>({n,state,title:'Keep the task title readable '+n,revision
 const long={root:'/fixture/long',name:'Infrastructure provisioning and observability pipeline',host:'fixture',issues:'https://example.org/org/long/issues',board_kind:'github',alive:true,complete:true,age:1,focus:['all'],labels:[],tasks:[task(1,'ready'),task(2,'doing')],delivery:{preset:'auto-merge',revision:0}};
 const state={platform:'windows',font:16,theme:'dark',host:'fixture',now:1000,version:'9.9.9',size_anchor:'auto',attached_edge:'top',top:false,pinned:false,service:{state:'running'},projects:[long],ai:{draft:''},notify:{projects:{}},stop_modes:false,display:require('./fixtures/display-model.json').display,messages:{complete:true,count:3}};
 // icon::css, the palette the native menu injects
-const palette={dark:'--work:#38E8A0;--ask:#FFC247;--failed:#FF6378;--ready:#B9C6D8;--muted:#B9C6D8',light:'--work:#087F5B;--ask:#995200;--failed:#C92641;--ready:#536171;--muted:#536171'};
+const palette={dark:'--work:#38E8A0;--ask:#FFC247;--failed:#FF6378;--ready:#B9C6D8;--muted:#B9C6D8;--review:#BCA3EB',light:'--work:#087F5B;--ask:#995200;--failed:#C92641;--ready:#536171;--muted:#536171;--review:#8250DF'};
 const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.replace('<head>','<head><script>window.taskqSurface=\'settings\';</script>');
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
