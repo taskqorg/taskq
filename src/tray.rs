@@ -2059,7 +2059,7 @@ fn openable(u: &str) -> bool {
 }
 
 fn open(arg: &str) {
-    let _ = coreq::telemetry::capture::operation("tray.open-request",||crate::runtime::open_link(arg),|_|"open");
+    let _ = coreq::telemetry::capture::operation("tray.open-request",||crate::runtime::open_link(arg, false),|_|"spawn");
 }
 
 /// The menu bar's theme: macOS follows the app appearance; the Windows taskbar has its own setting.

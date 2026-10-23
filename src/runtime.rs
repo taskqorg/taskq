@@ -1835,10 +1835,22 @@ pub fn session_link(root: &Path, own: bool, rt: &str, id: &str, task: u64, attem
     (id, url)
 }
 
-/// The one opener (A2): a session link, web page or folder in this host's default app, waited for a bounded time.
-pub fn open_link(arg: &str) -> Result<(), String> {
+/// The one opener (A2): a session link, web page or folder in this host's default app. `wait` bounds the opener's
+/// exit for callers that act on the open (Codex app queue); the tray only spawns it.
+pub fn open_link(arg: &str, wait: bool) -> Result<(), String> {
     let mut c = Command::new(if cfg!(windows) { "explorer" } else { "open" });
-    coreq::process::output("runtime.open-link", crate::platform::quiet(c.arg(arg)), std::time::Duration::from_secs(10)).map(|_| ()).map_err(|e| e.to_string())
+    crate::platform::quiet(c.arg(arg));
+    if !wait { return c.spawn().map(|_| ()).map_err(|e| e.to_string()); }
+    match coreq::process::output("runtime.open-link", &mut c, std::time::Duration::from_secs(10)) {
+        Err(coreq::process::Failure::Exit(out)) if !opened(cfg!(windows), out.status.code()) => Err(format!("open exited {:?}", out.status.code())),
+        Err(coreq::process::Failure::Exit(_)) | Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Windows `explorer` exits 1 after it opened the link; only `open`'s 0 is success elsewhere.
+fn opened(windows: bool, code: Option<i32>) -> bool {
+    code == Some(0) || windows && code == Some(1)
 }
 
 /// Only a URL registered by the native session is a Remote Control link.
@@ -1906,7 +1918,7 @@ impl AppTurn {
 /// Show `thread` in the Codex app and queue `text` on it (§ 8 Codex app); the caller has checked the id.
 pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
     let ok = |c: &mut Command| coreq::process::output("runtime.app-submit", c, std::time::Duration::from_secs(10)).is_ok();
-    if open_link(&thread_url(thread)).is_err() || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
+    if open_link(&thread_url(thread), true).is_err() || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
         return Err(format!("codex queue failed for thread {thread}"));
     }
     Ok(())
@@ -2385,6 +2397,13 @@ pub fn agents_line(r: &serde_json::Value) -> String {
 mod tests {
     use std::process::Stdio;
     use super::*;
+
+    // Risk: Windows `explorer` exits 1 after a successful open, so a Codex app queue reads it as a failed open (#1593).
+    #[test]
+    fn open_exit_rule() {
+        assert!(opened(true, Some(0)) && opened(true, Some(1)) && opened(false, Some(0)));
+        assert!(!opened(false, Some(1)) && !opened(true, Some(2)) && !opened(true, None));
+    }
 
     // Chain: R3 session name -> Claude `--name`/Remote Control and Codex first input line (#1564). Risk: sessions
     // show the shared rules header or an uncut title instead of role, task and title.
