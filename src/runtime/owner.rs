@@ -116,7 +116,90 @@ pub fn claude_link(workdir: &Path, job: &str) -> (Option<String>, Option<String>
     let url = session.as_deref().and_then(super::claude_remote);
     (session, url)
 }
+/// D2: one owner turn into a launched session, text on stdin; the caller spawns it. Never `--bg --resume`: that copies the session.
+pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
+    let a = super::of(&r.runtime);
+    let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
+    if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    let install = own.parent().and_then(Path::parent).unwrap_or(own);
+    let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
+    let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
+    let codex = policy.map_or(vec![], |p| p.codex);
+    // the same folder and grant as the launch, so the turn resumes where the session started
+    let workdir = if a.codex { own } else { r.root.as_deref().map_or(own, Path::new) };
+    let exe = std::env::current_exe().unwrap_or_default();
+    let env = super::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
+    let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
+    let mut c = super::cli(&r.runtime, &access, &env)?;
+    crate::platform::quiet(&mut c);
+    c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
+        .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT");
+    if a.codex {
+        c.args(["exec", "--json", "--skip-git-repo-check"]).args(access.codex.as_deref().unwrap_or(&codex)).args(["resume", session, "-"]);
+    } else {
+        // print mode streams JSON only with --verbose
+        c.args(["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", access.claude.as_deref().unwrap_or(&mode),
+            "--settings", &serde_json::json!({"env": super::claude_env(install, None, None)}).to_string(), "--resume", session]);
+    }
+    Ok(c)
+}
 
+/// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
+pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
+    if super::of(&r.runtime).codex { return Ok(false); }
+    let (ok, out) = super::probe("runtime.agents", &super::which("claude"), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
+    if !ok { return Err(format!("claude agents: {}", out.trim())); }
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))?;
+    Ok(rows.iter().any(|v| v["sessionId"].as_str().is_some_and(|s| Some(s) == r.session.as_deref())))
+}
+
+/// D3 refusal text.
+pub fn open_in(runtime: &str) -> String { format!("open in {runtime}; close it there first") }
+
+/// D5: the outcome only from the runtime's end record (Claude `result`, Codex `turn.completed`/`turn.failed`); exit alone is unknown.
+pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
+    let codex = super::of(runtime).codex;
+    if codex && format!("{out}{err}").contains("already has an active writer") { return open_in(runtime); }
+    for v in out.lines().rev().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
+        match (codex, v["type"].as_str()) {
+            (false, Some("result")) if v["is_error"] != true && v["subtype"] == "success" => return "success".into(),
+            (false, Some("result")) => return format!("failed: {}", v["subtype"].as_str().unwrap_or("error")),
+            (true, Some("turn.completed")) => return "success".into(),
+            (true, Some("turn.failed")) => return format!("failed: {}", v["error"]["message"].as_str().unwrap_or("error")),
+            _ => {}
+        }
+    }
+    "unknown: the turn ended without a result record".into()
+}
+
+/// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.
+pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
+    // ponytail: no Windows probe qualified these homes (R12); unknown there until one does
+    if cfg!(windows) { return Err("transcript unknown: Windows transcript paths are not qualified".into()); }
+    let home = |var: &str, dir: &str| std::env::var_os(var).map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(dir))).ok_or("transcript unknown: no home folder".to_string());
+    if super::of(runtime).codex { codex_transcript_in(&home("CODEX_HOME", ".codex")?, session) } else { super::claude_transcript_in(&home("CLAUDE_CONFIG_DIR", ".claude")?, session) }
+}
+
+pub(crate) fn codex_transcript_in(home: &Path, session: &str) -> Res<PathBuf> {
+    if !super::plain_thread(session) { return Err("Codex thread identity invalid".into()); }
+    let suffix = format!("-{session}.jsonl");
+    let (mut found, mut dirs, mut seen) = (vec![], vec![(home.join("sessions"), 0)], 0);
+    // ponytail: one scan of sessions/YYYY/MM/DD per read; remember the path per session if this shows up in telemetry
+    while let Some((dir, depth)) = dirs.pop() {
+        for entry in fs::read_dir(&dir).map_err(|e| format!("Codex transcript unavailable: {e}"))? {
+            seen += 1;
+            if seen > 200_000 { return Err("Codex transcript scan exceeds 200000 entries".into()); }
+            let p = entry.map_err(|e| e.to_string())?.path();
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or_default();
+            if depth < 3 && p.is_dir() { dirs.push((p.clone(), depth + 1)); } else if name.starts_with("rollout-") && name.ends_with(&suffix) && p.is_file() { found.push(p); }
+        }
+    }
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err("Codex transcript unavailable".into()),
+        _ => Err("Codex session has multiple transcript paths; inspect native history".into()),
+    }
+}
 
 /// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546).
 pub fn claude_key(p: &Path) -> String { p.display().to_string().replace('\\', "/") }

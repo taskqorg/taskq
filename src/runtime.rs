@@ -1435,7 +1435,7 @@ fn claude_transcript(session: &str) -> Option<PathBuf> {
     claude_transcript_in(&claude_home()?,session).ok()
 }
 
-fn claude_transcript_in(home:&Path,session:&str)->Result<PathBuf,String> {
+pub(crate) fn claude_transcript_in(home:&Path,session:&str)->Result<PathBuf,String> {
     if session.len()!=36 || !native_job_id(session) {return Err("Claude session identity invalid".into());}
     let mut found=None;
     for (i,entry) in std::fs::read_dir(home.join("projects")).map_err(|e|e.to_string())?.enumerate() {
@@ -2217,7 +2217,7 @@ fn completes(rollout: &Path) -> Result<usize, String> {
 // ---------- `taskq agents` (taskq.md § 5): read-only probes, unknown when unreadable (R12) ----------
 
 /// Exit success and bounded stdout + stderr; incomplete execution/output remains unknown.
-fn probe(name: &'static str, bin: &Path, args: &[&str]) -> Option<(bool, String)> {
+pub(crate) fn probe(name: &'static str, bin: &Path, args: &[&str]) -> Option<(bool, String)> {
     probe_within(name, bin, args, std::time::Duration::from_secs(10))
 }
 
