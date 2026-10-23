@@ -4,7 +4,7 @@ const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
   const view={page:'messages',taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0};
-  const routes={conversations:{title:'Conversations'},messages:{title:'Inbox'},message:{title:'Message',parent:'messages'},request:{title:'New AI request',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},agents:{title:'Agent settings',parent:'messages'},operations:{title:'Operation review',parent:'messages'}};
+  const routes={conversations:{title:'Conversations'},messages:{title:'Inbox'},message:{title:'Message',parent:'messages'},request:{title:'New AI request',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},operations:{title:'Operation review',parent:'messages'}};
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'messages',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   const local=signal({text:'',caret:[0,0],op:null,receipt:null});let hydrated=false,timer=null,composing=false;
@@ -20,7 +20,7 @@ const {create}=execution.module('workspace',{
    conversations:function(){return conversations.body();},
    messages:function(){
     const m=snapshot.value.messages,filter=view.messageFilter||'all',rows=(m?.entries||[]).filter(r=>view.page!=='conversations'||r.kind!=='question').filter(r=>filter==='archived'?r.archived:!r.archived&&(filter!=='pending'||r.pending));
-    return [h('div',{class:'options'},h('button',{'data-route':'request'},'New AI request'),h('button',{'data-route':'sessions'},'Work sessions'),h('button',{'data-route':'agents'},'Agent settings')),
+    return [h('div',{class:'options'},h('button',{'data-route':'request'},'New AI request'),h('button',{'data-route':'sessions'},'Work sessions')),
      h('label',{for:'message-filter'},'Show messages'),h('select',{id:'message-filter','data-field':'message-filter'},[['all','All messages'],['pending','Pending'],['archived','Archived']].map(([v,label])=>h('option',{value:v,selected:filter===v},label))),
      m?.complete!==true&&h('p',{role:'status'},'Messages unknown: '+(m?.reason||'Source unavailable; refresh status.')),
      filter==='archived'&&[h('p',null,'Delete permanently removes TaskQ message records and owned copies. There is no undo. Board tasks, source files and native chats stay; sessions keep running. Requests awaiting launch cannot be deleted.'),h('button',{'data-a':'message-delete-all',disabled:!rows.length||!!view.messageBusy},'Delete all archived permanently')],
@@ -55,8 +55,7 @@ const {create}=execution.module('workspace',{
      t.state==='ask'?answers.answerSlot({...t,key:p.issues+'/'+t.n}):h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues)];
    },
    operations:function(){return operations.operationBody(view.operation);},
-   sessions:function(){return conversations.sessions();},
-   agents:function(){return h('p',null,'Agent settings are not available here. Use Settings → Agents in the tray. Opening this screen changes no runtime or permissions.');}
+   sessions:function(){return conversations.sessions();}
   });
   const api=execution.module('workspace.instance',{
    messageAction:function(action,keys){
@@ -82,9 +81,9 @@ const {create}=execution.module('workspace',{
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
     const icons=require('./ui-icons.js');
-    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Inbox'],['conversations','Conversations'],['request','New AI request'],['sessions','Work sessions'],['agents','Agent settings']].map(([route,label])=>h('button',{'data-route':route},label))))];
+    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},'⋯'),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Inbox'],['conversations','Conversations'],['request','New AI request'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
     renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='messages',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
-     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?(pages[view.page]||pages.agents)():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
+     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?(pages[view.page]||pages.messages)():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     conversations.afterDraw();state.flush();

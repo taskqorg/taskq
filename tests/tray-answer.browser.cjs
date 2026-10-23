@@ -85,7 +85,7 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       await page.locator('details.answered > summary').click();
       await page.evaluate(s=>taskq.receive({...s,page:undefined}),state);
       assert.equal(await answeredOpen(),true,'refresh keeps an explicit toggle');
-      await page.locator('.shell-overflow > summary').click();await page.locator('.overflow-actions [data-route=agents]').click();await page.locator('[data-a=back]').click();
+      await page.locator('.shell-overflow > summary').click();await page.locator('.overflow-actions [data-route=sessions]').click();await page.locator('[data-a=back]').click();
       assert.equal(await answeredOpen(),true,'Back keeps an explicit toggle');
       await page.locator('details.answered > summary').click();
       await page.evaluate(s=>taskq.receive(s),state);

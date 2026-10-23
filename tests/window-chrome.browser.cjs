@@ -58,11 +58,11 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   await p.evaluate(()=>taskq.receive({settingsWindow:{top:true,maximized:false}}));
   assert.deepEqual((await row(p)).map(r=>r[0]),['Settings home','Always on top','Enlarge window','Close settings']);
   assert.equal(await p.locator('.head [data-a=settings-top]').getAttribute('aria-pressed'),'true');
-  await p.evaluate(()=>taskq.receive({settingsOpen:{page:'window'}}));assert.equal(await p.locator('.head h1').textContent(),'Window');
+  await p.evaluate(()=>taskq.receive({settingsOpen:{page:'appearance'}}));assert.equal(await p.locator('.head h1').textContent(),'Appearance');
   assert.equal(await p.locator('.content [aria-label="Keep menu open"]').count(),1);assert.equal(await p.locator('.content [aria-label="Menu always on top"]').count(),1);
   if(out)await p.screenshot({path:out+'/settings-window-360-'+theme+'.png'});
   await p.locator('.head [data-a=home]').click();assert.equal(await p.locator('.head h1').textContent(),'Settings','Settings home is the Settings index');
-  await p.locator('.head [data-a=back]').click();assert.equal(await p.locator('.head h1').textContent(),'Window','Back steps one page');
+  await p.locator('.head [data-a=back]').click();assert.equal(await p.locator('.head h1').textContent(),'Appearance','Back steps one page');
   for(const a of ['settings-top','settings-enlarge','hide']){await p.locator('.head [data-a='+a+']').click();assert(await p.evaluate(a=>messages.some(m=>m.a===a),a));}
   const head=await p.locator('.head h1').boundingBox();await p.mouse.move(head.x+head.width+4,head.y+4);await p.mouse.down();await p.mouse.move(head.x+head.width+30,head.y+20);await p.mouse.up();
   assert(await p.evaluate(()=>messages.some(m=>m.a==='drag')),'header drag');

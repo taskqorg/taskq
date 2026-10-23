@@ -75,7 +75,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await editor().getByRole('button',{name:'Undo deleting Attention'}).click();assert.equal(await editor().locator('[data-a=view-select]').count(),3);assert.equal(await p.locator('[data-task-query]').inputValue(),'5','unchanged fallback lets Undo reselect the view');
   await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await p.locator('[data-task-query]').inputValue(),'5','Undo restores working context');
   await p.locator('[data-a=view-select][data-id=all]').click();
-  await p.locator('[data-route=settings]').click();await p.locator('[data-route=window]').click();
+  await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();
   for(const mode of ['auto','top','bottom','fixed']){await p.locator('[data-a=size-anchor][data-value='+mode+']').click();assert(await p.evaluate(mode=>messages.some(m=>m.a==='size-anchor'&&m.value===mode),mode));}
   await p.locator('[data-resize]').focus();await p.keyboard.press('ArrowRight');assert(await p.evaluate(()=>messages.some(m=>m.a==='resize')));
   await p.getByRole('button',{name:'Close menu',exact:true}).click();assert(await p.evaluate(()=>messages.some(m=>m.a==='hide')));
@@ -96,8 +96,8 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    observations.push({theme,font,variant,...geometry});await p.close();
   }
   const preview='data:image/png;base64,'+fs.readFileSync('docs/shots/icon-summary-run-dark.png').toString('base64');
-  for(const font of [16,20,40]){p=await open({...state,font,icons:{icon:preview,full:'<svg xmlns="http://www.w3.org/2000/svg" width="68" height="22"></svg>'}},{width:320,height:700});await p.locator('[data-route=settings]').click();await p.locator('[data-route=tray-icon]').click();assert.equal(await p.locator('.views button').count(),2,'#1611 removed Custom icons');assert.deepEqual(await p.locator('.views button').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.textContent)),[],'actual-size previews keep complete labels at '+font+'px');await p.close();}
-  p=await open();await p.locator('[data-route=settings]').click();await p.locator('[data-route=window]').click();
+  for(const font of [16,20,40]){p=await open({...state,font,icons:{icon:preview,full:'<svg xmlns="http://www.w3.org/2000/svg" width="68" height="22"></svg>'}},{width:320,height:700});await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();assert.equal(await p.locator('.views button').count(),2,'#1611 removed Custom icons');assert.deepEqual(await p.locator('.views button').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.textContent)),[],'actual-size previews keep complete labels at '+font+'px');await p.close();}
+  p=await open();await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();
   const start=await p.locator('.growth-miniature[data-growth=top] i').evaluate(e=>e.getBoundingClientRect().height);
   await p.waitForFunction(start=>Math.abs(document.querySelector('.growth-miniature[data-growth=top] i').getBoundingClientRect().height-start)>2,start,{timeout:2500});
   assert.equal(await p.locator('.growth-miniature[data-growth=fixed] i').evaluate(e=>getComputedStyle(e).animationName),'none');

@@ -92,7 +92,7 @@ fn observation(ps: &[Value]) -> Value {
 }
 
 /// The page model over tray projects at board time `now`: each project gains `counts`, `partial`, `open`, `mode` and
-/// `age_text` (status file age);
+/// `age_text` (status file age), `sample_age_text` (CPU/memory sample age);
 /// each row gains `key`, `state_name`, `age`, `total_age`, step `age`, `rank` (global order) and `dup` (another
 /// registration of the same board task shows it). Returns the shared vocabulary and the all-projects counters.
 pub fn model(ps: &mut [Value], now: i64) -> Value {
@@ -103,6 +103,8 @@ pub fn model(ps: &mut [Value], now: i64) -> Value {
         let o = observation(std::slice::from_ref(p));
         let b = board(p);
         p["age_text"] = json!(p["age"].as_i64().map(age));
+        // #1661 R17: the load sample ages by its own offset plus the status file age; absent while the gate is off
+        p["sample_age_text"] = json!(p["capacity"]["sample_age_seconds"].as_i64().zip(p["age"].as_i64()).map(|(s, a)| age(s + a)));
         p["mode"] = json!(mode(p["focus"].as_array().is_some_and(|f| !f.is_empty()), p["saved"] == true));
         for k in ["counts", "partial", "open"] { p[k] = o[k].clone(); }
         let Some(ts) = p["tasks"].as_array_mut() else { continue };
@@ -173,5 +175,9 @@ mod tests {
         assert_eq!((t[0]["age"].as_str(), t[0]["total_age"].as_str(), t[0]["state_name"].as_str()), (Some("5m"), None, Some("Doing")));
         assert_eq!(t[0]["steps"].as_array().unwrap().iter().map(|s| s["age"].clone()).collect::<Vec<_>>(), [json!("5m"), json!("5m"), Value::Null]);
         assert_eq!(ps[0]["mode"], "watch");
+        // #1661 R17: the CPU/memory sample is as old as its offset plus the status file; no sample, no age
+        let mut ps = [json!({"age": 30, "capacity": {"sample_age_seconds": 90}}), json!({"age": 30, "capacity": {}})];
+        model(&mut ps, 1000);
+        assert_eq!((ps[0]["sample_age_text"].as_str(), ps[1]["sample_age_text"].clone()), (Some("2m"), Value::Null));
     }
 }
