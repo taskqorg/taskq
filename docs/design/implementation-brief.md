@@ -119,7 +119,7 @@ Installation handoff: [S1–S5](setup-and-project-locations.md) requires a real 
 
 ## Dashboard baseline (#1578)
 
-Implement #1578 against main `21742cea80e5ac90c0e9e375169fecaae8e09773`, preserving the dirty design checkout. [#1573](https://github.com/taskqorg/taskq/issues/1573#issuecomment-6340259438) settles O1–O3; [MP11–MP13](menu-product.md#dashboard-decisions-1573) are canonical. The earlier open choices and Closed/operator snapshots do not override them.
+Implement #1578 against main `21742cea80e5ac90c0e9e375169fecaae8e09773`, preserving the dirty design checkout. [#1573](https://github.com/taskqorg/taskq/issues/1573#issuecomment-6340259438) settles O1–O3; [MP11–MP15, P-V1 and P-W1–P-W3](menu-product.md#dashboard-decisions-1573) are canonical; the [2026-10-23 review handoff](review-handoff.md) maps R01–R44 to them. The earlier open choices and Closed/operator snapshots do not override them.
 
 Frozen archive: [taskq-design-2026-10-22.zip](https://github.com/user-attachments/files/33818402/taskq-design-2026-10-22.zip), 7,839,451 bytes, SHA256 `d9f39f3f24bbb4e43d94c113dbdd222bf839ee78e67e86de4fa0b12e2ef1f640`. [Manifest](evidence/frozen-1573-package.json) verified all 168 TaskQ and 30 shared-file hashes. The archived shared snapshot is provenance only; apply injected specq `d67126cd7e4fb88bcabd63de10748c5c3a9f5442`.
 

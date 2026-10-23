@@ -21,6 +21,6 @@ Each release ships, under `SHA256SUMS`: `taskq-<v>-task-workspace.js`, `-task-wo
 
 - `narrow` (320×640): rows fit; the view editor opens, a state facet filters, Escape returns focus.
 - `large-text` (360×760, font 20): rows fit; a row opens its detail, which fits; Stop sends `answer`.
-- `keyboard`: Tab reaches a row and previews it; Enter pins focus in the detail; Escape returns focus to the row.
+- `keyboard`: Tab reaches a row without opening its detail; Enter or Space opens the detail with focus in it; Escape returns focus to the row (MP13). The shipped fixture still expects a focus preview until #1659 updates it.
 
 Each step names a selector or key and an expectation (`count`, `open`, `focus`, `text`, `fits`, `sent`), so a consumer replays them on its pinned version.

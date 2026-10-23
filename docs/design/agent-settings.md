@@ -43,4 +43,16 @@ Reference uses fictional versioned probes and two fixture projects. Editable pre
 - AS-A6: both themes and 20px narrow layout remain readable; all review actions reachable.
 - AS-A7: runtime unavailable, unsupported enforcement and request above authority have explicit blocked routes in the production ledger.
 
+## AS5 Version and sign-in
+
+Owner requirement (#1657 R18–R19). Agents shows, per host and per OS user/configuration profile, the runtime identity, observed client version, actual account when known, sign-in state and check age together. Host worker/service versions stay separate from Claude/Codex client versions. Never merge credentials across hosts or profiles; codex-app references a shared Codex login only when the host adapter confirms the shared profile.
+
+- Account versus method: the account is the identity the provider reports. "ChatGPT", "API key" or another auth method alone is not an account; show the method separately, or Account unknown.
+- States: Signed in, Checking, Check failed, Unknown, Expired, Rejected and Sign in required, each from a source-backed observation. Check failed and Unknown are check outcomes, not auth failures; Expired and Rejected need an explicit provider/adapter signal.
+- Signed in at capture: a stale result keeps its value with its age as "Signed in at <time>", never as current confirmation. An installed binary, a running worker or an account label never proves fresh sign-in.
+- Expiry: show expiration or remaining validity only when the provider/adapter supplies it; otherwise Expiry unknown. Last refresh is not expiration. A short-lived access token expiring under supported automatic refresh is not an expired login. A confirmed rejection overrides a cached positive result for that credential/profile until a new qualifying observation.
+- Remote hosts stay Unknown until that host's own observation arrives; never copy the local result.
+- Detail keeps source, last check, last refresh when supplied, expiry meaning, a safe failure reason and a supported sign-in route. A check never starts a login; reauthentication stays an explicit native user action. Expired, Rejected and Sign in required surface in the compact host summary and the single workspace notification route under existing event/acknowledgement rules.
+- Never send tokens, cookies, secret key text or raw auth files to the UI or telemetry. This display adds no credential-reading mechanism and no hard-coded expiry-warning threshold.
+
 Reusable rules already live in shared F1/F3/F5 and permission authority. This page defines TaskQ navigation and policy presentation only.
