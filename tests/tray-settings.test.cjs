@@ -1,6 +1,7 @@
 // #1661 R18–R20, R28–R31: Settings content reads the AS5 sign-in view, effective access and one host service line.
 // Defect guarded: a stale probe read as current sign-in, a method shown as the account, a remote host or a missing
-// access file shown as known, the host service repeated per project, and a widget route without its page.
+// access file shown as known, a probe in progress shown as its prior result, Work mode pointing elsewhere instead of
+// showing access, the host service repeated per project, and a widget route without its page.
 const assert=require('node:assert/strict');
 const fx=require('./fixtures/display-model.json');
 const access=[{runtime:'claude',requested:'workspace-write',grant:'workspace-write',effective:'workspace-write',enforcement:'sandbox'},{runtime:'codex',requested:'full',grant:null,effective:null,refused:'host grant missing'}];
@@ -26,6 +27,12 @@ for(const [state,label] of [['expired','Expired'],['rejected','Rejected'],['sign
  c.S.agents={...c.S.agents,rows:[row('claude',state,{next:state==='unknown'?null:'run `claude auth login`'})]};html=c.routeBody();
  assert(html.includes('>'+label+'<'),label+' stays distinct');assert.equal(html.includes('A check never signs in.'),state!=='unknown');
 }
+// AS5 Checking: a probe in progress reads Checking apart from every result, the prior result kept as a detail
+c.S.agents={at:700,age:'5m',fresh:true,checking:true,rows:[row('claude','expired')]};html=c.routeBody();
+assert(html.includes('Claude · <span class="">Checking</span>'),'a probe in progress is not its prior result');
+assert(html.includes('Last result: Expired'));assert(html.includes('sign-in checking now · checked 5m ago'));
+c.page='settings';assert(c.routeBody().includes('checking sign-in'));c.page='agents';
+c.S.agents={at:null,checking:true,rows:[]};assert(c.routeBody().includes('Checking: no earlier result'));
 c.S.agents=null;assert(c.routeBody().includes('Unknown: no status.json has agents'));
 // R30: one host service line on Services; project rows name their status age only
 c.page='services';html=c.routeBody();assert.equal(html.split('Host service: running · PID 42').length-1,1,'the host service appears once per host');
@@ -33,6 +40,11 @@ c.page='services';html=c.routeBody();assert.equal(html.split('Host service: runn
 c.page='about';html=c.routeBody();assert(html.includes('Service 4.1.0<span class="meta"> · 2 projects'));assert(html.includes('Service 4.0.9<span class="meta"> · 1 project'));
 // R32: admission comes first; projects without a reported mode never read as none
 assert.equal(c.admissionText(),'admission unknown');c.S.projects[0].mode='paused';assert.equal(c.admissionText(),'1 paused');delete c.S.projects[0].mode;
+// R32: Work mode shows the access facts themselves after admission, not a pointer to Agents
+const wm={operationController:true,S:c.S};require('./tray-harness.cjs').install(wm);html=wm.workPage();
+assert(html.indexOf('Admission · ')<html.indexOf('Codex: refused: host grant missing'),'admission first, then access');
+assert(html.includes('Claude: requested workspace-write · saved grant workspace-write · applied workspace-write · sandbox'));
+assert(html.includes('Access unknown for beta: no access in status.json'));assert(!html.includes('Access is separate'));
 // R28: every Settings widget opens a route the page renders
 c.page='settings';html=c.routeBody();
 for(const route of html.match(/data-route="[^"]+"/g).map(x=>x.slice(12,-1))){c.page=route;assert.notEqual(c.routeBody(),'','route '+route+' renders');}

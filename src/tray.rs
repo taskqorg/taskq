@@ -1677,6 +1677,8 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
     let mut seen = agents(&ps);
     // AS5: a probe older than one probe cycle plus a minute reads "Signed in at <time>", never current
     if let Some(at) = seen["at"].as_i64() { seen["age"] = json!(crate::display::age(observed - at)); seen["fresh"] = json!((0..=360).contains(&(observed - at))); }
+    // a probe runs at most 40 s (2 clients × 2 probes × 10 s); an older mark is a pass that never finished, not Checking
+    if !seen.is_null() { seen["checking"] = json!(seen["checking"].as_i64().is_some_and(|c| (0..=60).contains(&(observed - c)))); }
     let messages=crate::messages::snapshot(install,&ps);
     let onboarding=snap.and_then(|(_,route)|agentq_fixture(route)).unwrap_or_else(crate::agentq::snapshot);
     let (start, end) = s.range(observed);
@@ -1730,8 +1732,12 @@ fn notes(install: &Path, s: &mut Settings, st: &Value, asked: &mut bool, bursts:
 
 /// Host-level `Agents` (§ 4): the rows of the freshest probe in any `status.json` in the AS5 view; null when none has one.
 fn agents(ps: &[Value]) -> Value {
-    let Some(a) = ps.iter().map(|p| &p["agents"]).filter(|a| a["at"].is_u64()).max_by_key(|a| a["at"].as_u64()) else { return Value::Null };
-    json!({"at": a["at"], "rows": a["rows"].as_array().into_iter().flatten().map(crate::runtime::agent_view).collect::<Vec<_>>()})
+    // AS5 Checking: a service marks a due probe before it runs; a probe read after the mark ends it
+    let checking = ps.iter().filter_map(|p| p["agents"]["checking"].as_u64()).max();
+    let Some(a) = ps.iter().map(|p| &p["agents"]).filter(|a| a["at"].is_u64()).max_by_key(|a| a["at"].as_u64()) else {
+        return checking.map_or(Value::Null, |c| json!({"at": null, "checking": c, "rows": []}));
+    };
+    json!({"at": a["at"], "checking": checking.filter(|c| a["at"].as_u64().is_some_and(|at| *c >= at)), "rows": a["rows"].as_array().into_iter().flatten().map(crate::runtime::agent_view).collect::<Vec<_>>()})
 }
 
 /// The default 24 h Summary period.
@@ -3115,8 +3121,14 @@ mod tests {
     fn agents_come_from_the_freshest_probe_or_are_unknown() {
         let row = |v: &str| json!({"runtime": "claude", "path": "/c", "version": v, "login": "not logged in", "account": null});
         let ps = [json!({"agents": {"at": 10, "rows": [row("1")]}}), json!({"agents": {"at": 20, "rows": [row("2")]}}), json!({})];
-        assert_eq!(agents(&ps), json!({"at": 20, "rows": [{"runtime": "claude", "version": "2", "state": "sign-in-required", "account": null, "method": null, "expires": null, "refreshed": null, "reason": null, "next": "run `claude auth login` with the PM (docs/relogin.md)"}]}));
+        assert_eq!(agents(&ps), json!({"at": 20, "checking": null, "rows": [{"runtime": "claude", "version": "2", "state": "sign-in-required", "account": null, "method": null, "expires": null, "refreshed": null, "reason": null, "next": "run `claude auth login` with the PM (docs/relogin.md)"}]}));
         assert_eq!(agents(&ps[2..]), Value::Null);
+        // #1661 A2: a probe in progress reads Checking over its prior rows; a probe read after the mark ends it
+        let ps = [json!({"agents": {"at": 20, "checking": 30, "rows": [row("2")]}}), json!({"agents": {"at": 25, "rows": [row("3")]}})];
+        assert_eq!((agents(&ps)["checking"].clone(), agents(&ps)["rows"][0]["version"].clone()), (json!(30), json!("3")));
+        let ps = [json!({"agents": {"at": 20, "checking": 30, "rows": []}}), json!({"agents": {"at": 40, "rows": []}})];
+        assert_eq!(agents(&ps)["checking"], Value::Null);
+        assert_eq!(agents(&[json!({"agents": {"checking": 30}})]), json!({"at": null, "checking": 30, "rows": []}));
     }
 
     // Chain: § 6 Add project from the tray. Risk: a folder is classified wrong and set up wrong.

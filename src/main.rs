@@ -1030,6 +1030,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let request = fs::read_to_string(d.join("focus.request")).ok();
         // § 4: runtime probes at most every 5 minutes
         if !reduced && agents.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 300) {
+            mark_checking(&platform::tool(&cfg.install), &cfg.root, at);
             agents = Some((Instant::now(), json!({"at": at, "rows": runtime::agents(&cfg.install)})));
             // #1429: a logged-out runtime admits nothing until a probe reads it logged in
             s.logged_out = agents.as_ref().and_then(|a| a.1["rows"].as_array().cloned()).unwrap_or_default().iter()
@@ -1195,6 +1196,16 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             }
         }
     }
+}
+
+/// AS5 Checking (#1661): before a due probe the last published status names it in progress, its prior rows kept;
+/// the pass's own status replaces the object without the mark. No prior status: nothing to mark.
+fn mark_checking(tool: &coreq::Tool, root: &Path, at: u64) {
+    let p = coreq::status::path(tool, root);
+    let Some(mut s) = fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object) else { return };
+    if !s["agents"].is_object() { s["agents"] = json!({}); }
+    s["agents"]["checking"] = json!(at);
+    if let Err(e) = platform::write_status(tool, root, &s) { log!("agents checking mark not written: {e}"); }
 }
 
 fn publish_status(tool: &coreq::Tool, root: &Path, status: &Value, host: Option<&host::Shared>) -> bool {
@@ -3082,6 +3093,22 @@ mod tests {
         assert_eq!(project_config(&t).unwrap().0.update_every, 60);
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "update_every": 900}"#).unwrap();
         assert_eq!(project_config(&t).unwrap().0.update_every, 900);
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    // Chain: #1661 A2 AS5 Checking. Risk: a probe in progress has no service signal, or the mark drops prior rows.
+    #[test]
+    fn a_due_probe_marks_the_last_status_checking() {
+        let t = std::env::temp_dir().join(format!("taskq-checking-{}", crate::runtime::uuid()));
+        let tool = platform::tool(&t.join("install"));
+        let p = coreq::status::path(&tool, &t);
+        mark_checking(&tool, &t, 30);
+        assert!(!p.exists(), "no prior status: nothing to mark");
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, json!({"at": 20, "agents": {"at": 20, "rows": [{"runtime": "claude"}]}}).to_string()).unwrap();
+        mark_checking(&tool, &t, 30);
+        let s: Value = serde_json::from_str(&fs::read_to_string(&p).unwrap()).unwrap();
+        assert_eq!(s["agents"], json!({"at": 20, "checking": 30, "rows": [{"runtime": "claude"}]}));
         fs::remove_dir_all(&t).unwrap();
     }
 

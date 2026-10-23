@@ -19,7 +19,7 @@ final class Capture: NSObject, WKNavigationDelegate {
         window.contentView=web;window.orderBack(nil);web.navigationDelegate=self
         try FileManager.default.createDirectory(atPath:output,withIntermediateDirectories:true)
         for theme in ["light","dark"] {
-            for (name,page) in [("day","cadence"),("hour","cadence"),("incomplete","cadence"),("day","tray-icon")] {
+            for (name,page) in [("day","cadence"),("hour","cadence"),("incomplete","cadence"),("day","appearance")] {
                 let data=try Data(contentsOf:URL(fileURLWithPath:root+"/tests/fixtures/icon-history/"+name+"-"+theme+".json"))
                 let history=try JSONSerialization.jsonObject(with:data) as! [String:Any]
                 let s:[String:Any] = ["page":page,"font":16,"size":[360,800],"size_anchor":"fixed","theme":theme,"period":name=="hour" ? "1h" : "1d","host":"Frozen capture","version":"1598 candidate","platform":"macos","now":history["captured"]!,"palette":history["palette"]!,"view":"full","history":history,"icons":["full":history["svg"]!,"icon":history["compact"]!],"projects":[["root":"frozen","name":"Frozen TaskQ capture","tasks":[],"focus":[],"labels":[],"alive":true]],"ai":["draft":""]]

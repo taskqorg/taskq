@@ -337,19 +337,26 @@ agentq:function(settings=false){
 },
 agents:function(){
   const A=view.S.agents,local=view.S.projects.filter(p=>p.host===view.S.host),remote=[...new Set(view.S.projects.map(p=>p.host).filter(x=>x&&x!==view.S.host))];
-  const label=r=>r.state==='signed-in'?(A.fresh?'Signed in':'Signed in at '+when(A.at)):signState[r.state]||'Unknown';
-  const rows=A?A.rows.map(r=>h('details',{class:'group agent-signin','data-view-key':'agent:'+r.runtime},h('summary',{class:'line'},icon(r.runtime==='claude'?'claude':'openai'),family(r.runtime)+' · ',h('span',{class:signAlert.includes(r.state)?'alert':''},label(r)),h('span',{class:'meta'},' · '+(r.account||'account unknown'))),
-    h('div',{class:'body meta'},lines([r.method&&'Method: '+r.method,r.expires?'Expires '+when(r.expires):'Expiry unknown',r.refreshed&&'Last refresh '+r.refreshed+'; not an expiry',r.reason&&'Reason: '+r.reason,'Runtime client '+(r.version||'version unknown')+' · checked '+A.age+' ago'].filter(Boolean))),
-    r.next&&h('div',{class:'body'},'Sign in: '+r.next+'. A check never signs in.'))):[h('div',{class:'body meta'},'Unknown: no status.json has agents')];
-  const access=local.filter(p=>Array.isArray(p.access)).map(p=>h('details',{class:'group access','data-view-key':'access:'+p.root},h('summary',{class:'line'},icon('shield'),'Access ',h('span',{class:'meta'},p.name+' · '+(p.access.map(a=>family(a.runtime)+' '+(a.refused?'refused':a.effective||'unknown')).join(' · ')||'no runtime'))),
-    p.access.map(a=>h('div',{class:'body meta'},family(a.runtime)+': '+(a.refused?'refused: '+a.refused:'requested '+(a.requested||'unknown')+' · saved grant '+(a.grant||'none')+' · applied '+(a.effective||'unknown')+(a.enforcement?' · '+a.enforcement:'')))),
-    h('div',{class:'body meta'},'Applied at the last service pass · '+(p.age==null?'age unknown':p.age_text+' old'))));
-  const missing=local.filter(p=>!Array.isArray(p.access)).map(p=>p.name);
-  return f(h('div',{class:'row'},h('span',null,h('strong',null,view.S.host||'This host'),' · sign-in '+(A?'checked '+A.age+' ago':'unknown: no service probe yet'))),
+  const prior=r=>r.state==='signed-in'?(A.fresh?'Signed in':'Signed in at '+when(A.at)):signState[r.state]||'Unknown';
+  // AS5 Checking: the service marked a probe in progress; the prior result stays in the detail with its age
+  const label=r=>A.checking?'Checking':prior(r),checked=A?.at==null?'no earlier check':'checked '+A.age+' ago';
+  const rows=A?.rows.length?A.rows.map(r=>h('details',{class:'group agent-signin','data-view-key':'agent:'+r.runtime},h('summary',{class:'line'},icon(r.runtime==='claude'?'claude':'openai'),family(r.runtime)+' · ',h('span',{class:!A.checking&&signAlert.includes(r.state)?'alert':''},label(r)),h('span',{class:'meta'},' · '+(r.account||'account unknown'))),
+    h('div',{class:'body meta'},lines([A.checking&&'Last result: '+prior(r),r.method&&'Method: '+r.method,r.expires?'Expires '+when(r.expires):'Expiry unknown',r.refreshed&&'Last refresh '+r.refreshed+'; not an expiry',r.reason&&'Reason: '+r.reason,'Runtime client '+(r.version||'version unknown')+' · '+checked].filter(Boolean))),
+    r.next&&h('div',{class:'body'},'Sign in: '+r.next+'. A check never signs in.'))):[h('div',{class:'body meta'},A?.checking?'Checking: no earlier result':'Unknown: no status.json has agents')];
+  return f(h('div',{class:'row'},h('span',null,h('strong',null,view.S.host||'This host'),' · sign-in '+(A?(A.checking?'checking now · ':'')+checked:'unknown: no service probe yet'))),
     h('div',{class:'body meta'},'Tray '+(view.S.version||'version unknown')+' · service '+(grouped(local.map(p=>p.version||'version unknown'))||'none on this host')),rows,
     remote.map(n=>h('div',{class:'body meta'},h('strong',null,n),' · sign-in unknown until this host reports')),
-    access,missing.length>0&&h('div',{class:'body meta'},'Access unknown for '+missing.join(', ')+': no access in status.json'),
+    api.accessFacts(),
     h('div',{class:'body meta'},'Editing is not available here: the operator changes grants with `taskq service permissions --runtime <runtime> --mode <mode>`.'),api.agentq(true));
+},
+// R29/R32: per project on this host, effective or refused access per runtime, or the one reason it is unknown
+accessFacts:function(){
+  const local=view.S.projects.filter(p=>p.host===view.S.host),missing=local.filter(p=>!Array.isArray(p.access)).map(p=>p.name);
+  return [local.filter(p=>Array.isArray(p.access)).map(p=>h('details',{class:'group access','data-view-key':'access:'+p.root},h('summary',{class:'line'},icon('shield'),'Access ',h('span',{class:'meta'},p.name+' · '+(p.access.map(a=>family(a.runtime)+' '+(a.refused?'refused':a.effective||'unknown')).join(' · ')||'no runtime'))),
+    p.access.map(a=>h('div',{class:'body meta'},family(a.runtime)+': '+(a.refused?'refused: '+a.refused:'requested '+(a.requested||'unknown')+' · saved grant '+(a.grant||'none')+' · applied '+(a.effective||'unknown')+(a.enforcement?' · '+a.enforcement:'')))),
+    h('div',{class:'body meta'},'Applied at the last service pass · '+(p.age==null?'age unknown':p.age_text+' old')))),
+    missing.length>0&&h('div',{class:'body meta'},'Access unknown for '+missing.join(', ')+': no access in status.json'),
+    !local.length&&h('div',{class:'body meta'},'Access unknown: no project on this host')];
 },
 about:function(){
   const S=view.S,up=S.projects.find(p=>p.update&&p.update!==p.version),versions=new Map();
@@ -487,7 +494,7 @@ capacity:function(p){if(!ports.workspace)return p.resources?api.operationLaunche
   return h('details',{class:'group','data-view-key':'capacity:'+p.root},h('summary',null,icon('square'),'Capacity ',h('span',{class:'meta'},(p.cap_host||'this host')+' · '+require('./resource-controls.js').headline(resourceGroup(p),view.S.now))),h('div',{'data-resources':p.root}));},
 workEntry:function(root){return view.S.projects.some(p=>p.resources)?h('button',{class:'project','data-a':'work','data-root':root||null},icon('sliders-horizontal'),'Work mode…'):'';},
 workPage:function(){if(!ports.workspace)return api.operationLauncher('resources',Object.keys(view.working||{})[0]||null,'Review host limits in workspace…');const ps=view.S.projects.filter(p=>p.resources),p=ps.find(p=>view.working?.[p.root])||ps[0],run=view.S.projects.filter(p=>mode(p)==='run'),held=view.S.projects.filter(p=>mode(p)==='paused');
-  return f(h('div',{class:'body',role:'status'},'Admission · '+api.admissionText()),bulk(run,held),p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''}),h('div',{class:'body meta'},'Access is separate: see Settings · Agents and access.'));},
+  return f(h('div',{class:'body',role:'status'},'Admission · '+api.admissionText()),bulk(run,held),p?.resources.targets?.some(t=>t.supported?.some(s=>s.policy_schema==='taskq.host-capacity/1'))?h('div',{'data-resources':p.root}):h('div',{'data-work':''}),api.accessFacts());},
 admissionText:function(){return [['run','admitting'],['paused','paused'],['watch','observation']].map(([m,l])=>[l,view.S.projects.filter(p=>mode(p)===m).length]).filter(([,n])=>n).map(([l,n])=>n+' '+l).join(' · ')||(view.S.projects.length?'admission unknown':'no projects');},
 mountResources:function(){
   const ws=menu.querySelector('[data-work]');
@@ -545,7 +552,7 @@ settings:function(){
    ['Host and projects',[
     widget({'data-route':'hosts'},icon('network'),'Hosts and resources',line.label+' · '+line.meta),
     widget(work,icon('sliders-horizontal'),'Work mode',api.admissionText()+(ps.some(p=>p.resources)?'':' · capacity unavailable')),
-    widget({'data-route':'agents'},icon('shield'),'Agents and access',A?A.rows.map(r=>family(r.runtime)+' '+(r.state==='signed-in'&&!A.fresh?'signed in at capture':(signState[r.state]||'Unknown').toLowerCase())).join(' · ')||'no runtime':'sign-in unknown'),
+    widget({'data-route':'agents'},icon('shield'),'Agents and access',A?.checking?'checking sign-in':A?A.rows.map(r=>family(r.runtime)+' '+(r.state==='signed-in'&&!A.fresh?'signed in at capture':(signState[r.state]||'Unknown').toLowerCase())).join(' · ')||'no runtime':'sign-in unknown'),
     widget({'data-route':'projects'},icon('folder'),'Projects',ps.length+' registered'),
     widget({'data-route':'delivery'},icon('git-pull-request'),'Delivery',grouped(ps.map(p=>p.delivery?.preset||'unavailable'))||'no projects'),
     widget({'data-route':'services'},icon('settings'),'Services and support','host service '+(svc==='running'?'running':svc==='exited'?'exited':'unknown')),
