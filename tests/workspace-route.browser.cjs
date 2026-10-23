@@ -1,0 +1,51 @@
+// #1680 actual bundle, invented values in the Mac install's persisted shape: one launched request, idle dialogue, list-only
+// navigation, saved navigation on Work mode Recovery. Defect class: Conversations opens as Interface error, a failing route
+// hides Home and Close, and the native request status leaks onto every page.
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
+const evidence=process.env.TASKQ_EVIDENCE_1680;
+const request={id:'owner-request-1680',state:'launched',kind:'launched',next:'Reply in Conversations',reason:null,url:'https://claude.ai/code/session_fixture1680',host:'fixture-host',runtime:'claude',session:'fixture-session'};
+const page_={page:'operations',operation:{operation:'recovery',root:null},project:null,parent:'messages',taskFilter:null,working:null,aiRoot:'fixture-alpha',
+ answer:{board:'https://example.org/alpha/issues',task:7,revision:1,root:'fixture-alpha'},messageFilter:'all',message:null,scroll:0,open:{},focus:null,unavailable:null};
+const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[]}],
+ ai:{request,runtime:{id:'claude',name:'Claude Code',available:true,reason:''},root:'fixture-alpha',local:{text:'',caret:[0,0],op:null,receipt:null},error:null,draft:'',history:['Start']},
+ messages:{entries:[{key:'request:'+request.id,kind:'request',title:'Start',root:'fixture-alpha',host:'fixture-host',id:request.id,state:'launched',created:1,request,pending:true,read:false,archived:false,deleting:false}],count:1,reason:'',complete:true},
+ conversations:{items:[{revision:3,title:'',root:'fixture-alpha',text:'',caret:[0,0],scroll:0,archived:false,deleting:false,next:false,parent:null,files:[],
+  sent:{revision:2,text:'Start',root:'fixture-alpha',runtime:'claude',files:[]},id:request.id,request,dialogue:{turn:null,watch:'no watch',state:'idle'}}],
+  navigation:{list:'recent',search:'',selection:{recent:request.id,archive:null},selected:request.id,listOnly:true,scrolls:{recent:0}},complete:true,reason:'',
+  limits:{files:8,file_bytes:1048576,draft_bytes:65536,store_bytes:8388608,pdf_pages:20}},
+ workspace_navigation:{schema:1,current:page_,trail:[{...page_,page:'messages',operation:null,open:{'conversation-history':true},focus:{tag:'button',key:'home',index:0}}]},
+ workspace_local:{}};
+(async()=>{
+ const browser=await chromium.launch(require('./browser.cjs')());
+ try{
+  const page=await browser.newPage({viewport:{width:900,height:720}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.setContent(fs.readFileSync(process.env.TASKQ_CONVERSATION_HTML||'build/web/workspace.html','utf8'));
+  await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='conversation-dialogue')taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='status'?{turn:null,watch:'no watch',last_line:'Done',state:'idle'}:{items:[{role:'user',text:'Start'},{role:'assistant',text:'Done'}],start:0,end:2}}});}};});
+  const status=()=>page.locator('[data-status=workspace]').innerText(),fence=()=>page.getByText('Interface error').count();
+  // The tray's own order on open: state, open, window chrome, owner.
+  await page.evaluate(s=>{taskq.receive(s);taskq.receive({open:{page:'conversations'}});taskq.receive({workspacePin:false,workspaceMaximized:false});taskq.receive({workspaceOwner:{id:'main',detached:[]}});},snapshot);
+  await page.waitForTimeout(300);
+  // A1/A2: the list opens with its one request; the guard did not fire.
+  assert.deepEqual(errors,[]);assert.equal(await fence(),0,'Conversations opened as Interface error');
+  assert.equal(await page.locator('h1').innerText(),'Conversations');
+  assert(await page.locator('.conversation-list').getByText('Start').count()>0,'the launched request is listed');
+  if(evidence){fs.mkdirSync(evidence,{recursive:true});await page.screenshot({path:path.join(evidence,'conversations.png')});}
+  // A4: request status stays on its conversation; Recovery and Inbox carry no global request notice.
+  for(const open of [{page:'operations',operation:'recovery'},{page:'operations',operation:'resources'},{page:'messages'}]){
+   await page.evaluate(o=>{taskq.receive({open:o});},open);await page.evaluate(s=>taskq.receive(s),snapshot);
+   assert(!/Native request/.test(await status()),open.operation||open.page);assert(!/Native request: launched/.test(await page.locator('main').innerText()),open.operation||open.page);
+  }
+  // A3: a route that throws keeps Home, Back and Close and reports its class and site, not page-wide Interface error.
+  await page.evaluate(s=>taskq.receive({...s,messages:{complete:true,count:1,entries:{}}}),snapshot);
+  assert.equal(await fence(),0,'a route failure tripped the page-wide fence');
+  assert.match(await page.locator('main [role=alert]').innerText(),/could not be shown/);
+  for(const name of ['Workspace home','Close workspace'])assert(await page.getByRole('button',{name}).isVisible(),name);
+  const report=await page.evaluate(()=>sent.filter(m=>m.a==='route-error'));
+  assert.equal(report.length,1);assert.equal(report[0].route,'messages');assert.equal(report[0].error,'TypeError');assert.match(report[0].site,/^[\w$.]+(:\d+:\d+)?$/);
+  assert(!JSON.stringify(report).includes('example.org'),'report carries no content');
+  await page.locator('.shell-overflow summary').click();await page.locator('[data-route=conversations]').click();
+  assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
+  assert.deepEqual(errors,[]);
+  console.log('PASS persisted-shape Conversations open, scoped request status, failing route keeps Home and Close');
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exit(1);});

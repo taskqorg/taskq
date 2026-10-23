@@ -13,7 +13,7 @@ module.exports=execution.module('conversations',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    current:function(){return items.find(c=>c.id===selected);},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
-   title:function(c){return c.title||c.text.split('\n').find(s=>s.trim())?.trim()||c.sent?.text.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
+   title:function(c){return c.title||(c.text||'').split('\n').find(s=>s.trim())?.trim()||c.sent?.text?.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
    visible:function(){return items.filter(c=>!c.deleted&&!!c.archived===(list==='archive')&&(!search||[api.title(c),c.root,c.id].join(' ').toLowerCase().includes(search.toLowerCase())));},
    launched:function(c){return c?.request?.state==='launched';},
    // D5: a live read wins over the snapshot; anything else, including no read yet, is unknown, never idle or done.
@@ -52,7 +52,7 @@ module.exports=execution.module('conversations',{
    },
    form:function(){
     if(view.form?.dirty)return;const w=view.status?.watch;
-    view.form=w?.prompt?{prompt:w.prompt,every:String(w.every),events:[...w.events],dirty:false}:{prompt:'',every:'30',events:[],dirty:false};
+    view.form=w?.prompt?{prompt:w.prompt,every:String(w.every),events:[...(w.events||[])],dirty:false}:{prompt:'',every:'30',events:[],dirty:false};
    },
    when:function(ms){return ms?new window.Date(Number(ms)).toLocaleString():'none';},
    // D7: the Status control shows the watch, last and next turn, outcome and last assistant line; it sets and removes the watch.
@@ -63,7 +63,7 @@ module.exports=execution.module('conversations',{
     return h('details',{class:'dialogue-status','data-view-key':'dialogue-status'},h('summary',null,'Status · '+watchText),
      h('div',{class:'dialogue-status-body'},
       h('dl',null,
-       watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',w.events.join(', ')||'none'),row('Last turn',api.when(w.last_turn)),row('Next turn',api.when(w.next_due)),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
+       watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last turn',api.when(w.last_turn)),row('Next turn',api.when(w.next_due)),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
        row('Latest turn',t?t.state+' · '+(t.outcome||(t.state==='done'?'outcome unknown':'outcome pending'))+' · '+api.when(t.at):'none'),
        row('Last assistant line',!s?'unknown':s.reason?'unknown: '+s.reason:s.last_line??'none in the last chunk')),
       h('div',{class:'dialogue-watch'},
@@ -163,14 +163,14 @@ module.exports=execution.module('conversations',{
     if(snapshot.conversations?.complete!==true)return snapshot.conversations?.reason||'Native draft storage unavailable; refresh before sending.';
     if(api.launched(c)){
      if(c.archived)return 'Restore before sending.';
-     if(!c.text.trim())return 'Write a message for the session.';
+     if(!(c.text||'').trim())return 'Write a message for the session.';
      if(c.files?.some(f=>f.error))return 'Resolve attachment errors before sending.';
      if(c.sending)return 'Sending; wait for its receipt.';
      return '';
     }
     if(c.sent||c.request)return 'Replies open here after the native launch. New from draft starts a separate request.';
     if(c.archived)return 'Restore before sending.';
-    if(!c.text.trim())return 'Write a request before sending files.';
+    if(!(c.text||'').trim())return 'Write a request before sending files.';
     const p=snapshot.projects?.find(p=>p.root===c.root);if(!p)return 'Choose a registered project.';if(!p.alive)return 'Project service unavailable.';
     if(!snapshot.ai?.runtime?.available)return snapshot.ai?.runtime?.reason||'Owner runtime unavailable; no fallback.';
     if(c.files?.some(f=>f.error))return 'Resolve attachment errors before sending.';
