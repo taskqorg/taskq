@@ -331,6 +331,8 @@ fn answer_dispatch(m: &Value, args: &[String], mut run: impl FnMut(&[String]) ->
         r["reason"] = json!("Close receipt did not read back closed");
     }
     if r["outcome"] != "accepted" {
+        // #1662 A4: the first step applied, so the operation is partial, never a plain rejection or unknown
+        r["outcome"] = json!("partial");
         r["reason"] = json!(format!("Parked; close not verified: {}", r["reason"].as_str().unwrap_or("unknown")));
         r["next"] = json!("Check the board; retry the same cancellation to reconcile delivery.");
     }
@@ -678,6 +680,9 @@ fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
     serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
 }
+/// One answer operation as the queue sees it: correlated by its op id, its draft side channel already saved apart.
+/// #1662 A1: a readback or Check delivery resend omits or changes `local`; with it the same op read as id-mismatch.
+fn answer_request(m:&Value)->Value {let mut request=m.clone();request["id"]=m["op"]["id"].clone();request.as_object_mut().map(|r|r.remove("local"));request}
 fn answer_reply(root:PathBuf,id:String,result:crate::Res<Value>)->Value {result.unwrap_or_else(|error|json!({"answerReceipt":{"root":root,"id":id,"state":"unknown","reason":error,"next":"Check delivery with the same operation"}}))}
 fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!({"resources_receipt":{"state":"submitted","reason":"Resources terminal submitted"}}),Err(reason)=>json!({"resources_receipt":{"state":"unknown","reason":reason}})}}
 
@@ -1221,9 +1226,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     }
                     Some("answer") => {
                         let key=format!("{}#{}",m["board"].as_str().unwrap_or(""),m["op"]["task"]);
-                        let mut request=m.clone();request["id"]=m["op"]["id"].clone();
-                        let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|answer_actions.submit(&request));
-                        if let Err(error)=result {let r=json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
+                        let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|answer_actions.submit(&answer_request(&m)));
+                        if let Err(error)=result {let r=json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
                     }
                     Some("open") => {if let Some(url)=m["url"].as_str().filter(|u|openable(u)){open(url);}}
                     Some(a) if matches!(a,"ai-send"|"ai-draft"|"ai-clear") => {
@@ -1330,8 +1334,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                         reply!(&json!({"workspaceError":Value::Null}));
                     }
                     "answer" if snapshot.is_none() && crate::snapshot::CONTROLS.iter().any(|c| m["op"]["action"]==c.0) => {
-                        let mut request=m.clone();request["id"]=m["op"]["id"].clone();
-                        if let Err(error)=answer_actions.submit(&request){reply!(&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"rejected","reason":error,"next":"Check delivery with the same operation"}}));}
+                        if let Err(error)=answer_actions.submit(&answer_request(&m)){reply!(&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}}));}
                     }
                     "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
                     "ready" => {
@@ -2531,6 +2534,36 @@ mod tests {
         });
     }
 
+    // Chain: workspace answer send -> readback resend while the first is still queued. Defect (#1662 A1): the resend
+    // carried no draft side channel, so the same op read as id-mismatch and the pending answer as rejected. Risk kept:
+    // a different payload under a pending op id is still refused.
+    #[test]
+    fn answer_resend_keeps_its_pending_correlation() {
+        crate::with_test_capture(|_store,dir| {
+            let root=dir.join("project");let install=dir.join("install");
+            fs::create_dir_all(&root).unwrap();fs::create_dir_all(&install).unwrap();
+            fs::write(install.join("projects"),format!("{}
+",root.display())).unwrap();
+            let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
+            let queue=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();Ok(json!({}))},|_,_,_|{}).unwrap();
+            let op=json!({"id":"ws.1","task":7,"revision":20,"choice":2});
+            let first=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"sending"}}});
+            queue.submit(&answer_request(&first)).unwrap();entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            let readback=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op});
+            let check=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"unknown"}}});
+            // the cause: the prior bridge queued the message as sent, draft included
+            let raw=|m:&Value|{let mut m=m.clone();m["id"]=json!("ws.0");m["op"]["id"]=json!("ws.0");m};
+            queue.submit(&raw(&first)).unwrap();
+            assert!(queue.submit(&raw(&readback)).unwrap_err().contains("already pending"),"the unnormalized resend reproduces id-mismatch");
+            queue.submit(&answer_request(&readback)).unwrap();
+            queue.submit(&answer_request(&check)).unwrap();
+            let mut other=readback.clone();other["op"]["choice"]=json!(1);
+            assert!(queue.submit(&answer_request(&other)).unwrap_err().contains("already pending"),"the correlation guard stays");
+            release_tx.send(()).unwrap();
+            let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
+        });
+    }
+
     // Chain: native Resume -> shared command -> failure receipt; retries keep the selected focus.
     #[test]
     fn action_failures_reach_the_tray_caller() {
@@ -2692,6 +2725,7 @@ mod tests {
             else { execute(a) }
         });
         assert!(partial["reason"].as_str().unwrap().contains("Parked; close not verified"));
+        assert_eq!(partial["outcome"], "partial", "a parked task whose close failed reads as partly applied");
         assert_eq!(crate::dispatch::current(&b, n).unwrap().1.state, crate::core::State::Later);
         snapshot["tasks"][0]["state"] = json!("later");
         assert!(answer_snapshot(&snapshot, &m).is_ok(), "retry can reconcile its parking receipt");

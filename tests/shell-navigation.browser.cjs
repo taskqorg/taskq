@@ -1,7 +1,7 @@
 // TW1/V02/V06/V09/V23: real bundled shells, invented snapshots, no native actions.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const project={root:'fixture-alpha',name:'Alpha',issues:'https://example.org/alpha/issues',alive:true,complete:true,age:1,focus:[],labels:[],cap_saved:{error:'Invented unavailable capacity'},tasks:Array.from({length:45},(_,i)=>({n:i+1,state:'ready',revision:1,title:'Keep navigation reachable while reading the full task title '+i}))};
-const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'fixture',projects:[project],ai:{draft:''},notify:{status:'unknown',host:{ask:'off',close:'off',failed:'off',gone:'off'},projects:{}},stop_modes:true,period:'1d',history:{start:0,end:1000,since:null,tz:'UTC',bins:Array.from({length:6},(_,i)=>({start:i*1000/6,end:(i+1)*1000/6,counts:[0,0,0,0],missing:["fixture"],ongoing:false}))}};
+const snapshot={display:require('./fixtures/display-model.json').display,platform:'windows',font:20,theme:'dark',host:'fixture',version:'fixture',projects:[project],ai:{draft:''},notify:{status:'unknown',host:{ask:'off',close:'off',failed:'off',gone:'off'},projects:{}},stop_modes:true,period:'1d',history:{start:0,end:1000,since:null,tz:'UTC',bins:Array.from({length:6},(_,i)=>({start:i*1000/6,end:(i+1)*1000/6,counts:[0,0,0,0],missing:["fixture"],ongoing:false}))}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
@@ -124,10 +124,10 @@ const snapshot={platform:'windows',font:20,theme:'dark',host:'fixture',version:'
   assert.match(await workspace.locator('.content').innerText(),/opens only on other-host/);
   await workspace.getByText('Open recorded session',{exact:true}).click();assert.equal(await workspace.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture-thread');
   await workspace.locator('[data-a=back]').click();assert.equal(await workspace.evaluate(()=>document.activeElement.dataset.route),'sessions');
-  await workspace.locator('.shell-overflow > summary').click();await workspace.locator('.overflow-actions [data-route=request]').click();
+  await workspace.locator('.shell-overflow > summary').click();await workspace.locator('.overflow-actions [data-route=conversations]').click();
   const saved=await workspace.evaluate(()=>messages.filter(m=>m.a==='workspace-set').at(-1).navigation);
   await workspace.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await workspace.evaluate(s=>taskq.receive(s),{...snapshot,workspace_navigation:saved});
-  assert.equal(await workspace.locator('h1').innerText(),'New AI request');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Inbox');
+  assert.equal(await workspace.locator('h1').innerText(),'Conversations');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Inbox');
   assert.deepEqual(errors,[]);await workspace.close();
   console.log('PASS TW1/V06/V09: route titles, invoker focus, stable bar, keyboard Back, fine/coarse targets and independent workspace reload/Back');
  }finally{await browser.close();}

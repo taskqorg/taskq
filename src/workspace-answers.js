@@ -1,18 +1,22 @@
 'use strict';
 const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
 const {create}=execution.module('workspace.answers',{
-create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel}){
+create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={};
  const api=execution.module('workspace.answers.instance',{
 project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
-answerCapability:function(board){const p=api.project(board);return {manage:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board'};},
+answerCapability:function(board){const p=api.project(board);return {manage:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer};},
+// #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
+answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board));},
+answerInput:function(board,n,text,caret){answerCards.get(board+'/'+n)?.ui.input(board,n,text,caret);},
+answerAct:function(board,n,type){answerCards.get(board+'/'+n)?.ui.act(board,n,type);},
 
 answerReceipt:function(r){
   const key=r.root+'#'+r.id,request=answerRequests.get(key);
   const previous=answerFeedback.get(key);
   if(!request&&previous?.state!=='unknown')return;
   const item=request||previous;
-  answerFeedback.set(key,{board:item.board,op:item.op,state:r.state,reason:r.reason,next:r.next});
+  answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next});
   const local=saved[item.board+'#'+item.op.task];
   if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
   // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
@@ -39,7 +43,8 @@ answerReadback:function(){
 answerSlot:function(t){return t.state==='ask'?h('div',{'data-answer':t.key,key:'answer:'+t.key}):null;},
 answerNotices:function(board){
   // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
-  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+' · '+r.state+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),r.state==='unknown'&&h('button',{'data-a':'answer-retry','data-key':key},'Check delivery'),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
+  // #1662 A1/A4: a receipt names its question and answer in plain words; operation id and revision stay behind a disclosure
+  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
   const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
   return [shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,'status')),answered.length>0&&h('details',{class:'group answered','data-view-key':'answered'},h('summary',null,'Answered'+counter(answered.length,'muted','Answered')),answered.map(x=>line(x,null)))];
@@ -53,7 +58,7 @@ mountAnswers:function(){
     const t=unique(view.S.projects.filter(p=>!view.answer?.root||p.root===view.answer.root).flatMap(tasks)).find(t=>t.key===slot.dataset.answer);
     if(!t)continue;
     let card=answerCards.get(t.key);
-    if(!card){const el=document.createElement('div');card={el,ui:require('./answer-card.js').mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
+    if(!card){const el=document.createElement('div');card={el,ui:component().mount(el,{capability:answerCapability,send:answerSend,load:load,save:save})};answerCards.set(t.key,card);}
     if(card.el.parentNode!==slot)slot.append(card.el);
     const p=api.project(t.key.slice(0,t.key.lastIndexOf('/')));
     card.ui.update([{board:p.issues,row:t}]);
@@ -71,25 +76,27 @@ answerSend:function(board,op){
   const promise=new Promise(r=>resolve=r);
   const timer=defer(()=>{answerReceipt({root:p.root,id:op.id,state:'unknown',reason:'No bridge receipt received',next:'Check delivery with the same operation'});},30000);
   answerRequests.set(key,{promise,resolve,timer,board,op,root:p.root});
-  answerFeedback.set(key,{board,op,state:'sending',reason:''});
+  answerFeedback.set(key,{board,op,about:kept?.op?.id===op.id?kept.about:undefined,state:'sending',reason:''});
   send({a:'answer',root:p.root,board,op,local:saved[board+'#'+op.task]});
   return promise;
 },
 
 load:function(board,row){return saved[board+'#'+row.n];},
-save:function(board,row,local){const prior=saved[board+'#'+row.n],projectRoot=prior?.op?.id&&prior.op.id===local.op?.id?prior.projectRoot:api.project(board)?.root;saved[board+'#'+row.n]=JSON.parse(JSON.stringify({...local,projectRoot}));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});},
+save:function(board,row,local){const prior=saved[board+'#'+row.n],projectRoot=prior?.op?.id&&prior.op.id===local.op?.id?prior.projectRoot:api.project(board)?.root;saved[board+'#'+row.n]=JSON.parse(JSON.stringify({...local,projectRoot}));send({a:'answer-local',key:board+'#'+row.n,local:saved[board+'#'+row.n]});changed?.();},
 hydrate:function(locals){
  for(const [key,local] of Object.entries(locals||{}))if(!Object.hasOwn(saved,key)&&local&&typeof local.draft==='string'){
   saved[key]={...local,confirmClose:false};
   if(local.op&&['sending','unknown'].includes(local.receipt?.state))saved[key].receipt={state:'unknown',reason:'Workspace reopened; delivery needs readback',next:'Check delivery with the same operation'};
   const board=key.slice(0,key.lastIndexOf('#')),p=api.project(board,local.projectRoot);
-  if(local.op&&p&&saved[key].receipt)answerFeedback.set(p.root+'#'+local.op.id,{board,op:local.op,...saved[key].receipt});
+  if(local.op&&p&&saved[key].receipt)answerFeedback.set(p.root+'#'+local.op.id,{board,op:local.op,about:local.about,...saved[key].receipt});
  }
 },
 retry:function(key){const r=answerFeedback.get(key);if(r)ui.effect('workspace.answer.reconcile',()=>answerSend(r.board,r.op),()=>{});},
 dismiss:function(key){answerFeedback.delete(key);if(view.toast===key)view.toast=null;draw();}
  });
  const {answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,answerSend,load,save}=api;
+ const STATE={sending:'sending',accepted:'accepted',rejected:'not accepted',stale:'question changed, review it',unknown:'delivery unknown',failed:'not sent',partial:'partly applied'};
+ const component=()=>require('./answer-card.js');
  const {tasks,unique,counter}=execution.module('workspace.answers.helpers',{
  tasks:p=>(p.tasks||[]).map(t=>({...t,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n})),
  unique:ts=>[...new Map(ts.map(t=>[t.key,t])).values()],counter:(n)=>' · '+n

@@ -460,7 +460,9 @@ pub fn question(card: &str) -> Value {
     let o = options(card);
     // an option that starts with `close` closes the task after the answer (dispatch::answer_picks): consequential
     let choices: Vec<Value> = o.iter().map(|(k, t, star)| json!({"id": k, "text": t, "recommended": star, "consequential": t.to_lowercase().starts_with("close")})).collect();
-    let parsed = field("Problem: ").is_some() && (2..=4).contains(&o.len()) && o.iter().filter(|x| x.2).count() == 1;
+    // § 2: options numbered 1..n in order, no gap or repeat; none is an owner action answered with text
+    let numbered = o.iter().enumerate().all(|(i, x)| x.0 == i + 1);
+    let parsed = field("Problem: ").is_some() && numbered && (o.is_empty() || (2..=4).contains(&o.len()) && o.iter().filter(|x| x.2).count() == 1);
     json!({"parsed": parsed, "text": card, "done": field("Done: "), "problem": field("Problem: ").map(|_| brief(card)), "evidence": evidence,
         "choices": choices, "limits": {"lines": ANSWER_LINES, "chars": ANSWER_CHARS}})
 }

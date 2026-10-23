@@ -2,7 +2,7 @@
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
 
-const {fresh,textProblem,status,step,render,receipt,mount,replay}=execution.module("answer-card",{
+const {fresh,textProblem,status,step,render,compose,receipt,mount,replay}=execution.module("answer-card",{
 fresh:function(row) { return {draft: '', bound: row.revision, op: null, receipt: null}; },
 textProblem:function(q, text) {
     const lines = text.split('\n').filter(l => l.trim());
@@ -15,7 +15,7 @@ status:function(row, local, cap) {
     const q = row.question;
     // a receipt belongs to the question it answered; one in flight or unknown holds across refreshes, an answered one
     // stays beside its task after the question is gone
-    if (local.op && local.receipt && (['sending', 'unknown'].includes(local.receipt.state) || local.op.revision === row.revision || !q)) return local.receipt.state;
+    if (local.op && local.receipt && (HELD.includes(local.receipt.state) || local.op.revision === row.revision || !q)) return local.receipt.state;
     if (!manageable(row, cap) && (!q || !q.parsed || !cap || !cap.answer || !['ask', 'review'].includes(row.state))) return 'read-only';
     if (local.bound !== row.revision && (local.draft.trim() || local.op || local.confirmClose)) return 'stale';
     return 'actionable';
@@ -25,6 +25,8 @@ step:function(row, local, cap, ev, newId) {
     const {start}=execution.module("answer-card.step",{start:payload => {
       l.confirmClose = false;
       l.op = {id: newId(), task: row.n, revision: row.revision, ...payload};
+      // #1662 A4: the receipt names the question and the answer it carries, kept apart from the immutable op
+      l.about = about(row, payload);
       l.bound = row.revision;
       l.receipt = {state: 'sending'};
       return {local: l, send: l.op};
@@ -36,18 +38,22 @@ step:function(row, local, cap, ev, newId) {
         l.draft = ev.text;
         return {local: l, send: null};
       case 'choose': {
-        if (!['actionable', 'rejected'].includes(st)) return {local, send: null};
+        if (!LIVE.includes(st)) return {local, send: null};
         const c = row.question.choices.find(x => x.id === ev.id);
         if (!c || c.consequential) return {local, send: null};
         return start({choice: c.id});
       }
       case 'submit':
-        if (!cap || !cap.answer || !['actionable', 'rejected'].includes(st) || textProblem(draftQuestion(row, cap), l.draft)) return {local, send: null};
-        return start(manageable(row, cap) ? {action: 'requeue', text: l.draft.trim()} : {text: l.draft.trim()});
+        if (!cap || !cap.answer || !LIVE.includes(st) || textProblem(draftQuestion(row, cap), l.draft)) return {local, send: null};
+        // an unparsed fallback card takes a requeue reason; a parsed owner action without options takes a text answer
+        return start(fallback(row, cap) ? {action: 'requeue', text: l.draft.trim()} : {text: l.draft.trim()});
+      case 'requeue':
+        if (!manageable(row, cap) || !LIVE.includes(st) || textProblem(REQUEUE, l.draft)) return {local, send: null};
+        return start({action: 'requeue', text: l.draft.trim()});
       case 'later':
       case 'close':
       case 'confirm-close':
-        if (!manageable(row, cap) || !['actionable', 'rejected'].includes(st)) return {local, send: null};
+        if (!manageable(row, cap) || !LIVE.includes(st)) return {local, send: null};
         if (ev.type === 'close') return {local: {...l, bound: row.revision, confirmClose: true}, send: null};
         if (ev.type === 'confirm-close' && !l.confirmClose) return {local, send: null};
         return start(ev.type === 'later' ? {action: 'later'} : {action: 'close', confirmed: true});
@@ -58,35 +64,38 @@ step:function(row, local, cap, ev, newId) {
         return {local: l, send: null};
       case 'receipt':
         if (!l.op || ev.opId !== l.op.id) return {local, send: null};
-        l.receipt = {state: ['accepted', 'rejected', 'stale', 'unknown'].includes(ev.state) ? ev.state : 'unknown', reason: ev.reason, next: ev.next};
+        l.receipt = {state: ['accepted', 'rejected', 'stale', 'unknown', 'failed', 'partial'].includes(ev.state) ? ev.state : 'unknown', reason: ev.reason, next: ev.next};
         if (ev.state === 'accepted' && l.op.text) l.draft = '';
         return {local: l, send: null};
       case 'retry':
-        // uncertain delivery reconciles with the same id and payload, never a new one
-        return st === 'unknown' ? {local: {...l, receipt: {state: 'sending'}}, send: l.op} : {local, send: null};
+        // uncertain, unsent or partial delivery reconciles with the same id and payload, never a new one
+        return RETRY.includes(st) ? {local: {...l, receipt: {state: 'sending'}}, send: l.op} : {local, send: null};
       default:
         return {local, send: null};
     }
   },
 render:function(board, row, local, cap) {
     const q = row.question || {text: row.card || '', parsed: false, choices: [], evidence: []}, st = status(row, local, cap);
-    const id = 'qac-' + String(board).replace(/[^\w-]/g, '_') + '-' + row.n, live = st === 'actionable' || st === 'rejected';
+    const id = 'qac-' + String(board).replace(/[^\w-]/g, '_') + '-' + row.n, live = LIVE.includes(st), own = !(cap && cap.composer);
+    const what = local.op ? '#' + row.n + ' ' + (local.about || about(row, local.op)) : '';
     let h = '<section class="qac" data-qac-state="' + st + '" aria-labelledby="' + id + '-t">';
     h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">#' + esc(row.n) + '</a> ' + esc(row.title) + '</p>';
     if (manageable(row, cap)) {
-      h += '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
-      h += '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(draftQuestion(row, cap), local.draft) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(draftQuestion(row, cap), local.draft)) + '</form>';
-      h += '<div class="qac-choices"><button type="button" data-qac="later"' + (live ? '' : ' disabled') + '>Later</button><button type="button" data-qac="close"' + (live ? '' : ' disabled') + '>Close…</button></div>';
+      h += q.parsed ? '<p class="qac-problem">' + linked(q.problem) + '</p>' : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
+      if (own) h += q.parsed ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(q, local.draft) ? '' : ' disabled') + '>Send</button>' + hint(id, live && textProblem(q, local.draft)) + '</form>'
+        : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(REQUEUE, local.draft) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(REQUEUE, local.draft)) + '</form>';
+      // an owner action answers with text above; its requeue reason is the same draft, sent as an action
+      h += '<div class="qac-choices">' + (q.parsed && own ? '<button type="button" data-qac="requeue"' + (live && !textProblem(REQUEUE, local.draft) ? '' : ' disabled') + '>Requeue</button>' : '') + '<button type="button" data-qac="later"' + (live ? '' : ' disabled') + '>Later</button><button type="button" data-qac="close"' + (live ? '' : ' disabled') + '>Close…</button></div>';
       if (local.confirmClose && live) h += '<p>Cancel #' + esc(row.n) + ' without publication? Running work will stop. The task is parked before closing.</p><div class="qac-choices"><button type="button" data-qac="confirm-close">Close without publishing</button><button type="button" data-qac="cancel-close">Keep task</button></div>';
-      h += receipt(st, local.receipt && local.receipt.reason, row.url, id, local.receipt && local.receipt.next, true);
+      h += receipt(st, local.receipt && local.receipt.reason, row.url, id, local.receipt && local.receipt.next, !!(local.op && local.op.action), what);
       if (st === 'stale') h += '<button type="button" data-qac="review">I read the new question</button>';
-      if (st === 'unknown') h += '<button type="button" data-qac="retry">Check delivery</button>';
+      h += retry(st);
       return h + '</section>';
     }
-    if (!q.parsed) return h + '<pre class="qac-text">' + esc(q.text) + '</pre>' + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id) +
-      (st === 'unknown' ? '<button type="button" data-qac="retry">Check delivery</button>' : '') + '</section>';
+    if (!q.parsed) return h + '<pre class="qac-text">' + esc(q.text) + '</pre>' + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id, null, false, what) +
+      retry(st) + '</section>';
     h += '<p class="qac-problem">' + linked(q.problem) + '</p>';
-    h += '<div class="qac-choices" role="group" aria-label="Choices">';
+    if (q.choices.length) h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
       const off = !live || c.consequential, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task' : '';
       h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (why ? ' aria-describedby="' + id + '-c' + c.id + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(label(c.text)) +
@@ -95,29 +104,37 @@ render:function(board, row, local, cap) {
       for (const m of c.text.matchAll(LINK)) h += '<a class="qac-link" href="' + href(m[2]) + '" target="_blank" rel="noopener">' + esc(m[1]) + ' ↗</a>';
       if (why) h += '<span class="qac-why" id="' + id + '-c' + c.id + '">' + esc(why) + ' <a href="' + href(row.url) + '" target="_blank" rel="noopener">board ↗</a></span>';
     }
-    h += '</div>';
+    if (q.choices.length) h += '</div>';
     // § 2: the PM's pick sits beside the worker's star; it is a view, never an answer
     if (row.pick) h += '<p class="qac-pick"><span class="qac-muted">PM</span> ' + esc(row.n) + '.' + esc(row.pick.id) + ': ' + esc(row.pick.reason) + '</p>';
-    if (st !== 'read-only' || local.draft) {
+    if (own && (st !== 'read-only' || local.draft)) {
       const bad = textProblem(q, local.draft);
-      // Q1: Other answer opens a compact field; a kept draft keeps it open
-      h += '<details class="qac-other"' + (local.draft ? ' open' : '') + '><summary>Other answer</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="Or type an answer"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
+      // Q1: Other answer opens a compact field; a kept draft keeps it open; an owner action without options has only this field
+      h += '<details class="qac-other"' + (local.draft || !q.choices.length ? ' open' : '') + '><summary>' + (q.choices.length ? 'Other answer' : 'Answer') + '</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="' + (q.choices.length ? 'Or type an answer' : 'What you did') + '"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
         '<button type="submit"' + (live && !bad ? '' : ' disabled') + '>Send</button>' + hint(id, live && bad) + '</form></details>';
     }
     const reason = st === 'read-only' ? (cap && cap.reason) || 'Answering is not available here' : local.receipt && local.receipt.reason;
-    h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next);
+    h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next, false, what);
     if (st === 'stale') h += '<button type="button" data-qac="review">I read the new question</button>';
-    if (st === 'unknown') h += '<button type="button" data-qac="retry">Check delivery</button>';
+    h += retry(st);
     // Q1: Done and evidence stay behind Details
     if (q.done || q.evidence.length) h += '<details class="qac-context"><summary>Checked &amp; context</summary>' +
       (q.done ? '<p class="qac-done"><span class="qac-muted">Done:</span> ' + esc(q.done) + '</p>' : '') +
       (q.evidence.length ? '<p class="qac-evidence">' + q.evidence.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener">' + esc(e.label) + '</a>').join(' · ') + '</p>' : '') + '</details>';
     return h + '</section>';
   },
-receipt:function(st, reason, url, id, next, action) {
+compose:function(row, local, cap) {
+    // What a shared composer shows for one card: null when the card takes no free text here
+    const q = row.question || {}, st = status(row, local, cap), text = !!(cap && cap.answer) && (fallback(row, cap) || !!q.parsed);
+    if (!text) return null;
+    const live = LIVE.includes(st);
+    return {draft: local.draft, caret: local.caret, state: st, live, problem: live ? textProblem(draftQuestion(row, cap), local.draft) : LABELS[st],
+      send: fallback(row, cap) ? 'Requeue' : 'Send', choices: !!(q.choices && q.choices.length), requeue: manageable(row, cap) && !fallback(row, cap) ? live ? textProblem(REQUEUE, local.draft) || '' : LABELS[st] : null};
+  },
+receipt:function(st, reason, url, id, next, action, what) {
     if (st === 'actionable') return '<p class="qac-receipt" id="' + id + '-r" role="status" aria-live="polite"></p>';
-    return '<p class="qac-receipt qac-' + st + '" id="' + id + '-r" role="status" aria-live="polite">' + esc(st === 'accepted' && action ? 'Action accepted on the board' : LABELS[st]) + (reason ? ': ' + esc(reason) : '') +
-      (next ? '. ' + esc(next) : '') + (st === 'read-only' || st === 'unknown' ? ' <a href="' + href(url) + '" target="_blank" rel="noopener">Open on board ↗</a>' : '') + '</p>';
+    return '<p class="qac-receipt qac-' + st + '" id="' + id + '-r" role="status" aria-live="polite">' + (what && st !== 'read-only' ? '<span class="qac-what">' + esc(what) + '</span> · ' : '') + esc(st === 'accepted' && action ? 'Action accepted on the board' : LABELS[st]) + (reason ? ': ' + esc(reason) : '') +
+      (next ? '. ' + esc(next) : '') + (['read-only', 'unknown', 'partial'].includes(st) ? ' <a href="' + href(url) + '" target="_blank" rel="noopener">Open on board ↗</a>' : '') + '</p>';
   },
 mount:function(el, adapter) {
 const {apply,paint,markup}=execution.module("answer-card.mount",{
@@ -132,8 +149,10 @@ apply:function(k, ev) {
       if (r.send) ui.effect('answer.send',()=>adapter.send(board,r.send),x=>{if(cards.has(k))apply(k,{type:'receipt',opId:r.send.id,...x});});
       else if (ev.type === 'input') {
         const s = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] button[type=submit]'), cap2 = adapter.capability(board, row);
-        const live = ['actionable', 'rejected'].includes(status(row, r.local, cap2)), bad = textProblem(draftQuestion(row, cap2), r.local.draft);
+        const live = LIVE.includes(status(row, r.local, cap2)), bad = textProblem(draftQuestion(row, cap2), r.local.draft);
         if (s) s.disabled = !!bad || !live;
+        const rq = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] [data-qac=requeue]');
+        if (rq) rq.disabled = !live || !!textProblem(REQUEUE, r.local.draft);
         // #1456: a disabled button states why; a state other than live already says so in the receipt
         const h = s && s.parentNode.querySelector('.qac-hint');
         if (h) h.textContent = live && bad || '';
@@ -178,6 +197,15 @@ paint:function() {
           apply(k, {...reply, type: 'receipt', opId});
         }
       },
+      // #1662 A3: an adapter whose capability has `composer` owns text entry in its shared composer and drives the card here;
+      // text null records only the caret
+      input(board, n, text, caret) {
+        const k = key(board, {n});
+        if (!cards.has(k)) return;
+        if (text != null && text !== locals.get(k).draft) apply(k, {type: 'input', text});
+        if (caret) { const c = cards.get(k), local = {...locals.get(k), caret}; locals.set(k, local); adapter.save?.(c.board, c.row, local); }
+      },
+      act(board, n, type) { const k = key(board, {n}); if (cards.has(k) && ['submit', 'requeue'].includes(type)) apply(k, {type}); },
       // rows: [{board, row}] of open questions; a row that left keeps no state
       update(rows) {
         cards.clear();
@@ -205,9 +233,13 @@ replay:function(fx, capability) {
 // Input: one status --json task row whose `question` is TaskQ's canonical parse, plus the adapter's capability.
 // The component has no network client, parser, credentials or task state machine: `send` is the adapter's.
 const root=globalThis;
-  const STATES = ['actionable', 'sending', 'accepted', 'stale', 'rejected', 'unknown', 'read-only'];
+  const STATES = ['actionable', 'sending', 'accepted', 'stale', 'rejected', 'failed', 'partial', 'unknown', 'read-only'];
+  // failed: the bridge refused before dispatch, nothing reached the board; partial: a two-step action stopped after its first
   const LABELS = {actionable: 'Waiting for your answer', sending: 'Sending…', accepted: 'Answer accepted on the board',
-    stale: 'The question changed: review it before sending', rejected: 'Answer not accepted', unknown: 'Delivery unknown: check the board', 'read-only': 'Read only'};
+    stale: 'The question changed: review it before sending', rejected: 'Answer not accepted', failed: 'Not sent: nothing reached the board',
+    partial: 'Partly applied: check the board', unknown: 'Delivery unknown: check the board', 'read-only': 'Read only'};
+  const LIVE = ['actionable', 'rejected', 'failed'], HELD = ['sending', 'unknown', 'failed', 'partial'], RETRY = ['unknown', 'failed', 'partial'];
+  const REQUEUE = {limits: {lines: 1, chars: 232}};
   const {esc}=execution.module("answer-card",{esc:s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]))});
   const {key}=execution.module("answer-card",{key:(board, row) => board + '#' + row.n});
   // only web links: card text is worker-written
@@ -229,9 +261,19 @@ const root=globalThis;
 
 
   const {manageable}=execution.module("answer-card",{manageable:(row, cap) => row.state === 'ask' && cap && cap.answer && cap.manage && !(row.question && row.question.choices && row.question.choices.length)});
+  // The tray fallback proper: an unparsed card whose only free text is a requeue reason.
+  const {fallback}=execution.module("answer-card",{fallback:(row, cap) => manageable(row, cap) && !(row.question && row.question.parsed)});
+  // What one receipt answers: the source-numbered choice and its text, a text answer or a fallback action.
+  const {about}=execution.module("answer-card",{about:(row, op) => {
+    if (op.action) return {requeue: 'requeue', later: 'later', close: 'close without publication'}[op.action] || op.action;
+    if (op.text != null) return 'text answer';
+    const c = row.question && row.question.choices && row.question.choices.find(x => x.id === op.choice);
+    return 'answer ' + op.choice + (c ? '. ' + label(c.text) : '');
+  }});
+  const {retry}=execution.module("answer-card",{retry:st => RETRY.includes(st) ? '<button type="button" data-qac="retry">' + (st === 'failed' ? 'Send again' : 'Check delivery') + '</button>' : ''});
   // Why the text button is off while the card is live; an empty node otherwise, so typing updates it in place.
   const {hint}=execution.module("answer-card",{hint:(id, why) => '<span class="qac-hint" id="' + id + '-h" aria-live="polite">' + esc(why || '') + '</span>'});
-  const {draftQuestion}=execution.module("answer-card",{draftQuestion:(row, cap) => manageable(row, cap) ? {limits: {lines: 1, chars: 232}} : row.question});
+  const {draftQuestion}=execution.module("answer-card",{draftQuestion:(row, cap) => fallback(row, cap) ? REQUEUE : row.question});
 
   // One of STATES for a row, its local state and the adapter's capability {answer, reason}.
 
@@ -252,5 +294,5 @@ const root=globalThis;
   // adapter capability; returns each checkpoint's {status, html, sent} for the fixture's expectations.
 
 
-  const api = {STATES, status, step, render, mount, replay, textProblem};
+  const api = {STATES, fresh, status, step, render, compose, mount, replay, textProblem};
   module.exports=api;
