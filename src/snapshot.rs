@@ -161,7 +161,7 @@ pub struct Row {
     pub steps: Vec<Value>,
     /// R6 stuck: seconds since the newest log entry; `None`: not stuck.
     pub stuck: Option<i64>,
-    /// #1616 TaskQ's own admission decision of a ready or waiting task; `None` for other states.
+    /// #1616 TaskQ's own admission decision of a ready or waiting task, or a review awaiting its reviewer (#1685); `None` for other states.
     pub admission: Option<Admission>,
 }
 
@@ -407,6 +407,12 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
+    /// The owner text of the row's wait: the execution diagnostic, else a capacity refusal with its runtime (#1685).
+    fn wait(&self) -> Option<String> {
+        if let Some(reason) = &self.execution_wait { return Some(wait_text(reason).into()); }
+        self.admission.as_ref().filter(|a| a.code == "capacity").map(|a| format!("{} · {}", WAIT_TEXTS[0], a.reason))
+    }
+
     pub fn json(&self) -> Value {
         let mut row = json!({"n": self.n, "title": self.title, "state": self.task.state.name(), "labels": self.labels, "url": self.url, "revision": self.revision,
             "session": self.task.session, "attempt": self.task.attempt, "role": self.task.role,
@@ -417,7 +423,8 @@ impl Row {
         // § 2: the PM's pick sits beside the worker's star; it is never an answer
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
-        if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); row["wait"] = json!(wait_text(reason)); }
+        if let Some(reason) = &self.execution_wait { row["execution_wait"] = json!(reason); }
+        if let Some(w) = self.wait() { row["wait"] = json!(w); }
         if let Some(u) = &self.session_url { row["session_url"] = json!(u); }
         row["since"] = json!(self.since);
         row["created"] = json!(self.created);
@@ -501,8 +508,8 @@ impl Snapshot {
         let rows: Vec<String> = self.tasks.iter()
             .filter(|r| !matches!(r.task.state, State::Held | State::Ask | State::Later | State::Failed))
             .map(|r| {
-                let state = if let Some(reason) = &r.execution_wait {
-                    format!("{} · {}", r.task.state.name(), wait_text(reason))
+                let state = if let Some(w) = r.wait() {
+                    format!("{} · {}", r.task.state.name(), cell(&w))
                 } else if r.task.state == State::Waiting {
                     let deps: Vec<String> = r.deps.iter().map(|b| format!("[{}]({}) {}", b.dep.name(), b.url, cell(&compact(&b.reason, 80)))).collect();
                     format!("blocked ({})", deps.join(", "))
