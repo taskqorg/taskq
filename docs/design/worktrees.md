@@ -45,7 +45,7 @@ The pass writes its last outcome to `<root>/.taskq/status.json` key `tidy`: time
 
 `<project>: root current|behind N|stale <reason>; .worktrees K (dirty D, S); foreign F (dirty G); tidy <age> <ok|skipped <reason>>`
 
-The project log gets one line per removal, refusal and root move; a pass that changes nothing logs nothing. Telemetry: one `service.tidy` operation per pass with the counts above, no paths. The PM periodic check reads the health line and flags dirty task worktrees older than a day, stale roots and size growth.
+The project log gets one line per removal, refusal and root move; a refusal line carries Git's first error line and repeats only when it changes; a pass that changes nothing logs nothing. Git runs with `core.longpaths` so a Windows removal of deep `target/` paths does not fail with `Filename too long`. Telemetry: one `service.tidy` operation per pass with the counts above, no paths. The PM periodic check reads the health line and flags dirty task worktrees older than a day, stale roots and size growth.
 
 ## Acceptance
 

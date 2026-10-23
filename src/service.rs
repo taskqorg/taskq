@@ -184,7 +184,7 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
 }
 
 fn git(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
-    coreq::process::output("cleanup.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60)).ok().map(|o| o.stdout)
+    coreq::process::output("seed.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60)).ok().map(|o| o.stdout)
 }
 
 /// #1620 (docs/testing.md#build-cache): before a worker's first start, create `.worktrees/taskq-<N>` (§ 7 rule 2) and

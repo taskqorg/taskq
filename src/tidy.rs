@@ -88,10 +88,26 @@ fn place(root: &str, entry: &str) -> Option<Option<String>> {
     Some(name.map(String::from))
 }
 
+/// Telemetry name per Git subcommand: expected non-zero exits (`merge-base --is-ancestor`, `symbolic-ref -q`,
+/// `branch -d`) stay apart from removal failures.
+fn label(args: &[&str]) -> &'static str {
+    match args.first().copied().unwrap_or("") {
+        "worktree" => if args.get(1) == Some(&"remove") { "cleanup.git.remove" } else { "cleanup.git.worktree" },
+        "status" => "cleanup.git.status",
+        "branch" => "cleanup.git.branch",
+        "merge-base" => "cleanup.git.merge_base",
+        "merge" => "cleanup.git.merge",
+        "fetch" => "cleanup.git.fetch",
+        _ => "cleanup.git",
+    }
+}
+
+/// `core.longpaths`: Git for Windows otherwise fails a removal at 260 characters (`Filename too long`, deep `target/`
+/// paths), after dropping the registry entry and `.git` file, so the rest of the directory stays; other Gits ignore it.
 fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut c = std::process::Command::new("git");
-    c.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "--no-optional-locks"]).args(args);
-    match coreq::process::output("cleanup.git", &mut c, std::time::Duration::from_secs(120)) {
+    c.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.longpaths=true", "--no-optional-locks"]).args(args);
+    match coreq::process::output(label(args), &mut c, std::time::Duration::from_secs(120)) {
         Ok(o) => Ok(o.stdout),
         Err(coreq::process::Failure::Exit(o)) => Err(String::from_utf8_lossy(&o.stderr).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("git failed").to_string()),
         Err(e) => Err(format!("git {}: {e}", args.first().unwrap_or(&""))),
@@ -283,17 +299,19 @@ impl Tidy<'_> {
         }
         if let Err(e) = self.held(n, closed, log) { return Some(Err(format!("{what} kept: {e}"))); }
         let rel = format!(".worktrees/{}", it.name);
+        // the refusal line carries Git's first stderr line; the service logs it once while it stays the same
         let removed = if self.force && it.dirty {
             let trash = crate::dot(self.root).join("trash");
-            let saved = run(&it.path, &["add", "-A"]).and_then(|_| run(&it.path, &["diff", "--cached", "--binary"])).is_ok_and(|patch| {
-                patch.is_empty() || std::fs::create_dir_all(&trash).and_then(|_| std::fs::write(trash.join(format!("{}.patch", it.name)), &patch)).is_ok()
-            });
-            saved && git(self.root, &["worktree", "remove", "--force", &rel]).is_ok()
+            run(&it.path, &["add", "-A"]).and_then(|_| run(&it.path, &["diff", "--cached", "--binary"])).and_then(|patch| {
+                if patch.is_empty() { return Ok(()); }
+                std::fs::create_dir_all(&trash).and_then(|_| std::fs::write(trash.join(format!("{}.patch", it.name)), &patch)).map_err(|e| format!("patch save failed: {e}"))
+            }).and_then(|_| git(self.root, &["worktree", "remove", "--force", &rel]).map(drop))
         } else {
-            git(self.root, &["worktree", "remove", &rel]).is_ok()
+            git(self.root, &["worktree", "remove", &rel]).map(drop)
         };
-        Some(if removed { Ok(format!("{what} removed")) } else {
-            Err(format!("{what} removal unconfirmed: {}", if self.force { "patch save or Git command failed; inspect the worktree" } else { "Git refused or failed; inspect uncommitted work before `taskq cleanup --force`" }))
+        Some(match removed {
+            Ok(()) => Ok(format!("{what} removed")),
+            Err(e) => Err(format!("{what} removal unconfirmed: {e}; {}", if self.force { "inspect the worktree" } else { "inspect uncommitted work before `taskq cleanup --force`" })),
         })
     }
 
@@ -342,7 +360,7 @@ impl Tidy<'_> {
             let merged = git(self.root, &["merge-base", "--is-ancestor", tip, "origin/main"]).is_ok() || self.receipt(n, tip);
             match git(self.root, &["branch", if merged { "-D" } else { "-d" }, name]) {
                 Ok(_) => { deleted += 1; log.push(format!("#{n} branch deleted")); }
-                Err(_) => { kept += 1; log.push(format!("#{n} branch kept: not merged into origin/main")); }
+                Err(e) => { kept += 1; log.push(format!("#{n} branch kept: {}{e}", if merged { "" } else { "not merged into origin/main: " })); }
             }
         }
         (deleted, kept)
@@ -546,7 +564,7 @@ mod tests {
         assert!(o.log.contains(&"#1 worktree removed".into()) && o.log.contains(&"#3 review worktree removed".into()), "{:?}", o.log);
         let branch = |b: &str| r.sh(&r.root, &["branch", "--list", b]) != "";
         assert!(!branch("taskq-1") && !branch("taskq-5"), "merged branches without a worktree go: {:?}", o.log);
-        assert!(branch("taskq-6") && o.log.contains(&"#6 branch kept: not merged into origin/main".into()), "unmerged stays: {:?}", o.log);
+        assert!(branch("taskq-6") && o.log.contains(&"#6 branch kept: not merged into origin/main: error: the branch 'taskq-6' is not fully merged".into()), "unmerged stays: {:?}", o.log);
         assert!(branch("taskq-2"), "a branch with a worktree stays");
         assert_eq!((o.report["task"]["count"].as_u64(), o.report["task"]["dirty"].as_u64()), (Some(2), Some(1)));
         assert_eq!((o.report["reserved"]["count"].as_u64(), o.report["foreign"]["count"].as_u64(), o.report["foreign"]["dirty"].as_u64()), (Some(1), Some(1), Some(1)));
@@ -574,6 +592,30 @@ mod tests {
         std::fs::create_dir_all(r.root.join(".worktrees/taskq-8")).unwrap();
         let o = pass(&r.tidy(&b, false));
         assert!(r.wt("taskq-8") && o.report["task"]["count"] == 1 && o.report["task"]["oldest_s"].as_u64() < Some(86400), "{}", o.report);
+    }
+
+    // Chain: tidy step 2 removal on Windows. Defect (PM steer, win 4.6.35): clean closed-task worktrees stayed and
+    // `cleanup.git` failed 163 of 308 calls with one log line and no cause. Git for Windows fails `worktree remove` at
+    // 260 characters (`Filename too long`) on deep ignored `target/` paths and drops the registry entry. Risk protected:
+    // a refusal line without Git's reason, and a long ignored path that keeps a closed task's worktree.
+    #[test]
+    fn removal_handles_long_ignored_paths_and_names_git_refusals() {
+        let r = Repo::new("long");
+        let b = Fake::default();
+        for _ in 0..2 { b.create("T", "", &["taskq".into()]).unwrap(); }
+        std::fs::write(r.root.join(".git/info/exclude"), "target/
+").unwrap();
+        for n in [1, 2] { r.sh(&r.root, &["worktree", "add", "-q", "-b", &format!("taskq-{n}"), &format!(".worktrees/taskq-{n}")]); }
+        let deep = (0..12).fold(r.root.join(".worktrees/taskq-1/target/debug/build"), |p, i| p.join(format!("aaaaaaaaaaaaaaaaaaaaaaaaaa{i}")));
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("f.rlib"), "x").unwrap();
+        assert!(deep.join("f.rlib").as_os_str().len() > 300);
+        for n in [1, 2] { b.close(n).unwrap(); }
+        // work written between the status read and the removal: Git refuses, and the line says why
+        let wip = r.root.join(".worktrees/taskq-2/wip");
+        let o = r.tidy(&b, false).run(&mut |n| { if n == 2 { let _ = std::fs::write(&wip, "x"); } false }, &|_| None);
+        assert!(!r.wt("taskq-1") && o.log.contains(&"#1 worktree removed".into()), "long ignored paths go: {:?}", o.log);
+        assert!(r.wt("taskq-2") && o.log.iter().any(|l| l.starts_with("#2 worktree removal unconfirmed: fatal: '.worktrees/taskq-2' contains modified or untracked files")), "{:?}", o.log);
     }
 
     // Chain: tidy step 3. Risk protected: removing recent or dirty unowned work.
