@@ -72,10 +72,10 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         else await page.evaluate(({p,row,display})=>taskq.receive({page:p.id,font:20,theme:'dark',projects:[{...p,root:p.id,issues:p.board.url,board_kind:'github',alive:true,focus:[],labels:[],tasks:[row],cap_saved:{error:'fixture'}}],ai:{draft:''},notify:{projects:{}},display}),{p,row,display});
         await page.locator('[data-tqp=tasks][data-state=review]').first().click();
         if(mode==='browser')assert.deepEqual(await page.evaluate(()=>navigation),[['tasks',p.id,'review']]);
-        else {assert.match(await page.locator('.view-criteria').innerText(),new RegExp(p.name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));assert.equal(await page.locator('.filter-header [data-state=review]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.tqp-task').count(),1);}
+        else {assert.equal(await page.getByRole('button',{name:/^Reset .* to its saved criteria$/}).count(),1,'#1659 R01: the modified view offers Reset instead of criteria prose');assert.equal(await page.locator('.filter-header [data-state=review]').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.tqp-task').count(),1);}
         if(mode==='browser'){await page.locator('[data-tqp=project]').first().click();assert.deepEqual(await page.evaluate(()=>navigation.at(-1)),['project',p.id]);}
         else await page.locator('.project-group [data-route]').first().click();
-        await page.locator('.tqp-task a').first().click();if(mode==='tray'){await page.locator('[data-a=task-detail]').click();await page.locator('#taskq-popover a').filter({hasText:'Open codex session'}).click();}else await page.locator('.tqp-task a[aria-label="Open codex session"]').click();
+        await page.locator('.tqp-task a').first().click();if(mode==='tray'){await page.locator('[data-a=task-detail]').click();await page.locator('#taskq-popover .task-more summary').click();await page.locator('#taskq-popover a').filter({hasText:'Open codex session'}).click();}else await page.locator('.tqp-task a[aria-label="Open codex session"]').click();
         const opened=await page.evaluate(mode=>mode==='browser'?navigation.filter(n=>n[0]==='open').map(n=>n[1]):messages.filter(n=>n.a==='open').map(n=>n.url),mode);
         assert.deepEqual(opened,[row.url,row.session_url]);
         const flow=await page.locator('.tqp-task').evaluate(el=>({display:getComputedStyle(el).display,title:el.textContent,width:el.getBoundingClientRect().width}));

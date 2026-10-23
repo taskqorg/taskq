@@ -178,7 +178,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq later N [--text T] [--blocker #M]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | owner gate approval of the current result (§ 7; refused with `TASKQ_ATTEMPT`) / recipe run (§ 7) |
-| `taskq status [--only L,..] [--json]` | R6 report of tasks with one of the labels (none: all); no write. `--json`: the snapshot: `schema` 1, `source` board, `observed` board time, `complete` and `reason`, `board` identity, `totals` per open state (null when incomplete: [unknown][sq-unknown]), `tasks` (labels, session, `session_url`, deps, card), `hosts`, `capabilities` |
+| `taskq status [--only L,..] [--json]` / `taskq status --closed [--page N] [--since T]` | R6 report of tasks with one of the labels (none: all); no write. `--json` snapshot and `--closed` page: [menu] |
 | `taskq inbox N` / `taskq retro` | task text, folded state and the log (a requeue says what to fix); `retro`: requests an owner session (§ 4) over the use-case proposals and the board's `ask`/`answer`/`requeue` history; it files accepted recommendations with `add` |
 | `taskq wait [--window MIN] [--only L,..]` | PM: block until a task moves to `ask`, `review` with options, closed or `failed`; print `ask #N` etc. or `tick` |
 | `taskq cleanup [--force]` | remove clean worktrees and branches of closed tasks; `--force` also dirty ones (R11) |

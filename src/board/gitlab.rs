@@ -159,6 +159,14 @@ impl Board for GitLab {
         Ok(self.api.all(&url)?.iter().map(|v| self.parse_issue(v)).collect())
     }
 
+    fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
+        let since = since.map_or(String::new(), |t| format!("&updated_after={}", stamp(t)));
+        let r = self.api.call("GET", &format!("/issues?state=closed&labels={}&order_by=updated_at&sort=desc&per_page={}&page={}{since}", crate::service::TASK_LABEL, super::CLOSED_PAGE, page.max(1)), None)?;
+        let list = r.json()?;
+        let rows = list.as_array().ok_or("invalid board list: expected array")?;
+        Ok((rows.iter().map(|v| (self.parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect(), r.next().is_some()))
+    }
+
     fn issue(&self, n: u64) -> Result<Issue> {
         Ok(self.parse_issue(&self.api.call("GET", &format!("/issues/{n}"), None)?.json()?))
     }

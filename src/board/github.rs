@@ -397,6 +397,14 @@ impl Board for GitHub {
         Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect())
     }
 
+    fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
+        let since = since.map_or(String::new(), |t| format!("&since={}", stamp(t)));
+        let r = self.api.call("GET", &format!("/issues?state=closed&labels={}&sort=updated&direction=desc&per_page={}&page={}{since}", crate::service::TASK_LABEL, super::CLOSED_PAGE, page.max(1)), None)?;
+        let list = r.json()?;
+        let rows = list.as_array().ok_or("invalid board list: expected array")?.iter().filter(|v| v.get("pull_request").is_none());
+        Ok((rows.map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect(), r.next().is_some()))
+    }
+
     fn issue(&self, n: u64) -> Result<Issue> {
         Ok(parse_issue(&self.api.call("GET", &format!("/issues/{n}"), None)?.json()?))
     }

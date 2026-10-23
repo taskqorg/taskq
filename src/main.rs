@@ -77,7 +77,7 @@ const USAGE: &str = "taskq agents
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--only L,..] [--json] | taskq inbox N
+ taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] | taskq inbox N
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -658,6 +658,23 @@ fn inbox(b: &dyn Board, n: u64) -> Res<String> {
         out.push(format!("[{}{}] {}", e.id, if e.edited { " edited, ignored" } else { "" }, e.body.trim()));
     }
     Ok(out.join("\n\n"))
+}
+
+/// MP14 Completed: one board page of closed tasks with their sourced outcome, result line and last PR link; no store.
+fn closed_history(b: &dyn Board, page: u32, since: Option<i64>, gitlab: bool) -> Res<Value> {
+    let (issues, more) = b.closed_tasks(page, since)?;
+    let tasks: Vec<Value> = issues.iter().filter(|(_, closed)| since.is_none_or(|t| *closed >= t)).map(|(i, closed)| {
+        let log = entries(b, i.number);
+        // § 1: GitHub records why an issue closed; GitLab records no reason, so a closed GitLab issue is done
+        let outcome = match (i.reason.as_deref(), gitlab) { (Some("completed"), _) | (None, true) => "success", (Some("not_planned"), _) => "not_planned", _ => "unknown" };
+        let (result, pr) = log.as_ref().map_or((Value::Null, Value::Null), |log| {
+            let t = fold(i.number, log, false);
+            let pr = log.iter().flat_map(|e| e.body.split_whitespace()).filter(|w| w.starts_with("https://") && (w.contains("/pull/") || w.contains("/merge_requests/"))).last();
+            (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
+        });
+        json!({"n": i.number, "title": i.title, "url": b.url(i.number), "closed": closed, "outcome": outcome, "result": result, "pr": pr, "error": log.err()})
+    }).collect();
+    Ok(json!({"schema": 1, "source": "board", "page": page.max(1), "more": more, "tasks": tasks}))
 }
 
 // ---------- wait ----------
@@ -2803,6 +2820,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if let Some(w) = data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).as_ref().and_then(requests::warning) {
                 println!("{w}");
             }
+            if a.flags.contains_key("closed") {
+                let page = a.one("page").map_or(Ok(1), |p| p.parse::<u32>().map_err(|_| "bad --page"))?;
+                let since = a.one("since").map(|t| t.parse::<i64>().map_err(|_| "bad --since: board seconds")).transpose()?;
+                println!("{}", closed_history(b, page, since, cfg.board.name == "gitlab")?);
+                return Ok(());
+            }
             let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
             if a.flags.contains_key("json") {
                 println!("{}", serde_json::to_string_pretty(&snap.json()).map_err(|e| e.to_string())?);
@@ -4710,5 +4733,28 @@ mod tests {
         // #1555: no bare `could not be saved`; it says why
         assert!(failed.ends_with("no cli-errors.log copy (outside a taskq project)."), "{failed}");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // Chain: MP14 Completed. Risk: a page invents an outcome, loses board paging or hides the PR link.
+    #[test]
+    fn completed_reads_board_pages_with_sourced_outcome() {
+        let b = Fake::default();
+        for n in 1..=12u64 {
+            b.create(&format!("t{n}"), "", &["taskq".into()]).unwrap();
+            b.close(n).unwrap();
+            let mut st = b.state.borrow_mut();
+            let i = st.issues.iter_mut().find(|i| i.number == n).unwrap();
+            (i.updated, i.reason) = (100 + n as i64, [Some("completed".into()), Some("not_planned".into()), None][n as usize % 3].clone());
+        }
+        b.comment(12, "Merged https://github.com/o/r/pull/7.").unwrap();
+        b.state.borrow_mut().issues.iter_mut().find(|i| i.number == 12).unwrap().updated = 112;
+        let first = closed_history(&b, 1, None, false).unwrap();
+        assert_eq!((first["tasks"].as_array().unwrap().len(), first["more"].clone()), (10, json!(true)));
+        assert_eq!((first["tasks"][0]["n"].clone(), first["tasks"][0]["outcome"].clone(), first["tasks"][0]["pr"].clone()), (json!(12), json!("success"), json!("https://github.com/o/r/pull/7")));
+        assert_eq!((first["tasks"][1]["outcome"].clone(), first["tasks"][2]["outcome"].clone()), (json!("unknown"), json!("not_planned")), "GitHub without a reason stays unknown");
+        let last = closed_history(&b, 2, None, false).unwrap();
+        assert_eq!((last["tasks"].as_array().unwrap().len(), last["more"].clone()), (2, json!(false)));
+        assert_eq!(closed_history(&b, 1, None, true).unwrap()["tasks"][1]["outcome"], "success", "§ 1: a closed GitLab issue is done");
+        assert_eq!(closed_history(&b, 1, Some(110), false).unwrap()["tasks"].as_array().unwrap().len(), 3, "period keeps closes at or after since");
     }
 }

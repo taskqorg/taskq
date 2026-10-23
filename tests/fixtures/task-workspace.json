@@ -544,7 +544,7 @@
     },
     {
      "expect": {
-      "open": true
+      "open": false
      }
     },
     {

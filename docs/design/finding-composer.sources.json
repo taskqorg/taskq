@@ -12,12 +12,12 @@
   "files": {
     "src/finding-composer.js": "4b3133df44a96935e51b8f4f907f586c42a3fecc8fccbbfb6aefa691fb6da42d",
     "src/finding-composer.css": "59429c0cf812caf40b3478cd95ab32f4f5e87b2841e9584b9480f9a0304e01c4",
-    "src/project-blocks.js": "5f7dff84d32ef023e8229d4039c7ce4f9b4d6ba433145c7a5fb82663429e949d",
+    "src/project-blocks.js": "bf3f40c69e1d8cfcf174dd0fe0fe59e3009de16e070c4e3278f16faaa2c02b50",
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
     "src/answer-card.js": "9422f61d3f861f31ef99db8200dfbcd1aa44c7bb4ab35b5877ea3348c9ede4fd",
     "src/answer-card.css": "8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc",
     "tests/fixtures/finding-composer.json": "9af0a043afc637c1f5f9b87372e67e864a107c9bf89ede612fb4d660a7e082eb",
-    "docs/design/project-blocks.sources.json": "da186b93507927cda07f779df510ebc9621cc80408e670491a0048da0acef8bb"
+    "docs/design/project-blocks.sources.json": "1f7b11e42c5ad924b6a5631151fbd7527aa7a6c5715d2b174f9d65bdde0f4d41"
   },
   "hashEncoding": "UTF-8, LF; release version is assigned by the tag workflow; before release pin the delivery commit and these hashes"
 }
