@@ -140,6 +140,12 @@ pub fn die(msg: &str) -> ! {
     exit(1);
 }
 
+/// § 4: a service exit first logs its code and reason (#1625: neither the launcher nor the Windows unit records them).
+pub fn service_exit(code: i32, reason: &str) -> ! {
+    log(&format!("service exits {code}: {reason}"));
+    exit(code)
+}
+
 /// Every taskq exit. #1566: Windows `ExitProcess` first kills the other threads, then runs this thread's
 /// TLS destructors; a thread killed while it held a lock one of them takes (sharded_slab's thread-id
 /// registry) left that exit waiting forever. Seal telemetry, flush, then end without destructors.
@@ -914,6 +920,30 @@ mod tests {
     fn short_dependency_child() {
         if std::env::var("TASKQ_SHORT_DEPENDENCY").unwrap()=="nonzero" {eprintln!("private dependency receipt");std::process::exit(7);}
         loop {std::thread::park();}
+    }
+
+    // Chain: #1625 § 4 service exit -> stderr redirected to taskq.log by the launcher -> process ends with the code.
+    // Risk: a service exit leaves no reason in taskq.log, or the line is lost when Windows terminates the process.
+    #[test]
+    fn service_exit_logs_reason_before_process_ends() {
+        let dir = std::env::temp_dir().join(format!("taskq-service-exit-{}", crate::runtime::uuid()));
+        fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("taskq.log");
+        let o = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "platform::tests::service_exit_child", "--ignored", "--nocapture"])
+            .env("TASKQ_SERVICE_EXIT", "1").stderr(fs::File::create(&log).unwrap()).output().unwrap();
+        assert_eq!(o.status.code(), Some(75));
+        let text = fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().filter(|l| l.ends_with(" service exits 75: restart to 9.9.9")).count(), 1, "{text}");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "owned subprocess that ends through service_exit"]
+    fn service_exit_child() {
+        if std::env::var_os("TASKQ_SERVICE_EXIT").is_none() { return; }
+        service_log();
+        service_exit(75, "restart to 9.9.9");
     }
 
     #[test]

@@ -792,6 +792,13 @@ pub fn run(install: &Path) -> Res<()> {
         Ok(None)=>{},
         Err(e)=>crate::platform::log(&e),
     }
+    // #1625: each start (logon, install, restart) re-arms the 5-minute repeat that Stop disabled.
+    #[cfg(windows)]
+    match crate::host_control::repeat_trigger(&crate::platform::tool(install),true) {
+        Ok("changed")=>crate::platform::log("host task 5-minute restart trigger enabled"),
+        Ok(_)=>{},
+        Err(e)=>crate::platform::log(&format!("host task restart trigger: {e}")),
+    }
     let mut telemetry=crate::telemetry::HostCapture::default();
     // Host identity is stable for this owner; policy and interrupted writes are still read each tick.
     let mut hostname=crate::hostname();
@@ -1013,7 +1020,7 @@ pub fn run(install: &Path) -> Res<()> {
                 if stopping {
                     match crate::lifecycle::pending(install).and_then(|p|p.filter(|p|p.stops()).ok_or("prepared Stop binding unavailable".into())) {
                         Ok(p)=>match crate::host_control::dispatch(install,&p) {
-                        Ok(control)=>{shared.lock().unwrap_or_else(|e|e.into_inner()).stop_controller=Some(control);},
+                        Ok(control)=>{crate::platform::log(&format!("service stops: Stop {} controller ends this process",p.id()));shared.lock().unwrap_or_else(|e|e.into_inner()).stop_controller=Some(control);},
                         Err(e)=>{let _=crate::lifecycle::failed(install,p.id(),&e);crate::platform::log(&e);}
                         },
                         Err(e)=>crate::platform::log(&e),
@@ -1030,7 +1037,7 @@ pub fn run(install: &Path) -> Res<()> {
                     let e = command.exec();
                     return Err(format!("host re-exec: {e}"));
                 }
-                #[cfg(not(unix))] crate::platform::exit(75);
+                #[cfg(not(unix))] crate::platform::service_exit(75,&format!("restart to {}",crate::platform::tool(install).current().unwrap_or_default()));
             }
         }
         drop(h);

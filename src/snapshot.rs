@@ -487,7 +487,9 @@ impl Snapshot {
             out.push(String::new());
             out.push(format!("Stuck: {}", stuck.join(", ")));
         }
-        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}", h.name, h.version, age(self.observed - h.updated), h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
+        // #1625: a heartbeat older than ttl reads stale, so a stopped service shows within ttl of its last beat
+        let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
+            if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>())).collect();
         if !hs.is_empty() {
             out.push(String::new());
@@ -634,6 +636,18 @@ mod tests {
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["stuck"].clone(), rows[0]["age_s"].clone()), (json!(true), json!(9000)));
         assert_eq!((rows[1]["stuck"].clone(), rows[1].get("age_s")), (json!(false), None));
+    }
+
+    // Chain: #1625 R6 6 Hosts line. Risk: a host whose service stopped keeps reading as a plain age, never as down.
+    #[test]
+    fn hosts_line_marks_heartbeat_older_than_ttl_stale() {
+        let ttl = crate::tests::cfg().ttl;
+        let host = |name: &str, updated| Host { name: name.into(), version: "1.0".into(), updated, ..Default::default() };
+        let snap = Snapshot { source: "board", observed: 10_000, reason: None, board: json!({"url": "b"}), tasks: vec![],
+            hosts: vec![host("mac", 10_000 - ttl), host("win", 10_000 - ttl - 1)] };
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
+        assert!(line.contains("mac v1.0 ") && !line.split(", ").next().unwrap().contains("stale") && line.split(", ").nth(1).unwrap().ends_with(" stale"), "{line}");
     }
 
     // Chain: #1524 menu.md M3 Task row text. Risk: a raw execution, fence or wait diagnostic reaches a tray or status row.
