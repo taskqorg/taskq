@@ -49,4 +49,10 @@ Pass is limited to the source, browser and native rendering boundaries above.
 
 Development checks: `project-blocks.test.cjs`, `tray-running.test.cjs`, `tray-settings.test.cjs`, `window-chrome.browser.cjs`, `settings-content.browser.cjs`, `tray-panels.browser.cjs`, `tray-history.browser.cjs`, `tray-resources.browser.cjs` and `tray-recovery.browser.cjs` passed after the applicable fixes. `docs/shots/update.sh` refreshed the native README images; source blob and signed binary hashes were read back against its manifest.
 
-The final rebased candidate's canonical gate is recorded in the PR and task result. Publication/merge-result CI is separate under R12 and § 7; this worker does not claim merge or deployment.
+The canonical gate ran once after rebase on `d28934463b9bd6a1db8762666307a7b848e1e1f5`: `python3 scripts/check.py --base 54efbdf4408ef53493ec767aef89a2c9e39acc5a`. It selected full checks and stopped in Rust unit tests after 73.236 s: **529 passed, 17 failed, 32 ignored**. Record **sandbox-blocked**, not PASS: host-operation tests encounter the worker guards `a worker cannot change host policy`, `a worker cannot install the host service`, and the corresponding Stop/restart refusals. Related expected-success assertions also fail in that worker environment. No worker guard or host test was weakened. Rust integration stages did not run; their outcome remains unknown pending CI.
+
+The remaining cheap checks ran separately: 24 Node component scripts, three artifact/release-script checks and all six changed browser instruments. Two consumer provenance checks initially found stale hashes in `finding-composer.sources.json` and `task-workspace.sources.json`; refreshing their transitive component hashes made the same checks pass, preserving every integrity assertion. All other scripts and all six browser instruments passed. These final metadata fixes do not change tested UI/Rust bytes, fixtures or dependencies; the full blocked Rust gate was not repeated.
+
+Offline `cargo run --locked -- selftest` passed 97 golden traces and format checks, and committed nine telemetry observations in an isolated temporary store. Board status is explicitly unknown/offline; no board-read success is claimed.
+
+Publication/merge-result CI is separate under R12 and § 7; this worker does not claim merge or deployment.
