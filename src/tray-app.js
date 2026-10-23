@@ -268,7 +268,7 @@ history:function(){
   const selected=Math.max(0,rows.findIndex(b=>identity(b)===view.historyBin));
   const incomplete=rows.some(b=>b.missing.length),tot=kinds.map((_,k)=>rows.reduce((a,b)=>a+b.counts[k],0));
   const detail=b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(b.counts[i],b.missing.length)).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length?' · incomplete: '+b.missing.join(', '):'');
-  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,icon('activity'),'History ',h('span',{class:'meta'},view.S.display.periods.find(x=>x.id===view.S.period)?.name)),
+  return h('details',{class:'group hist','data-view-key':'history'},h('summary',null,h('span',null,icon('activity'),'History '),h('span',{class:'meta'},view.S.display.periods.find(x=>x.id===view.S.period)?.name)),
     h('div',{class:'options periods'},view.S.display.periods.map(({id:k,name:l})=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
     view.draft&&custom(),h('div',{class:'body meta'},when(H.start,H.tz)+' – '+when(H.end,H.tz)),
     h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+quantity(tot[i],incomplete)))),

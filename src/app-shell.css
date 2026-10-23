@@ -59,3 +59,6 @@
 /* Long host/admission summaries get the row width instead of a narrow trailing column. */
 .menu .settings-widget.project:is([data-route=hosts],[data-a=work],[data-operation=admission]){display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px}
 .menu .settings-widget.project:is([data-route=hosts],[data-a=work],[data-operation=admission])>.meta{grid-column:2;margin-left:0;text-align:left}
+/* The workspace overflow belongs to the header, so its menu cannot extend left of a narrow window. */
+.menu.workspace .head{position:relative}.menu.workspace .shell-overflow{position:static}
+.menu.workspace .overflow-actions{inset-inline-end:var(--outer)}

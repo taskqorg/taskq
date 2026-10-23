@@ -12,6 +12,7 @@ const base={display:require('./fixtures/display-model.json').display,page:'caden
     const H=JSON.parse(fs.readFileSync(path.join(fixtures,name+'-'+theme+'.json')));
     const s={...base,theme,palette:H.palette,now:H.captured,history:H,icons:{full:H.svg,icon:H.compact}};
     await page.evaluate(s=>taskq.receive(s),s);
+    assert.equal(await page.locator('.hist>summary>.meta').evaluate(e=>e.getBoundingClientRect().right<=e.parentNode.getBoundingClientRect().right),true,'History period stays inside its summary beside the bundled icon');
     assert.equal(await page.locator('[data-view-key=history-source]').evaluate(e=>e.open),false,'R34: exact timestamps and source diagnostics start disclosed');
     const targets=page.locator('[data-history-bin]');await targets.first().waitFor();assert.equal(await targets.count(),6);
     const chart=page.locator('.history-plot #chart');assert.equal(await chart.locator('[data-start]').count(),6);

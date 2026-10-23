@@ -83,6 +83,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   await p.close();
   // the Conversations window keeps Enlarge and Close (R26)
   p=await open(360,{...state,theme},fs.readFileSync('build/web/workspace.html','utf8'));
+  await p.locator('.shell-overflow>summary').click();
+  const overflow=await p.locator('.overflow-actions').boundingBox();assert(overflow.x>=0&&overflow.x+overflow.width<=360,'R43: the bundled overflow action keeps its full menu inside the native-width window');
+  assert.equal(await p.locator('.shell-overflow>summary svg').count(),1,'bundled vector, never a Unicode glyph');
   await p.evaluate(()=>taskq.receive({open:{page:'conversations'}}));assert.equal(await p.locator('.head h1').textContent(),'Conversations');
   assert.equal(await p.locator('.head [aria-label="Enlarge window"]').count(),1,'Conversations keeps Enlarge');
   await p.close();
