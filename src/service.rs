@@ -1879,12 +1879,12 @@ impl<'a> Service<'a> {
     }
 
     /// #1616: each ready row of this pass's snapshot carries this host's decision; a row it did not reach keeps
-    /// `unknown`, reason `no host decision`.
+    /// `unknown`, reason `no host decision`. A review awaiting its reviewer carries it too (#1685).
     fn decided(&mut self, decided: BTreeMap<u64, (&'static str, String)>) {
         let me = self.cfg.me.clone();
         let Some(snapshot) = &mut self.snapshot else { return };
         let observed = snapshot.observed;
-        for r in snapshot.tasks.iter_mut().filter(|r| r.task.state == State::Ready) {
+        for r in snapshot.tasks.iter_mut().filter(|r| matches!(r.task.state, State::Ready | State::Review)) {
             if let Some((code, reason)) = decided.get(&r.n) {
                 r.admission = Some(crate::snapshot::Admission { code, reason: reason.clone(), observed, host: Some(me.clone()) });
             }
@@ -5063,6 +5063,26 @@ Open: none";
         assert_eq!((&row(maps)["code"], &row(maps)["reason"], &row(maps)["host"]), (&json!("unknown"), &json!("no host decision"), &Value::Null));
         assert_eq!(row(dep)["code"], "dependency");
         assert!(row(dep)["reason"].as_str().unwrap().contains(&format!("#{first} open")));
+    }
+
+    // Chain: § 4 Filter, reviewer waits for its runtime's slot -> snapshot row -> status/tray wait text (#1685). Risk: a
+    // review refused on capacity sits silent in status and the tray, as three GitLab reviews did for two hours.
+    #[test]
+    fn review_rows_carry_this_hosts_admission_decision() {
+        let b = Fake::default();
+        let n = b.create("R", "", &["taskq".into()]).unwrap();
+        let w = b.comment(n, "taskq: spawn worker codex:w mac").unwrap();
+        accept_execution(&b, n, w, w, None).unwrap(); release_execution(&b, n, w, w, "exit").unwrap();
+        b.comment(n, &format!("taskq: result {} attempt {w}", "a".repeat(40))).unwrap();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 0)]);
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.pass().unwrap();
+        assert!(e.borrow().is_empty(), "no reviewer slot");
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        assert_eq!((&row["state"], &row["admission"]["code"], &row["admission"]["host"]), (&json!("review"), &json!("capacity"), &json!("mac")));
+        assert_eq!(row["wait"], "Waiting for a free slot · claude slots full");
     }
 
     // Chain: host admission refusal text -> admission code (#1616). Risk: a host.rs or admission.rs refusal reads as
