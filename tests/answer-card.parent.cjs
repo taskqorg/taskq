@@ -1,4 +1,4 @@
-// B4 parent/child comparison (docs/design/shared-blocks.md): the parent question card in docs/design/workspace-preview.html
+// B4 parent/child comparison (docs/design/shared-blocks.md): the parent question card in docs/design/workspace-prototype.html
 // against the tray's shared card on the same task. Risk: the child drifts from parent tokens, choice layout or
 // disclosures, or the card breaks the project counter strip (K-A8). Instrument, not a CI gate (needs Playwright):
 // npm i --no-save playwright && node tests/answer-card.parent.cjs
@@ -18,8 +18,8 @@ function look(sel) {
   try {
     for (const theme of ['light', 'dark']) {
       const parent = await browser.newPage({viewport: {width: 1024, height: 1200}, colorScheme: theme});
-      await parent.goto('file://' + path.resolve('docs/design/workspace-preview.html'));
-      const frame = parent.frames()[1];
+      await parent.goto('file://' + path.resolve('docs/design/workspace-prototype.html'));
+      const frame = parent.mainFrame();
       await frame.waitForSelector('.menu [data-question=task]');
       const want = await frame.evaluate(look, {card: '.menu [data-question=task]', choice: '.qchoices button', choices: '.qchoices', mark: '.ask', number: '.qnumber'});
       await parent.close();

@@ -15,7 +15,7 @@ Inspected candidate: `377a424d4907120e7c5ddb0b1032c68ddaaf7c76`. The primary che
 
 The four files total 109,988 source bytes, not a production bundle size. `src/tray.rs` already compares snapshot signatures, excludes tray `now` from the comparison and avoids another snapshot call while one is pending. A client query library would not remove this producer work. `build.rs` already invokes `scripts/build-web.cjs`; esbuild emits ES2022 IIFEs embedded in HTML. Adding Preact does not require replacing wry, the native shell or the build system.
 
-`scripts/check-web.cjs` requires named app functions, methods, events and async work to use CoreQ execution boundaries. Standard component syntax is not automatically compatible. Integration must retain operation inventory and trace propagation rather than exempting all new UI code. Library internals are not product operations.
+`scripts/check-web.cjs` requires module-level app functions and methods, events and async work to use CoreQ execution boundaries; helpers local to a function stay plain. Standard component syntax is not automatically compatible. Integration must retain operation inventory and trace propagation rather than exempting all new UI code. Library internals are not product operations.
 
 ## Options (A2)
 

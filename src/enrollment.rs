@@ -1,6 +1,5 @@
 //! DashQ observation connection (docs/design/enrollment.md): coreq pairing and delivery of the board projection.
 //! No command authority or task-state storage.
-#![allow(dead_code)] // `coalesce` is the reader-side rule; no TaskQ reader yet.
 
 use crate::{Res, core, resources, snapshot::Snapshot};
 use coreq::enroll::{self, Backoff, Delivery, Https};
@@ -483,61 +482,6 @@ pub fn project(s: &Snapshot, installation: &str, approved: &[BoardScope], local:
     })
 }
 
-/// The reader side of host observations: per host and kind the latest across installations; one past its
-/// `valid_until`, or a kind no installation reported for a known host, reads unknown, never online, logged in or idle.
-fn current<'a>(obs: impl Iterator<Item = &'a Observation>, now: i64) -> Vec<Value> {
-    let mut latest: BTreeMap<(String, String), Value> = BTreeMap::new();
-    for o in obs.flat_map(|o| &o.observations) {
-        let key = (o["host"].as_str().unwrap_or_default().to_string(), o["kind"].as_str().unwrap_or_default().to_string());
-        if latest.get(&key).is_none_or(|v| v["observed"].as_i64() < o["observed"].as_i64()) { latest.insert(key, o.clone()); }
-    }
-    let hosts: std::collections::BTreeSet<String> = latest.keys().map(|k| k.0.clone()).collect();
-    for h in hosts {
-        for kind in ["login", "online", "queue"] {
-            latest.entry((h.clone(), kind.into())).or_insert_with(|| json!({"host": h, "kind": kind, "state": "unknown", "complete": false, "reason": "no observation"}));
-        }
-    }
-    latest.into_values().map(|mut o| {
-        if o["valid_until"].as_i64().is_none_or(|t| now > t) && o["reason"] != "no observation" {
-            for (k, v) in o.as_object_mut().unwrap().iter_mut() {
-                if k == "running" || k == "queued" { *v = Value::Null }
-                else if matches!(v.as_str(), Some("logged in" | "not logged in")) { *v = json!("unknown") }
-            }
-            o["state"] = json!("unknown");
-            o["complete"] = json!(false);
-            o["reason"] = json!("expired");
-        }
-        o
-    }).collect()
-}
-
-/// One row per approved board, never the sum of host snapshots. Delivery time cannot refresh data.
-pub fn coalesce(observations: &[Observation], approved: &[BoardScope], now: i64, max_age: u64) -> Vec<Value> {
-    let mut boards = BTreeMap::new();
-    for board in approved {
-        let latest = observations.iter().filter(|o| &o.board == board).max_by_key(|o| o.observed);
-        let row = match latest {
-            None => json!({"board": board, "freshness": "missing", "complete": false, "reason": "no observation", "totals": null, "observation": null}),
-            Some(o) => {
-                // Same-time reports differing only in installation are the same board observation.
-                let conflict = observations.iter().filter(|v| &v.board == board && v.observed == o.observed)
-                    .any(|v| v.complete != o.complete || v.totals != o.totals || v.tasks != o.tasks);
-                let age = now.checked_sub(o.observed);
-                let freshness = if conflict || o.observed <= 0 || age.is_none_or(|a| a < 0) { "unknown" }
-                    else if age.unwrap() as u64 > max_age { "stale" } else { "fresh" };
-                json!({"board": board, "freshness": freshness, "complete": o.complete && !conflict,
-                    "reason": if conflict { Some("conflicting observations") } else { o.reason },
-                    "totals": if freshness == "fresh" && !conflict { json!(o.totals) } else { Value::Null },
-                    "observation": if conflict { Value::Null } else { json!(o) }})
-            }
-        };
-        let mut row = row;
-        row["observations"] = json!(current(observations.iter().filter(|o| &o.board == board), now));
-        boards.insert(board.clone(), row);
-    }
-    boards.into_values().collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,15 +626,11 @@ mod tests {
             "login partial: codex unknown": obs(&base(), probe("unknown")).observations.last(),
             "queue unknown: incomplete read": obs(&incomplete, Value::Null).observations.iter().filter(|o| o["kind"] == "queue").collect::<Vec<_>>(),
             "queue partial: task limit": obs(&over, Value::Null).observations.iter().filter(|o| o["kind"] == "queue").collect::<Vec<_>>(),
-            "read fresh": coalesce(&[mac.clone()], &scope, 1000, 300)[0]["observations"],
-            "read expired": coalesce(&[mac], &scope, 2000, 300)[0]["observations"],
         });
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/host-observations.json");
         if std::env::var_os("TASKQ_BLESS").is_some() { fs::write(&path, serde_json::to_string_pretty(&got).unwrap() + "\n").unwrap(); }
         let want: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(got, want, "TASKQ_BLESS=1 rewrites {}", path.display());
-        let expired = &got["read expired"];
-        assert!(expired.as_array().unwrap().iter().all(|o| o["state"] == "unknown" && o["complete"] == false), "expired reads unknown");
         assert!(!got.to_string().contains("x mac") && !got.to_string().contains("codex:y"), "no session ids");
     }
 

@@ -70,7 +70,7 @@ fields:function(group) {
   },
 edited:function(group, d) { return fields(group).filter(f => d.touched[f.key] && d.values[f.key] !== shown(f)); },
 problem:function(group, d) {
-    const {n}=execution.module("resource-controls.problem",{n:(v, lo, hi) => /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi});
+    const n=(v, lo, hi) => /^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi;
     for (const f of edited(group, d)) {
       const v = d.values[f.key];
       if (f.bool) { if (f.locked && !v && d.values['host.mode'] !== 'fixed') return 'Auto keeps the load gate on'; continue; }
@@ -82,7 +82,7 @@ problem:function(group, d) {
     }
     if (!edited(group, d).length) return 'No change';
     // Auto cannot run with the gate off (taskq.md § 9): check the resulting pair, edited or not
-    const {now}=execution.module("resource-controls.problem",{now:k => { const f = fields(group).find(x => x.key === k); return f && (d.touched[k] ? d.values[k] : shown(f)); }});
+    const now=k => { const f = fields(group).find(x => x.key === k); return f && (d.touched[k] ? d.values[k] : shown(f)); };
     return now('host.mode') === 'auto' && now('gate.enabled') === false ? 'Auto keeps the load gate on' : null;
   },
 changes:function(group, d) {
@@ -97,7 +97,7 @@ changes:function(group, d) {
       else if (f.field === 'maximum') c.maximum = d.values[f.key] === '' ? null : Number(d.values[f.key]);
       else {
         const g = fields(group).filter(x => x.field === 'load_gate');
-const {v}=execution.module("resource-controls.changes.helpers",{v:x => d.touched[x.key] ? d.values[x.key] : shown(x)});
+const v=x => d.touched[x.key] ? d.values[x.key] : shown(x);
         c.load_gate = {enabled: !!v(g[0]), cpu_max: Number(v(g[1])), memory_min: Number(v(g[2]))};
       }
     }
@@ -218,23 +218,20 @@ input:function(id, x, v, mixed, off) {
     return h + '<input id="' + fid + '" type="number" inputmode="numeric" step="1" min="0" data-rsc-field="' + esc(x.key) + '" value="' + esc(v) + '"' + dis + (mixed ? ' placeholder="Mixed"' : x.value == null ? ' placeholder="' + esc(x.none || 'none') + '"' : '') + '>';
   },
 mount:function(el, adapter) {
-const {apply,paint}=execution.module("resource-controls.mount",{
-apply:function(ev) {
+const apply=function(ev) {
       const r = step(group, local, adapter.capability(group), ev, newId, now());
       local = r.local;
       if (ev.type !== 'input') paint();
       if (r.send) ui.effect('resource.send',()=>adapter.send(group,r.send),x=>apply({type:'receipt',opId:r.send.id,...x}));
-    },
-paint:function() {
+    },paint=function() {
       const a = document.activeElement, focus = a && el.contains(a) ? {sel: a.dataset.rscField ? '[data-rsc-field="' + a.dataset.rscField + '"]' : '[data-rsc="' + a.dataset.rsc + '"]', s: a.type === 'number' ? null : a.selectionStart, e: a.selectionEnd} : null;
       el.innerHTML = render(group, local, adapter.capability(group), now());
       const t = focus && el.querySelector(focus.sel);
       if (t) { t.focus(); if (focus.s != null && t.setSelectionRange) try { t.setSelectionRange(focus.s, focus.e); } catch (_) { /* number inputs */ } }
-    }
-});
+    };
 
     let group = null, local = fresh();
-    const {now}=execution.module("resource-controls.mount",{now:() => adapter.now ? adapter.now() : Math.floor(Date.now() / 1000)});
+    const now=() => adapter.now ? adapter.now() : Math.floor(Date.now() / 1000);
     const newId = adapter.newId || (() => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : 'rsc-' + Date.now().toString(36) + Math.random().toString(36).slice(2)));
 
 
@@ -267,7 +264,7 @@ workStatus:function(groups, w, cap, now) {
   },
 workStep:function(groups, w, cap, ev, newId, now) {
     const st = workStatus(groups, w, cap, now).state, l = {...w}, none = {local: w, send: []};
-    const {values}=execution.module("resource-controls.workStep",{values:gs => Object.fromEntries(workFields(gs).map(f => [f.key, f.mixed ? (f.bool ? false : '') : f.values[0]]))});
+    const values=gs => Object.fromEntries(workFields(gs).map(f => [f.key, f.mixed ? (f.bool ? false : '') : f.values[0]]));
     switch (ev.type) {
       case 'select': {
         if (!['view', 'read-only', 'editing'].includes(st)) return none;
@@ -363,8 +360,7 @@ workRender:function(groups, w, cap, now, host) {
       '<button type="button" data-rsc="cancel">Cancel</button></div></section>';
   },
 mountWork:function(el, adapter, selected) {
-const {apply,paint}=execution.module("resource-controls.mountWork",{
-apply:function(ev) {
+const apply=function(ev) {
       const r = workStep(groups, w, adapter.capability, ev, newId, now());
       w = r.local;
       if (ev.type !== 'input') paint();
@@ -372,17 +368,15 @@ apply:function(ev) {
         const g = groups.find(g => g.key === x.key);
         ui.effect('resource.work.send',()=>adapter.send(g,x.op),y=>apply({type:'receipt',key:x.key,opId:x.op.id,...y}));
       }
-    },
-paint:function() {
+    },paint=function() {
       const a = document.activeElement, sel = a && el.contains(a) ? (a.dataset.rscField ? '[data-rsc-field="' + a.dataset.rscField + '"]' : a.dataset.rscSelect ? '[data-rsc-select="' + CSS.escape(a.dataset.rscSelect) + '"]' : '[data-rsc="' + a.dataset.rsc + '"]') : null;
       el.innerHTML = workRender(groups, w, adapter.capability, now(), adapter.host);
       const t = sel && el.querySelector(sel);
       if (t) t.focus();
-    }
-});
+    };
 
     let groups = [], w = freshWork(selected || {});
-    const {now}=execution.module("resource-controls.mountWork",{now:() => adapter.now ? adapter.now() : Math.floor(Date.now() / 1000)});
+    const now=() => adapter.now ? adapter.now() : Math.floor(Date.now() / 1000);
     const newId = adapter.newId || (() => (root.crypto && root.crypto.randomUUID ? root.crypto.randomUUID() : 'rsc-' + Date.now().toString(36) + Math.random().toString(36).slice(2)));
 
 
@@ -395,7 +389,7 @@ replayWork:function(fx, capability) {
     let groups = fx.groups, w = freshWork(fx.selected || {}), n = 0;
     const sent = [];
 const out = [];
-const {cap}=execution.module("resource-controls.replayWork.helpers",{cap:g => capability(g) || fx.capability});
+const cap=g => capability(g) || fx.capability;
     for (const ev of fx.events || []) {
       if (ev.type === 'refresh') { groups = ev.groups.map(i => fx.refresh[i]); continue; }
       if (ev.type === 'check') { const s = workStatus(groups, w, cap, fx.now); out.push({status: s.state, each: s.each || {}, html: workRender(groups, w, cap, fx.now, fx.host), sent: sent.slice()}); continue; }
@@ -410,7 +404,7 @@ replay:function(fx, capability) {
     let group = fx.groups[0], local = fresh(), n = 0;
     const sent = [];
 const out = [];
-const {cap}=execution.module("resource-controls.replay.helpers",{cap:g => capability(g) || fx.capability});
+const cap=g => capability(g) || fx.capability;
     for (const ev of fx.events || []) {
       if (ev.type === 'refresh') { group = fx.groups[ev.group]; continue; }
       if (ev.type === 'check') { out.push({status: status(group, local, cap(group), fx.now), html: render(group, local, cap(group), fx.now), sent: sent.slice(), headline: headline(group, fx.now)}); continue; }
