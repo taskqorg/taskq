@@ -5,6 +5,10 @@ there is no migration code. Releases without a **Board** section need nothing.
 
 ## Unreleased
 
+## v4.6.39
+
+Review uses the accepted purple on every surface that colors the Review state (#1677). A failing workspace route keeps the shell and request status stays on its conversation (#1680). Completed history loads in the tray and shows Merged only for a confirmed merge (#1679). Menu and Settings get the accepted titles, per-host counters, session marks and runtime versions (#1681). `taskq status` shows why a review waits for its reviewer (#1685). GitLab close waits for MR mergeability before merging (#1687). A worker park's blocker survives owner Later and Retry (#1689). No board change.
+
 ## v4.6.38
 
 The task menu opens details on click only, keeps global task pins and per-view working state with saved views and one Undo, adds a Completed view read from board history (`taskq status --closed`) and uses the accepted state icons and colors (#1671). Settings is its own window with a stable header, Home and one Conversations entry (#1672). Settings shows hosts, agent sign-in and services as compact route widgets (#1673). PM requests and task answers share one composer, delivery state reads plainly and the ask parser rejects bad option numbering (#1674). The workspace dialogue gets the reply composer, transcript view and watch status (#1675). No board change.
