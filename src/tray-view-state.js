@@ -7,17 +7,19 @@ normalize:function(saved,snapshot,routes,root='home'){
  const {entry}=execution.module('tray.viewState.normalize',{
  entry:function(value){
   const v=value&&typeof value==='object'?value:{};
+  // #1691: a saved workspace Inbox page reopens as the Conversations Inbox section
+  if(v.page==='messages'&&root==='conversations')return entry({...v,page:root,section:'inbox'});
   let page=typeof v.page==='string'?v.page:root;
   const project=roots.has(page)?page:null;
   if(!project&&!Object.hasOwn(routes,page))page=v.project||page.startsWith('/')?(Object.hasOwn(routes,'projects')?'projects':root):page.startsWith('settings/')&&Object.hasOwn(routes,'settings')?'settings':Object.hasOwn(routes,v.parent)?v.parent:root;
   const valid=page===v.page,open={};
   const work=valid&&v.working&&typeof v.working==='object'&&!Array.isArray(v.working)?Object.fromEntries(Object.entries(v.working).filter(([root,on])=>roots.has(root)&&on===true)):null;
   if(valid&&v.open&&typeof v.open==='object')for(const [k,b] of Object.entries(v.open))if(typeof b==='boolean'&&k.length<=240)open[k]=b;
-  return {page,operation:root==='messages'&&v.operation&&typeof v.operation.operation==='string'?{operation:v.operation.operation,root:typeof v.operation.root==='string'?v.operation.root:null}:null,project:roots.has(page)?page:null,parent:routes[page]?.parent||root,
+  return {page,operation:root!=='home'&&v.operation&&typeof v.operation.operation==='string'?{operation:v.operation.operation,root:typeof v.operation.root==='string'?v.operation.root:null}:null,project:roots.has(page)?page:null,parent:routes[page]?.parent||root,
    taskFilter:valid&&Array.isArray(v.taskFilter)?[...new Set(v.taskFilter.filter(s=>states.has(s)))]:null,
    working:work&&(Object.keys(work).length||!Object.keys(v.working).length)?work:null,
-   aiRoot:roots.has(v.aiRoot)||(root==='messages'&&typeof v.aiRoot==='string')?v.aiRoot:null,answer:root==='messages'&&v.answer&&typeof v.answer.board==='string'&&Number.isSafeInteger(v.answer.task)&&v.answer.task>0?{board:v.answer.board,task:v.answer.task,revision:v.answer.revision,root:v.answer.root}:null,
-   ...(root==='messages'?{messageFilter:['all','pending','archived'].includes(v.messageFilter)?v.messageFilter:'all',message:typeof v.message==='string'&&/^[a-f0-9]{64}$/.test(v.message)?v.message:null}:{}),scroll:valid&&Number.isFinite(v.scroll)&&v.scroll>=0?v.scroll:0,open,
+   aiRoot:roots.has(v.aiRoot)||(root!=='home'&&typeof v.aiRoot==='string')?v.aiRoot:null,answer:root!=='home'&&v.answer&&typeof v.answer.board==='string'&&Number.isSafeInteger(v.answer.task)&&v.answer.task>0?{board:v.answer.board,task:v.answer.task,revision:v.answer.revision,root:v.answer.root}:null,
+   ...(root!=='home'?{messageFilter:['all','pending','archived'].includes(v.messageFilter)?v.messageFilter:'all',message:typeof v.message==='string'&&/^[a-f0-9]{64}$/.test(v.message)?v.message:null,section:v.section==='inbox'?'inbox':null}:{}),scroll:valid&&Number.isFinite(v.scroll)&&v.scroll>=0?v.scroll:0,open,
    focus:valid&&v.focus&&/^(BUTTON|A|SUMMARY|INPUT|SELECT|TEXTAREA|H1|DIV)$/.test(v.focus.tag)&&typeof v.focus.key==='string'&&v.focus.key.length<=2048&&Number.isInteger(v.focus.index)&&v.focus.index>=0&&v.focus.index<4096?v.focus:null,
    unavailable:!valid&&typeof v.page==='string'?'Requested destination is no longer available.':typeof v.unavailable==='string'?v.unavailable.slice(0,160):null};
  }
@@ -29,8 +31,8 @@ create:function(view,{menu,document,send,defer,cancel,routes,trail,root='home'})
  let hydrated=false,timer=null,last='',restoring=false;
  const api=execution.module('tray.viewState.instance',{
  groups:function(){return Object.fromEntries([...menu.querySelectorAll('details[data-view-key]:not(.shell-overflow)')].map(d=>[d.dataset.viewKey,d.open]));},
- capture:function(){const active=document.activeElement?.closest?.('.shell-overflow')?.querySelector('summary')||document.activeElement,key=active&&JSON.stringify(active.dataset),focus=active&&menu.contains?.(active)?{tag:active.tagName,key,index:[...menu.querySelectorAll(active.tagName)].filter(e=>JSON.stringify(e.dataset)===key).indexOf(active)}:null;return {page:view.page,operation:view.operation,project:view.S?.projects?.some(p=>p.root===view.page)?view.page:null,parent:routes[view.page]?.parent||root,taskFilter:view.taskFilter,working:view.working,aiRoot:view.aiRoot,answer:view.answer,messageFilter:view.messageFilter,message:view.message,scroll:(menu.querySelector('.content')||document.scrollingElement)?.scrollTop||0,open:api.groups(),focus,unavailable:view.unavailable};},
- apply:function(v){view.page=v.page;view.operation=v.operation;view.answer=v.answer;view.message=v.message;view.messageFilter=v.messageFilter;view.taskFilter=v.taskFilter;view.working=v.working;view.aiRoot=v.aiRoot;view.disclosures=v.open;view.restoreScroll=v.scroll;view.restoreFocus=v.focus;view.unavailable=v.unavailable;},
+ capture:function(){const active=document.activeElement?.closest?.('.shell-overflow')?.querySelector('summary')||document.activeElement,key=active&&JSON.stringify(active.dataset),focus=active&&menu.contains?.(active)?{tag:active.tagName,key,index:[...menu.querySelectorAll(active.tagName)].filter(e=>JSON.stringify(e.dataset)===key).indexOf(active)}:null;return {page:view.page,operation:view.operation,project:view.S?.projects?.some(p=>p.root===view.page)?view.page:null,parent:routes[view.page]?.parent||root,taskFilter:view.taskFilter,working:view.working,aiRoot:view.aiRoot,answer:view.answer,messageFilter:view.messageFilter,message:view.message,section:view.section,scroll:(menu.querySelector('.content')||document.scrollingElement)?.scrollTop||0,open:api.groups(),focus,unavailable:view.unavailable};},
+ apply:function(v){view.page=v.page;view.operation=v.operation;view.answer=v.answer;view.message=v.message;view.messageFilter=v.messageFilter;view.section=v.section;view.taskFilter=v.taskFilter;view.working=v.working;view.aiRoot=v.aiRoot;view.disclosures=v.open;view.restoreScroll=v.scroll;view.restoreFocus=v.focus;view.unavailable=v.unavailable;},
  focus:function(saved){const target=saved?[...menu.querySelectorAll(saved.tag)].filter(e=>JSON.stringify(e.dataset)===saved.key)[saved.index]:null;(target?.checkVisibility?.()&&!target.disabled?target:menu.querySelector('h1'))?.focus({preventScroll:true});},
  hydrate:function(snapshot){
   if(snapshot.page!==undefined){hydrated=true;return;}

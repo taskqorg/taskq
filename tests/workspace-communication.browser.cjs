@@ -27,7 +27,7 @@ const snapshot={font:16,theme:'dark',host:'fixture',now:1000,projects:[project],
   await page.evaluate(()=>taskq.receive({open:{page:'answer',board:'https://missing.example/issues',task:1}}));
   if(evidence)await page.screenshot({path:evidence+'/task-unavailable-dark-16.png'});
   assert.match(await page.locator('.content').innerText(),/task is unavailable/);assert.equal(await page.locator('.qac').count(),0);
-  await page.evaluate(()=>taskq.receive({open:{page:'removed-route'}}));assert.match(await page.locator('.content').innerText(),/surviving destination is Messages/);
+  await page.evaluate(()=>taskq.receive({open:{page:'removed-route'}}));assert.match(await page.locator('.content').innerText(),/surviving destination is Conversations/);
   await page.evaluate(()=>taskq.receive({open:{page:'messages'}}));assert(!/Requested destination/.test(await page.locator('.content').innerText()),'valid navigation clears the obsolete destination warning');
   const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8')),row=fx.cases.find(c=>c.name.startsWith('stale')).rows[0],board=project.issues;
   const question={...snapshot,projects:[{...project,tasks:[row]}]};

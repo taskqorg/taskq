@@ -25,8 +25,12 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   assert.equal(await page.locator('[data-c=new]').count(),1,'#1580: Conversations is a separate draft/file workspace; Inbox keeps native message records');
   assert.equal(await page.locator('[data-a=message-open]').count(),0,'board questions remain in Inbox');
   assert.equal(await page.evaluate(()=>sent.some(m=>['ai-send','answer','message-action'].includes(m.a))),false,'navigation launches/sends nothing');
+  // #1691 A4: an old Inbox open lands in the Conversations Inbox section with task questions, requests and outcomes
   await page.evaluate(()=>taskq.receive({open:{page:'messages'}}));
+  assert.equal(await page.locator('h1').innerText(),'Conversations');assert.equal(await page.locator('[data-section=inbox]').getAttribute('aria-pressed'),'true');
   assert.equal(await page.locator('[data-a=message-open]').count(),3);
+  await page.locator('.conversation-inbox [data-route=sessions]').click();assert.equal(await page.locator('h1').innerText(),'Work sessions');
+  await page.keyboard.press('Alt+ArrowLeft');assert.equal(await page.locator('[data-section=inbox]').getAttribute('aria-pressed'),'true','Back from Work sessions returns to the Inbox section');
   // #1662 A1: rows showed host, request id and raw state inline. Risk kept: correlation ids in the compact row.
   assert.equal(await page.locator('[data-a=message-open]').filter({hasText:'native-live'}).count(),0,'ids stay out of the row');
   assert.match(await page.locator('.content').innerText(),/Launched in the native session/,'the row states delivery in plain words');
@@ -63,7 +67,9 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.locator('.content [data-a=new-request]').click();
   assert.equal(await page.locator('h1').innerText(),'Conversations');
   assert.equal(await page.evaluate(()=>document.activeElement.id),'conversation-draft');
-  await page.keyboard.press('Alt+ArrowLeft');
+  // #1691 A4: Conversations is the root, so the Inbox section button replaces Back to a separate Inbox page
+  assert.equal(await page.locator('[data-section=inbox]').getAttribute('aria-pressed'),'false');
+  await page.locator('[data-section=inbox]').click();
   const mixed=structuredClone(archived);mixed.messages.entries[2].archived=true;
   await page.evaluate(s=>taskq.receive(s),mixed);
   await page.locator('[data-a=message-delete-all]').click();
@@ -77,13 +83,14 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.evaluate(s=>taskq.receive({...s,theme:'light',font:20,messages:{...s.messages,complete:false,count:null,reason:'Fixture: board source stale'}}),partial);
   assert.match(await page.locator('.content').innerText(),/Messages unknown: Fixture: board source stale/);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'narrow view has no horizontal clipping');
-  await page.locator('.content').evaluate(e=>{e.scrollTop=e.scrollHeight;});
+  // #1691: the Inbox section scrolls inside Conversations, under its fixed section toggle
+  await page.locator('.conversation-inbox').evaluate(e=>{e.scrollTop=e.scrollHeight;});
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-  const last=await page.locator('[data-a=message-delete]').boundingBox(),content=await page.locator('.content').boundingBox();
+  const last=await page.locator('[data-a=message-delete]').boundingBox(),content=await page.locator('.conversation-inbox').boundingBox();
   assert(last.y>=content.y&&last.y+last.height<=content.y+content.height+1,'last action is reachable in the intended scroll area');
   const head=await page.locator('.head').boundingBox();assert(head.y>=0,'fixed navigation stays visible while the message list scrolls: '+head.y);
   assert((await page.locator('h1').boundingBox()).y>=0,'navigation title remains visible');
-  if(evidence){await page.setViewportSize({width:360,height:880});await page.locator('.content').evaluate(e=>{e.scrollTop=0;});await page.screenshot({path:evidence+'/partial-light-20-360.png'});}
+  if(evidence){await page.setViewportSize({width:360,height:880});await page.locator('.conversation-inbox').evaluate(e=>{e.scrollTop=0;});await page.screenshot({path:evidence+'/partial-light-20-360.png'});}
   await page.keyboard.press('Escape');assert(await page.evaluate(()=>sent.some(m=>m.a==='hide')));
   assert(!await page.evaluate(()=>sent.some(m=>['cancel','ai-clear','ai-send','answer'].includes(m.a))),'close/archive/delete never cancel work or clear command history');
   assert.deepEqual(errors,[]);

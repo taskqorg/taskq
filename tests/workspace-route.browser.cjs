@@ -41,7 +41,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   assert.match(await page.locator('main [role=alert]').innerText(),/could not be shown/);
   for(const name of ['Workspace home','Close workspace'])assert(await page.getByRole('button',{name}).isVisible(),name);
   const report=await page.evaluate(()=>sent.filter(m=>m.a==='route-error'));
-  assert.equal(report.length,1);assert.equal(report[0].route,'messages');assert.equal(report[0].error,'TypeError');assert.match(report[0].site,/^[\w$.]+(:\d+:\d+)?$/);
+  assert.equal(report.length,1);assert.equal(report[0].route,'conversations');assert.equal(report[0].error,'TypeError');assert.match(report[0].site,/^[\w$.]+(:\d+:\d+)?$/);
   assert(!JSON.stringify(report).includes('example.org'),'report carries no content');
   await page.locator('.shell-overflow summary').click();await page.locator('[data-route=conversations]').click();
   assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
