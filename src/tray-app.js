@@ -283,7 +283,6 @@ update:function(){if(!ports.workspace)return api.operationLauncher('update',null
   if(view.updating&&view.S.now-view.updating.at<300)return h('button',{class:'project',disabled:true},'Updating to '+view.updating.v+'…');
   return f(view.updating&&h('div',{class:'row alert'},'Update to '+view.updating.v+' not confirmed: see the log'),!view.updating&&up&&h('button',{class:'project','data-a':'update','data-root':up.root,'data-v':up.update},'Update now to '+up.update));},
 ai:function(){return h('button',{class:'project','data-a':'workspace','data-page':'conversations','data-fresh':'true','data-root':view.aiRoot||null},'Ask AI · new session…');},
-messagesBadge:function(){const m=view.S.messages,known=m?.complete===true&&Number.isSafeInteger(m.count);return f(h('button',{class:'project','data-a':'workspace','data-page':'messages','aria-label':known?'Messages · '+m.count:'Messages · unknown'},'✉ Messages · '+(known?m.count:'unknown')),!known&&h('p',{class:'body meta',role:'status'},m?.reason||'Message source unavailable; refresh status.'));},
 addProject:function(){if(!ports.workspace)return api.operationLauncher('setup',null,'Add project in workspace…');
   const A=view.S.add;
   if(!A)return h('button',{class:'project','data-a':'add'},'Add project…');
@@ -583,9 +582,9 @@ head:function(){
   const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):settingsPages.includes(view.page)&&view.page!=='settings'?h('a',{href:'#','data-route':'settings'},'Settings'):'';
   // R07/A4: a stable action row; Close is always last, Keep open, Always on top and the task pin have distinct names
   if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
-  // R09/MP12: one Conversations entry; its count is the deduplicated actionable events, unknown never reads as zero
+  // R09/MP12, #1691 A2: one Conversations entry opens Conversations at every count, its Inbox section with new events; the count is deduplicated, unknown never reads as zero; opening acknowledges nothing
   const m=view.S.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null;
-  const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':count?'messages':'',title:'Conversations · '+(count===null?'unknown':count+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':count):'');
+  const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':'conversations','data-section':count?'inbox':'',title:'Conversations · '+(count===null?'unknown':count+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':count):'');
   const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),conversations,button('settings','Settings',{'data-route':'settings'})];
   const windows=[button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)}),button('x','Close menu',{'data-a':'hide'})];
   return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
@@ -707,7 +706,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='all-tasks'){if(view.page==='home'&&view.taskFilter){view.taskFilter=[];present();}else navigate('home',[]);return;}
   if(d.a==='hide')viewState.flush();
   if(d.a==='home'){const root=ports.settings?'settings':'home';if(view.page!==root||view.taskFilter||view.working)navigate(root);return;}
-  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page===''?null:d.page||'messages',operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
+  if(d.a==='workspace'){viewState.flush();send({a:'workspace',open:{page:d.page||'conversations',...(d.section!==undefined?{section:d.section}:{}),operation:d.operation||null,root:d.root||null,board:d.board||null,task:Number(d.task)||null,revision:Number(d.revision)||null,...(d.fresh==='true'?{fresh:true}:{})}});return;}
   if(d.route){if(d.route!==view.page||view.working||view.taskFilter)navigate(d.route);return;}
   if(d.a==='answer-dismiss'){startOperations.dismiss(d.key);return;}
   if(d.a==='toast-dismiss'){view.toast=null;present();return;}

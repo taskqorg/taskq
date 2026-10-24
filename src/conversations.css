@@ -2,6 +2,7 @@
 .conversation-content{display:flex;overflow:hidden!important;min-height:0;padding:8px!important}
 .conversation-content>.content-body{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
 .conversation-content>.content-body>[data-status=workspace]{display:none}
+.conversation-inbox{overflow:auto;flex:1;min-height:0;padding:4px}
 .conversations{display:flex;flex-direction:column;flex:1;min-height:0;gap:6px}
 .conversation-toolbar,.conversation-tools{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:none}
 .conversation-toolbar>details{position:relative}

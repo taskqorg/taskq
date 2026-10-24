@@ -127,7 +127,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   await workspace.locator('.shell-overflow > summary').click();await workspace.locator('.overflow-actions [data-route=conversations]').click();
   const saved=await workspace.evaluate(()=>messages.filter(m=>m.a==='workspace-set').at(-1).navigation);
   await workspace.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await workspace.evaluate(s=>taskq.receive(s),{...snapshot,workspace_navigation:saved});
-  assert.equal(await workspace.locator('h1').innerText(),'Conversations');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');await workspace.locator('[data-a=back]').click();assert.equal(await workspace.locator('h1').innerText(),'Inbox');
+  assert.equal(await workspace.locator('h1').innerText(),'Conversations');assert.equal(await workspace.evaluate(()=>document.activeElement.tagName),'H1','hydrated child focuses its route heading');assert.equal(await workspace.locator('[data-a=back]').count(),0,'#1691: Conversations is the workspace root');
   assert.deepEqual(errors,[]);await workspace.close();
   console.log('PASS TW1/V06/V09: route titles, invoker focus, stable bar, keyboard Back, fine/coarse targets and independent workspace reload/Back');
  }finally{await browser.close();}

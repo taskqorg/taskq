@@ -3,10 +3,11 @@ const ui=require('./ui-runtime.js'),shell=require('./app-shell.js'),{h}=require(
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
-  const view={page:'messages',taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0};
-  const routes={conversations:{title:'Conversations'},messages:{title:'Inbox'},message:{title:'Message',parent:'messages'},answer:{title:'Task answer',parent:'messages'},sessions:{title:'Work sessions',parent:'messages'},operations:{title:'Operation review',parent:'messages'}};
+  const view={page:'conversations',section:null,taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0};
+  // #1691 A3: Conversations is the one root; Inbox is its section, not a route
+  const routes={conversations:{title:'Conversations'},message:{title:'Message',parent:'conversations'},answer:{title:'Task answer',parent:'conversations'},sessions:{title:'Work sessions',parent:'conversations'},operations:{title:'Operation review',parent:'conversations'}};
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
-  const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'messages',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
+  const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'conversations',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   let composing=false,answerField=null,redraw=null;
   // #1662 A3: task answers use the workspace's one composer; a card change repaints it once per tick
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,changed:()=>{if(view.page==='answer'&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
@@ -19,16 +20,22 @@ const {create}=execution.module('workspace',{
    keyed:function(v){if(Array.isArray(v))return v.map(keyed);if(!v?.props)return v===''?null:v;const p=v.props;if(v.key==null)v.key=p['data-answer']||p['data-resources']||p['data-card']||p['data-view-key']||p.id;if(p.children!=null)p.children=keyed(p.children);return v;}});
   // A1: each route returns its Preact vnodes; called directly, since signal-aware components skip renders when only the plain view changes.
   const pages=execution.module('workspace.routes',{
-   conversations:function(){return conversations.body();},
-   messages:function(){
-    const m=snapshot.value.messages,filter=view.messageFilter||'all',rows=(m?.entries||[]).filter(r=>view.page!=='conversations'||r.kind!=='question').filter(r=>filter==='archived'?r.archived:!r.archived&&(filter!=='pending'||r.pending));
+   // #1691 A4: the Inbox section keeps requests, task answers and outcomes with their actions
+   conversations:function(){
+    const m=snapshot.value.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null,inbox=view.section==='inbox';
+    // the Inbox entry sits in the conversation toolbar, so the composer keeps its height in narrow windows
+    const label='Inbox · '+(count===null?'unknown':count+' new'),entry=h('button',{type:'button',title:label,'aria-label':label,'data-section':'inbox','aria-pressed':String(inbox)},require('./ui-icons.js').icon('inbox'),count?' '+count:'');
+    return inbox?[h('div',{class:'conversation-tools',role:'group','aria-label':'Sections'},h('button',{'data-section':'','aria-pressed':'false'},'Conversations'),entry),h('section',{class:'conversation-inbox','aria-label':'Inbox'},pages.inbox())]:conversations.body(entry);
+   },
+   inbox:function(){
+    const m=snapshot.value.messages,filter=view.messageFilter||'all',rows=(m?.entries||[]).filter(r=>filter==='archived'?r.archived:!r.archived&&(filter!=='pending'||r.pending));
     return [h('div',{class:'options'},h('button',{'data-a':'new-request'},'New request'),h('button',{'data-route':'sessions'},'Work sessions')),
      h('label',{for:'message-filter'},'Show messages'),h('select',{id:'message-filter','data-field':'message-filter'},[['all','All messages'],['pending','Pending'],['archived','Archived']].map(([v,label])=>h('option',{value:v,selected:filter===v},label))),
      m?.complete!==true&&h('p',{role:'status'},'Messages unknown: '+(m?.reason||'Source unavailable; refresh status.')),
      filter==='archived'&&[h('p',null,'Delete permanently removes TaskQ message records and owned copies. There is no undo. Board tasks, source files and native chats stay; sessions keep running. Requests awaiting launch cannot be deleted.'),h('button',{'data-a':'message-delete-all',disabled:!rows.length||!!view.messageBusy},'Delete all archived permanently')],
      // #1662 A1: a row reads as title and plain state; host, request id and revision stay behind its disclosure
      rows.length?rows.map(r=>h('section',{class:'message-row','aria-label':r.title||'Message',key:r.key},h('button',{class:'project','data-a':'message-open','data-key':r.key},r.kind==='question'?(r.project||'Board')+' · #'+r.task+' '+r.title:r.title||'Request'),h('p',{class:'meta'},(r.kind==='question'?(r.state==='ask'?'Unanswered':'Archived')+' question':api.plain(r.state))+(r.deleting?' · Deletion incomplete; retry Delete':r.read?' · Read':' · Unread')),api.ids(r),h('div',{class:'options'},api.messageButtons(r)))):h('p',null,'No '+(filter==='archived'?'archived ':filter==='pending'?'pending ':'')+'messages in the available snapshot.'),
-     answers.answerNotices()];
+     h('p',{class:'meta',role:'status'},view.messageNotice||''),answers.answerNotices()];
    },
    message:function(){
     const r=snapshot.value.messages?.entries?.find(r=>r.key===view.message);
@@ -78,9 +85,9 @@ const {create}=execution.module('workspace',{
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
     const icons=require('./ui-icons.js');
-    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['messages','Inbox'],['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
-    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='messages',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
-     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Messages.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
+    const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
+    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
+     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
@@ -89,7 +96,7 @@ const {create}=execution.module('workspace',{
    },
    // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
    route:function(){
-    try{return (pages[view.page]||pages.messages)();}
+    try{return (Object.hasOwn(routes,view.page)?pages[view.page]:pages.conversations)();}
     catch(error){
      const d=require('./tray-web.js').site(error),key=view.page+' '+d.site;
      if(view.routeFault!==key){view.routeFault=key;ui.send({a:'route-error',route:view.page,...d});}
@@ -99,17 +106,21 @@ const {create}=execution.module('workspace',{
    navigate:function(page,context){
     // #1662 A3: the removed New AI request route opens a new Conversations draft for its project
     if(page==='request'){page='conversations';context={...context,fresh:true};}
+    if(page==='messages'){page='conversations';context={...context,section:'inbox'};}
     if(Object.hasOwn(routes,page))view.unavailable=null;
-    else {view.unavailable='Requested destination is not available.';page='messages';}
+    else {view.unavailable='Requested destination is not available.';page='conversations';}
     renderer.push(state.capture());view.page=page;
     if(page==='answer')view.answer=context;
     if(page==='operations')view.operation={operation:context?.operation,root:context?.root||null};
     if(page==='message')view.message=context?.key;
+    // the header icon names a section ('' keeps the last one); new events open Inbox
+    if(page==='conversations'&&context?.section==='inbox')view.section='inbox';
+    if(page==='conversations'&&(context?.section==='conversations'||context?.fresh))view.section=null;
     view.disclosures={};view.restoreScroll=0;
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
     api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
    },
-   back:function(){const prior=renderer.pop()||{page:'messages',open:{},scroll:0};state.apply(prior);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
+   back:function(){const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
     if(s.workspacePin!==undefined||s.workspaceMaximized!==undefined){if(s.workspacePin!==undefined)view.workspacePin=s.workspacePin;if(s.workspaceMaximized!==undefined)view.workspaceMaximized=s.workspaceMaximized;api.draw();return;}
     if(conversations.receive(s)) {api.draw();return;}
@@ -141,10 +152,11 @@ const {create}=execution.module('workspace',{
       if(operations.operationAction(b.dataset))return;
      }
      if(conversations.click(b))return;
-     if(b.dataset.a==='home'){if(view.page!=='messages')api.navigate('messages');return;}
+     if(b.dataset.a==='home'){if(view.page!=='conversations')api.navigate('conversations');return;}
+     if(b.dataset.section!==undefined){view.section=b.dataset.section||null;view.restoreScroll=0;api.draw();state.flush();return;}
      if(b.dataset.a==='workspace-pin'||b.dataset.a==='workspace-enlarge'){ui.send({a:'workspace-window',action:b.dataset.a==='workspace-pin'?'pin':'enlarge'});return;}
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
-     else if(b.dataset.route)api.navigate(b.dataset.route);
+     else if(b.dataset.route)api.navigate(b.dataset.route,{section:'conversations'});
      else if(b.dataset.a==='open-answer')api.navigate('answer',{root:b.dataset.root,board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
      else if(b.dataset.a==='message-open'){
       const r=snapshot.value.messages?.entries?.find(r=>r.key===b.dataset.key);if(!r)return;
@@ -171,7 +183,7 @@ const {create}=execution.module('workspace',{
     ui.listen(document,'keydown',e=>{
      if(e.target.dataset?.cField==='answer'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();api.answerAct('submit');return;}
      if(e.key==='Escape'){conversations.flush();const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}state.flush();ui.send({a:'hide'});}
-     if(e.altKey&&e.key==='ArrowLeft'&&view.page!=='messages'){e.preventDefault();api.back();}
+     if(e.altKey&&e.key==='ArrowLeft'&&view.page!=='conversations'){e.preventDefault();api.back();}
     });
     // P-W3: the header drags the window; its controls never start a drag
     let dragFrom=null;
