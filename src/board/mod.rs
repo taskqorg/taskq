@@ -885,6 +885,7 @@ mod tests {
         let calls = std::rc::Rc::new(RefCell::new(vec![]));
         let captured = calls.clone();
         let reads = RefCell::new(0);
+        let put = RefCell::new(false);
         let comparisons = RefCell::new(0);
         let direct = mode == "direct";
         let h = http(kind, None, Box::new(move |method, url, _| {
@@ -913,7 +914,8 @@ mod tests {
             else if url.ends_with("/git/refs/heads/main") { json!({"object": {"sha": result}}) }
             else if url.contains("/pulls?") { json!([{"number": 7, "head": {"sha": result}}]) }
             else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result}]) }
-            else if url.ends_with("/merge") { json!({"sha": merged, "squash_commit_sha": merged}) }
+            else if url.ends_with("/merge") { *put.borrow_mut() = true; json!({"sha": merged, "squash_commit_sha": merged}) }
+            else if url.ends_with("/merge_requests/7") && !*put.borrow() { json!({"state": "opened", "detailed_merge_status": "mergeable"}) }
             else if url.ends_with("/pulls/7") || url.ends_with("/merge_requests/7") {
                 *reads.borrow_mut() += 1;
                 let yes = if *reads.borrow() == 1 { first_merged } else { second_merged.ok_or("HTTP 503")? };
@@ -1251,6 +1253,7 @@ exit 0
                         else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": "success"}}) }
                         else if url.contains("/pulls?") { json!([{"number": 7, "head": {"sha": result}}]) }
                         else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result}]) }
+                        else if url.ends_with("/merge_requests/7") { json!({"detailed_merge_status": "mergeable"}) }
                         else if url.ends_with("/merge") && moved { return Err("HTTP 405 Head branch is out of date".into()) }
                         else { panic!("unexpected {method} {url}") };
                     Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
@@ -1264,6 +1267,63 @@ exit 0
                 assert_eq!(got, want, "{} rebased={rebased} guard={guard} moved={moved}", kind.name);
                 assert_eq!(calls.borrow().iter().filter(|m| *m != "GET").count(), usize::from(moved), "merge only behind the fence");
             }
+        }
+    }
+
+    // Chain: § 7 GitLab `pr` close vs asynchronous mergeability (#1687). Risk: a merge sent while GitLab rechecks the MR
+    // gets 422 'Branch cannot be merged' and requeues a reviewed result; a real blocker merges or loses its reason.
+    #[test]
+    fn gitlab_merge_waits_for_mergeability() {
+        // (merge statuses read in order, PUT merge refusal) -> outcome, merge writes
+        let cases: [(&[&str], Option<&str>, &str, usize); 7] = [
+            (&["unchecked", "checking", "mergeable"], None, "Done", 1),
+            (&["checking"], None, "Pending", 0),
+            (&["conflict"], None, "Failed:conflict", 0),
+            (&["discussions_not_resolved"], None, "Failed:discussions_not_resolved", 0),
+            (&["ci_must_pass"], None, "Failed:ci_must_pass", 0),
+            (&["mergeable", "checking"], Some("HTTP 422 Branch cannot be merged"), "Pending", 1),
+            (&["mergeable", "conflict"], Some("HTTP 422 Branch cannot be merged"), "Failed:conflict", 1),
+        ];
+        for (statuses, refusal, want, writes) in cases {
+            let statuses: Vec<String> = statuses.iter().map(|s| s.to_string()).collect();
+            let refusal = refusal.map(String::from);
+            let reads = std::rc::Rc::new(RefCell::new(0usize));
+            let seen = reads.clone();
+            let calls = std::rc::Rc::new(RefCell::new(0usize));
+            let captured = calls.clone();
+            let merged = std::rc::Rc::new(RefCell::new(false));
+            let h = http(&gitlab::KIND, None, Box::new(move |method, url, _| {
+                let result = "a".repeat(40);
+                let value = if url.contains("/merge_base?") { json!({"id": "c".repeat(40)}) }
+                    else if url.ends_with("/repository/branches/main") { json!({"commit": {"id": "c".repeat(40)}}) }
+                    else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": "ff"}) }
+                    else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": "success"}}) }
+                    else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result}]) }
+                    else if url.ends_with("/merge") {
+                        *captured.borrow_mut() += 1;
+                        if let Some(e) = &refusal { return Err(e.clone()) }
+                        *merged.borrow_mut() = true;
+                        json!({"squash_commit_sha": "b".repeat(40)})
+                    }
+                    else if url.ends_with("/merge_requests/7") {
+                        if *merged.borrow() { json!({"state": "merged"}) } else {
+                            let i = *seen.borrow();
+                            *seen.borrow_mut() += 1;
+                            json!({"state": "opened", "detailed_merge_status": statuses[i.min(statuses.len() - 1)]})
+                        }
+                    }
+                    else { panic!("unexpected {method} {url}") };
+                Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+            }));
+            let got = match h.publish(1, &"a".repeat(40), "pr", "title", "Task: fake") {
+                Publish::Done(_) => "Done".to_string(),
+                Publish::Pending(_) => "Pending".to_string(),
+                Publish::Failed(m) => format!("Failed:{}", m.split(": ").nth(1).unwrap_or("")),
+                other => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(got, want, "{want}");
+            assert_eq!(*calls.borrow(), writes, "{want}: merge writes");
+            if want == "Pending" && writes == 0 { assert_eq!(*reads.borrow(), gitlab::MERGE_STATUS_READS as usize, "bounded wait"); }
         }
     }
 
@@ -1313,7 +1373,8 @@ exit 0
                 let (h, calls) = publication_board(kind, "pr", false, second, Some(true));
                 assert!(matches!(h.resume_publication(1, &"a".repeat(40), "title", "Task: fake", std::path::Path::new("unused"), false), Publish::Pending(_)), "reporting preserves first read outcome");
                 assert_eq!(crate::incident::take_detected(), if second == Some(false) { vec!["publication.readback"] } else { vec![] });
-                assert_eq!(calls.borrow().iter().filter(|(m, u)| m == "GET" && (u.ends_with("/pulls/7") || u.ends_with("/merge_requests/7"))).count(), 2);
+                let readback = calls.borrow().iter().skip_while(|(m, _)| m == "GET").filter(|(m, u)| m == "GET" && (u.ends_with("/pulls/7") || u.ends_with("/merge_requests/7"))).count();
+                assert_eq!(readback, 2);
                 assert_eq!(calls.borrow().iter().filter(|(method, _)| method != "GET").count(), 1);
             }
         }

@@ -117,8 +117,18 @@ impl GitLab {
             return Ok(Publish::Pending("project merge method does not require a rebased MR: set fast-forward or semi-linear".into()));
         }
         let iid = mr["iid"].as_u64().unwrap_or(0);
+        if let Some(stop) = self.mergeable(iid)? {
+            return Ok(stop);
+        }
         let body = if mode == "pr" { json!({ "sha": sha, "squash": true, "squash_commit_message": format!("{title}\n\n{task_line}") }) } else { json!({ "sha": sha }) };
-        let merged = self.api.call("PUT", &format!("/merge_requests/{iid}/merge"), Some(body))?;
+        let merged = match self.api.call("PUT", &format!("/merge_requests/{iid}/merge"), Some(body)) {
+            // 422 'Branch cannot be merged' also answers a merge sent while GitLab rechecks: only a settled blocker fails (#1687)
+            Err(e) if e.contains("HTTP 422") => return Ok(match self.merge_status(iid)? {
+                Status::Blocked(why) => Publish::Failed(format!("!{iid} cannot be merged: {why}: {e}")),
+                _ => Publish::Pending(format!("!{iid} merge refused while GitLab checks mergeability: {e}")),
+            }),
+            r => r?,
+        };
         let back = self.api.call("GET", &format!("/merge_requests/{iid}"), None)?.json()?;
         if back["state"] != "merged" {
             if let Ok(second) = self.api.call("GET", &format!("/merge_requests/{iid}"), None).and_then(|r| r.json())
@@ -133,6 +143,50 @@ impl GitLab {
             self.publication_ancestry(target, mode);
         }
         if back["state"] == "merged" { Ok(Publish::Done(format!("merged !{iid}"))) } else { Err(format!("!{iid} not merged yet")) }
+    }
+}
+
+/// MR mergeability (§ 7). GitLab computes it asynchronously: after a push, or after another MR moves `main`, every open
+/// MR reads `unchecked`/`checking` and `PUT merge` answers 422 'Branch cannot be merged' until the recheck ends (#1687).
+enum Status {
+    Mergeable,
+    Checking(String),
+    Blocked(String),
+}
+
+/// Reads of a checking MR before close gives up as Pending; the review retries the close later.
+pub(super) const MERGE_STATUS_READS: u32 = 5;
+#[cfg(not(test))]
+const MERGE_STATUS_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+#[cfg(test)]
+const MERGE_STATUS_WAIT: std::time::Duration = std::time::Duration::ZERO;
+
+impl GitLab {
+    fn merge_status(&self, iid: u64) -> Result<Status> {
+        // reading one MR also queues its recheck
+        let v = self.api.call("GET", &format!("/merge_requests/{iid}"), None)?.json()?;
+        // `detailed_merge_status` (GitLab 15.6+); legacy `merge_status` otherwise
+        Ok(match (v["detailed_merge_status"].as_str(), v["merge_status"].as_str()) {
+            (Some("mergeable"), _) | (None, Some("can_be_merged")) => Status::Mergeable,
+            (Some(st @ ("unchecked" | "checking" | "preparing" | "approvals_syncing" | "ci_still_running")), _)
+            | (None, Some(st @ ("unchecked" | "checking" | "cannot_be_merged_recheck" | "cannot_be_merged_rechecking"))) => Status::Checking(st.into()),
+            (Some(st), _) | (None, Some(st)) => Status::Blocked(st.into()),
+            (None, None) => Status::Checking("unknown merge status".into()),
+        })
+    }
+
+    /// None when the MR is mergeable; else the outcome that stops this close.
+    fn mergeable(&self, iid: u64) -> Result<Option<Publish>> {
+        let mut last = String::new();
+        for read in 0..MERGE_STATUS_READS {
+            if read > 0 { std::thread::sleep(MERGE_STATUS_WAIT); }
+            match self.merge_status(iid)? {
+                Status::Mergeable => return Ok(None),
+                Status::Blocked(why) => return Ok(Some(Publish::Failed(format!("!{iid} cannot be merged: {why}")))),
+                Status::Checking(st) => last = st,
+            }
+        }
+        Ok(Some(Publish::Pending(format!("!{iid} merge status {last}: GitLab still checks"))))
     }
 }
 
