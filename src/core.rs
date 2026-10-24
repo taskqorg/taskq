@@ -175,7 +175,7 @@ pub struct Task {
     /// The PM's pick of an open `ask` card (§ 2): option K and its one-line reason; never an answer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pick: Option<(usize, String)>,
-    /// A worker park's blocker issue (§ 2 `later <ref> attempt`): read like a `Depends on` line until the next ready.
+    /// A worker park's blocker issue (§ 2 `later <ref> attempt`): read like a `Depends on` line until the next spawn or an owner requeue outside `later`/`failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
 }
@@ -609,8 +609,11 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
             }
         }
         (Ready | Waiting | Doing | Review | Ask | Later | Failed, "requeue", false) => {
+            // § 2: Retry of an owner park returns to the worker park's blocker; a requeue elsewhere overrides it
+            let blocker = if matches!(t.state, Later | Failed) { t.blocker.take() } else { None };
             t.retries = 0;
             ready(t);
+            t.blocker = blocker;
         }
         // § 2 worker park: the attempt ends and the blocker keeps the task waiting until it is done
         (Doing | Review, "later", true) if l.args.len() == 1 && blocker_ref(l.args[0]) => {

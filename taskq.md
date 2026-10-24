@@ -103,7 +103,7 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | `ask` | `answer [K]` | state before `ask`, else `ready` | `retries = 0`; delivered: text, else option K, else first line |
 | `ask` | `pick K` | `ask` | PM view: option K, reason in text; no `attempt`; cleared by a card change or leaving `ask` |
 | any open | `requeue` | `ready` | by PM/owner: result, card and attempt cleared; `retries = 0` |
-| `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next ready; N-1: `later` |
+| `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next spawn or owner `requeue` outside `later`/`failed`; N-1: `later` |
 | any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended |
 | `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits |
 
