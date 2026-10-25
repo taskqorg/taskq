@@ -12,7 +12,7 @@
     "src/task-dashboard.js": "4a93f3bf83032c81ed63e23a08f89bb3c3cdab4c447d2ac28857f589b7648316",
     "src/task-views.js": "63a64709d292519e326e5a4a1996f11e2075a22be1bbeb7c9c25aa7055b6471b",
     "src/task-workspace.js": "ac818736f7490c9afd6070c15462b6e74826da6886547cb01eb3ff080282105d",
-    "src/tray-app.js": "c3e804360c4fb983c94852577081d4747bc202dad6c72cba6cb4dbf3ef772259",
+    "src/tray-app.js": "7347bdb0128188b395a0060ab96fec25332f032206847548be3f9c540e764878",
     "src/tray-view-state.js": "827b8bacf92f48ce864af3753c9e3eddde0a515129f9878fe984558e45ef425f",
     "src/ui-icons.js": "b5f3542c8d446db6e811f26bf82a3d716b5ee93e830ccd11007f5072f0e26d5a",
     "src/ui-icons.json": "b3861571ae080d4e05ffa187d3f5bc09f2fedf6fd7ba408e59eb51819abd6201",
@@ -23,7 +23,7 @@
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
     "src/resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
     "src/app-shell.css": "0f48ac56c0d038d5f074356cd2d28889905624fd18b5cae760a479ad726de349",
-    "src/task-dashboard.css": "1ddf549ceb7f67af70fbb11fcd8af9d865c5960f37a2214fd6e183086cc73b64",
+    "src/task-dashboard.css": "493cc5aaf4e5f1cb5c6a659b624734c7eab951a72749911dacec4a77541ce54a",
     "tests/fixtures/task-workspace.json": "4cbb1c89400f91b4450af154b82c73c700e728f1609f4364f502758a6b8f64d8"
   },
   "hashEncoding": "UTF-8, LF; tag assigns release version; pin candidate commit until release"
