@@ -30,3 +30,14 @@ After:
 ## Limits
 
 Browser evidence does not qualify native macOS rendering, Windows DPI variants or live host effects. README snapshots and their manifest are refreshed separately under § 7 rule 4. No service deployment or capacity change is part of this task. Merge-result CI and reviewer/owner acceptance remain separate under R12 and § 7.
+
+## Candidate checks
+
+- `python3 scripts/check.py --base aa7319c32107e109d9db337c26e93cd4682836f3`: **FAIL**, 529.781 s. Rust unit tests: 524 passed, 19 failed, 36 ignored. Eighteen host-policy/lifecycle/resource/sandbox cases reach worker/operator restrictions (`sandbox-blocked`); the worker environment and restrictions were preserved. `core::tests::every_table_row_has_a_golden_trace` passes, including R8's contract bounds.
+- The nineteenth failure is `runtime::app_control::windows_pipe::tests::native_pipe_bounds_unread_writes_and_empty_reads`: IPC deadline under parallel load. `cargo +stable test --locked --bin taskq runtime::app_control::windows_pipe::tests::native_pipe_bounds_unread_writes_and_empty_reads -- --exact` passes alone (0.20 s). This does not erase the parallel failure or qualify that timing risk.
+- The canonical gate stops at the Rust failure. Its remaining Node/component, artifact-script and changed browser checks were run separately. The source-manifest check first failed on the changed stylesheet; `node tests/task-workspace.test.cjs --write` refreshed that hash, retaining the released-asset protection. Those checks then pass, including all eight wrapping cells.
+- `cargo +stable run --locked -- selftest`: **PASS** with an isolated installation and `TASKQ_SELFTEST_OFFLINE=1`; formats and staged telemetry pass, board read remains unknown by design.
+- `cargo +stable test --locked --test integration`: **PASS**, 17 passed, 1 ignored (16.69 s).
+- `docs/shots/update.sh`: **PASS**, isolated Windows/WebView2 project/icon snapshots from `8bb655ebec1777595383656b444821ed04452c94`; inspect [manifest](../../../shots/manifest.json) for source/blob/binary/image identities. The later source-manifest/report changes leave UI source bytes unchanged.
+
+The local canonical gate is not green. Merge-result CI remains required under R12 and § 7; no restriction was removed to obtain a local pass.
