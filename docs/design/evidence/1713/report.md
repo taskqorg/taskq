@@ -53,3 +53,17 @@ fixture repair is included in this Settings navigation task.
 Native Settings clicks/window raising, macOS rendering and live operation effects
 are not tested. Publication requires green merge-result CI (§ 7, R12); worker
 handoff is not merge, release or deployment acceptance.
+
+The first full local gate failed after 493.297 s: 523 Rust tests passed,
+20 failed, 36 were ignored. The added root-contract sentence exceeded its exact
+60 KiB limit by 66 bytes. It was removed: the existing Product link already binds
+the accepted P-W2 placement, and TW1–TW2 now clarify these routes without growing
+the root contract. The size assertion is unchanged.
+
+Eighteen failures exercise host/operator capabilities refused by the inherited
+worker identity, including `a worker cannot change host policy`, `a worker cannot
+install the host service` and `Windows security restore requires an unrestricted
+operator`. These remain sandbox-blocked; worker restrictions are retained.
+The native named-pipe deadline fixture also failed under the full run. Those
+results cannot establish a green gate or native acceptance; CI must qualify the
+merge result outside this worker context.
