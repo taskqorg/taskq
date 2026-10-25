@@ -915,6 +915,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     }
     if snapshot.is_none(){crate::agentq::start(&install);}
     let agentq_shots=snapshot.is_some() && routes.iter().any(|r|r.starts_with("agentq-"));
+    // P-W4: the View window is its own surface, so its snapshot renders alone at the window's default size
+    let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
+    if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     let mut settings = Settings::load(&install);
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
@@ -1064,7 +1067,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(LogicalSize::new(320.0, 400.0)).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(360.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // a snapshot renders off the visible screen (taskq.md R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots{40.0}else{-20000.0}, if agentq_shots{40.0}else{-20000.0})).with_always_on_top(false).with_focused(false) } else { b };
                 #[cfg(windows)]
@@ -1072,7 +1075,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let p = proxy.clone();
                 let built = b.build(target).map_err(|e| e.to_string()).and_then(|w| {
                     // only our page: a link goes to the browser through the bridge
-                    WebViewBuilder::new().with_transparent(true).with_accept_first_mouse(true).with_html(HTML).with_navigation_handler(own_page)
+                    WebViewBuilder::new().with_transparent(true).with_accept_first_mouse(true).with_html(HTML).with_initialization_script(if views_shots {"window.taskqSurface='views';"} else {""}).with_navigation_handler(own_page)
                         .with_ipc_handler(move |r| {
                             let _ = p.send_event(Ev::Ipc(r.into_body()));
                         })
@@ -1801,7 +1804,13 @@ const ANSWERS: [(&str, &str); 4] = [
     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
 ];
-const ROUTES: [&str; 22] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown"];
+/// The `views` snapshots (P-W4): the View window with a custom saved view whose working conditions add Review, so
+/// Save, Reset and Delete are live and the Review choice is checked; at its top, then scrolled to the States; only when named.
+const VIEWS: [(&str, &str); 2] = [
+    ("top", "taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}]},initial:true})"),
+    ("states", "taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}]},initial:true});setTimeout(()=>document.querySelector('[data-facet=states][data-value=review]').scrollIntoView({block:'center'}),100)"),
+];
+const ROUTES: [&str; 23] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views"];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
@@ -1811,8 +1820,9 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
         for font in [16, 20] { v.extend(SCROLLS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
         for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "attention".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
+        if routes.iter().any(|r|r=="views") { for font in [16, 20] { v.extend(VIEWS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); } }
         for route in &ROUTES[5..] {
-            if route.starts_with("agentq-") && !routes.iter().any(|r|r==route){continue;}
+            if *route=="views" || route.starts_with("agentq-") && !routes.iter().any(|r|r==route){continue;}
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
         }
         v
@@ -1820,11 +1830,12 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
-    if script == RECOVERY { "recovery" } else if script == ACTIONS { "actions" } else if ANSWERS.iter().any(|(_, s)| *s == script) { "answers" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
+    if script == RECOVERY { "recovery" } else if VIEWS.iter().any(|(_, s)| *s == script) { "views" } else if script == ACTIONS { "actions" } else if ANSWERS.iter().any(|(_, s)| *s == script) { "answers" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
 }
 
 fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
     shots(install, routes).get(step).map_or(step.to_string(), |(t, p, f, js)| {
+        if let Some((n, _))=VIEWS.iter().find(|(_, s)| s == js) {return format!("{t}-views-{n}-{f}");}
         let suffix = if js.is_empty() || *js==RECOVERY { String::new() } else { format!("-{}", SCROLLS.iter().chain(&ANSWERS).find(|(_, s)| s == js).map_or("actions", |(n, _)| n)) };
         let scroll = match route_of(p, js) { "scroll" => "-scroll", "answers" => "-answers", _ => "" };
         format!("{t}-{}{scroll}{suffix}-{f}", if Path::new(p).is_absolute() { "project" } else { p })
@@ -2812,9 +2823,10 @@ mod tests {
         assert_eq!(names(&["answers"])[..4], ["dark-attention-answers-toast-16", "dark-attention-answers-expanded-16", "dark-attention-answers-dismissed-16", "dark-attention-answers-expired-16"]);
         assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
+        assert_eq!(names(&["views"]), ["dark-views-top-16", "dark-views-states-16", "dark-views-top-20", "dark-views-states-20", "light-views-top-16", "light-views-states-16", "light-views-top-20", "light-views-states-20"], "P-W4: the View window in both themes and sizes");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")).count() - 5)), "no filter keeps the menu matrix without scroll or answers");
-        assert!(all.iter().all(|name|!name.contains("agentq-")),"invented agentq evidence is opt-in only");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")&&**r!="views").count() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert!(all.iter().all(|name|!name.contains("agentq-")&&!name.contains("-views-")),"invented agentq and View window evidence is opt-in only");
         for route in ROUTES {
             if route.starts_with("agentq-"){assert_eq!(names(&[route]).len(),4,"one state, both themes and sizes");}
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
