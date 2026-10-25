@@ -135,3 +135,25 @@ these native static fixtures do not prove Settings clicks/window lifetime.
 99 golden traces, formats and nine staged capture observations. The board is
 explicitly unknown; the running installation is untouched. Tooling: Node v22.18.0,
 Cargo 1.98.1, warm seeded debug cache; release dependencies built locally.
+
+
+The frozen combined-source gate
+`python3 scripts/check.py --base 084a4526596e5eea439fec2530698df35cfa6ff6`
+fails in 131.320 s (budget 900 s): 537 Rust tests pass, 17 fail, 32 are ignored.
+Failures are host installation, capacity/resource policy, lifecycle and the tray
+capacity/pause fixture. Direct refusals include `a worker cannot change host
+policy`, `a worker cannot install the host service`, `a worker cannot restart the
+host service or request Stop` and `a worker cannot dispatch host Stop`.
+These operator capabilities are sandbox-blocked by the inherited worker identity;
+their secondary expected-receipt/phase assertions also fail and remain unqualified.
+No worker guard, host policy, permission or test expectation was changed. Rust
+integration and the gate's subsequent selftest/Node stages were not reached.
+
+All 25 `tests/*.test.cjs` files pass separately on the same bundled source, as do
+the screenshot fixture, release-tag fixture and exact-source release checks
+(28 commands). The separately run offline release-binary selftest above passes.
+The Settings browser regression is unchanged from the before/after observation;
+its original no-effect-entry and explicit-review fencing protection is retained.
+Publication still requires green merge-result CI (R12, § 7); native Settings
+clicks and live operation effects remain unknown. No merge, release or install
+was performed.
