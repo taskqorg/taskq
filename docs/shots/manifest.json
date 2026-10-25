@@ -1,16 +1,16 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "b3fe514cd07ea6d14142aee5f9f64741d27eeefa",
-  "binarySha256": "f3579ac59511c70798def63682240bfa70a5187aa40b9c65a6af2adad541866a",
+  "sourceCommit": "847b5b0a5276ba8169a6d1f0754d5fae494dc6c3",
+  "binarySha256": "16fe44cb905843c865d7224d55c76e7cf16935d40f4df0789d698ada6a089a39",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "b2d19a6f657a851ca8e8fae630fa9c4ac35f30dc",
+    "src/tray.rs": "2d0f535564ec59bad7d469ce15f5b8ecf9b79480",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "fd17f8c31ce3c6a832805690d68e943cad0b5d3a",
+    "src/tray-app.js": "67841699ec9fd18e6259bcc9542a118f2d6d784d",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "0d38245af5d24e8c4b1839ee98e0538b29c17975",

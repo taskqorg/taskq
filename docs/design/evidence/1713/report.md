@@ -81,3 +81,22 @@ checks pass. An isolated `cargo +stable run --locked -- selftest` passes 99 gold
 traces, format checks and its private staged telemetry capture; board access is
 explicitly unknown in offline mode. The native README snapshot refresh passed on
 Windows WebView2 and pins the changed UI blob without changing operation code.
+
+## Merge-conflict continuation
+
+Attempt `6400263715` rebases the existing implementation onto
+`914d603cee420743f1e8b1d771e9d27d09ecaeb5` after the merge queue removed PR #1717
+with `merge_conflict`. The conflict is in the generated README icon and screenshot
+manifest: main refreshed them for #1711 while this task refreshed them for #1713.
+The Settings implementation and regression check rebase without conflicts.
+
+The rebased Settings browser check passes A1–A4 in both themes at 320 px, with
+and without capacity. Window chrome and the existing Recovery operation browser
+check also pass. These observations retain the original no-effect-on-entry,
+explicit-operation-review, Back-focus and operation-fencing protection.
+
+`sh docs/shots/update.sh` regenerates the conflicting files from combined source
+`847b5b0a5276ba8169a6d1f0754d5fae494dc6c3` in an isolated Windows installation;
+`sh docs/shots/check.sh` passes afterward. The manifest records the Windows
+WebView2 renderer, binary digest and both tasks' current UI source blobs. This
+resolves the generated-file conflict without changing either implementation.
