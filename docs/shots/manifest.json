@@ -1,16 +1,16 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "8bb655ebec1777595383656b444821ed04452c94",
-  "binarySha256": "85368e25545405627e69669e9bea7da021b38fde5ee9cab88a27e1821de43d46",
+  "sourceCommit": "198490af13fbf610a447151397b8b8b4549bd631",
+  "binarySha256": "bd77e2e7070ee38d6241c04a71940b5e0afc0915bc53d4eca2539ee1f9485a74",
   "environment": {
-    "os": "Windows",
-    "arch": "x86_64",
-    "renderer": "WebView2 snapshot"
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "2d0f535564ec59bad7d469ce15f5b8ecf9b79480",
+    "src/tray.rs": "b2d19a6f657a851ca8e8fae630fa9c4ac35f30dc",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "89a7e4495fa6d80dc2b5eaf4d416c67c01a23ef5",
+    "src/tray-app.js": "fd17f8c31ce3c6a832805690d68e943cad0b5d3a",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "0d38245af5d24e8c4b1839ee98e0538b29c17975",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "63d8025b002b581fc322a4410a3970300f854143c4045c32292513a9b2701eb4"
+      "sha256": "2f38ec6e343b594d49856fc3e14efd7e416c488052e35663e1f840dd131c98a3"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "52a12080af0bcf3d874bfd902a493dbe973e845f591e836e7f24350b53f69488"
+      "sha256": "03be6060fad70b44492c1ce93de88fe59d9b547a7996867c10147ed3f89ca03f"
     }
   ]
 }
