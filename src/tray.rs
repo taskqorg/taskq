@@ -1443,8 +1443,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 match m["a"].as_str().unwrap_or("") {
                     "workspace" if snapshot.is_none() => {
                         workspace_open=m["open"].clone();
-                        // #1691: the header icon (it names a section) opens the main workspace, never a detached conversation
-                        if workspace_open["page"]=="conversations" && workspace_open["section"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
+                        // #1699: the header entry (it names a thread) opens the main workspace, never a detached conversation
+                        if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ Workspace").with_decorations(false).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {

@@ -1451,6 +1451,75 @@
       ]
     },
     {
+      "name": "retained correlation conflict names its cause",
+      "board": "github.com/o/r",
+      "capability": {
+        "answer": true
+      },
+      "rows": [
+        {
+          "n": 841,
+          "title": "Keep the old API?",
+          "state": "ask",
+          "url": "https://github.com/o/r/issues/841",
+          "revision": 4,
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "question": {
+            "parsed": true,
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "done": "compared both clients",
+            "problem": "Keep compatibility?",
+            "evidence": [],
+            "choices": [
+              {
+                "id": 1,
+                "text": "Keep compatibility",
+                "recommended": true,
+                "consequential": false
+              },
+              {
+                "id": 2,
+                "text": "Remove the old API",
+                "recommended": false,
+                "consequential": false
+              }
+            ],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          }
+        }
+      ],
+      "events": [
+        {
+          "type": "choose",
+          "id": 2
+        },
+        {
+          "type": "submit"
+        },
+        {
+          "type": "receipt",
+          "state": "failed",
+          "reason": "Correlation id is already pending for a different request"
+        },
+        {
+          "type": "check",
+          "status": "failed",
+          "sent": 1,
+          "has": [
+            "An earlier answer with this operation is still pending with different content",
+            ">Check delivery<"
+          ],
+          "not": [
+            ">Send again<",
+            "Correlation id is already pending"
+          ]
+        }
+      ]
+    },
+    {
       "name": "partial delivery names the choice",
       "board": "github.com/o/r",
       "capability": {
