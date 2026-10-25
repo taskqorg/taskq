@@ -60,7 +60,7 @@ operationInput:function(e){const d=e.target.dataset;if(d.recoveryTask||d.recover
 gutter:function(){if(ports.measureScrollbar)return ports.measureScrollbar();const d=document.createElement('div');d.style.cssText='position:absolute;top:-99px;width:60px;height:60px;overflow:scroll;scrollbar-width:thin';document.body.append(d);const g=d.offsetWidth-d.clientWidth;d.remove();return Math.ceil(g);},
 // #1523: the window's own layout (header, chips, summary, list, footer, any new panel) with the scroll area at full content height.
 natural:function(){const c=menu.querySelector('.content'),b=c&&c.querySelector('.content-body'),all=menu.getBoundingClientRect().height;if(!b)return Math.ceil(all);const cs=getComputedStyle(c),edges=['paddingTop','paddingBottom','borderTopWidth','borderBottomWidth'].reduce((n,k)=>n+(parseFloat(cs[k])||0),0);return Math.ceil(all-c.getBoundingClientRect().height+b.getBoundingClientRect().height+edges);},
-fit:function(){if(ports.workspace||ports.settings)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
+fit:function(){if(ports.workspace||ports.settings||ports.views)return;const size=view.manualSize||view.S.size,fixed=(view.S.size_anchor||(size?'fixed':'top'))==='fixed',w=view.page==='recovery'?Math.min(720,window.screen?.availWidth||720):size?size[0]:view.S.font>=18?360:320;document.body.style.width='100%';menu.style.width=w+'px';send({a:'size',d:window.devicePixelRatio,g:fixed&&size?0:gutter(),w,h:fixed&&size?size[1]:natural()});menu.style.width='100%';},
 actionReceipt:function(r){if(!view.S?.projects.some(p=>p.root===r.root))return;actionErrors.set(r.root,{text:r.text});present();},
 actionNotices:function(){if(!ports.workspace)return view.workspaceError?h('p',{role:'alert'},view.workspaceError):'';const r=view.hostCommand||view.S?.lifecycle;const alert=text=>h('div',{class:'body alert',role:'alert'},text);
   const items=[view.aiError&&alert(view.aiError),view.workspaceError&&alert(view.workspaceError),...view.S.projects.filter(p=>actionErrors.has(p.root)).map(p=>alert(p.name+': '+actionErrors.get(p.root).text)),r?.action==='uninstall'&&h('div',{class:'body meta',role:'status'},'Uninstall '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:''))].filter(Boolean);
@@ -594,6 +594,7 @@ head:function(){
   const crumbs=p?h('a',{href:'#','data-route':'projects'},'Projects'):settingsPages.includes(view.page)&&view.page!=='settings'?h('a',{href:'#','data-route':'settings'},'Settings'):'';
   // R07/A4: a stable action row; Close is always last, Keep open, Always on top and the task pin have distinct names
   if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
+  if(ports.views)return shell.bar({title:'View · '+dashboard.current().name,actions:[],windows:[button('x','Close view window',{'data-a':'hide'})]});
   // R09/MP12, #1691 A2: one Conversations entry opens Conversations at every count, its Inbox section with new events; the count is deduplicated, unknown never reads as zero; opening acknowledges nothing
   const m=view.S.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null;
   const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':'conversations','data-section':count?'inbox':'',title:'Conversations · '+(count===null?'unknown':count+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':count):'');
@@ -602,7 +603,7 @@ head:function(){
   return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
 },
 draw:function(navigating=false){
-  if(!view.S||view.resizing)return;
+  if(!view.S||view.resizing||ports.views&&!view.dashboard)return;
   const firstRender=!view.drawn;
   const active=document.activeElement,scroll=(menu.querySelector('.content')||document.scrollingElement).scrollTop;
   const bounds=new Map([...menu.querySelectorAll('[data-bound]')].map(e=>[e.dataset.bound,e.scrollTop]));
@@ -620,7 +621,8 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
-  const tree=[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
+  // P-W4: the View window is one scroll of compact sections; Display, Save, Reset and Done stay in its footer.
+  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
@@ -638,6 +640,7 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   const bound=[...menu.querySelectorAll('[data-bound]')];
   bound.forEach(c=>{c.scrollTop=bounds.has(c.dataset.bound)?bounds.get(c.dataset.bound):0;wholeLines(c);});
   if(bound.some(c=>c.style.maxHeight))fit();
+  if(ports.views){const text=JSON.stringify(view.dashboard);if(text!==view.sentDashboard){view.sentDashboard=text;send({a:'views-dashboard',dashboard:view.dashboard});}}
   viewState.flush();},
 wholeLines:function(c){
   if(c.scrollHeight<=c.clientHeight)return;
@@ -654,7 +657,10 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}tick();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
-  if(Object.hasOwn(s,'settingsWindow')){if(ports.settings)view.settingsChrome=s.settingsWindow;else view.settingsWindow=s.settingsWindow===true;if(view.S)present();return;}
+  if(Object.hasOwn(s,'settingsWindow')){if(ports.settings)view.settingsChrome=s.settingsWindow;else{view.settingsWindow=s.settingsWindow===true;view.viewsWindow=s.viewsWindow===true;}if(view.S)present();return;}
+  // P-W4: the menu adopts the View window's edits; the View window takes the menu's model when opened or while it is not being used.
+  // ponytail: focus decides the writer, so edits made in both windows within one push can race; add a revision if that matters.
+  if(s.dashboard){if(!ports.views)dashboard.adopt(s.dashboard);else if(s.initial||!document.hasFocus()){view.dashboard=require('./task-views.js').normalize(s.dashboard);view.sentDashboard=JSON.stringify(view.dashboard);present();}return;}
   if(s.settingsOpen){if(ports.settings&&view.S&&s.settingsOpen.page!==view.page)navigate(s.settingsOpen.page);return;}
   if(Object.hasOwn(s,'agentqError')){view.agentqError=s.agentqError;present();return;}
   if(ports.workspace&&s.projects){view.S=s;focusReadback();api.lifecycleReadback();present();return;}
@@ -675,7 +681,7 @@ receive:function(s){
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
-  if(!ports.settings)viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
+  if(!ports.settings&&!ports.views)viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.popup=null;view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;renderer.clear();view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
@@ -844,7 +850,7 @@ const modes=[['off','Off'],['silent','Silent'],['banner','Banner'],['sound','Ban
 
 // a reader's scroll leaves cut lines: once it settles, the block takes its CSS bound again and realigns on whole lines
 
-const dashboard=ports.workspace?null:require('./task-dashboard.js').create(view,{menu,present,send,app:api,window,document});
+const dashboard=ports.workspace?null:require('./task-dashboard.js').create(view,{menu,present,send,app:api,owned:!!ports.views,window,document});
 const startOperations=require('./workspace-answers.js').create(view,{menu,document,send,draw:present,defer,cancel});
 const {answerSend}=startOperations;
 return {...api,resourceSend};
