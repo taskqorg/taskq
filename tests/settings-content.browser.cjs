@@ -64,7 +64,34 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    assert.equal((await text()).split('Host service: running · PID 42').length-1,1,'one host service line');
    await shot('services');
    assert.deepEqual(errors,[]);await p.close();
+   // #1713 A1–A4 / TW1–TW2: Settings keeps its inner routes and Back focus; only an explicit review opens operations.
+   for(const resources of [null,require('./fixtures/resource-controls.json').cases.find(c=>c.name.startsWith('host commands')).groups[0]]){
+    const s=await browser.newPage({viewport:{width:320,height:900}});
+    s.on('pageerror',e=>errors.push(e.message));
+    await s.setContent(html.replace('<head>',"<head><script>window.taskqSurface='settings';</script>"));
+    await s.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
+    const current={...state,theme,projects:[{...alpha,resources}]};
+    await s.evaluate(snapshot=>taskq.receive(snapshot),current);
+    for(const [label,route,operation] of [['Work mode','work',resources?'resources':'admission'],['Recovery','recovery','recovery'],['Agents and access','agents'],['Services and support','services'],['About and updates','about']]){
+     await s.evaluate(()=>{messages.length=0;});
+     await s.locator('.settings-widget').getByText(label,{exact:true}).click();
+     assert.equal(await s.locator('.head h1').innerText(),label,'#1713: inner title equals list label');
+     assert.equal(await s.locator('.breadcrumbs').innerText(),'Settings');
+     assert.equal(await s.locator('[aria-label="Close settings"]').count(),1,'Settings stays open');
+     assert.deepEqual(await s.evaluate(()=>messages.filter(m=>!['web-observation','size','set'].includes(m.a))),[],'#1713 A4: opening sends no operation or workspace handoff');
+     await s.evaluate(snapshot=>taskq.receive(snapshot),current);
+     assert.equal(await s.locator('.head h1').innerText(),label,'refresh retains the inner route');
+     if(operation){
+      await s.locator('[data-a=workspace][data-operation='+operation+']').click();
+      assert.deepEqual(await s.evaluate(()=>messages.filter(m=>m.a==='workspace').map(m=>m.open)),[{page:'operations',operation,root:null,board:null,task:null,revision:null}],'explicit review keeps the existing operation destination');
+     }
+     await s.locator('.head [data-a=back]').click();
+     assert.equal(await s.locator('.head h1').innerText(),'Settings');
+     assert.equal(await s.evaluate(()=>document.activeElement.dataset.route),route,'Back restores the invoking Settings link');
+    }
+    assert.deepEqual(errors,[]);await s.close();
+   }
   }
-  console.log('PASS #1661 Settings widgets, host lines, sign-in, Appearance previews and one host service line, light and dark at 320 px');
+  console.log('PASS #1661 Settings content; #1713 inner routes, matching titles, Back focus and no operation on entry, light/dark at 320 px with/without capacity');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
