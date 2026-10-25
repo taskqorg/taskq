@@ -91,7 +91,7 @@ const USAGE: &str = "taskq agents
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
- taskq tray [--snapshot DIR [--route R,..]] | taskq selftest
+ taskq tray [--open | --snapshot DIR [--route R,..]] | taskq selftest
 Writes to a task take [--op-id ID] [--revision R] [--json] (taskq.md section 5).
 Text templates and limits: taskq.md sections 1, 2, 5, 7.";
 
@@ -110,7 +110,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -1737,7 +1737,8 @@ fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
 }
 
 /// macOS notifications need a bundle identity (§ 4): `<install>/TaskQ.app`, signed as § 8 step 5 (else ad-hoc),
-/// holding the current release. None: the tray runs unbundled and notifications read unsupported.
+/// holding the current release; the default install's bundle is `~/Applications/TaskQ.app`, which Finder, Spotlight
+/// and the Dock open (M15). None: the tray runs unbundled and notifications read unsupported.
 #[cfg(target_os = "macos")]
 fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     const PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -1751,7 +1752,10 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
 <key>LSUIElement</key><true/>
 </dict></plist>
 "#;
-    let app = install.join("TaskQ.app");
+    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|_| install == platform::default_install());
+    let app = home.as_ref().map_or_else(|| install.join("TaskQ.app"), |h| h.join("Applications/TaskQ.app"));
+    // one bundle per identity: the default install's older `<install>/TaskQ.app` would shadow it in LaunchServices
+    if home.is_some() { let _ = fs::remove_dir_all(install.join("TaskQ.app")); }
     let bin = app.join("Contents/MacOS/taskq");
     fs::create_dir_all(bin.parent()?).ok()?;
     fs::write(app.join("Contents/Info.plist"), PLIST).ok()?;
@@ -1770,8 +1774,8 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     signed.then_some(app)
 }
 
-/// The tray `open` started (`keep_tray`): `<install>/TaskQ.app/Contents/MacOS/taskq` with no args runs the tray of
-/// `<install>`, its stderr appended to `<install>/tray.log`.
+/// The tray `open` started (`keep_tray`, Finder, Spotlight, Dock): `TaskQ.app/Contents/MacOS/taskq` with no args runs
+/// the tray of `<install>`, its stderr appended to `<install>/tray.log`.
 #[cfg(target_os = "macos")]
 fn bundled_tray(exe: &Path, install:&Path) -> bool {
     use std::os::fd::AsRawFd;
@@ -2224,16 +2228,16 @@ fn recover_cmd(root: &Path, apply: bool, json: bool) -> Res<()> {
 }
 
 #[cfg(any(target_os = "macos", windows))]
-fn tray(install: PathBuf, snapshot: Option<&str>, routes: &[String], icon: Option<&str>) -> Res<()> {
+fn tray(install: PathBuf, snapshot: Option<&str>, open: bool, routes: &[String], icon: Option<&str>) -> Res<()> {
     if icon.is_some() { return Err("Custom icons were removed; choose Icon or Summary in Tray icon settings".into()); }
     if snapshot.is_none() && !routes.is_empty() {
         return Err("--route needs --snapshot DIR".into());
     }
-    tray::run(install, snapshot.map(PathBuf::from), routes.to_vec())
+    tray::run(install, snapshot.map(PathBuf::from), routes.to_vec(), open)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-fn tray(_install: PathBuf, _snapshot: Option<&str>, _routes: &[String], icon: Option<&str>) -> Res<()> {
+fn tray(_install: PathBuf, _snapshot: Option<&str>, _open: bool, _routes: &[String], icon: Option<&str>) -> Res<()> {
     if icon.is_some() { return Err("Custom icons were removed; choose Icon or Summary in Tray icon settings".into()); }
     Err("taskq tray: macOS and Windows only".into())
 }
@@ -2503,7 +2507,7 @@ fn run(argv: &[String]) -> Res<()> {
             println!("retro: request {} pending; the host service opens a new session in {}", r.id, cfg.root.display());
             Ok(())
         }
-        "tray" => tray(platform::default_install(), a.one("snapshot"), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
+        "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
         _ => command(&ctx()?, cmd, &a),
     }
@@ -2915,7 +2919,7 @@ fn application() {
     #[cfg(target_os = "macos")]
     if args.is_empty()&&exe.as_deref().is_some_and(|exe|bundled_tray(exe,&install)) {
         profile::init(&install);
-        if let Err(e) = tray(install, None, &[], None) {
+        if let Err(e) = tray(install, None, false, &[], None) {
             platform::die(&e);
         }
         return;
@@ -3014,7 +3018,7 @@ mod tests {
 
     #[test]
     fn removed_custom_icon_flag_refuses_before_reading_file_or_opening_tray() {
-        let error=tray(PathBuf::from("invented-unused-install"),None,&[],Some("invented-missing-icon.json")).unwrap_err();
+        let error=tray(PathBuf::from("invented-unused-install"),None,false,&[],Some("invented-missing-icon.json")).unwrap_err();
         assert!(error.contains("Custom icons were removed"),"{error}");
     }
 

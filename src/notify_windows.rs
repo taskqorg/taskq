@@ -38,7 +38,7 @@ fn shortcut(path: &std::path::Path, exe: &std::path::Path) -> Result<()> {
             }
         }
         link.SetPath(&HSTRING::from(exe.as_os_str()))?;
-        link.SetArguments(w!("tray"))?;
+        link.SetArguments(w!("tray --open"))?;
         link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
         props.SetValue(&key, &PROPVARIANT::from(APP))?;
         props.SetValue(&activator, &InitPropVariantFromCLSID(&ACTIVATOR)?)?;

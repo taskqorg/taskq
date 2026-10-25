@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 use tao::dpi::{LogicalSize, PhysicalPosition, PhysicalSize};
 use tao::event::{Event, StartCause, WindowEvent};
+use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::window::{Window, WindowBuilder};
-use tray_icon::{Icon, MouseButtonState, Rect, TrayIcon, TrayIconBuilder, TrayIconEvent};
+use tray_icon::{Icon, MouseButton, MouseButtonState, Rect, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use wry::{WebView, WebViewBuilder};
 
 use crate::icon::{self, Rgba, compact};
@@ -32,8 +33,34 @@ fn alone(install: &Path) -> bool {
     !(other && crate::file_age(&hb).is_some_and(|a| a < 10))
 }
 
+/// M15: one TaskQ app per host across install folders: the tray holds this OS temp lock for its life.
+fn host_lock() -> Option<fs::File> {
+    let f = fs::OpenOptions::new().create(true).truncate(false).write(true).open(std::env::temp_dir().join("taskq-tray.lock")).ok()?;
+    f.try_lock().ok().map(|_| f)
+}
+/// M15: a second Open asks the running tray to show its window; its next tick takes the request.
+fn raise_request() -> PathBuf { std::env::temp_dir().join("taskq-tray.raise") }
+
+/// M15 Quit names the active work it waits for (doing and review tasks); menu labels stay within 32 characters.
+fn quit_label(st: &Value, quitting: bool) -> String {
+    let work: Vec<String> = st["projects"].as_array().into_iter().flatten().flat_map(|p| p["tasks"].as_array().into_iter().flatten())
+        .filter(|t| matches!(t["state"].as_str(), Some("doing" | "review"))).map(|t| format!("#{}", t["n"])).collect();
+    if work.is_empty() { return (if quitting { "Quitting: stopping service" } else { "No active work" }).into(); }
+    let mut s = String::from(if quitting { "Quitting after" } else { "Quit waits for" });
+    for (i, w) in work.iter().enumerate() {
+        if s.len() + w.len() + 1 > 26 { s += &format!(" +{}", work.len() - i); break; }
+        s += " "; s += w;
+    }
+    s
+}
+
 enum Ev {
     Tick,
+    /// M15: Quit TaskQ from the tray menu or Cmd+Q; a refused Quit returns its reason.
+    Quit,
+    QuitFailed(String),
+    /// M15: a second Open shows the running tray's window.
+    Raise,
     Ipc(String),
     Workspace(String, String),
     /// R22: IPC from the one Settings window (the tray page as its `settings` surface).
@@ -866,9 +893,19 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
     }
 }
 
-pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> Result<(), String> {
-    if snapshot.is_none() && !alone(&install) {
+pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, raise: bool) -> Result<(), String> {
+    let lock = if snapshot.is_none() { host_lock() } else { None };
+    if snapshot.is_none() && (lock.is_none() || !alone(&install)) {
+        if raise { let _ = fs::write(raise_request(), ""); return Ok(()); }
         return Err("taskq tray already runs on this host".into());
+    }
+    if snapshot.is_none() {
+        let install = install.clone();
+        std::thread::spawn(move || match crate::lifecycle::open(&install, |root| crate::host::install_project(&install, root)) {
+            Ok(Some(receipt)) => eprintln!("taskq tray: Open started the service: {receipt}"),
+            Ok(None) => {}
+            Err(e) => eprintln!("taskq tray: Open left the service stopped: {e}"),
+        });
     }
     if let Some(r) = routes.iter().find(|r| r.as_str() != "icon" && !ROUTES.contains(&r.as_str())) {
         return Err(format!("unknown route {r}; known: icon, {}", ROUTES.join(", ")));
@@ -886,31 +923,25 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
         // a snapshot never takes the owner's focus (taskq.md R12)
         event_loop.set_activate_ignoring_other_apps(snapshot.is_none());
         if snapshot.is_none() {
-            use objc2::{MainThreadOnly,sel};
-            use objc2_foundation::{MainThreadMarker,NSString};
-            use objc2_app_kit::{NSApplication,NSMenu,NSEventModifierFlags as Mod};
-            let mtm=MainThreadMarker::new().ok_or("tray text editing requires the main thread")?;
-            let app=NSApplication::sharedApplication(mtm);
-            let menu=app.mainMenu().unwrap_or_else(||NSMenu::new(mtm));
-            let edit=NSMenu::initWithTitle(NSMenu::alloc(mtm),&NSString::from_str("Edit"));
-            for (title,action,key,shift) in [
-                ("Undo",sel!(undo:),"z",false),("Redo",sel!(redo:),"z",true),
-                ("Cut",sel!(cut:),"x",false),("Copy",sel!(copy:),"c",false),
-                ("Paste",sel!(paste:),"v",false),("Select All",sel!(selectAll:),"a",false),
-            ] {
-                let item=unsafe {edit.addItemWithTitle_action_keyEquivalent(&NSString::from_str(title),Some(action),&NSString::from_str(key))};
-                item.setKeyEquivalentModifierMask(Mod::Command|if shift {Mod::Shift}else{Mod::empty()});
-            }
-            let item=unsafe {menu.addItemWithTitle_action_keyEquivalent(&NSString::from_str("Edit"),None,&NSString::from_str(""))};
-            item.setSubmenu(Some(&edit));app.setMainMenu(Some(&menu));
+            use tray_icon::menu::{Submenu, accelerator::Accelerator};
+            let quit = MenuItem::with_id("quit", "Quit TaskQ", true, "CmdOrCtrl+Q".parse::<Accelerator>().ok());
+            let app = Submenu::with_items("TaskQ", true, &[&quit]).map_err(|e| e.to_string())?;
+            let edit = Submenu::with_items("Edit", true, &[&PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None), &PredefinedMenuItem::separator(),
+                &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None), &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None)]).map_err(|e| e.to_string())?;
+            let menu = Menu::with_items(&[&app, &edit]).map_err(|e| e.to_string())?;
+            menu.init_for_nsapp();
+            // ponytail: the app menu lives as long as the process
+            std::mem::forget(menu);
         }
     }
     let proxy = event_loop.create_proxy();
     TrayIconEvent::set_event_handler(Some(move |e: TrayIconEvent| {
-        if let TrayIconEvent::Click { rect, button_state: MouseButtonState::Up, .. } = e {
+        if let TrayIconEvent::Click { rect, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
             let _ = proxy.send_event(Ev::Click(rect));
         }
     }));
+    let proxy = event_loop.create_proxy();
+    MenuEvent::set_event_handler(Some(move |e: MenuEvent| if e.id.0 == "quit" { let _ = proxy.send_event(Ev::Quit); }));
     let proxy = event_loop.create_proxy();
     std::thread::spawn(move || {
         while proxy.send_event(Ev::Tick).is_ok() {
@@ -971,7 +1002,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
     let mut bursts = notify::Bursts::new();
     let mut shot_wait=None;
     let mut web=WebCalls::new();
+    let (work_item, mut quitting) = (MenuItem::new("No active work", false, None), false);
     event_loop.run(move |event, target, flow| {
+        let _ = &lock;
         crate::telemetry::diagnostic::poll(&install);
         *flow = ControlFlow::Wait;
         let native=match &event {
@@ -1050,7 +1083,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     return;
                 }
                 // macOS needs a running event loop before the icon exists
-                match TrayIconBuilder::new().with_icon(rgba_icon(&compact(false, dark, 2.0))).with_tooltip("taskq").build() {
+                // M15: Quit TaskQ in the tray menu (right click), naming the work it waits for
+                let menu = Menu::with_items(&[&work_item, &PredefinedMenuItem::separator(), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
+                match TrayIconBuilder::new().with_icon(rgba_icon(&compact(false, dark, 2.0))).with_tooltip("taskq").with_menu_on_left_click(false)
+                    .with_menu(Box::new(menu.unwrap_or_default())).build() {
                     Ok(t) => tray = Some(t),
                     Err(e) => {
                         eprintln!("taskq tray: {e}");
@@ -1107,10 +1143,18 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 // #1297: the 2 s refresh folds steady successful work into 15-minute aggregates.
                 let _repeating = tracing::info_span!("tray.refresh", coreq_repeating = true).entered();
                 // another version became current: exit, a service starts the current one (§ 4)
-                if !alone(&install) || crate::platform::tool(&install).current().is_some_and(|v| v != crate::platform::VERSION) {
+                // a removed install (a test's temp folder) has no current version: its tray exits too (M15)
+                if !alone(&install) || crate::platform::tool(&install).current().as_deref() != Some(crate::platform::VERSION) {
                     *flow = ControlFlow::Exit;
                     return;
                 }
+                // M15: Quit ends the tray once the service has stopped; no heartbeat stays behind
+                if quitting && crate::host::service_status(&install)["state"] != "running" {
+                    let _ = fs::remove_file(install.join("tray"));
+                    *flow = ControlFlow::Exit;
+                    return;
+                }
+                if fs::remove_file(raise_request()).is_ok() { let _ = proxy.send_event(Ev::Raise); }
                 let _ = fs::write(install.join("tray"), std::process::id().to_string());
                 // a drag sends many moves: save the last one per tick
                 if std::mem::take(&mut moved) {
@@ -1119,6 +1163,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                 let st = state(&install, &settings, dark, None, &adding);
                 if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));}
                 notes(&install, &mut settings, &st, &mut asked, &mut bursts);
+                work_item.set_text(quit_label(&st, quitting));
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
@@ -1132,6 +1177,26 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>) -> 
                     shown = sig;
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
                 }
+            }
+            Event::UserEvent(Ev::Quit) if snapshot.is_none() && !quitting => {
+                quitting = true;
+                let (install, p) = (install.clone(), proxy.clone());
+                std::thread::spawn(move || if let Err(e) = crate::lifecycle::quit(&install) {
+                    eprintln!("taskq tray: Quit refused: {e}");
+                    let _ = p.send_event(Ev::QuitFailed(e));
+                });
+            }
+            Event::UserEvent(Ev::QuitFailed(e)) => {
+                quitting = false;
+                work_item.set_text("Quit refused; see tray.log");
+                if let Some(t) = &tray { let _ = t.set_tooltip(Some(format!("TaskQ: Quit refused: {e}").chars().take(160).collect::<String>())); }
+            }
+            Event::UserEvent(Ev::Raise) | Event::Reopen { .. } if snapshot.is_none() => {
+                let Some((w, _)) = &ui else { return };
+                if !settings.pin.pinned && let Some(r) = tray.as_ref().and_then(TrayIcon::rect) { settings.pin.attached_edge = place(w, r, &mut settings.pin).into(); }
+                w.set_visible(true);
+                w.set_focus();
+                shown_at = Instant::now();
             }
             Event::UserEvent(Ev::Click(rect)) => {
                 workspace_handoff=false;
@@ -2359,6 +2424,22 @@ fn own_page(u: String) -> bool { !u.starts_with("http") }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // M15: Quit names the doing and review work it waits for within the 32-character menu label; a second tray on
+    // the host never takes the lock. Risk: Quit hides active work, or two trays run across install folders.
+    #[test]
+    fn quit_names_active_work_and_host_lock_is_single() {
+        let st = |ns: &[(u64, &str)]| json!({"projects": [{"tasks": ns.iter().map(|(n, s)| json!({"n": n, "state": s})).collect::<Vec<_>>()}]});
+        assert_eq!(quit_label(&st(&[]), false), "No active work");
+        assert_eq!(quit_label(&st(&[(12, "doing"), (13, "ready"), (14, "review")]), false), "Quit waits for #12 #14");
+        let many = quit_label(&st(&[(1001, "doing"), (1002, "doing"), (1003, "review"), (1004, "doing")]), true);
+        assert_eq!(many, "Quitting after #1001 #1002 +2");
+        assert!(many.len() <= 32);
+        if let Some(held) = host_lock() {
+            assert!(host_lock().is_none(), "a second tray on this host is refused");
+            drop(held);
+        }
+    }
 
     // A1/C1: `|_|false` blocked the inline page itself and left the window blank.
     // #1391 A2/A4: every icon style keeps all original counters/warnings; the absence mark clears independently.
