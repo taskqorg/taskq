@@ -4,7 +4,8 @@ const views=require('./task-views.js'),blocks=require('./project-blocks.js'),pop
 // MP14: closure outcome labels; only a success with a sourced merge receipt reads Merged (git-merge, Review purple).
 const outcomes={success:['circle-check','','Completed'],not_planned:['circle-slash','','Not planned'],unknown:['circle-question-mark','','Outcome unknown']};
 module.exports=execution.module('taskDashboard',{
- create:function(view,{menu,present,send,app,window=globalThis,document=window.document}){
+ // P-W4: `owned` is the View window surface; the menu sends `views-open` when native offers that window, else keeps the overlay.
+ create:function(view,{menu,present,send,app,owned=false,window=globalThis,document=window.document}){
   const crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;let restore=true,requests=0;
   const api=execution.module('taskDashboard.instance',{
    model:function(){return view.dashboard||(view.dashboard=views.normalize(null,{taskFilter:view.taskFilter}));},
@@ -58,17 +59,20 @@ module.exports=execution.module('taskDashboard',{
      loading?h('p',{class:'meta',role:'status'},'Reading board history…'):!shown.length&&h('div',{class:'body meta'},entries.length?'No completed tasks match':'No projects selected'),
      more.length>0&&h('button',{class:'completed-more','data-a':'completed-more'},'Load more'));
    },
-   editor:function(){const c=api.criteria(),v=api.current(),done=v.id==='completed';return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,'View'),button('x','Close view editor',{'data-a':'popup-close'})),
+   conditions:function(){const c=api.criteria(),done=api.current().id==='completed';return h(Fragment,null,
     h('fieldset',null,h('legend',null,'Projects'),h('div',{class:'facet-list'},h('button',{'data-a':'view-facet','data-facet':'projects','data-value':'','aria-pressed':String(!c.projects.length)},'All projects'),api.unique(view.S.projects).map(p=>h('button',{'data-a':'view-facet','data-facet':'projects','data-value':views.identity(p),disabled:!views.identity(p),'aria-pressed':String(c.projects.includes(views.identity(p)))},icon('folder'),p.name)))),
     done?h(Fragment,null,h('fieldset',null,h('legend',null,'Period'),h('div',{class:'options'},[['7d','7 days'],['30d','30 days'],['all','All time']].map(([value,label])=>h('button',{'data-a':'view-period','data-value':value,'aria-pressed':String(c.period===value)},label)))),
      h('fieldset',null,h('legend',null,'Outcome'),h('div',{class:'facet-list'},h('button',{'data-a':'view-facet','data-facet':'outcomes','data-value':'','aria-pressed':String(!c.outcomes.length)},'All outcomes'),Object.entries(outcomes).map(([id,[mark,,label]])=>h('button',{'data-a':'view-facet','data-facet':'outcomes','data-value':id,'aria-pressed':String(c.outcomes.includes(id))},icon(mark),label))))):
-    h(Fragment,null,h('fieldset',null,h('legend',null,'States'),h('div',{class:'facet-list'},h('button',{'data-a':'all-tasks','aria-pressed':String(!c.states.length)},'All states'),view.S.display.states.map(({id:s,name:n})=>h('button',{'data-a':'view-facet','data-facet':'states','data-value':s,'aria-pressed':String(c.states.includes(s))},icon(blocks.marks[s][0]),n)))),
-     h('fieldset',null,h('legend',null,'Display'),h('div',{class:'options'},[['combined','All together'],['project','By project']].map(([value,label])=>h('button',{'data-a':'view-group','data-value':value,'aria-pressed':String(c.group===value)},label)))),
+    // #1700 A4: each state choice keeps its token tone (Review purple), as on the task rows.
+    h('fieldset',null,h('legend',null,'States'),h('div',{class:'facet-list'},h('button',{'data-a':'all-tasks','aria-pressed':String(!c.states.length)},'All states'),view.S.display.states.map(({id:s,name:n})=>h('button',{'data-a':'view-facet','data-facet':'states','data-value':s,'aria-pressed':String(c.states.includes(s))},h('span',{class:blocks.marks[s][1]||null},icon(blocks.marks[s][0])),n)))));
+   },
+   actions:function(){const c=api.criteria(),v=api.current();return h(Fragment,null,v.id!=='completed'&&h(Fragment,null,h('fieldset',null,h('legend',null,'Display'),h('div',{class:'options'},[['combined','All together'],['project','By project']].map(([value,label])=>h('button',{'data-a':'view-group','data-value':value,'aria-pressed':String(c.group===value)},label)))),
      h('p',{class:'meta'},'State order · priority · issue number · repository')),
     h('div',{class:'options'},h('button',{'data-a':'view-save',disabled:!views.dirty(v)},icon('save'),'Save'),h('button',{'data-a':'view-reset'},icon('rotate-ccw'),'Reset'),h('button',{'data-a':'popup-close'},'Done')));
    },
+   editor:function(){return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,'View'),button('x','Close view editor',{'data-a':'popup-close'})),api.conditions(),api.actions());},
    // P-V1: Delete beside each custom view; the shortcut pin stays a separate control; one persisted Undo receipt.
-   presets:function(){const m=api.model(),v=api.current();return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,'Saved views'),button('x','Close saved views',{'data-a':'popup-close'})),
+   presets:function(){const m=api.model(),v=api.current();return h(owned?'fieldset':Fragment,null,owned?h('legend',null,'Saved views'):h('div',{class:'popover-heading'},h('strong',null,'Saved views'),button('x','Close saved views',{'data-a':'popup-close'})),
     m.views.map(v=>h('div',{class:'saved-view',key:v.id},h('button',{'data-a':'view-select','data-id':v.id,'aria-pressed':String(v.id===m.selected)},v.name,views.dirty(v)?' *':''),button(v.pinned?'pin':'pin-off',(v.pinned?'Remove shortcut for ':'Add shortcut for ')+v.name,{'data-a':'view-pin','data-id':v.id,'aria-pressed':String(v.pinned)}),!views.builtin(v.id)&&button('trash-2','Delete view '+v.name,{'data-a':'view-delete','data-id':v.id}))),
     m.undo&&h('div',{class:'view-receipt',role:'status'},'Deleted ',h('strong',null,m.undo.view.name),button('undo-2','Undo deleting '+m.undo.view.name,{'data-a':'view-undo'})),
     h('label',null,'New view',h('input',{'data-view-name':'',value:v.draft,maxLength:80,placeholder:'View name'})),h('button',{'data-a':'view-add',disabled:!v.draft.trim()||m.views.length>=64},icon('plus'),'Save as new view'),view.viewError&&h('p',{role:'alert'},view.viewError));},
@@ -76,7 +80,7 @@ module.exports=execution.module('taskDashboard',{
    detail:function(){const t=api.live().find(t=>t.key===view.popup.key);if(!t)return h(Fragment,null,h('p',{role:'status'},'Task no longer available; no action submitted.'),h('button',{'data-a':'popup-close'},'Close'));
     const p=view.S.projects.find(p=>p.root===t.root),pinned=views.pinned(api.model(),api.ref(t));
     return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,p.name+' #'+t.n),button(pinned?'pin-off':'pin',pinned?'Unpin task':'Pin task',{'data-a':'task-pin','aria-pressed':String(pinned)}),button('x','Close task details',{'data-a':'popup-close'})),h('a',{class:'detail-title',href:t.url,'data-url':t.url},t.title),
-     h('div',{class:'body meta'},(t.state_name||t.state)+' · '+(t.age??'elapsed unknown')),t.wait&&h('p',{role:'status'},t.wait),t.failed&&h('p',{class:'alert'},t.failed),api.question(t),
+     h('div',{class:'body meta'},h('span',{class:blocks.marks[t.state]?.[1]||null},t.state_name||t.state),' · '+(t.age??'elapsed unknown')),t.wait&&h('p',{role:'status'},t.wait),t.failed&&h('p',{class:'alert'},t.failed),api.question(t),
      (t.blocked||[]).map(b=>h('p',null,h('a',{href:b.url,'data-url':b.url},b.ref),' · '+b.reason)),
      h('div',{class:'row-actions'},app.answerSlot(t),t.state==='held'&&app.startButton([t]),h('span',{dangerouslySetInnerHTML:{__html:require('./task-controls.js').render(t,{key:t.key,url:t.url,except:['start']})}})),
      h('details',{class:'task-more','data-view-key':'more:'+t.key},h('summary',null,'Details'),h('dl',null,h('dt',null,'Runtime'),h('dd',null,t.runtime||'unknown'),h('dt',null,'Host'),h('dd',null,t.host||'unknown'),h('dt',null,'Session'),h('dd',null,t.session_url?h('a',{href:t.session_url,'data-url':t.session_url},icon('terminal'),'Open '+(t.runtime||'agent')+' session'):h('button',{disabled:true,title:t.session_reason||'Session unavailable'},t.session_reason||'Session unavailable')),
@@ -84,6 +88,8 @@ module.exports=execution.module('taskDashboard',{
       Array.isArray(t.steps)&&t.steps.length?h('ol',{class:'task-steps'},t.steps.map(s=>h('li',null,s.state,' · ',s.age??'duration unknown',s.complete?'':' · current'))):h('p',{class:'meta'},'Ordered stage history unavailable in this snapshot.')),
      app.answerNotices(p.issues));
    },
+   // P-W4: the menu takes the View window's model whole; a switched view restores its own scroll and open task.
+   adopt:function(value){const prior=view.dashboard?.selected;view.dashboard=views.normalize(value);if(prior!==view.dashboard.selected){view.restoreScroll=api.current().scroll;restore=true;}present();},
    popup:function(){const p=view.popup;if(!p)return null;return popover.render({label:p.kind==='task'?'Task details':p.kind==='editor'?'View editor':'Saved views',children:p.kind==='task'?api.detail():p.kind==='editor'?api.editor():api.presets()});},
    place:function(){
     // A3: the view's open task returns on view switch and restart, never on a data refresh.
@@ -91,15 +97,16 @@ module.exports=execution.module('taskDashboard',{
     if(view.popup){const selector=view.popup.kind==='task'?'[data-a="task-detail"][data-key="'+CSS.escape(view.popup.key)+'"]':'[data-a="'+(view.popup.kind==='views'?'view-list':'view-editor')+'"]',trigger=menu.querySelector(selector);if(trigger)view.popup.anchor=api.anchor(trigger);}for(const b of menu.querySelectorAll('[data-a="task-detail"]'))b.setAttribute('aria-expanded',String(view.popup?.kind==='task'&&view.popup.key===b.dataset.key));if(view.popup)popover.place(menu.querySelector('#taskq-popover'),view.popup.anchor);},
    click:function(e){const b=e.target.closest('button');if(!b||b.disabled)return false;const d=b.dataset,m=api.model();
     if(d.a==='task-detail'){if(view.popup?.kind==='task'&&view.popup.key===d.key)api.close();else api.open('task',b,d.key,true);return true;}
+    if((d.a==='view-editor'||d.a==='view-list')&&view.viewsWindow){send({a:'views-open'});return true;}
     if(d.a==='view-editor'||d.a==='view-list'){if(view.popup?.kind===(d.a==='view-editor'?'editor':'views'))api.close();else api.open(d.a==='view-editor'?'editor':'views',b);return true;}
-    if(d.a==='popup-close'){api.close();return true;}
+    if(d.a==='popup-close'){if(owned)send({a:'hide'});else api.close();return true;}
     // P-W1: pinning or unpinning closes the details; the pin is a global reference, not a detail latch.
     if(d.a==='task-pin'){const t=api.live().find(t=>t.key===view.popup?.key);if(t)views.toggle(m,{ref:api.ref(t),title:t.title,url:t.url});api.close();return true;}
     if(d.a==='task-unpin'){views.toggle(m,{ref:d.ref});present();return true;}
-    if(d.a==='view-select'){api.current().scroll=menu.querySelector('.content')?.scrollTop||0;m.selected=d.id;view.popup=null;view.restoreScroll=api.current().scroll;restore=true;present();menu.querySelector('[data-a="view-list"]')?.focus();return true;}
+    if(d.a==='view-select'){if(!owned)api.current().scroll=menu.querySelector('.content')?.scrollTop||0;m.selected=d.id;view.popup=null;view.restoreScroll=api.current().scroll;restore=true;present();menu.querySelector('[data-a="view-list"]')?.focus();return true;}
     if(d.a==='view-pin'){const v=m.views.find(v=>v.id===d.id);if(v)v.pinned=!v.pinned;present();return true;}
-    if(d.a==='view-delete'){if(views.remove(m,d.id)){if(m.selected==='all')view.restoreScroll=api.current().scroll;present();menu.querySelector('#taskq-popover [data-a="view-undo"]')?.focus();}return true;}
-    if(d.a==='view-undo'){views.undo(m);present();menu.querySelector('#taskq-popover [data-a="view-select"][aria-pressed="true"]')?.focus();return true;}
+    if(d.a==='view-delete'){if(views.remove(m,d.id)){if(m.selected==='all')view.restoreScroll=api.current().scroll;present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-undo"]')?.focus();}return true;}
+    if(d.a==='view-undo'){views.undo(m);present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-select"][aria-pressed="true"]')?.focus();return true;}
     if(d.a==='view-add'){if(views.add(m,api.current().draft,'view-'+Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''))){view.popup=null;present();}return true;}
     if(d.a==='view-facet'){const value=d.value,key=d.facet,current=api.criteria()[key];if(!['states','projects','outcomes'].includes(key))return true;api.set({[key]:!value?[]:current.includes(value)?current.filter(x=>x!==value):[...current,value]});return true;}
     if(d.a==='view-group'){api.set({group:d.value});return true;}

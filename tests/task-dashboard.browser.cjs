@@ -97,6 +97,32 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    else {assert.equal((await p.locator('.filter-header').innerText()).includes('?'),true,'partial never zero');}
    observations.push({theme,font,variant,...geometry});await p.close();
   }
+  // #1700 A2–A5 (P-W4): with native windows the menu opens the one View window; that window edits the menu's model.
+  const eight=Array.from({length:8},(_,i)=>({...alpha,root:'/fixture/p'+i,name:'Project '+i,issues:'https://example.org/org/p'+i+'/issues',tasks:i?[]:[task(1,'review',{rank:0})]})),wide={...state,projects:eight,palette:'--review:#BCA3EB'};
+  p=await open(wide);await p.evaluate(()=>taskq.receive({settingsWindow:true,viewsWindow:true}));
+  for(const a of ['view-editor','view-list']){await p.locator('[data-a='+a+']').click();assert.equal(await editor().count(),0,'no overlay with a View window');}
+  assert.equal(await p.evaluate(()=>messages.filter(m=>m.a==='views-open').length),2,'both view controls open the View window');
+  await p.locator('[data-a=task-detail]').first().click();assert.equal(await editor().locator('.body.meta .review').evaluate(e=>getComputedStyle(e).color),'rgb(188, 163, 235)','A4: detail state line Review token');await p.keyboard.press('Escape');
+  await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard));
+  const model=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard).at(-1).navigation.dashboard);
+  const w=await browser.newPage({viewport:{width:360,height:600}});w.on('pageerror',e=>{throw e;});await w.setContent(html.replace('<head>','<head><script>window.taskqSurface=\'views\';</script>'));
+  await w.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await w.evaluate(s=>taskq.receive(s),wide);
+  assert.equal(await w.locator('[data-a=view-facet]').count(),0,'nothing drawn or sent before the menu model arrives');
+  await w.evaluate(d=>taskq.receive({dashboard:d,initial:true}),model);
+  assert.deepEqual(await w.locator('legend').allInnerTexts(),['Saved views','Projects','States','Display'],'compact sections in one fixed order');
+  assert.equal(await w.locator('[data-facet=states][data-value=review] .review').evaluate(e=>getComputedStyle(e).color),'rgb(188, 163, 235)','A4: Review choice uses the Review token');
+  if(out){fs.mkdirSync(out,{recursive:true});await w.screenshot({path:out+'/dark-view-window.png'});}
+  const reach=await w.evaluate(()=>[...document.querySelectorAll('[data-a=hide],[data-a=view-group],[data-a=view-save],[data-a=view-reset],[data-a=popup-close]')].map(e=>{const r=e.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&!e.closest('.content');}));
+  assert(reach.length===6&&reach.every(Boolean),'Close, Display, Save, Reset and Done reachable without scrolling '+reach);
+  assert.equal(await w.evaluate(()=>[...document.querySelectorAll('*')].filter(e=>e.scrollHeight>e.clientHeight+1&&/auto|scroll/.test(getComputedStyle(e).overflowY)).length),1,'one content scroll');
+  assert.equal(await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').length),0,'opening sends nothing back');
+  await w.locator('[data-facet=states][data-value=review]').click();
+  const edited=await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard);assert.deepEqual(edited.views.find(v=>v.id===edited.selected).working.states,['review'],'A3: a working change applies at once');
+  assert.equal(await w.evaluate(()=>messages.some(m=>m.a==='set')),false,'the View window never writes tray.json itself');
+  await w.locator('[data-a=view-save]').click();await w.locator('[data-a=view-reset]').click();assert.equal(await w.locator('[data-a=view-delete]').count(),0,'built-in views stay protected');
+  await w.locator('[data-a=popup-close]').click();assert(await w.evaluate(()=>messages.some(m=>m.a==='hide')),'Done hides the View window');await w.close();
+  await p.evaluate(d=>taskq.receive({dashboard:d}),edited);assert.equal(await list().count(),1,'menu adopts the View window edit');
+  await p.waitForFunction(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard?.views?.[0]?.working?.states?.[0]==='review').length>0);await p.close();
   const preview='data:image/png;base64,'+fs.readFileSync('docs/shots/icon-summary-run-dark.png').toString('base64');
   for(const font of [16,20,40]){p=await open({...state,font,icons:{icon:preview,full:'<svg xmlns="http://www.w3.org/2000/svg" width="68" height="22"></svg>'}},{width:320,height:700});await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();assert.equal(await p.locator('.views button').count(),2,'#1611 removed Custom icons');assert.deepEqual(await p.locator('.views button').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.textContent)),[],'actual-size previews keep complete labels at '+font+'px');await p.close();}
   p=await open();await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();
