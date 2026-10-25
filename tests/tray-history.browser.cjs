@@ -44,6 +44,11 @@ const base={display:require('./fixtures/display-model.json').display,page:'caden
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     if(process.env.TASKQ_HISTORY_SHOTS&&dpr===2&&!name.startsWith('synthetic-')){fs.mkdirSync(process.env.TASKQ_HISTORY_SHOTS,{recursive:true});await page.screenshot({path:path.join(process.env.TASKQ_HISTORY_SHOTS,name+'-'+theme+'.png')});}
    }
+   // #1712 A3: Source names each project read and why a missing one is unknown
+   const H=JSON.parse(fs.readFileSync(path.join(fixtures,'hour-dark.json')));
+   await page.evaluate(s=>taskq.receive(s),{...base,theme:'dark',palette:H.palette,now:H.captured,history:H,icons:{full:H.svg,icon:H.compact},projects:[{...base.projects[0],since:H.bins[0].start},{root:'csgo',name:'csgo',tasks:[],focus:[],labels:[],alive:true,since:null,events_error:'no events file'}]});
+   const sources=await page.locator('.history-sources').textContent();
+   assert(sources.includes('TaskQ frozen capture events since ')&&sources.includes('csgo unknown: no events file'),sources);
    assert.deepEqual(errors,[]);await page.close();
   }
  }finally{await browser.close();}
