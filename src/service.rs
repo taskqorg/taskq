@@ -238,18 +238,25 @@ fn clone_dir(_: &std::path::Path, _: &std::path::Path) -> Result<(), String> {
     Err("no copy-on-write clone on this OS".into())
 }
 
+/// Seconds after an issue's `updated` before its comment list counts as settled: a list read sooner may lag the write
+/// that set `updated`, so the next pass reads it again instead of reusing it for the unchanged `updated` (#1718).
+const SETTLE: i64 = 30;
+
+/// Comments per task: the `updated` they were read for, the board time of that read, the list.
+pub type CommentCache = HashMap<u64, (i64, i64, Vec<Comment>)>;
+
 /// Fold every open task (heartbeat issues and untrusted authors excluded).
-pub fn views(board: &dyn Board, cache: &mut HashMap<u64, (i64, Vec<Comment>)>, deps: &mut DepCache) -> Result<(Vec<View>, Vec<Issue>), String> {
+pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache) -> Result<(Vec<View>, Vec<Issue>), String> {
     let issues = board.issues(None)?;
     let open: HashSet<u64> = issues.iter().map(|i| i.number).collect();
     let (hosts, tasks): (Vec<Issue>, Vec<Issue>) = issues.into_iter().filter(|i| i.trusted).partition(is_host);
     let mut out = vec![];
     for issue in tasks.into_iter().filter(|i| is_task(i) || is_held(i)) {
-        let comments = match cache.get(&issue.number) {
-            Some((u, c)) if *u == issue.updated => c.clone(),
-            _ => board.comments(issue.number)?,
+        let (read, comments) = match cache.get(&issue.number) {
+            Some((u, at, c)) if *u == issue.updated && *at >= issue.updated + SETTLE => (*at, c.clone()),
+            _ => { let c = board.comments(issue.number)?; (board.now().unwrap_or(issue.updated), c) },
         };
-        cache.insert(issue.number, (issue.updated, comments.clone()));
+        cache.insert(issue.number, (issue.updated, read, comments.clone()));
         let log: Vec<_> = comments.iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
         // only a task that would be ready reads its dependencies (§ 4 budget)
         let mut projection = core::project(issue.number, &log, false);
@@ -332,7 +339,7 @@ pub struct Service<'a> {
     pub focus_error: Option<String>,
     /// The last inbox id handed to each attempt's child.
     delivered: HashMap<u64, u64>,
-    cache: HashMap<u64, (i64, Vec<Comment>)>,
+    cache: CommentCache,
     deps: DepCache,
     label_fixes: HashMap<u64, (String, Vec<String>, u32)>,
     cancelled_publications: HashMap<u64, u64>,
@@ -2824,7 +2831,9 @@ mod tests {
         let mut other = Service::new(&b, &mac, "test", Box::new(|_| panic!("no process while queued")));
         let count = |b: &Fake| { let s = b.state.borrow(); (s.reads, s.comment_reads, s.publications) };
         let mut passes = vec![];
-        for _ in 0..2 {
+        for round in 0..3 {
+            // a log read within SETTLE of its last write is read once more on a later pass (#1718)
+            if round > 0 { b.advance(SETTLE); }
             for s in [&mut owner, &mut other] {
                 let before = count(&b);
                 s.pass().unwrap();
@@ -2832,8 +2841,9 @@ mod tests {
                 passes.push((after.0 - before.0, after.1 - before.1, after.2 - before.2));
             }
         }
-        // (issue reads, comment reads, publication polls) per pass, owner then other; was (1, 3, 1) on both hosts
-        assert_eq!(passes, [(0, 1, 1), (0, 1, 0), (0, 1, 1), (0, 0, 0)]);
+        // (issue reads, comment reads, publication polls) per pass, owner then other; was (1, 3, 1) on both hosts;
+        // the second round still reads the log its first round read within SETTLE, the settled third reads none
+        assert_eq!(passes, [(0, 1, 1), (0, 1, 0), (0, 1, 1), (0, 1, 0), (0, 0, 1), (0, 0, 0)]);
         // a stale owner heartbeat hands the poll to any host
         b.state.borrow_mut().clock += win.ttl + 1;
         let before = count(&b).2;
@@ -4695,6 +4705,37 @@ Open: none";
         *e.borrow()[1].1.borrow_mut() = Some(0);
         s.pass().unwrap();
         assert_eq!(task(&b, n).retries, 1);
+    }
+
+    // Chain: § 2 answer resumes the asking attempt, every round (#1718). Risk: a second answer in one attempt stays
+    // undelivered while the task reads `doing` with no live worker: the pass that first saw the answer's `updated`
+    // read a comment list that lagged it, and every later pass reused that list for the unchanged `updated`.
+    #[test]
+    fn second_answer_in_one_attempt_resumes_within_one_pass() {
+        let b = Fake::default();
+        let n = b.create("T", "", &["taskq".into()]).unwrap();
+        let c = cfg("mac");
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        for round in 1..=2 {
+            b.comment(n, &core::entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★")).unwrap();
+            *e.borrow()[round - 1].1.borrow_mut() = Some(0);
+            s.pass().unwrap();
+            assert_eq!((task(&b, n).state, s.kids.len()), (State::Ask, 0), "round {round}: asked, child released");
+            let answer = b.comment(n, &core::entry("answer", &["2"], None, "y")).unwrap();
+            if round == 2 {
+                b.state.borrow_mut().hide_latest_comment = true;
+                s.pass().unwrap();
+                b.state.borrow_mut().hide_latest_comment = false;
+                assert_eq!((s.kids.len(), e.borrow().len()), (0, 2), "a comment list lagging the answer resumes nothing yet");
+            }
+            s.pass().unwrap();
+            let t = task(&b, n);
+            assert_eq!((t.state, t.attempt, e.borrow().len(), s.kids.len()), (State::Doing, Some(a), round + 1, 1), "round {round}: resumed in one pass");
+            assert_eq!(s.delivered(a), answer, "round {round}: the answer is accepted input");
+        }
     }
 
     // Chain: § 3 admission filters. Risk: a waiting or filtered task starts.
