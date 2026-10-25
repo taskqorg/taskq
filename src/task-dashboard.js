@@ -43,20 +43,27 @@ module.exports=execution.module('taskDashboard',{
    },
    // MP14: Completed reads board history pages on demand through the tray (`taskq status --closed`); nothing is stored.
    since:function(period){const days={'7d':7,'30d':30}[period];return days&&Number.isFinite(view.S.now)?view.S.now-days*86400:null;},
-   request:function(e){e.loading=true;e.reason=null;e.id=String(++requests);send({a:'completed',root:e.root,id:e.id,page:e.page+1,...(e.since==null?{}:{since:e.since})});},
+   request:function(e){e.loading=true;e.reason=null;e.id=String(++requests);const id=e.id;
+    e.timer=ui.defer(()=>api.receive({root:e.root,id,reason:'No history response within 65 seconds'}),65000);
+    send({a:'completed',root:e.root,id,page:e.page+1,...(e.since==null?{}:{since:e.since})});},
    history:function(){const c=api.criteria(),key=JSON.stringify([c.projects,c.period]),prior=view.completed;
-    if(api.current().id==='completed'&&prior?.key!==key){const since=api.since(c.period);view.completed={key,entries:api.unique(api.projects()).map(p=>({root:p.root,name:p.name,kind:p.board_kind,identity:views.identity(p),page:0,more:true,tasks:[],since}))};view.completed.entries.forEach(api.request);}
+    if(api.current().id==='completed'&&prior?.key!==key){const since=api.since(c.period);prior?.entries.forEach(e=>ui.cancel(e.timer));
+     view.completed={key,entries:api.unique(api.projects()).map(p=>{const old=prior?.entries.find(e=>e.identity===views.identity(p));return {root:p.root,name:p.name,kind:p.board_kind,identity:views.identity(p),page:0,more:true,tasks:old?.tasks||[],shown:old?.shown||[],replace:true,since};})};view.completed.entries.forEach(api.request);}
     const entries=view.completed?.entries||[];return {entries,rows:entries.flatMap(e=>e.tasks.map(t=>({...t,project:e.name,kind:e.kind,ref:e.identity+'#'+t.n})))};
    },
-   receive:function(page){const e=view.completed?.entries.find(e=>e.id===page.id&&e.root===page.root);if(!e)return;e.loading=false;if(page.reason){e.reason=page.reason;e.more=false;}else{e.page=page.page||e.page+1;e.more=page.more===true;e.tasks.push(...(page.tasks||[]).filter(t=>!e.tasks.some(x=>x.n===t.n)));}present();},
+   receive:function(page){const e=view.completed?.entries.find(e=>e.id===page.id&&e.root===page.root);if(!e?.loading)return;ui.cancel(e.timer);e.loading=false;
+    if(page.reason)e.reason=page.reason;
+    else{if(e.replace){e.tasks=[];e.replace=false;}e.page=page.page||e.page+1;e.more=page.more===true;e.tasks.push(...(page.tasks||[]).filter(t=>!e.tasks.some(x=>x.n===t.n)));}present();},
    outcome:function(t){return t.outcome==='success'&&typeof t.merged==='string'&&t.merged?['git-merge','review','Merged']:outcomes[t.outcome]||outcomes.unknown;},
-   completed:function(){const c=api.criteria(),{entries,rows}=api.history(),pinned=new Set(api.model().pins.map(p=>p.ref));
-    const shown=rows.filter(t=>!pinned.has(t.ref)&&views.matches(t,c.query)&&(!c.outcomes.length||c.outcomes.includes(t.outcome in outcomes?t.outcome:'unknown'))).sort((a,b)=>(b.closed??0)-(a.closed??0)||b.n-a.n);
-    const loading=entries.some(e=>e.loading),more=entries.filter(e=>e.more&&!e.loading);
+   completed:function(){const c=api.criteria(),{entries}=api.history(),pinned=new Set(api.model().pins.map(p=>p.ref));
+    const shown=entries.flatMap(e=>{if(!e.replace)e.shown=e.tasks.filter(t=>views.matches(t,c.query)&&(!c.outcomes.length||c.outcomes.includes(t.outcome in outcomes?t.outcome:'unknown')));
+     return e.shown.map(t=>({...t,project:e.name,kind:e.kind,ref:e.identity+'#'+t.n}));}).filter(t=>!pinned.has(t.ref)).sort((a,b)=>(b.closed??0)-(a.closed??0)||b.n-a.n);
+    const loading=entries.some(e=>e.loading),more=entries.filter(e=>e.more&&!e.loading&&!e.reason);
     return h(Fragment,null,shown.map(t=>{const [mark,tone,label]=api.outcome(t);return h('div',{class:'task-row completed-row',key:t.ref,'data-completed':t.ref},h('span',{class:tone,title:label,'aria-label':label},icon(mark)),h('a',{class:'detail-title',href:t.url,'data-url':t.url},t.title),
       h('div',{class:'meta'},icon(t.kind),' ',t.project+' #'+t.n,' · ',label,' · ',Number.isFinite(t.closed)?new Date(t.closed*1000).toISOString().slice(0,10):'closed date unknown',t.result?' · '+t.result:'',t.pr&&h(Fragment,null,' · ',h('a',{href:t.pr,'data-url':t.pr},icon('git-pull-request'),'PR'))));}),
-     entries.filter(e=>e.reason).map(e=>h('p',{class:'meta',role:'status',key:'reason'+e.root},e.name+': history unavailable · '+e.reason)),
-     loading?h('p',{class:'meta',role:'status'},'Reading board history…'):!shown.length&&h('div',{class:'body meta'},entries.length?'No completed tasks match':'No projects selected'),
+     entries.map(e=>h('p',{class:'meta',role:e.reason?'alert':'status',key:'source'+e.identity,'data-history-source':e.identity},e.name+': '+(e.loading?'Reading page '+(e.page+1)+'…':e.reason?'History unavailable · '+e.reason:'Page '+e.page+' loaded · '+e.tasks.length+' rows'+(e.more?' · more available':'')),
+      e.replace&&e.shown.length>0?' · Showing previous rows':'',e.reason&&h('button',{'data-a':'completed-retry','data-root':e.root,'aria-label':'Retry '+e.name+' history'},'Retry'))),
+     !loading&&!shown.length&&h('div',{class:'body meta'},entries.some(e=>e.reason)?'Completed history incomplete':entries.length?'No completed tasks match':'No projects selected'),
      more.length>0&&h('button',{class:'completed-more','data-a':'completed-more'},'Load more'));
    },
    conditions:function(){const c=api.criteria(),done=api.current().id==='completed';return h(Fragment,null,
@@ -111,7 +118,8 @@ module.exports=execution.module('taskDashboard',{
     if(d.a==='view-facet'){const value=d.value,key=d.facet,current=api.criteria()[key];if(!['states','projects','outcomes'].includes(key))return true;api.set({[key]:!value?[]:current.includes(value)?current.filter(x=>x!==value):[...current,value]});return true;}
     if(d.a==='view-group'){api.set({group:d.value});return true;}
     if(d.a==='view-period'){api.set({period:d.value});return true;}
-    if(d.a==='completed-more'){view.completed?.entries.filter(e=>e.more&&!e.loading).forEach(api.request);present();return true;}
+    if(d.a==='completed-retry'){const entry=view.completed?.entries.find(e=>e.root===d.root&&e.reason&&!e.loading);if(entry){api.request(entry);present();}return true;}
+    if(d.a==='completed-more'){view.completed?.entries.filter(e=>e.more&&!e.loading&&!e.reason).forEach(api.request);present();return true;}
     if(d.a==='view-save'){views.save(m);present();return true;}
     if(d.a==='view-reset'||d.a==='filter-reset'){views.reset(m);present();return true;}
     if(d.a==='all-tasks'){api.set({states:[]});return true;}

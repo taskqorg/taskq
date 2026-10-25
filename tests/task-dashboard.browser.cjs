@@ -69,6 +69,47 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   if(out){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/dark-completed.png'});}
   await p.locator('[data-task-query]').fill('dropped');assert.equal(await p.locator('[data-completed]').count(),1,'search covers loaded history');await p.locator('[data-task-query]').fill('');
   await p.locator('[data-a=completed-more]').click();assert(await p.evaluate(()=>messages.some(m=>m.a==='completed'&&m.root==='/fixture/alpha'&&m.page===2)));
+  // #1711 A1–A4: delayed sources retain displayed rows through period/outcome changes and Reset + Done.
+  const historyRequests=()=>p.evaluate(()=>messages.filter(m=>m.a==='completed'));
+  const reply=(request,tasks=[],extra={})=>p.evaluate(page=>taskq.receive({completed:page}),{...request,tasks,more:false,...extra});
+  await reply((await historyRequests()).find(m=>m.root==='/fixture/beta'),[{n:9,title:'Beta history',closed:960,outcome:'success'}]);
+  await reply((await historyRequests()).find(m=>m.root==='/fixture/alpha'&&m.page===2),[]);
+  await p.clock.install();
+  const retained=await p.locator('[data-completed]').allInnerTexts();
+  await p.locator('[data-a=view-editor]').click();await editor().locator('[data-a=view-period][data-value="7d"]').click();
+  await editor().locator('[data-facet=outcomes][data-value="not_planned"]').click();await editor().getByRole('button',{name:'Done',exact:true}).click();
+  assert.deepEqual(await p.locator('[data-completed]').allInnerTexts(),retained,'A1: slow filter reload keeps the previous rows');
+  const source=name=>p.locator('[data-history-source]').filter({hasText:name+':'});
+  assert.match(await source('Alpha').innerText(),/Reading page 1.*previous rows/);assert.equal(await source('Alpha').getAttribute('role'),'status');
+  let requests=await historyRequests(),alphaReload=requests.filter(m=>m.root==='/fixture/alpha').at(-1),betaReload=requests.filter(m=>m.root==='/fixture/beta').at(-1);
+  await reply(alphaReload,[],{reason:'Board unavailable'});
+  assert.deepEqual(await p.locator('[data-completed]').allInnerTexts(),retained,'A1: failed reload retains rows');
+  assert.equal(await source('Alpha').getAttribute('role'),'alert');assert.match(await source('Alpha').innerText(),/Board unavailable/);
+  await p.clock.fastForward(65000);
+  assert.match(await source('Beta').innerText(),/No history response within 65 seconds/);assert.equal(await source('Beta').getAttribute('role'),'alert');
+  if(out){await source('Alpha').scrollIntoViewIfNeeded();await p.screenshot({path:out+'/completed-reload-errors.png'});}
+  await source('Alpha').getByRole('button',{name:'Retry Alpha history'}).click();
+  assert.equal((await historyRequests()).filter(m=>m.root==='/fixture/beta').length,2,'Retry targets only the failed source');
+  const retried=(await historyRequests()).filter(m=>m.root==='/fixture/alpha').at(-1);assert.equal(retried.page,1);
+  await reply(alphaReload,[{n:99,title:'Stale reply',closed:999,outcome:'not_planned'}]);assert.equal(await p.getByText('Stale reply',{exact:true}).count(),0,'old replies cannot replace retained rows');
+  await reply(retried,[{n:6,title:'Dropped idea refreshed',closed:940,outcome:'not_planned'}]);
+  assert.equal(await p.getByText('Merged work',{exact:true}).count(),0,'first successful page replaces the old source rows');assert.match(await source('Alpha').innerText(),/Page 1 loaded/);
+  await p.locator('[data-a=view-editor]').click();await editor().getByRole('button',{name:'Reset',exact:true}).click();await editor().getByRole('button',{name:'Done',exact:true}).click();
+  assert(await p.locator('[data-completed]').count()>0,'A3: Reset + Done never blanks the list while reloading');
+  if(out)await p.screenshot({path:out+'/completed-reset-loading.png'});
+  requests=await historyRequests();
+  await reply(betaReload,[{n:99,title:'Timed-out reply',closed:999,outcome:'success'}]);assert.equal(await p.getByText('Timed-out reply',{exact:true}).count(),0);
+  await reply(requests.filter(m=>m.root==='/fixture/alpha').at(-1),[{n:7,title:'Full history restored',closed:950,outcome:'success'}],{more:true});
+  await reply(requests.filter(m=>m.root==='/fixture/beta').at(-1),[]);
+  assert.deepEqual(await p.locator('[data-completed] .detail-title').allInnerTexts(),['Full history restored'],'A3: Reset restores all outcomes');
+  await reply(requests.filter(m=>m.root==='/fixture/alpha').at(-1),[{n:99,title:'Duplicate reply',closed:999,outcome:'success'}]);
+  assert.equal(await p.getByText('Duplicate reply',{exact:true}).count(),0,'duplicate terminal replies are ignored');
+  await p.locator('[data-a=completed-more]').click();
+  const nextPage=(await historyRequests()).filter(m=>m.root==='/fixture/alpha').at(-1);assert.equal(nextPage.page,2);
+  await reply(nextPage,[],{reason:'Next page failed'});assert.equal(await p.getByText('Full history restored',{exact:true}).count(),1,'paging failure keeps prior pages');
+  await source('Alpha').getByRole('button',{name:'Retry Alpha history'}).click();
+  const retryPage=(await historyRequests()).filter(m=>m.root==='/fixture/alpha').at(-1);assert.equal(retryPage.page,2,'paging Retry requests the failed page');await reply(retryPage,[]);
+  assert.equal(await p.getByText('Full history restored',{exact:true}).count(),1,'paging Retry appends instead of replacing prior pages');
   await p.locator('[data-a=view-select][data-id=all]').click();await p.locator('.task-pins [data-a=task-detail]').click();await editor().getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await p.locator('.task-pins').count(),0);
   // #1659 A4 (P-V1): custom views delete by keyboard, built-ins cannot; Undo restores the view and its context.
   await p.locator('[data-a=view-list]').click();await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();await p.locator('[data-task-query]').fill('5');
