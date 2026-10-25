@@ -135,6 +135,9 @@ const {create}=execution.module('workspace',{
     if(s.answerReceipt){answers.answerReceipt(s.answerReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
+    // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
+    if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
+    if(!Array.isArray(s.projects))return;
     const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
