@@ -204,7 +204,16 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 - The first enable asks the OS for permission on macOS; Windows reads the OS notification setting without a consent prompt. While the prompt is open Settings shows `Asked`; a failed request shows its OS error, never `Not asked`. Denied or revoked: Settings shows `Blocked by the OS` with a link to the OS setting, and nothing falls back to another channel. `Send test` posts one sample of the selected kind.
 - An unknown `tray.json` value reads as the default and keeps the file.
 - Windows toasts use AppUserModelID `org.taskq.tray` on a TaskQ-owned Start Menu shortcut to the stable tray executable, whose toast activator CLSID names the running tray's COM activator, so a click on a banner or in Notification Center reaches it; OS settings are read through the notifier (denied: Blocked, no setting recorded before the first toast: the OS default, allowed, other errors: Unknown). A failed authorization request is logged in `tray.log`.
-- Packaging: Windows runs the tray as `<install>/taskq-tray.exe`, so the notification-area pin follows the exe path across updates. macOS notifications show the TaskQ app icon, packaged in `<install>/TaskQ.app` (bundle `org.taskq.tray`, signed as taskq.md § 8 step 5), which notifications need, started through LaunchServices (`open`; the bundle with no args is the tray of its parent folder and appends its stderr to `tray.log`): a bundle exec'd by the service is refused authorization.
+- Packaging: Windows runs the tray as `<install>/taskq-tray.exe`, so the notification-area pin follows the exe path across updates. macOS notifications show the TaskQ app icon, packaged in `<install>/TaskQ.app` (the default install: `~/Applications/TaskQ.app`, M15) (bundle `org.taskq.tray`, signed as taskq.md § 8 step 5), which notifications need, started through LaunchServices (`open`; the bundle with no args is the tray of its parent folder and appends its stderr to `tray.log`): a bundle exec'd by the service is refused authorization.
+
+## M15 App lifecycle
+
+- TaskQ is one normal app per host: one tray across all install folders, held by an OS temp-dir lock for the tray's life. A tray that cannot take the lock exits; a tray of a removed install exits on its next tick.
+- Open: macOS `~/Applications/TaskQ.app` (the default install's bundle; Finder, Spotlight, Dock), Windows Start menu `TaskQ` (`taskq-tray.exe tray --open`). Open starts a stopped service for the registered projects and shows the tray. A second Open raises the running app's window (macOS reopen event, Windows a raise request the running tray takes on its next tick).
+- Quit TaskQ: the tray menu (right click) and, on macOS, Cmd+Q. The tray menu names the active work Quit waits for (doing and review tasks). Quit drain-stops the service: current work finishes, nothing new starts. On macOS the drain keeps a Quit hold (Stop mode `quit`); the unit keeps OS autostart, so the next logon starts the service and its tray, which reopens TaskQ as Open does. The tray exits once the service has stopped and removes its `<install>/tray` heartbeat.
+- Reopen restores both: Open clears only a Quit hold whose service generation has gone (an older operator hold returns), then starts the service. Open never clears a reviewed Stop hold (drain or full): the service stays stopped until reviewed recovery (#1285). `service release` still refuses every Stop hold.
+- A refused Quit (service observation stale, another lifecycle operation pending) keeps the tray and service running and shows the reason in the tray menu and tooltip.
+- Tests that start a tray from a temp install stop it before they end: the lock refuses a second tray, and removing the temp install ends a tray it started.
 
 ## Acceptance
 
@@ -234,6 +243,7 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 
 [Verification](verification.md) separates historical evidence from the current candidate. General principles change per [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules); TaskQ behavior changes here under R13.
 | M-A22 | Each kind follows its host or project setting; an event notifies once across tray restarts; a burst becomes one summary; a click opens the card; OS denial shows Blocked and posts nothing. |
+| M-A23 | On macOS and Windows: launcher Open starts service and tray; a second Open raises the window; Quit names active work, and readback shows the service stopped and no tray pid; reopen restores both; a second tray across install folders exits. |
 
 ## Contract detail
 

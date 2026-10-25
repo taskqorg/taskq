@@ -15,7 +15,8 @@ impl Action {
 }
 #[derive(Clone,Copy,Debug,Default,Deserialize,Serialize,PartialEq)]
 #[serde(rename_all="lowercase")]
-pub enum StopMode {#[default] Drain,Full}
+/// Quit (M15): a drain under the tray's own hold, which Open clears.
+pub enum StopMode {#[default] Drain,Full,Quit}
 impl StopMode {fn drain(&self)->bool {*self==Self::Drain}}
 
 #[derive(Clone,Debug,Deserialize,Serialize,PartialEq)]
@@ -297,6 +298,30 @@ pub fn stop_hold_status(install:&Path)->Value {
         Ok(None)=>Value::Null,Err(reason)=>json!({"state":"unknown","reason":reason}),
     }
 }
+/// M15 Quit: a drain Stop of a running service under the tray's own Quit hold.
+pub fn quit(install:&Path)->Res<()> {
+    if host::service_status(install)["state"]!="running" {return Ok(());}
+    let mut review=stop_review(install,&crate::runtime::uuid().replace('-',""))?;
+    review["mode"]=json!("quit");submit(install,&review).map(|_|())
+}
+/// M15 Open: clears only a Quit hold whose generation has gone, never a reviewed Stop hold; then starts a stopped
+/// service for the registered projects.
+pub fn open(install:&Path,start:impl FnOnce(&Path)->Res<String>)->Res<Option<String>> {
+    let service=host::service_status(install);
+    {
+        let _hold=coreq::file_lock::try_lock(&install.join("admission.lock")).map_err(|e|format!("hold busy: {e}"))?;
+        if let Some(r)=stop_hold(install)? {
+            if r.mode!=StopMode::Quit {return Err("reviewed Stop hold remains; Open never clears it, use reviewed recovery (#1285)".into());}
+            if service["state"]=="running"&&service["instance"]==json!(r.instance) {return Ok(None);}
+            let path=install.join("hold");
+            let value:Value=serde_json::from_str(&fs::read_to_string(&path).map_err(|e|e.to_string())?).map_err(|_|"Quit hold corrupt")?;
+            match value["previous_hold"].as_str() {Some(p)=>crate::platform::write_atomic(&path,p)?,None=>fs::remove_file(&path).map_err(|e|e.to_string())?}
+            let _=crate::platform::write_atomic(&install.join("poke"),"");
+        }
+    }
+    if service["state"]=="running" {return Ok(None);}
+    match scope(install)?.first() {Some(root)=>start(root).map(Some),None=>Ok(None)}
+}
 pub fn release_guard(install:&Path)->Res<()> {
     if stop_hold(install)?.is_some() {return Err("reviewed Stop hold requires selective recovery (#1285); ordinary release cannot clear it".into());}Ok(())
 }
@@ -560,6 +585,34 @@ mod tests {
         assert!(next_hold.get("recovery").is_none());assert!(next_hold.get("recovery_start").is_none());
         assert_eq!(next_hold["previous_hold"],"prior operator hold","new Stop revokes recovery, never an older operator hold");
         fs::write(install.join("hold"),"{broken").unwrap();assert!(full_stop(&install,&root).is_err());assert!(release_guard(&install).is_err());assert!(save_stop_hold(&install,&request).is_err(),"corrupt Stop identity cannot be overwritten");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // M15: Open clears only the tray's Quit hold once its generation is gone and restores the older operator hold;
+    // a reviewed Stop hold stays and the service stays stopped.
+    #[test]
+    fn open_clears_only_a_gone_quit_hold() {
+        let (dir,install,root)=fixture();
+        let at=now().unwrap();
+        let quit=typed(&json!({"id":"quit-stop","instance":"original","roots":[root],"issued_at":at,"expires_at":at+300,"action":"stop","mode":"quit"})).unwrap();
+        fs::write(install.join("hold"),"operator hold").unwrap();
+        save_stop_hold(&install,&quit).unwrap();
+        assert!(!full_stop(&install,&root).unwrap(),"Quit drains, never cancels");
+        assert!(release_guard(&install).is_err(),"ordinary release still refuses");
+        let started=std::cell::Cell::new(false);
+        assert_eq!(open(&install,|_|{started.set(true);Ok("started".into())}).unwrap(),None,"Quit generation still draining");
+        assert!(stop_hold(&install).unwrap().is_some());
+        publish(&install,"next-generation");
+        assert_eq!(open(&install,|_|{started.set(true);Ok("started".into())}).unwrap(),None,"a running service needs no start");
+        assert_eq!(fs::read_to_string(install.join("hold")).unwrap(),"operator hold");
+        let reviewed=typed(&json!({"id":"reviewed-stop","instance":"original","roots":[root],"issued_at":at,"expires_at":at+300,"action":"stop"})).unwrap();
+        fs::remove_file(install.join("hold")).unwrap();save_stop_hold(&install,&reviewed).unwrap();
+        fs::remove_file(install.join("service")).unwrap();
+        assert!(open(&install,|_|{started.set(true);Ok("started".into())}).is_err());
+        assert!(!started.get(),"reviewed Stop hold keeps the service stopped");
+        assert_eq!(stop_hold(&install).unwrap(),Some(reviewed));
+        fs::remove_file(install.join("hold")).unwrap();
+        assert_eq!(open(&install,|r|{assert_eq!(r,root.canonicalize().unwrap());Ok("started".into())}).unwrap().as_deref(),Some("started"));
         fs::remove_dir_all(dir).unwrap();
     }
 
