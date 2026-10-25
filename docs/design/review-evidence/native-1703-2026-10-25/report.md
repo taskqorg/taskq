@@ -41,13 +41,17 @@ Settings list: screen 04.
 
 ## Findings
 
-1. **A1-1 (fail):** Completed loses its rows during a slow reload and shows no per-source progress or error.
-2. **A2-1 (fail):** Work mode and Recovery leave Settings. They open "Operation review" in the Workspace window, the Settings panel closes, and Back goes to Conversations.
-3. **A2-2 (check):** Activity history Hour shows ask 0 and closed 0 for a window that contains at least one ask. Check which sources the counters read.
-4. **A2-3 (minor):** Route titles differ from list labels ("Agents" vs "Agents and access", "Services" vs "Services and support").
+1. **A1-1 (fail):** Completed loses its rows during a slow reload and shows no per-source progress or error. Filed: [#1711](https://github.com/taskqorg/taskq/issues/1711).
+2. **A2-1 (fail):** Work mode and Recovery leave Settings. They open "Operation review" in the Workspace window, the Settings panel closes, and Back goes to Conversations. Filed: [#1713](https://github.com/taskqorg/taskq/issues/1713).
+3. **A2-2 (check):** Activity history Hour shows ask 0 and closed 0 for a window that contains at least one ask. Check which sources the counters read. Filed: [#1712](https://github.com/taskqorg/taskq/issues/1712).
+4. **A2-3 (minor):** Route titles differ from list labels ("Agents" vs "Agents and access", "Services" vs "Services and support"). Filed with A2-1: [#1713](https://github.com/taskqorg/taskq/issues/1713).
 
 ## AX notes
 
 - All routes have a visible Back control and a Close control; titles are text, not images.
 - The Settings panel is a separate small window. Two routes (Work mode, Recovery) move focus to another window without a cue.
 - During the stale period the only status signal in Completed is the text "Reading board history…"; it has no role or progress value per source.
+
+## Not tested
+
+Windows, light theme and alternate window geometry.
