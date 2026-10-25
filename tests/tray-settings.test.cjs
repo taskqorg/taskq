@@ -17,8 +17,8 @@ assert(html.includes('Method: Claude subscription'),'the method stays in the det
 assert(html.includes('Codex 2.1 · <span class="alert">Check failed</span><span class="meta"> · account unknown</span>'),'ChatGPT is a method, never the account');
 assert(html.includes('Expiry unknown'),'no expiry is invented');assert(html.includes('Expires '),'a supplied expiry is shown');
 assert(html.includes('Runtime client 2.1 · checked 5m ago'));assert(html.includes('Tray 4.1.0 · service 4.1.0 (2)'),'worker service versions apart from the runtime client');
-assert(html.includes('win · clients / access unknown'),'a remote host stays unknown until seen');
-assert(html.includes('Codex app · version unknown · sign-in unknown · access unknown'));
+assert(/win · heartbeat [^<]* · clients unknown/.test(html),'a remote host shows heartbeat freshness only');
+assert(html.includes('Codex app · unknown: win heartbeat publishes no client version, sign-in, account or access'),'#1702 A3: missing source named');
 assert(html.includes('Claude: requested workspace-write · saved grant workspace-write · applied workspace-write · sandbox'));
 assert(html.includes('Codex: refused: host grant missing'));assert(html.includes('Access unknown for beta: no access in status.json'),'a missing access file names one reason');
 assert(!html.includes('data-route="agents"'),'R29: no circular Agents placeholder');

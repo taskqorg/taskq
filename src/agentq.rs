@@ -50,12 +50,18 @@ fn inspect(root:&Path,launcher:Res<bool>,status:Res<Option<(Value,u64)>>,clock:u
     let Some((s,age))=status else{return if launcher{unknown("installed launcher; service status missing")}else{json!({"kind":"shown"})}};
     let version=s["version"].as_str().unwrap_or("");
     let parts:Vec<_>=version.split('.').collect();
-    let compatible=parts.len()==3 && parts[0]=="0" && parts[1].parse::<u32>().is_ok_and(|v|(5..=9).contains(&v)) && parts[2].parse::<u32>().is_ok();
+    // #1702: 0.10.0 failed the old 0.5–0.9 bound; any 0.x from 0.5 keeps the same status shape
+    let compatible=parts.len()==3 && parts[0]=="0" && parts[1].parse::<u32>().is_ok_and(|v|v>=5) && parts[2].parse::<u32>().is_ok();
     let Some(at)=s["at"].as_u64() else{return unknown("status observation time missing")};
     let Some(pid)=s["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).filter(|p|*p>0 && *p<=i32::MAX as u32) else{return unknown("status process identity missing")};
-    if !compatible || s["project"]!="host" {return unknown("unsupported agentq status version or shape");}
-    if age>90 || at>clock || clock-at>90 {return unknown("agentq status stale or timestamp is in the future");}
+    if !compatible {return unknown(format!("unsupported agentq status version {version:?}"));}
+    if s["project"]!="host" {return unknown("unsupported agentq status shape: project is not host");}
     if !launcher {return unknown("status exists without the known launcher");}
+    if at>clock {return unknown("agentq status timestamp is in the future");}
+    if age>90 || clock-at>90 {
+        // A disabled service leaves its last status behind: an absent recorded process reads as off, anything else stays unknown.
+        return match process(pid) {Ok(None)=>json!({"kind":"stopped","reason":"agentq off or unreachable · last status is stale and its process is absent"}),_=>unknown("agentq status stale")};
+    }
     match process(pid) {
         Ok(None)=>json!({"kind":"stopped","reason":"agentq installed · service stopped (fresh status, recorded process absent)"}),
         Ok(Some(image))=>{
@@ -198,6 +204,11 @@ mod tests {
         assert_eq!(check(Ok(false),Err("corrupt".into()),Ok(None)),"unknown");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),90))),Ok(Some(exe.clone()))),"running");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),91))),Ok(Some(exe.clone()))),"unknown");
+        assert_eq!(check(Ok(true),Ok(Some((good.clone(),91))),Ok(None)),"stopped","#1702 A2: a disabled service's stale status reads as off");
+        // #1702 A1: installed AgentQ 0.10.0 read as 'unsupported agentq status version or shape'
+        let ten=json!({"project":"host","version":"0.10.0","at":100,"pid":42});let ten_exe=root.join("releases/0.10.0").join(if cfg!(windows){"agentq.exe"}else{"agentq"});
+        assert_eq!(check(Ok(true),Ok(Some((ten,0))),Ok(Some(ten_exe))),"running");
+        assert_eq!(inspect(root,Ok(true),Ok(Some((json!({"project":"host","version":"0.4.0","at":100,"pid":42}),0))),100,|_|Ok(None))["reason"],"unsupported agentq status version \"0.4.0\"");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(None)),"stopped");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(Some("/other/agentq".into()))),"unknown");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Err("denied".into())),"unknown");

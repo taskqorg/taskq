@@ -319,6 +319,14 @@ agentq:function(settings=false){
   if(A.kind==='running')return settings?h('div',{class:'body',role:'status'},'agentq running · '+(A.version||'version unknown')):'';
   if(!settings&&A.kind==='shown'&&A.dismissed&&!view.agentqError)return '';
   const rows=Array.isArray(A.runtimes)?A.runtimes:[],runtime=view.agentqRuntime||rows.find(r=>r.eligible)?.runtime,selected=rows.find(r=>r.runtime===runtime),targets=A.targets?.[runtime]||[];
+  // #1702 A2: off or unreadable AgentQ is a status with its reason, not a setup prompt; taskq works without it
+  if(A.kind==='stopped'||A.kind==='unknown')return h('section',{class:'group agentq','aria-label':'agentq '+A.kind},
+    view.agentqError&&h('div',{class:'body alert',role:'alert'},view.agentqError),
+    h('div',{class:'row'},A.kind==='stopped'?'agentq off or unreachable':'agentq status unknown'),
+    h('div',{class:'body meta'},A.host+' · '+A.platform),
+    A.reason&&h('div',{class:'body',role:'status'},A.reason),
+    h('div',{class:'body meta'},'taskq runs without agentq. Start or repair it from agentq itself; nothing is installed or changed here.'),
+    h('div',{class:'options'},h('button',{'data-a':'agentq-check'},'Check again')));
   const session=A.setup?.url&&/^(https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+|codex:\/\/threads\/[A-Za-z0-9-]+)$/.test(A.setup.url)?h('a',{href:'#','data-url':A.setup.url},'Open session'):null;
   return h('section',{class:'group agentq','aria-label':A.kind==='shown'?'agentq is not installed':'agentq '+A.kind},
     view.agentqError&&h('div',{class:'body alert',role:'alert'},view.agentqError),
@@ -331,7 +339,7 @@ agentq:function(settings=false){
     rows.filter(r=>!r.eligible).map(r=>h('div',{class:'body meta'},r.client+' · '+(r.reason||'unknown'))),
     selected&&h('div',{class:'body'},'Set up agentq on this host for '+selected.client+' using '+runtime+'. This installs its verified release, engines and host service, and connects this client’s supported configuration, hooks and MCP. Existing sessions keep running. New sessions may be needed to verify the connection.'),
     selected&&h('div',{class:'body meta'},'Approved targets: '+targets.join(', ')),
-    h('div',{class:'options'},h('button',{'data-a':'agentq-setup',disabled:!selected?.eligible||targets.length!==2},A.kind==='stopped'?'Review setup…':settings?'Set up agentq…':'OK — set up agentq'),A.kind==='shown'&&!A.dismissed&&h('button',{'data-a':'agentq-dismiss'},'Not now'),h('button',{'data-a':'agentq-check'},'Check again')),
+    h('div',{class:'options'},h('button',{'data-a':'agentq-setup',disabled:!selected?.eligible||targets.length!==2},settings?'Set up agentq…':'OK — set up agentq'),A.kind==='shown'&&!A.dismissed&&h('button',{'data-a':'agentq-dismiss'},'Not now'),h('button',{'data-a':'agentq-check'},'Check again')),
     !selected?.eligible&&h('div',{class:'body meta'},'Use an existing client: Install agentq from https://github.com/taskqorg/agentq and set it up for this client. No runtime or permissions are changed here.'));
 },
 agents:function(){
@@ -344,7 +352,11 @@ agents:function(){
     r.next&&h('div',{class:'body'},'Sign in: '+r.next+'. A check never signs in.'))):[h('div',{class:'body meta'},A?.checking?'Checking: no earlier result':'Unknown: no status.json has agents')];
   return f(h('div',{class:'row'},h('span',null,h('strong',null,view.S.host||'This host'),' · sign-in '+(A?(A.checking?'checking now · ':'')+checked:'unknown: no service probe yet'))),
     h('div',{class:'body meta'},'Tray '+(view.S.version||'version unknown')+' · service '+(grouped(local.map(p=>p.version||'version unknown'))||'none on this host')),rows,
-    remote.map(n=>h('details',{class:'group remote-agents','data-view-key':'agents:'+n},h('summary',null,n+' · clients / access unknown'),['claude','codex','codex-app'].map(rt=>h('div',{class:'body meta'},runtimeName(rt)+' · version unknown · sign-in unknown · access unknown')),h('div',{class:'body meta'},'Source: board host observation; no runtime-client or access probe from this host.'))),
+    // #1702 A3: a remote host's only source here is its board heartbeat (freshness); client, sign-in, account and access read unknown with the missing source
+    remote.map(n=>{const beat=view.S.projects.flatMap(p=>Array.isArray(p.hosts)?p.hosts:[]).find(x=>x?.name===n&&x.age_text);
+      return h('details',{class:'group remote-agents','data-view-key':'agents:'+n},h('summary',null,n+' · '+(beat?'heartbeat '+beat.age_text+' old':'heartbeat unknown: no host row')+' · clients unknown'),
+        ['claude','codex','codex-app'].map(rt=>h('div',{class:'body meta'},runtimeName(rt)+' · unknown: '+n+' heartbeat publishes no client version, sign-in, account or access')),
+        h('div',{class:'body meta'},'Source: board heartbeat only; no runtime-client or access probe of '+n+' reaches this host.'));}),
     api.accessFacts(),
     h('div',{class:'body meta'},'Editing is not available here: the operator changes grants with `taskq service permissions --runtime <runtime> --mode <mode>`.'),api.agentq(true));
 },
