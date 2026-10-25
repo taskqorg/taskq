@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "17b86080ed8404e74e0f1592425c34bc30415fc8",
-  "binarySha256": "55b3aa866e95c5f0cc3774f9aeef80d0265234fb9278def2a3af8681ff23c99c",
+  "sourceCommit": "c084e04cc22c49ba80f7572379b8e6b64ef236f2",
+  "binarySha256": "40fd34b37dbb12f9c570b7aae71c1279bea291b7588e2486e6612e047062a0a3",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -10,7 +10,7 @@
   "uiSources": {
     "src/tray.rs": "e7f231db8b274edbf8a56b625d32cf9d6bc3519e",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "71071a3301e7cb0608e9381769171494eb844411",
+    "src/tray-app.js": "1263bf4a120fafa5c33e56c9c0deb03e7a899a9f",
     "src/tray-entry.js": "8231d269085366b914b96f027f702a83ec32a7fb",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "0d38245af5d24e8c4b1839ee98e0538b29c17975",
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "37ea07e2f14f63252dda3db1da9ce027feb39f14ea9596a59fba5e31263acd5b"
+      "sha256": "723b8ecfdcf7019750b506455c819d6cf1384cb5bf78fe4a72458e0ae1ad8026"
     },
     {
       "file": "popover-dark-project-16.png",
