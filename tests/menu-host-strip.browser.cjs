@@ -8,7 +8,7 @@ const projects=['taskq','pilotq','agentq','dashq','coreq','serverq','specq','csg
  ...(i===0?{error:'Fixture urgent fault'}:{}),
  tasks:[{n:i+1,state:states[i],title:name+' task '+(i+1),revision:1,...(i===0?{runtime:'claude',host:'mac',local_session:true,executions:[exec(10,'mac','claude')]}:i===1?{runtime:'codex',host:'win',executions:[exec(11,'win','codex')]}:{})}]}));
 const navigation={schema:1,current:{page:'home'},dashboard:{selected:'all',views:[{id:'view-running',name:'Running',pinned:true,working:{states:['doing','review']}},{id:'view-answers',name:'Waiting for answer',pinned:true,working:{states:['ask']}}]}};
-const snapshot={display:require('./fixtures/display-model.json').display,platform:'macos',font:18,theme:'dark',host:'mac',now:1000,version:'fixture',projects,notify:{host:{ask:"on",close:"on",failed:"on",gone:"on"},projects:{}},stop_modes:true,navigation,period:'1d',history:require('./fixtures/icon-history/day-dark.json')};
+const snapshot={display:require('./fixtures/display-model.json').display,platform:'macos',font:18,theme:'dark',host:'mac',now:1000,version:'fixture',projects,notify:{host:{ask:'on',close:'on',failed:'on',gone:'on'},projects:{}},stop_modes:true,navigation,period:'1d',history:require('./fixtures/icon-history/day-dark.json')};
 const html=fs.readFileSync('build/web/tray.html','utf8');
 const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filter(e=>e.checkVisibility()).flatMap(e=>{
  const style=getComputedStyle(e);
@@ -21,7 +21,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
   const page=await browser.newPage({viewport:{width,height:760}});
   page.on('pageerror',e=>{throw e;});
   await page.setContent(html);
-  await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
+  await page.evaluate(()=>{window.ipc={postMessage:()=>{}};});
   for(const theme of ['dark','light']){
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
    await page.evaluate(()=>document.fonts.ready);
@@ -45,6 +45,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    const picks=await page.locator('.view-picks>button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size);
    assert.deepEqual(await overflow(page),[],'A2: menu '+width+' px / '+font+' px / '+theme);
    assert(picks>1,'A1: view picks wrap at '+width+' px / '+font+' px');
+   assert.equal(await page.locator('.filter-header .tqp-counts button').count(),9,'A1: all eight states and All tasks remain');
    assert(await page.locator('.filter-header .tqp-counts button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size)>1,'A1: counters wrap');
    assert.deepEqual(await page.locator('.view-picks,.filter-header .tqp-counts').evaluateAll(es=>es.filter(e=>getComputedStyle(e).maskImage!=='none').map(e=>e.className)),[],'A1: no edge mask');
    assert.deepEqual(await page.locator('.viewbar button, .filter-header .tqp-counts button').evaluateAll(bs=>bs.filter(b=>{
@@ -52,7 +53,6 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
     return b.scrollWidth>b.clientWidth||r.left<p.left||r.right>p.right||r.bottom>p.bottom;
    }).map(b=>b.innerText)),[],'A1: each chip is fully visible');
    assert.equal(await page.locator('.dashboard-status').evaluate(e=>parseFloat(getComputedStyle(e.closest('.menu')).fontSize)),font,'A1: text is not shrunk');
-   const dashboard=await page.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard).at(-1)?.navigation.dashboard);
    await page.locator('[data-a=task-detail]').first().click();
    assert.deepEqual(await overflow(page),[],'A2: menu task details');
    await page.keyboard.press('Escape');
@@ -62,7 +62,10 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
     await window.setContent(html.replace('<head>','<head><script>window.taskqSurface='+JSON.stringify(surface)+';</script>'));
     await window.evaluate(()=>{window.ipc={postMessage:()=>{}};});
     await window.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
-    if(surface==='views')await window.evaluate(d=>taskq.receive({dashboard:d,initial:true}),dashboard||navigation.dashboard);
+    if(surface==='views'){
+     await window.evaluate(d=>taskq.receive({dashboard:d,initial:true}),navigation.dashboard);
+     assert.equal(await window.locator('legend').count(),4,'A2: the View window is populated');
+    }
     assert.deepEqual(await overflow(window),[],'A2: '+surface+' '+width+' px / '+font+' px / '+theme);
     if(surface==='settings')for(const route of ['appearance','hosts','delivery','cadence','notifications','agents','services','about']){
      await window.evaluate(page=>taskq.receive({settingsOpen:{page}}),route);
