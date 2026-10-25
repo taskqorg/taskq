@@ -36,6 +36,7 @@ const BUDGET=260; // px from the strip top to the counter row bottom at 18 px te
    const picks=await page.locator('.view-picks>button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size);
    assert.equal(picks,1,'A2: Running never wraps onto its own row');
    assert.equal(await page.locator('.filter-header .tqp-counts button').evaluateAll(bs=>new Set(bs.map(b=>Math.round(b.getBoundingClientRect().top))).size),1,'A2: counters stay one row');
+   assert.deepEqual(await page.locator('.viewbar button, .filter-header .tqp-counts button').evaluateAll(bs=>bs.filter(b=>b.scrollWidth>b.clientWidth+1).map(b=>b.innerText)),[],'A2: no one-row button is squeezed below its text');
    assert.equal(await page.locator('.dashboard-status').evaluate(e=>parseFloat(getComputedStyle(e.closest('.menu')||document.body).fontSize)),18,'A2: text is not shrunk');
    const top=s.y,bottom=(await page.locator('.filter-header').boundingBox()).y+(await page.locator('.filter-header').boundingBox()).height;
    assert(bottom-top<=BUDGET,'A2: header and filter rows take '+Math.round(bottom-top)+' px, budget '+BUDGET);
