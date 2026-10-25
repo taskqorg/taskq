@@ -458,14 +458,18 @@ runningAgents:function(compact=false){
       unknown?h('div',{class:'body meta'},'Unknown'+age+': '+([...reasons].join('; ')||host.reason||'host observation missing or stale')):runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},'No running agents'),
       here&&api.resourceMeters(latest),h('details',{'data-view-key':'host-facts:'+host.name},h('summary',null,'Resource details'),(here?facts:['CPU and memory: not collected for remote hosts','Slots and reservations: unknown for remote hosts']).map(t=>h('div',{class:'body meta'},t)))));
   }
-  if(compact)return {label:sorted.map(host=>host.name+' · '+[...totals(host)].map(([k,n])=>k+' '+(partial||host.unknown?'?':n)).join(' · ')).join('; ')||'Host unknown · Claude ? · Codex ?',meta:''};
+  // #1701 S09: the menu strip is one unbroken chip per named host, runtime marks with numbers; the text label stays for Settings and AX.
+  const chip=host=>{const unknown=partial||host.unknown,t=totals(host),age=host.age!==null&&host.age>=0?host.age_text:'';
+   const label=host.name+' · '+(unknown?'runs unknown'+(age?' · '+age+' old':''):[...t].map(([k,n])=>k+' '+n).join(' · '));
+   return h('span',{class:'host-chip'+(unknown?' unknown':''),role:'img','aria-label':label,title:label,key:host.name},h('strong',null,host.name),[['claude','Claude'],['openai','Codex']].map(([mark,k])=>h('span',{class:'host-count',key:k},icon(mark),unknown?'?':String(t.get(k)))),unknown&&h('span',{class:'meta'},age?'stale '+age:'unknown'));};
+  if(compact)return {label:sorted.map(host=>host.name+' · '+[...totals(host)].map(([k,n])=>k+' '+(partial||host.unknown?'?':n)).join(' · ')).join('; ')||'Host unknown · Claude ? · Codex ?',meta:'',strip:h('span',{class:'host-strip'},sorted.length?sorted.map(chip):h('span',{class:'host-chip unknown'},'Host unknown'))};
   return h('section',{class:'group running-agents','aria-label':'Running agents'},h('div',{class:'row'},'Running agents'),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
     h('details',{'data-view-key':'run-definitions'},h('summary',null,'Count definitions'),h('div',{class:'body meta'},'Running processes, occupied slots, reservations and board tasks are counted apart. Reservations include pending or unconfirmed work; occupied slots can include other projects.')));
 },
 home:function(){
   const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
   const line=api.runningAgents(true);
-  return f(h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,h('span',null,line.label),faults.length>0&&h('span',{class:'meta'},'Attention · '+faults.length)),api.runningAgents(),controls(),faults),dashboard.list());
+  return f(h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('triangle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
 },
 routeBody:function(){
   switch(view.page){

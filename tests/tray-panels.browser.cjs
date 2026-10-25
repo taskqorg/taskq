@@ -29,9 +29,8 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    assert.equal(await page.locator('.tqp-task-title').evaluate(e=>e.scrollHeight<=e.clientHeight&&getComputedStyle(e).whiteSpace!=='nowrap'),true);
   }
   await page.evaluate(s=>taskq.receive(s),{...snapshot,page:'home',projects:[{...project,error:'Fixture urgent fault'}]});
-  const collapsed=await page.locator('.dashboard-status>summary').innerText();
-  assert.match(collapsed,/mac · Claude 0 · Codex 1/,'R16: attention never replaces runtime counters');
-  assert.match(collapsed,/Attention/);
+  assert.equal(await page.locator('.dashboard-status>summary .host-chip').getAttribute('aria-label'),'mac · Claude 0 · Codex 1','R16: attention never replaces runtime counters');
+  assert.equal(await page.locator('.dashboard-status>summary .attention').getAttribute('aria-label'),'Attention · 1');
   await page.getByRole('link',{name:'Open codex session',exact:true}).click();
   assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture','R05: runtime activation opens the verified target directly');
   assert.match(await page.locator('.content').innerText(),/Fixture urgent fault/);
