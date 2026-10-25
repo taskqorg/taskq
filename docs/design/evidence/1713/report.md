@@ -100,3 +100,38 @@ explicit-operation-review, Back-focus and operation-fencing protection.
 `sh docs/shots/check.sh` passes afterward. The manifest records the Windows
 WebView2 renderer, binary digest and both tasks' current UI source blobs. This
 resolves the generated-file conflict without changing either implementation.
+
+
+## macOS merge-conflict continuation
+
+Attempt `6400570491` rebases the same PR onto
+`084a4526596e5eea439fec2530698df35cfa6ff6`. Settings source and its regression
+check merge unchanged; the conflicts are generated source provenance and the
+README screenshot manifest. The source manifest is recomputed with its existing
+`node tests/task-workspace.test.cjs --write` owner command; the source-provenance
+assertion remains intact and passes.
+
+The current main `src/tray-app.js`, bundled in an isolated temporary copy with
+the unchanged regression check, reproduces `Settings` instead of `Work mode`.
+The combined candidate passes the same Settings check in light/dark at 320 px,
+with and without capacity, including all A1–A4, refresh retention, Back focus and
+explicit review destinations. Window chrome and recovery browser checks pass.
+
+The two linked after images are refreshed from the combined candidate on macOS,
+Chromium headless, 16 px, 320×900, dark, invented fixture data. Both were visually
+inspected: Settings breadcrumb, inner title, Back, Settings window controls and
+explicit review link are visible without clipping. These are browser observations;
+native Settings clicks and window raising remain untested (R12).
+
+`sh docs/shots/update.sh` passes with an isolated fixture installation and real
+WKWebView snapshots on macOS 27.0.1 arm64. `sh docs/shots/check.sh` passes with
+the refreshed combined-source manifest (source
+`9a795c0fe1317181e7e0baedab14d143c244e1e2`, release binary SHA-256
+`c29916fab9edfcd64a2a023ce2b55755edc83ed1eb7e2a2201290d26e808e3db`).
+The README project image and summary icon were visually inspected after export;
+these native static fixtures do not prove Settings clicks/window lifetime.
+
+`target/release/taskq selftest` passes in an isolated offline installation:
+99 golden traces, formats and nine staged capture observations. The board is
+explicitly unknown; the running installation is untouched. Tooling: Node v22.18.0,
+Cargo 1.98.1, warm seeded debug cache; release dependencies built locally.
