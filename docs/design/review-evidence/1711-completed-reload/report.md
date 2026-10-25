@@ -2,12 +2,12 @@
 
 Completed preserves each selected source's displayed rows until its first successful replacement page. A failed or missing response retains them with an explicit previous-rows label and source-specific Retry. Search, outcomes, pins and paging keep their existing behavior after replacement.
 
-Applied rules: R13 Product and MP14 define the behavior before implementation; R12 requires failure/pass evidence and keeps browser proof separate from native acceptance; § 7 requires source pins and the selected candidate gate. No R-number changes.
+Applied rules: R13 keeps the existing Product contract intact; its linked MP14 records A1–A4 before implementation; R12 requires failure/pass evidence and keeps browser proof separate from native acceptance; § 7 requires source pins and the selected candidate gate. No R-number changes.
 
 ## Failure before, pass after
 
 - Baseline: `66641866f8cf6844175e8fd7aa70b40f5a692aa1`.
-- Source candidate: `7df61837b4356801f1254208a19c7541c56a9a3a`.
+- UI source candidate: `7df61837b4356801f1254208a19c7541c56a9a3a`.
 - Command: `node tests/task-dashboard.browser.cjs`, using `npm run build` artifacts and invented board replies; no live board mutation.
 - Before: the added A1 reproduction expected five displayed rows after period/outcome changes, but received `[]` (`A1: slow filter reload keeps the previous rows`).
 - After: the same reproduction passes. A1–A4 also cover independent source errors, a missing response at 65 seconds, source-only Retry, Reset + Done, first-page replacement, duplicate/late reply rejection, and failed-page retry without losing earlier pages.
@@ -29,3 +29,7 @@ Environment: macOS host, Node v22.18.0, Playwright 1.64.1, Chromium headless 156
 The 65-second deadline bounds the UI's wait for a reply, including native queue time; it does not cancel the existing read-only native command. Native commands retain their existing timeout and queue. Late replies are ignored after timeout or replacement.
 
 Installed native Completed behavior, Windows and screen-reader announcements were not exercised. These browser checks do not claim live/native acceptance. The README snapshot refresh uses an isolated installation and does not change the running service.
+
+## Candidate gate limitation
+
+`python3 scripts/check.py --base 66641866f8cf6844175e8fd7aa70b40f5a692aa1` stopped in the full Rust suite after 63.077 s: 535 passed, 18 failed, 32 ignored. One failure was the proposed root-contract addition exceeding 60 KiB; that addition was removed, leaving the existing Product contract intact and the detailed requirement in its linked MP14. The 17 remaining failures exercise host installation, policy, lifecycle or resource writes under inherited worker authority (`a worker cannot change host policy`, `a worker cannot install the host service`, or related rejection/cascade). Worker guards remain enabled; this is not a passing canonical gate. Targeted component proof remains separate. Merge-result CI must validate the complete candidate under R12 and § 7.
