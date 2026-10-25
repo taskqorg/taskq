@@ -49,7 +49,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    // R18/R19/R29: account, not method; expiry; the sign-in route; access effective per project; no placeholder
    await go('agents');
    const t=await text();
-   for(const s of ['Claude 2.1.3 · Signed in · owner@example.org','Codex 0.48.0 · Expired · account unknown','win · clients / access unknown','fra · clients / access unknown','Access unknown for Beta','taskq service permissions'])assert(t.includes(s),s);
+   for(const s of ['Claude 2.1.3 · Signed in · owner@example.org','Codex 0.48.0 · Expired · account unknown','Codex · unknown: win heartbeat publishes no client version','Codex · unknown: fra heartbeat publishes no client version','Access unknown for Beta','taskq service permissions'])assert(t.includes(s),s);
    assert.equal(await p.locator('.content [data-route=agents]').count(),0,'no circular placeholder');
    await p.locator('.agent-signin > summary').nth(1).click();await p.locator('details.access > summary').first().click();
    await shot('agents');
