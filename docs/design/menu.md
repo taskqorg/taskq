@@ -31,6 +31,8 @@ Counter scope, all states and Held drafts with Start: [K-A1–K-A6](task-counter
 
 ## M3 Navigation and tasks
 
+Owner rule (2026-10-25, #1709): no horizontal scrolling anywhere in the menu, View window or Settings. Rows wrap; view picks and state counters keep each chip's icon and count fully visible, without an edge mask or clipping. The #1701 header height budget yields to wrapping.
+
 Approved navigation/header and view-only multi-select targets: [UI01–UI04 and UI25–UI28](ui-rules.md#checklist-28-rules). The task-list counter strip alone toggles states with OR; all eight states show, zero as icon-only and unknown as `?`. Selected capsules expose `aria-pressed` and a visible outline. No Filter checkbox group. All tasks in that row counts deduplicated open tasks across all projects (Held included), clears state/project restrictions and shows each observed project with nonzero counters and its tasks; partial/unknown stays explicit. This control alone is exempt from the no-Work-total rule. Project-summary strips still hide zero. Filters never change admission focus or write the queue.
 
 - Header outside the scrolling content ([MP12](menu-product.md#dashboard-decisions-1573), P-W3, #1660): one stable action row: Home, then the Board link and Emergency stop when present, one Conversations entry with the deduplicated new-event count, Settings, Keep menu open, Always on top and close ×. Back, breadcrumbs and a title that does not fit use the row below, whole words only. Settings opens or raises its own window; no menu Enlarge; the footer is the version and the corner grip. Its slightly contrasting strip never moves during scroll bounce.
