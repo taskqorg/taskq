@@ -33,6 +33,11 @@ Acceptance: each implementing task repeats its affected flow against TW1–TW8 a
 the [interaction table](evidence/1443/owner-plan.md#interaction-differences-to-remove);
 the last one reviews the combined tray and workspace against all seven points.
 
+Settings Work mode and Recovery open inner Settings pages; Back returns to the
+Settings list. Their explicit review links open the existing workspace Operation
+review; entering a Settings page submits no operation. Page titles match their
+Settings list labels, including Agents and access and Services and support.
+
 #1467's [owner answer](https://github.com/taskqorg/taskq/issues/1467#issuecomment-6320097999)
 confirms TW5–TW7 message records only, the prelaunch deletion refusal and #1464's
 attachment deferral. Native conversations stay in their runtime. Local metadata

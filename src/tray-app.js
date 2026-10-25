@@ -197,7 +197,7 @@ navigate:function(next,filter=null,work=null){
   // R22: from the menu, Settings opens or raises its own window; plain Settings keeps that window's section
   if(view.settingsWindow&&!ports.settings&&settingsPages.includes(next)){viewState.flush();send({a:'settings-open',page:next==='settings'?null:next});return;}
   if(ports.settings&&next==='home')next='settings';
-  if(!ports.workspace&&(work||['stop','recovery'].includes(next))){send({a:'workspace',open:{page:'operations',operation:work?'resources':next,root:work?Object.keys(work)[0]||null:null}});return;}
+  if(!ports.workspace&&(work||next==='stop'||next==='recovery'&&!ports.settings)){send({a:'workspace',open:{page:'operations',operation:work?'resources':next,root:work?Object.keys(work)[0]||null:null}});return;}
   renderer.push(remember());view.page=next;view.taskFilter=filter===null?null:Array.isArray(filter)?filter:[filter];view.working=work;view.workCard=null;view.ask=null;view.noted=null;view.disclosures={};view.restoreScroll=0;
   view.unavailable=null;
   present(true);(menu.querySelector('.content')||document.scrollingElement).scrollTop=0;
@@ -484,6 +484,7 @@ routeBody:function(){
     case 'cadence':return history();
     case 'notifications':return notifications();
     case 'agents':return agents();
+    case 'work':return view.S.projects.some(p=>p.resources)?api.workPage():api.operationLauncher('admission',null,'Review admission in workspace…');
     case 'stop':return api.stopPanel();
     case 'recovery':return api.recoveryPanel();
     case 'services':return f(h('div',{class:'row'},h('strong',null,view.S.host||'This host')),api.hostService(),api.operationLauncher('service',null,'Host maintenance in workspace…'),view.S.projects.map(p=>[problem(p),incidentNotice(p),service(p,false)]));
@@ -577,20 +578,19 @@ settings:function(){
   const S=view.S,ps=S.projects,A=S.agents,line=api.runningAgents(true),st=S.notify?.status,svc=S.service?.state,up=ps.find(p=>p.update&&p.update!==p.version);
   const growth={auto:'Auto',top:'Down',bottom:'Up',fixed:'Fixed'}[S.size_anchor||'auto']||'Auto';
   const widget=(target,mark,label,meta)=>h('button',{class:'project settings-widget',...target},mark,h('span',null,label),h('span',{class:'meta'},meta));
-  const work=ps.some(p=>p.resources)?{'data-a':'work','data-root':null}:{'data-a':'workspace','data-page':'operations','data-operation':'admission'};
   const sections=[['Display',[
     widget({'data-route':'appearance'},icon('sliders-horizontal'),'Appearance',S.font+' px · '+(S.view==='full'?'Summary':'Icon')+' · growth '+growth),
     widget({'data-route':'notifications'},icon('bell'),'Notifications',{allowed:'OS allowed',blocked:'OS blocked','not asked':'OS not asked',asking:'OS asking','request failed':'OS request failed',unsupported:'OS unsupported'}[st]||'OS permission unknown'),
     widget({'data-route':'cadence'},icon('activity'),'Activity history',S.display?.periods?.find(x=>x.id===S.period)?.name||'period unknown')]],
    ['Host and projects',[
     widget({'data-route':'hosts'},icon('network'),'Hosts and resources',line.label),
-    widget(work,icon('sliders-horizontal'),'Work mode',api.admissionText()+(ps.some(p=>p.resources)?'':' · capacity unavailable')),
+    widget({'data-route':'work'},icon('sliders-horizontal'),'Work mode',api.admissionText()+(ps.some(p=>p.resources)?'':' · capacity unavailable')),
     widget({'data-route':'agents'},icon('shield'),'Agents and access',A?.checking?'checking sign-in':A?A.rows.map(r=>runtimeName(r.runtime)+' '+(r.state==='signed-in'&&!A.fresh?'signed in at capture':(signState[r.state]||'Unknown').toLowerCase())).join(' · ')||'no runtime':'sign-in unknown'),
     widget({'data-route':'projects'},icon('folder'),'Projects',ps.length+' registered'),
     widget({'data-route':'delivery'},icon('git-pull-request'),'Delivery',grouped(ps.map(p=>p.delivery?.preset||'unavailable'))||'no projects'),
     widget({'data-route':'services'},icon('settings'),'Services and support','host service '+(svc==='running'?'running':svc==='exited'?'exited':'unknown')),
     S.stop_modes&&widget({'data-a':'workspace','data-page':'operations','data-operation':'stop'},icon('octagon-x'),'Emergency stop','Drain or Full stop'),
-    S.stop_modes&&widget({'data-a':'workspace','data-page':'operations','data-operation':'recovery'},icon('rotate-ccw'),'Recovery',S.stop_hold?'admission held':'no hold'),
+    S.stop_modes&&widget({'data-route':'recovery'},icon('rotate-ccw'),'Recovery',S.stop_hold?'admission held':'no hold'),
     widget({'data-route':'about'},icon('info'),'About and updates',(S.version?'v'+S.version:'version unknown')+(up?' · update '+up.update:''))]]];
   return f(sections.map(([label,rows])=>h('section',{class:'settings-section'},h('div',{class:'meta'},label),rows)));},
 windowSettings:function(){const mode=view.S.size_anchor||'auto';return f(h('p',{class:'meta'},'Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.'),h('fieldset',null,h('legend',null,'Window growth'),h('div',{class:'growth-options'},[['auto','Auto'],['top','Down'],['bottom','Up'],['fixed','Fixed']].map(([value,label])=>h('button',{'data-a':'size-anchor','data-value':value,'aria-pressed':String(mode===value)},h('span',{class:'growth-miniature','data-growth':value,'data-opening':view.S.auto_anchor==='bottom'?'up':'down','aria-hidden':'true'},h('i')),h('span',null,label))))),h('div',{class:'options'},button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Menu always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)})));},
@@ -802,8 +802,8 @@ const signState={'signed-in':'Signed in',expired:'Expired',rejected:'Rejected','
 const actionErrors=new Map();
 
 // Navigation is view state only: every route consumes the same pushed snapshot.
-const routes={hosts:'Hosts and resources',delivery:'Delivery','agentq-shown':'Agentq shown','agentq-setting-up':'Agentq setting up','agentq-running':'Agentq running','agentq-unknown':'Agentq unknown',recovery:'Reviewed recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents',services:'Services',about:'About'};
-const settingsPages=['settings','appearance','hosts','delivery','cadence','notifications','agents','services','about'];
+const routes={hosts:'Hosts and resources',delivery:'Delivery','agentq-shown':'Agentq shown','agentq-setting-up':'Agentq setting up','agentq-running':'Agentq running','agentq-unknown':'Agentq unknown',work:'Work mode',recovery:'Recovery',stop:'Stop and hold',home:'Home',projects:'Projects',attention:'Attention',settings:'Settings',appearance:'Appearance',cadence:'Activity history',notifications:'Notifications',agents:'Agents and access',services:'Services and support',about:'About and updates'};
+const settingsPages=['settings','appearance','hosts','delivery','cadence','notifications','work','recovery','agents','services','about'];
 if(ports.settings)view.page='settings';
 const viewState=require('./tray-view-state.js').create(view,{menu,document,send,defer,cancel,trail:renderer.entries(),routes:Object.fromEntries(Object.keys(routes).map(page=>[page,{parent:settingsPages.includes(page)&&page!=='settings'?'settings':'home'}]))});
 
