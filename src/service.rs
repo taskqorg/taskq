@@ -622,7 +622,8 @@ impl Gate {
     }
 }
 
-/// Append `(task, kind, attempt)` moves to the events file at board time `now` (§ 4): one line per attempt and kind,
+/// Append `(task, kind, id)` moves to the events file at board time `now` (§ 4): one line per id and kind (`ask`: its
+/// card entry, else the attempt),
 /// lines older than 30 days dropped. Returns the first time covered.
 pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> Result<i64, String> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
@@ -1691,8 +1692,10 @@ impl<'a> Service<'a> {
         let (mut moves, mut closed) = (vec![], vec![]);
         for n in ns {
             let (to, a) = match views.iter().find(|v| v.issue.number == n) {
-                // `ask` and `waiting` without an attempt: the last comment, else the issue number
-                Some(v) if matches!(v.projection.task.state, State::Ask | State::Waiting) => (v.projection.task.state, attempt(&v.projection.task, &v.comments).or(v.comments.last().map(|c| c.id)).or(Some(n))),
+                // #1712: `ask` is its card's entry (§ 2 revision), so a second ask of one attempt is its own event
+                Some(v) if v.projection.task.state == State::Ask => (State::Ask, Some(v.projection.revision).filter(|r| *r > 0).or(Some(n))),
+                // `waiting` without an attempt: the last comment, else the issue number
+                Some(v) if v.projection.task.state == State::Waiting => (State::Waiting, attempt(&v.projection.task, &v.comments).or(v.comments.last().map(|c| c.id)).or(Some(n))),
                 Some(v) => (v.projection.task.state, attempt(&v.projection.task, &v.comments)),
                 None => match self.board.issue(n) {
                     Ok(i) if !i.open => {
@@ -5516,12 +5519,18 @@ Open: none";
         let w = b.create("W", "", &["taskq".into()]).unwrap();
         again.pass().unwrap();
         let aw = task(&b, w).attempt.unwrap();
-        b.comment(w, &core::entry("ask", &[], Some(aw), "Which?\n1. x\n2. y ★")).unwrap();
+        let q1 = b.comment(w, &core::entry("ask", &[], Some(aw), "Which?\n1. x\n2. y ★")).unwrap();
+        again.pass().unwrap();
+        again.pass().unwrap();
+        // #1712: the answer resumes the same attempt; its second ask is a second event, not a duplicate of the first
+        b.comment(w, &core::entry("answer", &["1"], None, "")).unwrap();
+        again.pass().unwrap();
+        let q2 = b.comment(w, &core::entry("ask", &[], Some(aw), "Where?\n1. x\n2. y ★")).unwrap();
         again.pass().unwrap();
         again.pass().unwrap();
         let ev = std::fs::read_to_string(root.join(".taskq/events")).unwrap();
         let lines: Vec<&str> = ev.lines().skip(3).map(|l| l.split_once(' ').unwrap().1).collect();
-        assert_eq!(lines, [format!("#{z} blocked {z}"), format!("#{w} ask {aw}")], "{ev}");
+        assert_eq!(lines, [format!("#{z} blocked {z}"), format!("#{w} ask {q1}"), format!("#{w} ask {q2}")], "{ev}");
         // a `gone` entry after the first pass is one `gone` event, once
         let v = b.create("V", "", &["taskq".into()]).unwrap();
         again.pass().unwrap();

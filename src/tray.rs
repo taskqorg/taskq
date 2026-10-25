@@ -456,8 +456,14 @@ fn project(install: &Path, root: &str) -> Value {
     let ttl = crate::snapshot::ttl(r);
     let live = age.is_some_and(|a| crate::snapshot::live(a as i64, ttl));
     let saved = crate::display::saved(&d);
-    let text = fs::read_to_string(d.join("events")).unwrap_or_default();
+    let (text, events_error) = match fs::read_to_string(d.join("events")) {
+        Ok(t) => (t, None),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (String::new(), Some("no events file".to_string())),
+        Err(e) => (String::new(), Some(format!("events unreadable: {e}"))),
+    };
     let since = text.lines().next().and_then(|l| l.strip_prefix("since ")?.parse::<i64>().ok());
+    // #1712 A3: the Source line names why a project's history is unknown
+    let events_error = events_error.or_else(|| since.is_none().then(|| "events file has no since line".to_string()));
     let events: Vec<Value> = text.lines().skip(1).filter_map(|l| {
         let w: Vec<&str> = l.split(' ').collect();
         Some(json!([w.first()?.parse::<i64>().ok()?, w.get(2)?, w.get(3)?, w.get(1)?.strip_prefix('#')?.parse::<u64>().ok()?]))
@@ -476,7 +482,7 @@ fn project(install: &Path, root: &str) -> Value {
     let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
     let observed_at=s["at"].as_i64().filter(|at|crate::snapshot::live(now()-*at,ttl)).and(age.map(|a|now()-a as i64));
     let resources = resource_group(&s["capacity"], &cap_saved,&cap_revision, &project_limits, observed_at, installation, &id);
-    json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(r)),
+    let mut out = json!({"root": root, "name": s["project"].as_str().map(String::from).unwrap_or_else(|| crate::project_name(r)),
         "issues": s["issues"].as_str().unwrap_or(""), "board_kind": board_kind,
         "delivery": crate::load(r).ok().map(|(c,_)|json!({"preset":c.delivery,"revision":c.delivery_revision})),
         "log": s["log"].is_string(), "alive": live, "age": age, "ttl": ttl,
@@ -485,7 +491,9 @@ fn project(install: &Path, root: &str) -> Value {
         "focus_command": s["focus_command"],"service_pid":s["pid"],"host_instance":s["host_instance"],"restart_waits":s["restart_waits"],"stop_progress":s["stop_progress"],"uninstall_review":crate::lifecycle::uninstall_review(install,"review",Some(r)).unwrap_or_else(|reason|json!({"state":"unknown","reason":reason})), "request": s["request"], "since": since, "events": events, "tasks": tasks, "host": s["host"], "version": s["version"], "update": s["update"],
         "hosts": hosts, "observed": s["observed"], "tasks_age_seconds": s["tasks_age_seconds"], "tasks_live": tasks_live, "capacity": s["capacity"], "resources": resources, "cap_host": cap_host, "cap_saved": cap_saved, "agents": s["agents"], "access": s["access"],
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
-        "incident_repo": crate::platform::RELEASE_REPO})
+        "incident_repo": crate::platform::RELEASE_REPO});
+    out["events_error"] = json!(events_error);
+    out
 }
 
 /// #1591: the page gets each observation's live state from the one Rust rule. Task, host and execution rows age by
@@ -3332,6 +3340,28 @@ mod tests {
         let ps = json!([{"issues": "u", "events": []}, {"issues": "v", "events": [], "since": 5}]);
         assert_eq!(summary(&ps.as_array().unwrap()[..1], (0, 1)).since, None, "no events cache: no since");
         assert_eq!(summary(ps.as_array().unwrap(), (0, 1)).since, Some(5));
+    }
+
+    // Chain: #1712 events file -> project() -> Hour summary. Risk: a second ask of one attempt or a close in the
+    // window is not counted, or a missing source reads as zero without a reason.
+    #[test]
+    fn hour_window_counts_each_ask_and_close_and_names_missing_sources() {
+        let root = std::env::temp_dir().join(format!("taskq-1712-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(crate::dot(&root)).unwrap();
+        let install = root.join("install");
+        let r = root.to_str().unwrap();
+        assert_eq!((project(&install, r)["since"].clone(), project(&install, r)["events_error"].clone()), (Value::Null, json!("no events file")));
+        fs::write(crate::dot(&root).join("events"), "1000 #9 ask 3\n").unwrap();
+        assert_eq!(project(&install, r)["events_error"], "events file has no since line");
+        // the first ask before the window; an answer, then a second ask and a close of the same task inside it
+        fs::write(crate::dot(&root).join("events"), "since 0\n1000 #9 ask 11\n5000 #9 ask 22\n6000 #9 close 33\n").unwrap();
+        let p = project(&install, r);
+        assert_eq!((p["since"].clone(), p["events_error"].clone()), (json!(0), Value::Null));
+        let s = summary_at(&[p], (3600, 7200), 7200);
+        assert_eq!((0..4).map(|k| s.bins.iter().map(|b| b.counts[k]).sum::<u32>()).collect::<Vec<_>>(), [1, 0, 1, 0], "closed, failed, ask, blocked");
+        assert!(s.bins.iter().all(|b| b.missing.is_empty()));
+        let _ = fs::remove_dir_all(&root);
     }
 
     // A8: real event identity, half-open bounds and incomplete sources feed the same renderer.
