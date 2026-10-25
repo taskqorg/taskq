@@ -77,10 +77,12 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
      await s.locator('.settings-widget').getByText(label,{exact:true}).click();
      assert.equal(await s.locator('.head h1').innerText(),label,'#1713: inner title equals list label');
      assert.equal(await s.locator('.breadcrumbs').innerText(),'Settings');
+     assert.equal(await s.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Settings inner route fits at 320 px');
      assert.equal(await s.locator('[aria-label="Close settings"]').count(),1,'Settings stays open');
      assert.deepEqual(await s.evaluate(()=>messages.filter(m=>!['web-observation','size','set'].includes(m.a))),[],'#1713 A4: opening sends no operation or workspace handoff');
      await s.evaluate(snapshot=>taskq.receive(snapshot),current);
      assert.equal(await s.locator('.head h1').innerText(),label,'refresh retains the inner route');
+     if(out&&resources&&theme==='dark'&&operation)await s.screenshot({path:out+'/settings-'+route+'-320-dark.png',fullPage:true});
      if(operation){
       await s.locator('[data-a=workspace][data-operation='+operation+']').click();
       assert.deepEqual(await s.evaluate(()=>messages.filter(m=>m.a==='workspace').map(m=>m.open)),[{page:'operations',operation,root:null,board:null,task:null,revision:null}],'explicit review keeps the existing operation destination');
