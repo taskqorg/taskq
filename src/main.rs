@@ -439,6 +439,15 @@ fn one_line(what: &str, items: &[String]) -> Res<()> {
     if items.iter().any(|s| s.contains(['\r', '\n']) || s.trim().is_empty()) { Err(format!("{what}: one nonempty line each")) } else { Ok(()) }
 }
 
+/// § 1: `add` numbers Acceptance itself; a typed `A<n>.` label would double (#1696).
+fn labelled_acceptance(items: &[String]) -> Res<()> {
+    let bad = |s: &str| s.trim_start().strip_prefix('A').and_then(|r| r.split_once('.')).is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()));
+    match items.iter().position(|s| bad(s)) {
+        Some(i) => Err(format!("--acceptance {}: drop the A<n>. label; add numbers the lines", i + 1)),
+        None => Ok(()),
+    }
+}
+
 /// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue; only the owner or PM parks without one.
 fn park(n: u64, blocker: Option<&str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&str>> {
     let worker = attempt.is_some() && task.is_some_and(|t| t.parse() == Ok(n));
@@ -2271,6 +2280,7 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
         if title > 80 { Err(format!("title: {title} characters, limit 80; shorten it")) } else { Ok(()) },
         limit("Goal", &goal, 1, 2, 240),
         one_line("--acceptance", &t.acceptance),
+        labelled_acceptance(&t.acceptance),
         one_line("--scope", &t.scope),
         limit("Acceptance", &acc, 1, 8, 240).map_err(|e| if acc.len() > 8 { format!("{e} (split the task, R2)") } else { e }),
         limit("Scope", &scope, 0, 4, 240),
@@ -3696,6 +3706,10 @@ mod tests {
         assert!(run(&["add", &"t".repeat(81), "--goal", "G", "--acceptance", "a"]).unwrap_err().contains("80"));
         assert!(run(&["add", "T", "--goal", "1\n2\n3", "--acceptance", "a"]).unwrap_err().contains("Goal: 3 lines"));
         assert!(run(&["add", "T", "--goal", "G", "--acceptance", "a\nb"]).is_err());
+        // #1696: a typed A<n>. label would render "A1. A1. ..."; a later mention is text
+        assert!(run(&["add", "T", "--goal", "G", "--acceptance", "a", "--acceptance", " A12. b"]).unwrap_err().contains("--acceptance 2: drop the A<n>. label"));
+        run(&["add", "T2", "--goal", "G", "--acceptance", "see A1. above", "--acceptance", "Abc. d"]).unwrap();
+        assert!(c.board.issues(None).unwrap().pop().unwrap().body.contains("A1. see A1. above\nA2. Abc. d\n"));
         let mut v = vec!["add", "T", "--goal", "G"];
         v.extend(["--acceptance", "a"].repeat(9));
         assert!(run(&v).unwrap_err().contains("split the task"));
@@ -3705,7 +3719,7 @@ mod tests {
         v[3] = "1\n2\n3";
         let e = run(&v).unwrap_err();
         assert!(e.contains("title: 81 characters, limit 80") && e.contains("Goal: 3 lines, allowed 1-2") && e.contains("Acceptance: 9 lines, allowed 1-8"), "{e}");
-        assert_eq!(c.board.issues(None).unwrap().len(), 2, "rejected input writes nothing");
+        assert_eq!(c.board.issues(None).unwrap().len(), 3, "rejected input writes nothing");
     }
 
     // Chain: § 2 Ask card. Risk: a card breaks the template or limits.
