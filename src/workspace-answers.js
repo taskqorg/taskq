@@ -44,7 +44,7 @@ answerSlot:function(t){return t.state==='ask'?h('div',{'data-answer':t.key,key:'
 answerNotices:function(board){
   // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
   // #1662 A1/A4: a receipt names its question and answer in plain words; operation id and revision stay behind a disclosure
-  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
+  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+(r.reason===CONFLICT?'an earlier answer with this operation is still pending with different content':r.reason):'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'&&r.reason!==CONFLICT?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision+(r.reason===CONFLICT?' · bridge: '+r.reason:'')),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
   const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
   return [shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,'status')),answered.length>0&&h('details',{class:'group answered','data-view-key':'answered'},h('summary',null,'Answered'+counter(answered.length,'muted','Answered')),answered.map(x=>line(x,null)))];
@@ -95,6 +95,8 @@ retry:function(key){const r=answerFeedback.get(key);if(r)ui.effect('workspace.an
 dismiss:function(key){answerFeedback.delete(key);if(view.toast===key)view.toast=null;draw();}
  });
  const {answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,answerSend,load,save}=api;
+ // #1699 A4: the bridge's retained correlation guard (tray.rs ActionQueue::submit), named in user terms
+ const CONFLICT='Correlation id is already pending for a different request';
  const STATE={sending:'sending',accepted:'accepted',rejected:'not accepted',stale:'question changed, review it',unknown:'delivery unknown',failed:'not sent',partial:'partly applied'};
  const component=()=>require('./answer-card.js');
  const {tasks,unique,counter}=execution.module('workspace.answers.helpers',{

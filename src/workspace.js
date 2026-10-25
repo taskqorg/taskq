@@ -4,15 +4,15 @@ const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
   const view={page:'conversations',section:null,taskFilter:null,working:null,aiRoot:null,answer:null,disclosures:{},restoreScroll:0};
-  // #1691 A3: Conversations is the one root; Inbox is its section, not a route
-  const routes={conversations:{title:'Conversations'},message:{title:'Message',parent:'conversations'},answer:{title:'Task answer',parent:'conversations'},sessions:{title:'Work sessions',parent:'conversations'},operations:{title:'Operation review',parent:'conversations'}};
+  // #1699 A1: Conversations is the one thread screen; a task thread is view.answer, an event thread view.message, else an owner conversation
+  const routes={conversations:{title:'Conversations'},sessions:{title:'Work sessions',parent:'conversations'},operations:{title:'Operation review',parent:'conversations'}};
   // A2: the recorded Wouter history is the Back stack; each entry keeps its scroll, disclosures and focus.
   const state=require('./tray-view-state.js').create(view,{menu,document,routes,trail:renderer.entries(),root:'conversations',defer:ui.defer,cancel:ui.cancel,send:m=>ui.send({...m,a:'workspace-set'})});
   let composing=false,answerField=null,redraw=null;
   // #1662 A3: task answers use the workspace's one composer; a card change repaints it once per tick
-  const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,changed:()=>{if(view.page==='answer'&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
+  const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,changed:()=>{if(view.page==='conversations'&&view.answer&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
   const pm=require('./pm-composer.js');
-  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args)});
+  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args),onSelect:()=>{view.answer=null;view.message=null;}});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const {session,keyed}=execution.module('workspace.links',{session:function(url){return !!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);},
@@ -20,52 +20,71 @@ const {create}=execution.module('workspace',{
    keyed:function(v){if(Array.isArray(v))return v.map(keyed);if(!v?.props)return v===''?null:v;const p=v.props;if(v.key==null)v.key=p['data-answer']||p['data-resources']||p['data-card']||p['data-view-key']||p.id;if(p.children!=null)p.children=keyed(p.children);return v;}});
   // A1: each route returns its Preact vnodes; called directly, since signal-aware components skip renders when only the plain view changes.
   const pages=execution.module('workspace.routes',{
-   // #1691 A4: the Inbox section keeps requests, task answers and outcomes with their actions
    conversations:function(){
-    const m=snapshot.value.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null,inbox=view.section==='inbox';
-    // the Inbox entry sits in the conversation toolbar, so the composer keeps its height in narrow windows
-    const label='Inbox · '+(count===null?'unknown':count+' new'),entry=h('button',{type:'button',title:label,'aria-label':label,'data-section':'inbox','aria-pressed':String(inbox)},require('./ui-icons.js').icon('inbox'),count?' '+count:'');
-    return inbox?[h('div',{class:'conversation-tools',role:'group','aria-label':'Sections'},h('button',{'data-section':'','aria-pressed':'false'},'Conversations'),entry),h('section',{class:'conversation-inbox','aria-label':'Inbox'},pages.inbox())]:conversations.body(entry);
+    const threads=api.threads(),selected=view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null,row=threads.find(t=>t.id===selected);
+    const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
+    const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
+    return conversations.body({rows:threads,selected,marks,notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,disabled:!!view.messageBusy},'Mark read'),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+     footer:[api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]});
    },
-   inbox:function(){
-    const m=snapshot.value.messages,filter=view.messageFilter||'all',rows=(m?.entries||[]).filter(r=>filter==='archived'?r.archived:!r.archived&&(filter!=='pending'||r.pending));
-    return [h('div',{class:'options'},h('button',{'data-a':'new-request'},'New request'),h('button',{'data-route':'sessions'},'Work sessions')),
-     h('label',{for:'message-filter'},'Show messages'),h('select',{id:'message-filter','data-field':'message-filter'},[['all','All messages'],['pending','Pending'],['archived','Archived']].map(([v,label])=>h('option',{value:v,selected:filter===v},label))),
-     m?.complete!==true&&h('p',{role:'status'},'Messages unknown: '+(m?.reason||'Source unavailable; refresh status.')),
-     filter==='archived'&&[h('p',null,'Delete permanently removes TaskQ message records and owned copies. There is no undo. Board tasks, source files and native chats stay; sessions keep running. Requests awaiting launch cannot be deleted.'),h('button',{'data-a':'message-delete-all',disabled:!rows.length||!!view.messageBusy},'Delete all archived permanently')],
-     // #1662 A1: a row reads as title and plain state; host, request id and revision stay behind its disclosure
-     rows.length?rows.map(r=>h('section',{class:'message-row','aria-label':r.title||'Message',key:r.key},h('button',{class:'project','data-a':'message-open','data-key':r.key},r.kind==='question'?(r.project||'Board')+' · #'+r.task+' '+r.title:r.title||'Request'),h('p',{class:'meta'},(r.kind==='question'?(r.state==='ask'?'Unanswered':'Archived')+' question':api.plain(r.state))+(r.deleting?' · Deletion incomplete; retry Delete':r.read?' · Read':' · Unread')),api.ids(r),h('div',{class:'options'},api.messageButtons(r)))):h('p',null,'No '+(filter==='archived'?'archived ':filter==='pending'?'pending ':'')+'messages in the available snapshot.'),
-     h('p',{class:'meta',role:'status'},view.messageNotice||''),answers.answerNotices()];
+   // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
+   task:function(row){
+    const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
+    return [h('div',{class:'conversation-tools thread-head'},h('p',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),
+     h('details',{class:'ids','data-view-key':'answer-ids'},h('summary',null,'Details'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
+     api.threadNotice(row.id),
+     !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
+     [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
+      t.state==='ask'?[h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})),api.answerComposer(p,t)]:h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues)]];
    },
-   message:function(){
-    const r=snapshot.value.messages?.entries?.find(r=>r.key===view.message);
-    if(!r)return h('p',{role:'status'},'This message is unavailable or was deleted. Back returns to the list; Refresh reads current status.');
-    const request=r.request,url=request?.url;
-    return [h('p',null,r.title||'Message'),h('p',{class:'meta'},api.plain(r.state)),api.ids(r),
+   // an event with no owner conversation (setup, project open) keeps its record as its own thread
+   message:function(row){
+    const r=row.event,request=r.request,url=request?.url;
+    return [h('div',{class:'conversation-tools thread-head'},h('p',{class:'thread-title'},r.title||'Request'),api.eventButtons(r)),h('p',{class:'meta'},api.plain(r.state)),api.ids(r),api.threadNotice(row.id),
      h('p',null,request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.'),
      session(url)&&h('a',{'data-url':url,href:url},'Open native session'),
-     request?.state==='launched'&&h('button',{'data-c':'reply-open','data-id':r.id},'Reply in Conversations'),
-     h('p',null,request?.state==='launched'?'Replies go to this native session from its conversation. Opening this record never sends a request.':'Replies open in Conversations after the native launch. Opening this record never sends a request.'),h('div',{class:'options'},api.messageButtons(r))];
-   },
-   answer:function(){
-    const c=view.answer,p=view.S.projects.find(p=>p.issues===c?.board&&(!c.root||p.root===c.root)),t=p?.tasks?.find(t=>t.n===c.task);
-    if(!p||!t)return [h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'),c?.board&&h('a',{href:c.board+'/'+c.task,'data-url':c.board+'/'+c.task},'Open task on board')];
-    return [h('p',{class:'meta'},p.name+' · ',h('a',{href:p.issues,'data-url':p.issues},'Board')),h('details',{class:'ids','data-view-key':'answer-ids'},h('summary',null,'Details'),h('p',{class:'meta'},'Attempt '+(t.attempt??'unknown')+' · question revision '+(t.revision??'unknown'))),
-     (!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
-     !!c.revision&&c.revision!==t.revision&&h('p',{role:'status'},'The question changed since this launcher was opened. Read the current question before answering.'),
-     t.state==='ask'?[answers.answerSlot({...t,key:p.issues+'/'+t.n}),api.answerComposer(p,t)]:h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues)];
+     h('p',{class:'meta'},'Opening this thread never sends a request or marks it read.')];
    },
    operations:function(){return operations.operationBody(view.operation);},
    sessions:function(){return conversations.sessions();}
   });
   const api=execution.module('workspace.instance',{
-   messageAction:function(action,keys){
+   // the notice stays on the thread that asked; an archived thread leaves the list, so its notice and Undo go to the list footer
+   messageAction:function(action,keys,thread){
     if(view.messageBusy||!keys.length)return;
-    const id=Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');view.messageBusy=id;view.messageNotice='Checking '+action+' readback…';
-    ui.defer(()=>{if(view.messageBusy===id){view.messageBusy=null;view.messageNotice='Message action outcome unknown. Refresh to read back; no action was replayed.';api.draw();}},30000);
+    const id=Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');view.messageBusy=id;view.messageThread={thread:thread||'conversation',action,keys};view.threadNotice={thread:view.messageThread.thread,text:'Checking '+action+' readback…'};
+    ui.defer(()=>{if(view.messageBusy===id){view.messageBusy=null;view.threadNotice={thread:view.messageThread.thread,text:'Message action outcome unknown. Refresh to read back; no action was replayed.'};api.draw();}},30000);
     ui.send({a:'message-action',id,action,keys});api.draw();
    },
-   messageButtons:function(row){return h('button',{'data-a':row.archived?'message-delete':'message-archive','data-key':row.key,disabled:!!view.messageBusy},row.archived?'Delete permanently':'Archive');},
+   thread:function(key){const r=snapshot.value.messages?.entries?.find(r=>r.key===key);return !r?null:r.kind==='question'?'task:'+r.board+'/'+r.task:conversations.ids().includes(r.id)?'conversation':'event:'+r.key;},
+   // #1699 A2/A7: Mark read is explicit; Archive offers Undo; an archived event restores or deletes
+   eventButtons:function(r){const busy=!!view.messageBusy;return r&&h('span',{class:'options'},!r.read&&!r.archived&&h('button',{'data-a':'message-read','data-key':r.key,disabled:busy},'Mark read'),r.archived?[h('button',{'data-a':'message-restore','data-key':r.key,disabled:busy},'Restore'),h('button',{'data-a':'message-delete','data-key':r.key,disabled:busy},'Delete permanently')]:h('button',{'data-a':'message-archive','data-key':r.key,disabled:busy},'Archive'));},
+   // #1699 A6: a message receipt shows in the thread it acted on, never in the shared status line
+   threadNotice:function(id){return view.threadNotice?.thread===id?h('p',{class:'meta thread-notice',role:'status'},view.threadNotice.text):null;},
+   // #1699 A1: one task thread per board task with a question event, plus the task opened from the menu; an owner conversation's request events stay on it
+   threads:function(){
+    const S=snapshot.value,rows=new Map(),owned=new Set(conversations.ids());
+    for(const r of S.messages?.entries||[]){
+     if(r.kind==='question'){const id='task:'+r.board+'/'+r.task,prior=rows.get(id);if(!prior||prior.event.archived&&!r.archived)rows.set(id,{id,task:r.task,board:r.board,root:r.root,title:'#'+r.task+' '+(r.title||''),project:r.project,revision:r.revision,event:r,archived:r.archived});}
+     else if(r.kind==='request'&&!owned.has(r.id))rows.set('event:'+r.key,{id:'event:'+r.key,title:r.title||'Request',event:r,archived:r.archived,meta:(r.host||'Host unknown')+' · '+api.plain(r.state),marker:!r.read&&!r.archived?'Unread':''});
+    }
+    const a=view.answer,id=a&&'task:'+a.board+'/'+a.task;
+    if(a&&!rows.has(id))rows.set(id,{id,task:a.task,board:a.board,root:a.root,title:'#'+a.task,revision:a.revision});
+    for(const row of rows.values())if(row.task){
+     const p=S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
+     if(t)row.title='#'+t.n+' '+t.title;
+     row.meta=(p?.name||row.project||'Board')+' · '+(t?.state||row.event?.state||'unknown');
+     row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
+    }
+    return [...rows.values()];
+   },
+   // #1699 A2: the menu badge selects the first unread thread, an open question first; nothing is acknowledged
+   unread:function(){
+    const e=(snapshot.value?.messages?.entries||[]).filter(r=>!r.archived&&!r.read),r=e.find(r=>r.kind==='question'&&r.state==='ask')||e.find(r=>r.kind==='question')||e.find(r=>r.kind==='request');
+    if(!r)return;
+    if(r.kind==='question'){conversations.show('recent');view.message=null;view.answer={root:r.root,board:r.board,task:r.task,revision:r.revision};}
+    else if(!conversations.reveal(r.id,false)){conversations.show('recent');view.answer=null;view.message=r.key;}
+   },
    // A1: a record's technical identity, read only on demand
    ids:function(r){return h('details',{class:'ids','data-view-key':'ids:'+r.key},h('summary',null,'Details'),h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
    plain:function(state){return {launched:'Launched in the native session',launching:'Launching',pending:'Waiting to launch',failed:'Launch failed',unknown:'Delivery unknown'}[state]||(state?String(state).replace(/[-_]/g,' '):'State unknown');},
@@ -87,7 +106,7 @@ const {create}=execution.module('workspace',{
     const icons=require('./ui-icons.js');
     const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
     renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
-     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.messageNotice||view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
+     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
@@ -106,16 +125,21 @@ const {create}=execution.module('workspace',{
    navigate:function(page,context){
     // #1662 A3: the removed New AI request route opens a new Conversations draft for its project
     if(page==='request'){page='conversations';context={...context,fresh:true};}
-    if(page==='messages'){page='conversations';context={...context,section:'inbox'};}
+    // #1699 A2: the removed Inbox, message and answer routes open their thread in Conversations
+    if(page==='messages'){page='conversations';context={...context,thread:'unread'};}
+    if(page==='answer'||page==='message')page='conversations';
     if(Object.hasOwn(routes,page))view.unavailable=null;
     else {view.unavailable='Requested destination is not available.';page='conversations';}
     renderer.push(state.capture());view.page=page;
-    if(page==='answer')view.answer=context;
     if(page==='operations')view.operation={operation:context?.operation,root:context?.root||null};
-    if(page==='message')view.message=context?.key;
-    // the header icon names a section ('' keeps the last one); new events open Inbox
-    if(page==='conversations'&&context?.section==='inbox')view.section='inbox';
-    if(page==='conversations'&&(context?.section==='conversations'||context?.fresh))view.section=null;
+    // the menu entry names 'unread' when it counts events; otherwise the last thread stays
+    if(page==='conversations'){
+     const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
+     if(context?.thread==='unread')api.unread();
+     else if(context?.board&&context?.task){conversations.flush();conversations.show('recent');view.message=null;view.answer={root:context.root||null,board:context.board,task:Number(context.task),revision:Number(context.revision)||null};}
+     else if(r?.kind==='question'){conversations.show('recent');view.message=null;view.answer={root:r.root,board:r.board,task:r.task,revision:r.revision};}
+     else if(r&&!conversations.reveal(r.id,false)){view.answer=null;view.message=r.key;}
+    }
     view.disclosures={};view.restoreScroll=0;
     if(page==='conversations'&&context?.fresh)conversations.fresh({root:context.root||undefined});
     api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');if(!(page==='conversations'&&context?.fresh))menu.querySelector('h1').focus();state.flush();
@@ -127,7 +151,12 @@ const {create}=execution.module('workspace',{
     if(s.messageReceipt){
      if(s.messageReceipt.id!==view.messageBusy)return;
      const r=s.messageReceipt;view.messageBusy=null;
-     view.messageNotice=r.reason||r.outcomes.map(o=>o.state==='accepted'?({read:'Message marked read',archive:'Message archived',delete:'Message permanently deleted'}[o.action]||'Message updated'):'Unknown: '+o.reason).join('; ');
+     const text=r.reason||r.outcomes.map(o=>o.state==='accepted'?({read:'Message marked read',archive:'Archived',restore:'Restored',delete:'Message permanently deleted'}[o.action]||'Message updated'):'Unknown: '+o.reason).join('; '),done=!r.reason&&r.outcomes.every(o=>o.state==='accepted'),{thread,action,keys}=view.messageThread||{};
+     view.undoMessage=done&&action==='archive'&&keys.length===1?keys[0]:null;
+     if(done&&(action==='archive'||action==='delete')&&thread!=='conversation'&&(view.answer||view.message)&&thread===(view.answer?'task:'+view.answer.board+'/'+view.answer.task:'event:'+view.message)){view.answer=null;view.message=null;}
+     // A7: Restore and Undo open the restored thread in Recent
+     if(done&&action==='restore'&&keys.length===1){const e=snapshot.value.messages?.entries?.find(e=>e.key===keys[0]);conversations.show('recent');if(e?.kind==='question'){view.message=null;view.answer={root:e.root,board:e.board,task:e.task,revision:e.revision};}else if(e&&!conversations.reveal(e.id,false)){view.answer=null;view.message=e.key;}}
+     view.threadNotice={thread:done&&['archive','delete'].includes(action)?'list':thread,text};
      api.draw();return;
     }
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
@@ -156,19 +185,16 @@ const {create}=execution.module('workspace',{
      }
      if(conversations.click(b))return;
      if(b.dataset.a==='home'){if(view.page!=='conversations')api.navigate('conversations');return;}
-     if(b.dataset.section!==undefined){view.section=b.dataset.section||null;view.restoreScroll=0;api.draw();state.flush();return;}
      if(b.dataset.a==='workspace-pin'||b.dataset.a==='workspace-enlarge'){ui.send({a:'workspace-window',action:b.dataset.a==='workspace-pin'?'pin':'enlarge'});return;}
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route,{section:'conversations'});
-     else if(b.dataset.a==='open-answer')api.navigate('answer',{root:b.dataset.root,board:b.dataset.board,task:Number(b.dataset.task),revision:Number(b.dataset.revision)});
-     else if(b.dataset.a==='message-open'){
-      const r=snapshot.value.messages?.entries?.find(r=>r.key===b.dataset.key);if(!r)return;
-      api.messageAction('read',[r.key]);
-      if(r.kind==='question')api.navigate('answer',{root:r.root,board:r.board,task:r.task,revision:r.revision});else api.navigate('message',{key:r.key});
+     // #1699 A2/A7: selecting a thread acknowledges nothing; its draft, caret and scroll stay with it
+     else if(b.dataset.a==='thread'){
+      const row=api.threads().find(t=>t.id===b.dataset.thread);if(!row)return;conversations.flush();
+      if(row.task){view.message=null;view.answer={root:row.root||null,board:row.board,task:row.task,revision:view.answer?.board===row.board&&view.answer.task===row.task?view.answer.revision:row.revision||null};}else {view.answer=null;view.message=row.event.key;}
+      view.restoreScroll=0;api.draw();state.flush();
      }
-     else if(b.dataset.a==='message-archive')api.messageAction('archive',[b.dataset.key]);
-     else if(b.dataset.a==='message-delete')api.messageAction('delete',[b.dataset.key]);
-     else if(b.dataset.a==='message-delete-all')api.messageAction('delete',(snapshot.value.messages?.entries||[]).filter(r=>r.archived).map(r=>r.key));
+     else if(['message-read','message-archive','message-restore','message-delete'].includes(b.dataset.a))api.messageAction(b.dataset.a.slice(8),[b.dataset.key],api.thread(b.dataset.key));
      else if(b.dataset.a==='new-request')api.navigate('conversations',{fresh:true,root:view.aiRoot});
      else if(b.dataset.a==='answer-send')api.answerAct('submit');
      else if(b.dataset.a==='answer-requeue')api.answerAct('requeue');
@@ -179,7 +205,6 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
     ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);});
-    ui.listen(menu,'change',e=>{if(e.target.dataset.field==='message-filter'){view.messageFilter=e.target.value;view.messageNotice=null;api.draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{const c=view.answer;if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);

@@ -40,8 +40,8 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
    if(width===360){const q=await open(width,{...state,theme,palette:palette[theme]});await readable(q,'with the injected palette '+theme);await q.close();}
    assert.equal(await p.locator('.menu [aria-label*=Enlarge]').count(),0,'menu has no Enlarge');
    assert.deepEqual(await p.locator('.status-footer>*').evaluateAll(es=>es.map(e=>e.textContent||e.getAttribute('aria-label'))),['TaskQ v9.9.9','Resize window with arrow keys'],'footer is the version and the grip');
-   // #1691 A2: the icon opened a separate Inbox page when events were new. Risk kept: one route at every count, Inbox as its section.
-   await p.locator('.head [data-a=workspace]').click();assert.deepEqual(await p.evaluate(()=>(({page,section})=>({page,section}))(messages.filter(m=>m.a==='workspace').at(-1).open)),{page:'conversations',section:'inbox'},'new events open the Conversations Inbox section');
+   // #1691 A2: the icon opened a separate Inbox page when events were new. #1699 A2 risk kept: one route at every count, the unread thread selected.
+   await p.locator('.head [data-a=workspace]').click();assert.deepEqual(await p.evaluate(()=>(({page,thread})=>({page,thread}))(messages.filter(m=>m.a==='workspace').at(-1).open)),{page:'conversations',thread:'unread'},'new events open Conversations at the unread thread');
    assert.equal(await p.evaluate(()=>messages.filter(m=>m.a!=='workspace'&&/message|read|ack/.test(m.a)).length),0,'opening acknowledges nothing');
    // a project page with a long name: Back and the title take the row below, whole words only
    await p.evaluate(s=>taskq.receive({...s,page:'/fixture/long'}),{...state,theme});
@@ -59,9 +59,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
    if(out&&width===320)await p.locator('.head [data-a=home]').click().then(()=>p.screenshot({path:out+'/menu-home-320-'+theme+'.png'}));
    await p.close();
   }
-  // no events: the entry opens the workspace on its last section
+  // no events: the entry opens the workspace on its last thread
   let p=await open(360,{...state,theme,messages:{complete:true,count:0}});
-  await p.locator('.head [data-a=workspace]').click();assert.deepEqual(await p.evaluate(()=>(({page,section})=>({page,section}))(messages.filter(m=>m.a==='workspace').at(-1).open)),{page:'conversations',section:''},'#1691: no events still open Conversations');
+  await p.locator('.head [data-a=workspace]').click();assert.deepEqual(await p.evaluate(()=>(({page,thread})=>({page,thread}))(messages.filter(m=>m.a==='workspace').at(-1).open)),{page:'conversations',thread:''},'#1691: no events still open Conversations');
   assert.equal(await p.locator('.head .badge').count(),0);
   // a native menu sends Settings to its own window and keeps the dashboard
   await p.evaluate(()=>taskq.receive({settingsWindow:true}));await p.locator('.head [data-route=settings]').click();

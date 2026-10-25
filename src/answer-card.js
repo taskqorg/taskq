@@ -89,11 +89,11 @@ render:function(board, row, local, cap) {
       if (local.confirmClose && live) h += '<p>Cancel #' + esc(row.n) + ' without publication? Running work will stop. The task is parked before closing.</p><div class="qac-choices"><button type="button" data-qac="confirm-close">Close without publishing</button><button type="button" data-qac="cancel-close">Keep task</button></div>';
       h += receipt(st, local.receipt && local.receipt.reason, row.url, id, local.receipt && local.receipt.next, !!(local.op && local.op.action), what);
       if (st === 'stale') h += '<button type="button" data-qac="review">I read the new question</button>';
-      h += retry(st);
+      h += retry(st, local.receipt && local.receipt.reason);
       return h + '</section>';
     }
     if (!q.parsed) return h + '<pre class="qac-text">' + esc(q.text) + '</pre>' + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id, null, false, what) +
-      retry(st) + '</section>';
+      retry(st, local.receipt && local.receipt.reason) + '</section>';
     h += '<p class="qac-problem">' + linked(q.problem) + '</p>';
     if (q.choices.length) h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
@@ -116,7 +116,7 @@ render:function(board, row, local, cap) {
     const reason = st === 'read-only' ? (cap && cap.reason) || 'Answering is not available here' : local.receipt && local.receipt.reason;
     h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next, false, what);
     if (st === 'stale') h += '<button type="button" data-qac="review">I read the new question</button>';
-    h += retry(st);
+    h += retry(st, local.receipt && local.receipt.reason);
     // Q1: Done and evidence stay behind Details
     if (q.done || q.evidence.length) h += '<details class="qac-context"><summary>Checked &amp; context</summary>' +
       (q.done ? '<p class="qac-done"><span class="qac-muted">Done:</span> ' + esc(q.done) + '</p>' : '') +
@@ -133,7 +133,7 @@ compose:function(row, local, cap) {
   },
 receipt:function(st, reason, url, id, next, action, what) {
     if (st === 'actionable') return '<p class="qac-receipt" id="' + id + '-r" role="status" aria-live="polite"></p>';
-    return '<p class="qac-receipt qac-' + st + '" id="' + id + '-r" role="status" aria-live="polite">' + (what && st !== 'read-only' ? '<span class="qac-what">' + esc(what) + '</span> · ' : '') + esc(st === 'accepted' && action ? 'Action accepted on the board' : LABELS[st]) + (reason ? ': ' + esc(reason) : '') +
+    return '<p class="qac-receipt qac-' + st + '" id="' + id + '-r" role="status" aria-live="polite">' + (what && st !== 'read-only' ? '<span class="qac-what">' + esc(what) + '</span> · ' : '') + esc(st === 'accepted' && action ? 'Action accepted on the board' : LABELS[st]) + (reason ? ': ' + esc(plain(reason)) : '') +
       (next ? '. ' + esc(next) : '') + (['read-only', 'unknown', 'partial'].includes(st) ? ' <a href="' + href(url) + '" target="_blank" rel="noopener">Open on board ↗</a>' : '') + '</p>';
   },
 mount:function(el, adapter) {
@@ -270,7 +270,10 @@ const root=globalThis;
     const c = row.question && row.question.choices && row.question.choices.find(x => x.id === op.choice);
     return 'answer ' + op.choice + (c ? '. ' + label(c.text) : '');
   }});
-  const {retry}=execution.module("answer-card",{retry:st => RETRY.includes(st) ? '<button type="button" data-qac="retry">' + (st === 'failed' ? 'Send again' : 'Check delivery') + '</button>' : ''});
+  // #1699 A4: a retained correlation conflict reads in user terms and offers Check delivery, never a resend
+  const CONFLICT = 'Correlation id is already pending for a different request';
+  const {retry,plain}=execution.module("answer-card",{retry:(st, reason) => RETRY.includes(st) ? '<button type="button" data-qac="retry">' + (st === 'failed' && reason !== CONFLICT ? 'Send again' : 'Check delivery') + '</button>' : '',
+    plain:reason => reason === CONFLICT ? 'An earlier answer with this operation is still pending with different content; Check delivery reads its outcome' : reason});
   // Why the text button is off while the card is live; an empty node otherwise, so typing updates it in place.
   const {hint}=execution.module("answer-card",{hint:(id, why) => '<span class="qac-hint" id="' + id + '-h" aria-live="polite">' + esc(why || '') + '</span>'});
   const {draftQuestion}=execution.module("answer-card",{draftQuestion:(row, cap) => fallback(row, cap) ? REQUEUE : row.question});

@@ -113,6 +113,21 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal page scrolling');
   assert(await page.locator('[data-c=reply]').isVisible());assert(await view.isVisible());
   await capture('narrow-light-16');
+  // #1699 A5/A6: diagnostics filled the detail and the composer read 'Session runtime unknown' for a claude handoff.
+  // Risk kept: at 18–20 px the transcript keeps the reading area, Send stays reachable with a long reply, copy names the recorded runtime.
+  for(const font of [18,20]){
+   await page.setViewportSize({width:900,height:720});await page.evaluate(s=>taskq.receive(s),{...state,font});
+   await page.locator('[data-c=select][data-id=claude-1665]').click();await page.waitForFunction(()=>document.querySelector('.dialogue-transcript .dialogue-item'));
+   assert.equal(await page.locator('.dialogue-launch').evaluate(d=>d.open),false,'launch diagnostics start collapsed');
+   const composer=await page.locator('.conversation-composer').innerText();
+   assert.match(composer,/Session claude/);assert.doesNotMatch(composer,/runtime unknown|not recorded/);
+   assert.equal(await input.getAttribute('placeholder'),'Reply to the claude session');
+   await input.fill('Long reply line. '.repeat(200));assert.match(await page.locator('.conversation-composer').innerText(),/Send goes to this claude session from this window/);
+   const [t,b,r]=await Promise.all([view,page.locator('.dialogue-bar'),page.locator('[data-c=reply]')].map(l=>l.boundingBox()));
+   assert(t.height>b.height,'the transcript takes more height than the status bar at '+font+' px');
+   assert(r.y>=0&&r.y+r.height<=720,'Send stays inside the window with a long reply at '+font+' px');
+   await input.fill('');
+  }
   assert.deepEqual(errors,[]);
   console.log('PASS #1665: D2/D3 reply and refusals keep the draft, D4 ordered transcript with infinite scroll and live append, D5 states incl. unknown, D7 watch set/edit/remove, narrow layout');
  }finally{await browser.close();}

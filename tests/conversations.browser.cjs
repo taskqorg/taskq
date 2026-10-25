@@ -85,13 +85,14 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   paused=false;await drain();
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1);
   await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();assert.equal(second.sent.text,'Review the attached text');assert.equal(second.sent.files[0].hash,file.hash);
-  assert.match(await page.locator('.conversation-record').innerText(),/Read and reply in the native session/);assert.equal(await page.locator('[data-c=cancel]').count(),1);
+  assert.match(await page.locator('.conversation-record').innerText(),/Replies open here after the native launch/);assert.equal(await page.locator('[data-c=cancel]').count(),1);
   await input.press('Enter');await drain();assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1,'one immutable launch per item');
   // A receipt from another item/operation cannot change text or claim cancellation.
   await page.evaluate(()=>taskq.receive({conversationReceipt:{id:'foreign',state:'accepted'}}));assert.equal(await input.inputValue(),'Next draft while launch waits');
   await page.locator('[data-c=reconcile]').click();await drain();const retries=await page.evaluate(()=>sent.filter(m=>m.action==='reconcile'));assert(retries.every(m=>m.conversation===second.id));
   const launched={id:second.id,state:'launched',kind:'launched',url:'https://claude.ai/code/session_invented1580',next:'Read and answer in Claude Code'};second.request=launched;await page.evaluate(s=>taskq.receive(s),state);
-  await page.locator('.native-session').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='open').at(-1).url),launched.url);assert.equal(await page.locator('[data-c=cancel]').count(),0,'no runtime Stop adapter is invented');
+  // #1699 A5: the handoff sits under Launch details
+  await page.locator('.dialogue-launch summary').click();await page.locator('.native-session').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='open').at(-1).url),launched.url);assert.equal(await page.locator('[data-c=cancel]').count(),0,'no runtime Stop adapter is invented');
   await capture('launched-dark-16');
   // Native snapshot round trip (not browser localStorage); chat-first reload never requires opening the tray first.
   await input.evaluate(e=>e.setSelectionRange(3,8));await input.dispatchEvent('select');await drain();

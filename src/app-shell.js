@@ -18,6 +18,10 @@ const api=execution.module('shell',{
  fitTitle:function(container){
   const head=container.querySelector('.head'),title=head?.querySelector('h1');
   if(!title||head.classList.contains('title-below'))return;
+  // #1699: an unchanged redraw keeps the measured layout, so a refresh touches no DOM
+  const key=head.clientWidth+'|'+getComputedStyle(head).fontSize+'|'+title.textContent;
+  if(head.fitted===key)return;
+  head.fitted=key;
   head.removeAttribute('data-title-below');
   if(title.scrollWidth>title.clientWidth+1)head.setAttribute('data-title-below','');
  },
