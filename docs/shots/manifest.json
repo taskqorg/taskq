@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "8dc879a2df9a77fe8e19da4191eee3263aa12919",
-  "binarySha256": "04a258637a654103e7c8ea91a7411e8b636e75bc93fc5d2bd917a02faa419f40",
+  "sourceCommit": "778dbe4b8ec9f503316090fa1d0ac04b97283052",
+  "binarySha256": "b6fb09afdbf49b85a12e8673654d8bf192463157bc2633326d31f82f63f143fb",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -31,7 +31,7 @@
     "src/conversations.css": "72b9e0eddf06dfbb973de393fe3ba46875705567",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
-    "src/workspace.js": "c9798586876ea00a57e3095acce71cd6c52df0a4",
+    "src/workspace.js": "14f2bac4dcf544c095fbbc76530c281211cd0ed9",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "507c60f6fa8d180c984411b1c2a673024930cd4e",
     "src/answer-card.js": "866d5cf7b7a2d8bc4e9674c11d734164e735eee9",

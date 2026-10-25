@@ -6,7 +6,7 @@ const evidence=process.env.TASKQ_EVIDENCE_1680;
 const request={id:'owner-request-1680',state:'launched',kind:'launched',next:'Reply in Conversations',reason:null,url:'https://claude.ai/code/session_fixture1680',host:'fixture-host',runtime:'claude',session:'fixture-session'};
 const page_={page:'operations',operation:{operation:'recovery',root:null},project:null,parent:'messages',taskFilter:null,working:null,aiRoot:'fixture-alpha',
  answer:{board:'https://example.org/alpha/issues',task:7,revision:1,root:'fixture-alpha'},messageFilter:'all',message:null,scroll:0,open:{},focus:null,unavailable:null};
-const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[]}],
+const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[],mode:'run',focus:['all']}],
  ai:{request,runtime:{id:'claude',name:'Claude Code',available:true,reason:''},root:'fixture-alpha',local:{text:'',caret:[0,0],op:null,receipt:null},error:null,draft:'',history:['Start']},
  messages:{entries:[{key:'request:'+request.id,kind:'request',title:'Start',root:'fixture-alpha',host:'fixture-host',id:request.id,state:'launched',created:1,request,pending:true,read:false,archived:false,deleting:false}],count:1,reason:'',complete:true},
  conversations:{items:[{revision:3,title:'',root:'fixture-alpha',text:'',caret:[0,0],scroll:0,archived:false,deleting:false,next:false,parent:null,files:[],
@@ -45,6 +45,25 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',version:'0.0.0-fixture'
   assert(!JSON.stringify(report).includes('example.org'),'report carries no content');
   await page.locator('.shell-overflow summary').click();await page.locator('[data-route=conversations]').click();
   assert.equal(await page.locator('h1').innerText(),'Conversations','safe navigation leaves the failing route');
+  assert.deepEqual(errors,[]);
+  // #1698 A1/A3: Settings opens each operation review while the tray forwards a Completed history page and an agentq
+  // reply; neither is a status snapshot, so Work mode no longer fails at operationBody on a snapshot without projects.
+  for(const operation of ['resources','service','setup','admission','recovery','stop','update']){
+   await page.evaluate(s=>taskq.receive(s),snapshot);
+   await page.evaluate(o=>{taskq.receive({open:{page:'operations',operation:o}});taskq.receive({completed:{items:[],complete:true}});taskq.receive({agentqError:null});},operation);
+   assert.deepEqual(errors,[],operation);assert.equal(await fence(),0,operation+' opened as Interface error');
+   assert.equal(await page.locator('h1').innerText(),'Operation review',operation);
+   assert.equal(await page.locator('main [role=alert]').count(),0,operation+' route failed: '+JSON.stringify(await page.evaluate(()=>sent.filter(m=>m.a==='route-error'))));
+  }
+  if(evidence)await page.screenshot({path:path.join(evidence,'work-mode.png')});
+  // #1698 A2: a content failure inside Operation review keeps the shell; Back, Home and Escape still act.
+  await page.evaluate(s=>{taskq.receive({...s,projects:[{...s.projects[0],focus:null}]});taskq.receive({open:{page:'operations',operation:'admission'}});},snapshot);
+  assert.equal(await fence(),0,'an operation route failure tripped the page-wide fence');
+  assert.match(await page.locator('main [role=alert]').innerText(),/could not be shown/);
+  for(const name of ['Workspace home','Close workspace'])assert(await page.getByRole('button',{name}).isVisible(),name);
+  if(evidence)await page.screenshot({path:path.join(evidence,'route-failure.png')});
+  await page.getByRole('button',{name:'Workspace home'}).click();assert.equal(await page.locator('h1').innerText(),'Conversations','Home leaves the failing route');
+  await page.keyboard.press('Escape');assert(await page.evaluate(()=>sent.some(m=>m.a==='hide')),'Escape closes the workspace');
   assert.deepEqual(errors,[]);
   console.log('PASS persisted-shape Conversations open, scoped request status, failing route keeps Home and Close');
  } finally {await browser.close();}
