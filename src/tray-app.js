@@ -353,8 +353,8 @@ agents:function(){
   return f(h('div',{class:'row'},h('span',null,h('strong',null,view.S.host||'This host'),' · sign-in '+(A?(A.checking?'checking now · ':'')+checked:'unknown: no service probe yet'))),
     h('div',{class:'body meta'},'Tray '+(view.S.version||'version unknown')+' · service '+(grouped(local.map(p=>p.version||'version unknown'))||'none on this host')),rows,
     // #1702 A3: a remote host's only source here is its board heartbeat (freshness); client, sign-in, account and access read unknown with the missing source
-    remote.map(n=>{const beat=view.S.projects.flatMap(p=>Array.isArray(p.hosts)?p.hosts:[]).find(x=>x?.name===n&&x.age_text);
-      return h('details',{class:'group remote-agents','data-view-key':'agents:'+n},h('summary',null,n+' · '+(beat?'heartbeat '+beat.age_text+' old':'heartbeat unknown: no host row')+' · clients unknown'),
+    remote.map(n=>{const beat=view.S.projects.flatMap(p=>Array.isArray(p.hosts)?p.hosts:[]).find(x=>x?.name===n);
+      return h('details',{class:'group remote-agents','data-view-key':'agents:'+n},h('summary',null,n+' · '+(beat?.age_text?'heartbeat '+beat.age_text+' old':beat?'heartbeat age unknown':'heartbeat unknown: no host row')+' · clients unknown'),
         ['claude','codex','codex-app'].map(rt=>h('div',{class:'body meta'},runtimeName(rt)+' · unknown: '+n+' heartbeat publishes no client version, sign-in, account or access')),
         h('div',{class:'body meta'},'Source: board heartbeat only; no runtime-client or access probe of '+n+' reaches this host.'));}),
     api.accessFacts(),
