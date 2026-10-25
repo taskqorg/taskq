@@ -59,11 +59,25 @@ The first full local gate failed after 493.297 s: 523 Rust tests passed,
 60 KiB limit by 66 bytes. It was removed: the existing Product link already binds
 the accepted P-W2 placement, and TW1–TW2 now clarify these routes without growing
 the root contract. The size assertion is unchanged.
+`cargo +stable test --locked --bin taskq core::tests::every_table_row_has_a_golden_trace -- --exact`
+passes after the correction.
 
 Eighteen failures exercise host/operator capabilities refused by the inherited
 worker identity, including `a worker cannot change host policy`, `a worker cannot
 install the host service` and `Windows security restore requires an unrestricted
 operator`. These remain sandbox-blocked; worker restrictions are retained.
-The native named-pipe deadline fixture also failed under the full run. Those
-results cannot establish a green gate or native acceptance; CI must qualify the
-merge result outside this worker context.
+The native named-pipe deadline fixture also failed under the full run; its exact
+filtered run passes in 0.20 s. This does not erase the full-run failure or qualify
+native acceptance. CI must qualify the merge result outside this worker context.
+
+The separately run Node component suite initially found the expected stale
+`task-workspace.sources.json` hash for the changed tray source. The owning
+`node tests/task-workspace.test.cjs --write` command updates that hash; the original
+source-provenance assertion remains intact and passes afterward.
+
+All 25 `tests/*.test.cjs` files then pass, each invoked with Node. README shot
+freshness and its fixture checks, release-tag fixtures and exact-source release
+checks pass. An isolated `cargo +stable run --locked -- selftest` passes 99 golden
+traces, format checks and its private staged telemetry capture; board access is
+explicitly unknown in offline mode. The native README snapshot refresh passed on
+Windows WebView2 and pins the changed UI blob without changing operation code.
