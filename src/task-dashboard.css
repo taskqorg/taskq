@@ -9,9 +9,9 @@
 .menu .project:has(>.ui-icon){display:flex;gap:8px;white-space:normal}
 .menu .project>span:first-child{white-space:normal;overflow-wrap:anywhere;overflow:visible}
 .dashboard-status{border-bottom:1px solid var(--divider);padding-bottom:3px}.dashboard-status>summary{font-size:.85em;min-height:32px}
-/* Whole host chips and Attention keep their columns; filter rows wrap without shrinking text (#1709). */
+/* Host chips and Attention keep their columns; long names reflow inside each chip (#1724). */
 .dashboard-status>summary{grid-template-columns:minmax(0,1fr) auto 8px;align-items:start}
-.host-strip{display:flex;flex-wrap:wrap;gap:0 12px;min-width:0}.host-chip{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.host-count{display:inline-flex;align-items:center;gap:2px;font-variant-numeric:tabular-nums}.host-chip.unknown .host-count{color:var(--muted)}
+.host-strip{display:flex;flex-wrap:wrap;gap:0 12px;min-width:0}.host-chip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:0 5px;max-width:100%;white-space:normal}.host-chip>strong{min-width:0;overflow-wrap:anywhere}.host-line>summary,.remote-agents>summary{overflow-wrap:anywhere}.host-chip>.meta{white-space:nowrap}.host-count{display:inline-flex;flex:none;white-space:nowrap;align-items:center;gap:2px;font-variant-numeric:tabular-nums}.host-chip.unknown .host-count{color:var(--muted)}
 .dashboard-status .attention{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;color:var(--ask,light-dark(#995200,#FFC247));font-weight:600}
 .viewbar{display:flex;align-items:flex-start;gap:4px;padding-top:5px}.view-picks{display:flex;flex-wrap:wrap;align-items:center;gap:2px;flex:1;min-width:0}
 .filter-header .tqp-counts{justify-content:flex-start}.filter-header .tqp-counts>*{flex:none}
