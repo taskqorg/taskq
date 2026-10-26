@@ -3390,7 +3390,10 @@ mod tests {
         for b in &mut zero.bins {b.counts=[0;4];}
         let mut failed=zero.clone();failed.bins[2].counts[1]=1;
         let mut unknown=zero.clone();unknown.bins[0].missing=vec!["synthetic missing source".into()];unknown.bins[0].counts[0]=999;
-        for (name,s) in [("day",&day),("hour",&hourly),("incomplete",&aggregate),("paused",&paused),("synthetic-zero",&zero),("synthetic-failed",&failed),("synthetic-unknown",&unknown)] {
+        let mut ask=zero.clone();ask.bins[0].counts[2]=3;
+        ask.bins[2].counts=[2,1,1,0];
+        ask.bins[4].missing=vec!["synthetic missing source".into()];ask.bins[4].counts=[999,0,2,0];
+        for (name,s) in [("day",&day),("hour",&hourly),("incomplete",&aggregate),("paused",&paused),("synthetic-zero",&zero),("synthetic-failed",&failed),("synthetic-unknown",&unknown),("synthetic-ask",&ask)] {
             for dark in [false,true] {
                 let vector=icon::svg(&icon_data(s),dark);
                 for n in [18,22,33,44,66,256] {assert_eq!(icon::raster(&vector,n).unwrap().w,n);}
