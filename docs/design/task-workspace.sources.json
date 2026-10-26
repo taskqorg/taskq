@@ -23,7 +23,7 @@
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
     "src/resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
     "src/app-shell.css": "0f48ac56c0d038d5f074356cd2d28889905624fd18b5cae760a479ad726de349",
-    "src/task-dashboard.css": "d304570a2385b69647e1de04eb6b4e0cc393288042eafa463a0e5dd684dddcbf",
+    "src/task-dashboard.css": "2cde15809d909261ebeb5c9096a04651e525ebd891744bf868ad2bdfb3838578",
     "tests/fixtures/task-workspace.json": "4cbb1c89400f91b4450af154b82c73c700e728f1609f4364f502758a6b8f64d8"
   },
   "hashEncoding": "UTF-8, LF; tag assigns release version; pin candidate commit until release"
