@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "9a795c0fe1317181e7e0baedab14d143c244e1e2",
-  "binarySha256": "c29916fab9edfcd64a2a023ce2b55755edc83ed1eb7e2a2201290d26e808e3db",
+  "sourceCommit": "25692a06b6d2f2d2c12be726530ddaa21e8e3aeb",
+  "binarySha256": "b65beac8b2053234db1c0273f99de9eaece38612c95a2fa4232be9d592537858",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -19,7 +19,7 @@
     "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
     "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
     "src/task-dashboard.js": "8b300a1b54d59897f7677555a5456d7ea58277e5",
-    "src/task-dashboard.css": "625562f99fec48f6a163af7e8b9777a376616dd2",
+    "src/task-dashboard.css": "0696af5449af279c54645434360358e24e80b42d",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "723b8ecfdcf7019750b506455c819d6cf1384cb5bf78fe4a72458e0ae1ad8026"
+      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
     },
     {
       "file": "popover-dark-project-16.png",

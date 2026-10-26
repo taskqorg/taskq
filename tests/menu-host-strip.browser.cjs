@@ -22,7 +22,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
   const page=await browser.newPage({viewport:{width,height:760}});
   page.on('pageerror',e=>{throw e;});
   await page.setContent(html);
-  await page.evaluate(()=>{window.ipc={postMessage:()=>{}};});
+  await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
   for(const theme of ['dark','light']){
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
    await page.evaluate(()=>document.fonts.ready);
@@ -64,6 +64,14 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    await page.locator('[data-a=task-detail]').first().click();
    assert.deepEqual(await overflow(page),[],'A2: menu task details');
    await page.keyboard.press('Escape');
+   await page.locator('[data-a=view-select][data-id=completed]').click();
+   const requests=await page.evaluate(()=>messages.filter(m=>m.a==='completed'));
+   for(const request of requests)await page.evaluate(r=>taskq.receive({completed:{...r,more:false,tasks:[{n:99,title:'Invented completed task',url:'https://example.org/issues/99',closed:950,outcome:'success'}]}}),request);
+   assert.equal(await page.locator('[data-completed]').count(),8,'#1724 A4: Completed remains populated beside long host names');
+   assert.equal(await summary.locator('.host-chip').count(),5,'#1724 A2: Completed keeps every host');
+   assert.deepEqual(await overflow(page),[],'#1724 A4: Completed has no horizontal overflow');
+   if(process.env.PANEL_EVIDENCE&&width===320&&font===18&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/completed.png'});
+   await page.locator('[data-a=view-select][data-id=all]').click();
    for(const surface of ['views','settings']){
     const window=await browser.newPage({viewport:{width,height:760}});
     window.on('pageerror',e=>{throw e;});
