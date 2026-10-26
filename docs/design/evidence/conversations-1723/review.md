@@ -1,0 +1,66 @@
+# Conversations #1723 verification
+
+The candidate fixes M01–M03 and M06–M07 under C1/C2/C5/C7/D4. Applied R1 (navigation identities only, no task store), R13 (linked contract updated before implementation), R12 (browser, native rendering and installed-app observations remain separate), and § 7 (candidate checks and publication). No R-number changes.
+
+## Failure and retained protection
+
+Before the fix, `node tests/messages.browser.cjs` failed `first event-free task remains in Recent` (expected 1, actual 0). The same scenario now passes, including both identities after navigation rehydration. The menu dispatcher scenario opens Later, Doing, Review and Ask through exactly one task-thread entry without lifecycle effects.
+
+The mixed-selection scenario covers task, event and owner selections, both Recent/Archive directions, empty detail, preserved nonempty drafts, and archived owner transcript with Restore before reply. It also caught a second defect: a snapshot reset expanded Status from scrollTop 2299 to 0. Capturing the rendered thread's position before repaint makes that scenario pass. Self-review also reproduced a task opening under the wrong project when two registered roots shared a board (`Other` instead of the explicitly requested `Target`). Navigation now retains the source root; the mixed-selection scenario protects it. New selection data uses the existing bounded navigation envelope; legacy owner selections and workspace answer navigation remain readable.
+
+`tests/dialogue.browser.cjs` moves its existing read/anchor checks to the single detail scroll. Ordered chunks, prepend anchoring, append-follow, explicit unknown, reply refusal, watch validation and immutable operation checks remain. The render instrument now reaches Send through the detail scroll; it still checks complete framing and horizontal overflow. `tests/messages.browser.cjs` retains source choice numbers, recommendation, exact-revision card handling, explicit acknowledgement and independent owner/task drafts. The mixed-selection scenario also refreshes a nonempty draft to a newer question revision and requires stale refusal with choices and Send disabled. Shared answer-card checks retain operation identity protection.
+
+A local run also loaded the real #359 question from the previously retained native AX observation into the same browser scenario. Its source text, paths and screenshots are not published. This checks browser rendering of captured input, not the installed app or current board state.
+
+The Node component sweep found a stale task-workspace source hash and an obsolete assertion excluding non-Ask task entries. The source manifest was refreshed without weakening its identity check. The assertion now follows A2 and still requires exactly one navigation-only entry with the exact board, task and revision; it rejects composers and lifecycle controls. Both checks pass after these updates.
+
+## Candidate checks
+
+- All Node component checks pass, including task-workspace source identity and task launchers.
+- `node tests/messages.browser.cjs`, `node tests/conversations-selection.browser.cjs`, `node tests/dialogue.browser.cjs` and `node tests/conversations-render.browser.cjs` pass. The latter covers six render fixtures; the selection scenario also passes with the privately captured real question.
+- `cargo +stable run --locked -- selftest` passes offline in a temporary installation: 99 golden traces, formats and staged capture. The board remains unknown in offline mode.
+- `docs/shots/update.sh` and `sh docs/shots/check.sh` pass for isolated WKWebView README rendering and current UI source identities. Artifact-script checks also pass.
+- `python3 scripts/check.py` is **sandbox-blocked**, not passed: 540 Rust checks pass, 17 host/policy/lifecycle fixtures fail under the inherited worker identity, and 32 are ignored. Refusals include `a worker cannot change host policy` and `a worker cannot restart the host service or request Stop`. Worker restrictions were retained. The gate stops before integration, selftest and Node stages; the separately run checks above do not replace a complete gate. Green merge-result CI remains required by R12 and § 7.
+
+## Visual review
+
+Four synthetic browser screens are retained below, at 940 × 740, dark theme, system font. They show the selected archived owner, a long task question scrolled to its choices/composer, and expanded Status scrolled to the composer at 18 and 20 px. Intentional differences from the pinned reference are limited to #1723: one task identity heading, compact task metadata, coherent selections, archived transcript, and one thread-content scroll. Existing shell, palette, icons and list/detail proportions remain.
+
+- [Archived owner, 20 px](archived-dark-20.png)
+- [Long question, 20 px](question-dark-20.png)
+- [Expanded Status, 18 px](expanded-status-dark-18.png)
+- [Expanded Status, 20 px](expanded-status-dark-20.png)
+
+These are browser instruments with invented receipts. They do not establish native delivery, installed-app operation or owner visual acceptance.
+
+## Installed Mac journey (A8)
+
+The read-only attempt to select the installed TaskQ app through the native UI tool returned `Computer Use server error -10005: timeoutReached` before an app observation. No native screen was captured and no live record was changed. A screenshot renderer is not substituted for this journey.
+
+| Finding | Installed-app status | Reason |
+|---|---|---|
+| M01 | Not tested | Native UI observation unavailable |
+| M02 | Not tested | Native UI observation unavailable |
+| M03 | Not tested | Native UI observation unavailable |
+| M06 | Not tested | Native UI observation unavailable |
+| M07 | Not tested | Native UI observation unavailable |
+
+Source/browser fixes are implemented. Installed Mac qualification remains unknown under R12; merge-result CI and deployment are separate from this report.
+
+## Artifact identity
+
+Original UI source commit: `db95128f27a2a435b9e10bb763b4b4b59d95ef3e`. Browser bundle SHA256: `6e61283dbb426ee3536bff6b0754c7bc64673b07e0f292e72ceb4bd454e01e49`. WKWebView README source/binary/environment: [manifest](../../../shots/manifest.json).
+
+
+## Merge-queue conflict recovery
+
+The queue removed PR #1727 with `merge_conflict`; GitHub reported the old head `e4590cda44678bbac7d21fa3cea2e6acd300efd4` as `DIRTY`. Rebased onto `853575349ebd98b8a560bc4ec030e3203a77c87c` under § 7.4. The only conflict was README screenshot provenance in `docs/shots/manifest.json`; application code merged without conflict. The combined UI source is `64b3d9b89f3a9391c6d56442d171422826427aba`.
+
+- Regenerated README snapshots using `sh docs/shots/update.sh`; `sh docs/shots/check.sh` passes. Both final WKWebView images were visually inspected: menu framing, labels, task rows and icon remain visible. This uses an isolated fixture, not the installed app.
+- Re-ran the mixed-selection scenario and inspected all four final browser images: archived transcript, long question and expanded Status at 18/20 px. Choices and composer are reachable, with no additional content scrollbar. The four images above identify this rebased UI; three are byte-identical to the original candidate.
+- `python3 scripts/check.py --base 853575349ebd98b8a560bc4ec030e3203a77c87c` remains **sandbox-blocked**, not passed: 540 Rust checks pass, 17 host/policy/lifecycle fixtures fail under the inherited worker identity, and 32 are ignored; elapsed 37.751 s on warm macOS. Failures retain the same worker-policy refusals as the original candidate. No permission or test-rule change was made.
+- All `tests/*.test.cjs` component checks, the four affected browser scenarios (`messages`, `conversations-selection`, `dialogue`, `conversations-render`) and screenshot/release artifact-script checks pass after rebase. Source identity, question revision/stale refusal, drafts and read-only navigation protections remain.
+- Offline `cargo +stable run --locked -- selftest` passes in a temporary installation: 99 golden traces, formats and staged capture; board state remains unknown.
+- Installed Mac M01/M02/M03/M06/M07 remain **Not tested**; this conflict recovery does not substitute the snapshot renderer for the installed-app journey. No live record changed. Green `merge_group` CI remains required; not deployed.
+
+Rebased browser bundle SHA256: `ba1f0635ad50599d3d25b37f5234729db3fb2fe414804988cb22be041c63f284`. No R-number amendments.

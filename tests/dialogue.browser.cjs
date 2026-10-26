@@ -29,25 +29,25 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   async function action(name){await page.waitForFunction(n=>sent.some(m=>m.action===n),name);return page.evaluate(n=>{const m=sent.filter(m=>m.action===n).at(-1);sent.splice(sent.indexOf(m),1);return m;},name);}
   async function receipt(m,r){const c=state.conversations.items.find(c=>c.id===m.conversation);c.revision++;await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:m.id,snapshot:state.conversations,...r});}
   async function capture(name){if(evidence){fs.mkdirSync(evidence,{recursive:true});await page.screenshot({path:path.join(evidence,name+'.png')});}}
-  const view=page.locator('.dialogue-transcript'),input=page.locator('[data-c-field=text]'),texts=()=>view.locator('.dialogue-item .conversation-text, .dialogue-tool').allInnerTexts();
+  const view=page.locator('.dialogue-transcript'),detail=page.locator('.conversation-detail'),input=page.locator('[data-c-field=text]'),texts=()=>view.locator('.dialogue-item .conversation-text, .dialogue-tool').allInnerTexts();
 
   // A2/D4: the newest chunk in order, tool calls as one line, newest at the bottom.
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item').length>0);
   assert.deepEqual(await texts(),records.slice(40).map(r=>r.role==='tool'?'Tool · '+r.text:r.text),'last chunk in file order');
   assert.equal(await view.locator('.dialogue-tool').first().evaluate(e=>getComputedStyle(e).whiteSpace),'nowrap','a tool call is one line');
-  assert(await view.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'opens at the newest record');
+  assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'opens at the newest record');
   assert.equal(await page.locator('.conversation-record').count(),0,'a launched conversation shows its transcript, not the request record');
   // Scrolling up loads the previous chunk without jumping away from the reading position; Load earlier reaches the first record.
-  const top=await view.locator('.dialogue-item').first().innerText();await view.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
+  const top=await view.locator('.dialogue-item').first().innerText();await detail.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===40);
-  assert(await view.evaluate(e=>e.scrollTop>0),'prepend keeps the reading anchor');assert.match(top,/Answer 40/);
+  assert(await detail.evaluate(e=>e.scrollTop>0),'prepend keeps the reading anchor');assert.match(top,/Answer 40/);
   await page.locator('[data-c=earlier]').click();await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===60);
   assert.equal(await page.locator('[data-c=earlier]').count(),0,'first record reached');assert.deepEqual((await texts())[0],'Question 0');
   // New records append while the view is open (2 s poll).
-  await view.evaluate(e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
+  await detail.evaluate(e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
   log.push({role:'user',text:'Question 60'},{role:'assistant',text:'Answer 61'});
   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-transcript .conversation-text')].at(-1)?.innerText==='Answer 61',null,{timeout:8000});
-  assert(await view.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'a reader at the bottom follows new records');
+  assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'a reader at the bottom follows new records');
   // A3/D5: state comes from the live status read.
   assert.match(await page.locator('.dialogue-state').innerText(),/State: idle/);
   await capture('transcript-dark-16');
@@ -125,7 +125,8 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
    await input.fill('Long reply line. '.repeat(200));assert.match(await page.locator('.conversation-composer').innerText(),/Send goes to this claude session from this window/);
    const [t,b,r]=await Promise.all([view,page.locator('.dialogue-bar'),page.locator('[data-c=reply]')].map(l=>l.boundingBox()));
    assert(t.height>b.height,'the transcript takes more height than the status bar at '+font+' px');
-   assert(r.y>=0&&r.y+r.height<=720,'Send stays inside the window with a long reply at '+font+' px');
+   await page.locator('[data-c=reply]').scrollIntoViewIfNeeded();
+   const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=720,'Send is reachable in the one scroll at '+font+' px');
    await input.fill('');
   }
   assert.deepEqual(errors,[]);

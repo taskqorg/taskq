@@ -18,9 +18,11 @@ const out=process.env.TASKQ_EVIDENCE_1580||'docs/design/evidence/conversations-1
    if(sample.state==='unavailable'){s.projects[0].alive=false;c.title='Long request with unavailable service';c.files[0].name='a-long-owner-selected-file-name-that-must-wrap-without-hiding-controls.md';}
    if(sample.state==='empty'){s.conversations.items=[];s.conversations.navigation.selected=null;}
    await page.setContent(html.toString());await page.evaluate(s=>{window.ipc={postMessage:()=>{}};taskq.receive(s);taskq.receive({open:{page:'conversations'}});},s);
+   // #1723 D4: the one detail scroll reaches the composer; no independent composer scroll is allowed.
+   const send=page.locator('[data-c=send],[data-c=from-draft]');if(await send.count())await send.scrollIntoViewIfNeeded();
    const geometry=await page.evaluate(()=>({client:innerWidth,scroll:document.documentElement.scrollWidth,heading:document.querySelector('h1').getBoundingClientRect().top,composer:document.querySelector('.conversation-composer')?.getBoundingClientRect().toJSON(),send:document.querySelector('[data-c=send],[data-c=from-draft]')?.getBoundingClientRect().toJSON()}));
    assert(geometry.scroll<=geometry.client,'F3 horizontal overflow: '+sample.name);assert(geometry.heading>=0,'fixed bar reachable: '+sample.name);
-   if(geometry.composer)assert(geometry.composer.bottom<=sample.height&&geometry.composer.top>=0,'composer reachable: '+sample.name);
+   if(geometry.composer)assert(geometry.composer.bottom<=sample.height&&geometry.composer.top>=0,'composer reachable through detail scroll: '+sample.name);
    if(geometry.send)assert(geometry.send.top>=geometry.composer.top&&geometry.send.bottom<=geometry.composer.bottom,'Send fully visible without composer scroll: '+sample.name);
    assert.deepEqual(errors,[]);
    const file=sample.name+'.png';await page.screenshot({path:path.join(out,file)});

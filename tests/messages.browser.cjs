@@ -9,7 +9,7 @@ const entries=[
  {key:r,kind:'request',title:'Setup request · launched',root:'fixture',host:'fixture-host',id:'native-live',state:'launched',pending:true,read:false,archived:false,request:{next:'Read replies in the native runtime.',url:'https://claude.ai/code/session_Invented123'}}
 ];
 const owner={id:'owner-1',revision:1,title:'Owner plan',text:'owner draft text',root:'fixture',caret:[3,3],scroll:0,files:[],archived:false};
-const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{root:'fixture',name:'Fixture',issues:board,alive:true,complete:true,age:1,tasks_age_seconds:1,focus:[],labels:[],tasks:[row,{n:900,title:'Plain running task',state:'doing',revision:1}]}],
+const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{root:'fixture',name:'Fixture',issues:board,alive:true,complete:true,age:1,tasks_age_seconds:1,focus:[],labels:[],tasks:[row,{n:900,title:'Plain running task',state:'doing',revision:1},{n:901,title:'Event-free Later task',state:'later',revision:2}]}],
  messages:{entries,count:2,complete:true,reason:''},conversations:{complete:true,items:[owner],navigation:{selected:'owner-1',list:'recent'}},ai:{draft:'',history:[],runtime:{available:true,name:'Claude Code',id:'claude'}},workspace_local:{}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
@@ -55,6 +55,14 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.evaluate(b=>taskq.receive({open:{page:'conversations',board:b,task:900}}),board);
   assert.equal(await page.locator('.conversation-row').count(),rows+1,'reopening adds no duplicate thread');
   assert.match(await page.locator('.thread-detail').innerText(),/There is no open question/);
+  // #1723 A2/A3: both event-free tasks remain revisitable; list changes never show a hidden thread.
+  await page.evaluate(b=>taskq.receive({open:{page:'conversations',board:b,task:901}}),board);
+  assert.equal(await page.locator('[data-thread="task:'+board+'/900"]').count(),1,'first event-free task remains in Recent');
+  await page.locator('[data-thread="task:'+board+'/900"]').click();assert.match(await current(),/#900/);
+  await page.locator('[data-c=archive-list]').click();
+  assert.equal(await page.locator('.thread-detail').count(),0,'empty Archive has no Recent task detail');
+  assert.equal(await page.locator('[data-c-field=text]').count(),0,'empty Archive has no Recent owner detail');
+  await page.locator('[data-c=recent]').click();assert.match(await current(),/#900/,'Recent restores task selection');
   // Event thread: Mark read is explicit and its receipt stays in that thread only
   await page.locator('[data-a=thread][data-thread="event:'+r+'"]').click();
   assert.match(await current(),/Setup request[^]*Unread/);assert.equal(await effects(),0,'selecting a thread acknowledges nothing');
@@ -82,8 +90,10 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   if(evidence)await page.screenshot({path:evidence+'/thread-dark-16.png'});
   // Restart: the selected thread and the task draft come back; nothing is replayed
   await page.locator('[data-a=thread][data-thread="task:'+board+'/'+row.n+'"]').click();
-  const saved=await page.evaluate(()=>({navigation:sent.filter(m=>m.a==='workspace-set').at(-1).navigation,local:Object.fromEntries(sent.filter(m=>m.a==='answer-local').map(m=>[m.key,m.local]))}));
-  await boot({workspace_navigation:saved.navigation,workspace_local:saved.local});
+  await page.waitForFunction(id=>sent.filter(m=>m.a==='conversation-navigation').at(-1)?.navigation.threads?.selected===id,'task:'+board+'/'+row.n);
+  const saved=await page.evaluate(()=>({conversation:sent.filter(m=>m.a==='conversation-navigation').at(-1).navigation,navigation:sent.filter(m=>m.a==='workspace-set').at(-1).navigation,local:Object.fromEntries(sent.filter(m=>m.a==='answer-local').map(m=>[m.key,m.local]))}));
+  await boot({workspace_navigation:saved.navigation,workspace_local:saved.local,conversations:{...state.conversations,navigation:saved.conversation}});
+  for(const n of [900,901])assert.equal(await page.locator('[data-thread="task:'+board+'/'+n+'"]').count(),1,'restart retains each event-free task identity');
   assert.match(await current(),new RegExp('#'+row.n),'restart keeps the selected thread');
   assert.equal(await page.locator('[data-c-field=answer]').inputValue(),'Typed answer draft','restart keeps the task draft');
   assert.equal(await effects(),0,'rehydration replays no effects');

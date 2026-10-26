@@ -1,4 +1,4 @@
-/* C2/F3: two independent navigation surfaces; the composer never shares transcript scrolling. */
+/* C2/D4: list navigation and one thread-content scroll. */
 .conversation-content{display:flex;overflow:hidden!important;min-height:0;padding:8px!important}
 .conversation-content>.content-body{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
 .conversation-content>.content-body>[data-status=workspace]{display:none}
@@ -14,17 +14,17 @@
 .conversation-rows{overflow-y:auto;min-height:0}
 .conversation-row{display:flex;flex-direction:column;text-align:left;width:100%;gap:3px;border:0;border-radius:0;overflow-wrap:anywhere;padding:7px}
 .conversation-row small{font-size:max(12px,.8em);color:var(--muted)}
-.conversation-detail{display:flex;flex-direction:column;gap:6px;min-height:0;min-width:0}
+.conversation-detail{display:block;overflow-y:auto;overflow-wrap:anywhere;scrollbar-gutter:stable;min-height:0;min-width:0}
 .conversation-tools input[data-c-field=title]{flex:1;min-width:90px;width:90px;font:inherit;color:inherit;background:none;padding:4px}
-.conversation-record{overflow:auto;flex:1;min-height:40px;overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px}
+.conversation-record{overflow:visible;min-height:0;overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px}
 .conversation-text{white-space:pre-wrap}.conversation-record ul{padding-left:1.2em}
 .conversation-record p{margin-block:6px}.conversation-record img{max-width:100%;max-height:180px;object-fit:contain}
 .conversation-record pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
 .conversation-record .native-session{text-decoration:underline;gap:5px;justify-content:start}
-/* D4/D7: a launched conversation's status bar and transcript; each scrolls on its own so the composer stays visible, newest at the bottom. */
-.dialogue-bar{flex:0 1 auto;max-height:25%;overflow:auto;display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+/* D4/D7: launched status, transcript and composer share the detail scroll. */
+.dialogue-bar{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
 .dialogue-bar p{margin:2px 0}.dialogue-bar .native-session{text-decoration:underline;justify-content:start}
-.dialogue-state{font-weight:600;position:sticky;top:0;z-index:1;background:var(--surface,Canvas)}.dialogue-state[data-state=unknown]{color:var(--muted)}
+.dialogue-state{font-weight:600}.dialogue-state[data-state=unknown]{color:var(--muted)}
 .dialogue-status summary{padding:2px 4px;overflow-wrap:anywhere}
 .dialogue-status-body{border:1px solid var(--edge);border-radius:4px;padding:6px}
 .dialogue-status dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 10px;margin:0 0 6px}
@@ -34,13 +34,13 @@
 .dialogue-watch input[type=number]{width:7em}
 .dialogue-watch fieldset{display:flex;flex-wrap:wrap;gap:4px 12px;border:1px solid var(--edge);border-radius:4px;margin:0;padding:4px 6px}
 .dialogue-watch fieldset label{flex-direction:row;align-items:center}
-.dialogue-transcript{overflow:auto;flex:1;min-height:max(40px,30%);overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px;display:flex;flex-direction:column;gap:6px}
+.dialogue-transcript{overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px;display:flex;flex-direction:column;gap:6px}
 .dialogue-transcript>button{align-self:center}
 .dialogue-item p{margin:0}.dialogue-item .meta{font-size:max(12px,.8em)}
 .dialogue-item.user{align-self:flex-end;max-width:85%;border:1px solid var(--edge);border-radius:6px;padding:4px 8px}
 .dialogue-tool{margin:0;color:var(--muted);font-size:max(12px,.85em);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.2em}
 .dialogue-unknown{margin:0;font-weight:600}
-.conversation-composer{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--edge);padding-top:6px;flex:none;max-height:65%;overflow-y:auto;min-height:90px}
+.conversation-composer{display:flex;flex-direction:column;gap:4px;border-top:1px solid var(--edge);padding-top:6px;flex:none}
 .conversation-composer label{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .conversation-composer select{font:inherit;background:none;color:inherit;flex:1;min-width:100px;padding:3px}
 .conversation-composer textarea{font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:6px;width:100%;min-height:64px;resize:vertical;max-height:25vh;-webkit-user-select:text;user-select:text}
@@ -54,7 +54,7 @@
 .conversation-list-toggle{display:none}.conversations.detached .conversation-list{display:none}.conversations.detached .conversation-grid{grid-template-columns:minmax(0,1fr)}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 @media(max-width:620px){.conversation-list-toggle{display:inline-flex}.conversation-grid{grid-template-columns:minmax(0,1fr)}.conversations:not(.list-only) .conversation-list{display:none}.conversations.list-only .conversation-detail{display:none}.conversation-list{border:0;padding:0}.conversation-toolbar{gap:4px}.conversation-toolbar button{padding:4px}.workspace .head{gap:2px;padding-inline:4px}.workspace .nav-actions{display:flex}.workspace .head h1{font-size:1em}}
-@media(max-height:430px){.conversation-record,.dialogue-transcript{min-height:20px}.conversation-composer{max-height:75%;min-height:80px}.conversation-composer textarea{min-height:44px}.conversation-composer>p.meta{display:none}}
+@media(max-height:430px){.conversation-composer textarea{min-height:44px}.conversation-composer>p.meta{display:none}}
 
 @media(pointer:coarse){.workspace-resize{width:44px;height:44px;min-height:44px!important}.attach-label{min-height:44px}}
 
@@ -63,3 +63,9 @@
 .thread-marker{align-self:flex-start;font-size:max(12px,.8em);color:var(--accent,inherit);font-weight:600}
 .dialogue-launch>summary{padding:2px 4px;color:var(--muted)}
 .thread-detail{overflow-y:auto}
+
+/* #1723 A4-A6: all thread content shares one reading position. */
+.thread-title{font:inherit;font-weight:600;margin:4px 0}
+.thread-card .qac-head{display:none}
+.conversation-detail .qac{margin:0;padding:6px}
+.conversation-detail .qac-problem{margin:4px 0}

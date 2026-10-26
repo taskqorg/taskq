@@ -210,7 +210,7 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return h('button',{class:'project','data-route':route},label);},
-answerSlot:function(t){return t.state==='ask'?h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},'Answer in workspace…'):'';},
+answerSlot:function(t){return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},t.state==='ask'?'Answer in Conversations…':'Open Conversations…');},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},

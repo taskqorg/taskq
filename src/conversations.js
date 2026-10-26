@@ -8,11 +8,21 @@ module.exports=execution.module('conversations',{
   let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,undo=null,notice='',failure=null,preview=null,confirmDelete=false;
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
-  let view=null,reads={},pollTimer=null;
+  let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false;
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    current:function(){return items.find(c=>c.id===selected);},
    ids:function(){return items.map(c=>c.id);},
+   opened:function(){return opened;},
+   remember:function(id,root){const prior=opened.find(r=>r.id===id);if(prior)prior.root=root||prior.root;else opened.push({id,root:root||null});search='';api.nav();},
+   // C2/C7: one selected identity for owner, task and event rows; only view identities persist.
+   sync:function(rows,legacy){
+    if(!synced){synced=true;if(!unified&&legacy)selected=legacy;}
+    const row=items.find(c=>c.id===selected&&!c.deleted)||rows.find(r=>r.id===selected);
+    if(!row||!!row.archived!==(list==='archive'))selected=null;
+    selection[list]=selected;onSelect?.(selected);return selected;
+   },
+   capture:function(){const el=menu.querySelector('.conversation-detail');if(el?.dataset.threadId)positions[el.dataset.threadId]=el.scrollTop;},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
    title:function(c){return c.title||(c.text||'').split('\n').find(s=>s.trim())?.trim()||c.sent?.text?.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
    visible:function(){return items.filter(c=>!c.deleted&&!!c.archived===(list==='archive')&&(!search||[api.title(c),c.root,c.id].join(' ').toLowerCase().includes(search.toLowerCase())));},
@@ -31,16 +41,16 @@ module.exports=execution.module('conversations',{
    settle:function(r){
     const op=reads[r.id];if(!op)return;delete reads[r.id];
     if(view?.id!==op.conversation)return;if(view.busy[op.kind]===r.id)view.busy[op.kind]=null;
-    const v=r.value,el=menu.querySelector('.dialogue-transcript');
+    const v=r.value,el=menu.querySelector('.conversation-detail');
     if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
     if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';return;}
     view.reason='';
-    if(op.kind==='initial'){view.items=v.items.map((item,i)=>({...item,n:i}));view.start=v.start;view.end=v.end;view.stick=true;}
+    if(op.kind==='initial'){view.items=v.items.map((item,i)=>({...item,n:i}));view.start=v.start;view.end=v.end;}
     else if(op.kind==='before'&&op.before===view.start){const first=view.items[0]?.n??0;view.items=[...v.items.map((item,i)=>({...item,n:first-v.items.length+i})),...view.items];view.start=v.start;if(el)view.anchor={height:el.scrollHeight,top:el.scrollTop};}
     else if(op.kind==='after'&&op.after===view.end&&v.end>view.end){const last=view.items.at(-1)?.n??-1;view.items.push(...v.items.map((item,i)=>({...item,n:last+1+i})));view.end=v.end;}
    },
    open:function(c){
-    if(view?.id!==c.id){reads={};view={id:c.id,items:[],start:null,end:null,reason:'',status:null,statusReason:'',busy:{},stick:true,anchor:null,ticks:0,form:null};api.read('initial');api.read('status');}
+    if(view?.id!==c.id){reads={};view={id:c.id,items:[],start:null,end:null,reason:'',status:null,statusReason:'',busy:{},stick:positions[c.id]===undefined,anchor:null,ticks:0,form:null};api.read('initial');api.read('status');}
     if(!pollTimer)pollTimer=ui.defer(api.poll,2000);
    },
    // D4: poll every 2 s while the view is open; status, which probes the native holder, every 10 s.
@@ -83,16 +93,16 @@ module.exports=execution.module('conversations',{
    },
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next};},
-   nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>ui.send({a:'conversation-navigation',navigation:{list,search,selection,selected,listOnly,scrolls}}),100);},
-   select:function(id,focus=true){const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);onSelect?.();selected=id;selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
+   nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>ui.send({a:'conversation-navigation',navigation:{list,search,selected:api.current()?.id||null,listOnly,scrolls,threads:{selected,selection,opened,positions}}}),100);},
+   select:function(id,focus=true){const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
    // #1699 A2: open one owner conversation in its list without acknowledging anything
    reveal:function(id,focus=true){const c=items.find(c=>c.id===id);if(!c)return false;list=c.archived?'archive':'recent';search='';api.select(id,focus);return true;},
    // #1699 A7: a restored task or event thread opens in Recent
-   show:function(name){if(list!==name){selection[list]=selected;list=name;api.nav();}},
+   show:function(name){if(list!==name){selection[list]=selected;list=name;selected=selection[list]||null;onSelect?.(selected);api.nav();}},
    fresh:function(copy){
     const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);
     const c={id:api.id(),revision:0,title:'',root:copy?.root||snapshot.projects?.[0]?.root||'',text:copy?.text||'',caret:copy?.caret||[0,0],scroll:0,files:[],archived:false,version:1};
-    items.push(c);onSelect?.();list='recent';search='';selected=c.id;selection.recent=c.id;listOnly=false;focusDraft=true;api.save(c);api.nav();draw();
+    items.push(c);list='recent';search='';selected=c.id;onSelect?.(c.id);selection.recent=c.id;listOnly=false;focusDraft=true;api.save(c);api.nav();draw();
    },
    save:function(c){
     if(!api.editable(c))return;
@@ -110,7 +120,7 @@ module.exports=execution.module('conversations',{
     ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;notice=failure.reason;draw();}},30000);
    },
    action:function(action,extra={}){
-    const c=api.current();if(!api.editable(c)||failure)return;
+    const c=api.current();if(!api.editable(c)||failure||c.archived&&!['restore','delete','preview'].includes(action))return;
     ui.cancel(saveTimer);api.save(c);
     if(action==='send'&&(c.sending||c.sent||c.request)||action==='reply'&&c.sending)return;
     if(action==='send'||action==='reply')c.sending=true;
@@ -118,7 +128,7 @@ module.exports=execution.module('conversations',{
    },
    receive:function(s){
     if(s.dialogueReceipt){api.settle(s.dialogueReceipt);return true;}
-    if(s.workspaceOwner){owner=s.workspaceOwner;if(owner.conversation||owner.select){selected=owner.conversation||owner.select;listOnly=false;focusDraft=true;}draw();return true;}
+    if(s.workspaceOwner){owner=s.workspaceOwner;if(owner.conversation||owner.select){selected=owner.conversation||owner.select;onSelect?.(selected);listOnly=false;focusDraft=true;}draw();return true;}
     if(s.conversationNavigationError!==undefined){if(s.conversationNavigationError)notice=s.conversationNavigationError;return true;}
     if(s.conversationReceipt){
      const r=s.conversationReceipt;if(r.id!==pending?.id)return true;
@@ -157,7 +167,13 @@ module.exports=execution.module('conversations',{
      for(const n of incoming.items||[]){const c=items.find(c=>c.id===n.id);if(c){c.request=n.request;c.sent=n.sent;c.dialogue=n.dialogue;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
      if(incoming.complete)for(const c of items){if(c.revision>0&&!incoming.items.some(n=>n.id===c.id)){c.deleted=true;if(c.text===c.sent?.text)c.text='';c.sent=null;c.request=null;c.files=[];queue=queue.filter(o=>o.conversation!==c.id);if(pending?.conversation===c.id){pending=null;ui.cancel(timer);}if(failure?.conversation===c.id)failure=null;}}
     }
-    if(!hydrated){hydrated=true;const nav=incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';selection=nav.selection||{};scrolls=nav.scrolls||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(!selected)selected=api.visible()[0]?.id||null;}
+    if(!hydrated){hydrated=true;const nav=incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';selection=nav.selection||{};scrolls=nav.scrolls||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(nav?.threads&&typeof nav.threads==='object'){
+      const t=nav.threads;unified=true;selected=typeof t.selected==='string'?t.selected:null;
+      selection=Object.fromEntries(['recent','archive'].map(k=>[k,typeof t.selection?.[k]==='string'?t.selection[k]:null]));
+      opened=Array.isArray(t.opened)?t.opened.filter(r=>r&&typeof r.id==='string'&&/^task:https?:\/\/.+\/[1-9][0-9]*$/.test(r.id)&&(r.root==null||typeof r.root==='string')).map(r=>({id:r.id,root:r.root||null})):[];
+      positions=t.positions&&typeof t.positions==='object'?Object.fromEntries(Object.entries(t.positions).filter(([k,v])=>Number.isFinite(v)&&v>=0)):{};
+     }else if(!selected)selected=api.visible()[0]?.id||null;}
+
     return false;
    },
    problem:function(c){
@@ -183,7 +199,7 @@ module.exports=execution.module('conversations',{
     return '';
    },
    files:function(files){
-    const c=api.current();if(!api.editable(c)||!files.length)return;
+    const c=api.current();if(!api.editable(c)||c.archived||!files.length)return;
     for(const file of files){
      const mime=({txt:'text/plain',md:'text/markdown',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'})[file.name.split('.').at(-1).toLowerCase()];
      if(!mime||!file.size||file.size>5*1024*1024||c.files.length+queue.filter(o=>o.conversation===c.id&&o.action==='attach').length>=4){notice=file.name+': unsupported or over limit. Use 4 files, 5 MiB each; PDF unavailable (0 pages).';draw();continue;}
@@ -197,7 +213,7 @@ module.exports=execution.module('conversations',{
    },
    // #1699 A1/A4: one thread list: owner conversations plus the task and event threads the workspace passes in
    body:function(extra={}){
-    const thread=extra.selected,c=thread?null:api.current(),disabled=!api.editable(c)||c.deleting,bad=api.problem(c),button=icons.button,dialogue=api.launched(c)&&!c.archived;
+    const thread=extra.selected,c=thread?null:api.current(),disabled=!api.editable(c)||c.deleting||c.archived,bad=api.problem(c),button=icons.button,dialogue=api.launched(c);
     if(c?.deleted)return h('section',{class:'conversations'},h('p',{role:'status'},'History permanently deleted. Sent content cannot be restored. Independent saved drafts remain in Recent.'),c.text&&h('label',null,'Unsent local text',h('textarea',{readOnly:true,value:c.text})),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':'new'},'New request'));
     const find=text=>!search||text.toLowerCase().includes(search.toLowerCase()),threads=(extra.rows||[]).filter(r=>!!r.archived===(list==='archive')&&find([r.title,r.meta].join(' '))),own=api.visible();
     const rows=[...threads.map(r=>h('button',{key:r.id,class:'conversation-row','data-a':'thread','data-thread':r.id,'aria-current':r.id===thread?'page':null},h('span',null,r.title),h('small',null,r.meta,r.marker&&h('b',{class:'thread-marker'},' · '+r.marker)))),
@@ -208,13 +224,13 @@ module.exports=execution.module('conversations',{
      h('div',{class:'conversation-toolbar'},h('button',{'data-c':'list',class:'conversation-list-toggle'},listOnly?'Back':'List'),h('button',{'data-c':'new',disabled:!!owner.conversation},icons.icon('plus'),' New'),icons.button('panels-top-left','Work sessions',{'data-route':'sessions'}),h('details',{'data-view-key':'conversation-history'},h('summary',null,'History'),h('div',{class:'conversation-history'},(snapshot.ai?.history||[]).map((text,i)=>h('button',{'data-c':'history','data-index':i,disabled},text)),h('button',{'data-c':'clear-history'},'Clear command history'),h('p',{class:'meta'},'History fills only. Permanent deletion is available in Archive.')))),
      h('div',{class:'conversation-grid'},
       h('aside',{class:'conversation-list','aria-label':'Threads'},h('div',{class:'conversation-tools'},h('button',{'data-c':'recent','aria-pressed':list==='recent'},'Recent'),h('button',{'data-c':'archive-list','aria-pressed':list==='archive'},'Archive')),h('label',{class:'conversation-search'},h('span',{class:'sr-only'},'Search threads'),h('input',{type:'search','data-c-field':'search',value:search,placeholder:'Search',maxLength:512})),search&&h('button',{'data-c':'clear-search'},'Clear search'),h('div',{class:'conversation-rows'},rows.length?rows:h('p',null,search?'No matches':'No '+(list==='archive'?'archived threads':'threads yet')))),
-      thread?h('section',{class:'conversation-detail thread-detail','aria-label':'Selected thread'},extra.detail):
-      h('section',{class:'conversation-detail','aria-label':'Selected request'},c?[h('div',{class:'conversation-tools'},h('input',{'data-c-field':'title','aria-label':'Request name',placeholder:api.title(c),value:c.title,disabled,maxLength:120}),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':(owner.detached||[]).includes(c.id)?'raise':'detach',disabled:!!pending},(owner.detached||[]).includes(c.id)?'Raise window':'Detach'),h('button',{'data-c':c.archived?'restore':'archive',disabled:disabled||!!pending},c.archived?'Restore':'Archive')),
+      thread?h('section',{class:'conversation-detail thread-detail','data-thread-id':thread,'aria-label':'Selected thread'},extra.detail):
+      h('section',{class:'conversation-detail','data-thread-id':c?.id||'','aria-label':'Selected request'},c?[h('div',{class:'conversation-tools'},h('input',{'data-c-field':'title','aria-label':'Request name',placeholder:api.title(c),value:c.title,disabled,maxLength:120}),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':(owner.detached||[]).includes(c.id)?'raise':'detach',disabled:!!pending},(owner.detached||[]).includes(c.id)?'Raise window':'Detach'),h('button',{'data-c':c.archived?'restore':'archive',disabled:!api.editable(c)||!!pending},c.archived?'Restore':'Archive')),
        // A5: launch diagnostics and Status collapse above the transcript, which takes the reading area
-       dialogue?[h('div',{class:'dialogue-bar'},h('p',{class:'dialogue-state','data-state':api.state(c).split(' ')[0]},'State: '+api.state(c)),h('details',{class:'dialogue-launch','data-view-key':'dialogue-launch'},h('summary',null,'Launch details'),pm.handoff(c.request,true)),api.status(c,disabled),api.preview()),api.transcript(c)]:
+       dialogue?[h('div',{class:'dialogue-bar'},h('p',{class:'dialogue-state','data-state':api.state(c).split(' ')[0]},'State: '+api.state(c)),h('details',{class:'dialogue-launch','data-view-key':'dialogue-launch'},h('summary',null,'Details'),pm.handoff(c.request,true)),c.archived?h('div',null,h('p',{class:'meta'},'Archived in TaskQ only; the native conversation stays. Restore before reply.'),h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},'Delete permanently'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Native chats and sessions stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record'))):api.status(c,disabled),api.preview()),api.transcript(c)]:
        h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},h('details',{'data-view-key':'request-identity'},h('summary',null,'Request identity'),h('p',{class:'meta'},c.id)),c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),pm.handoff(c.request,true),c.sent&&h('article',null,h('h2',null,'Sent request'),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),(c.sent||c.request)&&h('p',{class:'meta'},'Replies open here after the native launch.'),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery'),c.archived&&h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},c.deleting?'Retry Delete':'Delete permanently'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Source files, native chats, sessions and board tasks stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record')),api.preview()),
        extra.notice,
-       pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),h('p',{class:'meta'},(dialogue?(runtime?'Session '+runtime:'Session runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown'))],files:
+       !c.archived&&pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),h('p',{class:'meta'},(dialogue?(runtime?'Session '+runtime:'Session runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown'))],files:
         h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled})))),
         tools:h('div',{class:'conversation-tools'},h('label',{class:'attach-label'},'Attach',h('input',{type:'file',multiple:true,accept:'.txt,.md,.png,.jpg,.jpeg,.webp','data-c-field':'files',disabled})),dialogue&&h('button',{'data-c':'reply',disabled:!!bad},'Send'),h('button',{'data-c':c.sent||c.request?'from-draft':'send',disabled:(c.sent||c.request)?disabled||!!owner.conversation||!c.text.trim():!!bad},c.sent||c.request?'New from draft':'Send')),
         reason:bad||(dialogue?'Send goes to this '+(runtime||'native')+' session from this window as one turn. New from draft starts a separate request.':'Share this request and selected files with the visible native session.'),after:h('details',{'data-view-key':'file-limits'},h('summary',null,'File limits'),h('p',{class:'meta'},'UTF-8 text/Markdown, PNG/JPEG/WebP. 4 files, 5 MiB each, 20 MiB per draft, 100 MiB owned storage. PDF unavailable (0 pages). Sources stay untouched.'))})
@@ -227,7 +243,7 @@ module.exports=execution.module('conversations',{
     if(action==='new'&&!owner.conversation)api.fresh();
     else if(action==='select'){if((owner.detached||[]).includes(b.dataset.id))ui.send({a:'conversation-window',action:'raise',conversation:b.dataset.id});else api.select(b.dataset.id);}
     else if(action==='list'){listOnly=!listOnly;api.nav();draw();}
-    else if(action==='recent'||action==='archive-list'){selection[list]=selected;list=action==='recent'?'recent':'archive';selected=selection[list]||api.visible()[0]?.id||null;listOnly=true;api.nav();draw();}
+    else if(action==='recent'||action==='archive-list'){api.flush();api.show(action==='recent'?'recent':'archive');listOnly=true;api.nav();draw();}
     else if(action==='clear-search'){search='';api.nav();draw();}
     else if(action==='history'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.text=snapshot.ai.history[Number(b.dataset.index)];c.caret=[0,0];c.version=(c.version||0)+1;api.save(c);focusDraft=true;draw();}
     else if(action==='clear-history'){ui.send({a:'ai-clear'});snapshot.ai.history=[];draw();}
@@ -258,15 +274,22 @@ module.exports=execution.module('conversations',{
     ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){search=e.target.value;api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);draw();});
     ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
-    ui.listen(menu,'scroll',e=>{if(e.target.classList?.contains('dialogue-transcript')&&view){view.stick=e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(e.target.scrollTop<32&&view.start>0&&!view.busy.before&&!view.anchor){api.read('before',{before:view.start});draw();}return;}if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}if(!e.target.classList?.contains('conversation-record'))return;const c=api.current();if(api.editable(c)&&c.scroll!==e.target.scrollTop){c.scroll=e.target.scrollTop;c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);}},true);
+    ui.listen(menu,'scroll',e=>{
+     if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}
+     if(!e.target.classList?.contains('conversation-detail'))return;
+     positions[selected]=e.target.scrollTop;api.nav();
+     if(view?.id===selected&&e.target.querySelector('.dialogue-transcript')){view.stick=e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(e.target.scrollTop<32&&view.start>0&&!view.busy.before&&!view.anchor){api.read('before',{before:view.start});draw();}}
+    },true);
+    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('dialogue-status')&&view){view.stick=false;const detail=menu.querySelector('.conversation-detail');if(detail)positions[selected]=detail.scrollTop;}},true);
     ui.listen(menu,'dragover',e=>{if(e.target.closest('.conversations'))e.preventDefault();});
     ui.listen(menu,'drop',e=>{if(!e.target.closest('.conversations'))return;e.preventDefault();api.files([...e.dataTransfer.files]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(document,'keydown',e=>{if(e.target.dataset?.cField==='text'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();const c=api.current();if(api.problem(c))return;if(api.launched(c))api.action('reply',{typed:c.version||0});else api.action('send',{runtime:snapshot.ai?.runtime?.id});}});
    },
    afterDraw:function(){
-    const log=menu.querySelector('.dialogue-transcript'),open=api.current();
-    if(log&&open){api.open(open);if(view.anchor){log.scrollTop=log.scrollHeight-view.anchor.height+view.anchor.top;view.anchor=null;}else if(view.stick)log.scrollTop=log.scrollHeight;}
+    const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-detail'),open=api.current();
+    if(detail)detail.scrollTop=positions[selected]??open?.scroll??0;
+    if(log&&open){api.open(open);if(view.anchor){detail.scrollTop=detail.scrollHeight-view.anchor.height+view.anchor.top;view.anchor=null;}else if(view.stick)detail.scrollTop=detail.scrollHeight;positions[selected]=detail.scrollTop;}
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}},
    flush:function(){ui.cancel(saveTimer);const c=api.current();if(c)api.save(c);api.nav();},
   });return api;
