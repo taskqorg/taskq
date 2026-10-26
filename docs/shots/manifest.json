@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "db95128f27a2a435b9e10bb763b4b4b59d95ef3e",
-  "binarySha256": "f8b2d4d97cdf532fbc5d03ae057c8f1eac0e9e70e205e8c9ecb94d310fcf83c3",
+  "sourceCommit": "64b3d9b89f3a9391c6d56442d171422826427aba",
+  "binarySha256": "fd82bb367e937dc5f9961c863f06a1e51ef5332da801b078cc273c9105415124",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
+      "sha256": "dcc657fa9782728d081b4354f836ab4f4e4f1b7f8c1f655e50873c9b033fae9b"
     },
     {
       "file": "popover-dark-project-16.png",

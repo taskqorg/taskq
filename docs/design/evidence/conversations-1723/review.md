@@ -49,4 +49,18 @@ Source/browser fixes are implemented. Installed Mac qualification remains unknow
 
 ## Artifact identity
 
-UI source commit: `db95128f27a2a435b9e10bb763b4b4b59d95ef3e`. Browser bundle SHA256: `6e61283dbb426ee3536bff6b0754c7bc64673b07e0f292e72ceb4bd454e01e49`. WKWebView README source/binary/environment: [manifest](../../../shots/manifest.json).
+Original UI source commit: `db95128f27a2a435b9e10bb763b4b4b59d95ef3e`. Browser bundle SHA256: `6e61283dbb426ee3536bff6b0754c7bc64673b07e0f292e72ceb4bd454e01e49`. WKWebView README source/binary/environment: [manifest](../../../shots/manifest.json).
+
+
+## Merge-queue conflict recovery
+
+The queue removed PR #1727 with `merge_conflict`; GitHub reported the old head `e4590cda44678bbac7d21fa3cea2e6acd300efd4` as `DIRTY`. Rebased onto `853575349ebd98b8a560bc4ec030e3203a77c87c` under § 7.4. The only conflict was README screenshot provenance in `docs/shots/manifest.json`; application code merged without conflict. The combined UI source is `64b3d9b89f3a9391c6d56442d171422826427aba`.
+
+- Regenerated README snapshots using `sh docs/shots/update.sh`; `sh docs/shots/check.sh` passes. Both final WKWebView images were visually inspected: menu framing, labels, task rows and icon remain visible. This uses an isolated fixture, not the installed app.
+- Re-ran the mixed-selection scenario and inspected all four final browser images: archived transcript, long question and expanded Status at 18/20 px. Choices and composer are reachable, with no additional content scrollbar. The four images above identify this rebased UI; three are byte-identical to the original candidate.
+- `python3 scripts/check.py --base 853575349ebd98b8a560bc4ec030e3203a77c87c` remains **sandbox-blocked**, not passed: 540 Rust checks pass, 17 host/policy/lifecycle fixtures fail under the inherited worker identity, and 32 are ignored; elapsed 37.751 s on warm macOS. Failures retain the same worker-policy refusals as the original candidate. No permission or test-rule change was made.
+- All `tests/*.test.cjs` component checks, the four affected browser scenarios (`messages`, `conversations-selection`, `dialogue`, `conversations-render`) and screenshot/release artifact-script checks pass after rebase. Source identity, question revision/stale refusal, drafts and read-only navigation protections remain.
+- Offline `cargo +stable run --locked -- selftest` passes in a temporary installation: 99 golden traces, formats and staged capture; board state remains unknown.
+- Installed Mac M01/M02/M03/M06/M07 remain **Not tested**; this conflict recovery does not substitute the snapshot renderer for the installed-app journey. No live record changed. Green `merge_group` CI remains required; not deployed.
+
+Rebased browser bundle SHA256: `ba1f0635ad50599d3d25b37f5234729db3fb2fe414804988cb22be041c63f284`. No R-number amendments.
