@@ -1,0 +1,60 @@
+{
+  "sourceCommit": "ddf834985858bdbc4164057289bce3f7b21c393f",
+  "binarySha256": "6882194711494d893318f1754941c5ef4c94afc280c2fa71471dc49f0e93cea0",
+  "renderer": "installed isolated TaskQ.app, WKWebView snapshot",
+  "fixture": "invented, disposable event files; no board or service",
+  "start": 1793023824,
+  "end": 1793027424,
+  "since": 1793024124,
+  "events": [
+    [
+      1793024324,
+      "ask"
+    ],
+    [
+      1793024524,
+      "ask"
+    ],
+    [
+      1793024624,
+      "ask"
+    ],
+    [
+      1793024724,
+      "ask"
+    ],
+    [
+      1793025124,
+      "close"
+    ],
+    [
+      1793025224,
+      "close"
+    ],
+    [
+      1793025324,
+      "ask"
+    ],
+    [
+      1793025374,
+      "failed"
+    ],
+    [
+      1793026324,
+      "close"
+    ]
+  ],
+  "os": "macOS 27.0.1",
+  "arch": "arm64",
+  "scale": 2,
+  "sourceBlobs": {
+    "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e",
+    "src/tray.rs": "45d26cac21b21938efd40d4fe722a5f1fd15f503",
+    "src/tray-app.js": "888574b3bdcea9350258c07ee40be136ab8ceab8",
+    "src/task-workspace.css": "c2ac1f503d9837c43638aceff515954d561c15b4"
+  },
+  "images": {
+    "popover-dark-cadence-16.png": "05be44a8ade116a023550d732d51f4a531e82e2f73b93c9b7dc5c4a661b710ea",
+    "popover-light-cadence-20.png": "373d9ebf0427c4e5159dd7c6df6e17e5f213f7a95744e09d671ab7bf89ce9c4e"
+  }
+}

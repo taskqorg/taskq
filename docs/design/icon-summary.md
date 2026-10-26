@@ -21,13 +21,14 @@ Exactly six separated columns, oldest left. For i = 0…5: x = 1 + 3.5i, width 2
 - Known zero: neutral tick at y = 20, height 0.5, column width.
 - Unknown/incomplete source: neutral mid dash at y = 15.5, height 0.75; no guessed green bar.
 - Bin containing now: separate neutral underline at y = 21, height 0.5; no underline in a completed historical range.
-- Known failed > 0: fixed red cap at y = 10.5, height 0.75, independent of green height. No ask/blocked marks.
+- Known failed > 0: fixed red cap at y = 10.5, height 0.75, independent of green height.
+- Activity history alone reveals a fixed Ask cap at y = 12, height 0.75, column width, in the Ask color when observed Ask > 0 (including incomplete bins). It remains hidden in menu-bar, Dock and picker icons. No blocked marks.
 - Palette A light/dark: closed/work `#087F5B` / `#38E8A0`; ask `#995200` / `#FFC247`; failed `#C92641` / `#FF6378`; neutral `#536171` / `#B9C6D8`. One source supplies counters, graph and menu CSS. Board label API colors stay separate.
 - Paused: existing gray composition and centered compact Q/pause identity. Partial pause does not gray everything.
 
 ## I5 Raster and acceptance
 
-Reference geometry scales to the actual menu-bar slot, then its backing scale. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins.
+Reference geometry scales to the actual menu-bar slot, then its backing scale. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins. Its CSS reveals the canonical SVG’s hidden Ask marks without changing Closed geometry or peak; failed, unknown, zero-Closed and ongoing marks remain distinct.
 
 Use the frozen day/hour fixtures linked from the approved review, plus explicitly synthetic zero-peak, failed and unknown cases. Checks retain bin identities, exact counts, heights, colors and marks at every viewport. Inspect at most ten native screens for owner acceptance: font/DPR, separated columns, counter bounds, zero vs unknown, ongoing/failed, pause and overflow. Static references and source CI are not native acceptance.
 

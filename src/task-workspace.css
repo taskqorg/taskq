@@ -46,7 +46,7 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 .askai textarea{font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:5px;resize:vertical;min-width:0;-webkit-user-select:text;user-select:text}
 .askai button{align-self:start;min-width:34px}
 .history-plot{position:relative;height:88px;margin:4px 12px}
-.history-plot svg{display:block;width:100%;height:100%}.history-plot #counters,.history-plot #empty-q{display:none}.history-plot #summary-data{visibility:visible}
+.history-plot svg{display:block;width:100%;height:100%}.history-plot #counters,.history-plot #empty-q{display:none}.history-plot #summary-data,.history-plot [data-mark=ask]{visibility:visible}
 .history-targets{position:absolute;inset:0;display:grid;grid-template-columns:repeat(6,1fr)}
 .menu .history-targets button{min-width:0;padding:0;border:0;border-radius:0;background:none}
 .menu .history-targets button[aria-pressed=true]{background:none;outline:1px solid var(--muted);outline-offset:1px}

@@ -150,7 +150,7 @@ pub fn peak(bins:&[Bin])->u32 {
     bins.iter().filter(|b|b.complete()).map(|b|b.counts[0]).max().unwrap_or(0)
 }
 
-/// One source for every surface. History changes only the viewport, not these vector groups.
+/// One source for every surface. History changes the viewport and reveals Ask marks, preserving the shared vector geometry.
 #[tracing::instrument(name="icon.svg",skip_all)]
 pub fn svg(d:&Data,dark:bool)->String {
     let p=palette(dark);
@@ -167,6 +167,7 @@ pub fn svg(d:&Data,dark:bool)->String {
             else if b.counts[0]==0 {(20.0,0.5,p.muted,"zero")}
             else {let h=9.0*b.counts[0] as f64/peak.max(1) as f64;(20.5-h,h,p.work,"closed")};
         write!(out,r#"<rect data-mark="{mark}" x="{x}" y="{y}" width="2.5" height="{h}" fill="{}"/>"#,color(c)).unwrap();
+        if b.counts[2]>0 {write!(out,r#"<rect data-mark="ask" visibility="hidden" x="{x}" y="12" width="2.5" height="0.75" fill="{}"/>"#,color(p.ask)).unwrap();}
         if b.counts[1]>0 {write!(out,r#"<rect data-mark="failed" x="{x}" y="10.5" width="2.5" height="0.75" fill="{}"/>"#,color(p.failed)).unwrap();}
         if b.ongoing {write!(out,r#"<rect data-mark="ongoing" x="{x}" y="21" width="2.5" height="0.5" fill="{}"/>"#,color(p.muted)).unwrap();}
         out.push_str("</g>");
@@ -399,6 +400,34 @@ mod tests {
             let rows = exported["events"].as_array().unwrap();
             assert_eq!(rows.iter().filter(|r| r["observation"]["operation"] == "taskq.icon.compact" && r["observation"]["kind"] == "method").count(), 30);
             assert!(!rows.iter().any(|r| r["observation"]["source"] == "diagnostic"), "normal rendering generated internal detail");
+        }
+    }
+
+    // #1725 A2–A4: History can reveal Ask without changing icon pixels, Closed scale or coverage marks.
+    #[test]
+    fn history_ask_marks_preserve_closed_zero_unknown_and_icon_pixels() {
+        let bins = [0, 0, 1, 2, 999, 0].into_iter().enumerate().map(|(i, closed)| Bin {
+            start: i as f64, end: (i + 1) as f64, counts: [closed, u32::from(i == 2), [3, 0, 1, 0, 2, 0][i], 0],
+            missing: if i == 4 { vec!["synthetic missing source".into()] } else { vec![] }, ongoing: i == 5,
+        }).collect();
+        let mut data = Data { counts: [Some(1); 4], blocked: Some(0), bins, paused: false };
+        assert_eq!(peak(&data.bins), 2);
+        for dark in [false, true] {
+            let vector = svg(&data, dark);
+            let bin = |i| vector.split(&format!(r#"<g id="bin-{i}" "#)).nth(1).unwrap().split("</g>").next().unwrap();
+            assert_eq!(vector.matches(r#"data-mark="ask""#).count(), 3, "ask-only, mixed and observed incomplete Ask");
+            for i in [0, 2, 4] {
+                assert!(bin(i).contains(r#"data-mark="ask" visibility="hidden""#), "icons hide History-only Ask");
+                assert!(bin(i).contains(&format!(r#"y="12" width="2.5" height="0.75" fill="{}""#, hex(palette(dark).ask))));
+            }
+            for (i, mark) in [(0, "zero"), (1, "zero"), (2, "closed"), (2, "failed"), (4, "unknown"), (5, "ongoing")] {
+                assert!(bin(i).contains(&format!(r#"data-mark="{mark}""#)));
+            }
+            assert!(bin(2).contains(r#"y="16" width="2.5" height="4.5""#), "Closed 1 / peak 2");
+            let asks: Vec<_> = data.bins.iter().map(|b| b.counts[2]).collect();
+            for b in &mut data.bins { b.counts[2] = 0; }
+            assert_eq!(raster(&vector, 256).unwrap().px, raster(&svg(&data, dark), 256).unwrap().px, "menu-bar/Dock keep closed-only pixels");
+            for (b, ask) in data.bins.iter_mut().zip(asks) { b.counts[2] = ask; }
         }
     }
 
