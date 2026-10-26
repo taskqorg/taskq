@@ -33,8 +33,12 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
  await page.evaluate(({board,n})=>taskq.receive({open:{page:'conversations',board,task:n}}),{board,n:question.n});
  assert.equal(await page.locator('.thread-title').count(),1);assert.equal(await page.locator('.qac-head').isVisible(),false);
  assert.deepEqual(await page.locator('[data-qac=choose]').evaluateAll(es=>es.map(e=>e.textContent.trim().match(/^\d+/)[0])),question.question.choices.map(c=>String(c.id)));
- await page.locator('[data-c-field=answer]').scrollIntoViewIfNeeded();assert(await page.locator('[data-c-field=answer]').isVisible());assert(await page.locator('[data-c-field=answer]').isVisible());
+ for(const font of [18,20]){await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});await page.locator('[data-c-field=answer]').scrollIntoViewIfNeeded();const box=await page.locator('[data-c-field=answer]').boundingBox();assert(box.y>=0&&box.y+box.height<=740,'long question composer reached at '+font);}
  if(out)await page.screenshot({path:out+'/question-dark-20.png'});
+ await page.locator('[data-c-field=answer]').fill('Retained answer draft');
+ state.projects[0].tasks[0]={...question,revision:question.revision+2};await page.evaluate(s=>taskq.receive(s),state);
+ assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'stale','fresh revision cannot silently approve a retained draft');
+ assert.equal(await page.locator('[data-c-field=answer]').inputValue(),'Retained answer draft');assert(await page.locator('[data-a=answer-send]').isDisabled());assert(await page.locator('[data-qac=choose]').first().isDisabled());
  await page.locator('[data-c=select][data-id=active-owner]').click();await page.locator('.dialogue-status summary').click();
  for(const font of [18,20]){
   await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});

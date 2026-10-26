@@ -8,7 +8,7 @@ Before the fix, `node tests/messages.browser.cjs` failed `first event-free task 
 
 The mixed-selection scenario covers task, event and owner selections, both Recent/Archive directions, empty detail, preserved nonempty drafts, and archived owner transcript with Restore before reply. It also caught a second defect: a snapshot reset expanded Status from scrollTop 2299 to 0. Capturing the rendered thread's position before repaint makes that scenario pass. Self-review also reproduced a task opening under the wrong project when two registered roots shared a board (`Other` instead of the explicitly requested `Target`). Navigation now retains the source root; the mixed-selection scenario protects it. New selection data uses the existing bounded navigation envelope; legacy owner selections and workspace answer navigation remain readable.
 
-`tests/dialogue.browser.cjs` moves its existing read/anchor checks to the single detail scroll. Ordered chunks, prepend anchoring, append-follow, explicit unknown, reply refusal, watch validation and immutable operation checks remain. The render instrument now reaches Send through the detail scroll; it still checks complete framing and horizontal overflow. `tests/messages.browser.cjs` retains source choice numbers, recommendation, exact-revision card handling, explicit acknowledgement and independent owner/task drafts. Shared answer-card checks retain stale-question refusal and operation identity protection.
+`tests/dialogue.browser.cjs` moves its existing read/anchor checks to the single detail scroll. Ordered chunks, prepend anchoring, append-follow, explicit unknown, reply refusal, watch validation and immutable operation checks remain. The render instrument now reaches Send through the detail scroll; it still checks complete framing and horizontal overflow. `tests/messages.browser.cjs` retains source choice numbers, recommendation, exact-revision card handling, explicit acknowledgement and independent owner/task drafts. The mixed-selection scenario also refreshes a nonempty draft to a newer question revision and requires stale refusal with choices and Send disabled. Shared answer-card checks retain operation identity protection.
 
 A local run also loaded the real #359 question from the previously retained native AX observation into the same browser scenario. Its source text, paths and screenshots are not published. This checks browser rendering of captured input, not the installed app or current board state.
 
@@ -36,3 +36,7 @@ The read-only attempt to select the installed TaskQ app through the native UI to
 | M07 | Not tested | Native UI observation unavailable |
 
 Source/browser fixes are implemented. Installed Mac qualification remains unknown under R12; merge-result CI and deployment are separate from this report.
+
+## Artifact identity
+
+UI source commit: `db95128f27a2a435b9e10bb763b4b4b59d95ef3e`. Browser bundle SHA256: `6e61283dbb426ee3536bff6b0754c7bc64673b07e0f292e72ceb4bd454e01e49`. WKWebView README source/binary/environment: [manifest](../../../shots/manifest.json).
