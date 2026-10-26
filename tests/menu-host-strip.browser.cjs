@@ -1,9 +1,10 @@
-// #1709 A1–A4 supersedes #1701's one-line filters/height budget. Keep whole host chips and Attention;
+// #1709 A1–A4 supersedes #1701's one-line filters/height budget. Keep host identities, counters and Attention;
 // catch horizontal scrolling, masks and clipped chips in the menu, View window and Settings.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const states=['doing','review','ask','failed','ready','waiting','later','held'];
 const exec=(id,host,runtime)=>({id,attempt:id,host,runtime,role:'worker',state:'running',observed:990,live:true});
-const hosts=[{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'hermes-fra1',updated:690,live:false,age:310,age_text:'5m'}];
+const longFresh='buildworker'+'0123456789'.repeat(5),longStale='staleworker'+'9876543210'.repeat(5);
+const hosts=[{name:longFresh,updated:990,live:true},{name:longStale,updated:690,live:false,age:310,age_text:'5m'},{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'hermes-fra1',updated:690,live:false,age:310,age_text:'5m'}];
 const projects=['taskq','pilotq','agentq','dashq','coreq','serverq','specq','csgo'].map((name,i)=>({root:'/fixture/'+name,name,host:'mac',issues:'https://example.org/'+name+'/issues',board_kind:'github',alive:true,complete:true,age:1,tasks_age_seconds:0,tasks_live:true,observed:1000,hosts,focus:['all'],labels:[],
  ...(i===0?{error:'Fixture urgent fault'}:{}),
  tasks:[{n:i+1,state:states[i],title:name+' task '+(i+1),revision:1,...(i===0?{runtime:'claude',host:'mac',local_session:true,executions:[exec(10,'mac','claude')]}:i===1?{runtime:'codex',host:'win',executions:[exec(11,'win','codex')]}:{})}]}));
@@ -21,7 +22,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
   const page=await browser.newPage({viewport:{width,height:760}});
   page.on('pageerror',e=>{throw e;});
   await page.setContent(html);
-  await page.evaluate(()=>{window.ipc={postMessage:()=>{}};});
+  await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>messages.push(JSON.parse(s))};});
   for(const theme of ['dark','light']){
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
    await page.evaluate(()=>document.fonts.ready);
@@ -30,11 +31,18 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
     await page.screenshot({path:process.env.PANEL_EVIDENCE+'/filter-header.png'});
    }
    const summary=page.locator('.dashboard-status>summary');
-   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.getAttribute('aria-label'))),['hermes-fra1 · runs unknown · 5m old','mac · Claude 1 · Codex 0','win · Claude 0 · Codex 1'],'A1: every named host, stale stays explicit');
-   assert.match(await summary.locator('.host-chip.unknown').innerText(),/\?[\s\S]*\?[\s\S]*stale 5m/,'A1: a stale host shows ? counts and its age');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.getAttribute('aria-label'))),[longFresh+' · Claude 0 · Codex 0','hermes-fra1 · runs unknown · 5m old','mac · Claude 1 · Codex 0',longStale+' · runs unknown · 5m old','win · Claude 0 · Codex 1'],'A1: every named host, stale stays explicit');
+   assert.match(await summary.locator('.host-chip.unknown').first().innerText(),/\?[\s\S]*\?[\s\S]*stale 5m/,'A1: a stale host shows ? counts and its age');
    const line=await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>{const r=c.getClientRects();return r.length===1&&c.scrollWidth<=c.clientWidth+1;}));
-   assert.deepEqual(line,[true,true,true],'A1: each host chip stays on one line');
-   assert.equal(await summary.locator('.host-chip [data-icon=claude], .host-chip svg').count()>=6,true,'A1: Claude/Codex marks');
+   assert.deepEqual(line,[true,true,true,true,true],'#1724 A1: every host chip fits');
+   const names=await summary.locator('.host-chip>strong').evaluateAll(es=>es.map(e=>({text:e.textContent,wrapped:e.getBoundingClientRect().height>parseFloat(getComputedStyle(e).lineHeight)+1})));
+   assert.deepEqual(names.filter(n=>n.wrapped).map(n=>n.text),[longFresh,longStale],'#1724 A1/A2: only long names wrap, full identity retained');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.flatMap(c=>{
+    const r=c.getBoundingClientRect();
+    return [...c.children].filter(e=>{const b=e.getBoundingClientRect();return b.left<r.left-1||b.right>r.right+1||b.top<r.top-1||b.bottom>r.bottom+1||e.scrollWidth>e.clientWidth+1;}).map(e=>e.textContent);
+   })),[],'#1724 A1: names, runtime marks/counts and freshness fit inside their chip');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>[...c.querySelectorAll('.host-count')].map(e=>e.innerText))),[['0','0'],['?','?'],['1','0'],['?','?'],['0','1']],'#1724 A1: all runtime counts remain, unknown is not zero');
+   assert.equal(await summary.locator('.host-count svg').count(),10,'#1724 A1: both runtime marks for every host');
    const attention=summary.locator('.attention');
    assert.equal(await attention.getAttribute('aria-label'),'Attention · 1');
    const a=await attention.boundingBox(),s=await summary.boundingBox();
@@ -56,6 +64,14 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    await page.locator('[data-a=task-detail]').first().click();
    assert.deepEqual(await overflow(page),[],'A2: menu task details');
    await page.keyboard.press('Escape');
+   await page.locator('[data-a=view-select][data-id=completed]').click();
+   const requests=await page.evaluate(()=>messages.filter(m=>m.a==='completed'));
+   for(const request of requests)await page.evaluate(r=>taskq.receive({completed:{...r,more:false,tasks:[{n:99,title:'Invented completed task',url:'https://example.org/issues/99',closed:950,outcome:'success'}]}}),request);
+   assert.equal(await page.locator('[data-completed]').count(),8,'#1724 A4: Completed remains populated beside long host names');
+   assert.equal(await summary.locator('.host-chip').count(),5,'#1724 A2: Completed keeps every host');
+   assert.deepEqual(await overflow(page),[],'#1724 A4: Completed has no horizontal overflow');
+   if(process.env.PANEL_EVIDENCE&&width===320&&font===18&&theme==='dark')await page.screenshot({path:process.env.PANEL_EVIDENCE+'/completed.png'});
+   await page.locator('[data-a=view-select][data-id=all]').click();
    for(const surface of ['views','settings']){
     const window=await browser.newPage({viewport:{width,height:760}});
     window.on('pageerror',e=>{throw e;});
