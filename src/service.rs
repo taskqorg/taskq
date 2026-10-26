@@ -91,6 +91,11 @@ pub fn is_host(i: &Issue) -> bool {
     i.labels.iter().any(|l| l == HOST_LABEL) && i.title.starts_with("taskq host ")
 }
 
+/// The host name of a heartbeat issue (§ 4 step 3); `None` for other issues.
+pub fn host_name(i: &Issue) -> Option<&str> {
+    is_host(i).then(|| i.title.trim_start_matches("taskq host "))
+}
+
 /// `who` is an assignee; an issue listed without assignees (github.com, § 4 budget) costs one `issue(n)` read.
 pub fn assigned(board: &dyn Board, i: &Issue, who: &str) -> Result<bool, String> {
     Ok(i.assignees.iter().any(|a| a == who) || i.assignees.is_empty() && board.issue(i.number)?.assignees.iter().any(|a| a == who))
@@ -1895,6 +1900,8 @@ impl<'a> Service<'a> {
         let Some(snapshot) = &mut self.snapshot else { return };
         let observed = snapshot.observed;
         for r in snapshot.tasks.iter_mut().filter(|r| matches!(r.task.state, State::Ready | State::Review)) {
+            // the board's own refusal (a host label no heartbeat names, #1721) holds on every host; keep it
+            if r.admission.as_ref().is_some_and(|a| a.code == "host" && a.host.is_none()) { continue; }
             if let Some((code, reason)) = decided.get(&r.n) {
                 r.admission = Some(crate::snapshot::Admission { code, reason: reason.clone(), observed, host: Some(me.clone()) });
             }
@@ -5069,6 +5076,7 @@ Open: none";
         let first = b.create("A", "", &["taskq".into()]).unwrap();
         let second = b.create("B", "", &["taskq".into()]).unwrap();
         let other = b.create("H", "", &["taskq".into(), "host-win".into()]).unwrap();
+        b.create("taskq host win", "version 4.0.0", &[HOST_LABEL.into()]).unwrap();
         let win = b.create("W", "", &["taskq".into(), "needs-windows".into()]).unwrap();
         let bad = b.create("X", "", &["taskq".into(), "p1".into(), "p2".into()]).unwrap();
         let maps = b.create("M", "", &["taskq".into(), "area-maps".into()]).unwrap();
@@ -5127,6 +5135,29 @@ Open: none";
         let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
         assert_eq!((&row["state"], &row["admission"]["code"], &row["admission"]["host"]), (&json!("review"), &json!("capacity"), &json!("mac")));
         assert_eq!(row["wait"], "Waiting for a free slot · claude slots full");
+    }
+
+    // Chain: `host-<name>` label -> heartbeat names -> board admission -> status wait text (R6). Risk (#1721): a task
+    // labelled `host-host-mac` sits ready for 30 min while status shows plain `ready` on every host.
+    #[test]
+    fn host_label_without_heartbeat_shows_its_wait_in_status() {
+        let b = Fake::default();
+        let orphan = b.create("O", "", &["taskq".into(), "host-host-mac".into()]).unwrap();
+        let other = b.create("W", "", &["taskq".into(), "host-win".into()]).unwrap();
+        b.create("taskq host win", "version 4.0.0", &[HOST_LABEL.into()]).unwrap();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 0)]);
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        s.pass().unwrap();
+        let rows = s.snapshot.as_ref().unwrap().json()["tasks"].clone();
+        let row = |n: u64| rows.as_array().unwrap().iter().find(|r| r["n"] == n).unwrap().clone();
+        assert_eq!((&row(orphan)["admission"]["code"], &row(orphan)["admission"]["host"], &row(orphan)["wait"]), (&json!("host"), &Value::Null, &json!("No host host-mac")));
+        assert_eq!(row(other)["admission"]["host"], "mac", "a host that beats keeps this host's own decision");
+        assert!(row(other)["wait"].is_null(), "another host's task is no wait of this host");
+        let cli = crate::snapshot::read(&b, &c, &Value::Null, &[]);
+        assert_eq!(cli.json()["tasks"].as_array().unwrap().iter().find(|r| r["n"] == orphan).unwrap()["wait"], "No host host-mac", "the CLI read decides it too");
+        assert!(cli.text(&c, &Value::Null).unwrap().contains("| ready · No host host-mac |"));
     }
 
     // Chain: host admission refusal text -> admission code (#1616). Risk: a host.rs or admission.rs refusal reads as
