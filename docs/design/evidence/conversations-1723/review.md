@@ -12,6 +12,16 @@ The mixed-selection scenario covers task, event and owner selections, both Recen
 
 A local run also loaded the real #359 question from the previously retained native AX observation into the same browser scenario. Its source text, paths and screenshots are not published. This checks browser rendering of captured input, not the installed app or current board state.
 
+The Node component sweep found a stale task-workspace source hash and an obsolete assertion excluding non-Ask task entries. The source manifest was refreshed without weakening its identity check. The assertion now follows A2 and still requires exactly one navigation-only entry with the exact board, task and revision; it rejects composers and lifecycle controls. Both checks pass after these updates.
+
+## Candidate checks
+
+- All Node component checks pass, including task-workspace source identity and task launchers.
+- `node tests/messages.browser.cjs`, `node tests/conversations-selection.browser.cjs`, `node tests/dialogue.browser.cjs` and `node tests/conversations-render.browser.cjs` pass. The latter covers six render fixtures; the selection scenario also passes with the privately captured real question.
+- `cargo +stable run --locked -- selftest` passes offline in a temporary installation: 99 golden traces, formats and staged capture. The board remains unknown in offline mode.
+- `docs/shots/update.sh` and `sh docs/shots/check.sh` pass for isolated WKWebView README rendering and current UI source identities. Artifact-script checks also pass.
+- `python3 scripts/check.py` is **sandbox-blocked**, not passed: 540 Rust checks pass, 17 host/policy/lifecycle fixtures fail under the inherited worker identity, and 32 are ignored. Refusals include `a worker cannot change host policy` and `a worker cannot restart the host service or request Stop`. Worker restrictions were retained. The gate stops before integration, selftest and Node stages; the separately run checks above do not replace a complete gate. Green merge-result CI remains required by R12 and § 7.
+
 ## Visual review
 
 Four synthetic browser screens are retained below, at 940 × 740, dark theme, system font. They show the selected archived owner, a long task question scrolled to its choices/composer, and expanded Status scrolled to the composer at 18 and 20 px. Intentional differences from the pinned reference are limited to #1723: one task identity heading, compact task metadata, coherent selections, archived transcript, and one thread-content scroll. Existing shell, palette, icons and list/detail proportions remain.
