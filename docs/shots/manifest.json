@@ -1,19 +1,19 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "64b3d9b89f3a9391c6d56442d171422826427aba",
-  "binarySha256": "fd82bb367e937dc5f9961c863f06a1e51ef5332da801b078cc273c9105415124",
+  "sourceCommit": "ddf834985858bdbc4164057289bce3f7b21c393f",
+  "binarySha256": "fdaf19a0536a0618520eb11cb0747c8a21832ff550d88019eb1d3023804abd55",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "b2d19a6f657a851ca8e8fae630fa9c4ac35f30dc",
+    "src/tray.rs": "45d26cac21b21938efd40d4fe722a5f1fd15f503",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "a56c45306befb5ab1ba6441c1d6712f95944dbf6",
+    "src/tray-app.js": "888574b3bdcea9350258c07ee40be136ab8ceab8",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
-    "src/task-workspace.css": "0d38245af5d24e8c4b1839ee98e0538b29c17975",
+    "src/task-workspace.css": "c2ac1f503d9837c43638aceff515954d561c15b4",
     "src/tray-view-state.js": "60aa47c370c775e949ea6ce2924b4bfd7ae2894a",
     "src/tray-web.js": "5f8ac6545d2df180f384d78cb9f6ccc5b09b0973",
     "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
@@ -36,7 +36,7 @@
     "src/workspace-answers.js": "a3220e3cf4eea9da8cc998583c1e54cc79497bca",
     "src/answer-card.js": "136f73cc43156dfe6f45feefca125a4b92fd31e0",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
-    "src/icon.rs": "940a48e7f4cc526638bb126c532e83344051aef3"
+    "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "dcc657fa9782728d081b4354f836ab4f4e4f1b7f8c1f655e50873c9b033fae9b"
+      "sha256": "b723921e4eb1d8c66fdb9f7b73cf5ca29b0537966650ac0a7a8bdd07fd03d654"
     },
     {
       "file": "popover-dark-project-16.png",
