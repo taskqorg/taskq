@@ -781,6 +781,8 @@ impl<'a> Service<'a> {
         if let Ok(c) = &cap {
             self.gate.configure(c.gate);
         }
+        // #1721: the pass after `capacity: <error>; launches held` names the resume
+        if self.cap.is_err() && cap.is_ok() { self.log.push("capacity: known again; launches resume".into()); }
         self.cap = cap;
     }
 
@@ -4683,6 +4685,37 @@ Open: none";
             assert_eq!(std::fs::read_to_string(crate::dot(&root).join("focus")).unwrap(),"all");
             drop(s);std::fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    // #1721 A1: one host tick that misses the resources lock holds one capacity pass only. Risk: the startup
+    // occupancy recovery and the lock miss together leave launches held and capacity unknown after the lock is free.
+    #[test]
+    fn resources_lock_miss_holds_one_pass_only() {
+        let root=std::env::temp_dir().join(format!("taskq-lock-miss-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        std::fs::write(crate::dot(&root).join("focus"),"all").unwrap();
+        let b=Fake::default();let n=b.create("Ready","",&[TASK_LABEL.into()]).unwrap();
+        let p=crate::host::Policy::parse(json!({"limits":{"claude":2},"load_gate":{"enabled":false}}),"invented").unwrap();
+        let host=std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p.clone()))));
+        {let mut h=host.lock().unwrap();h.rebuilding=true;h.busy.insert(root.clone(),true);}
+        let mut c=cfg("invented");c.root=root.clone();c.install=root.clone();
+        let exits:Exits=Default::default();let mut s=service(&b,&c,exits.clone());s.host=Some(host.clone());
+        let lock=crate::resources::dir(&root).join("lock");std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let held=coreq::file_lock::lock(&lock).unwrap();
+        let miss=crate::resources::try_locked(&root,||Ok(())).unwrap_err();
+        assert!(miss.starts_with("resources lock unavailable:"),"{miss}");
+        host.lock().unwrap().reload_admission(Err(miss.clone()),None,&[root.clone()]);
+        s.reload(Err(miss));s.pass().unwrap();s.sync_host();
+        assert!(exits.borrow().is_empty(),"a lock miss holds this pass");
+        s.log.clear();drop(held);
+        assert!(host.lock().unwrap().reload_admission(Ok(p.clone()),None,&[root.clone()]),"the host names the reopened admission");
+        s.reload(Ok(p.cap.clone()));
+        assert!(s.log.iter().any(|l|l=="capacity: known again; launches resume"),"{:?}",s.log);
+        s.pass().unwrap();s.sync_host();
+        assert_eq!(exits.borrow().len(),1,"the next pass launches the ready task");
+        assert_eq!(task(&b,n).state,State::Doing);
+        assert_eq!(s.capacity_json()["host_runtime_used"]["claude"],json!(1),"capacity shows running counts once the lock is free");
+        drop(s);std::fs::remove_dir_all(root).unwrap();
     }
 
     // Chain: § 2 early answer. Risk: an early answer marks the attempt gone.

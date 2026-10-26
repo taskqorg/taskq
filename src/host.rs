@@ -485,15 +485,18 @@ impl Host {
         self.policy = policy;
     }
 
-    pub(crate) fn reload_admission(&mut self, policy: Res<Policy>, held: Option<String>, roots: &[PathBuf]) {
+    /// True when this reload reopens a blocked admission; the projects are woken.
+    pub(crate) fn reload_admission(&mut self, policy: Res<Policy>, held: Option<String>, roots: &[PathBuf]) -> bool {
         let was_blocked=self.policy.is_err()||self.held.is_some();
         self.reload(policy);
         self.held=held;
-        if was_blocked&&self.policy.is_ok()&&self.held.is_none() {
+        let reopened=was_blocked&&self.policy.is_ok()&&self.held.is_none();
+        if reopened {
             for root in roots {
                 if let Err(error)=crate::poke(root) {crate::platform::log(&error);}
             }
         }
+        reopened
     }
 
     /// A newly attached project may carry old occupancy, even if its root was drained earlier.
@@ -855,7 +858,8 @@ pub fn run(install: &Path) -> Res<()> {
             let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
             let held = installation::admission_reason(install).or_else(||registry.error.clone()).or_else(|| old.as_ref().err().cloned()).or_else(||restart.current.as_ref().err().cloned())
                 .or_else(||publication.as_ref().map(|e|format!("host publication unavailable: {e}")));
-            h.reload_admission(policy,held,&roots);
+            // #1721: a hold's line is logged once; its reopening is logged too, so the next hold logs again
+            if h.reload_admission(policy,held,&roots) {crate::platform::log("admission: launches resume");reported.clear();}
             if let Some(p)=restart.current.as_ref().ok().and_then(Option::as_ref) {
                 if p.stops() {
                     if !h.stopping {h.prepared.clear();}
@@ -1273,15 +1277,22 @@ fn maintenance_once(last:&mut String,text:&str)->bool {
 #[cfg(test)]
 pub fn migrate(install: &Path, roots: &[PathBuf]) -> Res<()> {migrate_for_hostname(install,roots,&crate::hostname())}
 
+/// #1721: a settled migration never writes again, so its per-tick check needs no lock: an unrelated holder
+/// (an exchange, a grant, a lifecycle receipt) cannot hold launches; a policy write stages `host.json.pending`.
 fn migrate_for_hostname(install:&Path,roots:&[PathBuf],hostname:&str)->Res<()> {
+    if migration_settled(install) { return Policy::read_for_hostname(install,||hostname.into()).map(|_|()); }
     crate::resources::try_locked(install,||migrate_locked(install,roots,hostname))
+}
+
+fn migration_settled(install:&Path)->bool {
+    let backup = install.join("host-policy-migration");
+    backup.join("complete").exists() || !backup.join("plan.json").exists() && install.join("host.json").exists()
 }
 
 fn migrate_locked(install: &Path, roots: &[PathBuf],hostname:&str) -> Res<()> {
     let backup = install.join("host-policy-migration");
     let manifest = backup.join("plan.json");
-    if backup.join("complete").exists() { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
-    if !manifest.exists() && install.join("host.json").exists() { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
+    if migration_settled(install) { Policy::read_for_hostname(install,||hostname.into())?; return Ok(()); }
     let plan: Value = if manifest.exists() {
         serde_json::from_slice(&fs::read(&manifest).map_err(|e| e.to_string())?).map_err(|e| format!("migration backup unknown: {e}"))?
     } else {
@@ -1500,6 +1511,22 @@ mod tests {
         fs::write(root.join("host.json"),"{").unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
         fs::remove_file(root.join("host.json")).unwrap();assert!(Policy::read_for_hostname(&root,||"owner-identity".into()).is_err());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    // #1721: the host loop's per-tick migration check. Risk: another holder of the resources lock (an exchange, a grant,
+    // a lifecycle receipt) turned the admission policy into `resources lock unavailable` and held every launch.
+    #[test]
+    fn settled_migration_reads_policy_while_the_resources_lock_is_held() {
+        let root=temp(&format!("lock-miss-{}",crate::runtime::uuid()));
+        fs::write(root.join("host.json"),json!({"limits":{"codex":2}}).to_string()).unwrap();
+        let lock=crate::resources::dir(&root).join("lock");fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let held=coreq::file_lock::lock(&lock).unwrap();
+        migrate_for_hostname(&root,&[],"owner-identity").expect("a settled migration needs no lock");
+        let backup=root.join("host-policy-migration");fs::create_dir_all(&backup).unwrap();fs::write(backup.join("plan.json"),"{}").unwrap();
+        assert!(migrate_for_hostname(&root,&[],"owner-identity").unwrap_err().starts_with("resources lock unavailable:"),"an unsettled migration still waits for its lock");
+        fs::write(backup.join("complete"),"").unwrap();
+        migrate_for_hostname(&root,&[],"owner-identity").expect("a completed migration needs no lock");
+        drop(held);fs::remove_dir_all(root).unwrap();
     }
 
     // A5: a released admission hold must wake a project sleeping on its previous blocked pass, without editing focus.
