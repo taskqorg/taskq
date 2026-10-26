@@ -2301,6 +2301,17 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
     if t.host.as_deref().is_some_and(|v| v.is_empty() || v.contains(',') || v.chars().any(char::is_whitespace)) {
         return Err("--host requires one nonempty host name".into());
     }
+    // § 1: a host label no heartbeat names waits forever (#1721: `host-host-mac` sat ready 30 min)
+    if let Some(h) = t.host.as_deref() {
+        if let Some(name) = h.strip_prefix("host-") {
+            return Err(format!("--host takes the host name without host-: --host {name}"));
+        }
+        let issues = b.issues(None)?;
+        let known: Vec<&str> = issues.iter().filter(|i| i.trusted).filter_map(service::host_name).collect();
+        if !known.contains(&h) {
+            return Err(format!("--host {h}: no host named {h}; hosts: {}", if known.is_empty() { "none".into() } else { known.join(", ") }));
+        }
+    }
     if t.priority.as_deref() == Some("0") && !b.canonical_labels()? {
         return Err("--priority 0 needs the canonical label schema (§ 9)".into());
     }
@@ -3311,6 +3322,20 @@ mod tests {
         command(&c, "add", &Args::parse(&["add", "T", "--goal", "G1\nG2", "--acceptance", "a", "--acceptance", "b", "--scope", "a", "--scope", "b"].map(String::from)).unwrap()).unwrap();
         assert!(c.board.issues(None).unwrap().pop().unwrap().body.contains("## Goal\nG1\nG2\n"), "two-line goal through one value");
         assert!(task_body(&*c.board, &NewTask { title: "T".into(), goal: "G".into(), acceptance: vec!["observable".into()], labels: vec!["prefer-codex".into(), "prefer-claude".into()], ..Default::default() }, &Op::default()).is_err_and(|e| e.contains("prefer")));
+    }
+
+    // Chain: § 1 `add --host` -> heartbeat names (§ 4 step 3). Risk (#1721): a `host-host-mac` or misspelt host label
+    // files a task no host ever claims, and it sits ready with no reason shown.
+    #[test]
+    fn add_host_refuses_prefixed_and_unknown_names_before_writing() {
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        c.board.create("taskq host mac", "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
+        let add = |host: &str| command(&c, "add", &Args::parse(&["add", "T", "--goal", "G", "--acceptance", "observable", "--host", host].map(String::from)).unwrap());
+        assert_eq!(add("host-mac").unwrap_err(), "--host takes the host name without host-: --host mac");
+        assert_eq!(add("macbook").unwrap_err(), "--host macbook: no host named macbook; hosts: mac");
+        assert_eq!(c.board.issues(None).unwrap().len(), 1, "a refused add files nothing");
+        add("mac").unwrap();
+        assert!(c.board.issues(None).unwrap().pop().unwrap().labels.contains(&"host-mac".into()));
     }
 
     // Chain: F1/F2 local finding -> held issue -> replay. Risk: duplicate or wrong-board writes.

@@ -211,11 +211,13 @@ impl Admission {
     }
 }
 
-/// The board-only admission of a row: `waiting` is the fold's dependency decision, `ready` waits for a host decision.
-fn board_admission(t: &Task, deps: &[service::Blocker], observed: i64) -> Option<Admission> {
+/// The board-only admission of a row: `waiting` is the fold's dependency decision, `ready` waits for a host decision
+/// unless its `host-<name>` label names no heartbeat (#1721): no host ever claims it.
+fn board_admission(t: &Task, labels: &[String], deps: &[service::Blocker], hosts: &[board::Issue], observed: i64) -> Option<Admission> {
+    let orphan = labels.iter().filter_map(|l| l.strip_prefix("host-")).find(|h| !hosts.iter().any(|i| service::host_name(i) == Some(*h)));
     let (code, reason) = match t.state {
         State::Waiting => ("dependency", deps.iter().map(|b| format!("{} {}", b.dep.name(), b.reason)).collect::<Vec<_>>().join(", ")),
-        State::Ready => ("unknown", ADMISSION_UNKNOWN[0].to_string()),
+        State::Ready => match orphan { Some(h) => ("host", format!("no host {h}")), None => ("unknown", ADMISSION_UNKNOWN[0].to_string()) },
         _ => return None,
     };
     Some(Admission { code, reason, observed, host: None })
@@ -302,7 +304,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         executions,
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
-        admission: board_admission(&v.projection.task, &v.blockers, observed),
+        admission: board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
@@ -407,10 +409,16 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
-    /// The owner text of the row's wait: the execution diagnostic, else a capacity refusal with its runtime (#1685).
+    /// The owner text of the row's wait: the execution diagnostic, else a capacity refusal with its runtime (#1685),
+    /// else the board's own host refusal (R6, #1721).
     fn wait(&self) -> Option<String> {
         if let Some(reason) = &self.execution_wait { return Some(wait_text(reason).into()); }
-        self.admission.as_ref().filter(|a| a.code == "capacity").map(|a| format!("{} · {}", WAIT_TEXTS[0], a.reason))
+        let a = self.admission.as_ref()?;
+        match (a.code, &a.host) {
+            ("capacity", _) => Some(format!("{} · {}", WAIT_TEXTS[0], a.reason)),
+            ("host", None) => Some(a.reason.replacen("no host", "No host", 1)),
+            _ => None,
+        }
     }
 
     pub fn json(&self) -> Value {
