@@ -73,10 +73,20 @@ uploaded, replaced or published in this continuation.
 - **Pass:** Existing Python 3.12.1 / Pillow 12.0.0 and installed Arial regular/bold run
   `render.py --check`: 11 boundaries, 58 seconds, all 580 frame text bounds.
   Default Python lacks Pillow; no package was installed. The retained mobile
-  contact sheet was inspected; no new preview was generated.
-- **Not tested:** Mac FFmpeg/ffprobe encode/decode and playback. Homebrew ffmpeg 8.1.1
-  provides both executables, but the existing tool answer authorizes Windows only. Request
-  exact Mac tool use through #802 before running them; no installation is needed.
+  contact sheet was inspected; no new planning preview was generated.
+- **Pass:** After the [exact Mac tool answer](https://github.com/taskqorg/taskq/issues/802#issuecomment-6446244674),
+  both installed binaries report 8.1.1. A one-second libx264 CPU smoke from the
+  verified first retained style PNG encodes and fully decodes 10 frames at
+  1080×1080, yuv420p, 10 fps with no audio. The temporary smoke is a tool check,
+  not a new planning preview or final asset. Nothing was installed or synthesized.
+- **Pass:** Retained MP4 probes as H.264/yuv420p, 1080×1080, 10 fps, 580 frames,
+  exactly 58 seconds and no audio. FFmpeg with `-xerror` fully decodes all 580
+  frames. Both retained PCM WAVs also fully decode with no error and retain the
+  durations/format above. Smoke plus retained-media checks took 0.860 s on this
+  Mac; this is no playback or subjective listening proof.
+- **Pass:** The 26-second MP4 frame decoded to 360×360 shows the question,
+  numbered options, explicit owner answer, narration and planning label without
+  clipping or overlaps. This inspects one decoded state, not motion or phone QA.
 - **Not tested:** Human phone playback, voice listening, final subtitles, natural
   pacing, final site asset and seamless-loop motion. These are not established
   by the planning approval or file hashes.
@@ -86,6 +96,26 @@ in the contract before updating the package; §7 keeps final production and old
 sessions inactive. Before this change the documents still said all choices were
 pending, linked the old repository, and treated #805 as separate work. The
 continuation corrects those records without changing scene data or media.
+
+### Mac media commands
+
+The smoke input is `planning-style-01-1080.png` read from the hash-verified
+retained style ZIP into the local check directory; no source or draft asset is
+modified. Reproduce only within the approved Mac tool scope:
+
+```sh
+ffmpeg -nostdin -y -v error -xerror -loop 1 -framerate 10 -i .taskq/802-mac-check/smoke-input.png -frames:v 10 -an -c:v libx264 -threads 2 -pix_fmt yuv420p -movflags +faststart .taskq/802-mac-check/smoke.mp4
+ffprobe -v error -show_entries format=duration:stream=codec_type,codec_name,pix_fmt,width,height,nb_frames,r_frame_rate,sample_rate,channels,bits_per_sample -of json .taskq/802-readback/planning-preview-802.mp4
+ffmpeg -nostdin -v error -xerror -i .taskq/802-readback/planning-preview-802.mp4 -progress pipe:1 -nostats -f null -
+ffmpeg -nostdin -v error -xerror -i .taskq/802-readback/voice-ru_dmitriy.wav -progress pipe:1 -nostats -f null -
+ffmpeg -nostdin -v error -xerror -i .taskq/802-readback/voice-ru_eduard.wav -progress pipe:1 -nostats -f null -
+```
+
+The same probe/decode commands qualify the smoke and both voice files. Assertions
+require `progress=end`, final video frame counts 10/580, durations 1/58 s, one
+video-only H.264 stream for each MP4, and mono 16-bit/48 kHz PCM for the WAVs.
+The retained MP4/style ZIP/WAV hashes were rechecked before use. The old Mac
+encode/decode proof gap is now closed; the human/production unknowns above remain.
 
 ### Gate failure and retained protection
 

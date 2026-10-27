@@ -6,7 +6,10 @@ The [contract](../../../taskq.md#product) records the approved planning target. 
 [status review](https://github.com/taskqorg/taskq/issues/795) and
 [owner-policy fencing](https://github.com/taskqorg/taskq/issues/801#issuecomment-6134964702).
 The [tool answer](https://github.com/taskqorg/taskq/issues/802#issuecomment-6135228277)
-allows free Gyan.FFmpeg installation and qualification on Windows only.
+allows free Gyan.FFmpeg installation and qualification on Windows only. The
+[Mac tool answer](https://github.com/taskqorg/taskq/issues/802#issuecomment-6446244674)
+separately permits the installed Homebrew FFmpeg/ffprobe 8.1.1 for smoke
+encode/decode and retained planning-media checks only; no install or synthesis.
 
 ## Recorded owner decision
 
@@ -90,8 +93,8 @@ Authenticated API download links:
 - [Original voice evidence](https://api.github.com/repos/taskqorg/taskq/releases/assets/626182349)
 
 Fresh Mac downloads match both hashes in original evidence. Both are mono 48 kHz
-signed 16-bit PCM WAV; historical Windows evidence records full FFmpeg 9.0.2 decode. They use the older
-audition text, not this 69-word script. No resynthesis, model execution, speed
+signed 16-bit PCM WAV; both fully decode on Mac with FFmpeg 8.1.1 as well as in
+the historical Windows 9.0.2 check. They use the older audition text, not this 69-word script. No resynthesis, model execution, speed
 change, pitch shift, cloning or named-person imitation was performed.
 Dmitriy is the owner's recorded choice without listening. Realism, calmness and
 perceived age remain unverified; decode/metadata do not establish them.
@@ -136,7 +139,9 @@ credentials or environment. Draft release must stay unpublished.
 The #802 scene, 58 s timing, warm style and voice gate is resolved by the recorded
 owner decision above.
 Do not request those choices again. Tool authority and unproved playback remain
-separate; the Windows tool answer does not authorize FFmpeg/ffprobe on macOS.
+separate. The Mac tool answer above authorizes only smoke encode/decode and
+retained planning-media checks; it does not authorize new planning renders or
+final production. Mac media proof is recorded in [delivery.md](delivery.md#mac-continuation-readback).
 Planning approval does **not** authorize final synthesis/assembly, paid generation,
 publishing, README/site changes, access changes or resuming old tasks. Phone playback, live
 board capture, final site asset and final voice timing remain explicitly unproved.
