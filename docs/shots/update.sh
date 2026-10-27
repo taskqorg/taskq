@@ -7,7 +7,7 @@ ui='src/tray.rs src/tray.html src/tray-app.js src/tray-entry.js src/task-workspa
 # the images must come from sourceCommit, so UI sources must be committed
 git diff --quiet HEAD -- $ui || { echo "update.sh: commit UI source changes first: $ui" >&2; exit 1; }
 cargo build --release --locked
-bin=target/release/taskq
+bin=${CARGO_TARGET_DIR:-target}/release/taskq
 case $(uname -s) in
   MINGW*|MSYS*) bin=$bin.exe; os=Windows; renderer='WebView2 snapshot' ;;
   *) os="macOS $(sw_vers -productVersion)"; renderer='WKWebView snapshot' ;;
