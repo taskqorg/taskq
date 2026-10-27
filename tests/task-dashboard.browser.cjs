@@ -201,7 +201,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await w.getByRole('button',{name:'Done',exact:true}).focus();await w.keyboard.press('Tab');
   const expected=await w.locator('button:not(:disabled),input:not(:disabled)').evaluateAll(es=>es.map(e=>e.getAttribute('aria-label')||e.textContent.trim()));
   const reached=new Set();for(let i=0;i<expected.length+2;i++){const name=await w.evaluate(()=>document.activeElement.getAttribute('aria-label')||document.activeElement.textContent.trim());reached.add(name);await w.keyboard.press('Tab');}
-  assert(reached.has('All projects')&&reached.has('All states')&&reached.has('Save as…')&&reached.has('Done'),'keyboard reaches filters and fixed actions');
+  assert(expected.every(name=>reached.has(name)),'keyboard reaches every named control');
   await w.evaluate(s=>taskq.receive(s),wide);
   await w.locator('[data-facet=states][data-value=review]').click();
   const edited=await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard);assert.deepEqual(edited.views.find(v=>v.id===edited.selected).working.states,['review'],'A3: a working change applies at once');
