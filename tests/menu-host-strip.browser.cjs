@@ -7,7 +7,7 @@ const longFresh='buildworker'+'0123456789'.repeat(5),longStale='staleworker'+'98
 const hosts=[{name:longFresh,updated:990,live:true},{name:longStale,updated:690,live:false,age:310,age_text:'5m'},{name:'mac',updated:990,live:true},{name:'win',updated:990,live:true},{name:'hermes-fra1',updated:690,live:false,age:310,age_text:'5m'}];
 const projects=['taskq','pilotq','agentq','dashq','coreq','serverq','specq','csgo'].map((name,i)=>({root:'/fixture/'+name,name,host:'mac',issues:'https://example.org/'+name+'/issues',board_kind:'github',alive:true,complete:true,age:1,tasks_age_seconds:0,tasks_live:true,observed:1000,hosts,focus:['all'],labels:[],
  ...(i===0?{error:'Fixture urgent fault'}:{}),
- tasks:[{n:i+1,state:states[i],title:name+' task '+(i+1),revision:1,...(i===0?{runtime:'claude',host:'mac',local_session:true,executions:[exec(10,'mac','claude')]}:i===1?{runtime:'codex',host:'win',executions:[exec(11,'win','codex')]}:{})}]}));
+ tasks:[{n:i+1,state:states[i],title:name+' task '+(i+1),revision:1,...(i===0?{runtime:'claude',host:'mac',local_session:true,executions:[exec(10,'mac','claude')]}:i===1?{runtime:'codex',host:'win',executions:[exec(11,'win','codex')]}:i===2?{executions:[exec(12,'pilot','codex')]}:{})}]}));
 const navigation={schema:1,current:{page:'home'},dashboard:{selected:'all',views:[{id:'view-running',name:'Running',pinned:true,working:{states:['doing','review']}},{id:'view-answers',name:'Waiting for answer',pinned:true,working:{states:['ask']}}]}};
 const snapshot={display:require('./fixtures/display-model.json').display,platform:'macos',font:18,theme:'dark',host:'mac',now:1000,version:'fixture',projects,notify:{host:{ask:'on',close:'on',failed:'on',gone:'on'},projects:{}},stop_modes:true,navigation,period:'1d',history:require('./fixtures/icon-history/day-dark.json')};
 const html=fs.readFileSync('build/web/tray.html','utf8');
@@ -31,18 +31,21 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
     await page.screenshot({path:process.env.PANEL_EVIDENCE+'/filter-header.png'});
    }
    const summary=page.locator('.dashboard-status>summary');
-   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.getAttribute('aria-label'))),[longFresh+' · Claude 0 · Codex 0','hermes-fra1 · runs unknown · 5m old','mac · Claude 1 · Codex 0',longStale+' · runs unknown · 5m old','win · Claude 0 · Codex 1'],'A1: every named host, stale stays explicit');
-   assert.match(await summary.locator('.host-chip.unknown').first().innerText(),/\?[\s\S]*\?[\s\S]*stale 5m/,'A1: a stale host shows ? counts and its age');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.getAttribute('aria-label'))),[longFresh+' · idle','hermes-fra1 · runs unknown · 5m old','mac · Claude 1',longStale+' · runs unknown · 5m old','win · Codex 1'],'A1: every named host, stale stays explicit; #1729 full name in the accessible name');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),['bui','her ? 5m','mac 1','sta ? 5m','win 1'],'#1729 A2/A4: three-letter labels, nonzero counts only, stale is ? with its age, no chip for the execution-only host');
    const line=await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>{const r=c.getClientRects();return r.length===1&&c.scrollWidth<=c.clientWidth+1;}));
    assert.deepEqual(line,[true,true,true,true,true],'#1724 A1: every host chip fits');
-   const names=await summary.locator('.host-chip>strong').evaluateAll(es=>es.map(e=>({text:e.textContent,wrapped:e.getBoundingClientRect().height>parseFloat(getComputedStyle(e).lineHeight)+1})));
-   assert.deepEqual(names.filter(n=>n.wrapped).map(n=>n.text),[longFresh,longStale],'#1724 A1/A2: only long names wrap, full identity retained');
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.flatMap(c=>{
     const r=c.getBoundingClientRect();
     return [...c.children].filter(e=>{const b=e.getBoundingClientRect();return b.left<r.left-1||b.right>r.right+1||b.top<r.top-1||b.bottom>r.bottom+1||e.scrollWidth>e.clientWidth+1;}).map(e=>e.textContent);
    })),[],'#1724 A1: names, runtime marks/counts and freshness fit inside their chip');
-   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>[...c.querySelectorAll('.host-count')].map(e=>e.innerText))),[['0','0'],['?','?'],['1','0'],['?','?'],['0','1']],'#1724 A1: all runtime counts remain, unknown is not zero');
-   assert.equal(await summary.locator('.host-count svg').count(),10,'#1724 A1: both runtime marks for every host');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>[...c.querySelectorAll('.host-count')].map(e=>e.innerText))),[[],[],['1'],[],['1']],'#1729 A2: zero counts hide, unknown is ? not zero');
+   assert.equal(await summary.locator('.host-count svg').count(),2,'#1729 A2: a mark only beside a nonzero count');
+   const real=['hermes-fra1','mac','win','pilot'].map(name=>({name,updated:990,live:true}));
+   await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme,projects:projects.map(p=>({...p,hosts:real}))});
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),['her','mac 1','pil 1','win 1'],'#1729 A2: the owner hosts read her, mac, win, pil');
+   assert.equal(await summary.locator('.host-strip').evaluate(e=>new Set([...e.children].map(c=>Math.round(c.getBoundingClientRect().top))).size),1,'#1729: four hosts fit one line');
+   await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
    const attention=summary.locator('.attention');
    assert.equal(await attention.getAttribute('aria-label'),'Attention · 1');
    const a=await attention.boundingBox(),s=await summary.boundingBox();

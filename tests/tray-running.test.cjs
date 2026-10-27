@@ -25,7 +25,7 @@ assert(html.includes('idle</strong> · Claude 0 · Codex 0'));
 // #1661 R16/R17: one line per named host, Claude and Codex apart; this host's expansion holds its resources, a remote one names what is not collected
 assert(html.includes('mac</strong> · Claude 1 · Codex 1'));assert(html.includes('win</strong> · Claude 0 · Codex 1'));
 assert(html.includes('CPU and memory: not collected for remote hosts'));assert(html.includes('CPU and memory: no sample; sampled only while the load gate is on'));
-assert.deepEqual(line(c.runningAgents(true)),{label:'idle · Claude 0 · Codex 0; mac · Claude 1 · Codex 1; old · Claude ? · Codex ?; win · Claude 0 · Codex 1',meta:''},'R16: every host and both counters survive collapse, including unknown');
+assert.deepEqual(line(c.runningAgents(true)),{label:'idle · idle; mac · Claude 1 · Codex 1; old · runs unknown · 5m old; win · Codex 1',meta:''},'R16/#1729: every host survives collapse, zero counts drop, unknown keeps its age');
 assert(html.includes('Reservations: claude 1'));
 assert(html.includes('Occupied slots: claude 2 · codex 1'));
 assert(html.includes('Tasks: Doing 3 · Review 2'));
@@ -55,11 +55,18 @@ c.S.projects=[{...project,age:301,alive:false,tasks_live:false}];assert(c.runnin
 c.S.projects=[{...project,age:250}];assert(c.runningAgents().includes('claude: 1 worker'),'no false unknown within ttl');
 // #1661 R16-R19: a lone fresh host names itself with both counts; a load sample shows units and age; sign-in alerts reach the line
 c.S.projects=[{...project,hosts:[{name:'mac',updated:990,live:true}],tasks:[{n:1,state:'doing',executions:[execution(11,'mac','claude','worker')]}],age_text:'<1m',sample_age_text:'2m',capacity:{...project.capacity,cpu_percent:41.6,memory_available_percent:62.2}}];
-assert.deepEqual(line(c.runningAgents(true)),{label:'mac · Claude 1 · Codex 0',meta:''});
+assert.deepEqual(line(c.runningAgents(true)),{label:'mac · Claude 1',meta:''});
 assert(c.runningAgents().includes('CPU 42% busy · memory 62% available · sampled 2m ago'));
 c.S.projects[0].tasks.push({n:9,key:'github:p/9',executions:[execution(19,'mac','codex-app','worker')]});assert.equal(c.runningAgents(true).label,'mac · Claude 1 · Codex 1','Codex app stays in the Codex family counter');
 c.S.agents={at:900,fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};
 assert(c.runningAgents().includes('<span class="alert"> · Codex expired</span>'),'an expired sign-in shows on the host line');
-c.S.projects=[];assert.deepEqual(line(c.runningAgents(true)),{label:'mac · Claude ? · Codex ?',meta:''},'this host without an observation is unknown, never zero');
+c.S.projects=[];assert.deepEqual(line(c.runningAgents(true)),{label:'mac · runs unknown · Codex expired',meta:''},'this host without an observation is unknown, never idle; #1729 its sign-in warning stays');
+// #1729 A2/A4: labels are three letters, longer on collision; zero counts hide; an execution-only host (no heartbeat) is no strip chip.
+c.S.agents=null;c.S.projects=[{...project,hosts:['mac','macbook','hermes-fra1','hermes-win','win'].map(name=>({name,updated:990,live:true})),tasks:[{n:1,state:'doing',executions:[execution(11,'win','codex','worker'),execution(12,'pilot','codex','worker')]}]}];
+const chips=require('./tray-harness.cjs').html(c.runningAgents(true).strip),strong=[...chips.matchAll(/<strong>([^<]*)<\/strong>/g)].map(m=>m[1]);
+assert.deepEqual(strong,['hermes-f','hermes-w','mac','macb','win'],'collisions extend the label, the fixture-only host is absent');
+assert(chips.includes('aria-label="hermes-fra1 · idle"'),'the full name stays in the accessible name');
+assert.equal((chips.match(/class="host-count"/g)||[]).length,1,'only nonzero counts render');
+assert(c.runningAgents().includes('pilot</strong>'),'the execution-only host stays in host details');
 module.exports={project};
 console.log('PASS running agents: roles, runtimes, hosts, stale/partial, reservations, deduplication and escaping');

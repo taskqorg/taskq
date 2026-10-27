@@ -1477,7 +1477,18 @@ impl<'a> Service<'a> {
             Some(h) if stable(&h.body) == stable(&body)
                 && now - h.updated < if body.lines().any(|l| l.starts_with("execution ")) { 60.min(ttl / 3) } else { ttl / 3 } => {}
             // a same-body edit leaves `updated_at` as is (GitHub), so the stamp keeps the heartbeat fresh
-            Some(h) => self.board.edit(h.number, &format!("{body}\nat {now}"))?,
+            Some(h) => {
+                self.board.edit(h.number, &format!("{body}\nat {now}"))?;
+                // #1729 A3: the snapshot read this heartbeat before the write; after a wake it kept the pre-sleep age
+                // until the next read, so this host's row takes the board time of the write it just made
+                if let Some(s) = self.snapshot.as_mut() {
+                    let observed = s.observed;
+                    if let Some(row) = s.hosts.iter_mut().find(|r| r.name == me && r.updated < now) {
+                        row.updated = now;
+                        row.diagnostics = crate::service_versions::read(&body, now, observed, ttl as i64, false);
+                    }
+                }
+            }
             None => {
                 self.host_issue = Some(self.board.create(&title, &body, &[HOST_LABEL.to_string()])?);
             }
@@ -3805,6 +3816,22 @@ mod tests {
         let mut d: Value = serde_json::from_str(&line["diagnostics ".len()..]).unwrap();
         d["running"]["value"] = json!("9.9.9");
         assert_ne!(stable(&body), stable(&body.replace(line, &format!("diagnostics {d}"))), "a changed diagnostics value is written at once");
+    }
+
+    // Chain: § 4 heartbeat, status.json hosts (#1729 A3). Risk: after a sleep the pass reads this host's heartbeat
+    // before rewriting it, so status.json shows this host stale for a whole pass interval while the board is fresh.
+    #[test]
+    fn own_heartbeat_row_is_fresh_after_a_wake() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let mut s = service(&b, &c, Default::default());
+        s.instance="abcdef012345".into();
+        s.pass().unwrap();
+        b.advance(1920);
+        s.pass().unwrap();
+        let snapshot = s.snapshot.as_ref().unwrap();
+        let row = snapshot.hosts.iter().find(|h| h.name == "mac").unwrap();
+        assert_eq!(snapshot.observed - row.updated, 0, "the pass that rewrote the heartbeat reports its write");
     }
 
     // Chain: § 4 heartbeat, host rename (#1483). Risk: a renamed host leaves its old-name heartbeat open in every
