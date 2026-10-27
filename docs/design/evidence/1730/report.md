@@ -20,3 +20,9 @@ Images: Chromium headless shell 156.0.8078.4 on Windows, dark theme, 16 px text,
 ## Requeue verification
 
 Rebased onto `e83d64fac056e973c0db9b5ab84a5f8c7064e8e8` after PR #1732 conflicted. Kept main's CSS changes and recalculated workspace source hashes. Restored the explicit A5 assertion that exactly one content container scrolls in the 20 pt long-name case; it passes with the compact-grid and scope/draft checks. This retains nested-scroll regression protection without changing accepted behavior (R12; § 7). Native installed Mac evidence is still unavailable on this Windows attempt and requires a Mac-host task before A6 is complete.
+
+`python3 scripts/check.py --base e83d64fac056e973c0db9b5ab84a5f8c7064e8e8` failed on Windows in 299.562 s: 530 passed, 19 failed, 36 ignored. Eighteen host-policy/lifecycle/native cases failed under worker-authority guards; the Windows native-pipe deadline fixture also timed out during listener acceptance. Its focused rerun passed (0.20 s), which does not erase the full-suite failure. No worker guard was bypassed; the gate is not a pass.
+
+The stopped gate's remaining 25 Node component scripts, screenshot/release checks and isolated offline selftest pass (99 golden traces; board unknown). The browser instrument passed after the rebase, including the restored single-scroller assertion. README source-blob checks pass.
+
+The screenshot refresh exposed an empty binary hash with `CARGO_TARGET_DIR`: the script looked in `target/release` instead of the shared build directory. Its path now honors Cargo's target override. The same native capture command then passed; the manifest's binary SHA-256 matches the actual captured executable, and every recorded image hash matches its bytes. These isolated Windows captures leave the owner's installation and saved views untouched and do not replace the missing installed Mac View evidence. A6 and merge-result CI remain unverified (R12).
