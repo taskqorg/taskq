@@ -149,6 +149,11 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     if !issue.open {
         return Receipt::rejected(n, op, format!("#{n} is closed"));
     }
+    // § 1: only `start` or a person admits an issue; a `ready` without `taskq` would never spawn or show in status
+    if kind == "requeue" && !issue.labels.iter().any(|l| l == service::TASK_LABEL) {
+        let r = Receipt::rejected(n, op, format!("#{n} lacks the {} label; requeue refused", service::TASK_LABEL));
+        return Receipt { state: Some(before.state.name()), revision: Some(rev), next: format!("Owner: add the {} label to #{n} on the board, then retry.", service::TASK_LABEL), ..r };
+    }
     if op.revision.is_some_and(|r| r != rev) {
         let next = format!("Read `taskq inbox {n}`; retry with --revision {rev} if still wanted.");
         return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::new(n, op, "stale", format!("revision {} is stale; current is {rev}", op.revision.unwrap_or(0)), next) };
@@ -556,6 +561,24 @@ g", &["taskq".into()]).unwrap();
         let other = act_child(&b, &root, n, "requeue", &[], "blocked", &op("rq2"), env);
         assert_eq!((other.outcome, count()), ("rejected", before));
         assert!(other.text().contains("is not the live attempt none"), "{}", other.text());
+    }
+
+    // Chain: § 1 admission over § 2 `requeue` (#1735). Risk: requeue of a legacy `q-later` issue without `taskq`
+    // prints `ready`, yet status hides it and no service spawns it.
+    #[test]
+    fn requeue_without_task_label_is_refused_by_name() {
+        let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-unlabelled-{}", std::process::id())));
+        let n = b.create("Legacy", "## Goal\ng", &["q-later".into()]).unwrap();
+        b.comment(n, &entry("later", &[], None, "parked")).unwrap();
+        let before = b.comments(n).unwrap().len();
+        let r = act(&b, &root, n, "requeue", &[], "", &Op::default());
+        assert_eq!((r.outcome, r.state, b.comments(n).unwrap().len()), ("rejected", Some("later"), before), "{}", r.text());
+        assert!(r.text().contains("lacks the taskq label"), "{}", r.text());
+        assert_eq!(b.issue(n).unwrap().labels, ["q-later"]);
+        b.labels(n, &["taskq".into()], &[]).unwrap();
+        let r = act(&b, &root, n, "requeue", &[], "", &Op::default());
+        assert_eq!((r.outcome, r.state), ("accepted", Some("ready")), "{}", r.text());
+        assert!(service::is_task(&b.issue(n).unwrap()));
     }
 
     // Chain: § 2 retry limit to the owner's answer (#913, #1123). Risk: a reviewer's 3rd requeue after a lost double
