@@ -26,3 +26,9 @@ Rebased onto `e83d64fac056e973c0db9b5ab84a5f8c7064e8e8` after PR #1732 conflicte
 The stopped gate's remaining 25 Node component scripts, screenshot/release checks and isolated offline selftest pass (99 golden traces; board unknown). The browser instrument passed after the rebase, including the restored single-scroller assertion. README source-blob checks pass.
 
 The screenshot refresh exposed an empty binary hash with `CARGO_TARGET_DIR`: the script looked in `target/release` instead of the shared build directory. Its path now honors Cargo's target override. The same native capture command then passed; the manifest's binary SHA-256 matches the actual captured executable, and every recorded image hash matches its bytes. These isolated Windows captures leave the owner's installation and saved views untouched and do not replace the missing installed Mac View evidence. A6 and merge-result CI remain unverified (R12).
+
+## Mac continuation
+
+The branch is rebased on `65205cd45395df6c9e7bbab955e5f9a9378fab5a`. The [Mac evidence](../../review-evidence/native-1730-2026-10-27/report.md) supplies the prior four WKWebView captures, with owner saved-view hash unchanged; its F1/F2 remain failing baseline evidence.
+
+A5/F1 reproduced in the browser: All projects stretched to the tallest project cell at 20 pt. Grid items now retain their own height. A5/F2's active long title overflowed its header; it now stays within the title slot and wraps under the existing two-line ellipsis. The browser fixture explicitly selects the long custom view with an initial dashboard delivery, so focus cannot silently discard that fixture. Existing one-scroller, icon, keyboard, exclusive-project, membership, Save/Reset, Delete/Undo and draft protection remain. No saved-view schema, queue controls or owner preferences change.

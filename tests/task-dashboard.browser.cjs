@@ -194,15 +194,19 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await w.getByRole('button',{name:'Delete view All tasks',exact:true}).count(),0);
   // A5: larger text and long names overflow only the content; keyboard can reach every control.
   await w.evaluate(s=>taskq.receive(s),{...wide,font:20,projects:eight.map(p=>({...p,name:(p.name+' long_identifier_').repeat(6)}))});
-  const longModel=await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard);longModel.views.find(v=>v.id==='attention').name='Long_unbroken_view_name_'.repeat(3);longModel.undo.view.name='Long_deleted_view_name_'.repeat(3);await w.evaluate(d=>taskq.receive({dashboard:d}),longModel);
+  const longModel=await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard);longModel.selected='attention';longModel.views.find(v=>v.id==='attention').name='Long_unbroken_view_name_'.repeat(3);longModel.undo.view.name='Long_deleted_view_name_'.repeat(3);await w.evaluate(d=>taskq.receive({dashboard:d,initial:true}),longModel);
+  assert(await w.getByRole('button',{name:'All projects',exact:true}).evaluate(e=>e.getBoundingClientRect().height<=48),'A5/F1: All projects stays compact beside long names');
+  assert(await w.locator('.head h1').evaluate(e=>{const r=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect();return e.textContent.includes('Long_unbroken_view_name_')&&r.right<=p.right+1&&e.scrollWidth<=e.clientWidth+1&&getComputedStyle(e).textOverflow==='ellipsis';}),'A5/F2: long View title stays bounded with ellipsis');
   assert(await w.locator('.content').evaluate(e=>e.scrollHeight>e.clientHeight),'overflow uses the content scroll');
   assert.equal(await w.locator('*').evaluateAll(es=>es.filter(e=>e.scrollHeight>e.clientHeight+1&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).length),1,'A5: overflow has exactly one scroll container');
   assert.deepEqual(await w.locator('button,input,.ui-icon,.project-choice,.facet-list').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.getAttribute('aria-label')||e.textContent)),[],'A5: no clipped text or icons at 20 pt');
   assert(await w.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth),'no horizontal overflow');
+  if(out)await w.screenshot({path:out+'/long-view-20pt-top.png'});
   await w.getByRole('button',{name:'Done',exact:true}).focus();await w.keyboard.press('Tab');
   const expected=await w.locator('button:not(:disabled),input:not(:disabled)').evaluateAll(es=>es.map(e=>e.getAttribute('aria-label')||e.textContent.trim()));
   const reached=new Set();for(let i=0;i<expected.length+2;i++){const name=await w.evaluate(()=>document.activeElement.getAttribute('aria-label')||document.activeElement.textContent.trim());reached.add(name);await w.keyboard.press('Tab');}
   assert(expected.every(name=>reached.has(name)),'keyboard reaches every named control');
+  await w.getByRole('button',{name:'All tasks',exact:true}).click();
   await w.evaluate(s=>taskq.receive(s),wide);
   await w.locator('[data-facet=states][data-value=review]').click();
   const edited=await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard);assert.deepEqual(edited.views.find(v=>v.id===edited.selected).working.states,['review'],'A3: a working change applies at once');
