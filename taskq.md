@@ -1,9 +1,9 @@
 # taskq contract
-taskq queues agents on GitHub/GitLab. Contract includes linked `Contract detail` sections; state: board (R1).
+taskq queues GitHub/GitLab agents; linked `Contract detail` applies; board state (R1).
 **v4**: Rust in `src/`.
 ## Principles (R1–R13)
 ### Change rule
-A task that changes a rule names its R-number, edits this file with the code and lists amended R-numbers in its result. A changed rule keeps its number. A new rule gets the next one. A rule elsewhere that disagrees with this file is a defect. No history here: no dates, no decision logs.
+Rule changes name the R-number, edit this file with code and list amended R-numbers in the result. Changed rules keep numbers; new rules get the next one. A rule conflicting with this file elsewhere is a defect. No history, dates or decision logs.
 ### R1. The board's own objects are the only state
 Trusted comments are truth; labels project them. Public: labels, issue text, `taskq:` comments (§2), heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue. Non-task exceptions: minimal native recovery identity (§3); [DashQ connection state](docs/design/enrollment.md); owner requests, tray AI history and agentq preferences (§4); incidents/profiles; host policy/migration backup; emergency hold; operator [resource grants/receipts][src]. Fresh `status.json` checks the per-root pid; `<install>/service` checks native host identity/generation (§ 4).
 ### R2. One task, one attempt
@@ -54,6 +54,7 @@ Follow [shared verification][sq-verify]. Gate `python3 scripts/check.py` ([selec
 Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and its [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps stay in [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); the [implementation brief](docs/design/implementation-brief.md) maps the accepted product to code. Security: [SECURITY.md](SECURITY.md) (private GitHub reporting, 7 calendar days); [baseline](https://github.com/taskqorg/specq/blob/main/engineering/security.md).
 ## Product
 Looks/sound: one line each (R13).
+- [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
 - UI: Preact/Signals/Wouter, O1–O3; [six bins, palette A; no Custom; History-only Ask](docs/design/icon-summary.md).
 - Menu/View/Settings wrap; no horizontal scroll ([menu]).
