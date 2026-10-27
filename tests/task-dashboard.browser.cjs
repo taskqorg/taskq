@@ -196,6 +196,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   await w.evaluate(s=>taskq.receive(s),{...wide,font:20,projects:eight.map(p=>({...p,name:(p.name+' long_identifier_').repeat(6)}))});
   const longModel=await w.evaluate(()=>messages.filter(m=>m.a==='views-dashboard').at(-1).dashboard);longModel.views.find(v=>v.id==='attention').name='Long_unbroken_view_name_'.repeat(3);longModel.undo.view.name='Long_deleted_view_name_'.repeat(3);await w.evaluate(d=>taskq.receive({dashboard:d}),longModel);
   assert(await w.locator('.content').evaluate(e=>e.scrollHeight>e.clientHeight),'overflow uses the content scroll');
+  assert.equal(await w.locator('*').evaluateAll(es=>es.filter(e=>e.scrollHeight>e.clientHeight+1&&['auto','scroll'].includes(getComputedStyle(e).overflowY)).length),1,'A5: overflow has exactly one scroll container');
   assert.deepEqual(await w.locator('button,input,.ui-icon,.project-choice,.facet-list').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.getAttribute('aria-label')||e.textContent)),[],'A5: no clipped text or icons at 20 pt');
   assert(await w.locator('.content').evaluate(e=>e.scrollWidth<=e.clientWidth),'no horizontal overflow');
   await w.getByRole('button',{name:'Done',exact:true}).focus();await w.keyboard.press('Tab');

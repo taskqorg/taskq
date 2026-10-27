@@ -16,3 +16,7 @@ The first canonical run found the root contract above R8's 60 KiB cap; the short
 The gate stops at those Rust failures. Its remaining checks were run separately: all 25 Node component scripts, screenshot/release script checks, the affected browser instrument and isolated offline selftest pass (99 golden traces; board unknown). The workspace source-hash check failed before the intended manifest refresh and passes after it; bundle/release byte protection remains enforced. Windows README captures use binary SHA-256 `acaa2bd32fb227506899f82885fbcec6122e3903e6eaa3df3e59725d89812cc6`; the shared Cargo target required filling that digest from the actual captured binary, and every image digest was verified.
 
 Images: Chromium headless shell 156.0.8078.4 on Windows, dark theme, 16 px text, 480×600 CSS pixels at scale 1. These are browser evidence, not native platform acceptance. The existing browser instrument also retains its narrow/short, light/dark and large-text checks.
+
+## Requeue verification
+
+Rebased onto `e83d64fac056e973c0db9b5ab84a5f8c7064e8e8` after PR #1732 conflicted. Kept main's CSS changes and recalculated workspace source hashes. Restored the explicit A5 assertion that exactly one content container scrolls in the 20 pt long-name case; it passes with the compact-grid and scope/draft checks. This retains nested-scroll regression protection without changing accepted behavior (R12; § 7). Native installed Mac evidence is still unavailable on this Windows attempt and requires a Mac-host task before A6 is complete.
