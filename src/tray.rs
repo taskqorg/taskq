@@ -1078,7 +1078,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(360.0,600.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // a snapshot renders off the visible screen (taskq.md R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots{40.0}else{-20000.0}, if agentq_shots{40.0}else{-20000.0})).with_always_on_top(false).with_focused(false) } else { b };
                 #[cfg(windows)]
@@ -1493,7 +1493,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "views-open" if snapshot.is_none() => {
                         if views_window.is_none() {
                             let p=proxy.clone();
-                            let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(false).with_inner_size(LogicalSize::new(360.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
+                            let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(false).with_inner_size(LogicalSize::new(480.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
                                 WebViewBuilder::new().with_html(HTML).with_initialization_script("window.taskqSurface='views';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Views(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {

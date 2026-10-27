@@ -26,8 +26,10 @@
 .anchored-popover{position:fixed;inset:auto;margin:0;width:320px;padding:8px;background:var(--popover);color:inherit;border:1px solid var(--popover-edge);border-radius:9px;box-shadow:0 8px 24px #0000004d,0 1px 3px #00000026;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;font:inherit;font-size:var(--size,16px);z-index:30;overflow-wrap:anywhere}
 .anchored-popover::backdrop{background:transparent}.popover-heading{display:flex;align-items:center;gap:4px;margin-bottom:5px}.popover-heading strong{flex:1}.popover-heading button{border:0;display:inline-flex;align-items:center;justify-content:center}
 :is(.anchored-popover,.view-window) fieldset,.growth-options{min-width:0}:is(.anchored-popover,.view-window) fieldset{border:0;border-top:1px solid var(--divider);padding:5px 0;margin:5px 0}:is(.anchored-popover,.view-window) legend{font-size:.85em;color:var(--muted);padding-right:6px}
-.facet-list{display:grid;grid-template-columns:minmax(0,1fr);gap:2px}.facet-list button{border:0;display:flex;align-items:center;gap:6px;text-align:left;overflow-wrap:anywhere}
-.saved-view{display:flex;gap:4px}.saved-view>button:first-child{flex:1;text-align:left;border:0}:is(.anchored-popover,.view-window) label{display:block;font-size:.85em;margin-block:6px}:is(.anchored-popover,.view-window) input{font:inherit;display:block;width:100%;background:transparent;color:inherit;border:1px solid var(--edge);padding:5px}
+.facet-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}.facet-list button{min-width:0;border:0;display:flex;align-items:center;gap:4px;text-align:left;overflow-wrap:anywhere}
+.project-choice{display:flex;align-items:center;min-width:0}.project-choice>button{flex:1;min-width:0}.menu .project-choice>label{flex:none;margin:0;min-width:32px;justify-content:center}.menu .project-choice input{width:16px;height:16px;margin:0;padding:0;accent-color:var(--work)}
+.view-naming{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.view-naming input{flex:1;min-width:80px}.view-naming button{flex:none}
+.saved-view{display:flex;gap:4px}.saved-view>button:first-child{flex:1;min-width:0;text-align:left;border:0;overflow-wrap:anywhere}.saved-view>button:not(:first-child){flex:none;padding:4px;width:32px}:is(.anchored-popover,.view-window) label{display:block;font-size:.85em;margin-block:6px}:is(.anchored-popover,.view-window) input{font:inherit;display:block;width:100%;background:transparent;color:inherit;border:1px solid var(--edge);padding:5px}
 .detail-title{display:block!important;text-align:left!important;font-weight:600}.task-card-text{white-space:pre-wrap;font-size:.85em;user-select:text}.task-steps{font-size:.85em;margin:4px;padding-left:24px}.row-actions{display:flex;gap:4px;flex-wrap:wrap}.row-actions .task-controls,.row-actions>span{display:contents}
 .settings-section{padding-block:4px}.settings-section+.settings-section{border-top:1px solid var(--divider)}
 /* #1661 R28: a Settings widget is one line, its live summary trails and wraps whole words */
@@ -58,6 +60,8 @@
 .menu .tqp .review,.menu .review{color:var(--review)}
 .task-pins{border-bottom:2px solid var(--divider)}.task-pins>h2,.completed-more{font-size:.8em;color:var(--muted);margin:4px 2px;font-weight:600}
 .task-more>summary{font-size:.85em;color:var(--muted);min-height:var(--target)}.task-more dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;font-size:.85em;margin:4px 0}.task-more dd{margin:0}
-.completed-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 6px;padding:5px 2px}.completed-row .meta{grid-column:2;font-size:.85em}.view-receipt{display:flex;align-items:center;gap:6px;font-size:.85em}
-/* #1700 P-W4: the View window footer keeps Display, Save, Reset and Done outside its one scroll. */
-.view-window-footer{flex:none;border-top:1px solid var(--edge);padding:0 8px 4px}.view-window-footer fieldset{border-top:0}.view-window-footer .meta{margin:0 0 4px;font-size:.8em}
+.completed-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 6px;padding:5px 2px}.completed-row .meta{grid-column:2;font-size:.85em}.view-receipt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.85em}.view-receipt strong{min-width:0;overflow-wrap:anywhere}.view-receipt button{flex:none}
+/* P-W4: the View window footer stays outside its one content scroll. */
+.view-window fieldset{margin:0;padding:4px 0}
+.view-window-footer{flex:none;border-top:1px solid var(--edge);padding:0 8px 4px}.view-window-footer fieldset{border-top:0;margin:0;padding:0 0 4px}
+.view-window .options{padding:0;gap:4px}.view-window button{padding:4px;overflow-wrap:anywhere}.view-window .saved-view .ui-icon{width:16px;height:16px}

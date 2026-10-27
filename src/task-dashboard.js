@@ -67,22 +67,23 @@ module.exports=execution.module('taskDashboard',{
      more.length>0&&h('button',{class:'completed-more','data-a':'completed-more'},'Load more'));
    },
    conditions:function(){const c=api.criteria(),done=api.current().id==='completed';return h(Fragment,null,
-    h('fieldset',null,h('legend',null,'Projects'),h('div',{class:'facet-list'},h('button',{'data-a':'view-facet','data-facet':'projects','data-value':'','aria-pressed':String(!c.projects.length)},'All projects'),api.unique(view.S.projects).map(p=>h('button',{'data-a':'view-facet','data-facet':'projects','data-value':views.identity(p),disabled:!views.identity(p),'aria-pressed':String(c.projects.includes(views.identity(p)))},icon('folder'),p.name)))),
+    h('fieldset',null,h('legend',null,'Projects'),h('div',{class:'facet-list'},h('button',{'data-a':'view-facet','data-facet':'projects','data-value':'','aria-pressed':String(!c.projects.length)},'All projects'),api.unique(view.S.projects).map(p=>h('div',{class:'project-choice',key:views.identity(p)},h('label',null,h('input',{type:'checkbox','data-project':views.identity(p),'aria-label':'Include '+p.name,disabled:!views.identity(p),checked:!c.projects.length||c.projects.includes(views.identity(p))})),h('button',{'data-a':'view-facet','data-facet':'projects','data-value':views.identity(p),disabled:!views.identity(p),'aria-label':'Show only '+p.name,'aria-pressed':String(c.projects.length===1&&c.projects[0]===views.identity(p))},p.name))))),
     done?h(Fragment,null,h('fieldset',null,h('legend',null,'Period'),h('div',{class:'options'},[['7d','7 days'],['30d','30 days'],['all','All time']].map(([value,label])=>h('button',{'data-a':'view-period','data-value':value,'aria-pressed':String(c.period===value)},label)))),
      h('fieldset',null,h('legend',null,'Outcome'),h('div',{class:'facet-list'},h('button',{'data-a':'view-facet','data-facet':'outcomes','data-value':'','aria-pressed':String(!c.outcomes.length)},'All outcomes'),Object.entries(outcomes).map(([id,[mark,,label]])=>h('button',{'data-a':'view-facet','data-facet':'outcomes','data-value':id,'aria-pressed':String(c.outcomes.includes(id))},icon(mark),label))))):
     // #1700 A4: each state choice keeps its token tone (Review purple), as on the task rows.
     h('fieldset',null,h('legend',null,'States'),h('div',{class:'facet-list'},h('button',{'data-a':'all-tasks','aria-pressed':String(!c.states.length)},'All states'),view.S.display.states.map(({id:s,name:n})=>h('button',{'data-a':'view-facet','data-facet':'states','data-value':s,'aria-pressed':String(c.states.includes(s))},h('span',{class:blocks.marks[s][1]||null},icon(blocks.marks[s][0])),n)))));
    },
-   actions:function(){const c=api.criteria(),v=api.current();return h(Fragment,null,v.id!=='completed'&&h(Fragment,null,h('fieldset',null,h('legend',null,'Display'),h('div',{class:'options'},[['combined','All together'],['project','By project']].map(([value,label])=>h('button',{'data-a':'view-group','data-value':value,'aria-pressed':String(c.group===value)},label)))),
-     h('p',{class:'meta'},'State order · priority · issue number · repository')),
-    h('div',{class:'options'},h('button',{'data-a':'view-save',disabled:!views.dirty(v)},icon('save'),'Save'),h('button',{'data-a':'view-reset'},icon('rotate-ccw'),'Reset'),h('button',{'data-a':'popup-close'},'Done')));
+   actions:function(){const c=api.criteria(),v=api.current();return h(Fragment,null,v.id!=='completed'&&h('fieldset',null,h('legend',null,'Display'),h('div',{class:'options'},[['combined','All together'],['project','By project']].map(([value,label])=>h('button',{'data-a':'view-group','data-value':value,'aria-pressed':String(c.group===value)},label)))),
+    !owned&&api.naming(),h('div',{class:'options'},h('button',{'data-a':'view-save',disabled:!views.dirty(v)},icon('save'),'Save'),h('button',{'data-a':'view-save-as','aria-expanded':String(!!view.naming)},'Save as…'),h('button',{'data-a':'view-reset'},icon('rotate-ccw'),'Reset'),h('button',{'data-a':'popup-close'},'Done')));
    },
+   naming:function(){const v=api.current();return view.naming&&h('div',{class:'view-naming'},h('input',{'data-view-name':'','aria-label':'New view name',value:v.draft,maxLength:80,placeholder:'View name'}),h('button',{'data-a':'view-add',disabled:!v.draft.trim()||api.model().views.length>=64},'Create'),h('button',{'data-a':'view-cancel'},'Cancel'));},
+   cancelNaming:function(){view.naming=false;present();menu.querySelector('[data-a="view-save-as"]')?.focus();},
    editor:function(){return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,'View'),button('x','Close view editor',{'data-a':'popup-close'})),api.conditions(),api.actions());},
    // P-V1: Delete beside each custom view; the shortcut pin stays a separate control; one persisted Undo receipt.
-   presets:function(){const m=api.model(),v=api.current();return h(owned?'fieldset':Fragment,null,owned?h('legend',null,'Saved views'):h('div',{class:'popover-heading'},h('strong',null,'Saved views'),button('x','Close saved views',{'data-a':'popup-close'})),
+   presets:function(){const m=api.model();return h(owned?'fieldset':Fragment,null,owned?h('legend',null,'Saved views'):h('div',{class:'popover-heading'},h('strong',null,'Saved views'),button('x','Close saved views',{'data-a':'popup-close'})),
     m.views.map(v=>h('div',{class:'saved-view',key:v.id},h('button',{'data-a':'view-select','data-id':v.id,'aria-pressed':String(v.id===m.selected)},v.name,views.dirty(v)?' *':''),button(v.pinned?'pin':'pin-off',(v.pinned?'Remove shortcut for ':'Add shortcut for ')+v.name,{'data-a':'view-pin','data-id':v.id,'aria-pressed':String(v.pinned)}),!views.builtin(v.id)&&button('trash-2','Delete view '+v.name,{'data-a':'view-delete','data-id':v.id}))),
     m.undo&&h('div',{class:'view-receipt',role:'status'},'Deleted ',h('strong',null,m.undo.view.name),button('undo-2','Undo deleting '+m.undo.view.name,{'data-a':'view-undo'})),
-    h('label',null,'New view',h('input',{'data-view-name':'',value:v.draft,maxLength:80,placeholder:'View name'})),h('button',{'data-a':'view-add',disabled:!v.draft.trim()||m.views.length>=64},icon('plus'),'Save as new view'),view.viewError&&h('p',{role:'alert'},view.viewError));},
+    owned?api.naming():h(Fragment,null,api.naming(),h('button',{'data-a':'view-save-as','aria-expanded':String(!!view.naming)},'Save as…')),view.viewError&&h('p',{role:'alert'},view.viewError));},
    question:function(t){const q=t.question;if(t.state!=='ask'||!q)return t.card&&h('p',{class:'task-card-text'},t.card);return h(Fragment,null,h('p',{class:'task-card-text'},q.parsed?q.problem:q.text),q.parsed&&q.choices?.length>0&&h('ol',{class:'task-steps'},q.choices.map(c=>h('li',{key:c.id,value:Number(c.id)||undefined},c.text,c.recommended?' (recommended)':''))));},
    detail:function(){const t=api.live().find(t=>t.key===view.popup.key);if(!t)return h(Fragment,null,h('p',{role:'status'},'Task no longer available; no action submitted.'),h('button',{'data-a':'popup-close'},'Close'));
     const p=view.S.projects.find(p=>p.root===t.root),pinned=views.pinned(api.model(),api.ref(t));
@@ -114,8 +115,10 @@ module.exports=execution.module('taskDashboard',{
     if(d.a==='view-pin'){const v=m.views.find(v=>v.id===d.id);if(v)v.pinned=!v.pinned;present();return true;}
     if(d.a==='view-delete'){if(views.remove(m,d.id)){if(m.selected==='all')view.restoreScroll=api.current().scroll;present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-undo"]')?.focus();}return true;}
     if(d.a==='view-undo'){views.undo(m);present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-select"][aria-pressed="true"]')?.focus();return true;}
-    if(d.a==='view-add'){if(views.add(m,api.current().draft,'view-'+Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''))){view.popup=null;present();}return true;}
-    if(d.a==='view-facet'){const value=d.value,key=d.facet,current=api.criteria()[key];if(!['states','projects','outcomes'].includes(key))return true;api.set({[key]:!value?[]:current.includes(value)?current.filter(x=>x!==value):[...current,value]});return true;}
+    if(d.a==='view-save-as'){view.naming=true;present();menu.querySelector('[data-view-name]')?.focus();return true;}
+    if(d.a==='view-cancel'){api.cancelNaming();return true;}
+    if(d.a==='view-add'){if(views.add(m,api.current().draft,'view-'+Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join(''))){view.naming=false;view.popup=null;present();menu.querySelector('[data-a="view-select"][aria-pressed="true"], [data-a="view-list"]')?.focus();}return true;}
+    if(d.a==='view-facet'){const value=d.value,key=d.facet,current=api.criteria()[key];if(!['states','projects','outcomes'].includes(key))return true;api.set({[key]:!value?[]:key==='projects'?[value]:current.includes(value)?current.filter(x=>x!==value):[...current,value]});return true;}
     if(d.a==='view-group'){api.set({group:d.value});return true;}
     if(d.a==='view-period'){api.set({period:d.value});return true;}
     if(d.a==='completed-retry'){const entry=view.completed?.entries.find(e=>e.root===d.root&&e.reason&&!e.loading);if(entry){api.request(entry);present();}return true;}
@@ -126,6 +129,8 @@ module.exports=execution.module('taskDashboard',{
     return false;
    },
    mount:function(){
+    ui.listen(menu,'change',e=>{if(!e.target.hasAttribute('data-project'))return;const value=e.target.dataset.project,current=api.criteria().projects,selected=current.length?current:api.unique(view.S.projects).map(views.identity).filter(Boolean);api.set({projects:e.target.checked?[...selected,value]:selected.filter(x=>x!==value)});});
+    ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&view.naming){e.preventDefault();e.stopImmediatePropagation();api.cancelNaming();}},true);
     ui.listen(menu,'input',e=>{if(e.target.hasAttribute('data-task-query')){api.criteria().query=e.target.value;present();}if(e.target.hasAttribute('data-view-name')){api.current().draft=e.target.value.slice(0,80);present();}});
     ui.listen(document,'pointerdown',e=>{if(view.popup&&!e.target.closest('#taskq-popover,[data-a="task-detail"],[data-a="view-editor"],[data-a="view-list"]'))api.close(false);});
     ui.listen(window,'resize',api.place);ui.listen(menu,'scroll',api.place,true);
