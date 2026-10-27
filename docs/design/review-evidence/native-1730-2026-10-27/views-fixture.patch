@@ -1,0 +1,44 @@
+diff --git a/src/tray.rs b/src/tray.rs
+index 22d71133..f29d245b 100644
+--- a/src/tray.rs
++++ b/src/tray.rs
+@@ -1748,9 +1748,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
+                 s.font = font;
+                 let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null);
+                 // the Conversations fixture merges its invented threads into the real pushed state (palette, font, theme)
+-                if conversation_shots {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
++                if conversation_shots || views_shots {if let Some((_, wv))=&ui {web_eval(wv,&if views_shots {format!("({script})({st})")} else {format!("{script}({st})")},"tray.web.fixture",&proxy,&mut web);}}
+                 else {push(&mut web,&ui,&st);}
+-                if let (Some((_, wv)), false) = (&ui, script.is_empty() || conversation_shots) {
++                if let (Some((_, wv)), false) = (&ui, script.is_empty() || conversation_shots || views_shots) {
+                     web_eval(wv,script,"tray.web.fixture",&proxy,&mut web);
+                 }
+                 let p = proxy.clone();
+@@ -1819,11 +1819,13 @@ const ANSWERS: [(&str, &str); 4] = [
+     ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
+     ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
+ ];
+-/// The `views` snapshots (P-W4): the View window with a custom saved view whose working conditions add Review, so
+-/// Save, Reset and Delete are live and the Review choice is checked; at its top, then scrolled to the States; only when named.
+-const VIEWS: [(&str, &str); 2] = [
+-    ("top", "taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}]},initial:true})"),
+-    ("states", "taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}]},initial:true});setTimeout(()=>document.querySelector('[data-facet=states][data-value=review]').scrollIntoView({block:'center'}),100)"),
++/// #1733 evidence fixture (not for merge): three saved views (All tasks, Completed, Review work) over the pushed
++/// eight-project state; each script gets that state and pushes it itself, like the conversation shots.
++const VIEWS: [(&str, &str); 4] = [
++    ("top", "s=>{taskq.receive(s);taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}]},initial:true})}"),
++    ("naming-undo", "s=>{taskq.receive(s);taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}],undo:{view:{id:'my-filters',name:'My filters',saved:{},working:{states:['ask']}},index:3}},initial:true});setTimeout(()=>{document.querySelector('[data-a=view-save-as]').click();const i=document.querySelector('[data-view-name]');i.value='My filters draft';i.dispatchEvent(new Event('input',{bubbles:true}));},100)}"),
++    ("long", "s=>{document.querySelector('[data-a=view-cancel]')?.click();taskq.receive({...s,projects:s.projects.map(p=>({...p,name:(p.name+' long_identifier_').repeat(6)}))});taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Long_unbroken_view_name_Long_unbroken_view_name_Long_unbroken_view_name_',saved:{states:['doing']},working:{states:['doing','review']}}],undo:{view:{id:'my-filters',name:'Long_deleted_view_name_Long_deleted_view_name_Long_deleted_view_name_',saved:{},working:{states:['ask']}},index:3}},initial:true})}"),
++    ("long-end", "s=>{document.querySelector('[data-a=view-cancel]')?.click();taskq.receive({...s,projects:s.projects.map(p=>({...p,name:(p.name+' long_identifier_').repeat(6)}))});taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Long_unbroken_view_name_Long_unbroken_view_name_Long_unbroken_view_name_',saved:{states:['doing']},working:{states:['doing','review']}}],undo:{view:{id:'my-filters',name:'Long_deleted_view_name_Long_deleted_view_name_Long_deleted_view_name_',saved:{},working:{states:['ask']}},index:3}},initial:true});setTimeout(()=>{const c=document.querySelector('.content');c.scrollTop=c.scrollHeight;},100)}"),
+ ];
+ /// The `conversations` snapshots (#1699 A8): the workspace page after the menu badge opens the unread task thread,
+ /// with a typed answer draft in that thread, then the owner conversation with its draft; only when named.
+@@ -1842,7 +1844,7 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
+         for font in [16, 20] { v.extend(SCROLLS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
+         for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "attention".to_string(), font, *js))); }
+         v.extend(first.clone().map(|r| (*t, r, 16, "")));
+-        if routes.iter().any(|r|r=="views") { for font in [16, 20] { v.extend(VIEWS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); } }
++        if *t=="dark" && routes.iter().any(|r|r=="views") { v.extend(VIEWS.iter().map(|(n, js)| (*t, "home".to_string(), if n.starts_with("long") {20} else {16}, *js))); }
+         // ponytail: dark only keeps six screens inside the ten-screen review set; add light when a review asks for it
+         if *t=="dark" && routes.iter().any(|r|r=="conversations") { for font in [18, 20] { v.extend(CONVERSATIONS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); } }
+         for route in &ROUTES[5..] {
