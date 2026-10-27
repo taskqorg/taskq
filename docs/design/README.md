@@ -103,4 +103,4 @@ Preserve requirement IDs and current capabilities. Shipped and native proof foll
 
 - [Conversations #1580 candidate evidence](evidence/conversations-1580/report.md): native-only drafts/files, before/after fixtures, source pins and qualification gaps.
 
-- [Compact View #1730 evidence](evidence/1730/report.md): filter grids, direct project switching, naming drafts and native Mac acceptance gap.
+- [Compact View #1730 evidence](evidence/1730/report.md): filter grids, direct project switching, naming drafts and bounded Mac renderer evidence.
