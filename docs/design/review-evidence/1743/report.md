@@ -1,6 +1,6 @@
 # Conversations daily PM use: native qualification (#1743)
 
-Slice 5 of the [Conversations usability plan](../../conversations-usability-review.md#acceptance-and-recurrence-prevention). The owner chose a PM lab run: the PM drives the installed Mac and Windows journeys and records them; the worker pins identity and keeps the Q-A1 to Q-A12 table. Native cells stay Not tested until the PM run in [runbook](#pm-runbook) lands here.
+Slice 5 of the [Conversations usability plan](../../conversations-usability-review.md#acceptance-and-recurrence-prevention). The owner chose a PM lab run: the PM drives the installed Mac and Windows journeys and records them; the worker pins identity and keeps the Q-A1 to Q-A12 table. The PM ran the Mac claude journey ([mac-claude](mac-claude/README.md)); the rest is Not tested, as the PM recorded.
 
 ## Pins
 
@@ -38,19 +38,29 @@ Pass, Fail or Not tested. Fixture: the instruments above. Native: installed app,
 | ID | Fixture (Chromium) | Mac WKWebView | Windows WebView2 |
 |---|---|---|---|
 | Q-A1 menu wheel over question preview | Pass | Not tested | Not tested |
-| Q-A2 fixed heading and Send | Pass | Not tested | Not tested |
-| Q-A3 anchor on prepend, append, font, resize | Pass (`conversations-render` cases before its failing step) | Not tested | Not tested |
-| Q-A4 reader not moved; Jump to latest | Fail (`conversations-render`: Jump to latest stays after reaching the end) | Not tested | Not tested |
+| Q-A2 fixed heading and Send | Pass | Not tested (one 800x600 view only, no growing draft) | Not tested |
+| Q-A3 anchor on prepend, append, font, resize | Pass (`conversations-render` cases before its failing step) | Not tested (history kept on return, offset not measured) | Not tested |
+| Q-A4 reader not moved; Jump to latest | Fail (`conversations-render`: Jump to latest stays after reaching the end) | Pass in the recording (wheel through history, Jump to latest) | Not tested |
 | Q-A5 long sources traversable, bounded nodes | Fail (`dialogue` file order; `conversations-render` traversal and bound passed) | Not tested | Not tested |
 | Q-A6 feedback and frame timing | Not tested (no measured run here) | Not tested | Not tested |
 | Q-A7 receipts stay on their question | Pass | Not tested | Not tested |
 | Q-A8 drafts, refusal, unknown result | Pass | Not tested | Not tested |
 | Q-A9 keyboard, screen reader, copy | Not tested | Not tested | Not tested |
-| Q-A10 sizes, fonts, themes, 1x/2x | Pass for menu and workspace widths; 2x not covered | Not tested | Not tested |
+| Q-A10 sizes, fonts, themes, 1x/2x | Pass for menu and workspace widths; 2x not covered | Not tested (2x dark 800x600 only) | Not tested |
 | Q-A11 failed and late reads | Pass | Not tested | Not tested |
-| Q-A12 two PM turns per runtime | Not applicable | Not tested | Not tested |
-| Restart | Not applicable | Not tested | Not tested |
-| One-writer refusal | Pass (Q-A8 owner refusal) | Not tested | Not tested |
+| Q-A12 two PM turns per runtime | Not applicable | Fail for claude: second Send refused until `claude stop` ([#1749](https://github.com/taskqorg/taskq/issues/1749)); codex Not tested (New offers Claude only) | Not tested |
+| Restart | Not applicable | Not tested (live workers on the host) | Not tested |
+| One-writer refusal | Pass (Q-A8 owner refusal) | Not tested mid-turn; refusal seen wrongly on an idle session (#1749) | Not tested |
+
+Windows WebView2: every cell is Not tested; no Windows lab run was made.
+
+Task acceptance: A1 Fail for claude on Mac (#1749), Not tested for codex and Windows. A2 Not tested: only one Mac 2x size; no Windows run. A3 met for the Mac run: pins above and in the README. A4: four committed screens; the recording is pinned by hash and kept off the repository because it shows a local path.
+
+## Mac lab findings
+
+- [#1749](https://github.com/taskqorg/taskq/issues/1749): the idle Claude background session from the first turn holds the thread; the second Send is refused (`open in claude; close it there first. Draft kept.`) until `claude stop <id>`. Daily PM use fails here.
+- [#1748](https://github.com/taskqorg/taskq/issues/1748): the thread title field follows the draft text (frame 05).
+- The first tool row shows the absolute brief path; frames 05-07 redact it, and the 240 s recording stays on the lab Mac (sha256 in the README).
 
 ## PM runbook
 
