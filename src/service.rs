@@ -3229,8 +3229,9 @@ mod tests {
             assert!(host.lock().unwrap().begin_pass(&root));
             s.pass().unwrap(); s.sync_host();
             let mut h = host.lock().unwrap();
-            h.busy.insert(root.clone(), !s.idle());
-            crate::report_handoff(s, &mut h, &root, s.idle()).unwrap();
+            let drained = crate::drained(s, &h);
+            h.busy.insert(root.clone(), !drained);
+            crate::report_handoff(s, &mut h, &root, drained).unwrap();
             h.handoff_ready()
         };
         assert!(!project_pass(&mut s), "the live worker defers the handover");
@@ -3314,13 +3315,41 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    // #1769 A1: a drain Stop refused the resume of an answered task (its worker had asked and exited), then waited on
+    // that refused attempt ('#N unresolved ownership') forever. Risk kept: nothing starts under the Stop; the task
+    // stays Doing with its inbox undelivered, and the next generation resumes it.
+    #[test]
+    fn stop_drain_passes_a_released_attempt_to_the_next_start() {
+        let root = std::env::temp_dir().join(format!("taskq-host-stop-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let p = crate::host::Policy::parse(json!({"limits": {"codex": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p.clone()))));
+        let b = Fake::default(); let mut c = cfg("invented"); c.root = root.clone(); c.install = root.clone();
+        let n = b.create("Answered", "", &[TASK_LABEL.into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:session invented").unwrap();
+        accept_execution(&b,n,a,a,None).unwrap(); release_execution(&b,n,a,a,"exit").unwrap();
+        b.comment(n, "taskq: steer\ncontinue").unwrap();
+        let mut s = service(&b, &c, Default::default()); s.host = Some(host.clone());
+        { let mut h = host.lock().unwrap(); h.busy.insert(root.clone(), true); h.restart = true; h.stopping = true; }
+        assert!(handover_pass(&mut s, &host, &root), "the drain completes: {:?}", crate::lifecycle_waits(&s, true));
+        assert!(s.kids.is_empty() && s.pending.contains(&(n,a)), "the Stop refuses the resume");
+        assert_eq!((task(&b, n).state, s.delivered(a)), (State::Doing, 0), "the inbox waits for the next start");
+        drop(s);
+        let mut next = service(&b, &c, Default::default());
+        next.host = Some(std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p)))));
+        next.pass().unwrap();
+        assert_eq!(next.kids.iter().map(|k| k.task).collect::<Vec<_>>(), vec![n], "the next generation resumes it");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// One project pass under the host lock protocol; true when the host may re-exec.
     fn handover_pass(s: &mut Service, host: &crate::host::Shared, root: &PathBuf) -> bool {
         assert!(host.lock().unwrap().begin_pass(root));
         s.pass().unwrap(); s.sync_host();
         let mut h = host.lock().unwrap();
-        h.busy.insert(root.clone(), !s.idle());
-        crate::report_handoff(s, &mut h, root, s.idle()).unwrap();
+        let drained = crate::drained(s, &h);
+        h.busy.insert(root.clone(), !drained);
+        crate::report_handoff(s, &mut h, root, drained).unwrap();
         h.handoff_ready()
     }
 

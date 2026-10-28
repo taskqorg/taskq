@@ -1155,7 +1155,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if let Some(host) = host.as_ref().filter(|_| !observe) {
             if let Ok(mut h) = host.lock() {
             let registered = !h.draining.contains(&cfg.root);
-            let drained = s.idle();
+            let drained = drained(&s, &h);
             if !registered && drained { h.sync(&cfg.root, vec![]); h.ready(&cfg.root, false); return Err("project drained".into()); }
             if registered { h.busy.insert(cfg.root.clone(), !drained); }
             if let Err(e) = report_handoff(&s, &mut h, &cfg.root, drained) { log!("handoff unknown: {e}"); }
@@ -1313,6 +1313,12 @@ fn observes(host: Option<&host::Shared>, root: &Path) -> Res<bool> {
     Ok(match host {Some(host)=>!host.lock().map_err(|_|"host handover unknown")?.begin_pass(root),None=>false})
 }
 
+/// #1769: a Stop drains running work only. A released attempt whose resume the Stop refused stays owned on the board
+/// and resumes after the next start; waiting on it deadlocked the drain.
+fn drained(s: &Service, h: &host::Host) -> bool {
+    if h.restart && h.stopping { lifecycle_waits(s, true).is_empty() } else { s.idle() }
+}
+
 /// The end of a project pass under a pending restart: prepared once nothing it owns blocks the re-exec.
 fn report_handoff(s: &Service, h: &mut host::Host, root: &Path, drained: bool) -> Res<()> {
     let ready = h.restart && (if h.stopping {drained}else{lifecycle_waits(s, false).is_empty()});
@@ -1328,7 +1334,7 @@ fn stopped_handoff(s: &mut Service, host: &host::Shared, cfg: &Config) -> Res<bo
     s.reconcile_ownership()?;
     s.sync_host();
     let mut h = host.lock().map_err(|_| "stopped project admission unknown")?;
-    let idle = s.idle();
+    let idle = drained(s, &h);
     h.busy.insert(cfg.root.clone(), !idle);
     report_handoff(s, &mut h, &cfg.root, idle)?;
     Ok(idle && h.draining.contains(&cfg.root))
@@ -1908,7 +1914,8 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
 fn lifecycle_waits(s: &Service, stopping:bool) -> Vec<String> {
     let mut w: Vec<String> = s.kids.iter().filter(|k| stopping || cfg!(windows) || runtime::handover_waits(&k.rt,k.proc.as_ref())).map(|k| format!("#{}", k.task)).collect();
     w.dedup();
-    w.extend(s.handoff_waits(!stopping, cfg!(windows) && !stopping));
+    // a refused resume (#1601) or Stop (#1769) leaves a childless attempt to the next start
+    w.extend(s.handoff_waits(true, cfg!(windows) && !stopping));
     w
 }
 
