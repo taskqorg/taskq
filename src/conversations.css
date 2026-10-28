@@ -17,7 +17,8 @@
 .workspace .conversation-detail{display:flex;flex-direction:column;overflow:hidden;overflow-wrap:anywhere;min-height:0;min-width:0}
 .workspace .thread-head,.workspace .conversation-send{flex:none}
 .workspace .conversation-reader{display:flex;flex-direction:column;flex:1;overflow-y:auto;scrollbar-gutter:stable;min-height:0;min-width:0;overflow-anchor:none}
-.workspace .conversation-reader>.conversation-composer,.workspace .conversation-reader>.answer-composer{margin-top:auto}
+.workspace .conversation-reader>.conversation-composer,.workspace .conversation-reader>.answer-composer{margin-top:auto;position:sticky;bottom:0;background:var(--surface);z-index:1;flex:none}
+.workspace .conversation-reader.long-draft>.conversation-composer,.workspace .conversation-reader.long-draft>.answer-composer{position:static}
 .workspace .conversation-send{border-top:1px solid var(--edge);padding-top:4px}
 .conversation-tools input[data-c-field=title]{flex:1;min-width:90px;width:90px;font:inherit;color:inherit;background:none;padding:4px}
 .conversation-record{overflow:visible;min-height:0;overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px}

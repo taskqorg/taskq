@@ -299,6 +299,8 @@ module.exports=execution.module('conversations',{
      input.after(mirror);const height=mirror.scrollHeight+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);mirror.remove();
      input.style.height=Math.max(parseFloat(style.minHeight)||0,height)+'px';measured.set(input,key);
     }
+    const reader=menu.querySelector('.conversation-reader'),editor=reader?.querySelector(':scope>.conversation-composer,:scope>.answer-composer');
+    if(reader)reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight*.45);
    },
    afterDraw:function(){
     api.grow();

@@ -24,6 +24,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
     const send=await page.locator('[data-a=answer-send]').boundingBox(),head=await page.locator('.thread-head').boundingBox();
     assert(send.y>=0&&send.y+send.height<=740,'Send visible without scrollIntoView at '+width+' / '+fraction);
     assert.equal(head.y,heading.y,'thread heading stays stable');
+    if(width===940){const field=await page.locator('[data-c-field=answer]').boundingBox();assert(field.y>=head.y+head.height&&field.y+field.height<=send.y,'short input stays at the bottom while reading');}
    }
    await page.locator('[data-c-field=answer]').fill('Long draft line.\n'.repeat(100));
    const geometry=await page.locator('[data-c-field=answer]').evaluate(e=>({client:e.clientHeight,scroll:e.scrollHeight,resize:getComputedStyle(e).resize}));

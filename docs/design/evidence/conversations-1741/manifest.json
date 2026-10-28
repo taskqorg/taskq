@@ -1,0 +1,38 @@
+{
+  "baseline": "b8427548779bd6a70555b6dc2bb18023d1d98bc4",
+  "sources": {
+    "src/workspace.js": "14e10d9aa1c1299b6d2673c0be9381ff176783504d806a57ce893864b46a25f2",
+    "src/workspace-answers.js": "910b1c42f811070875848512f233179d6347219ff6004c0d2543e077de7d3b8a",
+    "src/conversations.js": "e7a8663f1fd919bcf3ad9ede221a1ef2202c4cf115d8c89bf9253f00ecbc46e9",
+    "src/conversations.css": "48e6bf2a929367388c3fc1e163b2865ec7104397b79aa76832d55a6c22981281"
+  },
+  "environment": {
+    "os": "win32",
+    "arch": "x64",
+    "renderer": "Playwright Chromium headless 156.0.8078.4",
+    "width": 940,
+    "height": 740,
+    "font": 20,
+    "theme": "dark",
+    "scale": 1,
+    "native": "Not tested"
+  },
+  "fixture": "Invented choice fixture with long compatibility context; no board writes",
+  "images": [
+    {
+      "file": "before-long-question.png",
+      "sha256": "dfe09b7a814f424d140ec9a38392b4437fc61894d1416ada16634a08d2717ea1",
+      "bundle_sha256": "3cebe30d4d942055813c596a35e5ad55eb0ff361a247d540f60ad1bf81651159"
+    },
+    {
+      "file": "after-stable-question.png",
+      "sha256": "ba66501acba2ab0d413ff56e58236fc5e37b755d1cbf2768ba15c6da89ece08b",
+      "bundle_sha256": "45191f013622a53851bd3b49e904c17181aed1c7dbc4a7c30c0b01e9b5d2ce91"
+    },
+    {
+      "file": "after-long-draft.png",
+      "sha256": "187059ffe4a4ffae39618c92ba8d1cf471a8a3af87b760fb8f24aef0b7411fd4",
+      "bundle_sha256": "45191f013622a53851bd3b49e904c17181aed1c7dbc4a7c30c0b01e9b5d2ce91"
+    }
+  ]
+}
