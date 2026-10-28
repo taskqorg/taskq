@@ -5,12 +5,14 @@ const {h}=require('preact'),ui=require('./ui-runtime.js'),icons=require('./ui-ic
 const EVENTS=['close','failed','ask','blocked','gone'];
 module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect}){
-  let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,undo=null,notice='',failure=null,preview=null,confirmDelete=false;
+  let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
+  const measured=new WeakMap();
   let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false;
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
+   note:function(text,id=selected){notices[id||'list']=text;},
    current:function(){return items.find(c=>c.id===selected);},
    ids:function(){return items.map(c=>c.id);},
    opened:function(){return opened;},
@@ -22,7 +24,7 @@ module.exports=execution.module('conversations',{
     if(!row||!!row.archived!==(list==='archive'))selected=null;
     selection[list]=selected;onSelect?.(selected);return selected;
    },
-   capture:function(){const el=menu.querySelector('.conversation-detail');if(el?.dataset.threadId)positions[el.dataset.threadId]=el.scrollTop;},
+   capture:function(){const el=menu.querySelector('.conversation-reader');if(el?.parentElement.dataset.threadId)positions[el.parentElement.dataset.threadId]=el.scrollTop;},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
    title:function(c){return c.title||(c.text||'').split('\n').find(s=>s.trim())?.trim()||c.sent?.text?.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
    visible:function(){return items.filter(c=>!c.deleted&&!!c.archived===(list==='archive')&&(!search||[api.title(c),c.root,c.id].join(' ').toLowerCase().includes(search.toLowerCase())));},
@@ -41,7 +43,7 @@ module.exports=execution.module('conversations',{
    settle:function(r){
     const op=reads[r.id];if(!op)return;delete reads[r.id];
     if(view?.id!==op.conversation)return;if(view.busy[op.kind]===r.id)view.busy[op.kind]=null;
-    const v=r.value,el=menu.querySelector('.conversation-detail');
+    const v=r.value,el=menu.querySelector('.conversation-reader');
     if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
     if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';return;}
     view.reason='';
@@ -115,9 +117,10 @@ module.exports=execution.module('conversations',{
    next:function(){
     if(pending||!queue.length||failure)return;
     const op=queue.shift(),c=items.find(c=>c.id===op.conversation);if(!api.editable(c)){api.next();return;}
+    if(op.action!=='save')api.note('',op.conversation);
     pending={...op,id:api.id(),revision:c.revision||0,version:c.version||0};
     ui.send({a:op.action==='window'?'conversation-window':'conversation-action',...pending});
-    ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;notice=failure.reason;draw();}},30000);
+    ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;api.note(failure.reason,failure.conversation);draw();}},30000);
    },
    action:function(action,extra={}){
     const c=api.current();if(!api.editable(c)||failure||c.archived&&!['restore','delete','preview'].includes(action))return;
@@ -129,33 +132,33 @@ module.exports=execution.module('conversations',{
    receive:function(s){
     if(s.dialogueReceipt){api.settle(s.dialogueReceipt);return true;}
     if(s.workspaceOwner){owner=s.workspaceOwner;if(owner.conversation||owner.select){selected=owner.conversation||owner.select;onSelect?.(selected);listOnly=false;focusDraft=true;}draw();return true;}
-    if(s.conversationNavigationError!==undefined){if(s.conversationNavigationError)notice=s.conversationNavigationError;return true;}
+    if(s.conversationNavigationError!==undefined){if(s.conversationNavigationError)api.note(s.conversationNavigationError);return true;}
     if(s.conversationReceipt){
      const r=s.conversationReceipt;if(r.id!==pending?.id)return true;
      const op=pending;pending=null;ui.cancel(timer);const c=items.find(c=>c.id===op.conversation),native=r.snapshot?.items?.find(c=>c.id===op.conversation);
      if(c&&native){c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;if(['attach','remove'].includes(op.action))c.files=native.files;}
      if(r.state!=='accepted'&&['reply','watch','unwatch'].includes(op.action)){
       // D3: a refused turn or watch change is definite; its text shows and the draft stays.
-      if(c)c.sending=false;notice=op.action==='reply'?'Not sent: '+(r.reason||'delivery unknown')+'. Draft kept.':r.reason||'Watch change unknown';api.next();
+      if(c)c.sending=false;api.note(op.action==='reply'?'Not sent: '+(r.reason||'delivery unknown')+'. Draft kept.':r.reason||'Watch change unknown',op.conversation);api.next();
      }else if(r.state!=='accepted'){
-      failure={...op,reason:r.reason||'Native readback unknown; draft kept'};notice=failure.reason;
+      failure={...op,reason:r.reason||'Native readback unknown; draft kept'};api.note(failure.reason,op.conversation);
       if(c)c.sending=false;
      }else {
       if(c&&op.action==='save')c.saved=op.version;
-      if(c&&op.action==='send'){c.sending=false;if(c.text===c.sent?.text&&!c.next){c.text='';c.caret=[0,0];for(const f of c.sent.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=c.files.filter(f=>!c.sent.files.some(sent=>sent.id===f.id));c.version=(c.version||0)+1;api.save(c);}notice='Request saved. Native launch and replies are separate.';}
-      if(op.action==='archive'&&c){c.archived=true;undo=c.id;const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;notice='Archived';api.nav();}
-      if(op.action==='restore'&&c){c.archived=false;list='recent';search='';api.select(c.id);notice='Restored';undo=null;}
-      if(op.action==='delete'){items=items.filter(c=>c.id!==op.conversation);selected=api.visible()[0]?.id||null;notice='Permanently deleted';confirmDelete=false;undo=null;api.nav();}
-      if(op.action==='fork'&&r.value?.forked){if(c&&c.version===op.version)Object.assign(c,native);for(const row of r.snapshot.items)if(!items.some(c=>c.id===row.id))items.push({...row,version:0,saved:0});api.select(r.value.forked);notice='Draft and files moved to a separate request. Nothing sent.';}
+      if(c&&op.action==='send'){c.sending=false;if(c.text===c.sent?.text&&!c.next){c.text='';c.caret=[0,0];for(const f of c.sent.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=c.files.filter(f=>!c.sent.files.some(sent=>sent.id===f.id));c.version=(c.version||0)+1;api.save(c);}api.note('Request saved. Native launch and replies are separate.',op.conversation);}
+      if(op.action==='archive'&&c){c.archived=true;undo=c.id;const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;api.note('Archived');api.nav();}
+      if(op.action==='restore'&&c){c.archived=false;list='recent';search='';api.select(c.id);api.note('Restored',op.conversation);undo=null;}
+      if(op.action==='delete'){items=items.filter(c=>c.id!==op.conversation);selected=api.visible()[0]?.id||null;api.note('Permanently deleted');confirmDelete=false;undo=null;api.nav();}
+      if(op.action==='fork'&&r.value?.forked){if(c&&c.version===op.version)Object.assign(c,native);for(const row of r.snapshot.items)if(!items.some(c=>c.id===row.id))items.push({...row,version:0,saved:0});api.select(r.value.forked);api.note('Draft and files moved to a separate request. Nothing sent.');}
       if(op.action==='preview'&&r.value){
-       if(r.value.file.mime.startsWith('image/'))ui.effect('conversations.previewImage',()=>new Promise((resolve,reject)=>{const image=new window.Image();ui.listen(image,'load',()=>resolve(r.value));ui.listen(image,'error',()=>reject(Error('Image preview unavailable; file and draft kept')));image.src='data:'+r.value.file.mime+';base64,'+r.value.data;}),value=>{if(value.file){preview=value;notice='Local preview';}else notice=value.reason;draw();});
-       else {preview=r.value;notice='Local preview';}
+       if(r.value.file.mime.startsWith('image/'))ui.effect('conversations.previewImage',()=>new Promise((resolve,reject)=>{const image=new window.Image();ui.listen(image,'load',()=>resolve(r.value));ui.listen(image,'error',()=>reject(Error('Image preview unavailable; file and draft kept')));image.src='data:'+r.value.file.mime+';base64,'+r.value.data;}),value=>{if(value.file){preview=value;api.note('Local preview',op.conversation);}else api.note(value.reason,op.conversation);draw();});
+       else {preview=r.value;api.note('Local preview',op.conversation);}
       }
-      if(c&&op.action==='reply'){c.sending=false;if(c.version===op.typed){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];c.version=(c.version||0)+1;api.save(c);}notice='Sent as one native turn. The reply appears in the transcript.';if(view?.id===c.id){view.stick=true;api.read('status');}}
-      if(view?.id===op.conversation&&op.action==='watch'&&r.value){view.status={...view.status,watch:r.value};view.form=null;api.form();notice='Watch saved. Its prompt is sent when due and the session is idle.';}
-      if(view?.id===op.conversation&&op.action==='unwatch'){view.status={...view.status,watch:'no watch'};view.form=null;api.form();notice='Watch removed';}
-      if(op.action==='cancel')notice='Cancelled before native launch. No runtime work was rolled back.';
-      if(op.action==='reconcile')notice='Delivery checked using the original request ID.';
+      if(c&&op.action==='reply'){c.sending=false;if(c.version===op.typed){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];c.version=(c.version||0)+1;api.save(c);}api.note('Sent as one native turn. The reply appears in the transcript.',op.conversation);if(view?.id===c.id){view.stick=true;api.read('status');}}
+      if(view?.id===op.conversation&&op.action==='watch'&&r.value){view.status={...view.status,watch:r.value};view.form=null;api.form();api.note('Watch saved. Its prompt is sent when due and the session is idle.',op.conversation);}
+      if(view?.id===op.conversation&&op.action==='unwatch'){view.status={...view.status,watch:'no watch'};view.form=null;api.form();api.note('Watch removed',op.conversation);}
+      if(op.action==='cancel')api.note('Cancelled before native launch. No runtime work was rolled back.',op.conversation);
+      if(op.action==='reconcile')api.note('Delivery checked using the original request ID.',op.conversation);
       api.next();
      }
      draw();return true;
@@ -202,11 +205,11 @@ module.exports=execution.module('conversations',{
     const c=api.current();if(!api.editable(c)||c.archived||!files.length)return;
     for(const file of files){
      const mime=({txt:'text/plain',md:'text/markdown',png:'image/png',jpg:'image/jpeg',jpeg:'image/jpeg',webp:'image/webp'})[file.name.split('.').at(-1).toLowerCase()];
-     if(!mime||!file.size||file.size>5*1024*1024||c.files.length+queue.filter(o=>o.conversation===c.id&&o.action==='attach').length>=4){notice=file.name+': unsupported or over limit. Use 4 files, 5 MiB each; PDF unavailable (0 pages).';draw();continue;}
+     if(!mime||!file.size||file.size>5*1024*1024||c.files.length+queue.filter(o=>o.conversation===c.id&&o.action==='attach').length>=4){api.note(file.name+': unsupported or over limit. Use 4 files, 5 MiB each; PDF unavailable (0 pages).');draw();continue;}
      const cid=c.id;
      ui.effect('conversations.readFile',()=>new Promise((resolve,reject)=>{const reader=new window.FileReader();ui.listen(reader,'load',()=>{if(mime.startsWith('image/')){const image=new window.Image();ui.listen(image,'load',()=>image.naturalWidth<=8000&&image.naturalHeight<=8000?resolve(reader.result):reject(Error('Image exceeds 8000 pixels per side; draft kept')));ui.listen(image,'error',()=>reject(Error('Image unreadable; source and draft kept')));image.src=reader.result;}else resolve(reader.result);});ui.listen(reader,'error',()=>reject(Error('File unreadable; source kept')));reader.readAsDataURL(file);}),result=>{
-      if(typeof result!=='string'){notice=file.name+': '+(result.reason||'Read failed');draw();return;}
-      const current=items.find(c=>c.id===cid);if(!api.editable(current)){notice='File read finished after ownership changed; select it again in the owner window.';draw();return;}
+      if(typeof result!=='string'){api.note(file.name+': '+(result.reason||'Read failed'));draw();return;}
+      const current=items.find(c=>c.id===cid);if(!api.editable(current)){api.note('File read finished after ownership changed; select it again in the owner window.');draw();return;}
       api.save(current);queue.push({conversation:cid,action:'attach',file:{id:api.id(),name:file.name,mime,bytes:file.size,hash:'0'.repeat(64)},data:result.slice(result.indexOf(',')+1)});api.next();draw();
      });
     }
@@ -220,22 +223,23 @@ module.exports=execution.module('conversations',{
      ...own.map(row=>h('button',{key:row.id,class:'conversation-row','data-c':'select','data-id':row.id,'aria-current':!thread&&row.id===selected?'page':null},h('span',null,api.title(row)),h('small',null,(snapshot.projects?.find(p=>p.root===row.root)?.name||'Project unavailable')+' · '+(row.request?.kind||(row.sent?'Delivery unknown':'Draft'))+(api.launched(row)?' · '+api.state(row):'')+((owner.detached||[]).includes(row.id)?' · Detached':''),extra.marks?.[row.id]&&h('b',{class:'thread-marker'},' · '+extra.marks[row.id]))))];
     // A6: the session runtime is the one the request recorded at launch, not the current owner default
     const runtime=c?.request?.runtime||c?.sent?.runtime;
+    const tools=c&&!c.archived?h('div',{class:'conversation-tools'},h('label',{class:'attach-label'},'Attach',h('input',{type:'file',multiple:true,accept:'.txt,.md,.png,.jpg,.jpeg,.webp','data-c-field':'files',disabled})),dialogue&&h('button',{'data-c':'reply',disabled:!!bad},'Send'),h('button',{'data-c':c.sent||c.request?'from-draft':'send',disabled:(c.sent||c.request)?disabled||!!owner.conversation||!c.text.trim():!!bad},c.sent||c.request?'New from draft':'Send')):null;
     return h('section',{class:'conversations'+(listOnly?' list-only':'')+(owner.conversation?' detached':''),'aria-label':'Conversations'},
      h('div',{class:'conversation-toolbar'},h('button',{'data-c':'list',class:'conversation-list-toggle'},listOnly?'Back':'List'),h('button',{'data-c':'new',disabled:!!owner.conversation},icons.icon('plus'),' New'),icons.button('panels-top-left','Work sessions',{'data-route':'sessions'}),h('details',{'data-view-key':'conversation-history'},h('summary',null,'History'),h('div',{class:'conversation-history'},(snapshot.ai?.history||[]).map((text,i)=>h('button',{'data-c':'history','data-index':i,disabled},text)),h('button',{'data-c':'clear-history'},'Clear command history'),h('p',{class:'meta'},'History fills only. Permanent deletion is available in Archive.')))),
      h('div',{class:'conversation-grid'},
       h('aside',{class:'conversation-list','aria-label':'Threads'},h('div',{class:'conversation-tools'},h('button',{'data-c':'recent','aria-pressed':list==='recent'},'Recent'),h('button',{'data-c':'archive-list','aria-pressed':list==='archive'},'Archive')),h('label',{class:'conversation-search'},h('span',{class:'sr-only'},'Search threads'),h('input',{type:'search','data-c-field':'search',value:search,placeholder:'Search',maxLength:512})),search&&h('button',{'data-c':'clear-search'},'Clear search'),h('div',{class:'conversation-rows'},rows.length?rows:h('p',null,search?'No matches':'No '+(list==='archive'?'archived threads':'threads yet')))),
-      thread?h('section',{class:'conversation-detail thread-detail','data-thread-id':thread,'aria-label':'Selected thread'},extra.detail):
-      h('section',{class:'conversation-detail','data-thread-id':c?.id||'','aria-label':'Selected request'},c?[h('div',{class:'conversation-tools'},h('input',{'data-c-field':'title','aria-label':'Request name',placeholder:api.title(c),value:c.title,disabled,maxLength:120}),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':(owner.detached||[]).includes(c.id)?'raise':'detach',disabled:!!pending},(owner.detached||[]).includes(c.id)?'Raise window':'Detach'),h('button',{'data-c':c.archived?'restore':'archive',disabled:!api.editable(c)||!!pending},c.archived?'Restore':'Archive')),
+      thread?h('section',{class:'conversation-detail thread-detail','data-thread-id':thread,'aria-label':'Selected thread'},extra.detail?.header,h('div',{class:'conversation-reader'},extra.detail?.reading),extra.detail?.tools&&h('div',{class:'conversation-send'},extra.detail.tools)):
+      h('section',{class:'conversation-detail','data-thread-id':c?.id||'','aria-label':'Selected request'},c?[h('div',{class:'conversation-tools thread-head'},h('input',{'data-c-field':'title','aria-label':'Request name',placeholder:api.title(c),value:c.title,disabled,maxLength:120}),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':(owner.detached||[]).includes(c.id)?'raise':'detach',disabled:!!pending},(owner.detached||[]).includes(c.id)?'Raise window':'Detach'),h('button',{'data-c':c.archived?'restore':'archive',disabled:!api.editable(c)||!!pending},c.archived?'Restore':'Archive')),
+       h('div',{class:'conversation-reader'},
        // A5: launch diagnostics and Status collapse above the transcript, which takes the reading area
        dialogue?[h('div',{class:'dialogue-bar'},h('p',{class:'dialogue-state','data-state':api.state(c).split(' ')[0]},'State: '+api.state(c)),h('details',{class:'dialogue-launch','data-view-key':'dialogue-launch'},h('summary',null,'Details'),pm.handoff(c.request,true)),c.archived?h('div',null,h('p',{class:'meta'},'Archived in TaskQ only; the native conversation stays. Restore before reply.'),h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},'Delete permanently'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Native chats and sessions stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record'))):api.status(c,disabled),api.preview()),api.transcript(c)]:
        h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},h('details',{'data-view-key':'request-identity'},h('summary',null,'Request identity'),h('p',{class:'meta'},c.id)),c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),pm.handoff(c.request,true),c.sent&&h('article',null,h('h2',null,'Sent request'),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),(c.sent||c.request)&&h('p',{class:'meta'},'Replies open here after the native launch.'),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery'),c.archived&&h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},c.deleting?'Retry Delete':'Delete permanently'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Source files, native chats, sessions and board tasks stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record')),api.preview()),
        extra.notice,
        !c.archived&&pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),h('p',{class:'meta'},(dialogue?(runtime?'Session '+runtime:'Session runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown'))],files:
         h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled})))),
-        tools:h('div',{class:'conversation-tools'},h('label',{class:'attach-label'},'Attach',h('input',{type:'file',multiple:true,accept:'.txt,.md,.png,.jpg,.jpeg,.webp','data-c-field':'files',disabled})),dialogue&&h('button',{'data-c':'reply',disabled:!!bad},'Send'),h('button',{'data-c':c.sent||c.request?'from-draft':'send',disabled:(c.sent||c.request)?disabled||!!owner.conversation||!c.text.trim():!!bad},c.sent||c.request?'New from draft':'Send')),
-        reason:bad||(dialogue?'Send goes to this '+(runtime||'native')+' session from this window as one turn. New from draft starts a separate request.':'Share this request and selected files with the visible native session.'),after:h('details',{'data-view-key':'file-limits'},h('summary',null,'File limits'),h('p',{class:'meta'},'UTF-8 text/Markdown, PNG/JPEG/WebP. 4 files, 5 MiB each, 20 MiB per draft, 100 MiB owned storage. PDF unavailable (0 pages). Sources stay untouched.'))})
+        reason:bad||(dialogue?'Send goes to this '+(runtime||'native')+' session from this window as one turn. New from draft starts a separate request.':'Share this request and selected files with the visible native session.'),after:h('details',{'data-view-key':'file-limits'},h('summary',null,'File limits'),h('p',{class:'meta'},'UTF-8 text/Markdown, PNG/JPEG/WebP. 4 files, 5 MiB each, 20 MiB per draft, 100 MiB owned storage. PDF unavailable (0 pages). Sources stay untouched.'))})),tools&&h('div',{class:'conversation-send'},tools)
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
-     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notice,pending&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&h('button',{'data-c':'retry-save'},failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
+     h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notices[selected||'list']||'',pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
    sessions:function(){return [h('p',{class:'meta'},'Recorded workers and reviewers. Opening a target sends no input.'),(snapshot.projects||[]).map(p=>h('section',{key:p.root},h('h2',null,p.name),(!p.alive||p.complete===false)&&h('p',{role:'status'},'Session state unknown: project snapshot stale or incomplete.'),(p.tasks||[]).filter(t=>t.session).map(t=>h('article',{key:t.n},h('a',{href:p.issues+'/'+t.n},'#'+t.n+' '+t.title),h('p',{class:'meta'},(t.role||'Attempt')+' · '+(t.runtime||t.session)+' · '+(t.host||'Host unknown')+' · '+t.state),t.session_url?h('a',{href:t.session_url,'data-url':t.session_url},'Open recorded session'):h('p',{class:'meta'},t.session_reason||'Verified session target unavailable.'))))),h('p',{class:'meta'},'Remote/headless dialogue uses the native runtime or existing CLI. No local session or gateway is created.')];},
    click:function(b){
@@ -255,7 +259,7 @@ module.exports=execution.module('conversations',{
     else if(action==='raise'&&c)ui.send({a:'conversation-window',action:'raise',conversation:c.id});
     else if(action==='return'&&c?.deleted)ui.send({a:'conversation-window',windowAction:'return',conversation:c.id});
     else if(action==='detach'||action==='return'){if(c){api.save(c);queue.push({conversation:c.id,action:'window',windowAction:action});api.next();}}
-    else if(action==='reply-open'){if(!api.reveal(b.dataset.id)){notice='Conversation unavailable in this window; refresh.';draw();}}
+    else if(action==='reply-open'){if(!api.reveal(b.dataset.id)){api.note('Conversation unavailable in this window; refresh.');draw();}}
     else if(action==='reply'&&!api.problem(c))api.action('reply',{typed:c.version||0});
     else if(action==='watch'&&view?.form){api.action('watch',{prompt:view.form.prompt,every:Number(view.form.every),events:EVENTS.filter(e=>view.form.events.includes(e))});}
     else if(action==='unwatch')api.action('unwatch');
@@ -264,7 +268,7 @@ module.exports=execution.module('conversations',{
     else if(action==='retry-save'){
      const failed=failure;failure=null;
      // a reply with no receipt is never resent: the transcript and status tell whether it ran
-     if(failed&&['reply','watch','unwatch'].includes(failed.action)){const f=items.find(c=>c.id===failed.conversation);if(f)f.sending=false;notice='Delivery unknown; draft kept. Check the transcript and status before sending again.';if(view?.id===failed.conversation)api.read('status');api.next();draw();}
+     if(failed&&['reply','watch','unwatch'].includes(failed.action)){const f=items.find(c=>c.id===failed.conversation);if(f)f.sending=false;api.note('Delivery unknown; draft kept. Check the transcript and status before sending again.');if(view?.id===failed.conversation)api.read('status');api.next();draw();}
      else if(failed){if(['send','reconcile'].includes(failed.action)){queue=queue.filter(o=>o.action!=='send');queue.unshift({conversation:failed.conversation,action:'reconcile'});}else queue.unshift({...failed,id:undefined});api.next();draw();}
     }
     else if(['archive','restore','send','cancel','reconcile','preview','remove','delete'].includes(action))api.action(action,{...(b.dataset.file?{file:b.dataset.file}:{}),...(action==='send'?{runtime:snapshot.ai?.runtime?.id}:{})});
@@ -276,18 +280,32 @@ module.exports=execution.module('conversations',{
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
     ui.listen(menu,'scroll',e=>{
      if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}
-     if(!e.target.classList?.contains('conversation-detail'))return;
+     if(!e.target.classList?.contains('conversation-reader'))return;
      positions[selected]=e.target.scrollTop;api.nav();
      if(view?.id===selected&&e.target.querySelector('.dialogue-transcript')){view.stick=e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(e.target.scrollTop<32&&view.start>0&&!view.busy.before&&!view.anchor){api.read('before',{before:view.start});draw();}}
     },true);
-    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('dialogue-status')&&view){view.stick=false;const detail=menu.querySelector('.conversation-detail');if(detail)positions[selected]=detail.scrollTop;}},true);
+    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('dialogue-status')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)positions[selected]=detail.scrollTop;}},true);
+    ui.listen(window,'resize',()=>draw());
     ui.listen(menu,'dragover',e=>{if(e.target.closest('.conversations'))e.preventDefault();});
     ui.listen(menu,'drop',e=>{if(!e.target.closest('.conversations'))return;e.preventDefault();api.files([...e.dataTransfer.files]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(document,'keydown',e=>{if(e.target.dataset?.cField==='text'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();const c=api.current();if(api.problem(c))return;if(api.launched(c))api.action('reply',{typed:c.version||0});else api.action('send',{runtime:snapshot.ai?.runtime?.id});}});
    },
+   grow:function(){
+    for(const input of menu.querySelectorAll('.conversation-composer textarea')){
+     const style=window.getComputedStyle(input),width=input.getBoundingClientRect().width,key=JSON.stringify([input.value,width,style.font,style.lineHeight]);
+     if(measured.get(input)===key)continue;
+     const mirror=input.cloneNode();mirror.removeAttribute('id');mirror.removeAttribute('data-c-field');mirror.disabled=true;mirror.tabIndex=-1;mirror.setAttribute('aria-hidden','true');mirror.value=input.value;
+     Object.assign(mirror.style,{position:'absolute',visibility:'hidden',pointerEvents:'none',width:width+'px',height:'0',minHeight:'0',maxHeight:'none'});
+     input.after(mirror);const height=mirror.scrollHeight+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);mirror.remove();
+     input.style.height=Math.max(parseFloat(style.minHeight)||0,height)+'px';measured.set(input,key);
+    }
+    const reader=menu.querySelector('.conversation-reader'),editor=reader?.querySelector(':scope>.conversation-composer,:scope>.answer-composer');
+    if(reader)reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight*.45);
+   },
    afterDraw:function(){
-    const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-detail'),open=api.current();
+    api.grow();
+    const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
     if(detail)detail.scrollTop=positions[selected]??open?.scroll??0;
     if(log&&open){api.open(open);if(view.anchor){detail.scrollTop=detail.scrollHeight-view.anchor.height+view.anchor.top;view.anchor=null;}else if(view.stick)detail.scrollTop=detail.scrollHeight;positions[selected]=detail.scrollTop;}
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}},

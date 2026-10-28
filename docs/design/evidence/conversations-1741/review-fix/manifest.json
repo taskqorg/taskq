@@ -1,0 +1,27 @@
+{
+  "sourceCommit": "869c884dec64ca02e345db19fc76cd287398e99c",
+  "environment": {
+    "os": "darwin",
+    "release": "27.0.0",
+    "arch": "arm64",
+    "renderer": "Playwright Chromium headless 156.0.8078.4",
+    "width": 940,
+    "height": 740,
+    "font": 20,
+    "theme": "dark",
+    "scale": 1,
+    "native": "Not tested"
+  },
+  "fixture": "Invented owner-a archive receipt missing while owner-b is selected; no native or board effects",
+  "sources": {
+    "src/conversations.js": "deed1e6dd39b8d59dfc1976ee2d0c628761d51a9f9b0eba41400850746cb32eb",
+    "tests/conversations-stable.browser.cjs": "28d9a5de571ab7aa4c8947cda4c87f718925b33837b690b7d5480504993ef70c",
+    "build/web/workspace.html": "be88a38a3d7a5ca41bd11262bf3d8a504c83cd07affdd79c6e4b064f89342ff5"
+  },
+  "images": [
+    {
+      "file": "cross-thread-recovery.png",
+      "sha256": "621171f553c4b885243ddf7f9e234a8cd445414eebe783d5661c707aec4a476c"
+    }
+  ]
+}

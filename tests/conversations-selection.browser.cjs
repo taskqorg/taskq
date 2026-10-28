@@ -14,7 +14,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
  await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-dialogue')window.read(m);}};});
  await page.evaluate(s=>taskq.receive(s),state);
- const current=()=>page.locator('.conversation-row[aria-current=page]').innerText(),detail=page.locator('.conversation-detail');
+ const current=()=>page.locator('.conversation-row[aria-current=page]').innerText(),detail=page.locator('.conversation-reader');
  await page.locator('.dialogue-item').first().waitFor();
  await page.locator('[data-c=archive-list]').click();assert.equal(await page.locator('.dialogue-transcript').count(),0,'Archive starts empty instead of showing a Recent owner');
  await page.locator('[data-c=select][data-id=archived-owner]').click();await page.locator('.dialogue-item').first().waitFor();
@@ -44,7 +44,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
   await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});
   if(!await page.locator('.dialogue-status').evaluate(e=>e.open))await page.locator('.dialogue-status summary').click();
   const nested=await detail.evaluate(e=>[...e.querySelectorAll('.dialogue-bar,.dialogue-transcript,.conversation-composer')].filter(n=>['auto','scroll'].includes(getComputedStyle(n).overflowY)).length);assert.equal(nested,0,'no nested thread-content scroll at '+font);
-  await page.locator('[data-c=reply]').scrollIntoViewIfNeeded();const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=740,'composer reached at '+font);
+  const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=740,'composer reached at '+font);
   const before=await detail.evaluate(e=>e.scrollTop);await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});assert(Math.abs(await detail.evaluate(e=>e.scrollTop)-before)<2,'snapshot keeps reading position '+JSON.stringify({before,after:await detail.evaluate(e=>({top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight})),status:await page.locator('.dialogue-status').evaluate(e=>e.open)}));
   if(out)await page.screenshot({path:out+'/expanded-status-dark-'+font+'.png'});
  }

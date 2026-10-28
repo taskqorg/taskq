@@ -41,11 +41,12 @@ answerReadback:function(){
 },
 // The answer card owns the slot's descendants; Preact renders the slot without children.
 answerSlot:function(t){return t.state==='ask'?h('div',{'data-answer':t.key,key:'answer:'+t.key}):null;},
-answerNotices:function(board){
+answerNotices:function(board,task){
   // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
   // #1662 A1/A4: a receipt names its question and answer in plain words; operation id and revision stay behind a disclosure
   const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+(r.reason===CONFLICT?'an earlier answer with this operation is still pending with different content':r.reason):'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'&&r.reason!==CONFLICT?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision+(r.reason===CONFLICT?' · bridge: '+r.reason:'')),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
-  const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
+  const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&(task==null||r.op.task===task&&(!saved[board+'#'+task]?.op||saved[board+'#'+task].op.id===r.op.id))&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
+  if(task!=null)return shown.slice(-1).map(x=>line(x,'status'));
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
   return [shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,'status')),answered.length>0&&h('details',{class:'group answered','data-view-key':'answered'},h('summary',null,'Answered'+counter(answered.length,'muted','Answered')),answered.map(x=>line(x,null)))];
 },

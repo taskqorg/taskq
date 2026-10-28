@@ -90,7 +90,8 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   if(evidence)await page.screenshot({path:evidence+'/thread-dark-16.png'});
   // Restart: the selected thread and the task draft come back; nothing is replayed
   await page.locator('[data-a=thread][data-thread="task:'+board+'/'+row.n+'"]').click();
-  await page.waitForFunction(id=>sent.filter(m=>m.a==='conversation-navigation').at(-1)?.navigation.threads?.selected===id,'task:'+board+'/'+row.n);
+  // The selected task was visited earlier too; wait for the complete new navigation, not that older receipt.
+  await page.waitForFunction(({id,board})=>{const t=sent.filter(m=>m.a==='conversation-navigation').at(-1)?.navigation.threads;return t?.selected===id&&[900,901].every(n=>t.opened.some(r=>r.id==='task:'+board+'/'+n));},{id:'task:'+board+'/'+row.n,board});
   const saved=await page.evaluate(()=>({conversation:sent.filter(m=>m.a==='conversation-navigation').at(-1).navigation,navigation:sent.filter(m=>m.a==='workspace-set').at(-1).navigation,local:Object.fromEntries(sent.filter(m=>m.a==='answer-local').map(m=>[m.key,m.local]))}));
   await boot({workspace_navigation:saved.navigation,workspace_local:saved.local,conversations:{...state.conversations,navigation:saved.conversation}});
   for(const n of [900,901])assert.equal(await page.locator('[data-thread="task:'+board+'/'+n+'"]').count(),1,'restart retains each event-free task identity');
