@@ -25,4 +25,26 @@ Instruments, not native runs (R12). Run at 3b5c8208 on the Mac above, 2026-10-28
 | `dialogue` | FAIL (`last chunk in file order`) | PASS, twice |
 | `tray-window` | FAIL (`TypeError ... reading 'all'`) | PASS, twice |
 
-Fixture cells Q-A4 and Q-A5 move from Fail to Pass. Native cells wait for the PM lab run.
+Fixture cells Q-A4 and Q-A5 move from Fail to Pass.
+
+## Native lab: Mac claude
+
+The PM ran the [#1743 runbook](report.md#pm-runbook) on the Mac build above: [mac-claude-1753](mac-claude-1753/README.md). Owner answer 1 on #1753: Mac lab now, Windows Not tested.
+
+| ID | Mac WKWebView (claude) | Windows WebView2 |
+|---|---|---|
+| Q-A4 reader not moved; Jump to latest | Not tested: no recording | Not tested: 4.6.39 |
+| Q-A12 two PM turns | Fail: second Send refused, twice ([#1762](https://github.com/taskqorg/taskq/issues/1762)) | Not tested: 4.6.39 |
+| History on switch and reopen | Pass | Not tested: 4.6.39 |
+| Thread title keeps the first message (#1748) | Pass | Not tested: 4.6.39 |
+| Same session id after reopen | Not tested: no second reply | Not tested: 4.6.39 |
+| Restart | Not tested: live workers | Not tested: 4.6.39 |
+| One-writer refusal mid-turn | Not tested: every second Send was refused | Not tested: 4.6.39 |
+| Q-A10 1x, 350/620/940 widths | Not tested | Not tested: 4.6.39 |
+| codex runtime | Not tested: composer offers only Claude Code | Not tested: 4.6.39 |
+
+## Task acceptance
+
+- A1: Fail for claude on Mac (#1762, so the #1749 fix does not hold on the installed build); Not tested for codex and Windows.
+- A2: Mac WKWebView ran at 2x 800x600 only; other sizes Not tested. Windows WebView2 Not tested: the host runs 4.6.39, which lacks #1747-#1749.
+- A3: no interaction recording (capture lost); four review screens, kept off the repository and pinned above. The new defect is [#1762](https://github.com/taskqorg/taskq/issues/1762), not fixed here.
