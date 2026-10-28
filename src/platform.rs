@@ -89,6 +89,20 @@ pub fn default_install() -> PathBuf {
     })
 }
 
+/// M15: the OS default install (`%LOCALAPPDATA%\taskq`, `~/.local/share/taskq`), whatever `TASKQ_INSTALL` says: only
+/// its tray writes the user's launchers (Start menu `TaskQ.lnk`, `~/Applications/TaskQ.app`).
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub fn home_install() -> Option<PathBuf> {
+    let home = std::env::var_os(if cfg!(windows) { "LOCALAPPDATA" } else { "HOME" }).map(PathBuf::from).filter(|p| p.is_absolute())?;
+    Some(if cfg!(windows) { home.join("taskq") } else { home.join(".local/share/taskq") })
+}
+
+/// `install` is the OS default install; a path the exe location resolved (`\\?\` on Windows) still matches.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub fn is_home(install: &Path, home: Option<&Path>) -> bool {
+    home.is_some_and(|h| h == install || fs::canonicalize(h).is_ok_and(|h| fs::canonicalize(install).is_ok_and(|i| i == h)))
+}
+
 static SERVICE_LOG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// From here on this process is the service: each log line is stamped and folded (§ 4).

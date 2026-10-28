@@ -1772,10 +1772,10 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
 <key>CFBundleExecutable</key><string>taskq</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>TaskQ.icns</string>
-<key>LSUIElement</key><true/>
 </dict></plist>
 "#;
-    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|_| install == platform::default_install());
+    // M15: a regular app (Dock, Cmd+Tab), so no LSUIElement; only the OS default install writes the user's launcher
+    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|_| platform::is_home(install, platform::home_install().as_deref()));
     let app = home.as_ref().map_or_else(|| install.join("TaskQ.app"), |h| h.join("Applications/TaskQ.app"));
     // one bundle per identity: the default install's older `<install>/TaskQ.app` would shadow it in LaunchServices
     if home.is_some() { let _ = fs::remove_dir_all(install.join("TaskQ.app")); }

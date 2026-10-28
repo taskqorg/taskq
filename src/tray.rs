@@ -42,12 +42,13 @@ fn host_lock() -> Option<fs::File> {
 /// M15: a second Open asks the running tray to show its window; its next tick takes the request.
 fn raise_request() -> PathBuf { std::env::temp_dir().join("taskq-tray.raise") }
 
-/// M15 Quit names the active work it waits for (doing and review tasks); menu labels stay within 32 characters.
-fn quit_label(st: &Value, quitting: bool) -> String {
+/// M15 Quit and Restart name the active work they wait for (doing and review tasks); `phase` is `Quitting` or
+/// `Restarting` once one is under way. App text says TaskQ, never service; menu labels stay within 32 characters.
+fn quit_label(st: &Value, phase: Option<&str>) -> String {
     let work: Vec<String> = st["projects"].as_array().into_iter().flatten().flat_map(|p| p["tasks"].as_array().into_iter().flatten())
         .filter(|t| matches!(t["state"].as_str(), Some("doing" | "review"))).map(|t| format!("#{}", t["n"])).collect();
-    if work.is_empty() { return (if quitting { "Quitting: stopping service" } else { "No active work" }).into(); }
-    let mut s = String::from(if quitting { "Quitting after" } else { "Quit waits for" });
+    if work.is_empty() { return phase.map_or("No active work".into(), |p| format!("{p} TaskQ")); }
+    let mut s = phase.map_or("Quit waits for".into(), |p| format!("{p} after"));
     for (i, w) in work.iter().enumerate() {
         if s.len() + w.len() + 1 > 26 { s += &format!(" +{}", work.len() - i); break; }
         s += " "; s += w;
@@ -59,6 +60,8 @@ enum Ev {
     Tick,
     /// M15: Quit TaskQ from the tray menu or Cmd+Q; a refused Quit returns its reason.
     Quit,
+    /// M15: Restart TaskQ drain-stops as Quit, then starts a new tray that runs Open.
+    Restart,
     QuitFailed(String),
     /// M15: a second Open shows the running tray's window.
     Raise,
@@ -919,7 +922,7 @@ fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_l
 }
 
 pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, raise: bool) -> Result<(), String> {
-    let lock = if snapshot.is_none() { host_lock() } else { None };
+    let mut lock = if snapshot.is_none() { host_lock() } else { None };
     if snapshot.is_none() && (lock.is_none() || !alone(&install)) {
         if raise { let _ = fs::write(raise_request(), ""); return Ok(()); }
         return Err("taskq tray already runs on this host".into());
@@ -954,15 +957,20 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
     #[cfg(target_os = "macos")]
     {
-        // Accessory keeps the tray out of the Dock; AppKit menu accelerators enable native text editing.
+        // M15: TaskQ is always a regular app (Dock, Cmd+Tab); a snapshot stays an accessory out of the Dock.
+        // AppKit menu accelerators enable native text editing.
         use tao::platform::macos::{ActivationPolicy, EventLoopExtMacOS};
-        event_loop.set_activation_policy(if settings.pin.pinned && snapshot.is_none() { ActivationPolicy::Regular } else { ActivationPolicy::Accessory });
+        event_loop.set_activation_policy(if snapshot.is_none() { ActivationPolicy::Regular } else { ActivationPolicy::Accessory });
         // a snapshot never takes the owner's focus (taskq.md R12)
         event_loop.set_activate_ignoring_other_apps(snapshot.is_none());
         if snapshot.is_none() {
-            use tray_icon::menu::{Submenu, accelerator::Accelerator};
+            use tray_icon::menu::{AboutMetadata, Submenu, accelerator::Accelerator};
+            let about = AboutMetadata { name: Some("TaskQ".into()), version: Some(crate::platform::VERSION.into()), ..Default::default() };
+            let restart = MenuItem::with_id("restart", "Restart TaskQ", true, None);
             let quit = MenuItem::with_id("quit", "Quit TaskQ", true, "CmdOrCtrl+Q".parse::<Accelerator>().ok());
-            let app = Submenu::with_items("TaskQ", true, &[&quit]).map_err(|e| e.to_string())?;
+            let app = Submenu::with_items("TaskQ", true, &[&PredefinedMenuItem::about(Some("About TaskQ"), Some(about)), &PredefinedMenuItem::separator(),
+                &PredefinedMenuItem::hide(Some("Hide TaskQ")), &PredefinedMenuItem::hide_others(None), &PredefinedMenuItem::show_all(None), &PredefinedMenuItem::separator(),
+                &restart, &quit]).map_err(|e| e.to_string())?;
             let edit = Submenu::with_items("Edit", true, &[&PredefinedMenuItem::undo(None), &PredefinedMenuItem::redo(None), &PredefinedMenuItem::separator(),
                 &PredefinedMenuItem::cut(None), &PredefinedMenuItem::copy(None), &PredefinedMenuItem::paste(None), &PredefinedMenuItem::select_all(None)]).map_err(|e| e.to_string())?;
             let menu = Menu::with_items(&[&app, &edit]).map_err(|e| e.to_string())?;
@@ -978,7 +986,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         }
     }));
     let proxy = event_loop.create_proxy();
-    MenuEvent::set_event_handler(Some(move |e: MenuEvent| if e.id.0 == "quit" { let _ = proxy.send_event(Ev::Quit); }));
+    MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
+        let ev = match e.id.0.as_str() { "quit" => Ev::Quit, "restart" => Ev::Restart, "open" => Ev::Raise, _ => return };
+        let _ = proxy.send_event(ev);
+    }));
     let proxy = event_loop.create_proxy();
     // #1755: at most one queued tick; ticks behind a stalled loop fold into one refresh
     std::thread::spawn(move || loop {
@@ -1042,7 +1053,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut bursts = notify::Bursts::new();
     let mut shot_wait=None;
     let mut web=WebCalls::new();
-    let (work_item, mut quitting) = (MenuItem::new("No active work", false, None), false);
+    // M15: `Quitting` or `Restarting` while the drain-stop runs
+    let (work_item, mut quitting) = (MenuItem::new("No active work", false, None), None::<&str>);
     event_loop.run(move |event, target, flow| {
         let _ = &lock;
         crate::telemetry::diagnostic::poll(&install);
@@ -1073,7 +1085,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         }
         if web.failed && !web.notified {
             web.notified=true;
-            if let Some(t)=&tray {let _=t.set_tooltip(Some("TaskQ: interface outcomes unknown; check service status"));}
+            if let Some(t)=&tray {let _=t.set_tooltip(Some("TaskQ: interface outcomes unknown; check results before retry"));}
             if snapshot.is_none() && let Some((_,wv))=&ui {web_eval(wv,"window.taskqWebFault('native')","tray.web.notice",&proxy,&mut web);}
         }
         if web.failed && snapshot.is_some() && web.pending.is_empty() {crate::platform::exit(1);}
@@ -1128,8 +1140,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     return;
                 }
                 // macOS needs a running event loop before the icon exists
-                // M15: Quit TaskQ in the tray menu (right click), naming the work it waits for
-                let menu = Menu::with_items(&[&work_item, &PredefinedMenuItem::separator(), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
+                // M15: Open, Restart TaskQ and Quit TaskQ in the tray menu (right click), naming the work they wait for
+                let menu = Menu::with_items(&[&work_item, &PredefinedMenuItem::separator(), &MenuItem::with_id("open", "Open", true, None),
+                    &MenuItem::with_id("restart", "Restart TaskQ", true, None), &MenuItem::with_id("quit", "Quit TaskQ", true, None)]);
                 match TrayIconBuilder::new().with_icon(rgba_icon(&compact(false, dark, 2.0))).with_tooltip("taskq").with_menu_on_left_click(false)
                     .with_menu(Box::new(menu.unwrap_or_default())).build() {
                     Ok(t) => tray = Some(t),
@@ -1193,9 +1206,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     *flow = ControlFlow::Exit;
                     return;
                 }
-                // M15: Quit ends the tray once the service has stopped; no heartbeat stays behind
-                if quitting && crate::host::service_status(&install)["state"] != "running" {
+                // M15: Quit ends the tray once the service has stopped; no heartbeat stays behind. Restart then frees the
+                // host lock and starts a new tray, whose Open starts a new service generation.
+                if let Some(phase) = quitting && crate::host::service_status(&install)["state"] != "running" {
                     let _ = fs::remove_file(install.join("tray"));
+                    if phase == "Restarting" {
+                        drop(lock.take());
+                        if let Err(e) = relaunch(&install) { eprintln!("taskq tray: Restart could not start TaskQ: {e}"); }
+                    }
                     *flow = ControlFlow::Exit;
                     return;
                 }
@@ -1226,8 +1244,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
                 }
             }
-            Event::UserEvent(Ev::Quit) if snapshot.is_none() && !quitting => {
-                quitting = true;
+            Event::UserEvent(ev @ (Ev::Quit | Ev::Restart)) if snapshot.is_none() && quitting.is_none() => {
+                // M15: Restart drain-stops exactly as Quit does
+                quitting = Some(if matches!(ev, Ev::Restart) { "Restarting" } else { "Quitting" });
                 let (install, p) = (install.clone(), proxy.clone());
                 std::thread::spawn(move || if let Err(e) = crate::lifecycle::quit(&install) {
                     eprintln!("taskq tray: Quit refused: {e}");
@@ -1235,9 +1254,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 });
             }
             Event::UserEvent(Ev::QuitFailed(e)) => {
-                quitting = false;
-                work_item.set_text("Quit refused; see tray.log");
-                if let Some(t) = &tray { let _ = t.set_tooltip(Some(format!("TaskQ: Quit refused: {e}").chars().take(160).collect::<String>())); }
+                let what = if quitting == Some("Restarting") { "Restart" } else { "Quit" };
+                quitting = None;
+                work_item.set_text(format!("{what} refused; see tray.log"));
+                if let Some(t) = &tray { let _ = t.set_tooltip(Some(format!("TaskQ: {what} refused: {e}").chars().take(160).collect::<String>())); }
             }
             Event::UserEvent(Ev::Raise) | Event::Reopen { .. } if snapshot.is_none() => {
                 let Some((w, _)) = &ui else { return };
@@ -1584,8 +1604,6 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     }
                     "pin" | "drag" => {
                         settings.pin.pinned = m["a"]=="drag" || !settings.pin.pinned;
-                        #[cfg(target_os = "macos")]
-                        app_window(settings.pin.pinned);
                         #[cfg(windows)]
                         { use tao::platform::windows::WindowExtWindows; w.set_skip_taskbar(!settings.pin.pinned); }
                         if let (true, Ok(p), Some(m)) = (settings.pin.pinned, w.outer_position(), w.current_monitor()) {
@@ -2037,7 +2055,7 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
     });
     match applied { Ok(()) => *sig = new, Err(e) => eprintln!("taskq app icon: {e}") }
     let [w, a, r, _] = sum.counts;
-    let counts = if sum.known { format!("in work {w} · waiting for answer {a} · ready + blocked {}",r + sum.blocked) } else { "counts unknown (service error or stale status)".into() };
+    let counts = if sum.known { format!("in work {w} · waiting for answer {a} · ready + blocked {}",r + sum.blocked) } else { "counts unknown (status error or stale)".into() };
     let _ = t.set_tooltip(Some(format!("taskq: {counts}{}{}", if sum.run { "" } else { " · paused" },if st["agentq"]["warning"]==true{" · agentq is not installed (last confirmed absence; check Agents)"}else{""})));
 }
 
@@ -2061,14 +2079,23 @@ fn refresh_app_icon(img: &Rgba, window: Option<&Window>) -> Result<(),String> {
     Ok(())
 }
 
-/// M13: only a pinned tray participates in the normal macOS app switcher.
-#[cfg(target_os = "macos")]
-fn app_window(pinned: bool) {
-    use objc2_app_kit::{NSApplication,NSApplicationActivationPolicy};
-    if let Some(mtm)=objc2_foundation::MainThreadMarker::new() {
-        let app=NSApplication::sharedApplication(mtm);
-        app.setActivationPolicy(if pinned {NSApplicationActivationPolicy::Regular} else {NSApplicationActivationPolicy::Accessory});
+/// M15 Restart: a new tray that runs Open, started after this one has freed the host lock and heartbeat. A bundled
+/// tray reopens its `TaskQ.app` through LaunchServices as Open does (M14); else this executable runs `tray --open`.
+fn relaunch(install: &Path) -> std::io::Result<()> {
+    let exe = std::env::current_exe()?;
+    let mut c = std::process::Command::new(&exe);
+    c.args(["tray", "--open"]);
+    #[cfg(target_os = "macos")]
+    if let Some(app) = exe.ancestors().nth(3).filter(|_| exe.ends_with("TaskQ.app/Contents/MacOS/taskq")) {
+        c = std::process::Command::new("open");
+        c.arg("-n").arg(app);
     }
+    let err = fs::OpenOptions::new().create(true).append(true).open(install.join("tray.log")).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
+    c.current_dir(install).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(err);
+    // its own process group, as the service starts it: a later service stop leaves this tray alone
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut c, 0);
+    crate::platform::quiet(&mut c).spawn().map(drop)
 }
 
 fn workspace_operation(action:&str)->bool {
@@ -2531,16 +2558,20 @@ fn own_page(u: String) -> bool { !u.starts_with("http") }
 mod tests {
     use super::*;
 
-    // M15: Quit names the doing and review work it waits for within the 32-character menu label; a second tray on
-    // the host never takes the lock. Risk: Quit hides active work, or two trays run across install folders.
+    // M15: Quit and Restart name the doing and review work they wait for within the 32-character menu label, and app
+    // text never says service; a second tray on the host never takes the lock. Risk: Quit or Restart hides active
+    // work, the app shows itself as a service, or two trays run across install folders.
     #[test]
     fn quit_names_active_work_and_host_lock_is_single() {
         let st = |ns: &[(u64, &str)]| json!({"projects": [{"tasks": ns.iter().map(|(n, s)| json!({"n": n, "state": s})).collect::<Vec<_>>()}]});
-        assert_eq!(quit_label(&st(&[]), false), "No active work");
-        assert_eq!(quit_label(&st(&[(12, "doing"), (13, "ready"), (14, "review")]), false), "Quit waits for #12 #14");
-        let many = quit_label(&st(&[(1001, "doing"), (1002, "doing"), (1003, "review"), (1004, "doing")]), true);
+        assert_eq!(quit_label(&st(&[]), None), "No active work");
+        assert_eq!(quit_label(&st(&[(12, "doing"), (13, "ready"), (14, "review")]), None), "Quit waits for #12 #14");
+        let many = quit_label(&st(&[(1001, "doing"), (1002, "doing"), (1003, "review"), (1004, "doing")]), Some("Quitting"));
         assert_eq!(many, "Quitting after #1001 #1002 +2");
         assert!(many.len() <= 32);
+        let restart = quit_label(&st(&[(1001, "doing"), (1002, "doing"), (1003, "review"), (1004, "doing")]), Some("Restarting"));
+        assert_eq!(restart, "Restarting after #1001 +3");
+        for phase in ["Quitting", "Restarting"] { assert_eq!(quit_label(&st(&[]), Some(phase)), format!("{phase} TaskQ")); }
         if let Some(held) = host_lock() {
             assert!(host_lock().is_none(), "a second tray on this host is refused");
             drop(held);
