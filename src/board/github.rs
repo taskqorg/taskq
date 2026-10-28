@@ -321,6 +321,11 @@ impl GitHub {
                 } else if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {sha}") };
                 return Ok(Publish::Done(format!("merged #{}{} as {}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
             }
+            // #1777: superseded by PRs merged at other heads; `Failed` would cancel a PR that is gone and retry each pass
+            let merged: Vec<_> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null())
+                .map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha"))).collect();
+            let merged = if merged.is_empty() { "none".into() } else { merged.join(", ") };
+            return Ok(Publish::Blocked(format!("no open {branch} PR at result {sha}; merged {branch} PRs: {merged}; close by hand if superseded")));
         }
         if prs.len() != 1 {
             return Ok(Publish::Failed(format!("{} open PRs of {branch}, want exactly one", prs.len())));

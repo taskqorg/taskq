@@ -975,6 +975,31 @@ mod tests {
         }
     }
 
+    // Chain: § 7 publication with no open task PR and merged PRs only at other heads (#1777, pilotq#84).
+    // Risk: `Failed` makes `publication-failed` cancel a PR that is gone, its write is refused and publish retries each pass.
+    #[test]
+    fn a_result_superseded_by_merged_prs_asks_once() {
+        let calls = std::rc::Rc::new(RefCell::new(vec![]));
+        let captured = calls.clone();
+        let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+            captured.borrow_mut().push(method.to_string());
+            let value = if url.contains("/compare/") { json!({"status": "diverged"}) }
+                else if url.ends_with("/rules/branches/main") { json!([]) }
+                else if url.contains("state=open") { json!([]) }
+                else if url.contains("state=closed") {
+                    json!([{"number": 86, "head": {"sha": "d".repeat(40)}, "merged_at": "x"},
+                           {"number": 87, "head": {"sha": "a".repeat(40)}, "merged_at": null},
+                           {"number": 88, "head": {"sha": "e".repeat(40)}, "merged_at": "x"}])
+                } else { panic!("unexpected {method} {url}") };
+            Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+        }));
+        let sha = "a".repeat(40);
+        let got = h.resume_publication(1, &sha, "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
+        let Publish::Blocked(m) = got else { panic!("{got:?}") };
+        assert_eq!(m, format!("no open taskq-1 PR at result {sha}; merged taskq-1 PRs: #86 at ddddddd, #88 at eeeeeee; close by hand if superseded"));
+        assert!(calls.borrow().iter().all(|m| m == "GET"), "no publication write");
+    }
+
     // Chain: section 7 intent -> expected-head admission -> merge_group CI -> observed merge receipt.
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     #[test]
