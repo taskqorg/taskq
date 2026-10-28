@@ -1,0 +1,728 @@
+{
+  "schema": "taskq.usability-preservation/1",
+  "baseline": "da4ef2b6db01b066f5c897eb5afe01269fda37df",
+  "scope": "Menu, Conversations, shared task answers and reachable settings/operations. Source presence is not installed-runtime qualification.",
+  "approved_removals": [],
+  "features": [
+    {
+      "id": "M01",
+      "feature": "Eight task states and OR filters; unknown counts distinct from zero",
+      "source": "project-blocks.js;task-views.js",
+      "previous_candidate": "Partial: only a small single-choice filter",
+      "destination": "Same counter strip and separate View conditions",
+      "check": "Select Doing+Ask+Held, clear All; inject incomplete project and inspect unknown counters",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M02",
+      "feature": "Registered-project multi-selection and board deduplication",
+      "source": "task-dashboard.js;task-views.js",
+      "previous_candidate": "Missing",
+      "destination": "View window → Projects",
+      "check": "Two roots for one board never duplicate a row; include/exclude projects independently",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M03",
+      "feature": "Saved views: create, explicit Save, Save as, dirty and Reset",
+      "source": "task-dashboard.js;task-views.js",
+      "previous_candidate": "Missing",
+      "destination": "Separate View window; same menu shortcuts",
+      "check": "Edit temporary criteria, switch away/back, Save, Reset and reload without overwriting another view",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M04",
+      "feature": "View shortcut pin; delete custom view and named Undo",
+      "source": "task-dashboard.js;task-views.js",
+      "previous_candidate": "Missing",
+      "destination": "View window → Saved views",
+      "check": "Delete active/inactive view; Undo restores working/saved criteria and selection; built-ins protected",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M05",
+      "feature": "Combined/project grouping and source ranking",
+      "source": "task-dashboard.js;task-views.js",
+      "previous_candidate": "Missing; fixture array order",
+      "destination": "View → Display",
+      "check": "Same scoped result identities/order in both groups; priority/state/issue order retained",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M06",
+      "feature": "Global task pins across filters/projects/views",
+      "source": "task-dashboard.js",
+      "previous_candidate": "Partial",
+      "destination": "Menu above ordinary task results; shared scroll",
+      "check": "Pin excluded task, change query/project/state/Completed; one row remains and Unpin works",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M07",
+      "feature": "Task search and no-match recovery",
+      "source": "task-dashboard.js",
+      "previous_candidate": "Partial",
+      "destination": "Menu search; Clear/Reset",
+      "check": "Long identifier/title search retains other criteria and explicit Reset",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M08",
+      "feature": "Completed board history, periods, outcomes, PR links and retry",
+      "source": "task-dashboard.js",
+      "previous_candidate": "Missing",
+      "destination": "Completed view",
+      "check": "Read multiple pages, dedup, period/outcome filters; failure keeps prior rows and Retry",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M09",
+      "feature": "Forge/issue identity, full title and Board navigation",
+      "source": "project-blocks.js;task-dashboard.js",
+      "previous_candidate": "Partial",
+      "destination": "Existing row and title link; detail on identity click",
+      "check": "Same board with same number on different forge stays distinct; full title wraps",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M10",
+      "feature": "Runtime, remote host and verified session destinations",
+      "source": "project-blocks.js;task-dashboard.js",
+      "previous_candidate": "Missing",
+      "destination": "Row symbols and task Details",
+      "check": "Local Codex vs remote/headless vs Claude links; unsupported destination has an explanation",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M11",
+      "feature": "Stage age, total age, ordered steps and missing-source explanation",
+      "source": "project-blocks.js;task-dashboard.js",
+      "previous_candidate": "Partial",
+      "destination": "Existing row age; expanded task Details",
+      "check": "Long stages, incomplete history and missing fields show unknown rather than fabricated zeros",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M12",
+      "feature": "Blocked dependency links, wait and failure reasons",
+      "source": "task-dashboard.js;project-blocks.js",
+      "previous_candidate": "Missing",
+      "destination": "Inline task detail; full context in Conversations/Board",
+      "check": "Blocked vs capacity vs failed stay distinct; linked blockers reachable",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M13",
+      "feature": "Held task Start and batch Start held with revisions",
+      "source": "tray-app.js;task-controls.js;workspace-answers.js",
+      "previous_candidate": "Missing",
+      "destination": "Existing task actions and scoped Start held",
+      "check": "One held task vs several; stale revision refuses without admitting any unintended item",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M14",
+      "feature": "Task Stop, Later and Retry; Close on board",
+      "source": "task-controls.js;tray-app.js",
+      "previous_candidate": "Missing",
+      "destination": "Task actions; secondary actions stay available",
+      "check": "Allowed actions vary by source state; refusal keeps task and original operation identity",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M15",
+      "feature": "Compact question entry without nested reader",
+      "source": "task-dashboard.js;task-dashboard.css",
+      "previous_candidate": "Present as an isolated fixture",
+      "destination": "Short inline cue → exact task thread",
+      "check": "Wheel over cue/title/buttons continues one menu scroll; Back returns to prior view and position",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M16",
+      "feature": "Ordinary task thread and direct question opening",
+      "source": "tray-app.js;workspace.js",
+      "previous_candidate": "Partial: fixed fixture targets",
+      "destination": "Existing task-to-workspace route; no-question thread remains meaningful",
+      "check": "Correct board/root/task/revision for ask and ordinary task, no implicit acknowledgement",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M17",
+      "feature": "Header Home/Back/project Board, Settings and emergency stop",
+      "source": "tray-app.js;app-shell.js",
+      "previous_candidate": "Partial",
+      "destination": "Existing header locations and parent-only breadcrumb",
+      "check": "Back restores source view; emergency action opens scoped review before an effect",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M18",
+      "feature": "Unread event badge and explicit read/archive semantics",
+      "source": "tray-app.js;workspace.js;messages.rs",
+      "previous_candidate": "Partial",
+      "destination": "Single Conversations entry; unread badge stays source-driven",
+      "check": "Open/scroll/Close do not acknowledge; changed question identity is not the previous read event",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M19",
+      "feature": "Keep open versus Always on top; independent native window state",
+      "source": "tray-app.js;tray.rs",
+      "previous_candidate": "Partial: visual toggles only",
+      "destination": "Separate existing controls in menu and workspace",
+      "check": "Pinning window does not pin task/view; close one window leaves others intact",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M20",
+      "feature": "Menu drag, resize, growth/edge, Escape and keyboard focus",
+      "source": "tray-app.js;tray-view-state.js;tray.rs",
+      "previous_candidate": "Partial: CSS geometry only",
+      "destination": "Existing native shell/corner grip and Appearance",
+      "check": "Drag enables keep-open only on real movement; resize/scale/edges do not clip actions",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M21",
+      "feature": "Project navigation, explicit registry, folder picker and setup",
+      "source": "tray-app.js;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Projects page and existing setup review",
+      "check": "No discovery; cancellation, invalid/duplicate paths, unavailable service, reviewed external effects",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M22",
+      "feature": "Home hosts/resources/running agents and freshness",
+      "source": "tray-app.js;resource-controls.js",
+      "previous_candidate": "Missing",
+      "destination": "Existing compact host line and expansion",
+      "check": "Tasks, running processes and reservations stay distinct; stale/partial read is explicit",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M23",
+      "feature": "Work mode, admission/capacity, pause/resume and focus",
+      "source": "tray-app.js;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Settings → Work mode; existing operation workspace",
+      "check": "Configured versus effective values; scoped target review, rejection and fresh readback",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M24",
+      "feature": "Drain/full stop and durable recovery",
+      "source": "tray-app.js;tray.rs;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Existing emergency/recovery review",
+      "check": "Drain finishes work; Full stop holds first; unknown liveness never becomes safe-to-resume",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M25",
+      "feature": "Appearance: OS theme, 14/16/18/20 text, tray summary and growth",
+      "source": "tray-app.js",
+      "previous_candidate": "Partial; manual theme fixture differs from product",
+      "destination": "Settings → Appearance in its own window",
+      "check": "Each text size, Icon/Summary and growth persists natively; theme follows OS",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M26",
+      "feature": "Notifications, per-host/project modes and OS test/status",
+      "source": "tray-app.js",
+      "previous_candidate": "Missing",
+      "destination": "Settings → Notifications",
+      "check": "Off/Silent/Banner/Sound and per-project overrides; OS unknown/blocked and test refusal",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M27",
+      "feature": "Activity bins, scope, period and timezone",
+      "source": "tray-app.js",
+      "previous_candidate": "Missing",
+      "destination": "Settings → Activity history",
+      "check": "Six bins, selected period/custom range where currently exposed; stale/missing is not zero",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M28",
+      "feature": "Agents/access/login, runtime availability and AgentQ status",
+      "source": "tray-app.js",
+      "previous_candidate": "Missing",
+      "destination": "Settings → Agents/access",
+      "check": "Authentication differs from grants/capacity/running work; no silent runtime fallback",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M29",
+      "feature": "Delivery policies and actual effective state",
+      "source": "tray-app.js",
+      "previous_candidate": "Missing",
+      "destination": "Settings → Delivery",
+      "check": "Saved/pending/effective policy, unknown receipt and refresh remain distinct",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M30",
+      "feature": "Services, logs/folders/resource monitor, restart/stop/uninstall",
+      "source": "tray-app.js;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Settings → Services/support; existing reviewed operations",
+      "check": "Review exact host/roots/expiry; queued/applied/observed receipts; expired or stale refuses",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M31",
+      "feature": "Installed/running/available versions and updates",
+      "source": "tray-app.js;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Settings → About/updates",
+      "check": "Installed tray differs from host service version; update review, stale availability and failure",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "M32",
+      "feature": "Shared scroll and route survival during slow/faulted operations",
+      "source": "tray-app.js;app-shell.js;tray-guard.js",
+      "previous_candidate": "Not established",
+      "destination": "One menu reading scroll; separate window routes",
+      "check": "Delay service read; continue navigation/Close; route failure retains Home/Back and preserves view",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C01",
+      "feature": "One list for owner conversations, task questions and orphan events",
+      "source": "workspace.js;conversations.js",
+      "previous_candidate": "Partial: fixed fixture list",
+      "destination": "Existing unified Conversations list",
+      "check": "Dedup question updates, request-event association and event without owner conversation",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C02",
+      "feature": "Recent/Archive search, Clear and New",
+      "source": "conversations.js",
+      "previous_candidate": "Partial",
+      "destination": "Chat list: New chat saves a draft; existing topics continue directly; narrow Chats/Back",
+      "check": "Search both lists; New clears filter, focuses its own draft and reveals row",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C03",
+      "feature": "Independent durable draft, caret, files, list scroll and selection",
+      "source": "conversations.js;conversations.rs;tray-view-state.js",
+      "previous_candidate": "Partial: JS memory only",
+      "destination": "Existing native persistence; auto-growing input in the shared reading viewport, fixed Send tools",
+      "check": "Switch before debounce, close/reopen/restart, storage failure; no cross-thread draft/caret",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C04",
+      "feature": "Explicit registered project and launch runtime; no fallback",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Partial: provider selector fixture",
+      "destination": "New chat shows its registered project before Start chat; recorded runtime stays fixed after launch",
+      "check": "Unavailable project/runtime refuses; changing default never migrates an existing session",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C05",
+      "feature": "Continue in the same native session with one writer",
+      "source": "conversations.js;dialogue.rs",
+      "previous_candidate": "Scripted only",
+      "destination": "Same selected thread/composer",
+      "check": "Two consecutive replies on Codex/Claude; detached/native writer busy refuses and keeps draft",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C06",
+      "feature": "New from draft starts an independent request",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Missing",
+      "destination": "Composer secondary action; explicit new destination",
+      "check": "Move next draft/owned files once; failed fork preserves original and same fork id",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C07",
+      "feature": "Command history fills only, last twenty, Clear history",
+      "source": "conversations.js;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Composer history icon; one direct menu; fills only",
+      "check": "Filling never sends; Clear command history does not delete conversations or native transcript",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C08",
+      "feature": "Explicit rename versus temporary first-line title",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Missing",
+      "destination": "Existing editable conversation name",
+      "check": "Rename, change draft, switch/reopen; explicit name wins and source task title is immutable here",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C09",
+      "feature": "Attach/drop, count/type/byte/storage validation",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Partial: filename-only fixtures",
+      "destination": "Existing composer file picker and drag/drop",
+      "check": "4 files/5MiB/20MiB/100MiB; UTF8/NUL/image signature/dimensions/path/hash; invalid preserves others",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C10",
+      "feature": "Owned file preview/remove and immutable sent bytes",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Missing actual bytes/preview",
+      "destination": "File chips → preview; Remove local reference",
+      "check": "Preview text/image, changed/missing file, remove; source file untouched; sent manifest stays immutable",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C11",
+      "feature": "Open verified native session and Work sessions",
+      "source": "pm-composer.js;conversations.js",
+      "previous_candidate": "Missing/placeholder links",
+      "destination": "More → Task activity: task, role, state and verified agent chat; open question routes to Conversations",
+      "check": "Claude validated URL, own-host Codex link, remote explanation; opening sends no input",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C12",
+      "feature": "Detach, Raise, Return and single editable owner",
+      "source": "conversations.js;conversations.rs;tray.rs",
+      "previous_candidate": "Missing",
+      "destination": "Conversation tools and separate window",
+      "check": "Detached row raises existing window; main readonly; return/close/restart owner and draft continuity",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C13",
+      "feature": "Queued native launch cancellation versus active work",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Missing",
+      "destination": "Launch status → Cancel queued launch",
+      "check": "Cancel only before launch; late receipt never offers an invented native Stop",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C14",
+      "feature": "Check original delivery, missing receipt and explicit retry rules",
+      "source": "conversations.js;pm-composer.js",
+      "previous_candidate": "Partial local fixture",
+      "destination": "One thread-local status; Check delivery",
+      "check": "Same operation id on reconciliation; unknown never automatically resend; definite refusal differs",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C15",
+      "feature": "Save failure, quota, malformed storage and interrupted launch",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Missing most persistence cases",
+      "destination": "Inline actionable failure with retained draft/files",
+      "check": "Preserve unreadable bytes; do not overwrite/delete; queued send waits for durable save",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C16",
+      "feature": "Archive, Restore and named Undo",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Partial: in-memory only",
+      "destination": "Conversation tools/Archive list; clear local scope",
+      "check": "Source native chat/board unaffected; independent Recent/Archive selection and undo receipt",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C17",
+      "feature": "Permanent archived deletion, confirmation and draft rescue",
+      "source": "conversations.js;conversations.rs",
+      "previous_candidate": "Missing",
+      "destination": "Archive → Delete permanently → scoped confirmation",
+      "check": "No undo; only owned record/files; unsent independent draft preserved; failure retry/no resurrection",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C18",
+      "feature": "Orphan event Mark read/Archive/Restore/Delete and late receipts",
+      "source": "workspace.js;messages.rs",
+      "previous_candidate": "Missing",
+      "destination": "Existing selected event/thread controls",
+      "check": "Correct record identity; foreign receipt never changes selected thread; explicit acknowledgement",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C19",
+      "feature": "Watch create/edit/remove, cadence/events and due status",
+      "source": "conversations.js;dialogue.rs",
+      "previous_candidate": "Missing: no-watch placeholder",
+      "destination": "Conversation info → inline Watch controls; one disclosure",
+      "check": "Prompt, >=5min, event subset; last/next/outcome; idle-only send; save/refusal/unknown retained",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C20",
+      "feature": "Native transcript paging, tools, incomplete/unreadable source",
+      "source": "conversations.js;transcript.rs",
+      "previous_candidate": "Different synthetic known-count reader",
+      "destination": "Single reading viewport; Load earlier recovery retained",
+      "check": "Byte cursors, Unicode/long line/partial append/shrink/replacement/ignored records/page seams",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C21",
+      "feature": "Bounded long-history rendering and stable reading anchor",
+      "source": "conversations.js;transcript.rs",
+      "previous_candidate": "Isolated 10k interaction experiment only",
+      "destination": "Measured contiguous page window first; optional maintained virtualizer after spike",
+      "check": "Reach beginning and return latest; bounded DOM AND text cache; preserve selection/anchor; no silent truncation",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C22",
+      "feature": "Visible launch/delivery/work/slow/failure states",
+      "source": "conversations.js;dialogue.rs;pm-composer.js",
+      "previous_candidate": "Scripted only",
+      "destination": "One status per operation, distinct activity indicator",
+      "check": "Accepted delivery is not completed work; long wait has elapsed time and navigation remains live",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C23",
+      "feature": "Manual Refresh, work/operation routes and fault recovery",
+      "source": "workspace.js;app-shell.js",
+      "previous_candidate": "Missing operations/route survival",
+      "destination": "Existing header and Work sessions/operation review routes",
+      "check": "Refresh never sends/retries; unknown result remains unknown; shell survives route failure",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "C24",
+      "feature": "Keyboard, IME, selection, native windows and accessibility",
+      "source": "conversations.js;workspace.js;tray.rs",
+      "previous_candidate": "Partial Chromium fixture only",
+      "destination": "Existing shortcuts plus fixed input; source labels retained",
+      "check": "Enter/ShiftEnter/IME, Escape/AltLeft, focus return, screen reader, scrollbar and 1x/2x Mac/Windows",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A01",
+      "feature": "Source choice ids/order/recommendation and direct normal answer",
+      "source": "answer-card.js",
+      "previous_candidate": "Partial: two invented choices",
+      "destination": "Existing shared answer-card inside task reading viewport",
+      "check": "Non-sequential ids, exact source numbers, same button meaning and receipt; no renumbering",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A02",
+      "feature": "Checked evidence/source links and PM pick/rationale",
+      "source": "answer-card.js",
+      "previous_candidate": "Missing",
+      "destination": "Question card → Checked & context; PM recommendation separate",
+      "check": "PM pick is not worker recommendation; Done/proof retained and links reachable",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A03",
+      "feature": "Parsed no-choice owner action and free-text completion",
+      "source": "answer-card.js;workspace.js",
+      "previous_candidate": "Missing special management path",
+      "destination": "Same question card and shared composer",
+      "check": "What you did answer vs Requeue/Later/Close; plain text preserves intent",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A04",
+      "feature": "Unparsed question and explicit board/requeue fallback",
+      "source": "answer-card.js",
+      "previous_candidate": "Missing",
+      "destination": "Original source text + explained available actions",
+      "check": "Do not invent choices; unavailable action disabled with reason and board destination",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A05",
+      "feature": "Consequential close/publish review and close-without-publication",
+      "source": "answer-card.js",
+      "previous_candidate": "Missing",
+      "destination": "Explicit effect review; existing two-step close flow",
+      "check": "No ordinary choice directly publishes/closes; later→close readback and partial outcome remain visible",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A06",
+      "feature": "Question-specific text/bytes/lines limits and task-file exclusion",
+      "source": "answer-card.js;workspace.js",
+      "previous_candidate": "Partial: only nonempty check",
+      "destination": "Shared validated answer composer",
+      "check": "Exact limits, unsupported attachments/number-as-text; no silent truncation or file transport",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A07",
+      "feature": "Revision changes, stale question and retained selected draft",
+      "source": "answer-card.js;workspace-answers.js",
+      "previous_candidate": "Partial scripted refusal",
+      "destination": "Updated question → explicit review before answer",
+      "check": "Same-choice text changed/reordered, update while typing/pending, preserve source revision and draft",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A08",
+      "feature": "Receipt states, same-id reconciliation and partial failure",
+      "source": "workspace-answers.js;answer-card.js",
+      "previous_candidate": "Partial",
+      "destination": "One selected-task outcome; global Answered remains available",
+      "check": "Accepted/rejected/stale/unknown/partial; late same-op vs foreign-op; retry never duplicates unknown effect",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A09",
+      "feature": "Global Answered history/dismiss/toast versus selected-thread receipt",
+      "source": "workspace-answers.js;tray-app.js;workspace.js",
+      "previous_candidate": "Global feed omitted; local receipt simulated",
+      "destination": "Global menu Answered kept; task workspace filters by task identity",
+      "check": "Two questions same board, late receipt after switch, newest20/dismiss and original global acknowledgement",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "A10",
+      "feature": "Source action controls, task operation identity and grant boundary",
+      "source": "task-controls.js;workspace-answers.js;pm-composer.js",
+      "previous_candidate": "Missing native operation contracts",
+      "destination": "Reuse same exported components/native commands",
+      "check": "Exact board/task/revision/op/authority/expiry, one writer; no newly granted privileges",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "X01",
+      "feature": "Shared exports and DashQ consumers",
+      "source": "task-workspace.js;scripts/build-web.cjs",
+      "previous_candidate": "Different handwritten renderer",
+      "destination": "Existing Preact/Signals/Wouter/CoreQ and published interfaces",
+      "check": "Inventory all import/bundle consumers; compatible API/CSS scope; DashQ smoke before release",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "X02",
+      "feature": "Board/native storage authority and migration rollback",
+      "source": "conversations.rs;messages.rs;taskq.md",
+      "previous_candidate": "Not modeled",
+      "destination": "No replacement local task database or transcript store",
+      "check": "Read-only fixture separation; any metadata migration reversible with original bytes and rollback proof",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "X03",
+      "feature": "Provider capability boundary without model/permission changes",
+      "source": "dialogue.rs;runtime/;pm-composer.js",
+      "previous_candidate": "Invented normalized events",
+      "destination": "One view model over existing native Codex/Claude adapters",
+      "check": "Actual captured provider fixtures/version capabilities; no silent fallback and no generic native Stop",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "X04",
+      "feature": "All settings and operational capability retention",
+      "source": "tray-app.js;tray.rs",
+      "previous_candidate": "Only Appearance mocked",
+      "destination": "Retain existing pages; simplify entry/hierarchy, not scope",
+      "check": "Full settings route sweep plus reviewed action/refusal/receipt cases; disabled is not a simulated success",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "X05",
+      "feature": "Incremental implementation and source/binary qualification",
+      "source": "docs/testing.md;docs/design/ui-acceptance.md",
+      "previous_candidate": "No runtime proof",
+      "destination": "F0 parity gate, then independently usable slices",
+      "check": "Freeze baseline, run existing relevant tests, compare accepted journey evidence; installed proof separate",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    },
+    {
+      "id": "X06",
+      "feature": "No feature removal without an owner decision",
+      "source": "docs/design/session-draft.md;taskq.md",
+      "previous_candidate": "Unreviewed omissions",
+      "destination": "This ledger is a mandatory planning input",
+      "check": "Every Retain row has reachable target and test; removal needs rationale, alternatives, migration and explicit owner approval",
+      "decision": "Retain",
+      "native_result": "Not tested"
+    }
+  ]
+}

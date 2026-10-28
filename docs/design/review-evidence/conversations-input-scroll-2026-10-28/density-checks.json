@@ -1,0 +1,11 @@
+{
+  "scope": "Local prototype density and source control behavior only; no real task admission.",
+  "results": [
+    "Empty Search costs zero rows, focuses on one click, Escape restores the compact position; Held action shares counter flow without replacing its filter",
+    "Nonempty/no-match query stays visible across blur, Escape and Settings; Clear restores tasks and empty blur returns to the icon",
+    "Synthetic batch Start admits exactly the query-matched held task keys/revisions; excluded held work remains held",
+    "The same empty/active/clear search rule applies to Conversations without another permanent row",
+    "32 menu geometry cells preserve all state filters, view controls and full query capability at narrow widths/large type"
+  ],
+  "errors": []
+}

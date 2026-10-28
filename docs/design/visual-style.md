@@ -10,7 +10,7 @@ Final candidate for the approved dense menu. Shared principles: [specq D1–D14]
 - Outer inset 8 px; row horizontal inset 4 px; related gap 4–6 px; section separation 6 px with one 1 px divider.
 - Approved control hit targets follow [UI05–UI06](ui-rules.md#checklist-28-rules): at least 32×32 CSS px for fine pointers and 44×44 CSS px for coarse pointers; native units require scaling verification. Icons normally 16 px; compact top-strip icons keep usable targets.
 - Menu radius 12 px; controls 5–7 px; counter capsules; counter symbols may use 14 px within 32 px targets. No nested decorative cards; bordered surfaces only for composers and consequential change review.
-- Header/control strip stays accessible. Native height is bounded by the monitor work area; scroll content, never clip it. AI window uses a fixed composer within the window and a scrolling transcript.
+- Header/control strip stays accessible. Native height is bounded by the monitor work area; scroll content, never clip it. AI window keeps a stable heading and one reading viewport ([D4](ai-workspace.md#workspace-dialogue-d1d8)); Send stays reachable, short input stays at the bottom and a long draft grows into that viewport, never into an inner text scroll.
 - At short/narrow sizes, reflow header controls or use the conversation list as a separate page. Maintain Back, Send, context and attachments.
 - Metadata starts the task's first line; title continuation starts at the full block left edge. Do not shrink the title to accommodate columns.
 

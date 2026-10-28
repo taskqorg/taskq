@@ -3,6 +3,92 @@
 Replace the current menu with the approved stable adaptive layout and a proper AI workspace. Preserve every current capability in [the inventory](current-menu-audit.md).
 This package specifies the target; it does not authorize deployment or claim backend gaps are resolved.
 
+
+## Current review revision
+
+The owner now requests the complete [review correction handoff](review-handoff.md): trace every R01–R44 remark, reconcile current work, then create coherent held outcomes. Use that entrypoint and evidence/review-package.json for the new PM delivery. This is a review of the closed #1578/#1580 deliveries, not a rerun of the original redesign plan. Do not start implementation.
+
+Apply the owner-requested purple Review/awaiting-merge accent from [visual-style](visual-style.md#palette). The owner accepts the [icon review's](exploration/icon-review.html) eight-state mapping and paired theme colors on 2026-10-23. Blocked must not use PR/merge imagery. Reuse the pinned bundled SVG catalog across both platforms, and reconcile prototype-only names before implementation; see the [audit](exploration/review-control-panels-review.md#icon-and-review-color-audit). The frozen baseline remains unchanged.
+
+Continue the frozen control-panels visual system, applying [review refinements](menu-product.md#review-refinements), [revision fidelity](visual-style.md#revision-contract) and [shared input](ai-workspace.md#review-input-contract) first. They override archived hover/focus opening, scattered Appearance settings, footer duplication and obsolete transcript/Custom controls below. O1–O3 are resolved in the review refinements; do not reopen them. Preserve later native-only dialogue and retired-Custom decisions from the implementation handoff.
+
+The owner requests one connected broad revision, not another isolated navigation-icon alternative. Show task dashboard, completed history, click details/questions, host/resources, all Settings routes and the draft/file workspace in the same visual language. Source-backed runtime capability remains separate from prototype fixtures. The frozen reference stays unchanged; the review candidate and evidence are linked from the active session.
+
+## Final design-session handoff — 2026-10-22
+
+The owner accepts the connected control-panel direction and requests one Project Manager handoff task containing the complete package. PM owns reconciliation, planning and creation of implementation tasks. This handoff does not start implementation or change runtime, grants, services, release or deployment policy.
+
+### Reference precedence and scope
+
+Read the live project contract first. This package was prepared in a dirty design checkout at `590b87e457004594b39f7105d3b505bf18630bfd`; its runtime contract and dated audits are snapshots, not the current installed system. Reconcile with current code and board before creating work. Preserve existing tasks and useful shipped improvements.
+
+1. Canonical requirements and explicit owner choices govern behavior. Shared rules govern review; the owner does not replace compliance review.
+2. [Connected control panels](exploration/control-panels.html) is the frozen visual/interaction reference for the newly reviewed menu, settings and Conversations. SHA256: `9c250e850bbda81814f2a66a654d54b44e617615f2fa2c61fb527b1dd6863a04`; revision marker `conversation-walkthrough`.
+3. [Revision review](exploration/control-panels-review.md) separates exercised browser behavior from native/backend gaps. [Session history](session-draft.md) explains accepted, rejected and unresolved choices.
+4. Earlier `workspace-preview.html` and component references retain capabilities and adverse states absent from the compact overview. They do not override the newer reviewed geometry. Exploration variants are history, not competing approved designs.
+5. The current reference is self-contained editable HTML. Do not regenerate it with `build-workspace-preview.py`; that builder owns the older integrated preview only. Fixture dimensions, timing and local action receipts are illustrative.
+
+### Agreed product direction
+
+| Area | Required outcome and canonical home |
+|---|---|
+| Menu | Task dashboard and powerful task filter. A compact one/two-row status area leaves the body to tasks. Notifications/links belong here; full communication belongs in the separate workspace. M1–M3, MP11–MP13. |
+| Navigation | One Conversations/workspace icon with event-aware Inbox/Conversations routing and a deduplicated badge; separate extensible Settings. No Enlarge in the menu; corner resize remains. MP12/P-W3. |
+| Filtering | Multiple states and projects, clear active criteria, saved views/pinned presets and fast switching. The editor overlays without moving the list. Fixed state order in one column; no reorder arrows or unsolicited drag handles. All includes the current project/search total before state filtering. MP11/MP13. |
+| Ordering/display | Combined or grouped by project, with the same task comparator. Understandable default order following state/filter order; exact tie-break and saved/working-search policies remain the bounded open questions below. |
+| Task rows | Identity/status/issue metadata, then a full-width wrapped title. No separate right ellipsis, added action column or chevron beside the icon. Compact forge/issue identity anchors hover/focus preview; click/keyboard pins usable details/actions. M3 and shared D rules. |
+| Task lifecycle | Show current stage and elapsed time; reveal ordered steps and per-step duration on demand. Total system age and step-count visibility must be resolved, not silently removed. Unknown timing is not zero; elapsed time alone does not prove a stall. |
+| Icons and copy | One free monochrome outline action set (Lucide), bundled provider identity assets, shared tokens and concise labels. Avoid repeated state words, platform-dependent Unicode/emoji and redrawn near-matching glyphs. Preserve accessible names and usable targets. Visual style, D rules, CI1–CI5. |
+| Window | Always reachable Close. Restore last user mode; first actual drag automatically pins. Auto grows in the actual native opening direction from actual anchor placement, never an OS constant. Explicit Auto/Down/Up/Fixed choices have immediately animated miniatures; respect reduced motion. Pin/drag preserve direction/overrides. M13. |
+| Footer/resize | Useful fixed status/version footer outside content scroll; unknown version stays explicit. Resize affordance is integrated into the corner, without a square button; preserve pointer target and keyboard access. M13. |
+| Settings | Visible choices/previews for short sets; actual-size tray preview and shared Icon/Summary/Custom renderer. Separate local appearance/window preferences from operational policy and grants. The overview cannot replace MP2's full rule/snapshot Work mode editor. |
+| Conversations | Matching operator workspace: list left, transcript/composer right; New/search/archive, context, attachments, history and explicit detach. Enlarge/restore, Pin/Close and corner resize; narrow List/Back keeps the composer reachable. Owner chats and worker/reviewer sessions remain separate. C1–C9. |
+| Continuity | Preserve filters, view, query, selection, scroll, context and independent drafts across navigation and ordinary refresh. Restore recoverable state after restart. Closing never archives, cancels or sends. C2/C7 and F3. |
+| Safe actions | One active request per conversation, next drafting allowed; active/unresolved archive guards. Cancellation needs acknowledgement. Reopen/retry/confirm cannot duplicate sends or applied effects. Attachments and stale/partial outcomes retain their existing contracts. MP3/MP4, C4–C9. |
+
+### Closing Conversations journey
+
+Continue from the reviewed journey rather than redesigning it. New clears a hiding list search, selects the new conversation and focuses its composer in one action. A draft's first line identifies it until explicitly named. Switching conversations preserves separate drafts and returns focus to editable text. Archive stays in the current list, selects another visible item and offers Undo; Restore/Undo opens the recovered draft. Archive/Recent remember selection; clearing search preserves the current item. Narrow transcript exposes New directly. History deletion remains a separate guarded action.
+
+These are the closing reference's reviewed usability refinements. Incidental fixture labels, exact animation seconds, example data and geometry do not become runtime policy. Keep C-A1–C-A10, attachment states, source-numbered questions, request guards and explicit window ownership.
+
+### Bounded open choices
+
+Bring only choices that block a dependent slice to the owner, together with a small visual example and recommendation. Do not reopen selected layouts or invent a new settings-order editor.
+
+| Choice | Recommended continuation | Gate |
+|---|---|---|
+| Compact total age / completed-step count | Compare current-stage age plus compact total/step summary against details-only; retain the original need to spot long-running/stalled work. | Owner selects row density before that widget is implemented. |
+| Exact task comparator | Follow fixed state order in both combined/grouped views; specify stable priority/number or age tie-breakers and explicit alternatives. | Confirm user-visible semantics before sorting work. |
+| Saved view vs working criteria/search | Preserve working context; distinguish unsaved changes from explicit Save/reset and define switches/restart. | Resolve remaining policy without reopening overlay placement. |
+| Settings taxonomy | Keep the current compact grouping unless a concrete inventory conflict is found. | Routine engineering placement is not a new approval round. |
+
+Existing contracts retain their own unresolved engineering/product boundaries: full MP2 predicate/snapshot semantics; native tray raster/DPI, anchor placement and resizing; attachment limits/storage, cancellation/delivery receipts and detached ownership. Unsupported capabilities remain explicit; no automatic removal or fabricated proof.
+
+### PM deliverable
+
+Use [the existing backlog](refactoring-backlog.md) as the single work breakdown and reconcile [the dated implementation plan](implementation-plan.md) with live work. Do not execute its old installation/rollback commands as current instructions.
+
+- Map every discussed requirement and existing control to its canonical IDs, preserved destination, existing task or justified new slice. No approved removals were made in this session.
+- File coherent user-outcome tasks with Goal, numbered observable Acceptance, scope, specification/reference links, dependencies and exact evidence requirements. Avoid one task per cosmetic detail and duplicate open work.
+- Keep newly created implementation tasks held; explicit execution/start remains a separate owner decision. The PM handoff itself is planning, not a worker implementation task. PM does not implement (R3).
+- Link all child tasks back to the handoff, record coverage and bring the bounded unresolved choices as `ask` with options/recommendation before dependent work.
+- Include shared tokens/icons/menu/popover components, navigation and persistence, task filtering/lifecycle, settings/window and Conversations; preserve Work mode, resources, projects/services/support and remote/headless routes from the inventory.
+- Review the exact rendered candidate against D/M/MP/C/F requirements before presenting it. Record Pass/Fail/Not tested with revision-specific evidence. A functional check alone does not prove readable layout; a screenshot alone does not prove usable flow.
+- Native/platform, adapter and end-to-end qualification are separate from prototype checks. Required runtime gates remain `cargo test --locked` and `cargo run -- selftest` plus affected native scenarios. Do not run unrelated rollout or permission changes under this handoff.
+
+### Evidence delivered
+
+The revision review records desktop dark 16px and constrained light 20px inspection, no horizontal overflow in those fixtures, menu/filter continuity, Conversations creation/draft/archive/restore/reload and Close/reopen. Focused command: `node docs/design/exploration/control-panels-check.cjs` (seven scripts, strict first-save JSON, independent state, empty selection, oversized-save preservation and draft titles). Last source/display hash equality and whitespace check passed.
+
+Native drag/resize/blur/tray raster, real detached windows, screen reader/IME and live attachment/delivery/cancel adapters are not qualified. Latest Escape after reload timed out in the UI tool; explicit Close/reopen passed. Runtime tests, install, release and deployment were not performed for this design handoff.
+
+The archive includes the full design directory, assets/fixtures/evidence and review history, use cases, product principles and the referenced shared-rule snapshot. Package manifest pins every delivered byte. Private notes, credentials, machine configuration, taskq.json and unrelated workspace data are excluded.
+
+## Earlier system baseline — retain and reconcile
+
+The sections below preserve broader contracts, existing capabilities and historical implementation work. Their old reference and release/version descriptions do not supersede the final-session reference or current board/runtime evidence.
+
 ## Read in order
 
 1. `AGENTS.md`, [taskq.md](../../taskq.md), referenced specq rules.

@@ -1,0 +1,454 @@
+{
+  "baseline": "da4ef2b6db01b066f5c897eb5afe01269fda37df",
+  "sourceHashes": {
+    "anchored-popover.js": "107ca8d6b289e661ee5bc609f37a05f88c02c2c7151618fea2bacbb10a3492af",
+    "answer-card.css": "8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc",
+    "answer-card.js": "a85c7b5a073371f3025500da737cccb3bcd36bb7972ccddd1a2135f5950c5303",
+    "app-shell.css": "0f48ac56c0d038d5f074356cd2d28889905624fd18b5cae760a479ad726de349",
+    "app-shell.js": "69aa242f93a816847a6eb33486fd941a52a4db3f604624511a97a9b6e3bedf21",
+    "conversations.css": "f8540c1c69ca6b404cb748418fcb7663333a8b080b883d039c2f2d79d1f03aa0",
+    "conversations.js": "1af75b98206124ec10c879ca464b7c78065b8752334a37b0e56bfd121cc0c324",
+    "finding-composer.css": "59429c0cf812caf40b3478cd95ab32f4f5e87b2841e9584b9480f9a0304e01c4",
+    "finding-composer.js": "4b3133df44a96935e51b8f4f907f586c42a3fecc8fccbbfb6aefa691fb6da42d",
+    "pm-composer.css": "10e0263ce874eb0a5f9570e1aa8e99323a52cb2d28d2054d25631d357f0320fb",
+    "pm-composer.js": "f68561b0b1887b64af52cd6765f1b70927867c0f6734cb90761d5b23ab9441b3",
+    "project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
+    "project-blocks.js": "9c2d4cc5e853f7ad4af521aa3e8953a268db27a0b42a3c5a5e5f263167e5b478",
+    "resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
+    "resource-controls.js": "87b3d7d931ffbef6b11d90ac30da8ec62879c7d6a21e6d909f660e735988aec0",
+    "task-controls.js": "679670cf90ee3ce889f3e4182b81a8e4dc240ec7f04f24f0127a62d3aba80782",
+    "task-dashboard.css": "d4527b44e0eb3ca099e44dd3454555e7f0c06d0e6df66bb9b76cdf0972d0aac6",
+    "task-dashboard.js": "defa5d14ceb7b64ffb855ea8dc53eeb24944d69cc693765a7ed9636d6513455b",
+    "task-views.js": "63a64709d292519e326e5a4a1996f11e2075a22be1bbeb7c9c25aa7055b6471b",
+    "task-workspace.css": "a17c6a9e1e20023f123189147e5f5df29b09a804567bc76e70743197f2b76461",
+    "task-workspace.js": "ac818736f7490c9afd6070c15462b6e74826da6886547cb01eb3ff080282105d",
+    "tray-app.js": "ccb08f2f8fa8f3e7067f262452604146fb83bfe56f05621eed355eefb6822af1",
+    "tray-entry.js": "cd9ec55619108bade33a8d6f91f30103f1ba9ded5b6ad14ec3b39a01fa6a8d5c",
+    "tray-guard.js": "928daf03b94d2c0ac17589df77ff8913dad0f4c79f0aea42117f81cad8a8f750",
+    "tray-view-state.js": "827b8bacf92f48ce864af3753c9e3eddde0a515129f9878fe984558e45ef425f",
+    "tray-web.js": "99f2c573b0189cb5a173cd6737bce2f504ecb3d3d8b7cd76c3fef62388a99259",
+    "tray.html": "bc48032c3b05846758f1a483f44ecf174532e0e66ae1ca70eb9630c97c3872be",
+    "ui-icons.js": "b5f3542c8d446db6e811f26bf82a3d716b5ee93e830ccd11007f5072f0e26d5a",
+    "ui-icons.json": "b3861571ae080d4e05ffa187d3f5bc09f2fedf6fd7ba408e59eb51819abd6201",
+    "ui-runtime.js": "84ab02032fba8256b81926aca9198b02ece701b9cbee402f183113bf25fb9a8a",
+    "workspace-answers.js": "5b32c41f3e0f45ae83288797e74b3ca36fbc511ca3556db8215b14394dd640be",
+    "workspace-entry.js": "77b67724f0b548f2cb3df0d132004c2780de2e254f0515495896a7ad19ddadc7",
+    "workspace.js": "5830fbb417ff4c52d3ce6703fbc9ae2db68daba4e2dd8eff5f94f661a05c9332"
+  },
+  "nativePaletteSource": {
+    "path": "src/icon.rs",
+    "sha256": "86a59197c8b1db8cb623c501d8d0df4eb3f0e322bfb3e0862db23155a51038e7"
+  },
+  "reviewAssets": {
+    "presentation.js": "aa8632d66004ce32c2aea12d033ae9c7e3d8ea4f430d22bfce6c8d0b6dd918cc",
+    "activity.js": "06eed9662ea0c8cf741cfd8577ddc051d4e6922e1dea847fe54745ae545d5a05",
+    "journey.js": "b99c990a85608e62173f0a449d346a82ccbd212aeabb2729b34511303fb3f89f",
+    "reading.js": "3bfe1b922b9fe5db0c4817e1f5537adcb8f7d2e003713f13ad4719ce1cc6bfa4",
+    "board-links.js": "34bc88fb47df72c6c6c25ce67b4047f29fc9dcf1bd34b0e02c90cb5c976a3bc8",
+    "fixture.js": "6d8eed9ce666dde5382554a2002734b37618f01de0ab654336da0c3fc6e8a785",
+    "tooltips.js": "1338388ba0974fdecd440517a376624e6074552bfdd7ced5f865931ea92eb991",
+    "candidate.css": "9de7b771884724eb5dc0f8d1a411fe645a601bc2b38bd5a5515e028833c47e85",
+    "review-icons.json": "bea1c1eba6919902a01f9a28edc4d3527abd763e4433580ca25f2726cba28a38",
+    "review-icons.LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
+    "frame.js": "df7e65c89d4428173c7c7c225a06a44020a8c5c344609366d47ad2860143215c"
+  },
+  "candidatePatches": [
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "app.taskRow(t,true)",
+      "after": "api.row(t,true)"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "rows.map(t=>app.taskRow(t,true))",
+      "after": "rows.map(t=>api.row(t,true))"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "group.map(t=>app.taskRow(t,false))",
+      "after": "group.map(t=>api.row(t,false))"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "   question:function(t){",
+      "after": "   row:function(t,project){return h(Fragment,null,app.taskRow(t,project),view.popup?.kind==='task'&&view.popup.key===t.key&&h('section',{id:'taskq-popover',class:'candidate-task-detail',tabIndex:-1,'aria-label':'Task details'},api.detail()));},\n   question:function(t){"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Move complete question/options to the existing exact task thread; keep short cue",
+      "before": "   question:function(t){const q=t.question;if(t.state!=='ask'||!q)return t.card&&h('p',{class:'task-card-text'},t.card);return h(Fragment,null,h('p',{class:'task-card-text'},q.parsed?q.problem:q.text),q.parsed&&q.choices?.length>0&&h('ol',{class:'task-steps'},q.choices.map(c=>h('li',{key:c.id,value:Number(c.id)||undefined},c.text,c.recommended?' (recommended)':''))));},\n"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "popup:function(){const p=view.popup;if(!p)return null;",
+      "after": "popup:function(){const p=view.popup;if(!p||p.kind==='task')return null;"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "if(view.popup)popover.place(",
+      "after": "if(view.popup&&view.popup.kind!=='task')popover.place("
+    },
+    {
+      "file": "tray-app.js",
+      "reason": "Review interaction correction",
+      "before": "t.state==='ask'?'Answer in Conversations…':'Open Conversations…'",
+      "after": "t.state==='ask'?'Open question':'Open conversation'"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "   bar:function(){",
+      "after": "   projectHeader:function(p){const board=require('./review-board-links.js').board(p.issues);return h('div',{class:'project-group project-shortcuts'},p.issues?h('a',{class:'project-board compact-action',href:p.issues,'data-url':p.issues,title:'Open '+p.name+' board on '+board.name,'aria-label':'Open '+p.name+' board on '+board.name},icon(board.kind)):button('external-link','Project board unavailable',{disabled:true,class:'compact-action'}),h('button',{class:'project-overview','data-route':p.root,disabled:!p.root,title:'Open '+p.name+' project overview','aria-label':'Open '+p.name+' project overview'},p.name),button('folder',p.root?'Open '+p.name+' project folder on this computer':'Project folder unavailable: no registered root',{'data-a':'folder','data-root':p.root,disabled:!p.root,class:'compact-action project-folder'}));},\n   bar:function(){"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "h('div',{class:'project-group'},h('button',{'data-route':p.root},icon('folder'),p.name),h('a',{href:p.issues,'data-url':p.issues,title:'Open '+p.name+' Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)))",
+      "after": "api.projectHeader(p)"
+    },
+    {
+      "file": "workspace-answers.js",
+      "reason": "Review interaction correction",
+      "before": "answerNotices:function(board){",
+      "after": "answerNotices:function(board,task){"
+    },
+    {
+      "file": "workspace-answers.js",
+      "reason": "Review interaction correction",
+      "before": "(!board||r.board===board)&&!view.S",
+      "after": "(!board||r.board===board)&&(task==null||r.op.task===task)&&!view.S"
+    },
+    {
+      "file": "workspace.js",
+      "reason": "Review interaction correction",
+      "before": "answers.answerNotices(p.issues)",
+      "after": "answers.answerNotices(p.issues,t.n)"
+    },
+    {
+      "file": "workspace-answers.js",
+      "reason": "Review interaction correction",
+      "before": "  const answered=shown.filter",
+      "after": "  if(task!=null)return shown.map(x=>line(x,'status'));\n  const answered=shown.filter"
+    },
+    {
+      "file": "workspace.js",
+      "reason": "Review interaction correction",
+      "before": "answers.answerToast(),h('footer'",
+      "after": "null,h('footer'"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Separate reading from composer",
+      "before": "   body:function(extra={}){",
+      "after": "   splitThread:function(detail){const flat=(xs)=>Array.isArray(xs)?xs.flatMap(flat):[xs],parts=flat(detail),input=parts.find(x=>x?.props?.class==='answer-composer');return [h('div',{class:'candidate-reading'},parts.filter(x=>x!==input)),input];},\n   body:function(extra={}){"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "'aria-label':'Selected thread'},extra.detail)",
+      "after": "'aria-label':'Selected thread'},api.splitThread(extra.detail))"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Separate reading from composer",
+      "before": "       dialogue?[h('div'",
+      "after": "       h('div',{class:'candidate-reading'},dialogue?[h('div'"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "       extra.notice,",
+      "after": "       extra.notice),"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false;",
+      "after": "let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,previewReturn=null,previewFocus=false,previewRestore=false,previewFile=null;"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Separate reading from composer",
+      "before": "if(op.action==='preview'&&r.value){",
+      "after": "if(op.action==='preview'&&r.value){previewReturn=menu.querySelector('.candidate-reading')?.scrollTop??0;previewFile=op.file;previewFocus=true;if(view)view.stick=false;"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "else if(action==='preview-close'){preview=null;draw();}",
+      "after": "else if(action==='preview-close'){preview=null;previewRestore=true;draw();}"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Separate reading from composer",
+      "before": "if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft",
+      "after": "if(record&&c)record.scrollTop=c.scroll||0;const reading=menu.querySelector('.candidate-reading');if(reading&&preview&&previewFocus){previewFocus=false;reading.scrollTop=0;menu.querySelector('[data-c=preview-close]')?.focus({preventScroll:true});}if(reading&&previewRestore){previewRestore=false;reading.scrollTop=previewReturn??0;menu.querySelector('[data-c=preview][data-file=\"'+CSS.escape(previewFile||'')+'\"]')?.focus({preventScroll:true});}if(focusDraft"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "   mount:function(){\n    ui.listen(menu,'input'",
+      "after": "   mount:function(){\n    ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&preview){preview=null;previewRestore=true;e.preventDefault();e.stopImmediatePropagation();draw();}});\n    ui.listen(menu,'input'"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "if(s.workspaceOwner){owner=s.workspaceOwner;",
+      "after": "if(s.workspaceOwner){api.flush();owner=s.workspaceOwner;"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "api.transcript(c)]:",
+      "after": "api.transcript(c),require('./review-journey.js')(snapshot,c.id)]:"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "   receive:function(s){",
+      "after": "   receive:function(s){if(s.reviewTick&&view){if(!view.busy.status)api.read('status');if(view.end!==null&&!view.busy.after)api.read('after',{after:view.end});return true;}"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "label={user:'You',assistant:'Assistant'}",
+      "after": "label={user:'You',assistant:'Project manager'}"
+    },
+    {
+      "file": "workspace.js",
+      "reason": "Review interaction correction",
+      "before": "return [h('div',{class:'conversation-tools thread-head'}",
+      "after": "return [require('./review-journey.js')(snapshot.value,null,row.task),h('div',{class:'conversation-tools thread-head'}"
+    },
+    {
+      "file": "workspace.js",
+      "reason": "Review interaction correction",
+      "before": "sessions:{title:'Work sessions'",
+      "after": "sessions:{title:'Task activity'"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "class:'conversation-detail','data-thread-id':c?.id||''",
+      "after": "class:'conversation-detail'+(c&&!c.sent&&!c.request?' new-chat':''),'data-thread-id':c?.id||''"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "'New request')",
+      "after": "'New chat')"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "   launched:function(c){",
+      "after": "   rowStatus:function(c){if(api.launched(c))return ({working:'Working',idle:'Ready'}[api.state(c)]||'Status unknown');return c.request?({pending:'Waiting to start',launching:'Starting chat',failed:'Could not start',interrupted:'Start interrupted',unknown:'Delivery unknown'}[c.request.state]||'Status unknown'):c.sent?'Delivery unknown':'Draft';},\n   launched:function(c){"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "(row.request?.kind||(row.sent?'Delivery unknown':'Draft'))+(api.launched(row)?' · '+api.state(row):'')",
+      "after": "api.rowStatus(row)"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "class:'conversation-record',tabindex:'0'",
+      "after": "class:'conversation-record','data-start-state':c.request?.state||(c.sent?'unknown':'draft'),tabindex:'0'"
+    },
+    {
+      "file": "app-shell.js",
+      "reason": "Review interaction correction",
+      "before": "frame.value={route,depth:location.history.length,nodes};",
+      "after": "frame.value={route,depth:location.history.length,nodes:require('./review-presentation.js').present(nodes)};"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "   read:function(kind,extra={}){",
+      "after": "   activity:function(c){const state=api.state(c),at=view?.id===c.id?view.status?.turn?.at:null;return state==='working'?'PM is replying'+(Number.isFinite(at)?' · '+Math.max(0,Math.floor((Date.now()-at)/1000))+' s':''):state==='idle'?'PM is ready':'PM status unknown';},\n   read:function(kind,extra={}){"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "'State: '+api.state(c)",
+      "after": "api.activity(c)"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "view.items.push(...v.items.map((item,i)=>({...item,n:last+1+i})));view.end=v.end;",
+      "after": "view.items.push(...v.items.map((item,i)=>({...item,n:last+1+i})));view.end=v.end;if(v.items.length&&!view.busy.status)api.read('status');"
+    },
+    {
+      "file": "task-controls.js",
+      "reason": "Review interaction correction",
+      "before": "'+LABELS[a]+'</button>'",
+      "after": "'+require('./ui-icons.js').asset(({start:'play',stop:'square',later:'clock-3',retry:'rotate-ccw'})[a])+'</button>'"
+    },
+    {
+      "file": "task-controls.js",
+      "reason": "Review interaction correction",
+      "before": "aria-label=\"'+LABELS[a]+' #'+row.n+'\">",
+      "after": "title=\"'+LABELS[a]+' #'+row.n+'\" aria-label=\"'+LABELS[a]+' #'+row.n+'\" class=\"compact-action\">"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "bar:function(){const m=api.model(),v=api.current(),c=v.working;",
+      "after": "bar:function(){const m=api.model(),v=api.current(),c=v.working,searching=!!c.query||!!view.searchOpen;"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "button('sliders-horizontal','Edit view conditions',",
+      "after": "button('search','Search tasks',{'data-a':'search-open','aria-controls':'task-query','aria-expanded':String(searching)}),button('sliders-horizontal','Edit view conditions',"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "h('label',{class:'task-search'},icon('search'),h('input',{type:'search','data-task-query':'',maxLength:1024,'aria-label':'Search tasks',placeholder:'Search tasks',value:c.query}))",
+      "after": "searching&&h('div',{class:'task-search'},icon('search'),h('input',{id:'task-query',type:'search','data-task-query':'',maxLength:1024,'aria-label':'Search tasks',placeholder:'Search tasks',value:c.query}),c.query&&button('x','Clear task search',{'data-a':'search-clear'}))"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "const d=b.dataset,m=api.model();",
+      "after": "const d=b.dataset,m=api.model();if(d.a==='search-open'){view.searchOpen=!!api.criteria().query||!view.searchOpen;present();menu.querySelector(view.searchOpen?'[data-task-query]':'[data-a=search-open]')?.focus({preventScroll:true});return true;}if(d.a==='search-clear'){api.criteria().query='';view.searchOpen=false;present();menu.querySelector('[data-a=search-open]')?.focus({preventScroll:true});return true;}"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "   mount:function(){",
+      "after": "   mount:function(){\n    ui.listen(menu,'focusin',e=>{if(e.target.hasAttribute('data-task-query'))view.searchOpen=true;});\n    ui.listen(menu,'focusout',e=>{if(e.target.hasAttribute('data-task-query'))ui.defer(()=>{if(!api.criteria().query&&view.searchOpen&&!document.activeElement?.closest('.task-search')){view.searchOpen=false;present();}},0);});\n    ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&e.target.hasAttribute('data-task-query')){e.preventDefault();e.stopImmediatePropagation();if(!api.criteria().query)view.searchOpen=false;present();menu.querySelector('[data-a=search-open]')?.focus({preventScroll:true});}},true);"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "h('header',{class:'filter-header tqp',dangerouslySetInnerHTML:{__html:blocks.counters(counts.counts,'','Selected projects',partial,c.states,counts.open)}})",
+      "after": "h('header',{class:'filter-header tqp'},h('div',{class:'state-filters',dangerouslySetInnerHTML:{__html:blocks.counters(counts.counts,'','Selected projects',partial,c.states,counts.open)}}),rows.filter(t=>t.state==='held').length>1&&h('span',{class:'held-shortcut'},app.startButton(rows)))"
+    },
+    {
+      "file": "task-dashboard.js",
+      "reason": "Review interaction correction",
+      "before": "rows.filter(t=>t.state==='held').length>1&&h('div',{class:'row'},app.startButton(rows)),",
+      "after": ""
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "list='recent',search='',selection",
+      "after": "list='recent',search='',searchOpen=false,searchReturn=false,selection"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "listOnly?'Back':'List'),h('button',{'data-c':'new'",
+      "after": "listOnly?'Back':'List'),!owner.conversation&&icons.button('search','Search conversations',{'data-c':'search-open','aria-expanded':String(!!search||searchOpen),'aria-controls':'thread-search'}),h('button',{'data-c':'new'"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "h('label',{class:'conversation-search'},h('span',{class:'sr-only'},'Search threads'),h('input',{type:'search','data-c-field':'search',value:search,placeholder:'Search',maxLength:512})),search&&h('button',{'data-c':'clear-search'},'Clear search')",
+      "after": "(search||searchOpen)&&h('div',{class:'conversation-search'},h('label',{class:'sr-only',for:'thread-search'},'Search threads'),h('input',{id:'thread-search',type:'search','aria-label':'Search threads','data-c-field':'search',value:search,placeholder:'Search chats',maxLength:512}),search&&icons.button('x','Clear thread search',{'data-c':'clear-search'}))"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "if(action==='new'&&!owner.conversation)api.fresh();",
+      "after": "if(action==='search-open'){searchReturn=listOnly;searchOpen=true;listOnly=true;draw();menu.querySelector('[data-c-field=search]')?.focus({preventScroll:true});}else if(action==='new'&&!owner.conversation)api.fresh();"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "else if(action==='clear-search'){search='';api.nav();draw();}",
+      "after": "else if(action==='clear-search'){search='';searchOpen=false;api.nav();draw();menu.querySelector('[data-c=search-open]')?.focus({preventScroll:true});}"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "items.push(c);list='recent';search='';selected=c.id;",
+      "after": "items.push(c);list='recent';search='';searchOpen=false;selected=c.id;"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "   mount:function(){",
+      "after": "   mount:function(){\n    ui.listen(menu,'focusin',e=>{if(e.target.dataset.cField==='search')searchOpen=true;});\n    ui.listen(menu,'focusout',e=>{if(e.target.dataset.cField==='search')ui.defer(()=>{if(!search&&searchOpen&&!document.activeElement?.closest('.conversation-search')){searchOpen=false;draw();}},0);});\n    ui.listen(document,'keydown',e=>{if(e.key==='Escape'&&e.target.dataset.cField==='search'){e.preventDefault();e.stopImmediatePropagation();if(!search){searchOpen=false;listOnly=searchReturn;}api.nav();draw();menu.querySelector('[data-c=search-open]')?.focus({preventScroll:true});}},true);"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "  const api=execution.module('conversations.instance',{",
+      "after": "  const scrolling=require('./review-reading.js')(menu),dialogueViews=new Map();\n  const api=execution.module('conversations.instance',{"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Separate reading from composer",
+      "before": "capture:function(){const el=menu.querySelector('.candidate-reading');if(el?.dataset.threadId)positions[el.dataset.threadId]=el.scrollTop;}",
+      "after": "capture:function(){scrolling.capture();const el=menu.querySelector('.candidate-reading');if(el?.dataset.threadId)positions[el.dataset.threadId]=el.scrollTop;}"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "const action=b.dataset.c;if(!action)return false;",
+      "after": "const action=b.dataset.c;if(action==='jump-latest'){scrolling.follow();return true;}if(!action)return false;"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "view.stick=e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;",
+      "after": "view.stick=scrolling.following();"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Separate reading from composer",
+      "before": "classList?.contains('conversation-detail')",
+      "after": "classList?.contains('candidate-reading')"
+    },
+    {
+      "file": "conversations.js",
+      "reason": "Review interaction correction",
+      "before": "class:'dialogue-item '+item.role",
+      "after": "class:'dialogue-item '+item.role,'data-record':item.n"
+    },
+    {
+      "file": "answer-card.js",
+      "reason": "Review interaction correction",
+      "before": "<details class=\"qac-context\"><summary>Checked &amp; context</summary>",
+      "after": "<section class=\"qac-context\">"
+    },
+    {
+      "file": "answer-card.js",
+      "reason": "Review interaction correction",
+      "before": ".join(' · ') + '</p>' : '') + '</details>';",
+      "after": ".join(' · ') + '</p>' : '') + '</section>';"
+    },
+    {
+      "file": "project-blocks.js",
+      "reason": "Review interaction correction",
+      "before": "'+icon(mark)+'</span>'+run+elapsed",
+      "after": "'+(row.state==='ask'?'<button class=\"question-shortcut\" data-a=\"workspace\" data-page=\"answer\" data-root=\"'+esc(row.root||p.root||'')+'\" data-board=\"'+esc(row.key.slice(0,row.key.lastIndexOf('/')))+'\" data-revision=\"'+row.revision+'\" data-task=\"'+row.n+'\" aria-label=\"Open question #'+row.n+'\" title=\"Open question #'+row.n+'\">'+icon(mark)+'</button>':icon(mark))+'</span>'+run+elapsed"
+    },
+    {
+      "file": "task-controls.js",
+      "reason": "Review interaction correction",
+      "before": "Close on board ↗</a>",
+      "after": "'+require('./review-board-links.js').asset(url)+'</a>"
+    },
+    {
+      "file": "task-controls.js",
+      "reason": "Review interaction correction",
+      "before": "aria-label=\"Close #'+row.n+' on the board\">",
+      "after": "class=\"compact-action board-close\" title=\"Open #'+row.n+' on '+require('./review-board-links.js').board(url).name+' to close\" aria-label=\"Open #'+row.n+' on '+require('./review-board-links.js').board(url).name+' to close\">"
+    }
+  ],
+  "scope": "Review copies only. Native bridge is a synthetic local reducer; not the installed app.",
+  "retainedFramework": "Preact/Signals/Wouter/CoreQ; existing dependency pins"
+}

@@ -1,0 +1,26 @@
+{
+  "scope": "Chromium current-components with synthetic local bridge. Native/provider qualification not tested.",
+  "functional_groups": 72,
+  "results": [
+    "72 source-linked groups; no approved removals; source hashes match",
+    "Rendered palette A matches icon.rs; compact tools retain labelled glyphs and unclipped hints",
+    "All eight states retained; OR selection and All recovery use current components",
+    "Compact inline question keeps task actions/details; real wheel reaches menu list",
+    "Real answer-card preserves source choices/evidence, fixed composer, exact local receipt",
+    "Saved views create/delete/Undo and multi-state criteria retain actual View-window code and menu synchronization",
+    "Completed source history retains paging, outcome and linked receipt fixture",
+    "All 11 Settings routes open and return without page errors; native effects explicitly unqualified",
+    "Two consecutive local turns per recorded runtime use one source conversation/session; no real adapter claim",
+    "Delayed owner-conversation feedback stays with its originating thread after a switch",
+    "Explicit rename and source Watch create/edit/remove retained",
+    "Actual attach input, local bytes/hash, text preview and remove path retained in fixture",
+    "History fills only; New from draft creates an independent unsent request",
+    "Archive/Undo and Detach/Return retain source owner controls; OS ownership not tested",
+    "Task activity retains recorded agent destinations with task/role/state and unavailable-link explanation",
+    "New chat → visible project → first send → same chat; activity/Back preserves draft and question routes by exact task",
+    "144 source-component geometry cells: reader/input and hit-tested Send visible, no horizontal overflow",
+    "Current-source comparison is separately runnable; no production source patched"
+  ],
+  "errors": [],
+  "source_baseline": "da4ef2b6db01b066f5c897eb5afe01269fda37df"
+}
