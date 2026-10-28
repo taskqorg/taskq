@@ -5665,6 +5665,29 @@ Open: none";
         assert_eq!(lines(&s), 2, "a move rearms the line");
     }
 
+    // Chain: R6 stuck review -> service log (#1752). Risk: a review no host can start sits silent for hours.
+    #[test]
+    fn review_without_reviewer_logs_stuck_once() {
+        let b = Fake::default();
+        let n = b.create("R", "", &["taskq".into()]).unwrap();
+        let w = b.comment(n, "taskq: spawn worker codex:w mac").unwrap();
+        accept_execution(&b, n, w, w, None).unwrap(); release_execution(&b, n, w, w, "exit").unwrap();
+        b.comment(n, &format!("taskq: result {} attempt {w}", "a".repeat(40))).unwrap();
+        let mut c = cfg("mac");
+        c.limits = BTreeMap::from([("claude".to_string(), 0)]);
+        let e: Exits = Default::default();
+        let mut s = service(&b, &c, e.clone());
+        let lines = |s: &Service| s.log.iter().filter(|l| l.starts_with(&format!("#{n} event stuck review "))).count();
+        s.pass().unwrap();
+        assert_eq!(lines(&s), 0, "a fresh review is not stuck");
+        b.advance(crate::snapshot::STUCK_AFTER);
+        s.pass().unwrap();
+        s.pass().unwrap();
+        assert!(e.borrow().is_empty(), "no reviewer slot");
+        assert_eq!(lines(&s), 1, "{:?}", s.log);
+        assert_eq!(task(&b, n).state, State::Review, "observe only");
+    }
+
     #[test]
     fn new_worktrees_get_a_private_target_seed() {
         // Chain: first worker start -> worktree + cloned target/debug. Risk: a seed that writes into or shares its source.

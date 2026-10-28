@@ -245,7 +245,8 @@ pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, host
     match t.state {
         State::Waiting => deps.iter().all(|b| b.reason.starts_with("unknown: closed")),
         State::Held | State::Ask | State::Later => age >= STUCK_AFTER,
-        State::Doing => age >= STUCK_AFTER && !leased(),
+        // #1752: a review whose reviewer no host leases waits silently otherwise
+        State::Doing | State::Review => age >= STUCK_AFTER && !leased(),
         _ => false,
     }.then_some(age)
 }
@@ -694,7 +695,7 @@ mod tests {
         let dep = |reason: &str| service::Blocker { dep: crate::core::depends("Depends on #2").remove(0), url: String::new(), reason: reason.into() };
         let beat = |age: i64| board::Issue { title: "taskq host mac".into(), body: "version 4\n#1 5".into(), updated: 10_000 - age, trusted: true, ..Default::default() };
         let at = |task: &Task, deps: &[service::Blocker], age: i64, hosts: &[board::Issue]| stuck(1, task, deps, 10_000 - age, hosts, 10_000, 300);
-        for s in [State::Held, State::Ask, State::Later, State::Doing] {
+        for s in [State::Held, State::Ask, State::Later, State::Doing, State::Review] {
             assert_eq!(at(&t(s, Some(5)), &[], STUCK_AFTER - 1, &[]), None, "{s:?} under 2 h");
             assert_eq!(at(&t(s, Some(5)), &[], STUCK_AFTER, &[]), Some(STUCK_AFTER), "{s:?} at 2 h");
             assert_eq!(at(&t(s, Some(5)), &[], 60, &[]), None, "{s:?} moving");
@@ -703,7 +704,10 @@ mod tests {
         assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(10)]), None);
         assert_eq!(at(&t(State::Doing, Some(5)), &[], 3 * STUCK_AFTER, &[beat(301)]), Some(3 * STUCK_AFTER)); // #1591: live through ttl, stale after it
         assert_eq!(at(&t(State::Doing, Some(6)), &[], 3 * STUCK_AFTER, &[beat(10)]), Some(3 * STUCK_AFTER));
-        for s in [State::Ready, State::Review, State::Failed] {
+        // #1752: a review with a leased reviewer is not stuck; one whose reviewer never starts is
+        assert_eq!(at(&t(State::Review, Some(5)), &[], 3 * STUCK_AFTER, &[beat(10)]), None);
+        assert_eq!(at(&t(State::Review, Some(6)), &[], 3 * STUCK_AFTER, &[beat(10)]), Some(3 * STUCK_AFTER));
+        for s in [State::Ready, State::Failed] {
             assert_eq!(at(&t(s, None), &[], 3 * STUCK_AFTER, &[]), None, "{s:?} never");
         }
         // waiting: at once when every blocker is closed, never while one is open or unreadable
