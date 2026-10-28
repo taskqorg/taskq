@@ -8,6 +8,7 @@ Implements [#1741](https://github.com/taskqorg/taskq/issues/1741) against baseli
 - After: the same check passes Q-A2, Q-A7, Q-A8 and Q-A11. Heading and Send tools are siblings of the sole reading viewport. The short editor sticks to its bottom; a long editor joins its natural flow, using the approved reference's 45% threshold. An invisible measuring field preserves the live field while growing or shrinking it.
 - Task feedback filters board, task and current operation; the workspace presents one inline receipt. The menu's global Answered history/toast remains unchanged. Owner-operation notices and pending/recovery status stay with their conversation.
 - Tests previously scrolled Send into view before checking it. The updated geometry checks inspect its actual bounds without that workaround. Existing state, keyboard, validation, file, draft and same-operation recovery assertions remain. The menu history/toast is still protected by `tests/tray-answer.test.cjs`.
+- The event-free-task restart instrument could read an older navigation write with the same selection but an empty opened-task list. The baseline reproduced `0 !== 1`; `messages.browser.cjs` now waits for the selected identity and both opened tasks before simulating restart. Its restoration and no-replay assertions are unchanged.
 
 ## Acceptance and preservation coverage
 
