@@ -40,7 +40,7 @@ Limits count logical lines and Unicode characters, including labels and numberin
 Link targets and exact commands/SHAs/paths are exempt from character limits, not line limits; link labels stay short.
 Commands refuse over-limit new input before writing, naming the excess; historical/hand-written entries fold unchanged; compact displays use ellipsis and a link (stored text verbatim: [Core Write][sq-write], [source and sink][sq-sink]).
 ### R8. The contract is the SoT and matches code
-Per [shared spec-first rules](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md), TaskQ code and contract ship together (§8); every §2 row has a golden trace. Host acceptance: [H-A1–H-A5][hsa]; targets need qualification.
+TaskQ code and contract ship together (§8); every §2 row has a golden trace. Host acceptance: [H-A1–H-A5][hsa]; targets need qualification.
 ### R9. No silent changes to model, effort or permissions
 Name model, effort or permission changes to the owner first. Host.json owns capacity, `permission_mode` and `codex` (§ 9); agents propose capacity, applied only on explicit owner instruction. Access comes only from operator-owned grants ([P1-P4](docs/design/worker-permissions.md), [authority][sq-perm], § 8 Access); config, tasks, labels and answers may request or narrow, never grant it. Requests: Claude `--permission-mode dontAsk`; Codex `-s danger-full-access`. Owner sessions use workers' CLI permissions and host board environment: no silent elevation, runtime fallback or tool-free override. Owner requests grant their stated scope; setup external effects still need § 6 confirmation. Only owner-run `service onboard` trusts folders; others name gaps ([Claude](docs/design/standalone-onboarding.md#contract-detail)).
 ### R10. Multi-project only by explicit list
@@ -57,7 +57,7 @@ Looks/sound: one line each (R13).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
 - UI: Preact/Signals/Wouter, O1–O3; [six bins, palette A; no Custom; History-only Ask](docs/design/icon-summary.md).
-- Conversations prioritizes heading, transcript/question and composer; secondary actions, project choice, diagnostics, watch and input limits live in collapsed Details ([UX07](docs/design/ai-workspace.md#native-dialogue-workspace-c1c9)).
+- Conversations: reading first; secondary controls in Details ([UX07](docs/design/ai-workspace.md)).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows; growing input ([menu]).
 - Standalone: [onboarding][onb]; [telemetry][tel]: local SQLite/WAL, 30 days; sent async only under revocable `taskq-telemetry/1`. `profile export` feeds analysis, `guide` guides agents. Migration keeps legacy rows; board is task truth (R1).
 - README is the whole page: header, setup phrase, one sentence, what you get, screenshots, use cases, one link to taskq.md, release checksum and provenance verification, license, donate.

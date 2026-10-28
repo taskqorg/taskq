@@ -2,7 +2,7 @@
 
 Conversations now opens with a plain thread heading, a compact activity label, reading content and the shared composer. One collapsed Details disclosure holds rename, window ownership, archive actions, separate-request creation, project selection, launch handoff, watch and input limits. Task answers hide unsupported Attach and retain text-only and number-as-text guidance in Details. Supported files, source choices, validation, delivery failures and recovery stay directly available.
 
-R13 amended: `taskq.md` Product records the layout before implementation; C3/D7 in `ai-workspace.md`, `tray-workspace.md` and `visual-style.md` carry the detail. R1/R9 authority, native transcript ownership and R11 execution preservation are unchanged. R12 separates browser observations from installed acceptance.
+R13 amended (R8 wording shortened without changing its golden-trace, qualification or size protection): `taskq.md` Product records the layout before implementation; C3/D7 in `ai-workspace.md`, `tray-workspace.md` and `visual-style.md` carry the detail. R1/R9 authority, native transcript ownership and R11 execution preservation are unchanged. R12 separates browser observations from installed acceptance.
 
 ## Reproduction and review set
 
@@ -28,18 +28,26 @@ The original 72-group audit remains the inventory. The affected presentation gro
 
 | Audit groups | Existing journey and retained protection |
 |---|---|
-| C01–C03, C16, C18; A01, A07–A09 | `messages.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`: unified owner/task/event selection; per-thread drafts, source IDs, explicit read/archive/restore, late receipts, stale revisions and list/reading positions |
-| C04–C10, C12–C17, C24 | `conversations.browser.cjs`: explicit project/runtime, rename, History fills only, durable draft/caret fixture, supported file bytes/preview/removal, immutable launch, separate-request fork, detach owner, cancel/reconcile, archive/Undo/Restore, IME/keyboard/reopen; unreadable files and unknown outcomes preserve drafts |
-| C05, C19–C22 | `dialogue.browser.cjs`: same-session reply/refusal, transcript paging/live append, visible unknown/work activity, watch create/edit/remove with minimum interval/event validation, narrow/large text and fixed Send |
-| C20–C21 | `conversations-render.browser.cjs`: both provider-shaped 10,000-record histories, bounded mount, exact record order/anchor within 2 px, selection, skipped pages and obsolete read rejection; six adverse geometry fixtures |
-| C11, C23; A03–A04, A06–A10 | `workspace-communication.browser.cjs`, `tray-answer.browser.cjs`, `conversations-stable.browser.cjs`: original navigation, same-revision text/choice semantics, limits, literal numbers, recovery, operation identity and thread-local receipts; session-link validation retained |
-| X01, X03, X05–X06 | `task-workspace.test.cjs`, `pm-composer.test.cjs`, `check-web.cjs`: released bundle/stylesheet, pinned shared source hashes, PM schema/receipt correlation and safe native links; no export or adapter changes |
+| C01Ã¢â‚¬â€œC03, C16, C18; A01, A07Ã¢â‚¬â€œA09 | `messages.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`: unified owner/task/event selection; per-thread drafts, source IDs, explicit read/archive/restore, late receipts, stale revisions and list/reading positions |
+| C04Ã¢â‚¬â€œC10, C12Ã¢â‚¬â€œC17, C24 | `conversations.browser.cjs`: explicit project/runtime, rename, History fills only, durable draft/caret fixture, supported file bytes/preview/removal, immutable launch, separate-request fork, detach owner, cancel/reconcile, archive/Undo/Restore, IME/keyboard/reopen; unreadable files and unknown outcomes preserve drafts |
+| C05, C19Ã¢â‚¬â€œC22 | `dialogue.browser.cjs`: same-session reply/refusal, transcript paging/live append, visible unknown/work activity, watch create/edit/remove with minimum interval/event validation, narrow/large text and fixed Send |
+| C20Ã¢â‚¬â€œC21 | `conversations-render.browser.cjs`: both provider-shaped 10,000-record histories, bounded mount, exact record order/anchor within 2 px, selection, skipped pages and obsolete read rejection; six adverse geometry fixtures |
+| C11, C23; A03Ã¢â‚¬â€œA04, A06Ã¢â‚¬â€œA10 | `workspace-communication.browser.cjs`, `tray-answer.browser.cjs`, `conversations-stable.browser.cjs`: original navigation, same-revision text/choice semantics, limits, literal numbers, recovery, operation identity and thread-local receipts; session-link validation retained |
+| X01, X03, X05Ã¢â‚¬â€œX06 | `task-workspace.test.cjs`, `pm-composer.test.cjs`, `check-web.cjs`: released bundle/stylesheet, pinned shared source hashes, PM schema/receipt correlation and safe native links; no export or adapter changes |
 | UX07 layout across the groups above | `conversations-declutter.browser.cjs`: default collapse, keyboard access, rename, destination and activity, preserved choices, file-answer limitation, 350/620/940 widths, both themes and 32/44 px targets; opening controls never dispatches work |
 
 Fixture changes replace obsolete visible-placement/helper-copy expectations only. They retain the original effects, payload identity, file bytes, validation, source choices, stale guards and receipt assertions. The new regression protects the reproduced clutter; no permission, model, transport, storage or DashQ interface is changed. Workspace CSS stays in `workspace.html`; released `task-workspace` and `pm-composer` source hashes are unchanged. A live DashQ deployment is Not tested.
 
 ## Acceptance status
 
-- A1–A5: implemented; focused browser/component checks pass, with the selected candidate gate recorded in the result. UX07 is done at this source/browser boundary; owner visual acceptance remains the owner's decision.
+- A1Ã¢â‚¬â€œA5: implemented; focused browser/component checks pass, with the selected candidate gate recorded in the result. UX07 is done at this source/browser boundary; owner visual acceptance remains the owner's decision.
 - A6: merge and the owner's Mac dev-install pickup remain pending publication. No host update or service operation is performed by this task. Native Windows: **Not tested**. Native Mac and real-provider turns: **Not tested**.
 - Native snapshots used for the README manifest, if produced, are capture instruments; they do not qualify native input, window ownership or delivery.
+
+## Candidate gate observation
+
+`python3 scripts/check.py --base 28b2f9252b86fe72ccfc2c2aa76ffe11a7714359` first ran in 456.531 s on Windows with a cold debug cache: 543 unit cases passed, 21 failed, 37 ignored. The added Product line exceeded R8's 60 KiB bound; the wording was shortened without weakening that test. Host installation/capacity/lifecycle cases encountered worker-authority refusals, including `a worker cannot change host policy`; Windows security restore required an unrestricted operator. These remain sandbox-blocked, not passes. Two Codex App IPC deadline fixtures also failed; their cause is unverified. No permission guard or timeout was changed. Merge-result CI remains the publication gate.
+
+Canonical `npm ci` also changed the bundle relative to the initial browser-tool setup. Baseline and candidate captures were regenerated against the locked dependencies, and the manifest pins both rebuilt artifacts. The browser fixture setup now lives separately in ignored scratch state so it cannot alter project dependency resolution. This is an evidence correction, not a dependency update.
+
+After the wording fix, `cargo +stable test --locked --bin taskq core::tests::every_table_row_has_a_golden_trace` passes; the root contract is 61,435 UTF-8 bytes, within 300 lines and 60 KiB.
