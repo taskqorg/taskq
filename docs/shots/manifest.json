@@ -1,14 +1,14 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "91e6b43d2416a066c3bcde22b9c75963e590f860",
-  "binarySha256": "4ee5729bdf02b0766045665ba3b6f06b8ca987195334dfe8eb39127be329c19e",
+  "sourceCommit": "afcea5ff6743694ccfbbb93bce409f690ea0b249",
+  "binarySha256": "43e3b06329cb3f3d552038e642286a9114830d1bd081947625b158610a7b4e1e",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "b573cf0c7206b2c7afad8a91bca571abb47689ef",
+    "src/tray.rs": "eb70716fc011cf36a6d3432184b44fcd4691f246",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
     "src/tray-app.js": "0c41fd9004927f594a84f0141e4957eb5a470821",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
