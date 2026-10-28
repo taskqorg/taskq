@@ -54,3 +54,22 @@ An additional `shell-navigation.browser.cjs` probe fails G02/V23 at 320px with
 candidate. It is outside this slice's 14–20px matrix and remains an advisory;
 this slice does not change the shell. Canonical candidate checks are recorded
 in the PR and TaskQ result. Merge-result CI and owner acceptance remain pending.
+
+## Local gate limitation
+
+At implementation commit `b69ffd484d766d01f21f7c5ecc9772e16f5a5f0c`,
+`python scripts/check.py --base 3612d385fbcbc0d8c4b4c78f068c35cad2834319`
+selected full and failed after 191.672s: 531 Rust tests passed, 19 failed and
+36 were ignored. Host-policy/lifecycle/security cases encounter the inherited
+worker boundary (for example, `a worker cannot change host policy`); it was not
+removed. One unchanged Windows IPC test also hit its accept deadline during the
+full run. The same exact IPC test passed in isolation; that does not make the
+failed full run green or establish its timeout's cause.
+
+Checks run separately after that failure passed: all 25 Node component
+scripts, both changed browser instruments, offline selftest (99 golden traces),
+snapshot-manifest regressions and release-tag/source-check regressions passed.
+The additional dashboard and menu-host-strip browser journeys passed on this
+candidate too. Offline selftest did not read the board. Local full host checks
+remain blocked/failed, and the full gate did not reach integration tests. Green
+`merge_group` CI is still required by R12 and §7.
