@@ -1,0 +1,168 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TaskQ · preserved-function review</title><style>
+:root{color-scheme:dark;font:14px/1.45 system-ui;color:#edf1f4;background:#1a1f25}*{box-sizing:border-box}body{margin:0}button,select{font:inherit;background:#303a45;border:1px solid #6f8190;color:inherit;border-radius:5px;padding:6px 10px;cursor:pointer}button:hover{background:#41515e}button[aria-pressed=true]{outline:2px solid #b4c3d2}a{color:#b9d9f0}header{padding:12px 16px;border-bottom:1px solid #45515b;background:#242c34}h1{font-size:18px;margin:0 0 3px}.summary{color:#b7c3cf;margin:0 0 9px}nav,.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.tools{margin-top:8px}.badge{padding:2px 8px;color:#ffc865;border:1px solid #866a37;border-radius:20px}.layout{display:grid;grid-template-columns:360px minmax(0,1fr);gap:14px;padding:14px;max-width:1720px;margin:auto}.surface{display:flex;flex-direction:column;min-width:0;gap:5px}.caption{font-size:12px;color:#bac6d1;display:flex;justify-content:space-between}iframe{width:100%;height:calc(100vh - 220px);min-height:480px;border:1px solid #667889;border-radius:8px;background:#252b32}.readback{padding:0 16px 12px;color:#bac6d1}dialog{padding:14px;background:#242c34;color:#edf1f4;border:1px solid #8396a6;width:min(94vw,1000px);max-height:94vh}dialog::backdrop{background:#000a}dialog iframe{height:75vh;min-height:320px}dialog h2{font-size:18px;margin:0 0 10px}.dialogbar{display:flex;justify-content:space-between;gap:12px}#feature-dialog{width:96vw}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;vertical-align:top;padding:8px;border-bottom:1px solid #495662}th{position:sticky;top:0;background:#303a45}#feature-content{max-height:75vh;overflow:auto}#feature-content input{padding:8px;width:100%;font:inherit;background:#1a1f25;color:inherit;border:1px solid #7b8b98}details pre{white-space:pre-wrap;max-height:180px;overflow:auto;font-size:12px}#interaction-frame{height:80vh}.notice{color:#ffc865}@media(max-width:950px){.layout{grid-template-columns:320px minmax(0,1fr)}header .summary{font-size:12px}}@media(max-width:700px){.layout{grid-template-columns:1fr}.surface iframe{height:640px}iframe{min-height:430px}}
+
+body{display:flex;flex-direction:column;height:100dvh;overflow:hidden}header{flex:none;padding:8px 12px}.review-title{display:flex;align-items:center;gap:8px;color:#b9c3cd;font-size:12px;margin-bottom:5px}.review-title>strong{color:#eef2f5;font-size:14px}.local-state{margin-left:auto;color:#ffc247;font-size:11px}nav{gap:3px}nav button{width:32px;height:32px;min-width:32px;padding:7px;display:inline-flex;align-items:center;justify-content:center;gap:4px;border:0;background:transparent}nav button svg{width:16px;height:16px;flex:none}nav button#features{width:auto;font-size:11px}nav select{font-size:12px;padding:4px 6px;height:30px;background:transparent;border-color:#46505b}.review-divider{height:20px;border-left:1px solid #46505b;margin:0 5px}.layout{display:grid;grid-template-columns:360px minmax(0,1fr);gap:12px;flex:1;min-height:0;width:100%;padding:10px 12px 6px}.surface{min-height:0}.surface>iframe{height:100%;min-height:0;flex:1;border-color:#46505b}.caption{font-size:11px}iframe{border-radius:9px}.readback{flex:none;padding:3px 12px 6px;font-size:11px;line-height:1.4}.readback>details>summary{font-size:11px;color:#81909d;cursor:pointer}.readback details pre{max-height:120px}dialog{width:min(94vw,780px);padding:8px;border-color:#46505b;border-radius:10px}dialog iframe{height:560px;min-height:0;border-color:#46505b}.dialogbar{align-items:center;margin-bottom:7px}.dialogbar h2{margin:0;font-size:13px;font-weight:500}.dialogbar>button{font-size:12px;padding:4px 8px}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}#feature-dialog{height:min(90vh,800px)}#feature-content{max-height:72vh}#interaction-dialog{width:96vw}#interaction-frame{height:82vh}#question{color:#ffc247}nav button#journey{width:auto;color:#38e8a0;font-size:12px;padding:4px 8px;gap:6px}@media(max-width:950px){.layout{grid-template-columns:320px minmax(0,1fr)}}@media(max-width:700px){body{height:auto;overflow:auto}.layout{grid-template-columns:minmax(0,1fr)}.surface>iframe{height:620px;min-height:620px}.review-title{flex-wrap:wrap}.local-state{margin-left:0}nav{flex-wrap:wrap}}
+nav button[hidden]{display:none}#aux{padding:0;overflow:hidden;box-shadow:0 12px 50px #0007}#aux>.dialogbar{display:none}#aux>iframe{display:block;border:0;border-radius:9px;width:100%;margin:0}</style></head><body>
+<header><div class="review-title"><strong>TaskQ</strong><span>Usability review</span><span class="local-state">Local prototype · no real actions</span></div>
+<nav aria-label="Review surfaces"><button id="journey" title="Walk through a complete PM task" aria-label="PM to result"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-play"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />
+</svg>
+<span>PM → result</span></button><select id="journey-condition" aria-label="Walkthrough condition"><option value="normal">Normal</option><option value="slow">Slow work</option><option value="failure">Worker failure</option></select><span class="review-divider"></span><button id="question" title="Open a task question" aria-label="Open a task question"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-message-circle-question"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+  <path d="M12 17h.01" />
+</svg>
+</button><button id="pm" title="Talk to the project manager" aria-label="Talk to the project manager"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-bot"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 8V4H8" />
+  <rect width="16" height="12" x="4" y="8" rx="2" />
+  <path d="M2 14h2" />
+  <path d="M20 14h2" />
+  <path d="M15 13v2" />
+  <path d="M9 13v2" />
+</svg>
+</button><button id="views" title="Views and filters" aria-label="Views and filters"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-sliders-horizontal"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10 5H3" />
+  <path d="M12 19H3" />
+  <path d="M14 3v4" />
+  <path d="M16 17v4" />
+  <path d="M21 12h-9" />
+  <path d="M21 19h-5" />
+  <path d="M21 5h-7" />
+  <path d="M8 10v4" />
+  <path d="M8 12H3" />
+</svg>
+</button><button id="settings" title="All Settings" aria-label="All Settings"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-settings"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+  <circle cx="12" cy="12" r="3" />
+</svg>
+</button><button id="features" title="72 retained feature groups" aria-label="72 retained feature groups"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-rows-3"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M21 9H3" />
+  <path d="M21 15H3" />
+</svg>
+<span>72</span></button><button id="interaction" title="Read long history in this Conversations view" aria-label="Long history"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-activity"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
+</svg>
+</button><button id="new-output" hidden title="Append a simulated reply to the history demo" aria-label="Simulate a new reply"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-arrow-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 5v14" />
+  <path d="m19 12-7 7-7-7" />
+</svg>
+</button><span class="review-divider"></span><label><span class="sr-only">Source comparison</span><select id="mode" title="Compare proposed and current source layout"><option value="candidate">Proposed layout</option><option value="baseline">Current source</option></select></label><label><span class="sr-only">PM runtime</span><select id="provider" title="Demo PM runtime"><option>claude</option><option>codex</option></select></label><label><span class="sr-only">Text size</span><select id="font" title="Text size"><option>14</option><option selected>16</option><option>18</option><option>20</option></select></label><button id="reset" title="Reset local demo" aria-label="Reset local demo"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-rotate-ccw"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+  <path d="M3 3v5h5" />
+</svg>
+</button></nav></header>
+<main class="layout"><section class="surface"><div class="caption"><span>Menu · shared list scroll</span><span>Source components</span></div><iframe id="menu" title="Task menu" src="menu.html"></iframe></section><section class="surface"><div class="caption"><span>Conversations · same controls, stable input</span><span id="runtime-label">Claude · demo</span></div><iframe id="conversations" title="Conversations" src="conversations.html"></iframe></section></main>
+<section class="readback"><div id="feedback" role="status" aria-live="polite">Try: open a question → read the source choices → answer → return to task browsing.</div><details><summary>Review limits and local action log</summary><p>The retained screens use existing validators and controls. Save/files/watch/replies below are synthetic bridge receipts. Native windows, OS behavior, byte-level storage, real delivery and provider permissions require separate qualification. The 10,000-record history lab is an interaction experiment; the source-backed reader still exposes current source pagination and its known unbounded accumulation.</p><pre id="log"></pre></details></section>
+<dialog id="aux"><div class="dialogbar"><h2 id="aux-title">Settings</h2><button data-close="aux">Close review window</button></div><iframe id="aux-frame" title="Retained application surface"></iframe></dialog>
+<dialog id="feature-dialog"><div class="dialogbar"><h2>Functional preservation audit · all 72 groups retained</h2><button data-close="feature-dialog">Close</button></div><div id="feature-content"><input id="feature-search" aria-label="Find a feature" placeholder="Find a function, location or source"><table><thead><tr><th>Feature</th><th>Where it stays</th><th>Required check</th></tr></thead><tbody id="feature-rows"></tbody></table></div><p>Every native result: Not tested. This inventory is a mandatory implementation gate; render presence alone is not full functional proof.</p></dialog>
+<dialog id="interaction-dialog"><div class="dialogbar"><h2>Interaction experiment · long history, delivery and failures</h2><button data-close="interaction-dialog">Close</button></div><iframe id="interaction-frame" title="Interaction and adverse-case experiment"></iframe></dialog>
+<script src="fixture.js"></script></body></html>

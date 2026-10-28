@@ -30,6 +30,13 @@ Apply the approved [UI01–UI28 menu checklist](ui-rules.md#checklist-28-rules) 
 | D-A6 | Meaning survives without color; keyboard, screen reader and touch targets work. |
 | D-A7 | The menu contains no empty groups or redundant content. |
 | D-A8 | Compact counters hide 0; symbols with 1/12/100 fit; unknown stays visible. Wrap as a group under K rules, never stretch across empty width. |
+| D-A9 | Revision preserves approved palette, icon assets and row geometry; intentional changes trace to current owner corrections. Task dividers stay quiet; raised panels remain distinct in both themes. |
+| D-A10 | All text/file entry uses the shared composer; switching, validation and archive/Undo preserve independent drafts and never send. Unsupported capabilities remain explicit. |
+| D-A11 | Named-host/runtime counters and resource meters match their sources; stale/unknown remains distinct. Completed tasks expose outcomes and history independently of activity totals. |
+| D-A12 | Empty task/thread search occupies one labelled icon in its existing context row; opening focuses it. A nonempty query stays visible, including zero matches. Clear restores the list; empty blur/Escape restores the icon. Applied scope and focus never disappear during entry. |
+| D-A13 | Held batch admission uses a distinct action beside the existing counters, with visible Held count and exact scope in its accessible name/tooltip. It adds no dedicated row, never repurposes a filter chip and keeps source task keys/revisions. |
+| D-A14 | Review Menu, Conversations, task context/activity, Views and every Settings route under shared D4/D5/D11/D13: no row for an empty secondary control, no unnecessary disclosure on a primary path, no hidden active filter/error/decision and no inferred-frequency rearrangement. Record rows/clicks before and after; preserve all capabilities, readable type and 32/44px targets. |
+| D-A15 | Project headings keep board, project name and folder in one left-aligned row. Each target acts directly: exact registered board, existing project overview, or registered local root. Back preserves list context; missing destinations have an explicit unavailable state. No inferred paths or hidden task admission. |
 
 General improvements follow [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ behavior belongs in taskq.md and its linked specifications.
 Preserve these acceptance IDs when refining product checks.

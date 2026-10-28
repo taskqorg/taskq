@@ -1,0 +1,269 @@
+{
+  "date": "2026-10-28",
+  "renderer": "156.0.8078.4",
+  "scope": "Prototype only, invented local fixtures; no native send, board write or installed app qualification",
+  "checks": [
+    "real menu wheel",
+    "source-numbered answer",
+    "stale review preserves draft",
+    "two consecutive turns per provider",
+    "IME guard",
+    "unknown same-op reconcile without redispatch",
+    "definite refusal retry",
+    "slow reply and editable draft",
+    "turn failure stays distinct from non-delivery",
+    "native writer refusal",
+    "read failure preserves content",
+    "foreign late receipt isolation",
+    "10000-record bounded rendering",
+    "wheel, first record, stable append and return anchors",
+    "native text selection",
+    "Recent/Archive selection",
+    "new draft retained",
+    "40 geometry cells",
+    "narrow list/detail navigation"
+  ],
+  "cells": [
+    {
+      "width": 320,
+      "font": 14,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 14,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 18,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 18,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 320,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 14,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 14,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 18,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 18,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 14,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 14,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 18,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 18,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 14,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 14,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 18,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 18,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1024,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 14,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 14,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 18,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 18,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry"
+    },
+    {
+      "width": 1400,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry"
+    }
+  ],
+  "errors": []
+}

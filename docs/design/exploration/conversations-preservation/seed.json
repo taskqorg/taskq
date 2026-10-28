@@ -1,0 +1,1190 @@
+{
+  "platform": "macos",
+  "font": 16,
+  "theme": "dark",
+  "host": "Demo Mac",
+  "now": 200000,
+  "version": "source review",
+  "size_anchor": "auto",
+  "attached_edge": "top",
+  "top": true,
+  "service": {
+    "state": "running"
+  },
+  "projects": [
+    {
+      "name": "Website",
+      "root": "a",
+      "issues": "https://github.com/o/r/issues",
+      "board_kind": "github",
+      "complete": true,
+      "focus": [],
+      "saved": true,
+      "tasks": [
+        {
+          "n": 7,
+          "title": "Prepare the release notes",
+          "state": "doing",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/7",
+          "revision": 4,
+          "session": "claude:demo",
+          "attempt": 41,
+          "role": "worker",
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 199940,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/7",
+          "state_name": "Doing",
+          "age": "1m",
+          "total_age": null,
+          "dup": false,
+          "rank": 0,
+          "runtime": "claude",
+          "host": "Demo Mac",
+          "session_url": "https://claude.ai/code/session_DEMOONLY"
+        },
+        {
+          "n": 9,
+          "title": "Choose the compatibility approach",
+          "state": "ask",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/9",
+          "revision": 4,
+          "session": "claude:demo-question",
+          "attempt": 42,
+          "role": "worker",
+          "deps": [],
+          "blocked": [],
+          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility \u2605\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "question": {
+            "parsed": true,
+            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility \u2605\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "done": "compared both clients",
+            "problem": "Should the new admin API keep compatibility with existing clients?",
+            "evidence": [
+              {
+                "label": "#12",
+                "url": "https://github.com/o/r/pull/12"
+              }
+            ],
+            "choices": [
+              {
+                "id": 1,
+                "text": "Keep compatibility",
+                "recommended": true,
+                "consequential": false
+              },
+              {
+                "id": 2,
+                "text": "Remove the old API",
+                "recommended": false,
+                "consequential": false
+              }
+            ],
+            "limits": {
+              "lines": 4,
+              "chars": 240
+            }
+          },
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 191000,
+          "created": null,
+          "steps": [],
+          "stuck": true,
+          "age_s": 9000,
+          "key": "github:https://github.com/o/r/issues/9",
+          "state_name": "Ask",
+          "age": "2h",
+          "total_age": null,
+          "dup": false,
+          "rank": 1,
+          "runtime": "claude",
+          "host": "Demo Mac",
+          "session_url": null,
+          "session_reason": "Answer the question in Conversations."
+        },
+        {
+          "n": 8,
+          "title": "Check the payment flow",
+          "state": "ready",
+          "labels": [
+            "p0"
+          ],
+          "url": "https://github.com/o/r/issues/8",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 199970,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/8",
+          "state_name": "Ready",
+          "age": "<1m",
+          "total_age": null,
+          "dup": false,
+          "rank": 2,
+          "runtime": "codex",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 3,
+          "title": "Verify the mobile layout",
+          "state": "ready",
+          "labels": [
+            "p1"
+          ],
+          "url": "https://github.com/o/r/issues/3",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 199700,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/3",
+          "state_name": "Ready",
+          "age": "5m",
+          "total_age": null,
+          "dup": false,
+          "rank": 3,
+          "runtime": "claude",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 5,
+          "title": "Review translations",
+          "state": "ready",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/5",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 192800,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/5",
+          "state_name": "Ready",
+          "age": "2h",
+          "total_age": null,
+          "dup": false,
+          "rank": 4,
+          "runtime": "claude",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 4,
+          "title": "Revisit onboarding",
+          "state": "later",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/4",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "retry"
+          ],
+          "since": 199400,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/4",
+          "state_name": "Later",
+          "age": "10m",
+          "total_age": null,
+          "dup": false,
+          "rank": 5,
+          "runtime": "codex",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 2,
+          "title": "Plan the next milestone",
+          "state": "held",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/2",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "start"
+          ],
+          "since": 110000,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/2",
+          "state_name": "Held",
+          "age": "1d",
+          "total_age": null,
+          "dup": false,
+          "rank": 6,
+          "runtime": "codex",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 10,
+          "title": "Review the release candidate",
+          "state": "review",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/10",
+          "revision": 4,
+          "session": "codex:demo-review",
+          "attempt": 43,
+          "role": "reviewer",
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 199940,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/10",
+          "state_name": "Review",
+          "age": "1m",
+          "total_age": null,
+          "dup": false,
+          "rank": 10,
+          "runtime": "codex",
+          "host": "Demo Linux",
+          "session_url": null,
+          "session_reason": "No verified chat link is available for this remote agent."
+        },
+        {
+          "n": 11,
+          "title": "Resolve the failed image export",
+          "state": "failed",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/11",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "retry"
+          ],
+          "since": 199940,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/11",
+          "state_name": "Failed",
+          "age": "1m",
+          "total_age": null,
+          "dup": false,
+          "rank": 11,
+          "runtime": "claude",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 12,
+          "title": "Waiting for approved copy",
+          "state": "waiting",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/12",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "stop",
+            "later"
+          ],
+          "since": 199940,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/12",
+          "state_name": "Blocked",
+          "age": "1m",
+          "total_age": null,
+          "dup": false,
+          "rank": 12,
+          "runtime": "claude",
+          "host": "Demo Mac"
+        },
+        {
+          "n": 13,
+          "title": "Check the next campaign",
+          "state": "held",
+          "labels": [],
+          "url": "https://github.com/o/r/issues/13",
+          "revision": 4,
+          "session": null,
+          "attempt": null,
+          "role": null,
+          "deps": [],
+          "blocked": [],
+          "card": null,
+          "question": null,
+          "failed": null,
+          "controls": [
+            "start"
+          ],
+          "since": 199940,
+          "created": null,
+          "steps": [],
+          "stuck": false,
+          "key": "github:https://github.com/o/r/issues/13",
+          "state_name": "Held",
+          "age": "1m",
+          "total_age": null,
+          "dup": false,
+          "rank": 13,
+          "runtime": "claude",
+          "host": "Demo Mac"
+        }
+      ],
+      "age_text": null,
+      "mode": "run",
+      "counts": [
+        {
+          "state": "doing",
+          "name": "Doing",
+          "n": 1
+        },
+        {
+          "state": "review",
+          "name": "Review",
+          "n": 0
+        },
+        {
+          "state": "ask",
+          "name": "Ask",
+          "n": 1
+        },
+        {
+          "state": "failed",
+          "name": "Failed",
+          "n": 0
+        },
+        {
+          "state": "ready",
+          "name": "Ready",
+          "n": 3
+        },
+        {
+          "state": "waiting",
+          "name": "Blocked",
+          "n": 0
+        },
+        {
+          "state": "later",
+          "name": "Later",
+          "n": 1
+        },
+        {
+          "state": "held",
+          "name": "Held",
+          "n": 1
+        }
+      ],
+      "partial": [],
+      "open": 7,
+      "alive": true,
+      "age": 2,
+      "host": "Demo Mac",
+      "version": "fixture",
+      "resources": {
+        "key": "mac/taskq",
+        "observed_at": 1000,
+        "labels": {
+          "host": "mac",
+          "project": "taskq"
+        },
+        "targets": [
+          {
+            "target": {
+              "installation_id": "3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a",
+              "generation": 1,
+              "project_id": null,
+              "runtime_id": null
+            },
+            "service_version": "4.5.0",
+            "supported": [
+              {
+                "policy_schema": "taskq.host-capacity/1",
+                "modes": [],
+                "fields": [
+                  "maximum",
+                  "load_gate"
+                ],
+                "scopes": [
+                  "host"
+                ]
+              }
+            ],
+            "current_revision": "11111111111111111111111111111111",
+            "effective_revision": "11111111111111111111111111111111",
+            "current_policy": {
+              "maximum": null,
+              "load_gate": {
+                "enabled": true,
+                "cpu_max": 90,
+                "memory_min": 10
+              }
+            },
+            "effective_policy": {
+              "maximum": null,
+              "load_gate": {
+                "enabled": true,
+                "cpu_max": 90,
+                "memory_min": 10
+              }
+            },
+            "runtime_usage": [
+              {
+                "runtime_id": "codex",
+                "used": 2,
+                "limit": 3,
+                "limit_kind": "ceiling"
+              }
+            ],
+            "sample": {
+              "source": "taskq-admission-macos",
+              "sampled_at": 990,
+              "age_seconds": 10,
+              "cadence_seconds": 30,
+              "window_seconds": 60,
+              "cpu_busy_percent": 20,
+              "memory_available_percent": 40,
+              "memory_available_gib": 8,
+              "pressure": null
+            },
+            "blockers": [],
+            "completeness": "complete"
+          },
+          {
+            "target": {
+              "installation_id": "3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a",
+              "generation": 1,
+              "project_id": null,
+              "runtime_id": "claude"
+            },
+            "service_version": "4.5.0",
+            "supported": [
+              {
+                "policy_schema": "taskq.host-capacity/1",
+                "modes": [],
+                "fields": [
+                  "runtime_limit"
+                ],
+                "scopes": [
+                  "runtime"
+                ]
+              }
+            ],
+            "current_revision": "11111111111111111111111111111111",
+            "effective_revision": "11111111111111111111111111111111",
+            "current_policy": {
+              "runtime_limit": 2
+            },
+            "effective_policy": {
+              "runtime_limit": 2
+            },
+            "runtime_usage": [],
+            "sample": null,
+            "blockers": [],
+            "completeness": "complete"
+          },
+          {
+            "target": {
+              "installation_id": "3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a",
+              "generation": 1,
+              "project_id": null,
+              "runtime_id": "codex"
+            },
+            "service_version": "4.5.0",
+            "supported": [
+              {
+                "policy_schema": "taskq.host-capacity/1",
+                "modes": [],
+                "fields": [
+                  "runtime_limit"
+                ],
+                "scopes": [
+                  "runtime"
+                ]
+              }
+            ],
+            "current_revision": "11111111111111111111111111111111",
+            "effective_revision": "11111111111111111111111111111111",
+            "current_policy": {
+              "runtime_limit": 3
+            },
+            "effective_policy": {
+              "runtime_limit": 3
+            },
+            "runtime_usage": [],
+            "sample": null,
+            "blockers": [],
+            "completeness": "complete"
+          },
+          {
+            "target": {
+              "installation_id": "3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a3f9a",
+              "generation": 1,
+              "project_id": null,
+              "runtime_id": "codex-app"
+            },
+            "service_version": "4.5.0",
+            "supported": [
+              {
+                "policy_schema": "taskq.host-capacity/1",
+                "modes": [],
+                "fields": [
+                  "runtime_limit"
+                ],
+                "scopes": [
+                  "runtime"
+                ]
+              }
+            ],
+            "current_revision": "11111111111111111111111111111111",
+            "effective_revision": "11111111111111111111111111111111",
+            "current_policy": {
+              "runtime_limit": null
+            },
+            "effective_policy": {
+              "runtime_limit": null
+            },
+            "runtime_usage": [],
+            "sample": null,
+            "blockers": [],
+            "completeness": "complete"
+          }
+        ]
+      }
+    }
+  ],
+  "display": {
+    "states": [
+      {
+        "id": "doing",
+        "name": "Doing"
+      },
+      {
+        "id": "review",
+        "name": "Review"
+      },
+      {
+        "id": "ask",
+        "name": "Ask"
+      },
+      {
+        "id": "failed",
+        "name": "Failed"
+      },
+      {
+        "id": "ready",
+        "name": "Ready"
+      },
+      {
+        "id": "waiting",
+        "name": "Blocked"
+      },
+      {
+        "id": "later",
+        "name": "Later"
+      },
+      {
+        "id": "held",
+        "name": "Held"
+      }
+    ],
+    "series": [
+      {
+        "id": "close",
+        "name": "Closed"
+      },
+      {
+        "id": "failed",
+        "name": "Failed"
+      },
+      {
+        "id": "ask",
+        "name": "Ask"
+      },
+      {
+        "id": "blocked",
+        "name": "Blocked"
+      }
+    ],
+    "notify": [
+      {
+        "id": "ask",
+        "name": "Question"
+      },
+      {
+        "id": "close",
+        "name": "Closed"
+      },
+      {
+        "id": "failed",
+        "name": "Failed"
+      },
+      {
+        "id": "gone",
+        "name": "Attempt gone"
+      }
+    ],
+    "periods": [
+      {
+        "id": "5m",
+        "name": "5 min"
+      },
+      {
+        "id": "1h",
+        "name": "Hour"
+      },
+      {
+        "id": "1d",
+        "name": "Day"
+      },
+      {
+        "id": "1w",
+        "name": "7 days"
+      },
+      {
+        "id": "1mo",
+        "name": "30 days"
+      },
+      {
+        "id": "custom",
+        "name": "Custom"
+      }
+    ],
+    "all": {
+      "counts": [
+        {
+          "state": "doing",
+          "name": "Doing",
+          "n": 1
+        },
+        {
+          "state": "review",
+          "name": "Review",
+          "n": 0
+        },
+        {
+          "state": "ask",
+          "name": "Ask",
+          "n": 1
+        },
+        {
+          "state": "failed",
+          "name": "Failed",
+          "n": 0
+        },
+        {
+          "state": "ready",
+          "name": "Ready",
+          "n": 3
+        },
+        {
+          "state": "waiting",
+          "name": "Blocked",
+          "n": 0
+        },
+        {
+          "state": "later",
+          "name": "Later",
+          "n": 1
+        },
+        {
+          "state": "held",
+          "name": "Held",
+          "n": 1
+        }
+      ],
+      "partial": [],
+      "open": 7
+    },
+    "run": false
+  },
+  "ai": {
+    "history": [
+      "Summarize the latest decisions.",
+      "What needs my attention today?"
+    ],
+    "runtime": {
+      "id": "claude",
+      "name": "Claude Code",
+      "available": true
+    }
+  },
+  "notify": {
+    "status": "allowed",
+    "host": {
+      "ask": "off",
+      "close": "off",
+      "failed": "off",
+      "gone": "off"
+    },
+    "projects": {}
+  },
+  "stop_modes": true,
+  "messages": {
+    "complete": true,
+    "count": 2,
+    "entries": [
+      {
+        "key": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "question",
+        "board": "https://github.com/o/r/issues",
+        "task": 9,
+        "root": "a",
+        "project": "Website",
+        "revision": 4,
+        "title": "Choose the compatibility approach",
+        "state": "ask",
+        "read": false,
+        "archived": false
+      },
+      {
+        "key": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "request",
+        "id": "setup-event",
+        "root": "a",
+        "title": "Project setup result",
+        "host": "Demo Mac",
+        "state": "unknown",
+        "read": false,
+        "archived": false,
+        "request": {
+          "reason": "Demo record: setup result could not be confirmed."
+        }
+      }
+    ]
+  },
+  "settings_window": true,
+  "views_window": true,
+  "conversations": {
+    "complete": true,
+    "items": [
+      {
+        "id": "pm-claude",
+        "revision": 1,
+        "title": "Website planning",
+        "root": "a",
+        "text": "",
+        "caret": [
+          0,
+          0
+        ],
+        "scroll": 0,
+        "files": [],
+        "archived": false,
+        "sent": {
+          "text": "Help me plan the next release.",
+          "root": "a",
+          "runtime": "claude",
+          "files": []
+        },
+        "request": {
+          "id": "pm-claude",
+          "state": "launched",
+          "kind": "launched",
+          "runtime": "claude",
+          "host": "Demo Mac",
+          "url": "https://claude.ai/code/session_DEMOONLY",
+          "session": "demo-only",
+          "next": "Continue in this thread"
+        },
+        "dialogue": {
+          "state": "idle",
+          "watch": "no watch",
+          "turn": null
+        }
+      },
+      {
+        "id": "pm-codex",
+        "revision": 1,
+        "title": "Release review",
+        "root": "a",
+        "text": "",
+        "caret": [
+          0,
+          0
+        ],
+        "scroll": 0,
+        "files": [],
+        "archived": false,
+        "sent": {
+          "text": "Help me plan the next release.",
+          "root": "a",
+          "runtime": "codex",
+          "files": []
+        },
+        "request": {
+          "id": "pm-codex",
+          "state": "launched",
+          "kind": "launched",
+          "runtime": "codex",
+          "host": "Demo Mac",
+          "url": "codex://threads/demo-only",
+          "session": "demo-only",
+          "next": "Continue in this thread"
+        },
+        "dialogue": {
+          "state": "idle",
+          "watch": "no watch",
+          "turn": null
+        }
+      },
+      {
+        "id": "draft-planning",
+        "revision": 1,
+        "title": "Saved planning draft",
+        "root": "a",
+        "text": "Help compare the next two milestones.",
+        "caret": [
+          0,
+          0
+        ],
+        "scroll": 0,
+        "files": [],
+        "archived": false
+      }
+    ],
+    "navigation": {
+      "selected": "pm-claude",
+      "list": "recent"
+    }
+  },
+  "history": {
+    "bins": [
+      {
+        "start": 1792598400.0,
+        "end": 1792612800.0,
+        "counts": [
+          5,
+          0,
+          1,
+          3
+        ],
+        "missing": [],
+        "ongoing": false
+      },
+      {
+        "start": 1792612800.0,
+        "end": 1792627200.0,
+        "counts": [
+          4,
+          0,
+          3,
+          2
+        ],
+        "missing": [],
+        "ongoing": false
+      },
+      {
+        "start": 1792627200.0,
+        "end": 1792641600.0,
+        "counts": [
+          7,
+          0,
+          9,
+          7
+        ],
+        "missing": [],
+        "ongoing": false
+      },
+      {
+        "start": 1792641600.0,
+        "end": 1792656000.0,
+        "counts": [
+          12,
+          0,
+          5,
+          0
+        ],
+        "missing": [],
+        "ongoing": false
+      },
+      {
+        "start": 1792656000.0,
+        "end": 1792670400.0,
+        "counts": [
+          7,
+          0,
+          2,
+          1
+        ],
+        "missing": [],
+        "ongoing": false
+      },
+      {
+        "start": 1792670400.0,
+        "end": 1792684800.0,
+        "counts": [
+          4,
+          0,
+          0,
+          0
+        ],
+        "missing": [],
+        "ongoing": true
+      }
+    ],
+    "peak": 12,
+    "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 22 22\"><g id=\"summary-data\" visibility=\"visible\"><g id=\"chart\" shape-rendering=\"crispEdges\"><g id=\"bin-0\" data-start=\"1792598400\" data-end=\"1792612800\"><rect data-mark=\"closed\" x=\"1\" y=\"16.75\" width=\"2.5\" height=\"3.75\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"1\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-1\" data-start=\"1792612800\" data-end=\"1792627200\"><rect data-mark=\"closed\" x=\"4.5\" y=\"17.5\" width=\"2.5\" height=\"3\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"4.5\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-2\" data-start=\"1792627200\" data-end=\"1792641600\"><rect data-mark=\"closed\" x=\"8\" y=\"15.25\" width=\"2.5\" height=\"5.25\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"8\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-3\" data-start=\"1792641600\" data-end=\"1792656000\"><rect data-mark=\"closed\" x=\"11.5\" y=\"11.5\" width=\"2.5\" height=\"9\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"11.5\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-4\" data-start=\"1792656000\" data-end=\"1792670400\"><rect data-mark=\"closed\" x=\"15\" y=\"15.25\" width=\"2.5\" height=\"5.25\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"15\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-5\" data-start=\"1792670400\" data-end=\"1792684800\"><rect data-mark=\"closed\" x=\"18.5\" y=\"17.5\" width=\"2.5\" height=\"3\" fill=\"#087F5B\"/><rect data-mark=\"ongoing\" x=\"18.5\" y=\"21\" width=\"2.5\" height=\"0.5\" fill=\"#536171\"/></g></g><g id=\"counters\"><g id=\"counter-0\"><g fill=\"#087F5B\" transform=\"translate(0.4315948486328125 9) scale(1 -1)\"><path transform=\"translate(0 0)\" d=\"M2.234619140625 0 L2.234619140625 5.324592590332031 L2.1610794067382813 5.324592590332031 L0.5684051513671875 4.187919616699219 L0.5684051513671875 5.155815124511719 L2.238189697265625 6.34130859375 L3.2222213745117188 6.34130859375 L3.2222213745117188 0 Z\"/></g></g><g id=\"counter-2\"><g fill=\"#536171\" transform=\"translate(14.831594848632813 9) scale(1 -1)\"><path transform=\"translate(0 0)\" d=\"M2.234619140625 0 L2.234619140625 5.324592590332031 L2.1610794067382813 5.324592590332031 L0.5684051513671875 4.187919616699219 L0.5684051513671875 5.155815124511719 L2.238189697265625 6.34130859375 L3.2222213745117188 6.34130859375 L3.2222213745117188 0 Z\"/></g></g></g></g></svg>",
+    "start": 1792598400.0,
+    "end": 1792684800.0,
+    "tz": "local",
+    "since": 1791843119,
+    "palette": "--work:#087F5B;--ask:#995200;--failed:#C92641;--ready:#536171;--muted:#536171;--review:#8250DF",
+    "captured": 1792678585,
+    "font": ".AppleSystemUIFontMedium",
+    "compact": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAABi0lEQVR4nOWYPU7DQBCFHyP35AZYWrlwxZZ0mBvkBqA9QcrtAp3LnMCEG+QGhBuYyoVlEW4AHSUatEhuHDD2bjLmk7byauZpND/eIQiDIAyCMAjCIAiDIIxo38ck1WcAFgB0ID0lgFVdla9dF05+EMsGZgjLGweoS/S+lFgcQCycT/bdOyXaacCR3sAv85ZP/accbrGpq/IOHknSL416cl2CIAzCfxOsrLlW1lxCUIRjAFtlzaOy5hyCUiLj9qesuVfW8NDxgo8cvnHCl8qaUylFx9PqFsCOc1xSl5gBWCtrXsYqzFBtLR6rMEP34WxoYYobHFFgf1v+dWzy4vnYBe+43TV58TTUUBTg9bBo8uJhLIORR6ErPk1evI9p2IfgNQ+NJi86H5LHInhwQYUSzAWVjVFQQQSPWVCTHBwEYRCEEf3y3tztDXwvUgYJLt3fFaMDLgS/ffdOiZWbWIfgoneEeXuYpFoHXLfG7jAfvdetoUlSvXTvQGZbV+XVJLoEQRgEYRCEQYcW0JdPdGxf16F7kx8AAAAASUVORK5CYII="
+  },
+  "period": "1d",
+  "review_history_themes": {
+    "dark": {
+      "bins": [
+        {
+          "start": 1792598400.0,
+          "end": 1792612800.0,
+          "counts": [
+            5,
+            0,
+            1,
+            3
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792612800.0,
+          "end": 1792627200.0,
+          "counts": [
+            4,
+            0,
+            3,
+            2
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792627200.0,
+          "end": 1792641600.0,
+          "counts": [
+            7,
+            0,
+            9,
+            7
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792641600.0,
+          "end": 1792656000.0,
+          "counts": [
+            12,
+            0,
+            5,
+            0
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792656000.0,
+          "end": 1792670400.0,
+          "counts": [
+            7,
+            0,
+            2,
+            1
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792670400.0,
+          "end": 1792684800.0,
+          "counts": [
+            4,
+            0,
+            0,
+            0
+          ],
+          "missing": [],
+          "ongoing": true
+        }
+      ],
+      "peak": 12,
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 22 22\"><g id=\"summary-data\" visibility=\"visible\"><g id=\"chart\" shape-rendering=\"crispEdges\"><g id=\"bin-0\" data-start=\"1792598400\" data-end=\"1792612800\"><rect data-mark=\"closed\" x=\"1\" y=\"16.75\" width=\"2.5\" height=\"3.75\" fill=\"#38E8A0\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"1\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#FFC247\"/></g><g id=\"bin-1\" data-start=\"1792612800\" data-end=\"1792627200\"><rect data-mark=\"closed\" x=\"4.5\" y=\"17.5\" width=\"2.5\" height=\"3\" fill=\"#38E8A0\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"4.5\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#FFC247\"/></g><g id=\"bin-2\" data-start=\"1792627200\" data-end=\"1792641600\"><rect data-mark=\"closed\" x=\"8\" y=\"15.25\" width=\"2.5\" height=\"5.25\" fill=\"#38E8A0\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"8\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#FFC247\"/></g><g id=\"bin-3\" data-start=\"1792641600\" data-end=\"1792656000\"><rect data-mark=\"closed\" x=\"11.5\" y=\"11.5\" width=\"2.5\" height=\"9\" fill=\"#38E8A0\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"11.5\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#FFC247\"/></g><g id=\"bin-4\" data-start=\"1792656000\" data-end=\"1792670400\"><rect data-mark=\"closed\" x=\"15\" y=\"15.25\" width=\"2.5\" height=\"5.25\" fill=\"#38E8A0\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"15\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#FFC247\"/></g><g id=\"bin-5\" data-start=\"1792670400\" data-end=\"1792684800\"><rect data-mark=\"closed\" x=\"18.5\" y=\"17.5\" width=\"2.5\" height=\"3\" fill=\"#38E8A0\"/><rect data-mark=\"ongoing\" x=\"18.5\" y=\"21\" width=\"2.5\" height=\"0.5\" fill=\"#B9C6D8\"/></g></g><g id=\"counters\"><g id=\"counter-0\"><g fill=\"#38E8A0\" transform=\"translate(0.4315948486328125 9) scale(1 -1)\"><path transform=\"translate(0 0)\" d=\"M2.234619140625 0 L2.234619140625 5.324592590332031 L2.1610794067382813 5.324592590332031 L0.5684051513671875 4.187919616699219 L0.5684051513671875 5.155815124511719 L2.238189697265625 6.34130859375 L3.2222213745117188 6.34130859375 L3.2222213745117188 0 Z\"/></g></g><g id=\"counter-2\"><g fill=\"#B9C6D8\" transform=\"translate(14.831594848632813 9) scale(1 -1)\"><path transform=\"translate(0 0)\" d=\"M2.234619140625 0 L2.234619140625 5.324592590332031 L2.1610794067382813 5.324592590332031 L0.5684051513671875 4.187919616699219 L0.5684051513671875 5.155815124511719 L2.238189697265625 6.34130859375 L3.2222213745117188 6.34130859375 L3.2222213745117188 0 Z\"/></g></g></g></g></svg>",
+      "start": 1792598400.0,
+      "end": 1792684800.0,
+      "tz": "local",
+      "since": 1791843119,
+      "palette": "--work:#38E8A0;--ask:#FFC247;--failed:#FF6378;--ready:#B9C6D8;--muted:#B9C6D8;--review:#BCA3EB",
+      "captured": 1792678585,
+      "font": ".AppleSystemUIFontMedium",
+      "compact": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAABlklEQVR4nOWYMU7DQBBFf0auQyylxzcgkhs6wgEs5QZwhHRbBkp3vgHhBpH2AIQDrBROQOgtGVzRgUZspDQJMd5dZ8KTXHm187WaP7M7BGEQhEEQBkEYBGEQhBHt+1lW9TmAKYBRID0rAMUw7r/tWtD7RSxvMEBY3vmAdonelxLTDsTCxuTYjVNiOw34pBfwy2Qr5uhPObzFYhj37+GRsqpxiFfEVQmCMAj/TbAy+kYZfQVBJ5wAWCqjn5TRFxCUEmMuf8roB2U0Nx0v+MjhWyt8pow+k2I67lZ3ANac45KqxADAXBn96sqYocpa4sqYoevwuK0xxTWOKHC8JV8d8zR7OXbBay53eZo9t90oCvB6mOZp9uhqw8ij0IK/PM0+XG7sQ/Ccm0aeZjsfksciuLWhQglmQ41dGCqIYJeGOsnGQRAGQRjRgesmdm7ge5DSSvDK3q42A45QA8FN7MYpUdiO1QWXjU+Yp4dlVY9CjVu/gKT3c9FnPhuPW0NTVvXMvgOZ5TDuX59ElSAIgyAMgjCoawFN+QaDFWn8WZc/HwAAAABJRU5ErkJggg=="
+    },
+    "light": {
+      "bins": [
+        {
+          "start": 1792598400.0,
+          "end": 1792612800.0,
+          "counts": [
+            5,
+            0,
+            1,
+            3
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792612800.0,
+          "end": 1792627200.0,
+          "counts": [
+            4,
+            0,
+            3,
+            2
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792627200.0,
+          "end": 1792641600.0,
+          "counts": [
+            7,
+            0,
+            9,
+            7
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792641600.0,
+          "end": 1792656000.0,
+          "counts": [
+            12,
+            0,
+            5,
+            0
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792656000.0,
+          "end": 1792670400.0,
+          "counts": [
+            7,
+            0,
+            2,
+            1
+          ],
+          "missing": [],
+          "ongoing": false
+        },
+        {
+          "start": 1792670400.0,
+          "end": 1792684800.0,
+          "counts": [
+            4,
+            0,
+            0,
+            0
+          ],
+          "missing": [],
+          "ongoing": true
+        }
+      ],
+      "peak": 12,
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 22 22\"><g id=\"summary-data\" visibility=\"visible\"><g id=\"chart\" shape-rendering=\"crispEdges\"><g id=\"bin-0\" data-start=\"1792598400\" data-end=\"1792612800\"><rect data-mark=\"closed\" x=\"1\" y=\"16.75\" width=\"2.5\" height=\"3.75\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"1\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-1\" data-start=\"1792612800\" data-end=\"1792627200\"><rect data-mark=\"closed\" x=\"4.5\" y=\"17.5\" width=\"2.5\" height=\"3\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"4.5\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-2\" data-start=\"1792627200\" data-end=\"1792641600\"><rect data-mark=\"closed\" x=\"8\" y=\"15.25\" width=\"2.5\" height=\"5.25\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"8\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-3\" data-start=\"1792641600\" data-end=\"1792656000\"><rect data-mark=\"closed\" x=\"11.5\" y=\"11.5\" width=\"2.5\" height=\"9\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"11.5\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-4\" data-start=\"1792656000\" data-end=\"1792670400\"><rect data-mark=\"closed\" x=\"15\" y=\"15.25\" width=\"2.5\" height=\"5.25\" fill=\"#087F5B\"/><rect data-mark=\"ask\" visibility=\"hidden\" x=\"15\" y=\"12\" width=\"2.5\" height=\"0.75\" fill=\"#995200\"/></g><g id=\"bin-5\" data-start=\"1792670400\" data-end=\"1792684800\"><rect data-mark=\"closed\" x=\"18.5\" y=\"17.5\" width=\"2.5\" height=\"3\" fill=\"#087F5B\"/><rect data-mark=\"ongoing\" x=\"18.5\" y=\"21\" width=\"2.5\" height=\"0.5\" fill=\"#536171\"/></g></g><g id=\"counters\"><g id=\"counter-0\"><g fill=\"#087F5B\" transform=\"translate(0.4315948486328125 9) scale(1 -1)\"><path transform=\"translate(0 0)\" d=\"M2.234619140625 0 L2.234619140625 5.324592590332031 L2.1610794067382813 5.324592590332031 L0.5684051513671875 4.187919616699219 L0.5684051513671875 5.155815124511719 L2.238189697265625 6.34130859375 L3.2222213745117188 6.34130859375 L3.2222213745117188 0 Z\"/></g></g><g id=\"counter-2\"><g fill=\"#536171\" transform=\"translate(14.831594848632813 9) scale(1 -1)\"><path transform=\"translate(0 0)\" d=\"M2.234619140625 0 L2.234619140625 5.324592590332031 L2.1610794067382813 5.324592590332031 L0.5684051513671875 4.187919616699219 L0.5684051513671875 5.155815124511719 L2.238189697265625 6.34130859375 L3.2222213745117188 6.34130859375 L3.2222213745117188 0 Z\"/></g></g></g></g></svg>",
+      "start": 1792598400.0,
+      "end": 1792684800.0,
+      "tz": "local",
+      "since": 1791843119,
+      "palette": "--work:#087F5B;--ask:#995200;--failed:#C92641;--ready:#536171;--muted:#536171;--review:#8250DF",
+      "captured": 1792678585,
+      "font": ".AppleSystemUIFontMedium",
+      "compact": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACwAAAAsCAYAAAAehFoBAAABi0lEQVR4nOWYPU7DQBCFHyP35AZYWrlwxZZ0mBvkBqA9QcrtAp3LnMCEG+QGhBuYyoVlEW4AHSUatEhuHDD2bjLmk7byauZpND/eIQiDIAyCMAjCIAiDIIxo38ck1WcAFgB0ID0lgFVdla9dF05+EMsGZgjLGweoS/S+lFgcQCycT/bdOyXaacCR3sAv85ZP/accbrGpq/IOHknSL416cl2CIAzCfxOsrLlW1lxCUIRjAFtlzaOy5hyCUiLj9qesuVfW8NDxgo8cvnHCl8qaUylFx9PqFsCOc1xSl5gBWCtrXsYqzFBtLR6rMEP34WxoYYobHFFgf1v+dWzy4vnYBe+43TV58TTUUBTg9bBo8uJhLIORR6ErPk1evI9p2IfgNQ+NJi86H5LHInhwQYUSzAWVjVFQQQSPWVCTHBwEYRCEEf3y3tztDXwvUgYJLt3fFaMDLgS/ffdOiZWbWIfgoneEeXuYpFoHXLfG7jAfvdetoUlSvXTvQGZbV+XVJLoEQRgEYRCEQYcW0JdPdGxf16F7kx8AAAAASUVORK5CYII="
+    }
+  }
+}

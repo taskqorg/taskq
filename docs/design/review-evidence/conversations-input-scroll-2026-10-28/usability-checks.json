@@ -1,0 +1,180 @@
+{
+  "scope": "Local review gestures/components only. Native providers, platform physics and production scale not qualified.",
+  "results": [
+    "Shared input grows/shrinks on text, long paste uses the main viewport, wheel is not trapped, Send stays reachable",
+    "Real wheel pauses follow; incoming messages and switching chats preserve exact message/pixel anchor; Latest explicitly resumes follow",
+    "Explicit follow appends at the bottom without enabling a second scroll owner",
+    "Loading older history preserves the visible record across a delayed prepend",
+    "One click from the existing menu question glyph; choices/reason/evidence visible; no nested task disclosure",
+    "Close-on-board control uses recorded GitHub/GitLab provider, including self-hosted GitLab, and preserves the exact URL",
+    "Command history is one direct composer control; selecting only fills the draft",
+    "Wrapped input grows at 350×430 / 20px; opening information stays visible without nested scrolling",
+    "Menu, PM, Views and all 11 Settings routes audited for disclosure depth and shared no-grip input",
+    "Current history launcher and sample reply use the same UI and preserve the independent PM draft; old experiment is archival"
+  ],
+  "sections": [
+    {
+      "section": "Menu",
+      "disclosures": [
+        {
+          "name": "Dem?",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "PM",
+      "disclosures": [
+        {
+          "name": "",
+          "depth": 1
+        },
+        {
+          "name": "Conversation info",
+          "depth": 1
+        },
+        {
+          "name": "Website · claude · Demo Mac",
+          "depth": 1
+        },
+        {
+          "name": "",
+          "depth": 1
+        },
+        {
+          "name": "",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Views",
+      "disclosures": [],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/appearance",
+      "disclosures": [],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/notifications",
+      "disclosures": [],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/cadence",
+      "disclosures": [
+        {
+          "name": "History Day",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/hosts",
+      "disclosures": [
+        {
+          "name": "Demo Mac · runs unknown",
+          "depth": 1
+        },
+        {
+          "name": "Count definitions",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/work",
+      "disclosures": [],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/agents",
+      "disclosures": [],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/projects",
+      "disclosures": [
+        {
+          "name": "Request",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/delivery",
+      "disclosures": [
+        {
+          "name": "Website · policy unavailable",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/services",
+      "disclosures": [
+        {
+          "name": "Service Website · null old",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/recovery",
+      "disclosures": [],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Settings/about",
+      "disclosures": [
+        {
+          "name": "Service fixture · 1 project",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Task question",
+      "disclosures": [
+        {
+          "name": "",
+          "depth": 1
+        },
+        {
+          "name": "Task info",
+          "depth": 1
+        },
+        {
+          "name": "",
+          "depth": 1
+        },
+        {
+          "name": "",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    },
+    {
+      "section": "Task activity",
+      "disclosures": [
+        {
+          "name": "",
+          "depth": 1
+        }
+      ],
+      "manual_field_grips": 0
+    }
+  ],
+  "errors": []
+}

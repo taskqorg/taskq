@@ -1,0 +1,13 @@
+{
+  "scope": "Local invented transitions over existing source controls; no native/provider or durable-state proof.",
+  "results": [
+    "claude: message → held brief → one assignment → worker → exact question → accepted answer → reviewer → result; PM/answer drafts and origin retained",
+    "codex: message → held brief → one assignment → worker → exact question → accepted answer → reviewer → result; PM/answer drafts and origin retained",
+    "56 task-card geometry cells across seven phases: no internal horizontal overflow, fixed input and hit-tested Send",
+    "Worker failure has an explicit reason and retry of the same task, without duplicate assignment",
+    "Slow work keeps input usable; reset fences every late event and removes only local simulated state",
+    "Changed question refuses the old revision and never resumes work",
+    "48 exact-question geometry cells: both themes, short/narrow and large type; hit-tested Send, no horizontal overflow"
+  ],
+  "errors": []
+}
