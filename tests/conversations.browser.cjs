@@ -37,24 +37,26 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
    }throw Error('Fixture queue failed to settle');
   }
   async function capture(name){if(evidence){fs.mkdirSync(evidence,{recursive:true});await page.screenshot({path:path.join(evidence,name+'.png')});}}
+  async function details(){const d=page.locator('.conversation-info');if(!await d.evaluate(e=>e.open))await d.locator('summary').click();}
+  async function tool(action){await details();await page.locator('[data-c='+action+']').click();}
   await boot();
   assert.equal(await page.locator('[data-c=new]').count(),1,'CW1: Conversations must have direct New');
   await page.locator('[data-c=new]').click();await drain();
   const input=page.locator('[data-c-field=text]');assert.equal(await input.evaluate(e=>document.activeElement===e),true,'New focuses its own composer');
-  await input.fill('Design draft\nFirst independent context');await page.locator('[data-c-field=title]').focus();await drain();
+  await input.fill('Design draft\nFirst independent context');await input.dispatchEvent('select');await drain();
   assert.match(await page.locator('.conversation-row[aria-current=page]').innerText(),/^Design draft/,'#1748 A2: an unsent draft names itself by its first line');
   // Switching before the debounce must save the previous item, even if another draft is immediately edited.
   await page.locator('[data-c=new]').click();await drain();await input.fill('Release draft');await input.evaluate(e=>e.setSelectionRange(2,5));await input.dispatchEvent('select');await drain();
   const [first,second]=state.conversations.items;assert.equal(first.text,'Design draft\nFirst independent context');assert.equal(second.text,'Release draft');
   await page.locator('[data-c=select][data-id="'+first.id+'"]').click();await drain();assert.equal(await input.inputValue(),first.text);assert(await input.evaluate(e=>document.activeElement===e));
-  await page.locator('[data-c-field=title]').fill('Explicit name');await input.focus();await drain();await input.fill('Changed temporary title');await input.dispatchEvent('select');await drain();
+  await details();await page.locator('[data-c-field=title]').fill('Explicit name');await input.focus();await drain();await input.fill('Changed temporary title');await input.dispatchEvent('select');await drain();
   assert.match(await page.locator('[data-c=select][data-id="'+first.id+'"]').innerText(),/Explicit name/,'explicit title wins');
   await page.locator('[data-c-field=search]').fill('no match');await page.locator('[data-c=clear-search]').click();assert.equal(await input.inputValue(),'Changed temporary title','clear search keeps selection');
   await page.locator('[data-c-field=search]').fill('hidden');await page.locator('[data-c=new]').click();await drain();assert.equal(await page.locator('[data-c-field=search]').inputValue(),'');assert(await input.evaluate(e=>document.activeElement===e));
   await input.fill('Third draft');await input.dispatchEvent('select');await drain();
-  const third=state.conversations.items[2];await page.locator('[data-c=archive]').click();await drain();assert.equal(await input.inputValue(),first.text,'Archive selects another item without switching list');assert.equal(await page.locator('[data-c=recent]').getAttribute('aria-pressed'),'true');
+  const third=state.conversations.items[2];await tool('archive');await drain();assert.equal(await input.inputValue(),first.text,'Archive selects another item without switching list');assert.equal(await page.locator('[data-c=recent]').getAttribute('aria-pressed'),'true');
   await page.locator('[data-c=undo]').click();await drain();assert.equal(await input.inputValue(),'Third draft');assert(await input.evaluate(e=>document.activeElement===e));
-  await page.locator('[data-c=archive]').click();await drain();await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id="'+third.id+'"]').click();await page.locator('[data-c=restore]').click();await drain();assert.equal(await input.inputValue(),'Third draft');
+  await tool('archive');await drain();await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id="'+third.id+'"]').click();await tool('restore');await drain();assert.equal(await input.inputValue(),'Third draft');
   await page.locator('[data-c=recent]').click();await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,5],'separate caret retained');
   // C-A3/F3: list scroll is independent per Recent/Archive; a new row is visible even in a dense list.
   state.conversations.items.push(...Array.from({length:60},(_,n)=>({id:'dense-'+n,revision:1,title:'Dense saved request '+n,root:'fixture-alpha',text:'Saved draft '+n,caret:[0,0],scroll:0,files:[],archived:false})));
@@ -74,7 +76,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await page.locator('[data-c-field=files]').setInputFiles({name:'fixture.txt',mimeType:'text/plain',buffer:Buffer.from('invented attachment bytes')});
   await page.waitForFunction(()=>sent.some(m=>m.action==='attach'));await drain();assert.match(await page.locator('.conversation-files').innerText(),/fixture.txt/);
   const file=second.files[0];assert.equal(file.bytes,25);assert.equal(file.hash,crypto.createHash('sha256').update('invented attachment bytes').digest('hex'));
-  await page.locator('[data-c=preview]').click();await drain();assert.equal(await page.locator('.conversation-record pre').innerText(),'invented attachment bytes');await page.locator('[data-c=preview-close]').click();
+  await page.locator('[data-c=preview]').click();await drain();assert.equal(await page.locator('[aria-label="Local file preview"] pre').innerText(),'invented attachment bytes');await page.locator('[data-c=preview-close]').click();
   await page.locator('[data-c-field=files]').setInputFiles({name:'broken.png',mimeType:'image/png',buffer:Buffer.from('\x89PNG\r\n\x1a\n','latin1')});
   await page.waitForFunction(()=>document.querySelector('.conversation-status').textContent.includes('Image unreadable'));
   assert.equal(await input.inputValue(),'Review the attached text');assert.equal(second.files.length,1,'bad image keeps other files and cannot fault the whole interface');
@@ -88,14 +90,14 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();assert.equal(second.sent.text,'Review the attached text');assert.equal(second.sent.files[0].hash,file.hash);
   // #1748 A1: the next draft never renames a sent thread in its heading or sidebar row.
   assert.match(await page.locator('[data-c=select][data-id="'+second.id+'"]').innerText(),/^Review the attached text/);assert.equal(await page.locator('[data-c-field=title]').getAttribute('placeholder'),'Review the attached text');
-  assert.match(await page.locator('.conversation-record').innerText(),/Replies open here after the native launch/);assert.equal(await page.locator('[data-c=cancel]').count(),1);
+  assert.match(await page.locator('.conversation-record').innerText(),/Awaiting native launch/);assert.equal(await page.locator('[data-c=cancel]').count(),1);
   await input.press('Enter');await drain();assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1,'one immutable launch per item');
   // A receipt from another item/operation cannot change text or claim cancellation.
   await page.evaluate(()=>taskq.receive({conversationReceipt:{id:'foreign',state:'accepted'}}));assert.equal(await input.inputValue(),'Next draft while launch waits');
   await page.locator('[data-c=reconcile]').click();await drain();const retries=await page.evaluate(()=>sent.filter(m=>m.action==='reconcile'));assert(retries.every(m=>m.conversation===second.id));
   const launched={id:second.id,state:'launched',kind:'launched',url:'https://claude.ai/code/session_invented1580',next:'Read and answer in Claude Code'};second.request=launched;await page.evaluate(s=>taskq.receive(s),state);
   // #1699 A5: the handoff sits under Launch details
-  await page.locator('.dialogue-launch summary').click();await page.locator('.native-session').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='open').at(-1).url),launched.url);assert.equal(await page.locator('[data-c=cancel]').count(),0,'no runtime Stop adapter is invented');
+  await details();await page.locator('.native-session').click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='open').at(-1).url),launched.url);assert.equal(await page.locator('[data-c=cancel]').count(),0,'no runtime Stop adapter is invented');
   await capture('launched-dark-16');
   // Native snapshot round trip (not browser localStorage); chat-first reload never requires opening the tray first.
   await input.evaluate(e=>e.setSelectionRange(3,8));await input.dispatchEvent('select');await drain();
@@ -116,7 +118,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await page.waitForFunction(n=>sent.filter(m=>m.action==='attach').length>n,attachedBefore);await drain();
   await page.locator('[data-c=preview]').click();await drain();await page.locator('[aria-label="Local file preview"] img').waitFor({state:'visible'});
   assert.equal(await page.locator('[aria-label="Local file preview"] img').evaluate(e=>e.naturalWidth),2);await page.locator('[data-c=preview-close]').click();
-  const nextFiles=structuredClone(second.files);await page.locator('[data-c=from-draft]').click();await drain();
+  const nextFiles=structuredClone(second.files);await tool('from-draft');await drain();
   const forked=state.conversations.items.at(-1);assert.notEqual(forked.id,second.id);assert.equal(await input.inputValue(),'Next draft while launch waits');assert.deepEqual(forked.files,nextFiles);assert.equal(forked.sent,undefined);
   assert.equal(second.sent.text,'Review the attached text');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'draft transfer never launches');
   await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();

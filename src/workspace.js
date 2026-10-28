@@ -31,8 +31,8 @@ const {create}=execution.module('workspace',{
    task:function(row){
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
     const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
-    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),reading:[
-     h('details',{class:'ids','data-view-key':'answer-ids'},h('summary',null,'Details'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
+    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title)),reading:[
+     h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,'Details'),h('div',{class:'conversation-tools'},h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
      api.threadNotice(row.id),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
@@ -41,10 +41,8 @@ const {create}=execution.module('workspace',{
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
     const r=row.event,request=r.request,url=request?.url;
-    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},r.title||'Request'),api.eventButtons(r)),reading:[h('p',{class:'meta'},api.plain(r.state)),api.ids(r),api.threadNotice(row.id),
-     h('p',null,request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.'),
-     session(url)&&h('a',{'data-url':url,href:url},'Open native session'),
-     h('p',{class:'meta'},'Opening this thread never sends a request or marks it read.')]};
+    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},r.title||'Request')),reading:[api.ids(r,[api.eventButtons(r),h('p',{class:'meta'},api.plain(r.state)),session(url)&&h('a',{'data-url':url,href:url},'Open native session')]),api.threadNotice(row.id),
+     h('p',null,request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.')]};
    },
    operations:function(){return operations.operationBody(view.operation);},
    sessions:function(){return conversations.sessions();}
@@ -88,16 +86,15 @@ const {create}=execution.module('workspace',{
     else if(!conversations.reveal(r.id,false)){conversations.show('recent');conversations.select('event:'+r.key,false);}
    },
    // A1: a record's technical identity, read only on demand
-   ids:function(r){return h('details',{class:'ids','data-view-key':'ids:'+r.key},h('summary',null,'Details'),h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
+   ids:function(r,controls){return h('details',{class:'ids conversation-info','data-view-key':'ids:'+r.key},h('summary',null,'Details'),controls,h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
    plain:function(state){return {launched:'Launched in the native session',launching:'Launching',pending:'Waiting to launch',failed:'Launch failed',unknown:'Delivery unknown'}[state]||(state?String(state).replace(/[-_]/g,' '):'State unknown');},
    // A3: one composer for a task answer: context, validation and Send; the card above keeps choices, receipt and recovery
    answerComposer:function(p,t){
     const c=answers.answerCompose(p.issues,t);if(!c)return {};
     const off=!c.live,why=c.live?c.problem||'':c.problem;
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
-     files:h('p',{class:'meta conversation-files'},'Attachments: none. Task answers take text only; add files or PDFs on the board.'),
-     reason:why,after:c.choices&&h('p',{class:'meta'},'A number typed here is sent as text. Pick a numbered option with its button above.'),
-     onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}})),tools:h('div',{class:'conversation-tools'},h('label',{class:'attach-label','aria-disabled':'true'},'Attach',h('input',{type:'file',disabled:true,'aria-label':'Attach (not available for task answers)'})),c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',disabled:off||!!c.problem},c.send))};
+     reason:why,
+     onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}})),tools:h('div',{class:'conversation-tools'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',disabled:off||!!c.problem},c.send))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
    draw:function(){

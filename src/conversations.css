@@ -20,7 +20,11 @@
 .workspace .conversation-reader>.conversation-composer,.workspace .conversation-reader>.answer-composer{margin-top:auto;position:sticky;bottom:0;background:var(--surface);z-index:1;flex:none}
 .workspace .conversation-reader.long-draft>.conversation-composer,.workspace .conversation-reader.long-draft>.answer-composer{position:static}
 .workspace .conversation-send{border-top:1px solid var(--edge);padding-top:4px}
-.conversation-tools input[data-c-field=title]{flex:1;min-width:90px;width:90px;font:inherit;color:inherit;background:none;padding:4px}
+.conversation-info{flex:none;min-width:0}
+.conversation-info>summary{min-height:32px;cursor:pointer}
+.conversation-info>label{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-block:4px}
+.conversation-info>label>input,.conversation-info>label>select{font:inherit;color:inherit;background:var(--surface);border:1px solid var(--edge);padding:4px;flex:1;min-width:90px;width:90px;min-height:32px}
+.conversation-info>p{margin-block:4px}
 .conversation-record{overflow:visible;min-height:0;overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px}
 .conversation-text{white-space:pre-wrap}.conversation-record ul{padding-left:1.2em}
 .conversation-record p{margin-block:6px}.conversation-record img{max-width:100%;max-height:180px;object-fit:contain}
@@ -64,6 +68,7 @@
 @media(max-height:430px){.conversation-composer textarea{min-height:44px}.conversation-composer>p.meta{display:none}}
 
 @media(pointer:coarse){.workspace-resize{width:44px;height:44px;min-height:44px!important}.attach-label{min-height:44px}}
+@media(pointer:coarse){.conversation-info>summary,.conversation-info>label>input,.conversation-info>label>select{min-height:44px}}
 
 .workspace .status-footer{flex-wrap:nowrap;gap:6px}.workspace .status-footer>span:first-child{flex:1;min-width:0;overflow-wrap:anywhere}
 /* #1699 A4/A5: compact thread rows with one marker; launch diagnostics collapse; a task or event thread scrolls once above its composer. */
@@ -72,6 +77,7 @@
 
 /* D4: question content shares one reading position. */
 .thread-title{font:inherit;font-weight:600;margin:4px 0}
+.owner-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .thread-card .qac-head{display:none}
 .conversation-detail .qac{margin:0;padding:6px}
 .conversation-detail .qac-problem{margin:4px 0}

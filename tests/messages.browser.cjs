@@ -66,7 +66,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   // Event thread: Mark read is explicit and its receipt stays in that thread only
   await page.locator('[data-a=thread][data-thread="event:'+r+'"]').click();
   assert.match(await current(),/Setup request[^]*Unread/);assert.equal(await effects(),0,'selecting a thread acknowledges nothing');
-  await page.locator('.thread-detail [data-a=message-read]').click();
+  if(!await page.locator('.thread-detail .conversation-info').evaluate(e=>e.open))await page.locator('.thread-detail .conversation-info>summary').click();await page.locator('.thread-detail [data-a=message-read]').click();
   const read=await page.evaluate(()=>sent.filter(m=>m.a==='message-action').at(-1));assert.equal(read.action,'read');assert.deepEqual(read.keys,[r]);
   await page.evaluate(({id,key})=>taskq.receive({messageReceipt:{id,outcomes:[{key,action:'read',state:'accepted'}]}}),{id:read.id,key:r});
   assert.match(await page.locator('.thread-detail .thread-notice').innerText(),/Message marked read/);
@@ -74,7 +74,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',now:1000,projects:[{roo
   await page.locator('[data-c=select][data-id=owner-1]').click();assert.doesNotMatch(await page.locator('.content').innerText(),/Message marked read/,'other threads never show it');
   // Archive, Undo and Restore: the list stays, Undo restores and opens the thread
   await page.locator('[data-a=thread][data-thread="event:'+r+'"]').click();
-  await page.locator('.thread-detail [data-a=message-archive]').click();
+  if(!await page.locator('.thread-detail .conversation-info').evaluate(e=>e.open))await page.locator('.thread-detail .conversation-info>summary').click();await page.locator('.thread-detail [data-a=message-archive]').click();
   const archive=await page.evaluate(()=>sent.filter(m=>m.a==='message-action').at(-1));assert.equal(archive.action,'archive');
   state.messages.entries[1]={...state.messages.entries[1],read:true,archived:true};state.messages.count=1;
   await page.evaluate(({id,key})=>taskq.receive({messageReceipt:{id,outcomes:[{key,action:'archive',state:'accepted'}]}}),{id:archive.id,key:r});

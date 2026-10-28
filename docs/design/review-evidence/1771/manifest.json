@@ -1,0 +1,28 @@
+{
+  "baseline": "28b2f9252b86fe72ccfc2c2aa76ffe11a7714359",
+  "renderer": "Playwright Chromium headless shell",
+  "version": "156.0.8078.4",
+  "os": "Windows",
+  "scale": 1,
+  "font_px": 20,
+  "viewport_height": 740,
+  "native_acceptance": "Not tested",
+  "source_blobs": {
+    "src/conversations.js": "b5aa9e1de952453a5c8e09261a8f7ee3a6c95e3a",
+    "src/conversations.css": "38aceb2c61044cf72d96619254a2ed91b129f30e",
+    "src/workspace.js": "f3eb0ebd620d0125cdb6ea46f0fe25e798c97a50"
+  },
+  "bundle_sha256": "09ba325e1051d8bc40f7bd1ef983cdd1ff589df6428e81849afe3cb8b26f38de",
+  "images": {
+    "after-350-dark.png": "18eb5029e37dd3d559b5da3b037df0af4947d68393e9189df2e76af4e9fb433d",
+    "after-350-light.png": "176d725b293ee2fd30c7df9d77aeecb708d36f36b1b2fb6821a99a864764e76f",
+    "after-620-dark.png": "c2b528c0e87200e07f7aaa70caa38ef14a706daa9f8e881bb0b8dc84c3725879",
+    "after-620-light.png": "4a40a808d2096437a64cc54e0135b5ed2cd1bceb61d88b3758a847ae26c8ca00",
+    "after-940-dark.png": "6a97e91bc545f3dd11438739de7c0cb9ba073abca86d9c6c2a0b541b6c750aeb",
+    "after-940-light.png": "996b0b451da9624bf2c1a18b169c00a420c1937a082f51143c5ef257a82a29d0",
+    "after-question-940-light.png": "101421899a5d55c19ae6bfba8ea8128a826a602d0dea5e9505a852202b66ccdf",
+    "before-350-dark.png": "cf55fe87e1f731383d6f0c40adfb72ff9cd133e974906c45974cfd4581469c97",
+    "before-620-light.png": "bf7c2308dbde58284b4f517cc1e99b9b40f9efb1519e7e9aad94c5ec138209f5",
+    "before-940-dark.png": "4ee7705437727d49b0e9e1ff33eda357bdf8622ca82281fe53dfbd322120870b"
+  }
+}

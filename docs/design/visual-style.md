@@ -12,6 +12,7 @@ Final candidate for the approved dense menu. Shared principles: [specq D1–D14]
 - Menu radius 12 px; controls 5–7 px; counter capsules; counter symbols may use 14 px within 32 px targets. No nested decorative cards; bordered surfaces only for composers and consequential change review.
 - Header/control strip stays accessible. Native height is bounded by the monitor work area; scroll content, never clip it. AI window keeps a stable heading and one reading viewport ([D4](ai-workspace.md#workspace-dialogue-d1d8)); Send stays reachable, short input stays at the bottom and a long draft grows into that viewport, never into an inner text scroll.
 - At short/narrow sizes, reflow header controls or use the conversation list as a separate page. Maintain Back, Send, context and attachments.
+- UX07: selected Conversations threads show a plain heading, one collapsed Details control, reading content and a concise composer. Details groups secondary controls without nested watch/launch disclosures. Hide unsupported Attach; keep limitations in Details and actionable validation beside the input. Preserve the palette, icon catalog, type scale and 32/44 px targets.
 - Metadata starts the task's first line; title continuation starts at the full block left edge. Do not shrink the title to accommodate columns.
 
 ## Palette

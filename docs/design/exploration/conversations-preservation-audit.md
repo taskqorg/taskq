@@ -93,6 +93,8 @@ Source paths are relative to `src/`. The machine-readable companion is [features
 
 ## Nontechnical daily journeys
 
+UX07 implementation: [#1771 preservation and before/after evidence](../review-evidence/1771/review.md) maps the affected groups below to the existing executable journeys. Secondary controls move to one collapsed Details disclosure; no capability, export, authority or storage format is removed. Browser passes do not qualify native clients.
+
 1. **A question needs me.** See the task state and short reason in the menu. Open the exact question in Conversations. Read the problem, same numbered choices, recommendation and checked evidence. Choose a normal option or write an answer; consequential actions show what will happen first. One nearby status says whether the answer was accepted. Return to the original menu view/position. Looking at a task does not mark it read.
 2. **I want to ask the PM.** New → registered project → ordinary request → Send. See a visible delivery result, then that session's work state and reply. Type the next message while it works. Continue in the same thread; runtime/host details are available without teaching the person about operation IDs. New from draft explicitly starts a separate request.
 3. **I need an old decision.** Search/select the conversation, scroll upwards without losing the composer or moving when output arrives. Load earlier also works by keyboard and after a read error. Jump to latest is explicit; returning restores the message/offset. Native source remains authoritative, and the beginning stays reachable.
