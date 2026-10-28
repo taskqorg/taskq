@@ -2,7 +2,7 @@
 
 Conversations now opens with a plain thread heading, a compact activity label, reading content and the shared composer. One collapsed Details disclosure holds rename, window ownership, archive actions, separate-request creation, project selection, launch handoff, watch and input limits. Task answers hide unsupported Attach and retain text-only and number-as-text guidance in Details. Supported files, source choices, validation, delivery failures and recovery stay directly available.
 
-R13 amended (R8 wording shortened without changing its golden-trace, qualification or size protection): `taskq.md` Product records the layout before implementation; C3/D7 in `ai-workspace.md`, `tray-workspace.md` and `visual-style.md` carry the detail. R1/R9 authority, native transcript ownership and R11 execution preservation are unchanged. R12 separates browser observations from installed acceptance.
+Amended rules: R8 (wording shortened without changing golden-trace, qualification or size protection) and R13 (Product decision): `taskq.md` Product records the layout before implementation; C3/D7 in `ai-workspace.md`, `tray-workspace.md` and `visual-style.md` carry the detail. R1/R9 authority, native transcript ownership and R11 execution preservation are unchanged. R12 separates browser observations from installed acceptance.
 
 ## Reproduction and review set
 
@@ -28,19 +28,19 @@ The original 72-group audit remains the inventory. The affected presentation gro
 
 | Audit groups | Existing journey and retained protection |
 |---|---|
-| C01ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“C03, C16, C18; A01, A07ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“A09 | `messages.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`: unified owner/task/event selection; per-thread drafts, source IDs, explicit read/archive/restore, late receipts, stale revisions and list/reading positions |
-| C04ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“C10, C12ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“C17, C24 | `conversations.browser.cjs`: explicit project/runtime, rename, History fills only, durable draft/caret fixture, supported file bytes/preview/removal, immutable launch, separate-request fork, detach owner, cancel/reconcile, archive/Undo/Restore, IME/keyboard/reopen; unreadable files and unknown outcomes preserve drafts |
-| C05, C19ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“C22 | `dialogue.browser.cjs`: same-session reply/refusal, transcript paging/live append, visible unknown/work activity, watch create/edit/remove with minimum interval/event validation, narrow/large text and fixed Send |
-| C20ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“C21 | `conversations-render.browser.cjs`: both provider-shaped 10,000-record histories, bounded mount, exact record order/anchor within 2 px, selection, skipped pages and obsolete read rejection; six adverse geometry fixtures |
-| C11, C23; A03ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“A04, A06ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“A10 | `workspace-communication.browser.cjs`, `tray-answer.browser.cjs`, `conversations-stable.browser.cjs`: original navigation, same-revision text/choice semantics, limits, literal numbers, recovery, operation identity and thread-local receipts; session-link validation retained |
-| X01, X03, X05ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“X06 | `task-workspace.test.cjs`, `pm-composer.test.cjs`, `check-web.cjs`: released bundle/stylesheet, pinned shared source hashes, PM schema/receipt correlation and safe native links; no export or adapter changes |
+| C01–C03, C16, C18; A01, A07–A09 | `messages.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`: unified owner/task/event selection; per-thread drafts, source IDs, explicit read/archive/restore, late receipts, stale revisions and list/reading positions |
+| C04–C10, C12–C17, C24 | `conversations.browser.cjs`: explicit project/runtime, rename, History fills only, durable draft/caret fixture, supported file bytes/preview/removal, immutable launch, separate-request fork, detach owner, cancel/reconcile, archive/Undo/Restore, IME/keyboard/reopen; unreadable files and unknown outcomes preserve drafts |
+| C05, C19–C22 | `dialogue.browser.cjs`: same-session reply/refusal, transcript paging/live append, visible unknown/work activity, watch create/edit/remove with minimum interval/event validation, narrow/large text and fixed Send |
+| C20–C21 | `conversations-render.browser.cjs`: both provider-shaped 10,000-record histories, bounded mount, exact record order/anchor within 2 px, selection, skipped pages and obsolete read rejection; six adverse geometry fixtures |
+| C11, C23; A03–A04, A06–A10 | `workspace-communication.browser.cjs`, `tray-answer.browser.cjs`, `conversations-stable.browser.cjs`: original navigation, same-revision text/choice semantics, limits, literal numbers, recovery, operation identity and thread-local receipts; session-link validation retained |
+| X01, X03, X05–X06 | `task-workspace.test.cjs`, `pm-composer.test.cjs`, `check-web.cjs`: released bundle/stylesheet, pinned shared source hashes, PM schema/receipt correlation and safe native links; no export or adapter changes |
 | UX07 layout across the groups above | `conversations-declutter.browser.cjs`: default collapse, keyboard access, rename, destination and activity, preserved choices, file-answer limitation, 350/620/940 widths, both themes and 32/44 px targets; opening controls never dispatches work |
 
 Fixture changes replace obsolete visible-placement/helper-copy expectations only. They retain the original effects, payload identity, file bytes, validation, source choices, stale guards and receipt assertions. The new regression protects the reproduced clutter; no permission, model, transport, storage or DashQ interface is changed. Workspace CSS stays in `workspace.html`; released `task-workspace` and `pm-composer` source hashes are unchanged. A live DashQ deployment is Not tested.
 
 ## Acceptance status
 
-- A1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“A5: implemented; focused browser/component checks pass, with the selected candidate gate recorded in the result. UX07 is done at this source/browser boundary; owner visual acceptance remains the owner's decision.
+- A1–A5: implemented; focused browser/component checks pass, with the selected candidate gate recorded in the result. UX07 is done at this source/browser boundary; owner visual acceptance remains the owner's decision.
 - A6: merge and the owner's Mac dev-install pickup remain pending publication. No host update or service operation is performed by this task. Native Windows: **Not tested**. Native Mac and real-provider turns: **Not tested**.
 - Native snapshots used for the README manifest, if produced, are capture instruments; they do not qualify native input, window ownership or delivery.
 
