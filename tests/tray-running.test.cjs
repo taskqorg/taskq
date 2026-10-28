@@ -33,16 +33,21 @@ c.S.display.all=counts({doing:7,review:0});assert(c.runningAgents().includes('Ta
 c.S.display.all=counts(null);assert(c.runningAgents().includes('Tasks unknown'),'unknown model counts never read zero');
 c.S.display.all=counts({doing:3,review:2});
 const single=html;c.S.projects.push({...project,root:'duplicate'});assert.equal(c.runningAgents(),single,'duplicate board must not double count');
-c.S.projects=[{...project,complete:false}];html=c.runningAgents();assert(!html.includes('idle</strong> · Claude 0'));assert(!html.includes('claude: 1 worker'));
+// #1775 A3: an unreadable or stale project read keeps a live host's counts and marks them partial with its reason
+c.S.projects=[{...project,complete:false}];html=c.runningAgents();assert(html.includes('idle</strong> · Claude 0 · Codex 0 · partial'));assert(html.includes('Partial: partial board snapshot (p)'));assert(!html.includes('claude: 1 worker'));
 c.S.projects=[{...project,age:301,alive:false,tasks_live:false}];html=c.runningAgents();assert(!html.includes('claude: 1 worker'));assert(html.includes('Capacity unknown'));
 c.S.projects=[{...project,age:0,tasks_age_seconds:301,tasks_live:false}];assert(!c.runningAgents().includes('claude: 1 worker'),'capacity refresh cannot freshen old task observations');
-c.S.projects=[{...project,tasks_age_seconds:null,tasks_live:false}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
+c.S.projects=[{...project,tasks_age_seconds:null,tasks_live:false}];assert(c.runningAgents().includes('idle</strong> · Claude 0 · Codex 0 · partial'));
 c.S.projects=[{...project,hosts:null}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
 c.S.projects=[{...project,hosts:[{name:'mac',updated:1100,live:false}]}];assert(!c.runningAgents().includes('claude: 1 worker'));
-c.S.projects=[{...project,tasks:[{n:1,state:'doing',executions:[{...execution(11,'mac','claude','worker'),role:null}]}]}];assert(c.runningAgents().includes('mac</strong> · runs unknown'));
+c.S.projects=[{...project,tasks:[{n:1,state:'doing',executions:[{...execution(11,'mac','claude','worker'),role:null}]}]}];html=c.runningAgents();assert(html.includes('mac</strong> · Claude 0 · Codex 0 · partial')&&html.includes('Partial: run state unknown'),'#1775 A3: one unread run marks its host partial, never unknown');
+// #1775 A3: another project's stale read marks only its own hosts; the freshest heartbeat names the age
+c.S.projects=[project,{...project,root:'q',issues:'https://example.org/q',tasks_live:false,hosts:[{name:'win',updated:900,live:true,age:100,age_text:'2m'}],tasks:[]}];html=c.runningAgents();
+assert(html.includes('mac</strong> · Claude 1 · Codex 1<')&&html.includes('win</strong> · Claude 0 · Codex 1 · partial'),html);
+assert.equal(c.runningAgents(true).label,'idle · idle; mac · Claude 1 · Codex 1; old · runs unknown · 5m old; win · Codex 1 · partial: stale task observation (q)');
 c.S.projects=[{...project,hosts:[{name:'<img>',updated:990,live:true}],tasks:[]}];assert(c.runningAgents().includes('&lt;img&gt;'));assert(!c.runningAgents().includes('<img>'));
 for(const hosts of [{},[null],[{name:3}]]){c.S.projects=[{...project,hosts}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));}
-c.S.projects=[{...project,tasks:[{n:1,executions:{}}]}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
+c.S.projects=[{...project,tasks:[{n:1,executions:{}}]}];assert(c.runningAgents().includes('idle</strong> · Claude 0 · Codex 0 · partial'));
 // A2: the same board/task/execution observed twice is one process; task/board identities remain distinct.
 c.S.projects=[{...project,hosts:[{name:'mac',updated:990,live:true}],tasks:[{n:1,state:'doing',executions:[execution(11,'mac','codex','worker'),execution(11,'mac','codex','worker')]}]}];
 assert(c.runningAgents().includes('codex: 1 worker · 0 reviewers'),'duplicate execution must not double count');
@@ -61,10 +66,10 @@ c.S.projects[0].tasks.push({n:9,key:'github:p/9',executions:[execution(19,'mac',
 c.S.agents={at:900,fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};
 assert(c.runningAgents().includes('<span class="alert"> · Codex expired</span>'),'an expired sign-in shows on the host line');
 c.S.projects=[];assert.deepEqual(line(c.runningAgents(true)),{label:'mac · runs unknown · Codex expired',meta:''},'this host without an observation is unknown, never idle; #1729 its sign-in warning stays');
-// #1729 A2/A4: labels are three letters, longer on collision; zero counts hide; an execution-only host (no heartbeat) is no strip chip.
+// #1775 A3 (was #1729 three-letter labels): chips carry the full host name; zero counts hide; an execution-only host (no heartbeat) is no strip chip.
 c.S.agents=null;c.S.projects=[{...project,hosts:['mac','macbook','hermes-fra1','hermes-win','win'].map(name=>({name,updated:990,live:true})),tasks:[{n:1,state:'doing',executions:[execution(11,'win','codex','worker'),execution(12,'pilot','codex','worker')]}]}];
 const chips=require('./tray-harness.cjs').html(c.runningAgents(true).strip),strong=[...chips.matchAll(/<strong>([^<]*)<\/strong>/g)].map(m=>m[1]);
-assert.deepEqual(strong,['hermes-f','hermes-w','mac','macb','win'],'collisions extend the label, the fixture-only host is absent');
+assert.deepEqual(strong,['hermes-fra1','hermes-win','mac','macbook','win'],'full names, the fixture-only host is absent');
 assert(chips.includes('aria-label="hermes-fra1 · idle"'),'the full name stays in the accessible name');
 assert.equal((chips.match(/class="host-count"/g)||[]).length,1,'only nonzero counts render');
 assert(c.runningAgents().includes('pilot</strong>'),'the execution-only host stays in host details');
