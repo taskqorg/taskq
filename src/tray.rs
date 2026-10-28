@@ -742,10 +742,16 @@ struct WebCalls {
     notified: bool,
     metadata_unknown: bool,
     logged: u8,
+    /// The loop turn that last checked deadlines, and the window's last tick push.
+    seen: Instant,
+    tick: Option<u64>,
 }
+/// #1755: the running tray's `<install>/tray.fault`; the service heartbeat carries its code (`tray <code>`, § 4).
+static FAULT_FILE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static TICK_QUEUED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 impl WebCalls {
     fn new() -> Self {
-        let mut calls=Self{workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0};
+        let mut calls=Self{workspace:false,surface:"main".into(),next:0,pending:Default::default(),counts:[0;4],saturated:false,failed:false,notified:false,metadata_unknown:false,logged:0,seen:Instant::now(),tick:None};
         calls.begin("tray.web.boot",Instant::now());
         calls
     }
@@ -762,6 +768,7 @@ impl WebCalls {
         if !self.failed {
             self.failed=true;
             eprintln!("taskq tray: interface outcomes unknown ({reason}); check service status before retry");
+            if let Some(file)=FAULT_FILE.get() {let _=fs::write(file,reason);}
             let _=coreq::telemetry::capture::operation("tray.web.delivery",||Err::<(),_>(reason),|code|*code);
         }
     }
@@ -775,10 +782,16 @@ impl WebCalls {
             _ => self.fault(result), // no callback is not proof that the script failed or did not run
         }
     }
+    // #1755: the tick timer wakes the loop every 2 s, so a longer gap is the loop itself stalled (a slow refresh);
+    // callbacks queue behind it, and the deadline counts only time the loop could deliver them.
     fn expire(&mut self, now: Instant) {
+        let stall=now.saturating_duration_since(self.seen);self.seen=now;
+        if stall>Duration::from_secs(5) {for (start,_) in self.pending.values_mut() {*start+=stall;}}
         let expired:Vec<_>=self.pending.iter().filter(|(_, (start,_))|now.duration_since(*start)>=Duration::from_secs(30)).map(|(id,_)|*id).collect();
         for id in expired {self.finish(id,"ack-timeout");}
     }
+    /// Ready for a tick push: booted, and the previous tick push acknowledged; a later tick carries newer state.
+    fn idle(&self) -> bool {!self.pending.contains_key(&0) && self.tick.is_none_or(|id|!self.pending.contains_key(&id))}
     fn metadata(&mut self, row:&Value)->bool {
         let value=match web_observation(row){Ok(value)=>value,Err(_)=>{self.fault("invalid-web-observation");return false;}};
         // #1297: CoreQ folds JS summaries only inside a marked root; delivery is asynchronous to the refresh that caused it.
@@ -897,6 +910,7 @@ pub(crate) fn steady_tick() -> impl FnMut() {
 fn web_eval(wv: &WebView, script: &str, name: &'static str, proxy: &tao::event_loop::EventLoopProxy<Ev>, calls: &mut WebCalls) {
     if calls.pending.contains_key(&0) {calls.fault("page-not-ready");return;}
     let Some(id)=calls.begin(name,Instant::now()) else {return};
+    if name==TICK {calls.tick=Some(id);}
     let p=proxy.clone();
     let workspace=calls.workspace;let surface=calls.surface.clone();
     if wv.evaluate_script_with_callback(&web_script(script),move |value| {let _=p.send_event(if workspace {Ev::WorkspaceEvaluated(surface.clone(),id,web_result(&value))} else {Ev::Evaluated(id,web_result(&value))});}).is_err() {
@@ -911,6 +925,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         return Err("taskq tray already runs on this host".into());
     }
     if snapshot.is_none() {
+        // a new page clears the last tray's fault from the heartbeat
+        let fault = install.join("tray.fault");
+        let _ = fs::remove_file(&fault);
+        let _ = FAULT_FILE.set(fault);
         let install = install.clone();
         std::thread::spawn(move || match crate::lifecycle::open(&install, |root| crate::host::install_project(&install, root)) {
             Ok(Some(receipt)) => eprintln!("taskq tray: Open started the service: {receipt}"),
@@ -960,10 +978,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let proxy = event_loop.create_proxy();
     MenuEvent::set_event_handler(Some(move |e: MenuEvent| if e.id.0 == "quit" { let _ = proxy.send_event(Ev::Quit); }));
     let proxy = event_loop.create_proxy();
-    std::thread::spawn(move || {
-        while proxy.send_event(Ev::Tick).is_ok() {
-            std::thread::sleep(Duration::from_secs(2));
-        }
+    // #1755: at most one queued tick; ticks behind a stalled loop fold into one refresh
+    std::thread::spawn(move || loop {
+        if !TICK_QUEUED.swap(true, std::sync::atomic::Ordering::Relaxed) && proxy.send_event(Ev::Tick).is_err() {break;}
+        std::thread::sleep(Duration::from_secs(2));
     });
     let proxy = event_loop.create_proxy();
     let replies=proxy.clone();
@@ -1026,6 +1044,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     event_loop.run(move |event, target, flow| {
         let _ = &lock;
         crate::telemetry::diagnostic::poll(&install);
+        if matches!(event,Event::UserEvent(Ev::Tick)) {TICK_QUEUED.store(false,std::sync::atomic::Ordering::Relaxed);}
         *flow = ControlFlow::Wait;
         let native=match &event {
             Event::WindowEvent{event:WindowEvent::Resized(_),..}=>Some("tray.window.resize"),
@@ -1191,16 +1210,16 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let mut comparable=st.clone();comparable.as_object_mut().expect("tray snapshot object").remove("now");
                 let sig=comparable.to_string();
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {
-                    if sig!=workspace_shown && !calls.failed && !calls.pending.contains_key(&0) {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
+                    if sig!=workspace_shown && !calls.failed && calls.idle() {workspace_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
                 if let (Some((_,wv)),Some(calls))=(&settings_window,&mut settings_web) {
-                    if sig!=settings_shown && !calls.failed && !calls.pending.contains_key(&0) {settings_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
+                    if sig!=settings_shown && !calls.failed && calls.idle() {settings_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
                 if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) {
-                    if sig!=views_shown && !calls.failed && !calls.pending.contains_key(&0) {views_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
+                    if sig!=views_shown && !calls.failed && calls.idle() {views_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
-                for (_,wv,calls) in detached.values_mut(){if sig!=shown && !calls.failed && !calls.pending.contains_key(&0){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
-                if sig != shown && !web.pending.contains_key(&0) {
+                for (_,wv,calls) in detached.values_mut(){if sig!=shown && !calls.failed && calls.idle(){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
+                if sig != shown && web.idle() {
                     shown = sig;
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
                 }
@@ -2615,7 +2634,9 @@ mod tests {
                 let id=calls.begin(name,now).unwrap();calls.finish(id,result);calls.finish(id,"ok");
             }
             let expired=calls.begin("tray.web.expired",now).unwrap();
-            calls.expire(now+Duration::from_secs(29));assert!(calls.pending.contains_key(&expired));
+            calls.seen=now;
+            for s in 1..=29 {calls.expire(now+Duration::from_secs(s));}
+            assert!(calls.pending.contains_key(&expired));
             calls.expire(now+Duration::from_secs(30));assert!(calls.pending.is_empty());calls.finish(expired,"ok");
             for _ in 0..64 {assert!(calls.begin("tray.web.pending",now).is_some());}
             assert!(calls.begin("tray.web.overflow",now).is_none());assert_eq!(calls.pending.len(),64);
@@ -2642,6 +2663,26 @@ mod tests {
             assert!(errors.iter().all(|r|r["outcome"]=="failed"));
             assert_eq!(web_result("true"),"invalid-ack");assert_eq!(web_result("\"ok\""),"ok");
         });
+    }
+
+    // #1755 A1: a slow refresh stalls the native loop and WebView2 callbacks queue behind it; the stall is not the page's
+    // ack-timeout, and a tick push waits for the previous one. Risk: a 28 s refresh under load fences the whole window
+    // as Interface error, or queued ticks stack evaluations to the pending limit.
+    #[test]
+    fn loop_stall_is_not_an_ack_timeout_and_tick_pushes_do_not_stack() {
+        let mut calls=WebCalls::new();calls.finish(0,"ok");
+        let now=calls.seen;
+        assert!(calls.idle());
+        let tick=calls.begin(TICK,now).unwrap();calls.tick=Some(tick);
+        assert!(!calls.idle(),"a tick push waits for the previous one");
+        calls.expire(now+Duration::from_secs(2));
+        calls.expire(now+Duration::from_secs(60));
+        calls.expire(now+Duration::from_secs(61));
+        assert!(calls.pending.contains_key(&tick)&&!calls.failed,"the loop stall counted against the page");
+        calls.finish(tick,"ok");assert!(calls.idle()&&!calls.failed);
+        let lost=calls.begin(TICK,now+Duration::from_secs(61)).unwrap();
+        for s in 62..=91 {calls.expire(now+Duration::from_secs(s));}
+        assert!(!calls.pending.contains_key(&lost)&&calls.failed,"a responsive loop still times out a lost callback");
     }
 
     // #1680 A3: route and page errors log an identifier-only class and site; text, URLs or paths are dropped and a

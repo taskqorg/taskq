@@ -45,6 +45,13 @@ pub const FOCUS_OFF: &str = "focus off: nothing admitted; set `taskq service foc
 pub const TASK_LABEL: &str = "taskq";
 const NATIVE_PASS_BUDGET:std::time::Duration=std::time::Duration::from_secs(20);
 
+/// The code the host's tray wrote on an interface fault (#1755) until a new tray clears it: a fixed code, else none.
+fn tray_fault(install: &std::path::Path) -> Option<String> {
+    let code = std::fs::read_to_string(install.join("tray.fault")).ok()?;
+    let code = code.trim();
+    (!code.is_empty() && code.len() <= 40 && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')).then(|| code.to_string())
+}
+
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
 /// Heartbeat lines a write compares: the `at` stamp and diagnostics observation times change every pass (#1358).
 fn stable(body: &str) -> Vec<String> {
@@ -1169,6 +1176,7 @@ impl<'a> Service<'a> {
         }
         lines.extend(self.limited.keys().map(|rt| format!("limit {rt} {}", self.limit_line(rt))));
         lines.extend(self.logged_out.iter().map(|rt| format!("login {rt} off")));
+        lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
         let kids: BTreeSet<_> = self.kids.iter().map(|k| (k.task, k.attempt)).chain(self.pending.iter().copied()).collect();
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
@@ -3645,6 +3653,27 @@ mod tests {
         let stale=crate::snapshot::from_views("board",&b,&c,at+c.ttl as i64+1,&[],&[crate::board::Issue {
             number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,created:at,open:true,trusted:true,reason:None}]);
         assert_eq!(stale.json()["hosts"][0]["diagnostics"]["running"]["state"],"stale");
+    }
+
+    // Chain: #1755 A4 tray fault file -> heartbeat `tray <code>` -> status Hosts line. Risk: a tray fault stays in a
+    // host-local log the PM cannot read, or a hand-written file forwards arbitrary text to the public board.
+    #[test]
+    fn tray_fault_reaches_heartbeat_and_hosts_line() {
+        let dir = std::env::temp_dir().join(format!("taskq-tray-fault-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let b = Fake::default();
+        let c = Config { install: dir.clone(), ..cfg("win") };
+        let s = service(&b, &c, Default::default());
+        assert!(!s.heartbeat_body().lines().any(|l| l.starts_with("tray ")), "no fault, no line");
+        std::fs::write(dir.join("tray.fault"), "ack-timeout").unwrap();
+        let body = s.heartbeat_body();
+        assert!(body.lines().any(|l| l == "tray ack-timeout"), "{body}");
+        let issue = crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 100, created: 100, open: true, trusted: true, reason: None };
+        let text = crate::snapshot::from_views("board", &b, &c, 100, &[], &[issue]).text(&c, &json!({})).unwrap();
+        assert!(text.lines().any(|l| l.starts_with("Hosts: win v4.0.0 ") && l.ends_with(" tray ack-timeout")), "{text}");
+        std::fs::write(dir.join("tray.fault"), "C:\\Users\\x secret").unwrap();
+        assert!(!s.heartbeat_body().lines().any(|l| l.starts_with("tray ")), "only a fixed code crosses to the board");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     // Chain: board entry, fold changes, snapshot row `since` (§ 4 Tray age). Risk: the age restarts on a comment that
