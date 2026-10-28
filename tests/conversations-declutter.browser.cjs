@@ -22,6 +22,8 @@ const state={font:20,theme:'dark',host:'fixture-host',version:'fixture',projects
   assert((await info.locator('summary').boundingBox()).height>=32,'Details keeps the fine-pointer target');
   assert.equal(await page.locator('.dialogue-state').innerText(),'PM is ready','#1773: the idle state reads as the PM status line; activity remains visible with the narrow list hidden');
   for(const selector of ['[data-c-field=root]','[data-c-field=title]','[data-w-field=prompt]','.pm-handoff'])assert.equal(await page.locator(selector).isVisible(),false,selector+' stays in Details');
+  // #1775 R43: window and Work sessions marks follow the visual-style control icon table
+  assert.equal(await page.locator('[data-c=detach] .lucide-panels-top-left').count(),1);assert.equal(await page.locator('[data-route=sessions] .lucide-terminal').count(),1);
   // #1773 A3: New from draft is the v7 file icon in the composer tools row, labelled but wordless
   assert.equal(await page.locator('.composer-bottom [data-c=from-draft]').getAttribute('aria-label'),'New from draft');
   assert.doesNotMatch(await page.locator('.conversation-composer').innerText(),/native turn|New from draft|PDF|Host|Session/,'composer copy stays short');

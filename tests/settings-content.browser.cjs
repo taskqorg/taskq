@@ -32,6 +32,8 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await go('settings');
    const widgets=await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>({label:e.children[1].textContent,meta:e.querySelector('.meta').textContent,cut:[...e.children].some(c=>c.scrollWidth>c.clientWidth+1)})));
    assert.deepEqual(widgets.map(w=>w.label),['Appearance','Notifications','Activity history','Hosts and resources','Work mode','Agents and access','Projects','Delivery','Services and support','Emergency stop','Recovery','About and updates']);
+   // #1775 R43: route marks follow the visual-style control icon table, not near-miss substitutes
+   assert.deepEqual(await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>e.querySelector('.ui-icon svg')?.getAttribute('class').replace('lucide lucide-',''))),['type','bell','chart-no-axes-column','network','focus','bot','folder','git-pull-request','activity','octagon-x','rotate-ccw','info']);
    assert.deepEqual(widgets.filter(w=>w.cut).map(w=>w.label),[],'no clipped widget text');
    assert.equal(widgets.find(w=>w.label==='Hosts and resources').meta,'fra · runs unknown · 5m old; mac · Claude 1 · Codex 1 · Codex expired; win · Codex 1','a global count is never one host; #1729 zero counts hide');
    assert.equal(widgets.find(w=>w.label==='Agents and access').meta,'Claude signed in · Codex expired');
