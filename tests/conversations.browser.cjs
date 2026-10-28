@@ -42,6 +42,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await page.locator('[data-c=new]').click();await drain();
   const input=page.locator('[data-c-field=text]');assert.equal(await input.evaluate(e=>document.activeElement===e),true,'New focuses its own composer');
   await input.fill('Design draft\nFirst independent context');await page.locator('[data-c-field=title]').focus();await drain();
+  assert.match(await page.locator('.conversation-row[aria-current=page]').innerText(),/^Design draft/,'#1748 A2: an unsent draft names itself by its first line');
   // Switching before the debounce must save the previous item, even if another draft is immediately edited.
   await page.locator('[data-c=new]').click();await drain();await input.fill('Release draft');await input.evaluate(e=>e.setSelectionRange(2,5));await input.dispatchEvent('select');await drain();
   const [first,second]=state.conversations.items;assert.equal(first.text,'Design draft\nFirst independent context');assert.equal(second.text,'Release draft');
@@ -85,6 +86,8 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   paused=false;await drain();
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1);
   await input.fill('Next draft while launch waits');await input.dispatchEvent('select');await drain();assert.equal(second.sent.text,'Review the attached text');assert.equal(second.sent.files[0].hash,file.hash);
+  // #1748 A1: the next draft never renames a sent thread in its heading or sidebar row.
+  assert.match(await page.locator('[data-c=select][data-id="'+second.id+'"]').innerText(),/^Review the attached text/);assert.equal(await page.locator('[data-c-field=title]').getAttribute('placeholder'),'Review the attached text');
   assert.match(await page.locator('.conversation-record').innerText(),/Replies open here after the native launch/);assert.equal(await page.locator('[data-c=cancel]').count(),1);
   await input.press('Enter');await drain();assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),1,'one immutable launch per item');
   // A receipt from another item/operation cannot change text or claim cancellation.

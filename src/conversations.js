@@ -36,7 +36,8 @@ module.exports=execution.module('conversations',{
    },
    anchored:function(v){return !!v&&typeof v==='object'&&Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0&&Number.isFinite(v.y);},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
-   title:function(c){return c.title||(c.text||'').split('\n').find(s=>s.trim())?.trim()||c.sent?.text?.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
+   // The draft names only an unsent request; a sent or native thread keeps its title while the owner types the next message.
+   title:function(c){const line=s=>(s||'').split('\n').find(s=>s.trim())?.trim();return c.title||(c.sent||c.request?line(c.sent?.text)||'Native request':line(c.text)||'New request');},
    visible:function(){return items.filter(c=>!c.deleted&&!!c.archived===(list==='archive')&&(!search||[api.title(c),c.root,c.id].join(' ').toLowerCase().includes(search.toLowerCase())));},
    launched:function(c){return c?.request?.state==='launched';},
    // D5: a live read wins over the snapshot; anything else, including no read yet, is unknown, never idle or done.
