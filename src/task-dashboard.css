@@ -16,6 +16,7 @@
 .viewbar{display:flex;align-items:flex-start;gap:4px;padding-top:5px}.view-picks{display:flex;flex-wrap:wrap;align-items:center;gap:2px;flex:1;min-width:0}
 .filter-header .tqp-counts{justify-content:flex-start}.filter-header .tqp-counts>*{flex:none}
 .viewbar button{border:0;padding:3px 6px;font-size:.85em;white-space:nowrap;flex:none}.view-picks>button:first-child{font-weight:600;background:light-dark(#e9edf1,#37424c)}
+.viewbar>[data-a=search-open]{flex:none;border:0;color:var(--muted)}.task-search>[data-a=search-clear]{border:0;flex:none}.task-search input::-webkit-search-cancel-button{-webkit-appearance:none}
 .task-search{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--divider);padding:2px 4px}.task-search input{flex:1;width:100%;min-width:0;border:0;background:transparent;font:inherit;font-size:.85em;color:inherit;padding:3px 0}.task-search .meta{font-variant-numeric:tabular-nums}
 .filter-header{padding-block:4px}.filter-header .tqp-counts{gap:3px}
 .project-group{display:flex;align-items:center;gap:5px;padding-top:6px;color:var(--muted);font-size:.85em}.project-group button{border:0;display:flex;align-items:center;gap:5px;text-align:left;overflow-wrap:anywhere}.project-group a{margin-left:auto}.project-group .ui-icon{width:14px;height:14px}
@@ -68,3 +69,6 @@
 .view-window fieldset{margin:0;padding:4px 0}
 .view-window-footer{flex:none;border-top:1px solid var(--edge);padding:0 8px 4px}.view-window-footer fieldset{border-top:0;margin:0;padding:0 0 4px}
 .view-window .options{padding:0;gap:4px}.view-window button{padding:4px;overflow-wrap:anywhere}.view-window .saved-view .ui-icon{width:16px;height:16px}
+.filter-header>.state-filters,.filter-header>.state-filters>.tqp-counts{display:contents}.filter-header{display:flex;flex-wrap:wrap;align-items:center;gap:3px}
+.held-shortcut{display:inline-flex;align-items:center;margin-left:2px}.held-shortcut button{display:inline-flex;align-items:center;justify-content:center;width:32px;min-width:32px;height:32px;min-height:32px;padding:7px;border:0;border-radius:6px;background:var(--work);color:light-dark(#fafbfc,#20332a)}.held-shortcut button>span:not(.ui-icon){display:none}.held-shortcut .ui-icon{width:16px;height:16px}
+.project-group.project-shortcuts{gap:4px;min-width:0;padding-block:3px}.project-shortcuts .project-overview{flex:0 1 auto;min-width:0;padding:4px 2px;font-weight:500;background:transparent;color:inherit}.project-shortcuts .compact-action{flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:6px}.project-shortcuts a.project-board{margin-left:0}

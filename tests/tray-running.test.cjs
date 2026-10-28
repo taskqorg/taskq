@@ -41,6 +41,8 @@ c.S.projects=[{...project,tasks_age_seconds:null,tasks_live:false}];assert(c.run
 c.S.projects=[{...project,hosts:null}];assert(!c.runningAgents().includes('idle</strong> · Claude 0'));
 c.S.projects=[{...project,hosts:[{name:'mac',updated:1100,live:false}]}];assert(!c.runningAgents().includes('claude: 1 worker'));
 c.S.projects=[{...project,tasks:[{n:1,state:'doing',executions:[{...execution(11,'mac','claude','worker'),role:null}]}]}];html=c.runningAgents();assert(html.includes('mac</strong> · Claude 0 · Codex 0 · partial')&&html.includes('Partial: run state unknown'),'#1775 A3: one unread run marks its host partial, never unknown');
+// #1775 R16: the mac strip read `mac ✳1 ?` because an execution waiting for an owner answer, or one that ended, counted as unknown; a fresh waiting or ended run is known and not running
+c.S.projects=[{...project,tasks:[{n:1,state:'doing',executions:[execution(11,'mac','claude','worker')]},{n:2,state:'ask',executions:[execution(12,'mac','claude','worker','waiting')]},{n:3,state:'review',executions:[execution(13,'mac','codex','reviewer','ended')]}]}];html=c.runningAgents();assert(html.includes('mac</strong> · Claude 1 · Codex 0')&&!html.includes('mac</strong> · Claude 1 · Codex 0 · partial'),'#1775 R16: waiting and ended runs leave the host count exact, without ?');
 // #1775 A3: another project's stale read marks only its own hosts; the freshest heartbeat names the age
 c.S.projects=[project,{...project,root:'q',issues:'https://example.org/q',tasks_live:false,hosts:[{name:'win',updated:900,live:true,age:100,age_text:'2m'}],tasks:[]}];html=c.runningAgents();
 assert(html.includes('mac</strong> · Claude 1 · Codex 1<')&&html.includes('win</strong> · Claude 0 · Codex 1 · partial'),html);

@@ -51,8 +51,9 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await page.locator('[data-c=select][data-id="'+first.id+'"]').click();await drain();assert.equal(await input.inputValue(),first.text);assert(await input.evaluate(e=>document.activeElement===e));
   await details();await page.locator('[data-c-field=title]').fill('Explicit name');await input.focus();await drain();await input.fill('Changed temporary title');await input.dispatchEvent('select');await drain();
   assert.match(await page.locator('[data-c=select][data-id="'+first.id+'"]').innerText(),/Explicit name/,'explicit title wins');
-  await page.locator('[data-c-field=search]').fill('no match');await page.locator('[data-c=clear-search]').click();assert.equal(await input.inputValue(),'Changed temporary title','clear search keeps selection');
-  await page.locator('[data-c-field=search]').fill('hidden');await page.locator('[data-c=new]').click();await drain();assert.equal(await page.locator('[data-c-field=search]').inputValue(),'');assert(await input.evaluate(e=>document.activeElement===e));
+  // #1775 C5: sidebar search is an icon until opened or a query is active; clear closes it.
+  await page.locator('[data-c=search-open]').click();await page.locator('[data-c-field=search]').fill('no match');await page.locator('[data-c=clear-search]').click();assert.equal(await page.locator('[data-c-field=search]').count(),0,'cleared search closes');assert.equal(await input.inputValue(),'Changed temporary title','clear search keeps selection');
+  await page.locator('[data-c=search-open]').click();await page.locator('[data-c-field=search]').fill('hidden');await page.locator('[data-c=new]').click();await drain();assert.equal(await page.locator('[data-c-field=search]').count(),0,'New clears and closes search');assert(await input.evaluate(e=>document.activeElement===e));
   await input.fill('Third draft');await input.dispatchEvent('select');await drain();
   const third=state.conversations.items[2];await tool('archive');await drain();assert.equal(await input.inputValue(),first.text,'Archive selects another item without switching list');assert.equal(await page.locator('[data-c=recent]').getAttribute('aria-pressed'),'true');
   await page.locator('[data-c=undo]').click();await drain();assert.equal(await input.inputValue(),'Third draft');assert(await input.evaluate(e=>document.activeElement===e));
@@ -134,7 +135,7 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   assert(await page.locator('[data-c=new]').isVisible());assert(await page.locator('[data-c=list]').isVisible());assert(await input.isVisible());
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal page scrolling');
   await capture('narrow-light-20');
-  await page.locator('[data-c=list]').click();assert(await page.locator('[data-c-field=search]').isVisible());await page.locator('[data-c=select][data-id="'+first.id+'"]').click();assert(await input.isVisible());
+  await page.locator('[data-c=list]').click();assert(await page.locator('[data-c=search-open]').isVisible());await page.locator('[data-c=select][data-id="'+first.id+'"]').click();assert(await input.isVisible());
   await page.getByRole('button',{name:'Close workspace',exact:true}).click();assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='hide').length),1);assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='send').length),0,'close never sends');
   assert.deepEqual(errors,[]);
   console.log('PASS #1580: CW1–8, independent native drafts/caret/files, archive/Undo/Restore, explicit names/search, history fills only, IME/keyboard, immutable send IDs, native-only links, partial delivery, restart/close and narrow layout');

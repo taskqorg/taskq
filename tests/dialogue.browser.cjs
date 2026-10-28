@@ -86,7 +86,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   status['claude-1665']={...status['claude-1665'],state:'idle'};await page.locator('[data-c=reply]').click();m=await action('reply');
   assert(await page.locator('[data-c=reply]').isDisabled(),'one turn at a time from the workspace');await input.press('Enter');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),0,'Enter cannot send a second turn');
   status['claude-1665']={...status['claude-1665'],state:'working'};await receipt(m,{state:'accepted'});
-  await page.waitForFunction(()=>document.querySelector('[data-c-field=text]').value==='');assert.match(await page.locator('.conversation-status').innerText(),/Sent as one native turn/);
+  await page.waitForFunction(()=>document.querySelector('[data-c-field=text]').value==='');assert.match(await page.locator('.conversation-status').innerText(),/Message delivered/);
   await page.waitForFunction(()=>/^PM is replying$/.test(document.querySelector('.dialogue-state').innerText));
   // The reply itself comes only from the transcript.
   log.push({role:'user',text:'Is the build green?'},{role:'assistant',text:'Yes, all checks pass.'});

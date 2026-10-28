@@ -25,6 +25,25 @@ Evidence: [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/). Eac
 | Project page Notifications used a `◉` text glyph; Capacity used the Stop square | R43 | `fix(menu)` after this audit commit |
 | `recovery` snapshot faulted (`page-error`): its fixture clicked a button that exists only under a reviewed Stop | R35 | this commit (`tests/fixtures/recovery-review.js`) |
 
+## PM steer gaps
+
+The PM steer named gaps on 4.6.40-dev. Each row compares the native screen with the target render in [native-1775-steer-2026-10-29](review-evidence/native-1775-steer-2026-10-29/) (native left, target right). Native screens come from the PR head binary (`taskq tray --snapshot`), not a PR-head dev install.
+
+| Gap | Target | Native result | Fix |
+|---|---|---|---|
+| M1 Open search field instead of an icon | input-scroll 08 | Pass: Search is an icon beside Controls; the field opens on the icon or a query and stays open while it has text (`01`, `03`) | steer commit |
+| M2 No green run button | input-scroll 07, 09 | Pass for layout: the held Start sits inline after the state chips as a green play icon when more than one task is held. This install has Held 1, so the shortcut is absent and per-task Start stays in details | steer commit |
+| M3 No project folder row with board icon | input-scroll 09 | Pass: each group row is board icon, project name (overview) and folder icon (`01`, `02`, `04`) | steer commit |
+| M4 Host line `mac ?` | input-scroll 07 | Pass: `hermes-fra1 mac ✳1 win` (`01`) | steer commit (R16) |
+| M5 Extra `Running` tab | input-scroll 07 | Pass: `Running` is an owner-saved pinned view (R12–R14), not a builtin; builtins are All tasks and Completed. Kept per conversations-preservation-audit | none |
+| C1 No Conversation info row | input-scroll 06 | Pass: one collapsed `Conversation info` row heads the reader and shares the reading scroll (UX07); a long thread scrolls to the end, so the row sits above (`06`) | none |
+| C2 No info icon beside Send | input-scroll 06, usability 03 | Pass: info icon after Send opens file limits and message help (`05`, `06`) | steer commit |
+| C3 No delivery status line | usability 03 | Not testable natively: the line appears after a live send. Text now reads `Message delivered · PM replies here.` | steer commit |
+| C4 Raw tool lines with local absolute paths | usability 03 | Pass in source and browser test: tool lines shorten absolute paths to `…/file`; fixture threads carry no tool line | steer commit |
+| C5 Open sidebar search field | input-scroll 08 | Pass: sidebar search is an icon; the field opens on click or an active query (`05`–`10`) | steer commit |
+
+Browser tests `tray-state-filter` and `project-blocks` fail identically on the pre-steer source; they are pre-existing and outside this change.
+
 ## Review handoff R01–R44
 
 | Row | Design source | Native result (second pass) | Fix |
@@ -44,7 +63,7 @@ Evidence: [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/). Eac
 | R13 | R13 | Not testable: deleting a saved view writes owner state | |
 | R14 | R14 | Not testable: the install has no pinned task; pinning writes owner state | |
 | R15 | R15 | Pass: strip, filters and tasks share the one content scroll | |
-| R16 | R16, menu.md | Pass: `hermes-fra1 · mac ✳1 ? · win ⊛1`; Hosts reads `hermes-fra1 · Claude 0 · Codex 0`, `mac · Claude 1 · Codex 0 · partial`, `win · Claude 0 · Codex 1`. Failed in pass 1 | `bc2c88ce`, `28c83ad7` |
+| R16 | R16, menu.md | Pass: `hermes-fra1 mac ✳1 win` with no `?` (steer pass). Waiting and ended executions on a fresh read no longer count as unknown. Failed in pass 1 and in the steer review | `bc2c88ce`, `28c83ad7`, steer commit |
 | R17 | R17 | Not testable: host lines render collapsed (`hosts-*`); the CPU/memory expansion opens on a click. Board tasks read apart (`Tasks: Doing 2 · Review 1`) | |
 | R18 | R18, agent-settings | Pass: tray and service versions apart from runtime client version, account, method, expiry or `Expiry unknown`, check age (Agents route, not committed: shows the account) | |
 | R19 | R19 | Not testable: every runtime on this host reads Signed in; Expired, Rejected and Check failed need a failing probe; remote values need the remote host | |

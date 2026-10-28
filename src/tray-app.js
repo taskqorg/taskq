@@ -227,7 +227,7 @@ startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
   if(!held.length)return '';
   const label=held.length===1&&rows.length===1?'Start #'+held[0].n:'Start '+held.length+' held';
-  return h('button',{'data-a':'start','data-keys':held.map(t=>t.key).join(' '),title:label,'aria-label':label},label);
+  return h('button',{'data-a':'start','data-keys':held.map(t=>t.key).join(' '),title:label,'aria-label':label},icon('play'),h('span',null,label));
 },
 globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);const name=ts[0]?.state_name;return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},name),counter(ts.length,color(st),name)),ts.map(t=>taskRow(t,true))):'';},
 problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+p.age_text+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('circle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
@@ -421,6 +421,8 @@ runningAgents:function(compact=false){
       for(const x of Array.isArray(t.executions)?t.executions:[]){
         if(!x||typeof x.host!=='string'){partial=true;continue;}
         const h=add(x.host||'Unknown host',stale);
+        // #1775 R16: a fresh ended or waiting execution is known and not running; only an unknown or stale one marks its host ?
+        if(fresh&&['ended','waiting'].includes(x.state))continue;
         if(!fresh||x.live!==true||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.reasons.add('run state unknown; see service log');continue;}
         const identity=JSON.stringify([t.key,x.id]),prior=seen.get(identity);
         if(prior){if(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role){h.reasons.add('conflicting execution observations');hosts.get(prior.host).reasons.add('conflicting execution observations');}continue;}
