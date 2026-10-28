@@ -1,6 +1,6 @@
 # #1773 native Conversations evidence
 
-Native WKWebView snapshots (`taskq tray --snapshot --route conversations`, `scripts/macos-runner.sh`) of the branch release build at the commit that adds this file, over an isolated `TASKQ_INSTALL` from `docs/shots/fixture.sh`. Dark, 18 px text. The PM chat reads an invented transcript from the fixture; no board or session is touched.
+Native WKWebView snapshots (`taskq tray --snapshot --route conversations`) taken with the installed dev build 4.6.40-dev.1793220453 from 9fa60427 (install receipt f060764e) on the owner's Mac, its binary run in place over an isolated `TASKQ_INSTALL` from `docs/shots/fixture.sh`; each footer shows that version. Dark, 18 px text. The PM chat reads an invented transcript from the fixture; no board or session is touched.
 
 | Screen | Native | Target |
 | --- | --- | --- |
@@ -10,4 +10,4 @@ Native WKWebView snapshots (`taskq tray --snapshot --route conversations`, `scri
 | Badge opens the unread task thread | [badge](badge-dark-18.png) | [preservation 05](../conversations-preservation-2026-10-28/05-daily-pm-and-compact-tools.png) |
 
 The file icon (New from draft) shows only once a chat was sent, so the draft chat has attach and history alone.
-Installed-window captures follow the PM's dev install of the branch SHA. Windows: Not tested.
+Windows: Not tested.
