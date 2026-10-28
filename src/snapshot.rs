@@ -263,6 +263,8 @@ pub struct Host {
     pub focus: Option<String>,
     /// `<rt> until|probe <time>` per runtime held after a usage limit (§ 4 step 1).
     pub limits: Vec<String>,
+    /// The code of this host's tray interface fault (§ 4 step 3, #1755).
+    pub tray: Option<String>,
 }
 
 pub struct Snapshot {
@@ -325,6 +327,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         updated: h.updated,
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),
         limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ")).map(str::to_string).collect(),
+        tray: h.body.lines().find_map(|l| l.strip_prefix("tray ")).map(str::to_string),
     }).collect();
     Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
 }
@@ -580,7 +583,8 @@ impl Snapshot {
         // #1625: a heartbeat older than ttl reads stale, so a stopped service shows within ttl of its last beat
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
             if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
-            + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>())).collect();
+            + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>()
+            + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default())).collect();
         if !hs.is_empty() {
             out.push(String::new());
             out.push(format!("Hosts: {}", hs.join(", ")));
