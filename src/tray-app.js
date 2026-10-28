@@ -221,7 +221,7 @@ mode:function(p){return p.mode;},
 counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
 known:function(){return !view.S.display.all.partial.length;},
 // O1: identity anchors details/actions; title remains a full-width issue link.
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)),dashboard.attention(t));},
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)),dashboard?.attention(t));},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
