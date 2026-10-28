@@ -33,3 +33,9 @@ No capability is removed. Context, file validation/previews/removal, Watch, nati
 - [After: long draft uses the reader and retains validation](after-long-draft.png).
 
 These three distinct states were inspected at natural size. Width variants are automated geometry cells, not extra review screens. Canonical gate and final commit/PR receipts are recorded in the task result (§7); screenshots do not prove installed conversation behavior or merge-result CI.
+
+## Local gate limitations
+
+The first canonical Windows run stopped after 422.875 seconds: 530 Rust cases passed, 20 failed and 36 were ignored. Unchanged host-policy, installation, lifecycle and native-security fixtures encountered the worker authority boundary (`TASKQ_ATTEMPT`), including `a worker cannot change host policy`. These host checks are **sandbox-blocked**, not Pass; the worker identity and guards remain intact (§7/R9/R12). Two incident fixtures also inherited this run's diagnostic opt-out; their isolated fake-transport group passed all nine cases without that override. Offline selftest passed 99 fold traces, formats and private staged capture; its board read was explicitly unknown.
+
+The remaining Node checks caught the intended `workspace-answers.js` dependency change in the published workspace source manifest. Its hash was regenerated with `node tests/task-workspace.test.cjs --write`; the unchanged provenance assertion then passed. This updates source provenance, not the shared schema or exports. Final component/browser results and remaining host qualification are recorded in the task result; green `merge_group` CI remains the publication gate.
