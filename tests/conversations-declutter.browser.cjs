@@ -21,7 +21,9 @@ const state={font:20,theme:'dark',host:'fixture-host',version:'fixture',projects
   const info=page.locator('.conversation-info');assert.equal(await info.evaluate(e=>e.open),false);
   assert((await info.locator('summary').boundingBox()).height>=32,'Details keeps the fine-pointer target');
   assert.equal(await page.locator('.dialogue-state').innerText(),'PM is ready','#1773: the idle state reads as the PM status line; activity remains visible with the narrow list hidden');
-  for(const selector of ['[data-c-field=root]','[data-c-field=title]','[data-c=from-draft]','[data-w-field=prompt]','.pm-handoff'])assert.equal(await page.locator(selector).isVisible(),false,selector+' stays in Details');
+  for(const selector of ['[data-c-field=root]','[data-c-field=title]','[data-w-field=prompt]','.pm-handoff'])assert.equal(await page.locator(selector).isVisible(),false,selector+' stays in Details');
+  // #1773 A3: New from draft is the v7 file icon in the composer tools row, labelled but wordless
+  assert.equal(await page.locator('.composer-bottom [data-c=from-draft]').getAttribute('aria-label'),'New from draft');
   assert.doesNotMatch(await page.locator('.conversation-composer').innerText(),/native turn|New from draft|PDF|Host|Session/,'composer copy stays short');
   const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=740,'Send stays reachable');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
