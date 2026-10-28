@@ -22,6 +22,7 @@ Evidence: [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/). Eac
 | Conversations Archive/Restore used non-catalog glyphs | R43 | `30cdd306` |
 | Settings widgets, Detach/Return and Work sessions used other icons than visual-style | R28, R43 | `5d9d9cc2` |
 | Attention used triangle-alert, Open log, lifecycle and Pause/Resume icons differed from visual-style | R43 | `28c83ad7` |
+| Project page Notifications used a `◉` text glyph; Capacity used the Stop square | R43 | `fix(menu)` after this audit commit |
 | `recovery` snapshot faulted (`page-error`): its fixture clicked a button that exists only under a reviewed Stop | R35 | this commit (`tests/fixtures/recovery-review.js`) |
 
 ## Review handoff R01–R44
@@ -118,6 +119,7 @@ Evidence: [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/). Eac
 | Log / folder / restart | file-text / folder-open / rotate-cw | Pass (Services) | `28c83ad7` |
 | Stop / uninstall | square / trash-2 | Pass (Services lifecycle summary) | `28c83ad7` |
 | Appearance / cadence / agents / services / about | type / chart-no-axes-column / bot / activity / info | Pass (Settings) | `5d9d9cc2` |
+| Notifications / capacity (project page) | bell / sliders-horizontal | Pass (README project shot) | `fix(menu)` after this audit commit |
 
 ## Not covered on this host
 

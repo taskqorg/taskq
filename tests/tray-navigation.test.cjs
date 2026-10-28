@@ -34,6 +34,7 @@ assert(h.includes('Blocked by the OS'));assert(h.includes('data-a="notify-os"'))
 assert(h.includes('data-kind="ask" data-v="sound" aria-pressed="true"'));
 context.S.notify.status='allowed';h=(context.routeBody());assert(!h.includes('notify-os'));assert(!/notify-test[^>]*disabled/.test(h));
 h=(context.notifyGroup({root:'/p'}));
+assert(h.includes('lucide-bell')&&!h.includes('◉'),'#1775 R43: project Notifications uses the catalog bell, not a text glyph');
 assert(h.includes('data-kind="close" data-root="/p" data-v="banner" aria-pressed="true"'));assert(h.includes('data-kind="ask" data-root="/p" data-v="inherit" aria-pressed="true"'));
 // M14 click on a closed task: no open row, so the project page shows its card from the notification until navigation
 Object.assign(context,{TaskqProjectBlocks:require('../src/project-blocks.js'),CSS:{escape:s=>s},blockProject:p=>({name:p.name,board:{kind:'github',url:p.issues}}),
