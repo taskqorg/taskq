@@ -271,7 +271,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                 Publish::Done(_) => ("ok", "none"),
                 Publish::Pending(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("retried", "none"),
                 Publish::MainMoved(m) => ("failed", crate::profile::class(m)),
-                Publish::Failed(m) | Publish::Blocked(m) => ("failed", crate::profile::class(m)),
+                Publish::Failed(m) | Publish::Blocked(m) | Publish::Superseded { reason: m, .. } => ("failed", crate::profile::class(m)),
             };
             crate::profile::stage("checks", n, seen.0, &seen.1, Some(began.elapsed()), outcome, err, crate::profile::Usage::NoModel);
             if outcome == "retried" { seen.2 = Some((outcome, err)); }
@@ -283,7 +283,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                     r.extra = m;
                     r
                 }
-                Publish::Pending(m) | Publish::Blocked(m) => Receipt::rejected(n, op, format!("not closed: {m}")),
+                Publish::Pending(m) | Publish::Blocked(m) | Publish::Superseded { reason: m, .. } => Receipt::rejected(n, op, format!("not closed: {m}")),
                 Publish::Enqueued(_) | Publish::Rebased(_) => Receipt::rejected(n, op, "publication needs the service"),
                 Publish::MainMoved(m) => {
                     act(b, &cfg.root, n, "requeue", &["main-moved"], &m, &Op::default())
@@ -316,21 +316,28 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
         Publish::Rebased(sha) => write("rebased", &[&sha], ""),
         Publish::MainMoved(m) => write("requeue", &["main-moved"], &m),
         Publish::Failed(m) => write("publication-failed", &[], &core::limit_text(n, &t, "requeue", &format!("publication failed: {m}"))),
-        Publish::Blocked(m) => write("publication-blocked", &[], &blocked_card(n, &m)),
+        Publish::Blocked(m) => write("publication-blocked", &[], &blocked_card(n, &m, None)),
+        Publish::Superseded { reason, merged } => write("publication-blocked", &[], &blocked_card(n, &reason, Some(&merged))),
         Publish::Pending(m) => Receipt::rejected(n, &op, m),
     }
 }
 
 /// § 2 ask card of a publication only the owner can unblock (#1413); its answer resumes publication.
-fn blocked_card(n: u64, reason: &str) -> String {
+/// `merged`: superseded by these merged task PRs (#1779), so a `close` option ends the task with no merge.
+fn blocked_card(n: u64, reason: &str, merged: Option<&str>) -> String {
     let reason: String = reason.chars().take(200).collect();
-    [
+    let mut card = vec![
         "Done: the reviewed result is in publication; the service cannot finish it.".to_string(),
         format!("Problem: {reason}"),
-        "1. retry: fix it on the board (rerun CI or re-enqueue the PR), then publish again ★".into(),
+        format!("1. retry: fix it on the board (rerun CI or re-enqueue the PR), then publish again{}", if merged.is_some() { "" } else { " ★" }),
         "2. later: park the task until the owner requeues it".into(),
-        format!("To answer: `taskq answer {n}.K` or comment `K`; `later` needs the CLI form."),
-    ].join("\n")
+    ];
+    if let Some(m) = merged {
+        let m: String = m.chars().take(100).collect();
+        card.push(format!("3. close: superseded by merged {m}; no merge ★"));
+    }
+    card.push(format!("To answer: `taskq answer {n}.K` or comment `K`; `close` and `later` need the CLI form."));
+    card.join("\n")
 }
 
 /// § 7: a gated task or a `review-pr` project publishes only the owner's approved result.
@@ -394,11 +401,11 @@ pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> R
         }
         let card = t.card.clone().filter(|_| matches!(t.state, State::Ask | State::Review)).ok_or(format!("#{n} is {} without a question", t.state.name()))?;
         let opt = options(&card).into_iter().find(|o| o.0 == k).ok_or(format!("#{n} has no option {k}"))?.1;
-        plan.push((n, k, Some((opt, t.state, needs_approval(cfg, &t)))));
+        plan.push((n, k, Some((opt, t.state, needs_approval(cfg, &t), t.publication.is_some()))));
     }
     let mut out = vec![];
     for (n, k, card) in plan {
-        let Some((opt, state, gated)) = card else {
+        let Some((opt, state, gated, pending)) = card else {
             out.push(act(b, &cfg.root, n, "answer", &[&k.to_string()], "", op));
             continue;
         };
@@ -425,7 +432,9 @@ pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> R
                 let r = act(b, &cfg.root, n, "answer", &[&k.to_string()], &opt, op);
                 // the close an option starts runs after the answer, as one more op of the same id
                 let then = Op { id: op.id.as_ref().map(|i| format!("{i}.close")), revision: None };
-                if close && r.ok() && r.state == Some("review") { close_one(b, cfg, n, &opt, &then) } else { r }
+                // a blocked publication's close (superseded, #1779) ends the task with no merge; a publish would block again
+                if close && r.ok() && r.state == Some("review") && pending { act(b, &cfg.root, n, "close", &[], &opt, &then) }
+                else if close && r.ok() && r.state == Some("review") { close_one(b, cfg, n, &opt, &then) } else { r }
             }
             (_, true) => close_one(b, cfg, n, &opt, op),
             (_, false) => act(b, &cfg.root, n, "requeue", &[], &opt, op),

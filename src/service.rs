@@ -2681,6 +2681,33 @@ mod tests {
         assert_eq!(task(&b, n).state, State::Closed);
     }
 
+    // Chain: section 7 publication -> superseded by merged PRs -> ask with close -> `answer N.3` closes, no merge (#1779, pilotq#84).
+    // Risk: the card says close by hand, `close` is refused in `ask` and retry only asks again, so the task never ends.
+    #[test]
+    fn superseded_publication_closes_from_its_answer_without_a_merge() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented superseded publication", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "superseded".into();
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a superseded publication")));
+        s.pass().unwrap();
+        let t = task(&b, n);
+        assert_eq!(t.state, State::Ask);
+        let card = t.card.unwrap();
+        assert!(card.contains("1. retry:") && card.contains("2. later:") && card.contains("3. close: superseded by merged #86 at ddddddd; no merge ★"), "{card}");
+        let calls = b.state.borrow().publications;
+        let got = crate::dispatch::answer_picks(&b, &c, &[format!("{n}.3")], &crate::dispatch::Op::default()).unwrap().remove(0);
+        assert!(got.ok(), "{got:?}");
+        assert_eq!(task(&b, n).state, State::Closed);
+        assert!(!b.issue(n).unwrap().open);
+        assert_eq!(b.state.borrow().publications, calls, "no merge");
+        s.pass().unwrap();
+        assert_eq!(b.state.borrow().publications, calls, "no publication after close");
+    }
+
     // Chain: R1 hand-typed cancellation -> queue readback -> allow replacement; unknown never starts a new worker.
     #[test]
     fn hand_typed_cancellation_dequeues_before_another_attempt() {
