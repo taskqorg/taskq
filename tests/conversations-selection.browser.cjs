@@ -58,7 +58,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
  await menu.evaluate(s=>taskq.receive(s),{...state,page:'home',platform:'macos',display:require('./fixtures/display-model.json').display,projects:[{...state.projects[0],board_kind:'github',tasks:['later','doing','review','ask'].map((state,i)=>({n:i+1,state,title:'Menu task '+(i+1),revision:i+10,controls:[]}))}]});
  for(const n of [1,2,3,4]){
   await menu.locator('[data-a=task-detail][data-key="'+board+'/'+n+'"]').click();
-  const entry=menu.locator('#taskq-popover [data-a=workspace]');assert.equal(await entry.count(),1,'one thread entry per task');
+  const entry=menu.locator((n===4?'.question-attention':'#taskq-popover')+' [data-a=workspace]');assert.equal(await entry.count(),1,'one thread entry per task');
   await entry.click();const open=await menu.evaluate(()=>sent.filter(m=>m.a==='workspace').at(-1).open);assert.deepEqual([open.board,open.task,open.revision],[board,n,n+9]);await menu.keyboard.press('Escape');
  }
  assert.equal(await menu.evaluate(()=>sent.filter(m=>['answer','control','start','ai-send'].includes(m.a)).length),0,'opening a menu task has no lifecycle effect');await menu.close();

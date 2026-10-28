@@ -1,16 +1,16 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "7c0c52d5e7a1209c09f40c1c5ede7f577c239f32",
-  "binarySha256": "2cac9f02f359c6dad01cc8426d4e41dafd75c2412289fc334675dce701312385",
+  "sourceCommit": "cdb97d0b5ead7c52e89635493ad51f6ab40c1093",
+  "binarySha256": "af1cc9dc0c66bd08e991c468165dd6d77126501f757ae87034124d65440e7245",
   "environment": {
-    "os": "macOS 27.0.1",
-    "arch": "arm64",
-    "renderer": "WKWebView snapshot"
+    "os": "Windows",
+    "arch": "x86_64",
+    "renderer": "WebView2 snapshot"
   },
   "uiSources": {
     "src/tray.rs": "22d711330210cee9556a71ed667a3a7c15ac834f",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "5cf65bc9168edcaffce4b32893fc2e759f7879b7",
+    "src/tray-app.js": "0c41fd9004927f594a84f0141e4957eb5a470821",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "c2ac1f503d9837c43638aceff515954d561c15b4",
@@ -18,8 +18,8 @@
     "src/tray-web.js": "5f8ac6545d2df180f384d78cb9f6ccc5b09b0973",
     "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
     "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
-    "src/task-dashboard.js": "6e902976b5c2680310a0ed3194c0d1fdf3104ecb",
-    "src/task-dashboard.css": "668b3ac993d08c2329211813956cc916c0b63305",
+    "src/task-dashboard.js": "73d1d3b85c62e5af95fd6bf2675e9c5b94d13dac",
+    "src/task-dashboard.css": "97a4c0222e7f7c50d621c893c972af130b123924",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "9d6b23c8cdb33e8fe3e8fa3f18966f02f7fd6e72cee30e60f7e46f6a688f5dca"
+      "sha256": "c61441941376c61d28fd4af87e2378963169a18e44d90510b61faa82defdba51"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "03be6060fad70b44492c1ce93de88fe59d9b547a7996867c10147ed3f89ca03f"
+      "sha256": "f72c3dac4aaa40e45f0788d96cf5b8ce7276900e8fa7baa2995927e77292e409"
     }
   ]
 }

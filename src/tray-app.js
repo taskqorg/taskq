@@ -210,7 +210,7 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return h('button',{class:'project','data-route':route},label);},
-answerSlot:function(t){return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},t.state==='ask'?'Answer in Conversations…':'Open Conversations…');},
+answerSlot:function(t){return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},t.state==='ask'?'Open question':'Open Conversations…');},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
@@ -221,7 +221,7 @@ mode:function(p){return p.mode;},
 counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
 known:function(){return !view.S.display.all.partial.length;},
 // O1: identity anchors details/actions; title remains a full-width issue link.
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)));},
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)),dashboard?.attention(t));},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
