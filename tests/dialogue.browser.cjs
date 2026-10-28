@@ -7,7 +7,9 @@ const draft=(id,runtime,state)=>({id,revision:1,title:runtime+' session',text:''
 const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[]}],ai:{history:[],runtime:{id:'claude',name:'Claude Code',available:true}},
  conversations:{complete:true,items:[draft('claude-1665','claude','idle'),draft('codex-1665','codex','unknown')],navigation:{selected:'claude-1665',list:'recent'}},messages:{complete:true,entries:[]}};
 // 60 invented records; the reader returns chunks of 20 from the end like D4, each item with its record identity (at, i).
-const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: taskq status --line '+i}:{role:i%3?'assistant':'user',text:(i%3?'Answer ':'Question ')+i});
+// #1747: messages wrap to several lines, so one chunk fills more than the reader's one-viewport read-ahead margin (Q-A4)
+// and the view holds exactly the chunks this test loads; short records let the fill read a second chunk before the first check.
+const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: taskq status --line '+i}:{role:i%3?'assistant':'user',text:(i%3?'Answer ':'Question ')+i+' lorem'.repeat(150)});
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
@@ -41,8 +43,9 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   const top=await view.locator('.dialogue-item').first().innerText();await detail.evaluate(e=>{e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===40);
   assert(await detail.evaluate(e=>e.scrollTop>0),'prepend keeps the reading anchor');assert.match(top,/Answer 40/);
-  await page.locator('[data-c=earlier]').click();await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===60);
-  assert.equal(await page.locator('[data-c=earlier]').count(),0,'first record reached');assert.deepEqual((await texts())[0],'Question 0');
+  // #1747: an in-page click; Playwright's click scrolls the button into view first, which starts the read-ahead and disables it
+  await page.evaluate(()=>document.querySelector('[data-c=earlier]').click());await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===60);
+  assert.equal(await page.locator('[data-c=earlier]').count(),0,'first record reached');assert.match((await texts())[0],/^Question 0 lorem/);
   // New records append while the view is open (2 s poll).
   await detail.evaluate(e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
   log.push({role:'user',text:'Question 60'},{role:'assistant',text:'Answer 61'});

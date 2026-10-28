@@ -113,7 +113,9 @@ async function historyCase(browser,html,runtime){
  // A2: Jump to latest from the start replaces the window; a stale reply held across it is ignored
  await page.evaluate(()=>{history1742.hold=true;const e=document.querySelector('.conversation-reader');e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
  await page.waitForFunction(()=>history1742.held||history1742.pending===0);
- await page.locator('[data-c=latest]').click();
+ // #1747: a scroll event of the old window before the newest page arrives (macOS headless delivered one) keeps following
+ await page.locator('[data-c=latest]').waitFor();
+ await page.evaluate(()=>{document.querySelector('[data-c=latest]').click();const e=document.querySelector('.conversation-reader');e.scrollTop=0;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
  await page.evaluate(()=>{history1742.hold=false;const d=history1742.held;history1742.held=null;d?.();});await settle();
  s=await sample();order(s.keys,'latest');assert.equal(s.keys.at(-1),all.at(-1),runtime+': Jump to latest shows the newest record');
  assert(await page.evaluate(()=>{const e=document.querySelector('.conversation-reader');return e.scrollHeight-e.scrollTop-e.clientHeight<2;}),runtime+': Jump to latest reaches the end');
@@ -127,8 +129,11 @@ async function historyCase(browser,html,runtime){
  await page.evaluate(()=>getSelection().removeAllRanges());
  // A4: keyboard reading moves the reader and loads earlier history
  // A4: keyboard reading moves the reader and reaches earlier history
- await page.locator('.dialogue-transcript').focus();const k0=(await sample()).keys[0],y0=await page.evaluate(()=>document.querySelector('.conversation-reader').scrollTop);
- await page.keyboard.press('PageUp');await settle();assert(await page.evaluate(y=>document.querySelector('.conversation-reader').scrollTop<y,y0),runtime+': PageUp scrolls the transcript');
+ // #1747: headless Chromium on macOS sometimes drops the first PageUp (no scroll event, no view scrollTop write); a second
+ // press scrolls. The visible record moving down is the check: scrollTop also grows when the scroll prepends a page.
+ await page.locator('.dialogue-transcript').focus();const k0=(await sample()).keys[0],a0=await anchor();
+ let moved=false;for(let k=0;k<2&&!moved;k++){await page.keyboard.press('PageUp');await settle();const y=await offset(a0.key);moved=y===null||y>a0.y+100;}
+ assert(moved,runtime+': PageUp scrolls the transcript');
  for(let k=0;k<80&&(await sample()).keys[0]===k0;k++){await page.keyboard.press('PageUp');await settle();max=Math.max(max,(await sample()).keys.length);}
  assert.notEqual((await sample()).keys[0],k0,runtime+': PageUp reads earlier history');
  assert(max<=800,runtime+': mounted items stay bounded while a selection is held: '+max);
