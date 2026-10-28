@@ -910,13 +910,28 @@ fn health(install:&Path)->String {
     let mut out=health_lines("CLI telemetry",&Ok((crate::telemetry::diagnostic::health(),std::process::id() as u64,now)));
     out+=&health_lines("Service telemetry",&service);
     out+=&store_line(install);
-    // docs/design/worktrees.md: one line per root from its last tidy report
+    // docs/design/worktrees.md: one line per root from its last tidy report; #1766: then its status age
     for root in crate::host::projects(install).unwrap_or_default() {
+        let name=root.file_name().map_or("project".into(),|n|n.to_string_lossy().into_owned());
         let tidy=crate::data::json(&crate::dot(&root).join("tidy.json")).ok().flatten().unwrap_or_default();
-        out+=&crate::tidy::health_line(&root.file_name().map_or("project".into(),|n|n.to_string_lossy().into_owned()),&tidy,now);
+        out+=&crate::tidy::health_line(&name,&tidy,now);
+        out.push('\n');
+        out+=&status_line(&name,&crate::data::json(&crate::dot(&root).join("status.json")),now);
         out.push('\n');
     }
     out
+}
+
+/// #1766: a project's status.json age against its refresh `poll`; older than two refreshes is stale, read from the file
+/// alone, so a project whose passes stopped shows without any operation recorded.
+fn status_line(project:&str,status:&Result<Option<serde_json::Value>,String>,now:u64)->String {
+    let st=match status {Ok(Some(st))=>st,Ok(None)=>return format!("{project}: status unknown (status.json missing)"),
+        Err(e)=>return format!("{project}: status unknown (unreadable: {e})")};
+    let Some(at)=st["at"].as_u64() else {return format!("{project}: status unknown (no time)")};
+    // a status written before #1766 has no `poll`: the § 9 default
+    let poll=st["poll"].as_u64().unwrap_or(60).max(1);
+    let age=now.saturating_sub(at);
+    format!("{project}: status {} old · refresh {poll}s{}",crate::age(age as i64),if age>2*poll {" · stale"} else {""})
 }
 
 /// The freshest status (under 60 s, live pid) among registered projects; anything else is unknown with its reason (R12).
@@ -1128,6 +1143,31 @@ pub(crate) mod tests {
         assert!(health_lines("CLI telemetry",&Ok((lost,7,now))).contains("unknown (collector lost records or failed batches)"));
         let missing=serde_json::json!({"state":"unknown","scope":"this-process","reason":"collector-snapshot-unavailable"});
         assert_eq!(health_lines("CLI telemetry",&Ok((missing,7,now))),"CLI telemetry: unknown (collector-snapshot-unavailable) · scope this-process · pid 7 · at 2027-01-15 08:00 UTC\n");
+    }
+
+    // #1766 A3-A4: a drain froze every idle project's status.json and health showed no age, so nothing flagged it.
+    // Retained protection: health reads each registered project's status age from the file alone and flags one older
+    // than two refreshes, with no recorded operation needed; a missing status reads unknown, never fresh.
+    #[test]
+    fn profile_health_flags_project_status_older_than_two_refreshes() {
+        let dir=std::env::temp_dir().join(format!("taskq-status-age-{}",crate::runtime::uuid()));
+        let root=dir.join("frozen");
+        fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(dir.join("projects"),format!("{}\n",root.display())).unwrap();
+        let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let line=|at:u64|{
+            fs::write(root.join(".taskq/status.json"),serde_json::json!({"at":at,"poll":60}).to_string()).unwrap();
+            health(&dir).lines().find(|l|l.starts_with("frozen: status")).map(String::from).unwrap()
+        };
+        assert_eq!(line(now-30),"frozen: status <1m old · refresh 60s");
+        assert_eq!(line(now-120),"frozen: status 2m old · refresh 60s","two refreshes are not yet stale");
+        assert_eq!(line(now-121),"frozen: status 2m old · refresh 60s · stale");
+        assert_eq!(line(now-1500),"frozen: status 25m old · refresh 60s · stale");
+        assert_eq!(status_line("old",&Ok(Some(serde_json::json!({"at":now-200}))),now),"old: status 3m old · refresh 60s · stale","pre-#1766 status: § 9 default poll");
+        fs::remove_file(root.join(".taskq/status.json")).unwrap();
+        assert!(health(&dir).contains("frozen: status unknown (status.json missing)"));
+        assert_eq!(status_line("p",&Ok(Some(serde_json::json!({"poll":60}))),now),"p: status unknown (no time)");
+        fs::remove_dir_all(dir).unwrap();
     }
 
     // #1640 A2-A3: the store line showed WAL file size only, so a high-water file read as a full WAL. Retained protection:

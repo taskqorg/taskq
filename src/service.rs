@@ -678,7 +678,23 @@ impl<'a> Service<'a> {
         self.reap_owned();
         self.reconcile_ownership()?;
         self.sync_host();
-        if before != self.kids.len() || self.reduced_at.is_none_or(|t| self.mono.saturating_sub(t) >= (self.cfg.ttl / 5).max(1) as u64) {
+        self.beat_reduced(before != self.kids.len())
+    }
+
+    /// #1766: the Stop barrier keeps an idle prepared project out of passes (#1402); it still reads the board for
+    /// status.json and beats. No claim, resume, recovery, label or event write; ownership stays as last reported.
+    pub fn observe(&mut self) -> Result<(), String> {
+        self.unready();
+        let (views, hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
+        let now = self.board.now()?;
+        self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
+        self.tasks_read = Some(std::time::Instant::now());
+        self.beat_reduced(false)
+    }
+
+    /// The heartbeat of a reduced or observe pass: at most every `ttl / 5`, at once when its children changed.
+    fn beat_reduced(&mut self, changed: bool) -> Result<(), String> {
+        if changed || self.reduced_at.is_none_or(|t| self.mono.saturating_sub(t) >= (self.cfg.ttl / 5).max(1) as u64) {
             self.reduced_at = Some(self.mono);
             if let Some(n) = self.host_issue {
                 let hb = self.board.issue(n)?;
@@ -3224,6 +3240,55 @@ mod tests {
         assert!(s.kids.is_empty() && host.lock().unwrap().prepared.contains(&root));
         assert!(core::executions(n, &entries(&b,n).unwrap()).iter().all(|x| x.release.is_some()));
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #1766 A1-A2: a queued Stop with a live worker in project A froze idle project B: the barrier (#1402) skipped
+    // B's loop, so its status.json kept stale counters for the whole drain. Retained protection: the barrier still holds
+    // B out of ordinary passes and keeps its prepared report, A keeps monitoring its worker, and neither claims.
+    #[test]
+    fn drain_with_live_worker_keeps_idle_project_status_fresh_and_claims_nothing() {
+        let base = std::env::temp_dir().join(format!("taskq-drain-observe-{}", crate::runtime::uuid()));
+        let p = crate::host::Policy::parse(json!({"limits": {"claude": 2}, "load_gate": {"enabled": false}}), "invented").unwrap();
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Ok(p.clone()))));
+        let (ba, bb) = (Fake::default(), Fake::default());
+        let mut ca = cfg("invented"); ca.root = base.join("a"); ca.install = base.clone();
+        let mut cb = ca.clone(); cb.root = base.join("b");
+        for root in [&ca.root, &cb.root] { std::fs::create_dir_all(crate::dot(root)).unwrap(); }
+        let exits = Exits::default();
+        let (mut sa, mut sb) = (service(&ba, &ca, exits.clone()), service(&bb, &cb, exits.clone()));
+        for s in [&mut sa, &mut sb] { s.host = Some(host.clone()); s.reload(Ok(p.cap.clone())); }
+        let live = ba.create("Live", "", &[TASK_LABEL.into()]).unwrap();
+        let a = ba.comment(live, "taskq: spawn worker claude:fixture invented").unwrap();
+        sa.kids.push(Kid { unknown:None, stopping:false, session_url:None, execution: a, task: live, attempt: a, rt: "claude".into(), proc: Box::new(FakeProc(Default::default())) });
+        let ready = [(&ba, ba.create("Ready A", "## Goal\ng", &[TASK_LABEL.into()]).unwrap()), (&bb, bb.create("Ready B", "## Goal\ng", &[TASK_LABEL.into()]).unwrap())];
+        { let mut h = host.lock().unwrap(); h.restart = true; h.stopping = true; for root in [&ca.root, &cb.root] { h.busy.insert(root.clone(), true); } }
+        // One service-loop pass: the barrier's observe pass leaves the handover report untouched.
+        let loop_pass = |s: &mut Service| -> bool {
+            let observe = crate::observes(Some(&host), &s.cfg.root).unwrap();
+            if observe { s.observe().unwrap(); return true; }
+            s.pass().unwrap(); s.sync_host();
+            let mut h = host.lock().unwrap();
+            h.busy.insert(s.cfg.root.clone(), !s.idle());
+            crate::report_handoff(s, &mut h, &s.cfg.root, s.idle()).unwrap();
+            false
+        };
+        assert!(!loop_pass(&mut sa) && !loop_pass(&mut sb), "the first pass of each project reports its handover");
+        assert!(host.lock().unwrap().prepared.contains(&cb.root) && !host.lock().unwrap().handoff_ready(), "A's live worker holds the Stop");
+        for round in 0..3 {
+            let arrived = bb.create(&format!("Arrived {round}"), "", &[TASK_LABEL.into()]).unwrap();
+            sb.tasks_read = None;
+            assert!(loop_pass(&mut sb), "the barrier keeps idle B out of ordinary passes");
+            assert!(sb.tasks_read.is_some() && sb.snapshot.as_ref().unwrap().tasks.iter().any(|r| r.n == arrived), "B's status reads the board it observes now");
+            assert!(!loop_pass(&mut sa), "A keeps monitoring its live worker");
+            assert_eq!(sa.kids.len(), 1);
+            assert!(host.lock().unwrap().prepared.contains(&cb.root), "an observe pass keeps B's prepared report");
+        }
+        assert!(exits.borrow().is_empty(), "the drain admits nothing in either project");
+        for (b, n) in ready { assert!(entries(b, n).unwrap().iter().all(|e| !e.body.starts_with("taskq: spawn")), "#{n} stays unclaimed"); }
+        { let mut h = host.lock().unwrap(); h.restart = false; h.stopping = false; }
+        for _ in 0..2 { assert!(!loop_pass(&mut sa) && !loop_pass(&mut sb), "a cancelled Stop lifts the barrier"); }
+        assert!(!exits.borrow().is_empty(), "the fixture claims once admission reopens, so the drain's refusal was real: {:?} {:?}", sa.waits, sb.waits);
+        drop((sa, sb)); std::fs::remove_dir_all(base).unwrap();
     }
 
     // #1601 A4: a pending restart refused the resume of an answered task, and the handover waited on that refused

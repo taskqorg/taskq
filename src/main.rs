@@ -942,10 +942,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     loop {
         // #1297: steady successful work folds into 15-minute aggregates; failures, changes and command-linked passes stay rows.
         let _repeating = tracing::info_span!("service.loop", coreq_repeating = true, project = cfg.repo.as_str()).entered();
-        if let Some(host)=&host {
-            let proceed=host.lock().map_err(|_|"host handover unknown")?.begin_pass(&cfg.root);
-            if !proceed {std::thread::sleep(Duration::from_secs(1));continue;}
-        }
+        let observe=observes(host.as_ref(),&cfg.root)?;
         let pass_began=Instant::now();
         let poke_start = poke_times(&pokes);
         telemetry::diagnostic::poll(&cfg.install);
@@ -954,6 +951,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let command=match &control {Ok(snapshot)=>snapshot.command.clone(),Err(e)=>json!({"state":"unknown","reason":e})};
         let wakeup = control.as_ref().ok().and_then(|s|s.link.as_ref()).map(|link| link.span().entered());
         let reduced = panics.quarantined() || began.elapsed().as_secs() < panics.until;
+        // #1766: an observe pass reads and reports only; exchanges, probes and pruning wait for the next ordinary pass
+        let quiet = reduced || observe;
         // § 3: capacity reloads before each admission decision; children are untouched
         let cap = fs::read_to_string(cfg.root.join("taskq.json")).map_err(|e| e.to_string())
             .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| format!("taskq.json: {e}")))
@@ -986,7 +985,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             s.gui_checked = Some(Instant::now());
             s.gui_probe = platform::gui_probe();
         }
-        if !reduced { if let Some(m) = policy::pin_rollback(&cfg.install, platform::VERSION) { log!("{m}"); } }
+        if !quiet { if let Some(m) = policy::pin_rollback(&cfg.install, platform::VERSION) { log!("{m}"); } }
         s.mono = host.as_ref().and_then(|h| h.lock().ok().map(|h| h.elapsed())).unwrap_or_else(|| began.elapsed().as_secs());
         s.wall = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
         // § 4 Data: an unreadable focus admits nothing and reads unknown with its reason
@@ -1000,7 +999,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             if let Ok(h) = host.lock() { if h.draining.contains(&cfg.root) { s.focus.clear(); } }
         }
         s.focus_error = focus_error.clone();
-        let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else { s.pass() };
+        let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else if observe { s.observe() } else { s.pass() };
         s.sync_host();
         for l in s.log.drain(..) {
             log!("{l}");
@@ -1047,7 +1046,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         }).collect();
         let request = fs::read_to_string(d.join("focus.request")).ok();
         // § 4: runtime probes at most every 5 minutes
-        if !reduced && agents.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 300) {
+        if !quiet && agents.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 300) {
             mark_checking(&platform::tool(&cfg.install), &cfg.root, at);
             agents = Some((Instant::now(), json!({"at": at, "rows": runtime::agents(&cfg.install)})));
             // #1429: a logged-out runtime admits nothing until a probe reads it logged in
@@ -1057,16 +1056,16 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         // docs/design/enrollment.md: delivery runs on its own thread; its failure never fails or delays the pass
         let local = enrollment::Local { host: cfg.me.clone(), service: Some(s.instance.clone()), ttl: cfg.ttl.max(0) as u64, agents: agents.as_ref().map_or(Value::Null, |a| a.1.clone()),
             progress: s.snapshot.as_ref().map(|x| enrollment::progress(x, &cfg.root, &cfg.me)).unwrap_or_default() };
-        if !reduced { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), &local, at) { log!("{l}"); } }
+        if !quiet { if let Some(l) = dashq.tick(&cfg.install, s.snapshot.as_ref(), &local, at) { log!("{l}"); } }
         // docs/design/standalone-telemetry.md#remote-sync-1353: only under the telemetry grant, on its own thread
-        if !reduced { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        if !quiet { if let Some(l) = telemetry_sync.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
-        if !reduced { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
-        if !reduced { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        if !quiet { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        if !quiet { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]
-        if !reduced && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
+        if !quiet && is_installed && platform::dev_enabled(&cfg.repo, &cfg.install) {
             dev = platform::dev_tick(&cfg.install, &cfg.root, &mut |sha| {
                 if dev_ci.as_ref().is_some_and(|(s, t)| s == sha && t.elapsed().as_secs() < 300) { return Err("checked".into()); }
                 dev_ci = Some((sha.into(), Instant::now()));
@@ -1085,7 +1084,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             ("tasks_age_seconds", json!(s.tasks_read.map(|t| t.elapsed().as_secs()))), ("request", json!(request)), ("events_since", json!(s.events_since)),
             ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err()})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
-            ("stop_progress",json!(s.stop_progress)),
+            ("stop_progress",json!(s.stop_progress)), ("poll", json!(cfg.poll)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health()),
@@ -1142,7 +1141,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             reexec(&s, cfg)?;
         }
         // § 4 Data: the pruners run hourly
-        if !reduced && pruned.is_none_or(|t| t.elapsed().as_secs() >= 3600) {
+        if !quiet && pruned.is_none_or(|t| t.elapsed().as_secs() >= 3600) {
             pruned = Some(Instant::now());
             let live = s.retained_attempts();
             for l in data::prune(&cfg.root, &cfg.install, &project, &live) {
@@ -1152,7 +1151,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if host.is_none() && is_installed {
             keep_tray(&cfg.install, &mut tray);
         }
-        if let Some(host) = &host {
+        // an observe pass keeps the project's last handover report (#1402)
+        if let Some(host) = host.as_ref().filter(|_| !observe) {
             if let Ok(mut h) = host.lock() {
             let registered = !h.draining.contains(&cfg.root);
             let drained = s.idle();
@@ -1306,6 +1306,11 @@ fn save_kids(s: &Service, root: &Path) -> Res<()> {
     }
     kids.extend(kept);
     write_kids(&s.cfg.install,root,&kids)
+}
+
+/// #1766: a project the handover barrier keeps out of passes (#1402) still observes the board for its status.json.
+fn observes(host: Option<&host::Shared>, root: &Path) -> Res<bool> {
+    Ok(match host {Some(host)=>!host.lock().map_err(|_|"host handover unknown")?.begin_pass(root),None=>false})
 }
 
 /// The end of a project pass under a pending restart: prepared once nothing it owns blocks the re-exec.
