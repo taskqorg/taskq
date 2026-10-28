@@ -121,6 +121,7 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let a = super::of(&r.runtime);
     let session = r.session.as_deref().filter(|s| super::plain_thread(s)).ok_or("native session unknown; open it in its runtime")?;
     if !super::which(a.bin).is_absolute() { return Err(format!("{MISSING} {} is not on the host service PATH", a.bin)); }
+    if !a.codex { release_idle(r)?; }
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
@@ -147,10 +148,35 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
 /// D3: Claude lists a session someone has open; Codex refuses the second writer itself, so its check is the turn.
 pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
     if super::of(&r.runtime).codex { return Ok(false); }
+    Ok(holds(&claude_rows()?, r) == Hold::Other)
+}
+
+#[derive(Debug, PartialEq)]
+enum Hold { Free, Own, Other }
+
+/// The job TaskQ launched stays open after its reply; idle, it is no other writer. Interactive, busy or foreign rows hold.
+fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
+    let mut hold = Hold::Free;
+    for v in rows.iter().filter(|v| v["sessionId"].as_str().is_some_and(|s| Some(s) == r.session.as_deref())) {
+        let own = v["kind"] == "background" && r.job.as_deref().is_some_and(|j| v["id"] == j);
+        if !own || v["status"] == "busy" || v["state"] == "working" { return Hold::Other; }
+        hold = Hold::Own;
+    }
+    hold
+}
+
+fn claude_rows() -> Res<Vec<serde_json::Value>> {
     let (ok, out) = super::probe("runtime.agents", &super::which("claude"), &["agents", "--json"]).ok_or("Claude agents unavailable or timed out")?;
     if !ok { return Err(format!("claude agents: {}", out.trim())); }
-    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))?;
-    Ok(rows.iter().any(|v| v["sessionId"].as_str().is_some_and(|s| Some(s) == r.session.as_deref())))
+    serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
+}
+
+/// D3: Claude resumes only a stopped session, so the turn stops the idle launched job first and reads its release back.
+fn release_idle(r: &Request) -> Res<()> {
+    let job = match holds(&claude_rows()?, r) { Hold::Free => return Ok(()), Hold::Other => return Err(open_in(&r.runtime)), Hold::Own => r.job.as_deref().unwrap_or_default() };
+    let (ok, out) = super::probe("runtime.stop", &super::which("claude"), &["stop", job]).ok_or("Claude stop unavailable or timed out; state unknown")?;
+    if !ok { return Err(format!("claude stop: {}", out.trim())); }
+    if holds(&claude_rows()?, r) == Hold::Free { Ok(()) } else { Err("Claude session still open after stop; state unknown".into()) }
 }
 
 /// D3 refusal text.
@@ -293,3 +319,23 @@ pub const CLAUDE_CONFIG: &str = ".claude.json";
 pub(crate) const MISSING: &str = "runtime missing:";
 pub(crate) const LOGIN: &str = "sign-in needed:";
 pub(crate) const ACCESS: &str = "access refused:";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // #1749: the idle job TaskQ launched must not refuse the next Send; any other open writer still does (D3 one writer).
+    #[test]
+    fn only_the_idle_launched_job_is_released() {
+        let r: Request = serde_json::from_value(json!({"schema": 1, "id": "c1", "created": 0, "host": "mac", "platform": "macos", "client": "tray", "runtime": "claude",
+            "targets": [], "brief": "", "state": "launched", "job": "aa11", "session": "s1"})).unwrap();
+        let row = |id: &str, kind: &str, status: &str| json!({"id": id, "kind": kind, "sessionId": "s1", "status": status, "state": status});
+        assert_eq!(holds(&[], &r), Hold::Free);
+        assert_eq!(holds(&[json!({"sessionId": "s2", "kind": "interactive"})], &r), Hold::Free);
+        assert_eq!(holds(&[row("aa11", "background", "idle")], &r), Hold::Own);
+        assert_eq!(holds(&[row("aa11", "background", "busy")], &r), Hold::Other, "a working job is a writer");
+        assert_eq!(holds(&[row("bb22", "background", "idle")], &r), Hold::Other, "another job holds");
+        assert_eq!(holds(&[row("aa11", "background", "idle"), json!({"sessionId": "s1", "kind": "interactive", "status": "idle"})], &r), Hold::Other, "an open terminal holds");
+    }
+}
