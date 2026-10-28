@@ -30,20 +30,21 @@ const {create}=execution.module('workspace',{
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
    task:function(row){
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
-    return [h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),
+    const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
+    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),reading:[
      h('details',{class:'ids','data-view-key':'answer-ids'},h('summary',null,'Details'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
      api.threadNotice(row.id),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
-      t.state==='ask'?[h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})),api.answerComposer(p,t)]:h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues)]];
+      t.state==='ask'?[h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})),composer.body]:h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
     const r=row.event,request=r.request,url=request?.url;
-    return [h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},r.title||'Request'),api.eventButtons(r)),h('p',{class:'meta'},api.plain(r.state)),api.ids(r),api.threadNotice(row.id),
+    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},r.title||'Request'),api.eventButtons(r)),reading:[h('p',{class:'meta'},api.plain(r.state)),api.ids(r),api.threadNotice(row.id),
      h('p',null,request?.reason||request?.next||'Deletion incomplete; retry Delete to remove the remaining owned files.'),
      session(url)&&h('a',{'data-url':url,href:url},'Open native session'),
-     h('p',{class:'meta'},'Opening this thread never sends a request or marks it read.')];
+     h('p',{class:'meta'},'Opening this thread never sends a request or marks it read.')]};
    },
    operations:function(){return operations.operationBody(view.operation);},
    sessions:function(){return conversations.sessions();}
@@ -91,13 +92,12 @@ const {create}=execution.module('workspace',{
    plain:function(state){return {launched:'Launched in the native session',launching:'Launching',pending:'Waiting to launch',failed:'Launch failed',unknown:'Delivery unknown'}[state]||(state?String(state).replace(/[-_]/g,' '):'State unknown');},
    // A3: one composer for a task answer: context, validation and Send; the card above keeps choices, receipt and recovery
    answerComposer:function(p,t){
-    const c=answers.answerCompose(p.issues,t);if(!c)return null;
+    const c=answers.answerCompose(p.issues,t);if(!c)return {};
     const off=!c.live,why=c.live?c.problem||'':c.problem;
-    return h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
+    return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
      files:h('p',{class:'meta conversation-files'},'Attachments: none. Task answers take text only; add files or PDFs on the board.'),
-     tools:h('div',{class:'conversation-tools'},h('label',{class:'attach-label','aria-disabled':'true'},'Attach',h('input',{type:'file',disabled:true,'aria-label':'Attach (not available for task answers)'})),c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',disabled:off||!!c.problem},c.send)),
      reason:why,after:c.choices&&h('p',{class:'meta'},'A number typed here is sent as text. Pick a numbered option with its button above.'),
-     onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}));
+     onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}})),tools:h('div',{class:'conversation-tools'},h('label',{class:'attach-label','aria-disabled':'true'},'Attach',h('input',{type:'file',disabled:true,'aria-label':'Attach (not available for task answers)'})),c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',disabled:off||!!c.problem},c.send))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
    draw:function(){
@@ -107,7 +107,7 @@ const {create}=execution.module('workspace',{
     const icons=require('./ui-icons.js');
     const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
     renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
-     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),answers.answerToast(),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
+     h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once

@@ -1,4 +1,4 @@
-/* C2/D4: list navigation and one thread-content scroll. */
+/* C2/D4: fixed identity and Send tools, list navigation and one reading scroll. */
 .conversation-content{display:flex;overflow:hidden!important;min-height:0;padding:8px!important}
 .conversation-content>.content-body{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
 .conversation-content>.content-body>[data-status=workspace]{display:none}
@@ -14,14 +14,18 @@
 .conversation-rows{overflow-y:auto;min-height:0}
 .conversation-row{display:flex;flex-direction:column;text-align:left;width:100%;gap:3px;border:0;border-radius:0;overflow-wrap:anywhere;padding:7px}
 .conversation-row small{font-size:max(12px,.8em);color:var(--muted)}
-.conversation-detail{display:block;overflow-y:auto;overflow-wrap:anywhere;scrollbar-gutter:stable;min-height:0;min-width:0}
+.workspace .conversation-detail{display:flex;flex-direction:column;overflow:hidden;overflow-wrap:anywhere;min-height:0;min-width:0}
+.workspace .thread-head,.workspace .conversation-send{flex:none}
+.workspace .conversation-reader{display:flex;flex-direction:column;flex:1;overflow-y:auto;scrollbar-gutter:stable;min-height:0;min-width:0;overflow-anchor:none}
+.workspace .conversation-reader>.conversation-composer,.workspace .conversation-reader>.answer-composer{margin-top:auto}
+.workspace .conversation-send{border-top:1px solid var(--edge);padding-top:4px}
 .conversation-tools input[data-c-field=title]{flex:1;min-width:90px;width:90px;font:inherit;color:inherit;background:none;padding:4px}
 .conversation-record{overflow:visible;min-height:0;overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px}
 .conversation-text{white-space:pre-wrap}.conversation-record ul{padding-left:1.2em}
 .conversation-record p{margin-block:6px}.conversation-record img{max-width:100%;max-height:180px;object-fit:contain}
 .conversation-record pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
 .conversation-record .native-session{text-decoration:underline;gap:5px;justify-content:start}
-/* D4/D7: launched status, transcript and composer share the detail scroll. */
+/* D4/D7: launched status, transcript and growing editor share the reading scroll. */
 .dialogue-bar{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
 .dialogue-bar p{margin:2px 0}.dialogue-bar .native-session{text-decoration:underline;justify-content:start}
 .dialogue-state{font-weight:600}.dialogue-state[data-state=unknown]{color:var(--muted)}
@@ -44,6 +48,7 @@
 .conversation-composer label{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .conversation-composer select{font:inherit;background:none;color:inherit;flex:1;min-width:100px;padding:3px}
 .conversation-composer textarea{font:inherit;color:inherit;background:none;border:1px solid var(--edge);border-radius:4px;padding:6px;width:100%;min-height:64px;resize:vertical;max-height:25vh;-webkit-user-select:text;user-select:text}
+.workspace .conversation-composer textarea{resize:none;max-height:none;overflow:hidden;flex:none}
 .conversation-composer p{margin:2px 0}.conversation-composer summary{padding:2px 4px}
 .conversation-files{display:flex;flex-wrap:wrap;gap:4px}.conversation-file{display:flex;align-items:center;min-width:0;max-width:100%}.conversation-file button:first-child{overflow-wrap:anywhere;min-width:0}
 .attach-label{position:relative;border:1px solid var(--edge);border-radius:4px;min-height:32px;padding:4px 8px;overflow:hidden}
@@ -62,9 +67,8 @@
 /* #1699 A4/A5: compact thread rows with one marker; launch diagnostics collapse; a task or event thread scrolls once above its composer. */
 .thread-marker{align-self:flex-start;font-size:max(12px,.8em);color:var(--accent,inherit);font-weight:600}
 .dialogue-launch>summary{padding:2px 4px;color:var(--muted)}
-.thread-detail{overflow-y:auto}
 
-/* #1723 A4-A6: all thread content shares one reading position. */
+/* D4: question content shares one reading position. */
 .thread-title{font:inherit;font-weight:600;margin:4px 0}
 .thread-card .qac-head{display:none}
 .conversation-detail .qac{margin:0;padding:6px}

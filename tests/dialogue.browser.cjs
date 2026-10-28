@@ -29,7 +29,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   async function action(name){await page.waitForFunction(n=>sent.some(m=>m.action===n),name);return page.evaluate(n=>{const m=sent.filter(m=>m.action===n).at(-1);sent.splice(sent.indexOf(m),1);return m;},name);}
   async function receipt(m,r){const c=state.conversations.items.find(c=>c.id===m.conversation);c.revision++;await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:m.id,snapshot:state.conversations,...r});}
   async function capture(name){if(evidence){fs.mkdirSync(evidence,{recursive:true});await page.screenshot({path:path.join(evidence,name+'.png')});}}
-  const view=page.locator('.dialogue-transcript'),detail=page.locator('.conversation-detail'),input=page.locator('[data-c-field=text]'),texts=()=>view.locator('.dialogue-item .conversation-text, .dialogue-tool').allInnerTexts();
+  const view=page.locator('.dialogue-transcript'),detail=page.locator('.conversation-reader'),input=page.locator('[data-c-field=text]'),texts=()=>view.locator('.dialogue-item .conversation-text, .dialogue-tool').allInnerTexts();
 
   // A2/D4: the newest chunk in order, tool calls as one line, newest at the bottom.
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item').length>0);
@@ -125,8 +125,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
    await input.fill('Long reply line. '.repeat(200));assert.match(await page.locator('.conversation-composer').innerText(),/Send goes to this claude session from this window/);
    const [t,b,r]=await Promise.all([view,page.locator('.dialogue-bar'),page.locator('[data-c=reply]')].map(l=>l.boundingBox()));
    assert(t.height>b.height,'the transcript takes more height than the status bar at '+font+' px');
-   await page.locator('[data-c=reply]').scrollIntoViewIfNeeded();
-   const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=720,'Send is reachable in the one scroll at '+font+' px');
+   const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=720,'Send stays outside the reading scroll at '+font+' px');
    await input.fill('');
   }
   assert.deepEqual(errors,[]);
