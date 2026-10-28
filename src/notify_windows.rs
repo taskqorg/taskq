@@ -214,9 +214,11 @@ mod tests {
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
             let file: IPersistFile = link.cast()?;
             file.Load(&HSTRING::from(path.as_os_str()), STGM_READWRITE)?;
+            // M15: the launcher opens TaskQ with no arguments, started minimized so no console shows
             let mut args = [0u16; 32];
             link.GetArguments(&mut args)?;
-            assert_eq!(String::from_utf16_lossy(&args[..4]), "tray");
+            assert_eq!(args[0], 0);
+            assert_eq!(link.GetShowCmd()?, windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE);
             let mut icon_path=[0u16;1024];let mut icon_index=0;
             link.GetIconLocation(&mut icon_path,&mut icon_index)?;
             let end=icon_path.iter().position(|c|*c==0).unwrap();
