@@ -52,7 +52,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-transcript .conversation-text')].at(-1)?.innerText==='Answer 61',null,{timeout:8000});
   assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'a reader at the bottom follows new records');
   // A3/D5: state comes from the live status read.
-  assert.match(await page.locator('.dialogue-state').textContent(),/^idle$/);
+  assert.match(await page.locator('.dialogue-state').textContent(),/^PM is ready$/);assert.equal(await page.locator('.dialogue-state').getAttribute('data-state'),'idle','#1773: the PM status line keeps the raw idle state');
   await capture('transcript-dark-16');
 
   // A4/D7: no watch reads `no watch`; set, edit and remove it from Status.
@@ -81,13 +81,13 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await receipt(m,{state:'unknown',reason:'open in claude; close it there first'});
   assert.match(await page.locator('.conversation-status').innerText(),/Not sent: open in claude; close it there first\. Draft kept/);assert.equal(await input.inputValue(),'Is the build green?');
   status['claude-1665']={...status['claude-1665'],state:'open in claude'};await page.locator('[data-c=status-refresh]').click();
-  await page.waitForFunction(()=>/open in claude/.test(document.querySelector('.dialogue-state').innerText));assert.equal(await page.locator('.dialogue-state').textContent(),'open in claude');
+  await page.waitForFunction(()=>/Open in claude/.test(document.querySelector('.dialogue-state').innerText));assert.equal(await page.locator('.dialogue-state').textContent(),'Open in claude');
   await capture('refused-dark-16');
   status['claude-1665']={...status['claude-1665'],state:'idle'};await page.locator('[data-c=reply]').click();m=await action('reply');
   assert(await page.locator('[data-c=reply]').isDisabled(),'one turn at a time from the workspace');await input.press('Enter');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),0,'Enter cannot send a second turn');
   status['claude-1665']={...status['claude-1665'],state:'working'};await receipt(m,{state:'accepted'});
   await page.waitForFunction(()=>document.querySelector('[data-c-field=text]').value==='');assert.match(await page.locator('.conversation-status').innerText(),/Sent as one native turn/);
-  await page.waitForFunction(()=>/^working$/.test(document.querySelector('.dialogue-state').innerText));
+  await page.waitForFunction(()=>/^PM is replying$/.test(document.querySelector('.dialogue-state').innerText));
   // The reply itself comes only from the transcript.
   log.push({role:'user',text:'Is the build green?'},{role:'assistant',text:'Yes, all checks pass.'});
   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-transcript .conversation-text')].at(-1)?.innerText==='Yes, all checks pass.',null,{timeout:8000});
@@ -98,7 +98,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.waitForFunction(()=>/Transcript unknown/.test(document.querySelector('.dialogue-transcript')?.innerText||''));
   assert.match(await view.innerText(),/Transcript unknown: transcript unreadable/);assert.doesNotMatch(await view.innerText(),/No messages/);
   await page.waitForFunction(()=>/Status unknown/.test(document.querySelector('.dialogue-status').textContent));
-  assert.equal(await page.locator('.dialogue-state').textContent(),'unknown');assert.match(await page.locator('[data-c=select][data-id=codex-1665]').innerText(),/unknown/);
+  assert.equal(await page.locator('.dialogue-state').textContent(),'PM status unknown');assert.match(await page.locator('[data-c=select][data-id=codex-1665]').innerText(),/Status unknown/);
   await capture('codex-unknown-light-16');
   unreadable.delete('codex-1665');status['codex-1665']={state:'idle',watch:'no watch',turn:null,last_line:'Codex answer'};
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item').length>0,null,{timeout:8000});

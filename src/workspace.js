@@ -1,5 +1,5 @@
 'use strict';
-const ui=require('./ui-runtime.js'),shell=require('./app-shell.js'),{h}=require('preact'),{signal}=require('@preact/signals'),{execution}=ui;
+const ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),shell=require('./app-shell.js'),{h}=require('preact'),{signal}=require('@preact/signals'),{execution}=ui;
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
@@ -24,7 +24,7 @@ const {create}=execution.module('workspace',{
     const threads=api.threads(),id=conversations.sync(threads,view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null),row=threads.find(t=>t.id===id),selected=row?.id;
     const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
-    return conversations.body({rows:threads,selected,marks,notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,disabled:!!view.messageBusy},'Mark read'),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    return conversations.body({rows:threads,selected,marks,notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      footer:[api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]});
    },
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
@@ -36,7 +36,8 @@ const {create}=execution.module('workspace',{
      api.threadNotice(row.id),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
-      t.state==='ask'?[h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})),composer.body]:h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      // #1773 A3: the task shows as one card in the chat: number, title, agent state, then the question
+      h('article',{class:'journey-card','data-phase':t.state},h('div',{class:'journey-heading'},h('strong',null,'#'+t.n+' · '+t.title),h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -73,7 +74,8 @@ const {create}=execution.module('workspace',{
     for(const row of rows.values())if(row.task){
      const p=S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
      if(t){row.title='#'+t.n+' '+t.title;row.revision=t.revision;}
-     row.meta=(p?.name||row.project||'Board')+(t?.state==='ask'&&!row.archived?'':' · '+(t?.state||row.event?.state||'unknown'));
+     // #1773 A4: a row without a known state names only its project, never a bare unknown
+     const state=t?.state||row.event?.state;row.meta=(p?.name||row.project||'Board')+(!state||state==='ask'&&!row.archived?'':' · '+api.plain(state));
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     return [...rows.values()];
@@ -94,14 +96,14 @@ const {create}=execution.module('workspace',{
     const off=!c.live,why=c.live?c.problem||'':c.problem;
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
      reason:why,
-     onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}})),tools:h('div',{class:'conversation-tools'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',disabled:off||!!c.problem},c.send))};
+     tools:h('div',{class:'conversation-tools composer-bottom'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action',disabled:off||!!c.problem},icons.icon('arrow-up'),c.send)),
+     onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
    draw:function(){
     conversations.capture();
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
-    document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');
-    const icons=require('./ui-icons.js');
+    document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');for(const entry of (s?.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
     const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
     renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
      h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);

@@ -1865,11 +1865,13 @@ const VIEWS: [(&str, &str); 2] = [
     ("states", "taskq.receive({dashboard:{selected:'review-work',views:[{id:'review-work',name:'Review work',saved:{states:['doing']},working:{states:['doing','review']}}]},initial:true});setTimeout(()=>document.querySelector('[data-facet=states][data-value=review]').scrollIntoView({block:'center'}),100)"),
 ];
 /// The `conversations` snapshots (#1699 A8): the workspace page after the menu badge opens the unread task thread,
-/// with a typed answer draft in that thread, then the owner conversation with its draft; only when named.
-const CONVERSATIONS: [(&str, &str); 3] = [
+/// with a typed answer draft in that thread, then the owner conversation with its draft, then a PM chat with its
+/// transcript and a typed reply (#1773); only when named.
+const CONVERSATIONS: [(&str, &str); 4] = [
     ("badge", concat!(include_str!("../tests/fixtures/conversation-shots.js"), "taskqConversationShot.bind(null,'badge')")),
     ("question", concat!(include_str!("../tests/fixtures/conversation-shots.js"), "taskqConversationShot.bind(null,'question')")),
     ("owner", concat!(include_str!("../tests/fixtures/conversation-shots.js"), "taskqConversationShot.bind(null,'owner')")),
+    ("chat", concat!(include_str!("../tests/fixtures/conversation-shots.js"), "taskqConversationShot.bind(null,'chat')")),
 ];
 const ROUTES: [&str; 24] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations"];
 
@@ -2981,7 +2983,7 @@ mod tests {
         assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         assert_eq!(names(&["views"]), ["dark-views-top-16", "dark-views-states-16", "dark-views-top-20", "dark-views-states-20", "light-views-top-16", "light-views-states-16", "light-views-top-20", "light-views-states-20"], "P-W4: the View window in both themes and sizes");
-        assert_eq!(names(&["conversations"]), ["dark-conversations-badge-18", "dark-conversations-question-18", "dark-conversations-owner-18", "dark-conversations-badge-20", "dark-conversations-question-20", "dark-conversations-owner-20"], "#1699 A8: at most ten screens");
+        assert_eq!(names(&["conversations"]), ["dark-conversations-badge-18", "dark-conversations-question-18", "dark-conversations-owner-18", "dark-conversations-chat-18", "dark-conversations-badge-20", "dark-conversations-question-20", "dark-conversations-owner-20", "dark-conversations-chat-20"], "#1699 A8: at most ten screens");
         let all = names(&[]);
         assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")&&**r!="views"&&**r!="conversations").count() - 5)), "no filter keeps the menu matrix without scroll or answers");
         assert!(all.iter().all(|name|!name.contains("agentq-")&&!name.contains("-views-")&&!name.contains("-conversations-")),"invented agentq and View window evidence is opt-in only");
