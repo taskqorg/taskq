@@ -112,7 +112,7 @@ lifecycleControl:function(p,action='restart'){if(!ports.workspace)return api.ope
   const targets=Array.isArray(review?.roots)&&review.roots.every(root=>typeof root==='string')?review.roots.map(root=>(projects.find(p=>p.root===root)?.name||'Project')+' ('+root+')'):null;
   const effect=action==='uninstall'?'Waits for this project’s owned work to end; files and other projects stay.'+(targets?.length===1?' Removes the last host unit after exact exit.':''):action==='stop'?(view.S?.stop_modes?'Drain: durable hold; current work finishes. Automatic rollback to older releases is disabled. Use reviewed recovery to resume selected tasks.':'Waits for all owned work to end; retains OS autostart. Explicit service install can start it again.'):'Existing work is preserved; active turns can delay restart.';
   const scope=action==='uninstall'?p.name:'all registered projects: '+(targets?projects.map(p=>p.name).join(', ')||'none registered':'unknown');
-  return h('details',{class:'host-'+action,'data-view-key':p.root+':'+action},h('summary',null,title+' '+(action==='uninstall'?p.name:'host service')),h('div',{class:'body meta'},'Affects '+scope+'. '+effect),h('details',{'data-view-key':p.root+':'+action+':targets'},h('summary',null,'Exact targets'),targets&&targets.map(t=>h('div',{class:'body meta'},t))),!review?.instance&&h('div',{class:'body alert'},review?.reason||title+' protocol unavailable'),h('button',{class:'project','data-a':action,'data-root':p.root,disabled:!!(pending||!review?.instance||!targets)},'Confirm '+(action==='uninstall'?'uninstall '+p.name:'host '+action)),pending&&r&&api.lifecycleWaits(),(r?.id||r?.reason)&&h('div',{class:'body meta',role:'status'},title+' '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:'')));
+  return h('details',{class:'host-'+action,'data-view-key':p.root+':'+action},h('summary',null,icon({restart:'rotate-cw',stop:'square',uninstall:'trash-2'}[action]),title+' '+(action==='uninstall'?p.name:'host service')),h('div',{class:'body meta'},'Affects '+scope+'. '+effect),h('details',{'data-view-key':p.root+':'+action+':targets'},h('summary',null,'Exact targets'),targets&&targets.map(t=>h('div',{class:'body meta'},t))),!review?.instance&&h('div',{class:'body alert'},review?.reason||title+' protocol unavailable'),h('button',{class:'project','data-a':action,'data-root':p.root,disabled:!!(pending||!review?.instance||!targets)},'Confirm '+(action==='uninstall'?'uninstall '+p.name:'host '+action)),pending&&r&&api.lifecycleWaits(),(r?.id||r?.reason)&&h('div',{class:'body meta',role:'status'},title+' '+(r.id||'')+': '+(r.state||'unknown')+(r.reason?' · '+r.reason:'')));
 },
 stopPanel:function(){if(!ports.workspace)return api.operationLauncher('stop',null,'Review Stop and hold…');
   const projects=view.S.projects||[],root=projects[0]?.root,held=view.S.stop_hold;
@@ -230,12 +230,12 @@ startButton:function(rows){
   return h('button',{'data-a':'start','data-keys':held.map(t=>t.key).join(' '),title:label,'aria-label':label},label);
 },
 globalGroup:function(st,ts){ts=ts.filter(t=>t.state===st);const name=ts[0]?.state_name;return ts.length?h('details',{class:'group','data-view-key':'state:'+st,key:'state:'+st},h('summary',null,h('span',{class:color(st)},name),counter(ts.length,color(st),name)),ts.map(t=>taskRow(t,true))):'';},
-problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+p.age_text+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('triangle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
+problem:function(p){const e=!p.alive?(p.age==null?'no status.json: service not running':'status.json '+p.age_text+' old: service not running?'):p.error?'service error: '+p.error:'';return e?h('button',{class:'project alert','data-a':'log','data-root':p.root,title:e,disabled:!p.log},h('span',null,icon('circle-alert'),p.name+': '+e),h('span',{class:'meta'},p.log?'Log':''),h('span')):'';},
 modeText:function(p){return {run:'Configured intake: '+p.focus.join(' '),paused:'Paused: running tasks finish, no new ones',watch:'Observation only: focus off'}[mode(p)];},
 admission:function(p){if(!ports.workspace)return api.operationLauncher('admission',p.root,'Review admission in '+p.name+'…');
   if(view.pending[p.root]&&!view.pending[p.root].unknown)return h('button',{class:'project',disabled:true},view.pending[p.root].text+'…');
-  if(mode(p)==='run')return h('button',{class:'project','data-a':'pause','data-root':p.root},'Pause admission in '+p.name);
-  if(p.saved)return h('button',{class:'project','data-a':'resume','data-root':p.root},'Resume admission in '+p.name);
+  if(mode(p)==='run')return h('button',{class:'project','data-a':'pause','data-root':p.root},icon('pause'),'Pause admission in '+p.name);
+  if(p.saved)return h('button',{class:'project','data-a':'resume','data-root':p.root},icon('play'),'Resume admission in '+p.name);
   if(view.ask!==p.root)return h('button',{class:'project','data-a':'pick','data-root':p.root},'Resume: choose labels…');
   // no saved focus: offer labels, never `all` (M-A12)
   return f(h('div',{class:'body meta'},'No saved focus. Admit tasks with one label:'),h('div',{class:'options'},p.labels.length?p.labels.map(l=>h('button',{'data-a':'focus','data-root':p.root,'data-label':l},l)):h('span',{class:'meta'},'No labels on open tasks: use taskq service focus')));
@@ -251,7 +251,7 @@ incident:function(p,top=false){
 },
 incidentNotice:function(p){return p.incident_notice?h('details',{class:'group incident-notice','data-view-key':'incident:'+p.root},h('summary',null,'Incident reports: notice ',h('span',{class:'meta'},p.name)),h('div',{class:'body'},'Reports stay local until you choose.'),h('div',{class:'body meta'},'Destination: '+p.incident_repo+' on GitHub (public). Posting account: unknown here; verify the github.com account used by this project before enabling.'),h('div',{class:'body meta'},'Only sanitized fault codes, fingerprint, report ID, release, revision, contract, board/runtime/OS classes, source site and evidence codes are sent. No project, task, user, session, token or raw error text.'),h('div',{class:'body meta'},'Offline or unsupported login: keep a local JSON report. After confirming the destination and posting account, set incident_reports to true in taskq.json to enable, or false to opt out. TASKQ_INCIDENT_REPORTS=off also disables reporting.')):'';},
 service:function(p,host=true){return h('details',{class:'group service','data-view-key':'service:'+p.root},h('summary',{class:'line'},icon('activity'),'Service ',h('span',{class:'meta'},p.name+(host?'':' · '+(p.age==null?'status unknown':p.age_text+' old')))),host&&api.hostService(),incident(p),
-  p.log?h('button',{class:'project','data-a':'log','data-root':p.root},'Open log'):h('div',{class:'body meta'},'Log path unknown'),
+  p.log?h('button',{class:'project','data-a':'log','data-root':p.root},icon('file-text'),'Open log'):h('div',{class:'body meta'},'Log path unknown'),
   h('button',{class:'project','data-a':'folder','data-root':p.root},'Open folder'),
   ports.workspace?[api.lifecycleControl(p),api.lifecycleControl(p,'stop'),api.lifecycleControl(p,'uninstall')]:api.operationLauncher('service',p.root,'Review service operations…'));},
 hostService:function(){const s=view.S?.service;return h('div',{class:'body meta',role:'status'},'Host service: '+(s?.state==='running'?'running · PID '+s.pid+(s.fresh?' · fresh observation':' · stale observation'):s?.state==='exited'?'recorded process exited; worker outcomes separate':'unknown')+(s?.reason?': '+s.reason:''));},
@@ -398,8 +398,8 @@ controls:function(){
 runningAgents:function(compact=false){
   // #1592: task counts and the board-task identity (`key`, one per board and number) come from the display model.
   const hosts=new Map(),all=view.S.display.all.counts;
-  // #1775 A3/R16: one stale project read or unread run marks only its hosts partial (counts plus ?); a host is unknown
-  // only while no project holds a live heartbeat for it. `partial` stays for the board task totals.
+  // #1775 A3/R16: an unread run, or a stale read beside a fresh one, marks only its hosts partial (counts plus ?); a host is
+  // unknown while no fresh project read holds a live heartbeat for it, so a stale read never shows zero. `partial` stays for the board task totals.
   let partial=false;
   const seen=new Map();
   const add=(name,why)=>{if(!hosts.has(name))hosts.set(name,{name,age:null,age_text:null,live:false,reasons:new Set(),counts:new Map()});const host=hosts.get(name);if(why)host.reasons.add(why);return host;};
@@ -413,7 +413,7 @@ runningAgents:function(compact=false){
       if(!h||typeof h.name!=='string'||!h.name){partial=true;continue;}
       // #1592: host age and its text come from the display model; #1775: the freshest observation names the host age.
       const age=Number.isFinite(h.age)?h.age:null,host=add(h.name,stale);
-      host.beat=true;host.live ||= h.live===true;
+      host.beat=true;host.live ||= h.live===true&&!stale;
       if(age!==null&&(host.age===null||age<host.age))Object.assign(host,{age,age_text:h.age_text});
     }
     for(const t of Array.isArray(p.tasks)?p.tasks:[]){
@@ -478,7 +478,7 @@ runningAgents:function(compact=false){
 home:function(){
   const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
   const line=api.runningAgents(true);
-  return f(h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('triangle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
+  return f(h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
 },
 routeBody:function(){
   switch(view.page){
