@@ -12,7 +12,7 @@ for(const state of ['doing','review','ready','later','waiting','held','failed'])
  assert.equal((entry.match(/data-a="workspace"/g)||[]).length,1);assert(!/textarea|ai-send|<form|data-a="control"/.test(entry));
 }
 // #1740 A5: shared create() callers in workspace mode have no menu dashboard.
-const workspace={operationController:true,S:{projects:[{root:'/a',name:'a',issues:'https://example.org/issues',board_kind:'github'}]}};
+const workspace={operationController:true,S:{projects:[{root:'/a',name:'a',issues:'https://example.org/issues',board_kind:'github',tasks:[]}]}};
 require('./tray-harness.cjs').install(workspace);
 assert.match(workspace.taskRow({root:'/a',key:'https://example.org/issues/42',n:42,state:'ask',title:'Question'},true),/data-card="https:\/\/example.org\/issues\/42"/);
 console.log('PASS TW2: exact task/revision launchers; shared workspace-mode task rows stay compatible');
