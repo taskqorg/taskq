@@ -363,7 +363,8 @@ module.exports=execution.module('conversations',{
      if(!e.target.querySelector('.dialogue-transcript')){api.place(selected,e.target.scrollTop);api.nav();return;}
      if(view?.id!==selected||view.end===null||!view.items.length)return;
      // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
-     const shown=api.latest();view.stick=view.end>=view.size&&e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(view.stick)view.unseen=false;
+     // #1747: while Jump to latest replaces the window, a scroll event of the old window keeps following
+     const shown=api.latest();if(!view.busy.initial)view.stick=view.end>=view.size&&e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(view.stick)view.unseen=false;
      view.anchor=api.mark(e.target);const a=view.anchor&&view.items.find(item=>api.key(item)===view.anchor.key);
      api.place(selected,view.stick||!a?undefined:{at:a.at,i:a.i,y:Math.round(view.anchor.y)});api.nav();
      api.edge(e.target);if(shown!==api.latest()||view.busy.before||view.busy.after)draw();
