@@ -74,6 +74,9 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   assert.match(await page.locator('.conversation-status').innerText(),/Not sent: open in claude/);
   assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Independent draft');
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),1);
+  await page.locator('[data-c=reply]').click();
+  assert.doesNotMatch(await page.locator('.conversation-status').innerText(),/Not sent|open in claude/,'a new explicit submission replaces the old operation status');
+  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),2);
  });
  assert.deepEqual(errors,[]);assert.deepEqual(failures,[]);
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

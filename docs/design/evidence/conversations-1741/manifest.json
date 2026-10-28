@@ -3,7 +3,7 @@
   "sources": {
     "src/workspace.js": "14e10d9aa1c1299b6d2673c0be9381ff176783504d806a57ce893864b46a25f2",
     "src/workspace-answers.js": "910b1c42f811070875848512f233179d6347219ff6004c0d2543e077de7d3b8a",
-    "src/conversations.js": "e7a8663f1fd919bcf3ad9ede221a1ef2202c4cf115d8c89bf9253f00ecbc46e9",
+    "src/conversations.js": "b298edd51a7a39bd7e88033a7742ec8a25f4d8e0f8182aa06d4047abb73d03f0",
     "src/conversations.css": "48e6bf2a929367388c3fc1e163b2865ec7104397b79aa76832d55a6c22981281"
   },
   "environment": {
@@ -27,12 +27,12 @@
     {
       "file": "after-stable-question.png",
       "sha256": "ba66501acba2ab0d413ff56e58236fc5e37b755d1cbf2768ba15c6da89ece08b",
-      "bundle_sha256": "45191f013622a53851bd3b49e904c17181aed1c7dbc4a7c30c0b01e9b5d2ce91"
+      "bundle_sha256": "bee6d0a5432e0a2ddd2ed6ac41a7aea6a9ceb903d222c1ae07d8325d701e1b0c"
     },
     {
       "file": "after-long-draft.png",
       "sha256": "187059ffe4a4ffae39618c92ba8d1cf471a8a3af87b760fb8f24aef0b7411fd4",
-      "bundle_sha256": "45191f013622a53851bd3b49e904c17181aed1c7dbc4a7c30c0b01e9b5d2ce91"
+      "bundle_sha256": "bee6d0a5432e0a2ddd2ed6ac41a7aea6a9ceb903d222c1ae07d8325d701e1b0c"
     }
   ]
 }

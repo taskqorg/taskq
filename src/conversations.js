@@ -117,6 +117,7 @@ module.exports=execution.module('conversations',{
    next:function(){
     if(pending||!queue.length||failure)return;
     const op=queue.shift(),c=items.find(c=>c.id===op.conversation);if(!api.editable(c)){api.next();return;}
+    if(op.action!=='save')api.note('',op.conversation);
     pending={...op,id:api.id(),revision:c.revision||0,version:c.version||0};
     ui.send({a:op.action==='window'?'conversation-window':'conversation-action',...pending});
     ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;api.note(failure.reason,failure.conversation);draw();}},30000);
