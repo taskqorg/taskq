@@ -236,13 +236,14 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
     v
 }
 
-/// D4 view: the chunk before `before` (file end when none) or the records after `after`.
+/// D4 view: the page that ends at `before` (file end when none) or starts at `after`; `size` tells the view whether
+/// it holds the file end.
 pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let r = launched(install, id)?;
     let codex = crate::runtime::of(&r.runtime).codex;
     let path = crate::runtime::owner::transcript(&r.runtime, r.session.as_deref().unwrap_or_default())?;
     let page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
-    Ok(json!({"items": page.items, "start": page.start, "end": page.end}))
+    Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
 #[cfg(test)]

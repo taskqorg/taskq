@@ -3,13 +3,17 @@ const pm=require('./pm-composer.js');
 const {h}=require('preact'),ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),{execution}=ui;
 // D6: the event kinds a watch may follow.
 const EVENTS=['close','failed','ask','blocked','gone'];
+// #1742 Q-A5: a transcript view mounts at most WINDOW items and re-reads evicted ranges from the native source;
+// at most FILL pages in a row without a view item are read without a user action;
+// reading anchors persist for the SAVED most recently read threads within SAVED_BYTES of the 4096-byte navigation.
+const WINDOW=600,SAVED=24,SAVED_BYTES=1536,FILL=8;
 module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect}){
   let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
   const measured=new WeakMap();
-  let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false;
+  let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,observed=null,resize=null;
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    note:function(text,id=selected){notices[id||'list']=text;},
@@ -24,7 +28,13 @@ module.exports=execution.module('conversations',{
     if(!row||!!row.archived!==(list==='archive'))selected=null;
     selection[list]=selected;onSelect?.(selected);return selected;
    },
-   capture:function(){const el=menu.querySelector('.conversation-reader');if(el?.parentElement.dataset.threadId)positions[el.parentElement.dataset.threadId]=el.scrollTop;},
+   capture:function(){const el=menu.querySelector('.conversation-reader');if(el?.parentElement.dataset.threadId&&!el.querySelector('.dialogue-transcript'))api.place(el.parentElement.dataset.threadId,el.scrollTop);},
+   // a pixel offset for a thread reader, a record anchor for a transcript; the oldest beyond SAVED are dropped
+   place:function(id,value){
+    if(id!==undefined){delete positions[id];if(value!==undefined)positions[id]=value;}
+    for(const k of Object.keys(positions)){if(Object.keys(positions).length<=SAVED&&JSON.stringify(positions).length<=SAVED_BYTES)break;delete positions[k];}
+   },
+   anchored:function(v){return !!v&&typeof v==='object'&&Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0&&Number.isFinite(v.y);},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
    title:function(c){return c.title||(c.text||'').split('\n').find(s=>s.trim())?.trim()||c.sent?.text?.split('\n').find(s=>s.trim())?.trim()||(c.request?'Native request':'New request');},
    visible:function(){return items.filter(c=>!c.deleted&&!!c.archived===(list==='archive')&&(!search||[api.title(c),c.root,c.id].join(' ').toLowerCase().includes(search.toLowerCase())));},
@@ -36,7 +46,7 @@ module.exports=execution.module('conversations',{
    },
    read:function(kind,extra={}){
     if(!view)return;const id=api.id(),conversation=view.id;
-    reads[id]={conversation,kind,...extra};view.busy[kind]=id;
+    reads[id]={conversation,kind,gen:view.gen,...extra};view.busy[kind]=id;
     ui.send({a:'conversation-dialogue',id,conversation,action:kind==='status'?'status':'transcript',...extra});
     ui.defer(()=>{if(reads[id]){api.settle({id,conversation,state:'unknown',reason:'Dialogue read receipt missing'});draw();}},30000);
    },
@@ -46,20 +56,82 @@ module.exports=execution.module('conversations',{
     const v=r.value,el=menu.querySelector('.conversation-reader');
     if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
     if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';return;}
-    view.reason='';
-    if(op.kind==='initial'){view.items=v.items.map((item,i)=>({...item,n:i}));view.start=v.start;view.end=v.end;}
-    else if(op.kind==='before'&&op.before===view.start){const first=view.items[0]?.n??0;view.items=[...v.items.map((item,i)=>({...item,n:first-v.items.length+i})),...view.items];view.start=v.start;if(el)view.anchor={height:el.scrollHeight,top:el.scrollTop};}
-    else if(op.kind==='after'&&op.after===view.end&&v.end>view.end){const last=view.items.at(-1)?.n??-1;view.items.push(...v.items.map((item,i)=>({...item,n:last+1+i})));view.end=v.end;}
+    // Q-A3/A5: a reply for a replaced window, or for a cursor the window no longer ends at, is obsolete
+    if(op.gen!==view.gen)return;
+    view.reason='';view.size=v.size;
+    if(el&&!view.stick&&view.items.length&&menu.querySelector('.dialogue-transcript')?.dataset.id===view.id)view.anchor=api.mark(el)||view.anchor;
+    const have=new Set(view.items.map(api.key)),fresh=v.items.filter(item=>!have.has(api.key(item)));
+    if(op.kind==='initial'){
+     // a saved anchor reloads the range that starts at its record; a record that is gone is said, then Latest opens
+     if(op.after!==undefined&&!v.items.some(item=>api.key(item)===view.anchor?.key)){view.lost='Saved reading position is no longer in the transcript; showing the latest messages.';view.from=undefined;view.anchor=null;view.stick=true;api.place(view.id);api.read('initial');return;}
+     view.items=v.items;view.start=v.start;view.end=v.end;view.from=undefined;
+    }
+    else if(op.kind==='before'&&op.before===view.start){view.items=[...fresh,...view.items];view.start=v.start;view.quiet.before=fresh.length?0:view.quiet.before+1;if(fresh.length)view.announce='Earlier messages loaded';}
+    else if(op.kind==='after'&&op.after===view.end){view.items.push(...fresh);view.end=v.end;view.quiet.after=fresh.length?0:view.quiet.after+1;if(fresh.length){view.announce=fresh.length+(fresh.length===1?' new message':' new messages');if(!view.stick)view.unseen=true;}}
    },
+   key:function(item){return item.at+':'+item.i;},
+   // Q-A3: the first transcript record visible in the reading viewport and its offset from the viewport top
+   mark:function(el){
+    const nodes=el.querySelectorAll('.dialogue-transcript>[data-key]');if(!nodes.length)return null;
+    const top=el.getBoundingClientRect().top;let lo=0,hi=nodes.length-1;
+    while(lo<hi){const mid=(lo+hi)>>1;if(nodes[mid].getBoundingClientRect().bottom<=top)lo=mid+1;else hi=mid;}
+    return {key:nodes[lo].dataset.key,y:nodes[lo].getBoundingClientRect().top-top};
+   },
+   // Q-A3: the one owner of transcript scroll correction: follow the end, or keep the anchored record at its offset
+   hold:function(el){
+    if(view.stick){el.scrollTop=el.scrollHeight;return;}
+    const a=view.anchor,node=a&&el.querySelector('.dialogue-transcript>[data-key="'+a.key+'"]');
+    if(node)el.scrollTop+=node.getBoundingClientRect().top-el.getBoundingClientRect().top-a.y;
+   },
+   // Q-A3: font, width and content size changes keep the anchor too
+   observe:function(log){
+    if(observed===log)return;resize?.disconnect();observed=log;
+    resize=new window.ResizeObserver(()=>{const el=observed?.isConnected&&observed.closest('.conversation-reader');if(el&&view?.id===observed.dataset.id)api.hold(el);});resize.observe(log);
+   },
+   // Q-A4: read earlier or later records while they are within one viewport of the visible area; short and
+   // ignored-only pages leave the edge near, so the next draw reads again until the viewport fills or the cursor ends
+   edge:function(el){
+    const log=el.querySelector('.dialogue-transcript');if(!log||view.end===null||view.reason||view.busy.initial)return;
+    const box=el.getBoundingClientRect(),r=log.getBoundingClientRect(),margin=el.clientHeight;
+    if(view.start>0&&!view.busy.before&&view.quiet.before<FILL&&r.top>box.top-margin)api.read('before',{before:view.start});
+    if(view.end<view.size&&!view.busy.after&&view.quiet.after<FILL&&r.bottom<box.bottom+margin)api.read('after',{after:view.end});
+   },
+   // Q-A5: evict whole records beyond two viewports, the farther side first; records that hold a selection stay
+   // mounted while it is in use, so copy keeps its text
+   trim:function(el){
+    const items=view.items;if(items.length<=WINDOW)return false;
+    const log=el.querySelector('.dialogue-transcript'),nodes=log.querySelectorAll(':scope>[data-key]');if(nodes.length!==items.length)return false;
+    const box=el.getBoundingClientRect(),over=el.clientHeight*2,excess=items.length-WINDOW,sel=window.getSelection(),held=[];
+    if(sel&&!sel.isCollapsed)for(const n of [sel.anchorNode,sel.focusNode]){const node=n?.parentElement?.closest('.dialogue-transcript>[data-key]');if(node&&log.contains(node))held.push([...nodes].indexOf(node));}
+    let top=0,bottom=items.length;
+    while(top<items.length&&nodes[top].getBoundingClientRect().bottom<box.top-over)top++;
+    while(bottom>top&&nodes[bottom-1].getBoundingClientRect().top>box.bottom+over)bottom--;
+    if(held.length){top=Math.min(top,...held);bottom=Math.max(bottom,...held.map(k=>k+1));}
+    const far=items.length-bottom,b=top>=far?Math.min(far,excess-Math.min(top,excess)):Math.min(far,excess);
+    let a=Math.min(top,excess-b);while(a>0&&items[a].i>0)a--;
+    let cut=items.length-b;while(cut<items.length&&items[cut].i>0)cut++;
+    if(!a&&cut===items.length)return false;
+    if(cut<items.length)view.end=items[cut].at;if(a)view.start=items[a].at;
+    view.items=items.slice(a,cut);return true;
+   },
+   // Q-A4: detached from the end, or new output arrived below the reader
+   latest:function(){return !!view&&view.end!==null&&!view.reason&&!view.stick;},
+   jump:function(){return api.latest()&&h('button',{'data-c':'latest',class:'dialogue-latest'},view.unseen?'New messages · Jump to latest':'Jump to latest');},
+   // only this action and Send resume following; a window that does not hold the end is replaced by the newest page
+   follow:function(){view.unseen=false;view.stick=true;view.lost='';api.place(view.id);if(view.end!==null&&view.end<view.size){view.gen++;view.busy.before=view.busy.after=null;api.read('initial');}},
    open:function(c){
-    if(view?.id!==c.id){reads={};view={id:c.id,items:[],start:null,end:null,reason:'',status:null,statusReason:'',busy:{},stick:positions[c.id]===undefined,anchor:null,ticks:0,form:null};api.read('initial');api.read('status');}
+    if(view?.id!==c.id){
+     reads={};const saved=api.anchored(positions[c.id])?positions[c.id]:null;
+     view={id:c.id,items:[],start:null,end:null,size:null,gen:0,from:saved?.at,reason:'',lost:'',announce:'',unseen:false,quiet:{before:0,after:0},status:null,statusReason:'',busy:{},stick:!saved,anchor:saved&&{key:saved.at+':'+saved.i,y:saved.y},ticks:0,form:null};
+     api.read('initial',saved?{after:saved.at}:{});api.read('status');
+    }
     if(!pollTimer)pollTimer=ui.defer(api.poll,2000);
    },
    // D4: poll every 2 s while the view is open; status, which probes the native holder, every 10 s.
    poll:function(){
     pollTimer=null;const c=api.current();
     if(!view||c?.id!==view.id||!menu.querySelector('.dialogue-transcript'))return;
-    if(!view.busy.initial&&!view.busy.after){if(view.end===null)api.read('initial');else api.read('after',{after:view.end});}
+    if(!view.busy.initial&&!view.busy.after){if(view.end===null)api.read('initial',view.from!==undefined?{after:view.from}:{});else if(view.end>=view.size)api.read('after',{after:view.end});}
     if(++view.ticks%5===0&&!view.busy.status)api.read('status');
     pollTimer=ui.defer(api.poll,2000);
    },
@@ -88,10 +160,14 @@ module.exports=execution.module('conversations',{
    // D4: user and assistant text in order, one line per tool call, newest at the bottom; unknown is never shown as empty.
    transcript:function(c){
     const v=view?.id===c.id?view:null,label={user:'You',assistant:'Assistant'};
-    return h('div',{class:'dialogue-transcript',role:'log','aria-label':'Transcript',tabindex:'0','data-id':c.id},
+    // Q-A9: page loads are not announced in full; a short status says what changed
+    return [h('p',{class:'sr-only',role:'status'},v?.announce||''),h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Transcript',tabindex:'0','data-id':c.id},
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before},v.busy.before?'Loading earlier…':'Load earlier'),
+     v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?v.items.map(item=>item.role==='tool'?h('p',{key:item.n,class:'dialogue-tool',title:item.text},'Tool · '+item.text):h('article',{key:item.n,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text))):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'));
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?v.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:item.text},'Tool · '+item.text):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
+     c.archived&&api.jump())];
    },
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
    local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next};},
@@ -154,7 +230,7 @@ module.exports=execution.module('conversations',{
        if(r.value.file.mime.startsWith('image/'))ui.effect('conversations.previewImage',()=>new Promise((resolve,reject)=>{const image=new window.Image();ui.listen(image,'load',()=>resolve(r.value));ui.listen(image,'error',()=>reject(Error('Image preview unavailable; file and draft kept')));image.src='data:'+r.value.file.mime+';base64,'+r.value.data;}),value=>{if(value.file){preview=value;api.note('Local preview',op.conversation);}else api.note(value.reason,op.conversation);draw();});
        else {preview=r.value;api.note('Local preview',op.conversation);}
       }
-      if(c&&op.action==='reply'){c.sending=false;if(c.version===op.typed){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];c.version=(c.version||0)+1;api.save(c);}api.note('Sent as one native turn. The reply appears in the transcript.',op.conversation);if(view?.id===c.id){view.stick=true;api.read('status');}}
+      if(c&&op.action==='reply'){c.sending=false;if(c.version===op.typed){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];c.version=(c.version||0)+1;api.save(c);}api.note('Sent as one native turn. The reply appears in the transcript.',op.conversation);if(view?.id===c.id){api.follow();api.read('status');}}
       if(view?.id===op.conversation&&op.action==='watch'&&r.value){view.status={...view.status,watch:r.value};view.form=null;api.form();api.note('Watch saved. Its prompt is sent when due and the session is idle.',op.conversation);}
       if(view?.id===op.conversation&&op.action==='unwatch'){view.status={...view.status,watch:'no watch'};view.form=null;api.form();api.note('Watch removed',op.conversation);}
       if(op.action==='cancel')api.note('Cancelled before native launch. No runtime work was rolled back.',op.conversation);
@@ -174,7 +250,7 @@ module.exports=execution.module('conversations',{
       const t=nav.threads;unified=true;selected=typeof t.selected==='string'?t.selected:null;
       selection=Object.fromEntries(['recent','archive'].map(k=>[k,typeof t.selection?.[k]==='string'?t.selection[k]:null]));
       opened=Array.isArray(t.opened)?t.opened.filter(r=>r&&typeof r.id==='string'&&/^task:https?:\/\/.+\/[1-9][0-9]*$/.test(r.id)&&(r.root==null||typeof r.root==='string')).map(r=>({id:r.id,root:r.root||null})):[];
-      positions=t.positions&&typeof t.positions==='object'?Object.fromEntries(Object.entries(t.positions).filter(([k,v])=>Number.isFinite(v)&&v>=0)):{};
+      positions=t.positions&&typeof t.positions==='object'?Object.fromEntries(Object.entries(t.positions).filter(([k,v])=>Number.isFinite(v)&&v>=0||api.anchored(v))):{};api.place();
      }else if(!selected)selected=api.visible()[0]?.id||null;}
 
     return false;
@@ -235,7 +311,7 @@ module.exports=execution.module('conversations',{
        dialogue?[h('div',{class:'dialogue-bar'},h('p',{class:'dialogue-state','data-state':api.state(c).split(' ')[0]},'State: '+api.state(c)),h('details',{class:'dialogue-launch','data-view-key':'dialogue-launch'},h('summary',null,'Details'),pm.handoff(c.request,true)),c.archived?h('div',null,h('p',{class:'meta'},'Archived in TaskQ only; the native conversation stays. Restore before reply.'),h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},'Delete permanently'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Native chats and sessions stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record'))):api.status(c,disabled),api.preview()),api.transcript(c)]:
        h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},h('details',{'data-view-key':'request-identity'},h('summary',null,'Request identity'),h('p',{class:'meta'},c.id)),c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),pm.handoff(c.request,true),c.sent&&h('article',null,h('h2',null,'Sent request'),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),(c.sent||c.request)&&h('p',{class:'meta'},'Replies open here after the native launch.'),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery'),c.archived&&h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},c.deleting?'Retry Delete':'Delete permanently'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Source files, native chats, sessions and board tasks stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record')),api.preview()),
        extra.notice,
-       !c.archived&&pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),h('p',{class:'meta'},(dialogue?(runtime?'Session '+runtime:'Session runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown'))],files:
+       !c.archived&&pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[dialogue&&view?.id===c.id&&api.jump(),h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),h('p',{class:'meta'},(dialogue?(runtime?'Session '+runtime:'Session runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown'))],files:
         h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled})))),
         reason:bad||(dialogue?'Send goes to this '+(runtime||'native')+' session from this window as one turn. New from draft starts a separate request.':'Share this request and selected files with the visible native session.'),after:h('details',{'data-view-key':'file-limits'},h('summary',null,'File limits'),h('p',{class:'meta'},'UTF-8 text/Markdown, PNG/JPEG/WebP. 4 files, 5 MiB each, 20 MiB per draft, 100 MiB owned storage. PDF unavailable (0 pages). Sources stay untouched.'))})),tools&&h('div',{class:'conversation-send'},tools)
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
@@ -264,7 +340,9 @@ module.exports=execution.module('conversations',{
     else if(action==='watch'&&view?.form){api.action('watch',{prompt:view.form.prompt,every:Number(view.form.every),events:EVENTS.filter(e=>view.form.events.includes(e))});}
     else if(action==='unwatch')api.action('unwatch');
     else if(action==='status-refresh'&&view&&!view.busy.status){api.read('status');draw();}
-    else if(action==='earlier'&&view&&!view.busy.before&&view.start>0){api.read('before',{before:view.start});draw();}
+    else if(action==='earlier'&&view&&!view.busy.before&&view.start>0){view.quiet.before=0;api.read('before',{before:view.start});draw();}
+    else if(action==='later'&&view&&!view.busy.after&&view.end<view.size){view.quiet.after=0;api.read('after',{after:view.end});draw();}
+    else if(action==='latest'&&view){api.follow();draw();}
     else if(action==='retry-save'){
      const failed=failure;failure=null;
      // a reply with no receipt is never resent: the transcript and status tell whether it ran
@@ -281,10 +359,15 @@ module.exports=execution.module('conversations',{
     ui.listen(menu,'scroll',e=>{
      if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}
      if(!e.target.classList?.contains('conversation-reader'))return;
-     positions[selected]=e.target.scrollTop;api.nav();
-     if(view?.id===selected&&e.target.querySelector('.dialogue-transcript')){view.stick=e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(e.target.scrollTop<32&&view.start>0&&!view.busy.before&&!view.anchor){api.read('before',{before:view.start});draw();}}
+     if(!e.target.querySelector('.dialogue-transcript')){api.place(selected,e.target.scrollTop);api.nav();return;}
+     if(view?.id!==selected||view.end===null||!view.items.length)return;
+     // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
+     const shown=api.latest();view.stick=view.end>=view.size&&e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(view.stick)view.unseen=false;
+     view.anchor=api.mark(e.target);const a=view.anchor&&view.items.find(item=>api.key(item)===view.anchor.key);
+     api.place(selected,view.stick||!a?undefined:{at:a.at,i:a.i,y:Math.round(view.anchor.y)});api.nav();
+     api.edge(e.target);if(shown!==api.latest()||view.busy.before||view.busy.after)draw();
     },true);
-    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('dialogue-status')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)positions[selected]=detail.scrollTop;}},true);
+    ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('dialogue-status')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)view.anchor=api.mark(detail);}},true);
     ui.listen(window,'resize',()=>draw());
     ui.listen(menu,'dragover',e=>{if(e.target.closest('.conversations'))e.preventDefault();});
     ui.listen(menu,'drop',e=>{if(!e.target.closest('.conversations'))return;e.preventDefault();api.files([...e.dataTransfer.files]);});
@@ -306,9 +389,10 @@ module.exports=execution.module('conversations',{
    afterDraw:function(){
     api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
-    if(detail)detail.scrollTop=positions[selected]??open?.scroll??0;
-    if(log&&open){api.open(open);if(view.anchor){detail.scrollTop=detail.scrollHeight-view.anchor.height+view.anchor.top;view.anchor=null;}else if(view.stick)detail.scrollTop=detail.scrollHeight;positions[selected]=detail.scrollTop;}
-    const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}},
+    if(detail&&!log){const p=positions[selected];detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;}
+    if(log&&open){api.open(open);api.observe(log);api.hold(detail);}
+    const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
+    if(log&&open){if(api.trim(detail))draw();else api.edge(detail);}},
    flush:function(){ui.cancel(saveTimer);const c=api.current();if(c)api.save(c);api.nav();},
   });return api;
  }

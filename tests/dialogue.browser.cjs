@@ -6,7 +6,7 @@ const draft=(id,runtime,state)=>({id,revision:1,title:runtime+' session',text:''
  sent:{text:'Start',root:'fixture-alpha',runtime,files:[]},request:{id,state:'launched',kind:'launched',url:'https://example.org/'+runtime+'/'+id,next:'Reply here'},dialogue:{state,watch:'no watch',turn:null}});
 const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',alive:true,complete:true,issues:'https://example.org/alpha/issues',tasks:[]}],ai:{history:[],runtime:{id:'claude',name:'Claude Code',available:true}},
  conversations:{complete:true,items:[draft('claude-1665','claude','idle'),draft('codex-1665','codex','unknown')],navigation:{selected:'claude-1665',list:'recent'}},messages:{complete:true,entries:[]}};
-// 60 invented records; the reader returns chunks of 20 from the end like D4.
+// 60 invented records; the reader returns chunks of 20 from the end like D4, each item with its record identity (at, i).
 const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: taskq status --line '+i}:{role:i%3?'assistant':'user',text:(i%3?'Answer ':'Question ')+i});
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
@@ -19,7 +19,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
    let r;
    if(unreadable.has(m.conversation))r={state:'unknown',reason:m.action==='status'?'native holder unavailable':'transcript unreadable'};
    else if(m.action==='status')r={state:'accepted',value:status[m.conversation]};
-   else {const end=m.after!==undefined?log.length:m.before??log.length,start=m.after!==undefined?m.after:Math.max(0,end-20);r={state:'accepted',value:{items:log.slice(start,end),start,end}};}
+   else {const end=m.after!==undefined?log.length:m.before??log.length,start=m.after!==undefined?m.after:Math.max(0,end-20);r={state:'accepted',value:{items:log.slice(start,end).map((item,k)=>({...item,at:start+k,i:0})),start,end,size:log.length}};}
    await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:m.conversation,action:m.action,...r});
   });
   await page.exposeFunction('fixtureSave',async m=>{const c=state.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:m.id,state:'accepted',snapshot:state.conversations});});

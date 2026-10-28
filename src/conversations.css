@@ -40,6 +40,7 @@
 .dialogue-watch fieldset{display:flex;flex-wrap:wrap;gap:4px 12px;border:1px solid var(--edge);border-radius:4px;margin:0;padding:4px 6px}
 .dialogue-watch fieldset label{flex-direction:row;align-items:center}
 .dialogue-transcript{overflow-wrap:anywhere;-webkit-user-select:text;user-select:text;padding:4px;display:flex;flex-direction:column;gap:6px}
+.dialogue-latest{align-self:center}
 .dialogue-transcript>button{align-self:center}
 .dialogue-item p{margin:0}.dialogue-item .meta{font-size:max(12px,.8em)}
 .dialogue-item.user{align-self:flex-end;max-width:85%;border:1px solid var(--edge);border-radius:6px;padding:4px 8px}
