@@ -78,5 +78,52 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
   assert.doesNotMatch(await page.locator('.conversation-status').innerText(),/Not sent|open in claude/,'a new explicit submission replaces the old operation status');
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),2);
  });
+ // Q-A8/Q-A11: operations that move selection must retain feedback and recovery without replay.
+ async function bootOwners(){
+  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+  await page.evaluate(s=>{window.sent=[];window.fixture=s;window.ipc={postMessage:t=>{const m=JSON.parse(t);sent.push(m);if(m.a==='conversation-action'&&m.action==='save'){const c=fixture.conversations.items.find(c=>c.id===m.conversation);Object.assign(c,m.draft);c.revision++;queueMicrotask(()=>taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}}));}}};taskq.receive(s);},state);
+ }
+ for(const action of ['archive','delete','fork'])await check('Q-A8 '+action+' completion follows resulting selection',async()=>{
+  await bootOwners();
+  if(action==='delete'){
+   await page.locator('[data-c=archive]').click();
+   await page.evaluate(()=>{const m=sent.find(m=>m.action==='archive');fixture.conversations.items[0].archived=true;taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}});});
+   await page.evaluate(()=>{fixture.conversations.items[1].archived=true;taskq.receive(fixture);});
+   await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id=owner-a]').click();
+   await page.locator('[data-c=delete-review]').click();await page.locator('[data-c=delete]').click();
+  }else await page.locator('[data-c='+ (action==='fork'?'from-draft':action)+']').click();
+  await page.waitForFunction(action=>sent.some(m=>m.action===action),action);
+  await page.evaluate(action=>{
+   const m=sent.find(m=>m.action===action),c=fixture.conversations.items[0];let value;
+   if(action==='archive')c.archived=true;
+   if(action==='delete')fixture.conversations.items.shift();
+   if(action==='fork'){fixture.conversations.items.push({...c,id:m.fork_id,request:null,sent:null});value={forked:m.fork_id};}
+   taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations,value}});
+  },action);
+  assert.match(await page.locator('.conversation-status').innerText(),new RegExp({archive:'Archived',delete:'Permanently deleted',fork:'Draft and files moved'}[action]));
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['send','reply'].includes(m.action)).length),0,'navigation operations never send');
+ });
+ await check('Q-A11 foreign save failure names its source and opens recovery',async()=>{
+  await bootOwners();
+  await page.locator('[data-c=archive]').click();await page.waitForFunction(()=>sent.some(m=>m.action==='archive'));
+  const op=await page.evaluate(()=>sent.find(m=>m.action==='archive'));
+  await page.locator('[data-c=select][data-id=owner-b]').click();
+  await page.evaluate(id=>taskq.receive({conversationReceipt:{id,state:'unknown',reason:'Invented missing archive receipt'}}),op.id);
+  assert.match(await page.locator('.conversation-status').innerText(),/owner-a/,'blocked queue identifies the failed thread');
+  for(const width of [350,620,940]){
+   await page.setViewportSize({width,height:740});
+   const box=await page.locator('[data-c=reply-open]').boundingBox();
+   assert(box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=740,'recovery stays reachable at '+width);
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'recovery has no horizontal overflow');
+  }
+  if(process.env.TASKQ_EVIDENCE_1741){fs.mkdirSync(process.env.TASKQ_EVIDENCE_1741,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_1741+'/cross-thread-recovery.png'});}
+  await page.locator('[data-c=reply-open]').click();
+  assert.equal(await page.locator('.conversation-detail').getAttribute('data-thread-id'),'owner-a');
+  assert.match(await page.locator('.conversation-status').innerText(),/Invented missing archive receipt/);
+  assert(await page.locator('[data-c=retry-save]').isVisible());
+  assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Independent draft');
+  assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='archive').length),1,'opening recovery never retries');
+  assert.equal(await page.evaluate(()=>sent.filter(m=>['send','reply'].includes(m.action)).length),0,'opening recovery never sends');
+ });
  assert.deepEqual(errors,[]);assert.deepEqual(failures,[]);
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
