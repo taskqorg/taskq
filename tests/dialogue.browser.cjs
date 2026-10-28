@@ -52,11 +52,11 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-transcript .conversation-text')].at(-1)?.innerText==='Answer 61',null,{timeout:8000});
   assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'a reader at the bottom follows new records');
   // A3/D5: state comes from the live status read.
-  assert.match(await page.locator('.dialogue-state').innerText(),/State: idle/);
+  assert.match(await page.locator('.dialogue-state').textContent(),/^idle$/);
   await capture('transcript-dark-16');
 
   // A4/D7: no watch reads `no watch`; set, edit and remove it from Status.
-  const details=page.locator('.dialogue-status');assert.match(await details.locator('summary').innerText(),/Status · no watch/);
+  const details=page.locator('.conversation-info');assert.match(await details.textContent(),/Status · no watch/);
   await details.locator('summary').click();assert.match(await details.innerText(),/Watch\s+no watch/);assert.match(await details.innerText(),/Last assistant line\s+Answer 58/);
   assert(await page.locator('[data-c=watch]').isDisabled(),'a watch needs a prompt');
   await page.locator('[data-w-field=prompt]').fill('Check the board as the project rules say');await page.locator('[data-w-field=every]').fill('3');
@@ -71,7 +71,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await receipt(m,{state:'unknown',reason:'every must be at least 5 minutes'});assert.match(await page.locator('.conversation-status').innerText(),/every must be at least 5 minutes/);
   await capture('status-watch-dark-16');
   await page.locator('[data-c=unwatch]').click();m=await action('unwatch');status['claude-1665']={...status['claude-1665'],watch:'no watch'};await receipt(m,{state:'accepted'});
-  assert.match(await details.locator('summary').innerText(),/no watch/);assert.equal(await page.locator('[data-c=unwatch]').count(),0);
+  assert.match(await details.textContent(),/no watch/);assert.equal(await page.locator('[data-c=unwatch]').count(),0);
 
   // A1/D2/D3: Send continues the session; working and open-in refusals show their text and keep the draft.
   await input.fill('Is the build green?');await input.press('Enter');m=await action('reply');
@@ -81,13 +81,13 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await receipt(m,{state:'unknown',reason:'open in claude; close it there first'});
   assert.match(await page.locator('.conversation-status').innerText(),/Not sent: open in claude; close it there first\. Draft kept/);assert.equal(await input.inputValue(),'Is the build green?');
   status['claude-1665']={...status['claude-1665'],state:'open in claude'};await page.locator('[data-c=status-refresh]').click();
-  await page.waitForFunction(()=>/open in claude/.test(document.querySelector('.dialogue-state').innerText));assert.equal(await page.locator('.dialogue-state').innerText(),'State: open in claude');
+  await page.waitForFunction(()=>/open in claude/.test(document.querySelector('.dialogue-state').innerText));assert.equal(await page.locator('.dialogue-state').textContent(),'open in claude');
   await capture('refused-dark-16');
   status['claude-1665']={...status['claude-1665'],state:'idle'};await page.locator('[data-c=reply]').click();m=await action('reply');
   assert(await page.locator('[data-c=reply]').isDisabled(),'one turn at a time from the workspace');await input.press('Enter');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),0,'Enter cannot send a second turn');
   status['claude-1665']={...status['claude-1665'],state:'working'};await receipt(m,{state:'accepted'});
   await page.waitForFunction(()=>document.querySelector('[data-c-field=text]').value==='');assert.match(await page.locator('.conversation-status').innerText(),/Sent as one native turn/);
-  await page.waitForFunction(()=>/State: working/.test(document.querySelector('.dialogue-state').innerText));
+  await page.waitForFunction(()=>/^working$/.test(document.querySelector('.dialogue-state').innerText));
   // The reply itself comes only from the transcript.
   log.push({role:'user',text:'Is the build green?'},{role:'assistant',text:'Yes, all checks pass.'});
   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-transcript .conversation-text')].at(-1)?.innerText==='Yes, all checks pass.',null,{timeout:8000});
@@ -97,8 +97,8 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.locator('[data-c=select][data-id=codex-1665]').click();
   await page.waitForFunction(()=>/Transcript unknown/.test(document.querySelector('.dialogue-transcript')?.innerText||''));
   assert.match(await view.innerText(),/Transcript unknown: transcript unreadable/);assert.doesNotMatch(await view.innerText(),/No messages/);
-  await page.waitForFunction(()=>/Status unknown/.test(document.querySelector('.dialogue-status summary').innerText));
-  assert.equal(await page.locator('.dialogue-state').innerText(),'State: unknown');assert.match(await page.locator('[data-c=select][data-id=codex-1665]').innerText(),/unknown/);
+  await page.waitForFunction(()=>/Status unknown/.test(document.querySelector('.dialogue-status').textContent));
+  assert.equal(await page.locator('.dialogue-state').textContent(),'unknown');assert.match(await page.locator('[data-c=select][data-id=codex-1665]').innerText(),/unknown/);
   await capture('codex-unknown-light-16');
   unreadable.delete('codex-1665');status['codex-1665']={state:'idle',watch:'no watch',turn:null,last_line:'Codex answer'};
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item').length>0,null,{timeout:8000});
@@ -111,7 +111,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.locator('[data-w-field=prompt]').fill('Report the board');await page.locator('[data-w-field=every]').fill('5');await page.locator('[data-w-field=event][value=ask]').check();
   await page.locator('[data-c=watch]').click();m=await action('watch');assert.deepEqual([m.conversation,m.prompt,m.every,m.events],['codex-1665','Report the board',5,['ask']]);
   status['codex-1665']={...status['codex-1665'],watch:{prompt:m.prompt,every:5,events:['ask'],last_turn:null,last_outcome:null,next_due:null,seen:{}}};await receipt(m,{state:'accepted',value:status['codex-1665'].watch});
-  assert.match(await details.locator('summary').innerText(),/watch every 5 min/);
+  assert.match(await details.textContent(),/watch every 5 min/);
   await page.setViewportSize({width:350,height:560});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no horizontal page scrolling');
   assert(await page.locator('[data-c=reply]').isVisible());assert(await view.isVisible());
@@ -121,12 +121,13 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   for(const font of [18,20]){
    await page.setViewportSize({width:900,height:720});await page.evaluate(s=>taskq.receive(s),{...state,font});
    await page.locator('[data-c=select][data-id=claude-1665]').click();await page.waitForFunction(()=>document.querySelector('.dialogue-transcript .dialogue-item'));
-   assert.equal(await page.locator('.dialogue-launch').evaluate(d=>d.open),false,'launch diagnostics start collapsed');
+   if(await details.evaluate(d=>d.open))await details.locator('summary').click();
+   assert.equal(await details.evaluate(d=>d.open),false,'launch and watch details can collapse together');
    const composer=await page.locator('.conversation-composer').innerText();
-   assert.match(composer,/Session claude/);assert.doesNotMatch(composer,/runtime unknown|not recorded/);
+   assert.match(composer,/claude/);assert.doesNotMatch(composer,/runtime unknown|not recorded/);
    assert.equal(await input.getAttribute('placeholder'),'Reply to the claude session');
-   await input.fill('Long reply line. '.repeat(200));assert.match(await page.locator('.conversation-composer').innerText(),/Send goes to this claude session from this window/);
-   const [t,b,r]=await Promise.all([view,page.locator('.dialogue-bar'),page.locator('[data-c=reply]')].map(l=>l.boundingBox()));
+   await input.fill('Long reply line. '.repeat(200));assert.match(await page.locator('.conversation-composer p[title]').getAttribute('title'),/Send replies to the recorded claude session/);
+   const [t,b,r]=await Promise.all([view,page.locator('.conversation-info>summary'),page.locator('[data-c=reply]')].map(l=>l.boundingBox()));
    assert(t.height>b.height,'the transcript takes more height than the status bar at '+font+' px');
    const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=720,'Send stays outside the reading scroll at '+font+' px');
    await input.fill('');

@@ -10,6 +10,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
  await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
  await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:t=>sent.push(JSON.parse(t))};});
  await page.evaluate(s=>taskq.receive(s),state);
+ async function tool(action){const d=page.locator('.conversation-info');if(!await d.evaluate(e=>e.open))await d.locator('summary').click();await page.locator('[data-c='+action+']').click();}
  const open=async n=>page.evaluate(({board,n})=>taskq.receive({open:{page:'conversations',board,task:n}}),{board,n});
  async function check(name,run){try{await run();console.log('PASS '+name);}catch(e){failures.push(name+': '+e.message);console.error('FAIL '+name+': '+e.message);}}
  await check('Q-A2 fixed heading/Send with growing draft at 350/620/940',async()=>{
@@ -86,12 +87,12 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
  for(const action of ['archive','delete','fork'])await check('Q-A8 '+action+' completion follows resulting selection',async()=>{
   await bootOwners();
   if(action==='delete'){
-   await page.locator('[data-c=archive]').click();
+   await tool('archive');
    await page.evaluate(()=>{const m=sent.find(m=>m.action==='archive');fixture.conversations.items[0].archived=true;taskq.receive({conversationReceipt:{id:m.id,state:'accepted',snapshot:fixture.conversations}});});
    await page.evaluate(()=>{fixture.conversations.items[1].archived=true;taskq.receive(fixture);});
    await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id=owner-a]').click();
-   await page.locator('[data-c=delete-review]').click();await page.locator('[data-c=delete]').click();
-  }else await page.locator('[data-c='+ (action==='fork'?'from-draft':action)+']').click();
+   await tool('delete-review');await page.locator('[data-c=delete]').click();
+  }else await tool(action==='fork'?'from-draft':action);
   await page.waitForFunction(action=>sent.some(m=>m.action===action),action);
   await page.evaluate(action=>{
    const m=sent.find(m=>m.action===action),c=fixture.conversations.items[0];let value;
@@ -105,7 +106,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root,name:'Alpha',is
  });
  await check('Q-A11 foreign save failure names its source and opens recovery',async()=>{
   await bootOwners();
-  await page.locator('[data-c=archive]').click();await page.waitForFunction(()=>sent.some(m=>m.action==='archive'));
+  await tool('archive');await page.waitForFunction(()=>sent.some(m=>m.action==='archive'));
   const op=await page.evaluate(()=>sent.find(m=>m.action==='archive'));
   await page.locator('[data-c=select][data-id=owner-b]').click();
   await page.evaluate(id=>taskq.receive({conversationReceipt:{id,state:'unknown',reason:'Invented missing archive receipt'}}),op.id);

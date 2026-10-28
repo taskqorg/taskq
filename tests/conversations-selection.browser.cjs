@@ -39,13 +39,13 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
  state.projects[0].tasks[0]={...question,revision:question.revision+2};await page.evaluate(s=>taskq.receive(s),state);
  assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'stale','fresh revision cannot silently approve a retained draft');
  assert.equal(await page.locator('[data-c-field=answer]').inputValue(),'Retained answer draft');assert(await page.locator('[data-a=answer-send]').isDisabled());assert(await page.locator('[data-qac=choose]').first().isDisabled());
- await page.locator('[data-c=select][data-id=active-owner]').click();await page.locator('.dialogue-status summary').click();
+ await page.locator('[data-c=select][data-id=active-owner]').click();await page.locator('.conversation-info summary').click();
  for(const font of [18,20]){
   await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});
-  if(!await page.locator('.dialogue-status').evaluate(e=>e.open))await page.locator('.dialogue-status summary').click();
+  if(!await page.locator('.conversation-info').evaluate(e=>e.open))await page.locator('.conversation-info summary').click();
   const nested=await detail.evaluate(e=>[...e.querySelectorAll('.dialogue-bar,.dialogue-transcript,.conversation-composer')].filter(n=>['auto','scroll'].includes(getComputedStyle(n).overflowY)).length);assert.equal(nested,0,'no nested thread-content scroll at '+font);
   const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=740,'composer reached at '+font);
-  const before=await detail.evaluate(e=>e.scrollTop);await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});assert(Math.abs(await detail.evaluate(e=>e.scrollTop)-before)<2,'snapshot keeps reading position '+JSON.stringify({before,after:await detail.evaluate(e=>({top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight})),status:await page.locator('.dialogue-status').evaluate(e=>e.open)}));
+  const before=await detail.evaluate(e=>e.scrollTop);await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});assert(Math.abs(await detail.evaluate(e=>e.scrollTop)-before)<2,'snapshot keeps reading position '+JSON.stringify({before,after:await detail.evaluate(e=>({top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight})),status:await page.locator('.conversation-info').evaluate(e=>e.open)}));
   if(out)await page.screenshot({path:out+'/expanded-status-dark-'+font+'.png'});
  }
  assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='answer'||m.a==='message-action'||m.a==='conversation-action').length),0,'navigation/reading never sends, acknowledges or saves an owner record');
