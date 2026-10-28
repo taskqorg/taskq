@@ -271,7 +271,9 @@ mod tests {
             link_file.GetPath(&mut path, std::ptr::null_mut(), 4)?;
             std::path::PathBuf::from(String::from_utf16_lossy(&path[..path.iter().position(|c| *c == 0).unwrap()]))
         };
-        assert_eq!(target, home.join("taskq.exe"), "the default tray repairs a wrong target on start");
+        // canonical: the shell stores the long form of an 8.3 temp path (CI: RUNNER~1)
+        assert_eq!(std::fs::canonicalize(target).unwrap(), std::fs::canonicalize(home.join("taskq.exe")).unwrap(),
+            "the default tray repairs a wrong target on start");
         std::fs::remove_dir_all(dir).unwrap();
         unsafe { windows::Win32::System::WinRT::RoUninitialize(); }
         Ok(())
