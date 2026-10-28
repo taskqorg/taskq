@@ -28,6 +28,8 @@ The [#1580 owner answer](https://github.com/taskqorg/taskq/issues/1580#issuecomm
 
 ## Workspace dialogue (D1–D8)
 
+The Conversations window uses the adopted v7 look ([visual style](visual-style.md#geometry-and-type)); list rows show project and a plain status (Working, Ready, Status unknown, Draft, Delivery unknown), never `unknown`. A launch brief stays in the transcript as a collapsed Setup brief, not an owner message.
+
 Owner decision 2026-10-23 (target, not shipped): the owner talks to an owner session in the workspace without opening Claude or Codex. Any number of conversations; any one may do PM work; none is special. Phase 1 is the local workspace; DashQ follows.
 
 - D1 Source: the native transcript is the only record. Claude: `~/.claude/projects/*/<id>.jsonl`; Codex: `~/.codex/sessions/**/rollout-*-<id>.jsonl`. TaskQ keeps no copy, index or summary; transient in-memory record offsets and page heights for rendering are not an index, and a saved reading anchor holds only record identity and offset. A missing or unreadable transcript shows unknown, never empty.

@@ -242,8 +242,15 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     let r = launched(install, id)?;
     let codex = crate::runtime::of(&r.runtime).codex;
     let path = crate::runtime::owner::transcript(&r.runtime, r.session.as_deref().unwrap_or_default())?;
-    let page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    mark_brief(&mut page.items, &r.brief);
     Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+}
+
+/// #1773 A4: the launch brief TaskQ sent as the first native input is the setup brief, not an owner message.
+fn mark_brief(items: &mut [Value], brief: &str) {
+    let Some(head) = brief.lines().map(str::trim).find(|l| !l.is_empty()) else { return };
+    for i in items.iter_mut().filter(|i| i["role"] == "user" && i["text"].as_str().is_some_and(|t| t.trim_start().starts_with(head))) { i["role"] = json!("brief"); }
 }
 
 #[cfg(test)]
@@ -283,6 +290,16 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         panic!("turn never ended")
+    }
+
+    #[test]
+    fn launch_brief_is_not_an_owner_message() {
+        let brief = "You are a TaskQ session opened by the host service.\nProject: p\n\nWhy is nothing starting?\n";
+        let mut items = vec![json!({"role":"user","text":brief}), json!({"role":"assistant","text":"ok"}), json!({"role":"user","text":"Why is nothing starting?"})];
+        mark_brief(&mut items, brief);
+        assert_eq!(items.iter().map(|i| i["role"].as_str().unwrap()).collect::<Vec<_>>(), ["brief", "assistant", "user"]);
+        mark_brief(&mut items, "");
+        assert_eq!(items[2]["role"], "user", "an empty brief marks nothing");
     }
 
     // D-A1/A2 source: the input persists before dispatch; the outcome comes from the result record only.

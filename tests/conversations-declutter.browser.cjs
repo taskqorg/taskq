@@ -20,7 +20,7 @@ const state={font:20,theme:'dark',host:'fixture-host',version:'fixture',projects
   if(phase==='before')continue;
   const info=page.locator('.conversation-info');assert.equal(await info.evaluate(e=>e.open),false);
   assert((await info.locator('summary').boundingBox()).height>=32,'Details keeps the fine-pointer target');
-  assert.equal(await page.locator('.dialogue-state').innerText(),'idle','activity remains visible with the narrow list hidden');
+  assert.equal(await page.locator('.dialogue-state').innerText(),'PM is ready','#1773: the idle state reads as the PM status line; activity remains visible with the narrow list hidden');
   for(const selector of ['[data-c-field=root]','[data-c-field=title]','[data-c=from-draft]','[data-w-field=prompt]','.pm-handoff'])assert.equal(await page.locator(selector).isVisible(),false,selector+' stays in Details');
   assert.doesNotMatch(await page.locator('.conversation-composer').innerText(),/native turn|New from draft|PDF|Host|Session/,'composer copy stays short');
   const send=await page.locator('[data-c=reply]').boundingBox();assert(send.y>=0&&send.y+send.height<=740,'Send stays reachable');
