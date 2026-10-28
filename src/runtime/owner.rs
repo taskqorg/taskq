@@ -155,11 +155,12 @@ pub fn holder(_own: &Path, r: &Request) -> Res<bool> {
 enum Hold { Free, Own, Other }
 
 /// The job TaskQ launched stays open after its reply; idle, it is no other writer. Interactive, busy or foreign rows hold.
+/// Only `status` tells a turn in progress: `claude agents --json` keeps `state` `working` on an idle launched job (#1762).
 fn holds(rows: &[serde_json::Value], r: &Request) -> Hold {
     let mut hold = Hold::Free;
     for v in rows.iter().filter(|v| v["sessionId"].as_str().is_some_and(|s| Some(s) == r.session.as_deref())) {
         let own = v["kind"] == "background" && r.job.as_deref().is_some_and(|j| v["id"] == j);
-        if !own || v["status"] == "busy" || v["state"] == "working" { return Hold::Other; }
+        if !own || v["status"] == "busy" { return Hold::Other; }
         hold = Hold::Own;
     }
     hold
@@ -330,7 +331,8 @@ mod tests {
     fn only_the_idle_launched_job_is_released() {
         let r: Request = serde_json::from_value(json!({"schema": 1, "id": "c1", "created": 0, "host": "mac", "platform": "macos", "client": "tray", "runtime": "claude",
             "targets": [], "brief": "", "state": "launched", "job": "aa11", "session": "s1"})).unwrap();
-        let row = |id: &str, kind: &str, status: &str| json!({"id": id, "kind": kind, "sessionId": "s1", "status": status, "state": status});
+        // Real `claude agents --json` shape: an idle launched job still reports `state` `working` (#1762).
+        let row = |id: &str, kind: &str, status: &str| json!({"id": id, "kind": kind, "sessionId": "s1", "status": status, "state": "working"});
         assert_eq!(holds(&[], &r), Hold::Free);
         assert_eq!(holds(&[json!({"sessionId": "s2", "kind": "interactive"})], &r), Hold::Free);
         assert_eq!(holds(&[row("aa11", "background", "idle")], &r), Hold::Own);

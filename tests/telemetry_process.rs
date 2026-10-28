@@ -186,7 +186,7 @@ fn resume_records_its_result_without_releasing_the_host_hold() {
             .env("TASKQ_INCIDENT_REPORTS","off").bounded();
         assert!(read.status.success(),"{}",String::from_utf8_lossy(&read.stderr));
         assert!(String::from_utf8_lossy(&read.stdout).contains("taskq.resume"));
-        assert!(!String::from_utf8_lossy(&read.stderr).contains("Telemetry: unknown"));
+        assert!(!String::from_utf8_lossy(&read.stderr).contains("Telemetry: unknown"), "{}", String::from_utf8_lossy(&read.stderr));
         assert!(!install.join("write-probe").exists());
         drop(owner.0.stdin.take());assert!(owner.0.wait().unwrap().success());
         let snapshot=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3")).unwrap();

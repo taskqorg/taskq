@@ -130,6 +130,8 @@ These are deliverable slices, not newly filed tasks. Reconcile existing work bef
 | 4 | Long history remains responsive | `conversations.js`, `transcript.rs`, `dialogue.rs`, `conversations.rs`, native read IPC in `tray.rs`; add record identity/bounded reads only where needed. Preserve one-writer/session authority and native source. | Long-history wheel/keyboard/scrollbar traversal, exact anchors, bounded DOM/cache, out-of-order reads and both native renderers. |
 | 5 | Daily PM communication is qualified | Existing browser fixtures/instruments, installed Mac and Windows acceptance, evidence package. Update references/fixtures only for approved behavior. | Two consecutive turns in one disposable PM-capable owner session, both replies visible here; failure and restart cases separate. |
 
+Slice 5 status: Mac claude two-turn journey passes at 9d4126b7 after [#1762](https://github.com/taskqorg/taskq/issues/1762); codex, restart, 1x/widths and Windows Not tested. Evidence: [#1743](review-evidence/1743/report.md), [#1753 re-run](review-evidence/1743/requalify-1753.md).
+
 The shared task workspace is also consumed by DashQ. Inventory its consumers before changing exported answer-card/composer/task controls or bundled CSS; keep compatible APIs and scope local-workspace layout under its root. This review does not authorize a DashQ deployment. No host configuration, permission, board lifecycle, file format migration or automatic send/retry change is needed for the initial layout slices.
 
 ## Acceptance and recurrence prevention

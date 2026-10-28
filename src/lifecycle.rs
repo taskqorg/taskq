@@ -371,6 +371,22 @@ pub fn observe(install:&Path,instance:&str,ready:bool)->Res<()> {
     })
 }
 
+/// #1769: only its origin generation may complete a Stop, so one whose generation ended held the next generation
+/// forever. The current native owner drops a queued one (no native effect began) and an applied one after its
+/// expiry (its controller had that long). A reviewed Stop hold stays (#1285). Returns the dropped request ID.
+pub fn supersede(install:&Path,instance:&str)->Res<Option<String>> {
+    resources::try_with(install,|state| {
+        let Some(p)=active(state)? else {return Ok(None)};
+        if !p.stops()||p.origin()==instance||p.phase!="queued"&&now()?<state.ops[p.id()].expires_at {return Ok(None);}
+        let service=host::service_status(install);
+        if service["state"]!="running"||service["fresh"]!=true||service["instance"]!=instance||service["pid"]!=std::process::id() {
+            return Err("Stop of an ended generation kept: this process is not the current native owner".into());
+        }
+        state.ops.remove(p.id());
+        Ok(Some(p.id().to_owned()))
+    })
+}
+
 #[derive(Clone,Copy,Debug,PartialEq)]
 pub enum HandoffWait {Execution,Recovery,Project,Maintenance}
 impl HandoffWait {
@@ -382,14 +398,22 @@ impl HandoffWait {
     }}
 }
 
-/// Refresh only our provisional reason; a concrete controller/recovery failure remains authoritative.
-pub fn handoff_wait(install:&Path,instance:&str,wait:Option<HandoffWait>)->Res<()> {
+/// Refresh only our provisional reason; a concrete controller/recovery failure remains authoritative. #1769: past
+/// its expiry the reason also names what the project passes wait for (`waits`).
+pub fn handoff_wait(install:&Path,instance:&str,wait:Option<HandoffWait>,waits:&str)->Res<()> {
+    let at=now()?;
     resources::try_with(install,|state| {
         if let Some(p)=active(state)? && p.origin()==instance && p.phase=="queued" {
-            let reason=&state.ops[p.id()].receipt["reason"];
-            if reason.is_null()||[HandoffWait::Execution,HandoffWait::Recovery,HandoffWait::Project,HandoffWait::Maintenance].iter().any(|wait|reason==wait.reason()) {
+            let op=&state.ops[p.id()];
+            let reason=op.receipt["reason"].as_str();
+            if reason.is_none()||[HandoffWait::Execution,HandoffWait::Recovery,HandoffWait::Project,HandoffWait::Maintenance].iter().any(|wait|reason.is_some_and(|r|r.starts_with(wait.reason()))) {
+                let late=at>=op.expires_at;
                 match wait {
-                    Some(wait)=>{state.ops.get_mut(p.id()).unwrap().receipt["reason"]=json!(wait.reason());},
+                    Some(wait)=>{
+                        let text=if late {format!("{}; over expiry, waits for {waits}",wait.reason())}else{wait.reason().into()};
+                        let text:String=text.char_indices().take_while(|(offset,ch)|offset+ch.len_utf8()<=256).map(|(_,ch)|ch).collect();
+                        state.ops.get_mut(p.id()).unwrap().receipt["reason"]=json!(text);
+                    },
                     None=>{state.ops.get_mut(p.id()).unwrap().receipt.as_object_mut().unwrap().remove("reason");},
                 }
             }
@@ -588,6 +612,65 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    // #1769 A2: a kickstart left the drain Stop of the ended generation queued, and the new generation held admission
+    // on it ("Stop belongs to another host generation") until the op was removed by hand. Risk kept: the origin
+    // generation, an applied Stop before its expiry and a non-owner process never drop it.
+    #[test]
+    fn new_generation_drops_the_stop_of_an_ended_generation() {
+        let (dir,install,root)=fixture();
+        let stop=|id:&str,applied:bool,expires_at:u64| {
+            let at=now().unwrap();
+            let request=typed(&json!({"id":id,"instance":"original","roots":[root.canonicalize().unwrap()],"issued_at":expires_at-300,"expires_at":expires_at,"action":"stop"})).unwrap();
+            let trace=crate::runtime::uuid().replace('-',"");
+            let command=CommandReceipt::decode(&json!({"wire":1,"product":"taskq","version":crate::platform::VERSION,"operation":"taskq.host.stop.request",
+                "trace":format!("{trace}.1"),"span":format!("{trace}.1"),"parent":null,"started_ms":at*1000}).to_string()).unwrap();
+            let mut receipt=json!({"id":id,"state":"queued","received_receipt":command.event_id("received").unwrap()});
+            if applied {
+                receipt["state"]=json!("applied");receipt["applied_receipt"]=json!(command.event_id("applied").unwrap());
+                receipt["native_pid"]=json!(1);receipt["native_started"]=json!("gone");receipt["unit_revision"]=json!("0".repeat(64));
+            }
+            let op=resources::Op {bound:json!({"local_stop":{"request":request,"command":command.encode()}}),receipt,expires_at,saved_at:Some(at),writing:false,sent:true};
+            resources::with(&install,|state|{state.ops.insert(id.into(),op);Ok(())}).unwrap();
+        };
+        let at=now().unwrap();
+        stop("queued-stop",false,at+300);
+        assert_eq!(supersede(&install,"original").unwrap(),None,"the origin generation still owns its Stop");
+        assert!(supersede(&install,"next").is_err(),"a process that is not the published owner drops nothing");
+        assert!(pending(&install).unwrap().is_some());
+        publish(&install,"next");
+        assert_eq!(supersede(&install,"next").unwrap().as_deref(),Some("queued-stop"));
+        assert!(pending(&install).unwrap().is_none(),"admission no longer waits on the ended generation");
+        stop("applied-stop",true,at+300);
+        assert_eq!(supersede(&install,"next").unwrap(),None,"an applied Stop keeps its controller window");
+        resources::with(&install,|state|{state.ops.remove("applied-stop");Ok(())}).unwrap();
+        stop("expired-stop",true,at-1);
+        assert_eq!(supersede(&install,"next").unwrap().as_deref(),Some("expired-stop"));
+        assert!(pending(&install).unwrap().is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #1769 A4: past its expiry a waiting Stop names the project waits in its receipt reason.
+    #[test]
+    fn late_stop_reason_names_the_blocking_task() {
+        let (dir,install,root)=fixture();
+        let at=now().unwrap();
+        let request=typed(&json!({"id":"late-stop","instance":"original","roots":[root.canonicalize().unwrap()],"issued_at":at-301,"expires_at":at-1,"action":"stop"})).unwrap();
+        let trace=crate::runtime::uuid().replace('-',"");
+        let command=CommandReceipt::decode(&json!({"wire":1,"product":"taskq","version":crate::platform::VERSION,"operation":"taskq.host.stop.request",
+            "trace":format!("{trace}.1"),"span":format!("{trace}.1"),"parent":null,"started_ms":at*1000}).to_string()).unwrap();
+        let op=resources::Op {bound:json!({"local_stop":{"request":request,"command":command.encode()}}),receipt:json!({"id":"late-stop","state":"queued","received_receipt":command.event_id("received").unwrap()}),
+            expires_at:at-1,saved_at:Some(at),writing:false,sent:true};
+        resources::with(&install,|state|{state.ops.insert("late-stop".into(),op);Ok(())}).unwrap();
+        handoff_wait(&install,"original",Some(HandoffWait::Execution),"project #1758").unwrap();
+        let reason=receipt(&install,"late-stop").unwrap().unwrap()["reason"].clone();
+        assert_eq!(reason,json!(format!("{}; over expiry, waits for project #1758",HandoffWait::Execution.reason())));
+        handoff_wait(&install,"original",Some(HandoffWait::Project),"project #1759 unresolved ownership").unwrap();
+        assert!(receipt(&install,"late-stop").unwrap().unwrap()["reason"].as_str().unwrap().ends_with("waits for project #1759 unresolved ownership"),"a later wait refreshes the reason");
+        handoff_wait(&install,"original",None,"").unwrap();
+        assert!(receipt(&install,"late-stop").unwrap().unwrap()["reason"].is_null());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     // M15: Open clears only the tray's Quit hold once its generation is gone and restores the older operator hold;
     // a reviewed Stop hold stays and the service stays stopped.
     #[test]
@@ -702,7 +785,7 @@ mod tests {
         controller_exited(&install,"exact-stop","process exited with exit status: 1").unwrap();
         assert_eq!(receipt(&install,"exact-stop").unwrap().unwrap()["reason"],failure,"outer controller exit cannot hide its retained inner cause");
         let origin=pending(&install).unwrap().unwrap().origin().to_string();
-        handoff_wait(&install,&origin,Some(HandoffWait::Maintenance)).unwrap();
+        handoff_wait(&install,&origin,Some(HandoffWait::Maintenance),"").unwrap();
         assert_eq!(receipt(&install,"exact-stop").unwrap().unwrap()["reason"],failure,"background maintenance cannot hide a prepared controller failure");
         assert_eq!(fs::read(install.join("projects")).unwrap(),registry);
         assert!(complete_stop_with(&install,"exact-stop",|_,_|Ok(())).unwrap_err().contains("native exit"));
@@ -764,24 +847,24 @@ mod tests {
         let mut h=host::Host::new(Err("fixture policy unused".into()));h.restart=true;h.stopping=true;
         h.busy.insert(root.clone(),false);h.prepared.insert(root.clone());
         h.updating=Some(std::thread::spawn(||Ok(host::Maintenance::Update(None))));
-        handoff_wait(install,"original",h.handoff_wait()).unwrap();
+        handoff_wait(install,"original",h.handoff_wait(),"").unwrap();
         assert_eq!(receipt(install,"exact-stop").unwrap().unwrap()["reason"],HandoffWait::Maintenance.reason());
         h.sync(&root,vec![(1,3,"codex".into())]);
         for _ in 0..2 {
-            handoff_wait(install,"original",h.handoff_wait()).unwrap();
+            handoff_wait(install,"original",h.handoff_wait(),"").unwrap();
             let r=receipt(install,"exact-stop").unwrap().unwrap();
             assert_eq!(r["state"],"queued");assert_eq!(r["reason"],HandoffWait::Execution.reason());assert!(!h.handoff_ready());assert!(h.stop_controller.is_none());
         }
         h.updating.take().unwrap().join().unwrap().unwrap();
-        handoff_wait(install,"original",h.handoff_wait()).unwrap();
+        handoff_wait(install,"original",h.handoff_wait(),"").unwrap();
         assert_eq!(receipt(install,"exact-stop").unwrap().unwrap()["reason"],HandoffWait::Execution.reason());
         h.sync(&root,vec![]);h.rebuilding=true;assert_eq!(h.handoff_wait(),Some(HandoffWait::Recovery));
         h.rebuilding=false;h.prepared.clear();assert_eq!(h.handoff_wait(),Some(HandoffWait::Project));
         h.prepared.insert(root.clone());assert!(h.handoff_ready());assert_eq!(h.handoff_wait(),None);
-        handoff_wait(install,"original",h.handoff_wait()).unwrap();assert!(receipt(install,"exact-stop").unwrap().unwrap()["reason"].is_null(),"ready handoff clears its own provisional reason");
+        handoff_wait(install,"original",h.handoff_wait(),"").unwrap();assert!(receipt(install,"exact-stop").unwrap().unwrap()["reason"].is_null(),"ready handoff clears its own provisional reason");
         failed(install,"exact-stop","native scope denied").unwrap();let failure=receipt(install,"exact-stop").unwrap().unwrap()["reason"].clone();
         for wait in [Some(HandoffWait::Execution),Some(HandoffWait::Recovery),Some(HandoffWait::Project),Some(HandoffWait::Maintenance),None] {
-            handoff_wait(install,"original",wait).unwrap();assert_eq!(receipt(install,"exact-stop").unwrap().unwrap()["reason"],failure);
+            handoff_wait(install,"original",wait,"").unwrap();assert_eq!(receipt(install,"exact-stop").unwrap().unwrap()["reason"],failure);
         }
         h.stopping=false;h.sync(&root,vec![(1,3,"codex".into())]);assert!(h.handoff_ready());assert_eq!(h.handoff_wait(),None,"non-stopping reexec preserves prepared live CLI work");
         // The shared native-controller fixture continues with this same queued request.
@@ -805,7 +888,7 @@ mod tests {
         failed(&install,"exact-restart","native definition unavailable").unwrap();
         assert!(receipt(&install,"exact-restart").unwrap().unwrap()["reason"].as_str().unwrap().contains("retry service restart --request exact-restart"));
         let failure=receipt(&install,"exact-restart").unwrap().unwrap()["reason"].clone();
-        handoff_wait(&install,"original",Some(HandoffWait::Maintenance)).unwrap();
+        handoff_wait(&install,"original",Some(HandoffWait::Maintenance),"").unwrap();
         assert_eq!(receipt(&install,"exact-restart").unwrap().unwrap()["reason"],failure,"queued failure survives a background progress tick");
         prepare(&install,"original").unwrap();assert_eq!(receipt(&install,"exact-restart").unwrap().unwrap()["state"],"applied");
         assert!(receipt(&install,"exact-restart").unwrap().unwrap()["reason"].is_null(),"qualified preparation clears the resolved queued failure");

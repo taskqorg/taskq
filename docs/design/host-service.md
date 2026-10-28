@@ -296,7 +296,7 @@ Drain/re-exec preparation uses the service's reconciled ownership, not child cou
 | Terminal evidence not durably released | Retain project and slot | Wait |
 | Successful reconciliation, no owned work or operator | Ready | Ready |
 | Retained qualified CLI child | Wait | Unix handover only; Windows waits |
-| Childless reserved or refused attempt (#1601) | Wait | Ready: the next image resumes it from the board |
+| Childless reserved or refused attempt (#1601) | Wait; Stop: ready, the next start resumes it (#1769) | Ready: the next image resumes it from the board |
 | Held launch (#1601) | Wait | Released `no-start` first, then ready |
 
 Each project's preparation is the report of its last finished pass; a pass in flight holds the re-exec. Once every project and retained slot has a prepared owner, preparation latches: no project starts another pass, inventory refreshes stop, and the host re-execs when the passes in flight report prepared, so overlapping project passes cannot defer the handover (#1402). Failed threads lose preparation, retaining unknown occupancy. This closes the check-to-re-exec gap without a new persistent record. A pending handover wakes each project once; later passes keep `poll`, and a failed legacy handover retries at `poll`, so a waiting handover lists the board at most once per project per `poll` and completes within one `poll` after live work ends (#1357).
@@ -304,6 +304,10 @@ Each project's preparation is the report of its last finished pass; a pass in fl
 ### Restart handover
 
 A pending restart (re-exec or Stop) refuses every reservation (`Host::reserve`: `host restart pending`). The re-exec therefore waits only for what resolves without one: live children under § 8 step 3, ownership reads, board executions without a child (Unix) and unconfirmed releases. A childless reserved or pending attempt, such as an answered task whose resume the restart refused, passes to the next image, which reads it from the board and resumes it from the inbox (#1601). A held launch never called its start: the pass releases it `no-start` and the next image acts on the board; an initial claim released this way ends `gone` with one retry spent.
+
+Stop applies the same rule (#1769): it drains running executions only. A released attempt whose resume the Stop refused stays owned on the board and resumes after the next start. A Stop that waits past its expiry names the waiting tasks in its receipt reason, so `service status` shows what blocks it.
+
+The next host generation drops a Stop issued by an ended generation: at once while it is still queued, and after its expiry once applied. Only the current native owner (fresh `<install>/service` with its own instance and pid) may drop it; the reviewed Stop hold stays until reviewed recovery. Without this, a Stop of a dead generation held admission with no command to clear it.
 
 Why: the old rule waited on those attempts while the restart refused their reservation, so neither side could move and the host stayed on the old image until an owner kickstart. Admitting slots under a pending restart was rejected: a child started then must itself hand over or delay the re-exec again. A test sets up each childless attempt kind and asserts one pass reaches the re-exec.
 

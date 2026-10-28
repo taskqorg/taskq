@@ -849,6 +849,14 @@ pub fn run(install: &Path) -> Res<()> {
         if hostname.is_empty() {hostname=crate::hostname();}
         let configured = match &old { Ok(()) => migrate_for_hostname(install, &roots,&hostname).and_then(|_| Policy::read_for_hostname(install,||hostname.clone())), Err(_) => Policy::read_for_hostname(install,||hostname.clone()) };
         let (policy,timers)=guarded_policy(configured,&old);
+        // #1769: a Stop whose generation ended can never complete; this owner resolves it instead of holding forever
+        if restart.current.as_ref().ok().and_then(Option::as_ref).is_some_and(|p|p.stops()&&p.origin()!=instance) {
+            match crate::lifecycle::supersede(install,&instance) {
+                Ok(Some(id))=>{log_all(install,&roots,&format!("Stop {id} of an ended host generation dropped; this generation serves on"));restart.current=Ok(None);},
+                Ok(None)=>{},
+                Err(e)=>if reported!=e {crate::platform::log(&e);reported=e;},
+            }
+        }
         let removal=restart.current.as_ref().ok().and_then(Option::as_ref).and_then(|p|p.removal().map(Path::to_path_buf));
         drained_roots.retain(|root|removal.as_ref()==Some(root));
         {
@@ -860,7 +868,7 @@ pub fn run(install: &Path) -> Res<()> {
                 if p.stops() {
                     if !h.stopping {h.prepared.clear();}
                     h.restart=true;h.stopping=true;
-                    if p.origin()!=instance {h.held=Some("Stop belongs to another host generation; reconcile original owner via service status --request".into());}
+                    if p.origin()!=instance {h.held=Some(format!("Stop {} belongs to an ended host generation; dropped after its expiry",p.id()));}
                 } else if p.action()==crate::lifecycle::Action::Restart&&p.origin()==instance {h.restart=true;}
             }
             let now = h.elapsed();
@@ -1019,9 +1027,9 @@ pub fn run(install: &Path) -> Res<()> {
         if h.restart {
             let wait=h.handoff_wait();
             drop(h);
-            if let Err(e)=crate::lifecycle::handoff_wait(install,&instance,wait) {if reported!=e {crate::platform::log(&e);reported=e;}}
             // #1601: the receipt and the log name what the re-exec really waits for; a stuck one is reported, never killed
             let waits=restart_waits(&roots);
+            if let Err(e)=crate::lifecycle::handoff_wait(install,&instance,wait,&waits) {if reported!=e {crate::platform::log(&e);reported=e;}}
             if waits!=waits_reported&&installation::upgrade_waits(install,crate::platform::VERSION,&waits) {waits_reported=waits.clone();}
             if crate::restart_watch(&mut stuck,handover,began.elapsed().as_secs(),300) {log_all(install,&roots,&format!("restart pending over 600 s; waits for {waits}"));}
             h=shared.lock().unwrap_or_else(|e|e.into_inner());
