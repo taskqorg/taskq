@@ -929,6 +929,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         let fault = install.join("tray.fault");
         let _ = fs::remove_file(&fault);
         let _ = FAULT_FILE.set(fault);
+        // #1755: a startup election that failed is retried, and lost batches resolve to a line in tray.log.
+        crate::telemetry::keep_capture(install.clone(), Duration::from_secs(30), |line| eprintln!("taskq tray: {line}"));
         let install = install.clone();
         std::thread::spawn(move || match crate::lifecycle::open(&install, |root| crate::host::install_project(&install, root)) {
             Ok(Some(receipt)) => eprintln!("taskq tray: Open started the service: {receipt}"),
@@ -2683,6 +2685,64 @@ mod tests {
         let lost=calls.begin(TICK,now+Duration::from_secs(61)).unwrap();
         for s in 62..=91 {calls.expire(now+Duration::from_secs(s));}
         assert!(!calls.pending.contains_key(&lost)&&calls.failed,"a responsive loop still times out a lost callback");
+    }
+
+    // #1755 A3: a tray whose startup writer election failed retries off the UI loop; once the writer is free, a page
+    // error report commits as tray.web.error. Risk: one failed election leaves tray faults out of the store all lifetime.
+    #[test]
+    fn tray_collector_recovers_after_failed_election() {
+        use std::process::{Command,Stdio};
+        let d=std::env::temp_dir().join(format!("taskq-tray-capture-{}",std::process::id()));
+        let _=fs::remove_dir_all(&d);fs::create_dir_all(&d).unwrap();
+        struct Child(std::process::Child);
+        impl Drop for Child {fn drop(&mut self){let _=self.0.kill();let _=self.0.wait();}}
+        let spawn=|mode|Child(Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","tray::tests::tray_capture_process","--ignored","--nocapture"])
+            .env("TASKQ_CAPTURE_FIXTURE",&d).env("TASKQ_CAPTURE_MODE",mode).stdin(Stdio::null()).spawn().unwrap());
+        let mut writer=spawn("writer");
+        let until=Instant::now()+Duration::from_secs(30);
+        while !d.join("ready").exists() {
+            assert!(writer.0.try_wait().unwrap().is_none(),"refusing writer failed before readiness");
+            assert!(Instant::now()<until,"refusing writer did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut tray=spawn("tray");
+        let status=loop {
+            if let Some(status)=tray.0.try_wait().unwrap() {break status;}
+            assert!(Instant::now()<until,"tray collector did not recover");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.success(),"tray collector did not retry and commit");
+        assert!(writer.0.wait().unwrap().success());
+        let reader=coreq::telemetry::Reader::open(&d.join("telemetry.log/universal.sqlite3")).unwrap();
+        let rows=reader.export(0,0,1024).unwrap().to_string();
+        assert!(rows.contains("taskq.operation.tray.web.error"),"page error report missing after recovery");
+        drop(reader);fs::remove_dir_all(d).unwrap();
+    }
+
+    #[test]
+    #[ignore="owned refusing-writer/late-tray process fixture"]
+    fn tray_capture_process() {
+        let d=PathBuf::from(std::env::var_os("TASKQ_CAPTURE_FIXTURE").unwrap());
+        if std::env::var("TASKQ_CAPTURE_MODE").unwrap()=="writer" {
+            let _runtime=crate::telemetry::install_capture(&d).unwrap();
+            // Keep the writer alive but refuse every other election, as an unanswering owner does.
+            let endpoint=d.join("telemetry.log/telemetry-ipc/endpoint");
+            let mut value:Value=serde_json::from_slice(&fs::read(&endpoint).unwrap()).unwrap();
+            value["wire"]=json!(1);fs::write(endpoint,serde_json::to_vec(&value).unwrap()).unwrap();
+            fs::write(d.join("ready"),"").unwrap();
+            let until=Instant::now()+Duration::from_secs(30);
+            while !d.join("release").exists() {assert!(Instant::now()<until,"tray never failed its election");std::thread::sleep(Duration::from_millis(10));}
+            return;
+        }
+        let (send,lines)=std::sync::mpsc::channel::<String>();
+        crate::telemetry::keep_capture(d.clone(),Duration::from_millis(200),move|line|{let _=send.send(line.to_string());});
+        let first=lines.recv_timeout(Duration::from_secs(15)).unwrap();
+        assert!(first.starts_with("Telemetry: unknown (") && first.ends_with("; retrying every 1s"),"{first}");
+        fs::write(d.join("release"),"").unwrap();
+        assert_eq!(lines.recv_timeout(Duration::from_secs(20)).as_deref(),Ok("Telemetry: collecting"),"one line per state change");
+        WebCalls::new().errors(&json!({"counts":[1,0,0,0],"saturated":false}));
+        coreq::telemetry::capture::qualify().unwrap();
     }
 
     // #1680 A3: route and page errors log an identifier-only class and site; text, URLs or paths are dropped and a

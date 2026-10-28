@@ -118,6 +118,39 @@ impl HostCapture {
     }
 }
 
+/// #1755: the tray has no service pass, so its own thread (never the UI loop) retries a failed install, and a
+/// collector that lost batches says when commits resume; `log` gets one line per state change.
+pub(crate) fn keep_capture(install:std::path::PathBuf,every:std::time::Duration,log:impl Fn(&str)+Send+'static) {
+    use coreq::telemetry::capture::Capture;
+    std::thread::spawn(move || {
+        // Holds a late collector for the process lifetime; the exit path drains it like the startup one.
+        let mut _runtime=None;
+        let mut seen=(0,0);
+        let mut state=if tracing::dispatcher::get_default(|d|d.downcast_ref::<Capture>().is_some()) {"Telemetry: collecting".to_string()} else {String::new()};
+        loop {
+            let next=match tracing::dispatcher::get_default(|d|d.downcast_ref::<Capture>().map(Capture::health)) {
+                Some(health)=>{
+                    let now=(health["lost"].as_u64().unwrap_or(0),health["committed"].as_u64().unwrap_or(0));
+                    let next=capture_state(seen,now,&state);seen=now;next
+                }
+                None=>match install_capture(&install) {
+                    Ok(runtime)=>{_runtime=Some(runtime);"Telemetry: collecting".to_string()},
+                    Err(error)=>format!("Telemetry: unknown ({error}); retrying every {}s",every.as_secs().max(1)),
+                },
+            };
+            if next!=state {log(&next);state=next;}
+            std::thread::sleep(every);
+        }
+    });
+}
+
+/// Health counts are cumulative: a new loss makes the state unknown until a later commit lands.
+fn capture_state(seen:(u64,u64),now:(u64,u64),state:&str)->String {
+    if now.0>seen.0 {"Telemetry: unknown (observations lost); collector retries".to_string()}
+    else if now.1>seen.1 {"Telemetry: collecting".to_string()}
+    else {state.to_string()}
+}
+
 fn open(install: &Path) -> Result<Connection, String> {
     // Older release sweep keeps *.log entries, including directories; rollback must preserve DB and sidecars together.
     let dir = install.join("telemetry.log");
@@ -513,6 +546,18 @@ mod tests {
             assert_eq!(rows.contains("new.host.receipt"),fault!="stale","host receipt durability or refusal changed");
             drop(reader);std::fs::remove_dir_all(d).unwrap();
         }
+    }
+
+    // #1755 A3: lost batches log one unknown line and the next commit logs recovery; a quiet collector logs nothing.
+    // Risk: a sticky "Telemetry: unknown" line reads as a dead collector while commits resumed.
+    #[test]
+    fn collector_state_reports_loss_then_recovery_once() {
+        let (lost,ok)=("Telemetry: unknown (observations lost); collector retries","Telemetry: collecting");
+        assert_eq!(capture_state((0,5),(0,5),ok),ok);
+        assert_eq!(capture_state((0,5),(3,5),ok),lost);
+        assert_eq!(capture_state((3,5),(3,5),lost),lost);
+        assert_eq!(capture_state((3,5),(4,9),lost),lost,"a commit alongside a new loss is not recovery");
+        assert_eq!(capture_state((4,9),(4,10),lost),ok);
     }
 
     #[test]
