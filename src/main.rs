@@ -1737,7 +1737,10 @@ fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
         c = std::process::Command::new("open");
         c.args(["-n", "-W", "-g"]).arg(app);
     }
-    let err = fs::File::create(install.join("tray.log")).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
+    // #1755: appended, so a relaunch keeps the last tray's fault lines; it starts over past 1 MiB
+    let log = install.join("tray.log");
+    if fs::metadata(&log).is_ok_and(|m| m.len() > 1 << 20) { let _ = fs::remove_file(&log); }
+    let err = fs::OpenOptions::new().create(true).append(true).open(&log).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
     c.current_dir(install).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(err);
     // its own process group: stopping one project's service (launchctl bootout) leaves the host's tray alone
     #[cfg(unix)]
