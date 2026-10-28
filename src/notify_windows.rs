@@ -38,7 +38,9 @@ fn shortcut(path: &std::path::Path, exe: &std::path::Path) -> Result<()> {
             }
         }
         link.SetPath(&HSTRING::from(exe.as_os_str()))?;
-        link.SetArguments(w!("tray --open"))?;
+        // M15: no arguments opens TaskQ; minimized, so its console never shows before the launcher frees it
+        link.SetArguments(w!(""))?;
+        link.SetShowCmd(windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE)?;
         link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
         props.SetValue(&key, &PROPVARIANT::from(APP))?;
         props.SetValue(&activator, &InitPropVariantFromCLSID(&ACTIVATOR)?)?;
@@ -54,13 +56,13 @@ fn shortcut(path: &std::path::Path, exe: &std::path::Path) -> Result<()> {
     }
 }
 
-/// M15: the Start menu `TaskQ` (and a taskbar pin of it) opens `<default install>/taskq-tray.exe tray --open`.
+/// M15: the Start menu `TaskQ` (and a taskbar pin of it) opens `<default install>/taskq.exe` with no arguments.
 /// Only the OS default install's tray writes it, repairing a wrong target; a tray of another install (tests, temp
 /// installs) leaves it alone and its toasts use the identity the link already holds. True when this tray wrote it.
 fn register(install: &std::path::Path, home: Option<&std::path::Path>, link: &std::path::Path) -> std::result::Result<bool, String> {
     if !crate::platform::is_home(install, home) { return Ok(false) }
-    let exe = install.join("taskq-tray.exe");
-    if !exe.is_file() { return Err("stable tray executable unavailable".into()) }
+    let exe = install.join("taskq.exe");
+    if !exe.is_file() { return Err("launcher taskq.exe unavailable".into()) }
     shortcut(link, &exe).map_err(|e| e.to_string())?;
     Ok(true)
 }
@@ -248,12 +250,12 @@ mod tests {
         let (home, temp, link) = (dir.join("home"), dir.join("temp"), dir.join("TaskQ.lnk"));
         for install in [&home, &temp] {
             std::fs::create_dir_all(install).unwrap();
-            std::fs::write(install.join("taskq-tray.exe"), b"").unwrap();
+            std::fs::write(install.join("taskq.exe"), b"").unwrap();
         }
         assert_eq!(register(&temp, Some(&home), &link), Ok(false));
         assert!(!link.exists(), "a non-default install never creates the user's Start menu link");
         // a wrong target an older temp-install tray left behind
-        shortcut(&link, &temp.join("taskq-tray.exe"))?;
+        shortcut(&link, &temp.join("taskq.exe"))?;
         let before = std::fs::read(&link).unwrap();
         assert_eq!(register(&temp, Some(&home), &link), Ok(false));
         assert_eq!(register(&temp, None, &link), Ok(false));
@@ -267,7 +269,7 @@ mod tests {
             link_file.GetPath(&mut path, std::ptr::null_mut(), 4)?;
             std::path::PathBuf::from(String::from_utf16_lossy(&path[..path.iter().position(|c| *c == 0).unwrap()]))
         };
-        assert_eq!(target, home.join("taskq-tray.exe"), "the default tray repairs a wrong target on start");
+        assert_eq!(target, home.join("taskq.exe"), "the default tray repairs a wrong target on start");
         std::fs::remove_dir_all(dir).unwrap();
         unsafe { windows::Win32::System::WinRT::RoUninitialize(); }
         Ok(())

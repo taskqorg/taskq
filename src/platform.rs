@@ -81,8 +81,7 @@ pub fn tool(install: &Path) -> Tool {
 }
 
 pub fn default_install() -> PathBuf {
-    let aliases:&[&str]=if cfg!(windows) {&["taskq-tray.exe"]}else{&[]};
-    coreq::install_dir("taskq","TaskQ",aliases).unwrap_or_else(|error| {
+    coreq::install_dir("taskq","TaskQ",&[]).unwrap_or_else(|error| {
         use std::io::Write;
         let _=writeln!(std::io::stderr(),"taskq: {error}; set TASKQ_INSTALL explicitly to inspect or repair this installation");
         coreq::telemetry::capture::exit(1)
@@ -176,6 +175,22 @@ pub fn drain_telemetry() {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(20);
     while let Err(e) = capture.flush() && std::time::Instant::now() < until
         && (e.starts_with("telemetry flush unacknowledged (") || e == "telemetry flush queue deadline") {}
+}
+
+/// M15: the console was made for this process alone (Explorer, Start menu, taskbar pin), not a terminal's; then it is
+/// freed, so its window closes. The std handles are reset as CoreQ's launcher does: stale console handles failed later writes.
+#[cfg(windows)]
+pub fn own_console() -> bool {
+    #[link(name = "kernel32")]
+    unsafe extern "system" { fn GetConsoleProcessList(list: *mut u32, n: u32) -> u32; fn FreeConsole() -> i32; fn SetStdHandle(id: u32, h: *mut std::ffi::c_void) -> i32; }
+    let mut list = [0u32; 2];
+    // SAFETY: the buffer holds the two ids asked for; a larger count is only returned, never written.
+    if unsafe { GetConsoleProcessList(list.as_mut_ptr(), 2) } != 1 { return false; }
+    unsafe {
+        FreeConsole();
+        for id in [-10i32, -11, -12] { SetStdHandle(id as u32, std::ptr::null_mut()); }
+    }
+    true
 }
 
 /// Ends this process now: no other thread or destructor runs after the flush.
@@ -619,7 +634,7 @@ pub fn sweep(install: &Path, shim: &Path) {
         match version {Ok(version)=>keep.push(version),Err(_)=>unknown=true}
     }
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "installation-id", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "taskq-tray.exe", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "installation-id", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
