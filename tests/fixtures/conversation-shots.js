@@ -15,9 +15,11 @@ function taskqConversationShot(step,state){
  delete s.page;
  // #1773 A6: the PM chat reads an invented transcript locally, so a snapshot never reaches a native session
  const log=[['user','What needs my attention today?'],['assistant','One design question needs your answer. Two tasks are held for later; current work continues while you decide.'],['user','Which changes are we keeping?'],['assistant','The compact menu stays the place to find tasks. Conversations is the place to read and answer; saved views, pins, files and task actions stay available.']].map(([role,text],at)=>({role,text,at,i:0}));
- const post=window.ipc&&window.ipc.postMessage.bind(window.ipc);
- window.ipc={postMessage:t=>{const m=JSON.parse(t);if(m.a!=='conversation-dialogue'||m.conversation!=='pm-1')return post&&post(t);
-  setTimeout(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='status'?{state:'idle',watch:'no watch',turn:{state:'done',watch:false,outcome:'done'},last_line:log.at(-1).text}:{items:m.after!==undefined?[]:log,start:0,end:log.length,size:log.length}}}),0);}};
+ // the native view freezes window.ipc, so the stub wraps the WebKit handler it calls instead
+ const sink=window.webkit?.messageHandlers?.ipc||window.ipc,post=sink&&sink.postMessage.bind(sink);
+ const stub=t=>{const m=JSON.parse(t);if(m.a!=='conversation-dialogue'||m.conversation!=='pm-1')return post&&post(t);
+  setTimeout(()=>taskq.receive({dialogueReceipt:{id:m.id,conversation:m.conversation,action:m.action,state:'accepted',value:m.action==='status'?{state:'idle',watch:'no watch',turn:{state:'done',watch:false,outcome:'done'},last_line:log.at(-1).text}:{items:m.after!==undefined?[]:log,start:0,end:log.length,size:log.length}}}),0);};
+ if(sink)sink.postMessage=stub;else window.ipc={postMessage:stub};
  taskq.receive(s);
  // the menu badge names the unread thread; the open question's task thread is selected and nothing is acknowledged
  taskq.receive({open:{page:'conversations',thread:'unread'}});
