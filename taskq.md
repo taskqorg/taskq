@@ -236,8 +236,8 @@ Review Acceptance/contract. Checks follows [review](https://github.com/taskqorg/
 - GitLab `pr`: main ancestor, green exact-SHA CI, fast-forward/semi-linear protection; squash-merge/readback. Incident ancestry: squash merge SHA, direct result SHA.
 - No commit (research, SHA on `main`): check ancestry, close.
 - Pending/missing CI: refuse, state unchanged; pending GitHub publication stays in review. Failed CI/conflict: requeue.
-- Attempt host: remove a clean `.worktrees/taskq-<N>` and local branch; dirty stay.
-- Merged but open: with no open task PR/MR into main, reconcile one merged task PR/MR into any base at the result SHA; receipt `merged #P [into <base>] as SHA`, no second merge/requeue; includes partial publication and release-branch merges (close no issue). Reviewer `ask` keeps its result, so an owner close option works; `doing`/worker ask has no result: `later`, then `close`.
+- Attempt host: remove clean `.worktrees/taskq-<N>` and local branch; dirty stay.
+- Merged but open (no open task PR/MR to main): reconcile one task PR/MR merged at result SHA into any base, partial/release too; receipt `merged #P [into <base>] as SHA`, no second merge/requeue, close no issue. Merged only at other heads: `publication-blocked` lists them, option `close` (no merge). Reviewer `ask` keeps the result: close option works; worker ask: `later`, `close`.
 
 **Delivery presets** are § 9 `delivery` `{preset, revision}`, the owner's (R9; revision +1 per owner edit): `auto-merge` (the `pr` route), `direct`, `review-pr` (`pr` after the owner gate). `local` and `push-branch` are refused. Without `delivery`: `publish` preset, revision 0. `close` ends its verdict with `delivery <preset> r<revision>: <receipt>`. Detail: [agent behavior](docs/design/agent-behavior.md#contract-detail).
 ### Recipes and owner gates

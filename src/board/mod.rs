@@ -99,6 +99,8 @@ pub enum Publish {
     MainMoved(String),
     /// Only the owner can unblock it (merged with failed CI, removed from the queue): ask (§ 7, #1413).
     Blocked(String),
+    /// No PR at the result, task-branch PRs merged at other heads (#1777): the owner may close with no merge (#1779).
+    Superseded { reason: String, merged: String },
 }
 
 impl Publish {
@@ -107,7 +109,7 @@ impl Publish {
         match self {
             Publish::Done(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("ok", None),
             Publish::Pending(e) => ("retried", Some(e)),
-            Publish::Blocked(e) => ("ask", Some(e)),
+            Publish::Blocked(e) | Publish::Superseded { reason: e, .. } => ("ask", Some(e)),
             Publish::Failed(e) | Publish::MainMoved(e) => ("failed", Some(e)),
         }
     }
@@ -769,6 +771,7 @@ impl Board for Fake {
             "queue-waiting" => Publish::Pending("merge_group CI pending".into()),
             "queue-conflict" => Publish::MainMoved("queue merge conflict".into()),
             "queue-blocked" => Publish::Blocked("PR #7 merged, merge_group CI tests failure".into()),
+            "superseded" => Publish::Superseded { reason: "no open taskq-1 PR at result; merged taskq-1 PRs: #86 at ddddddd".into(), merged: "#86 at ddddddd".into() },
             _ => Publish::Done(format!("merged {sha}")),
         }
     }
@@ -995,8 +998,9 @@ mod tests {
         }));
         let sha = "a".repeat(40);
         let got = h.resume_publication(1, &sha, "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
-        let Publish::Blocked(m) = got else { panic!("{got:?}") };
-        assert_eq!(m, format!("no open taskq-1 PR at result {sha}; merged taskq-1 PRs: #86 at ddddddd, #88 at eeeeeee; close by hand if superseded"));
+        let Publish::Superseded { reason, merged } = got else { panic!("{got:?}") };
+        assert_eq!(reason, format!("no open taskq-1 PR at result {sha}; merged taskq-1 PRs: #86 at ddddddd, #88 at eeeeeee"));
+        assert_eq!(merged, "#86 at ddddddd, #88 at eeeeeee");
         assert!(calls.borrow().iter().all(|m| m == "GET"), "no publication write");
     }
 
