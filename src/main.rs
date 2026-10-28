@@ -1730,14 +1730,10 @@ fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
     }
     let t = platform::tool(install);
     let Some(v) = t.current() else { return };
-    let mut exe = t.release_exe(&v);
-    if cfg!(windows) {
-        // Windows keys the notification-area pin by exe path; a dead tray no longer locks the copy
-        let stable = install.join("taskq-tray.exe");
-        if fs::copy(&exe, &stable).is_ok() {
-            exe = stable;
-        }
-    }
+    // M15: Windows keys the notification-area pin by exe path, so the tray runs as the launcher `<install>/taskq.exe`,
+    // which every update rewrites with the current release
+    let launcher = install.join(t.exe_name());
+    let exe = if cfg!(windows) && launcher.is_file() { launcher } else { t.release_exe(&v) };
     let mut c = std::process::Command::new(&exe);
     c.arg("tray");
     // through LaunchServices: a bundle exec'd by the service has the unbundled service as its responsible process,
@@ -1772,10 +1768,10 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
 <key>CFBundleExecutable</key><string>taskq</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleIconFile</key><string>TaskQ.icns</string>
-<key>LSUIElement</key><true/>
 </dict></plist>
 "#;
-    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|_| install == platform::default_install());
+    // M15: a regular app (Dock, Cmd+Tab), so no LSUIElement; only the OS default install writes the user's launcher
+    let home = std::env::var_os("HOME").map(PathBuf::from).filter(|_| platform::is_home(install, platform::home_install().as_deref()));
     let app = home.as_ref().map_or_else(|| install.join("TaskQ.app"), |h| h.join("Applications/TaskQ.app"));
     // one bundle per identity: the default install's older `<install>/TaskQ.app` would shadow it in LaunchServices
     if home.is_some() { let _ = fs::remove_dir_all(install.join("TaskQ.app")); }
@@ -2936,7 +2932,8 @@ fn application() {
         return;
     }
     incident::install_panic_hook();
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    #[allow(unused_mut)]
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
     // `<install>/taskq` is the launcher: it runs the current release (coreq.md § Launcher).
     let install = platform::default_install();
     let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
@@ -2944,13 +2941,22 @@ fn application() {
     let launcher = install.join(t.exe_name()).canonicalize().ok();
     if exe.is_some() && exe == launcher && t.current().is_some() {
         // #1566: CoreQ's Windows launcher ends a CLI call through `ExitProcess`, the TLS-teardown hang `platform::exit` avoids.
+        // M15: the launcher is the Windows app. No arguments on its own console (Explorer, Start menu, taskbar pin) opens
+        // TaskQ without a console window; the tray runs in this process, so its exe path, and the pins keyed by it,
+        // stay the same across updates. ponytail: a launcher an update could not rewrite runs its older tray until the
+        // tray's version check ends it.
         #[cfg(windows)]
-        if !(args.first().map(String::as_str) == Some("service") && args.get(1).map(String::as_str) == Some("run")) {
+        if args.is_empty() && platform::own_console() { args = vec!["tray".into(), "--open".into()]; }
+        #[cfg(windows)]
+        if args.first().map(String::as_str) != Some("tray") && !(args.first().map(String::as_str) == Some("service") && args.get(1).map(String::as_str) == Some("run")) {
             let v = coreq::launcher::pick(&t, false).unwrap_or_else(|e| platform::die(&e));
             let status = std::process::Command::new(t.release_exe(&v)).args(&args).env(t.env("INSTALL"), &t.install).status();
             platform::exit(status.map_or_else(|e| platform::die(&format!("start {v}: {e}")), |s| s.code().unwrap_or(1)));
         }
+        #[cfg(not(windows))]
         coreq::launcher::launch(&t, &args);
+        #[cfg(windows)]
+        if args.first().map(String::as_str) != Some("tray") { coreq::launcher::launch(&t, &args); }
     }
     #[cfg(target_os = "macos")]
     if args.is_empty()&&exe.as_deref().is_some_and(|exe|bundled_tray(exe,&install)) {

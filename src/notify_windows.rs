@@ -38,7 +38,9 @@ fn shortcut(path: &std::path::Path, exe: &std::path::Path) -> Result<()> {
             }
         }
         link.SetPath(&HSTRING::from(exe.as_os_str()))?;
-        link.SetArguments(w!("tray --open"))?;
+        // M15: no arguments opens TaskQ; minimized, so its console never shows before the launcher frees it
+        link.SetArguments(w!(""))?;
+        link.SetShowCmd(windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE)?;
         link.SetIconLocation(&HSTRING::from(exe.as_os_str()), 0)?;
         props.SetValue(&key, &PROPVARIANT::from(APP))?;
         props.SetValue(&activator, &InitPropVariantFromCLSID(&ACTIVATOR)?)?;
@@ -52,6 +54,17 @@ fn shortcut(path: &std::path::Path, exe: &std::path::Path) -> Result<()> {
         }
         Ok(())
     }
+}
+
+/// M15: the Start menu `TaskQ` (and a taskbar pin of it) opens `<default install>/taskq.exe` with no arguments.
+/// Only the OS default install's tray writes it, repairing a wrong target; a tray of another install (tests, temp
+/// installs) leaves it alone and its toasts use the identity the link already holds. True when this tray wrote it.
+fn register(install: &std::path::Path, home: Option<&std::path::Path>, link: &std::path::Path) -> std::result::Result<bool, String> {
+    if !crate::platform::is_home(install, home) { return Ok(false) }
+    let exe = install.join("taskq.exe");
+    if !exe.is_file() { return Err("launcher taskq.exe unavailable".into()) }
+    shortcut(link, &exe).map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 fn setting(s: Result<NotificationSetting>) -> &'static str {
@@ -149,9 +162,7 @@ pub fn watch(f: impl Fn(String) + Send + 'static) {
             unsafe { RoInitialize(RO_INIT_SINGLETHREADED).map_err(|e| e.to_string())?; }
             let appdata = std::env::var_os("APPDATA").ok_or("APPDATA unavailable")?;
             let path = std::path::PathBuf::from(appdata).join("Microsoft/Windows/Start Menu/Programs/TaskQ.lnk");
-            let exe = crate::platform::default_install().join("taskq-tray.exe");
-            if !exe.is_file() { return Err("stable tray executable unavailable".into()) }
-            shortcut(&path, &exe).map_err(|e| e.to_string())?;
+            register(&crate::platform::default_install(), crate::platform::home_install().as_deref(), &path)?;
             // Registered for the tray's lifetime on its STA; the event loop pumps the incoming activations.
             let factory: IClassFactory = Factory.into();
             unsafe { CoRegisterClassObject(&ACTIVATOR, &factory, CLSCTX_LOCAL_SERVER, REGCLS_MULTIPLEUSE).map_err(|e| e.to_string())?; }
@@ -203,9 +214,11 @@ mod tests {
             let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
             let file: IPersistFile = link.cast()?;
             file.Load(&HSTRING::from(path.as_os_str()), STGM_READWRITE)?;
+            // M15: the launcher opens TaskQ with no arguments, started minimized so no console shows
             let mut args = [0u16; 32];
             link.GetArguments(&mut args)?;
-            assert_eq!(String::from_utf16_lossy(&args[..4]), "tray");
+            assert_eq!(args[0], 0);
+            assert_eq!(link.GetShowCmd()?, windows::Win32::UI::WindowsAndMessaging::SW_SHOWMINNOACTIVE);
             let mut icon_path=[0u16;1024];let mut icon_index=0;
             link.GetIconLocation(&mut icon_path,&mut icon_index)?;
             let end=icon_path.iter().position(|c|*c==0).unwrap();
@@ -226,6 +239,42 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), before);
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(dir).unwrap();
+        unsafe { windows::Win32::System::WinRT::RoUninitialize(); }
+        Ok(())
+    }
+
+    // Chain: M15 launcher ownership (#1758). Risk: a test or temp-install tray points the user's Start menu TaskQ, and
+    // its taskbar pin, at a folder about to be removed; or a wrong target such a tray left stays broken.
+    #[test]
+    fn only_the_default_install_writes_and_repairs_the_start_menu_link() -> Result<()> {
+        unsafe { RoInitialize(RO_INIT_SINGLETHREADED)?; }
+        let dir = std::env::temp_dir().join(format!("taskq-launcher-{}", std::process::id()));
+        let (home, temp, link) = (dir.join("home"), dir.join("temp"), dir.join("TaskQ.lnk"));
+        for install in [&home, &temp] {
+            std::fs::create_dir_all(install).unwrap();
+            std::fs::write(install.join("taskq.exe"), b"").unwrap();
+        }
+        assert_eq!(register(&temp, Some(&home), &link), Ok(false));
+        assert!(!link.exists(), "a non-default install never creates the user's Start menu link");
+        // a wrong target an older temp-install tray left behind
+        shortcut(&link, &temp.join("taskq.exe"))?;
+        let before = std::fs::read(&link).unwrap();
+        assert_eq!(register(&temp, Some(&home), &link), Ok(false));
+        assert_eq!(register(&temp, None, &link), Ok(false));
+        assert_eq!(std::fs::read(&link).unwrap(), before, "a non-default install leaves the link untouched");
+        assert_eq!(register(&home, Some(&home), &link), Ok(true));
+        let target = unsafe {
+            let link_file: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+            link_file.cast::<IPersistFile>()?.Load(&HSTRING::from(link.as_os_str()), STGM_READ)?;
+            let mut path = [0u16; 1024];
+            // SLGP_RAWPATH: the stored target, not one the shell resolved
+            link_file.GetPath(&mut path, std::ptr::null_mut(), 4)?;
+            std::path::PathBuf::from(String::from_utf16_lossy(&path[..path.iter().position(|c| *c == 0).unwrap()]))
+        };
+        // canonical: the shell stores the long form of an 8.3 temp path (CI: RUNNER~1)
+        assert_eq!(std::fs::canonicalize(target).unwrap(), std::fs::canonicalize(home.join("taskq.exe")).unwrap(),
+            "the default tray repairs a wrong target on start");
+        std::fs::remove_dir_all(dir).unwrap();
         unsafe { windows::Win32::System::WinRT::RoUninitialize(); }
         Ok(())
     }
