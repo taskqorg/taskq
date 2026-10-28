@@ -56,7 +56,10 @@ const snapshot={font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixtur
   await input.fill('Third draft');await input.dispatchEvent('select');await drain();
   const third=state.conversations.items[2];await tool('archive');await drain();assert.equal(await input.inputValue(),first.text,'Archive selects another item without switching list');assert.equal(await page.locator('[data-c=recent]').getAttribute('aria-pressed'),'true');
   await page.locator('[data-c=undo]').click();await drain();assert.equal(await input.inputValue(),'Third draft');assert(await input.evaluate(e=>document.activeElement===e));
-  await tool('archive');await drain();await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id="'+third.id+'"]').click();await tool('restore');await drain();assert.equal(await input.inputValue(),'Third draft');
+  await tool('archive');await drain();await page.locator('[data-c=archive-list]').click();await page.locator('[data-c=select][data-id="'+third.id+'"]').click();
+  // #1775 R43: Archive and Restore draw the catalog archive glyphs (visual-style control icons), not download/undo
+  assert.equal(await page.locator('[data-c=archive-list] .lucide-archive').count(),1);assert.equal(await page.locator('[data-c=restore] .lucide-archive-restore').count(),1);
+  await tool('restore');await drain();assert.equal(await input.inputValue(),'Third draft');
   await page.locator('[data-c=recent]').click();await page.locator('[data-c=select][data-id="'+second.id+'"]').click();await drain();assert.deepEqual(await input.evaluate(e=>[e.selectionStart,e.selectionEnd]),[2,5],'separate caret retained');
   // C-A3/F3: list scroll is independent per Recent/Archive; a new row is visible even in a dense list.
   state.conversations.items.push(...Array.from({length:60},(_,n)=>({id:'dense-'+n,revision:1,title:'Dense saved request '+n,root:'fixture-alpha',text:'Saved draft '+n,caret:[0,0],scroll:0,files:[],archived:false})));
