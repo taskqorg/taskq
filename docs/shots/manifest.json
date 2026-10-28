@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "cd48dd1d5f8e214ebac3064c633bf69907a06560",
-  "binarySha256": "68832490e335ba7407648ab1b1b965e2ea3876789ffb683c29956466cf17e41b",
+  "sourceCommit": "e74fddccff47a0f4b8ba853d8005a87d7ff3f8c1",
+  "binarySha256": "9afeb891f4dc61992c49ae268cff70a5023d009350e870a400bff7750ffdb924",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
@@ -27,7 +27,7 @@
     "src/project-blocks.js": "7b61130474864775f6a0c253a657e179438c2b43",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/conversations.rs": "bc317988b06e961b69225bfc30ea473b780fa079",
-    "src/conversations.js": "76751bc3b014b962f5c7ab240c5387f2e589f019",
+    "src/conversations.js": "d4fa03b662c0f71bfa12750f6510498f223cc4ce",
     "src/conversations.css": "866c156507b0eae2e3ccd1869136e5fb4da06b0a",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "ef07cf36d3d1ef5d2ffb350a7b8a5735cc1c59fe2b40f4e930b26e9038f2371d"
+      "sha256": "a43af84146ef36d936d176a70c381d59ef3bfe3093ba4dfa646e702a6531d8db"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "52a12080af0bcf3d874bfd902a493dbe973e845f591e836e7f24350b53f69488"
+      "sha256": "f72c3dac4aaa40e45f0788d96cf5b8ce7276900e8fa7baa2995927e77292e409"
     }
   ]
 }
