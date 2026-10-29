@@ -11,6 +11,8 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
  try{
   const open=async(s=state,viewport={width:360,height:760})=>{const p=await browser.newPage({viewport});p.on('pageerror',e=>{throw e;});await p.setContent(html);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await p.evaluate(s=>taskq.receive(s),s);return p;};
   let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover');
+  // #1775 M1: task search is an icon until opened or a query is active; a query keeps the field visible.
+  const query=async()=>{const q=p.locator('[data-task-query]');if(!await q.count())await p.locator('[data-a=search-open]').click();return q;};
   assert.equal(await p.locator('[data-a=view-editor]').count(),1,'before: approved overlay editor missing; after: reachable');
   assert.equal(await list().count(),6,'canonical duplicate registrations count once');
   assert.equal(await p.getByRole('button',{name:'Conversations · 1 new',exact:true}).count(),1);assert.equal(await p.getByRole('button',{name:/^Inbox/}).count(),0);
@@ -22,19 +24,19 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await list().count(),2);assert.match(await p.locator('[data-a=all-tasks]').first().innerText(),/4/,'All counts selected projects before state filtering');
   const after=await list().first().boundingBox();assert.equal(after.x,before.x,'overlay never displaces list');
   await editor().locator('[data-a=view-save]').click();await editor().locator('[data-a=popup-close]').first().click();
-  await p.locator('[data-task-query]').fill('complete');assert.equal(await list().count(),2);
+  await (await query()).fill('complete');assert.equal(await list().count(),2);
   await p.locator('[data-a=view-list]').click();await editor().locator('[data-a=view-save-as]').click();await editor().locator('[data-view-name]').fill('Attention');await editor().locator('[data-a=view-add]').click();
-  await p.locator('[data-task-query]').fill('5');assert.equal(await list().count(),1);
-  await p.locator('[data-a=view-select][data-id=all]').click();assert.equal(await p.locator('[data-task-query]').inputValue(),'complete','switch restores unsaved working query');
-  await p.locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await p.locator('[data-task-query]').inputValue(),'5');
+  await (await query()).fill('5');assert.equal(await list().count(),1);
+  await p.locator('[data-a=view-select][data-id=all]').click();assert.equal(await (await query()).inputValue(),'complete','switch restores unsaved working query');
+  await p.locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await (await query()).inputValue(),'5');
   await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard?.views?.length===3));
   const navigation=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard?.views?.length===3).at(-1).navigation);
-  await p.close();p=await open({...state,navigation});assert.equal(await p.locator('[data-task-query]').inputValue(),'5','restart retains each view working context');
-  await p.locator('[data-a=view-editor]').click();await editor().locator('[data-a=view-reset]').click();assert.equal(await p.locator('[data-task-query]').inputValue(),'complete','Reset restores explicitly saved criteria');
+  await p.close();p=await open({...state,navigation});assert.equal(await (await query()).inputValue(),'5','restart retains each view working context');
+  await p.locator('[data-a=view-editor]').click();await editor().locator('[data-a=view-reset]').click();assert.equal(await (await query()).inputValue(),'complete','Reset restores explicitly saved criteria');
   await editor().locator('[data-a=popup-close]').first().click();
   // All clears only the state filter. Project/search are independent and remain visible.
   await p.locator('[data-a=all-tasks]').click();assert.equal(await list().count(),4);
-  await p.locator('[data-task-query]').fill('');await p.locator('[data-a=view-editor]').click();await editor().locator('[data-facet=projects][data-value=""]').click();await editor().locator('[data-a=view-group][data-value=combined]').click();await editor().locator('[data-a=popup-close]').first().click();
+  await (await query()).fill('');await p.locator('[data-a=view-editor]').click();await editor().locator('[data-facet=projects][data-value=""]').click();await editor().locator('[data-a=view-group][data-value=combined]').click();await editor().locator('[data-a=popup-close]').first().click();
   const identities=await list().locator('[data-a=task-detail]').evaluateAll(es=>es.map(e=>e.textContent.trim().replace(/^GitHub /,'')));
   assert.deepEqual(identities,['Alpha #5','Beta #1','Alpha #2','Alpha #3','Beta #3','Alpha #4'],'O2 one comparator with canonical repository tie');
   assert.equal(await p.locator('[data-a=row-menu],.row-menu').count(),0,'no right ellipsis or action column');
@@ -67,7 +69,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.match(done[1],/Completed[\s\S]*PR/);assert.doesNotMatch(done[1],/Merged/);assert.match(done[2],/Not planned/);assert.match(done[3],/Outcome unknown/);
   assert.equal(await p.locator('[data-completed] [data-icon="git-merge"],[data-completed] .ui-icon').first().evaluate(e=>!!e.querySelector('svg')),true);
   if(out){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/dark-completed.png'});}
-  await p.locator('[data-task-query]').fill('dropped');assert.equal(await p.locator('[data-completed]').count(),1,'search covers loaded history');await p.locator('[data-task-query]').fill('');
+  await (await query()).fill('dropped');assert.equal(await p.locator('[data-completed]').count(),1,'search covers loaded history');await (await query()).fill('');
   await p.locator('[data-a=completed-more]').click();assert(await p.evaluate(()=>messages.some(m=>m.a==='completed'&&m.root==='/fixture/alpha'&&m.page===2)));
   // #1711 A1–A4: delayed sources retain displayed rows through period/outcome changes and Reset + Done.
   const historyRequests=()=>p.evaluate(()=>messages.filter(m=>m.a==='completed'));
@@ -112,11 +114,11 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await p.getByText('Full history restored',{exact:true}).count(),1,'paging Retry appends instead of replacing prior pages');
   await p.locator('[data-a=view-select][data-id=all]').click();await p.locator('.task-pins [data-a=task-detail]').click();await editor().getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await p.locator('.task-pins').count(),0);
   // #1659 A4 (P-V1): custom views delete by keyboard, built-ins cannot; Undo restores the view and its context.
-  await p.locator('[data-a=view-list]').click();await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();await p.locator('[data-task-query]').fill('5');
+  await p.locator('[data-a=view-list]').click();await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();await (await query()).fill('5');
   await p.locator('[data-a=view-list]').click();assert.equal(await editor().locator('[data-a=view-delete]').count(),1,'only the custom view is deletable');
-  await editor().getByRole('button',{name:'Delete view Attention'}).focus();await p.keyboard.press('Enter');assert.match(await editor().locator('.view-receipt').innerText(),/Deleted\s*Attention/);assert.equal(await editor().locator('[data-a=view-select]').count(),2);assert.notEqual(await p.locator('[data-task-query]').inputValue(),'5','active delete falls back to All tasks');
-  await editor().getByRole('button',{name:'Undo deleting Attention'}).click();assert.equal(await editor().locator('[data-a=view-select]').count(),3);assert.equal(await p.locator('[data-task-query]').inputValue(),'5','unchanged fallback lets Undo reselect the view');
-  await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await p.locator('[data-task-query]').inputValue(),'5','Undo restores working context');
+  await editor().getByRole('button',{name:'Delete view Attention'}).focus();await p.keyboard.press('Enter');assert.match(await editor().locator('.view-receipt').innerText(),/Deleted\s*Attention/);assert.equal(await editor().locator('[data-a=view-select]').count(),2);assert.notEqual(await (await query()).inputValue(),'5','active delete falls back to All tasks');
+  await editor().getByRole('button',{name:'Undo deleting Attention'}).click();assert.equal(await editor().locator('[data-a=view-select]').count(),3);assert.equal(await (await query()).inputValue(),'5','unchanged fallback lets Undo reselect the view');
+  await editor().locator('[data-a=view-select]').filter({hasText:'Attention'}).click();assert.equal(await (await query()).inputValue(),'5','Undo restores working context');
   await p.locator('[data-a=view-select][data-id=all]').click();
   await p.locator('[data-route=settings]').click();await p.locator('[data-route=appearance]').click();
   for(const mode of ['auto','top','bottom','fixed']){await p.locator('[data-a=size-anchor][data-value='+mode+']').click();assert(await p.evaluate(mode=>messages.some(m=>m.a==='size-anchor'&&m.value===mode),mode));}
@@ -125,7 +127,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await p.evaluate(()=>messages.some(m=>['focus','pause','resume','capacity','ai-send'].includes(m.a))),false,'view/window controls have no admission/grant/send effects');
   await p.close();
   p=await open({...state,projects:[alpha,{...alpha,root:'/fixture/conflict',partial:['Alpha'],tasks:alpha.tasks.map(t=>({...t,title:'Changed title',revision:t.revision+1}))}]});
-  await p.locator('[data-task-query]').fill('complete');assert.equal(await p.locator('[data-a=all-tasks]').innerText(),'All tasks ?','R12: search cannot hide a same-board conflict');await p.close();
+  await (await query()).fill('complete');assert.equal(await p.locator('[data-a=all-tasks]').innerText(),'All tasks ?','R12: search cannot hide a same-board conflict');await p.close();
   const observations=[];
   for(const theme of ['dark','light'])for(const font of [16,20])for(const variant of ['long','short']){
    p=await open({...state,font,theme,projects:variant==='long'?[{...alpha,tasks:Array.from({length:16},(_,i)=>task(i+1,i%2?'doing':'failed',{title:('Long unbroken identifier_'+i+'_').repeat(5),since:i%2?null:900}))}]:[{...alpha,complete:false,partial:['Alpha'],tasks:[]}]},{width:320,height:variant==='short'?300:700});

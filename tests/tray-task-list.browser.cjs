@@ -42,7 +42,8 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    for(const extra of [false,true]){
     await page.setViewportSize({width:360,height:900});
     await page.evaluate(s=>{messages.length=0;taskq.receive(s);},extra?{...state,page:undefined,projects:[{...project,complete:false,partial:['Alpha'],tasks:[...project.tasks,t(12,'held')]}]}:{...state,page:undefined});
-    if(extra)assert.match(await page.locator('.content').innerText(),/Partial: refresh[\s\S]*Start 2 held/,'added panels render');
+    // #1775 M2: the held shortcut is a green play icon; its label stays the accessible name.
+    if(extra){assert.match(await page.locator('.content').innerText(),/Partial: refresh/,'added panels render');assert.equal(await page.getByRole('button',{name:'Start 2 held'}).count(),1,'held shortcut renders');}
     const h=await page.evaluate(()=>messages.filter(m=>m.a==='size').at(-1).h);
     await page.setViewportSize({width:360,height:h});
     const fit=await page.evaluate(()=>{const c=document.querySelector('.content'),rows=document.querySelectorAll('[data-card]'),last=rows[rows.length-1].getBoundingClientRect(),grip=document.querySelector('.menu .grip').getBoundingClientRect(),menu=document.querySelector('.menu').getBoundingClientRect();return {scroll:c.scrollHeight-c.clientHeight,last:last.bottom,content:c.getBoundingClientRect().bottom,grip:grip.bottom,menu:menu.bottom,vh:innerHeight};});
@@ -84,7 +85,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    await page.mouse.wheel(0,20000);await page.waitForFunction(()=>{const c=document.querySelector('.content');return c.scrollHeight-c.clientHeight-c.scrollTop<=1;});
    assert(await page.locator('[data-card]').last().evaluate(e=>e.getBoundingClientRect().bottom<=document.querySelector('.content').getBoundingClientRect().bottom+1),'last row remains reachable');
    await page.mouse.wheel(0,-20000);await page.waitForFunction(()=>document.querySelector('.content').scrollTop===0);
-   await page.locator('[data-task-query]').fill('Task');await cue.locator('[data-a=workspace]').scrollIntoViewIfNeeded();await frames(page);
+   await page.locator('[data-a=search-open]').click();await page.locator('[data-task-query]').fill('Task');await cue.locator('[data-a=workspace]').scrollIntoViewIfNeeded();await frames(page);
    const position=await page.locator('.content').evaluate(e=>e.scrollTop);await cue.locator('[data-a=workspace]').click();
    const open=await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open);assert.deepEqual([open.root,open.board,open.task,open.revision],['/fixture/alpha',board,4,4]);
    // The native workspace is a separate window. Closing/returning and a status refresh leave menu context intact.

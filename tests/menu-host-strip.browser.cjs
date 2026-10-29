@@ -32,7 +32,7 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    }
    const summary=page.locator('.dashboard-status>summary');
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.getAttribute('aria-label'))),[longFresh+' · idle','hermes-fra1 · runs unknown · 5m old','mac · Claude 1',longStale+' · runs unknown · 5m old','win · Codex 1'],'A1: every named host, stale stays explicit; #1729 full name in the accessible name');
-   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),['bui','her ? 5m','mac 1','sta ? 5m','win 1'],'#1729 A2/A4: three-letter labels, nonzero counts only, stale is ? with its age, no chip for the execution-only host');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),[longFresh,'hermes-fra1 ? 5m','mac 1',longStale+' ? 5m','win 1'],'#1775 R16/R30 (was #1729 three-letter labels): full names, nonzero counts only, stale is ? with its age, no chip for the execution-only host');
    const line=await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>{const r=c.getClientRects();return r.length===1&&c.scrollWidth<=c.clientWidth+1;}));
    assert.deepEqual(line,[true,true,true,true,true],'#1724 A1: every host chip fits');
    assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.flatMap(c=>{
@@ -43,8 +43,8 @@ const overflow=page=>page.evaluate(()=>[...document.querySelectorAll('*')].filte
    assert.equal(await summary.locator('.host-count svg').count(),2,'#1729 A2: a mark only beside a nonzero count');
    const real=['hermes-fra1','mac','win','pilot'].map(name=>({name,updated:990,live:true}));
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme,projects:projects.map(p=>({...p,hosts:real}))});
-   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),['her','mac 1','pil 1','win 1'],'#1729 A2: the owner hosts read her, mac, win, pil');
-   assert.equal(await summary.locator('.host-strip').evaluate(e=>new Set([...e.children].map(c=>Math.round(c.getBoundingClientRect().top))).size),1,'#1729: four hosts fit one line');
+   assert.deepEqual(await summary.locator('.host-chip').evaluateAll(cs=>cs.map(c=>c.innerText.replace(/\s+/g,' ').trim())),['hermes-fra1','mac 1','pilot 1','win 1'],'#1775 R16: the owner hosts read hermes-fra1, mac, pilot, win, never clipped');
+   assert.equal(await summary.locator('.host-strip').evaluate(e=>new Set([...e.children].map(c=>Math.round(c.getBoundingClientRect().top))).size)<=2,true,'#1775 R16: full names wrap to at most two lines instead of clipping');
    await page.evaluate(s=>taskq.receive(s),{...snapshot,font,theme});
    const attention=summary.locator('.attention');
    assert.equal(await attention.getAttribute('aria-label'),'Attention · 1');

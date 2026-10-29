@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "204abf1f56d020d5301806193cfb9305ca6d5520",
-  "binarySha256": "d1ec487968088c6ebcc78aa1574d49c5698d881c19bdb8729d42d26d734eb75f",
+  "sourceCommit": "b632242e6117d72ba1555a34573c30f254a34ecf",
+  "binarySha256": "bfc4bd274a2ec63c4694d576fffc8c0cf06c920d3b710011e8b58c4329bc0182",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
@@ -10,7 +10,7 @@
   "uiSources": {
     "src/tray.rs": "61d913b7ef4c59dfbed6bfb9b2d10a52e17dfa80",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "0c41fd9004927f594a84f0141e4957eb5a470821",
+    "src/tray-app.js": "007d0664d00d915d602e0f7235184e219f1c9f51",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "c2ac1f503d9837c43638aceff515954d561c15b4",
@@ -18,17 +18,17 @@
     "src/tray-web.js": "5f8ac6545d2df180f384d78cb9f6ccc5b09b0973",
     "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
     "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
-    "src/task-dashboard.js": "73d1d3b85c62e5af95fd6bf2675e9c5b94d13dac",
-    "src/task-dashboard.css": "97a4c0222e7f7c50d621c893c972af130b123924",
+    "src/task-dashboard.js": "4bfc1e026871a2ed2e2289a00a1085767399164f",
+    "src/task-dashboard.css": "75d3ff4317bb3ecda2213beda7708509ebbc3617",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
-    "src/ui-icons.json": "0a2ee6dad1c696fee6b112c0e779327dc358663c",
+    "src/ui-icons.json": "8a7d7a358068c18f8783ec793af61734ac0421fc",
     "src/project-blocks.js": "7b61130474864775f6a0c253a657e179438c2b43",
     "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
     "src/conversations.rs": "bc317988b06e961b69225bfc30ea473b780fa079",
-    "src/conversations.js": "a8f881117731adaec0caff130d4c6b02c8507e95",
-    "src/conversations.css": "13fa84457bae14a3f1db2f4ae786949d72561b8a",
+    "src/conversations.js": "53ad818015123fc7b2c732c41e5834bc838117c7",
+    "src/conversations.css": "a106dc4f0a4b20773f039b78484b67e3fc487bf4",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
     "src/workspace.js": "767454f4c1b291ae9b263f3a6b28dad56c1b579c",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "37ea07e2f14f63252dda3db1da9ce027feb39f14ea9596a59fba5e31263acd5b"
+      "sha256": "2f38ec6e343b594d49856fc3e14efd7e416c488052e35663e1f840dd131c98a3"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "03be6060fad70b44492c1ce93de88fe59d9b547a7996867c10147ed3f89ca03f"
+      "sha256": "9c9c72d91e14b73c97aab95fe1d5896e55a3533673502f5a3e01181fb70902d3"
     }
   ]
 }

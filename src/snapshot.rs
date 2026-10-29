@@ -288,7 +288,10 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none())
             .map(|x| {
                 let mut value=execution_status(v.issue.number,x,hosts,observed,cfg.ttl);
-                value["role"]=json!(v.projection.changes.iter().find(|(id,_,_)| *id==x.attempt).and_then(|(_,_,t)|t.role.as_deref()));
+                // #1775 A3: `spawn reviewer` keeps `review`, so `changes` (state moves only) misses it; the current attempt's role is the fold's
+                let task=&v.projection.task;
+                value["role"]=json!(if task.attempt==Some(x.attempt) {task.role.as_deref()}
+                    else {v.projection.changes.iter().find(|(id,_,_)| *id==x.attempt).and_then(|(_,_,t)|t.role.as_deref())});
                 value
             }).collect();
         Row {
@@ -812,6 +815,20 @@ mod tests {
         assert!(text.contains("| doing · Run state unknown; see service log |") && !text.contains("termination") && !text.contains("execution 3"), "{text}");
         let j = &snap.json()["tasks"][0];
         assert_eq!((j["wait"].as_str(), j["execution_wait"].as_str()), (Some(WAIT_TEXTS[5]), Some(raw)));
+    }
+
+    // #1775 A3: a reviewer spawned in review leaves `changes` (state moves only). Risk: its execution row has no role,
+    // the menu host strip reads the host as unknown and hides its Claude/Codex counts.
+    #[test]
+    fn reviewer_execution_row_carries_reviewer_role() {
+        let sha = "a".repeat(40);
+        let log = vec![crate::core::Entry{id:9,body:"taskq: spawn worker claude:s0 mac".into(),edited:false},
+            crate::core::Entry{id:10,body:format!("taskq: result {sha} attempt 9\nChanged: x"),edited:false},
+            crate::core::Entry{id:11,body:"taskq: spawn reviewer codex:- mac".into(),edited:false}];
+        let v = View {issue:board::Issue{number:1,..Default::default()},projection:crate::core::project(1,&log,false),log,comments:vec![],blockers:vec![]};
+        let snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), 1000, &[v], &[]);
+        let roles: Vec<_> = snap.tasks[0].executions.iter().map(|x| (x["attempt"].as_u64(), x["role"].as_str())).collect();
+        assert!(roles.contains(&(Some(11), Some("reviewer"))), "{roles:?}");
     }
 
     #[test]
