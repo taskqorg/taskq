@@ -20,10 +20,10 @@ Stage 1: [before](00-before.png), [Menu comparison](01-menu.png), [selected Inli
 
 Stage 2, actual production bundle with invented native receipts:
 
-1. [Inline grouping](build/01-inline-groups.png).
-2. [Search across a collapsed group](build/02-search.png).
-3. [Archive with ordinary task threads](build/03-archive.png).
-4. [Narrow list and keyboard actions](build/04-narrow-list.png).
+1. [Inline grouping](implemented/01-inline-groups.png).
+2. [Search across a collapsed group](implemented/02-search.png).
+3. [Archive with ordinary task threads](implemented/03-archive.png).
+4. [Narrow list and keyboard actions](implemented/04-narrow-list.png).
 
 Unchanged: workspace chrome, toolbar destinations, Details, reading area and composer; bundled Lucide assets and the accepted palette/type scale. Intentional differences are the CS1–CS6 headings, ordering, counts, row actions, search and wrapping. The frozen reference is untouched. Final browser images were inspected at actual size; source rendering is distinct from native acceptance (R12).
 
