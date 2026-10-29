@@ -163,6 +163,8 @@ pub struct Row {
     pub stuck: Option<i64>,
     /// #1616 TaskQ's own admission decision of a ready or waiting task, or a review awaiting its reviewer (#1685); `None` for other states.
     pub admission: Option<Admission>,
+    /// § 5 late answer: outside `ask`, the answer that closed the last question, its writer and text (#1785).
+    pub answered: Option<crate::dispatch::Answered>,
 }
 
 /// #1616 fixed admission vocabulary of ready and waiting rows (docs/design/enrollment.md#contract-detail): code and
@@ -311,6 +313,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
         admission: board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed),
+        answered: crate::dispatch::answered_in(v.issue.number, &v.log, &v.projection, &v.comments),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
@@ -447,6 +450,7 @@ impl Row {
         row["stuck"] = json!(self.stuck.is_some());
         if let Some(a) = self.stuck { row["age_s"] = json!(a); }
         if let Some(a) = &self.admission { row["admission"] = a.json(); }
+        if let Some(a) = &self.answered { row["answered"] = json!(a); }
         row
     }
 }
@@ -669,8 +673,8 @@ mod tests {
             crate::core::Entry{id:2,body:"taskq: start".into(),edited:false},
             crate::core::Entry{id:3,body:"taskq: spawn worker codex:s mac".into(),edited:false},
             crate::core::Entry{id:4,body:"taskq: result deadbeef attempt 999".into(),edited:false}];
-        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false},
-            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false}];
+        let comments=vec![board::Comment{id:1,body:log[0].body.clone(),created:100,trusted:true,edited:false,author:String::new()},
+            board::Comment{id:2,body:log[1].body.clone(),created:150,trusted:true,edited:false,author:String::new()}];
         let v=View {issue:board::Issue{number:1,created:100,..Default::default()},projection:crate::core::project(1,&log,false),log,comments,blockers:vec![]};
         let steps=stage_history(&v);
         assert_eq!(steps.iter().map(|s|s["state"].as_str().unwrap()).collect::<Vec<_>>(),["ready","held","ready","doing"]);
@@ -683,11 +687,21 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: running");
+    }
+
+    // Chain: § 5 late answer -> status row -> tray, DashQ, PilotQ (#1785). Risk: a closed question that only the
+    // answering client's receipt names, so every other surface still offers it or shows a stale error.
+    #[test]
+    fn rows_name_the_answer_that_closed_the_question() {
+        let mut r = Row { n: 1, ..Default::default() };
+        assert!(r.json().get("answered").is_none(), "no answer, no field");
+        r.answered = Some(crate::dispatch::Answered { by: "alex".into(), text: "use x".into() });
+        assert_eq!(r.json()["answered"], json!({"by": "alex", "text": "use x"}));
     }
 
     // Chain: R6 3 session cell per runtime and host (#1565). Risk: a Codex thread link shown off its host, where it
@@ -697,7 +711,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -744,7 +758,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");

@@ -1,8 +1,8 @@
 'use strict';
 const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
 const {create}=execution.module('workspace.answers',{
-create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed}){
- const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={};
+create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer}){
+ const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
  const api=execution.module('workspace.answers.instance',{
 project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
 answerCapability:function(board){const p=api.project(board);return {manage:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer};},
@@ -16,9 +16,10 @@ answerReceipt:function(r){
   const previous=answerFeedback.get(key);
   if(!request&&previous?.state!=='unknown')return;
   const item=request||previous;
-  answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next});
+  answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next,answered:r.answered});
   const local=saved[item.board+'#'+item.op.task];
-  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
+  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
+  if(item.op.action==='steer'&&r.state==='accepted')steers[item.board+'#'+item.op.task]='';
   // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
   if(r.state==='accepted'){
     const answered=[...answerFeedback].filter(([,x])=>x.state==='accepted');
@@ -44,15 +45,38 @@ answerSlot:function(t){return t.state==='ask'?h('div',{'data-answer':t.key,key:'
 answerNotices:function(board,task){
   // M3: receipts follow Attention or their project's task rows, never above them; accepted ones collapse into Answered, newest first
   // #1662 A1/A4: a receipt names its question and answer in plain words; operation id and revision stay behind a disclosure
-  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+(r.reason===CONFLICT?'an earlier answer with this operation is still pending with different content':r.reason):'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'&&r.reason!==CONFLICT?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision+(r.reason===CONFLICT?' · bridge: '+r.reason:'')),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
-  const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&(task==null||r.op.task===task&&(!saved[board+'#'+task]?.op||saved[board+'#'+task].op.id===r.op.id))&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
+  const {line}=execution.module("workspace.answers.notices",{line:([key,r],role)=>r.answered?h('div',{class:'body',role,key},'#'+r.op.task+' · '+won(r)+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×')):h('div',{class:'body'+(r.state==='accepted'?'':' alert'),role,key},'#'+r.op.task+(r.about?' '+r.about:'')+' · '+(STATE[r.state]||r.state)+(r.reason?': '+(r.reason===CONFLICT?'an earlier answer with this operation is still pending with different content':r.reason):'')+(r.next?' · '+r.next:'')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),['unknown','failed','partial'].includes(r.state)&&h('button',{'data-a':'answer-retry','data-key':key},r.state==='failed'&&r.reason!==CONFLICT?'Send again':'Check delivery'),h('details',{class:'ids','data-view-key':'receipt:'+key},h('summary',null,'Details'),'Operation '+r.op.id+' · question revision '+r.op.revision+(r.reason===CONFLICT?' · bridge: '+r.reason:'')),!answerRequests.has(key)&&h('button',{'data-a':'answer-dismiss','data-key':key,'aria-label':'Dismiss #'+r.op.task+' receipt',title:'Dismiss'},'×'))});
+  // #1785: in its own thread an answer that won shows above the Steer composer, and steer receipts show in it
+  const shown=[...answerFeedback].filter(([,r])=>(!board||r.board===board)&&(task==null||r.op.task===task&&!r.answered&&r.op.action!=='steer'&&(!saved[board+'#'+task]?.op||saved[board+'#'+task].op.id===r.op.id))&&!view.S.projects.some(p=>p.issues===r.board&&p.tasks.some(t=>t.n===r.op.task&&t.state==='ask')));
   if(task!=null)return shown.slice(-1).map(x=>line(x,'status'));
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
   return [shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,'status')),answered.length>0&&h('details',{class:'group answered','data-view-key':'answered'},h('summary',null,'Answered'+counter(answered.length,'muted','Answered')),answered.map(x=>line(x,null)))];
 },
+// #1785 A1: a question another actor answered first names that answer, never revisions or CLI advice;
+// the status row's `answered` (§ 5 late answer) names it before this client sends anything
+answerWon:function(board,t){
+  const r=t.state==='ask'?null:[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.answered).at(-1)||(t.answered&&{answered:t.answered});
+  return r?h('p',{class:'body answered',role:'status'},won(r)):null;
+},
+// ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
+answerSteerComposer:function(board,t){
+  const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));
+  if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim())return null;
+  const text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
+  const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'');
+  return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason,
+   tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!text.trim()},'Steer')),
+   onInput:e=>{steers[key]=e.currentTarget.value;draw();}}));
+},
+answerSteer:function(board,t){
+  const key=board+'#'+t.n,text=(steers[key]??saved[key]?.draft??'').trim();
+  if(!text)return Promise.resolve(null);
+  steers[key]=text;
+  return answerSend(board,{id:'steer-'+t.n+'-'+Date.now().toString(36),task:t.n,revision:t.revision,action:'steer',text});
+},
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);
-  return r?h('div',{class:'toast',role:'status'},'#'+r.op.task+' · '+({start:'started',stop:'stopped',later:'parked',retry:'requeued'}[r.op.action]||'answer accepted')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'toast-dismiss','aria-label':'Dismiss',title:'Dismiss'},'×')):null;
+  return r?h('div',{class:'toast',role:'status'},'#'+r.op.task+' · '+({start:'started',stop:'stopped',later:'parked',retry:'requeued',steer:'steer sent'}[r.op.action]||'answer accepted')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'toast-dismiss','aria-label':'Dismiss',title:'Dismiss'},'×')):null;
 },
 mountAnswers:function(){
   for(const slot of menu.querySelectorAll('[data-answer]')){
@@ -98,6 +122,7 @@ dismiss:function(key){answerFeedback.delete(key);if(view.toast===key)view.toast=
  const {answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,answerSend,load,save}=api;
  // #1699 A4: the bridge's retained correlation guard (tray.rs ActionQueue::submit), named in user terms
  const CONFLICT='Correlation id is already pending for a different request';
+ const won=r=>'Answered by '+(r.answered.by||'another client')+': '+r.answered.text;
  const STATE={sending:'sending',accepted:'accepted',rejected:'not accepted',stale:'question changed, review it',unknown:'delivery unknown',failed:'not sent',partial:'partly applied'};
  const component=()=>require('./answer-card.js');
  const {tasks,unique,counter}=execution.module('workspace.answers.helpers',{

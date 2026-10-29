@@ -230,6 +230,13 @@ impl Projection {
     pub fn delivered(&self, attempt: u64) -> Option<u64> {
         self.executions.iter().filter(|x| x.attempt == attempt && x.accepted).map(|x| x.through).max()
     }
+    /// The accepted `answer` of `entries` that closed the last question, while the task stays out of `ask` (§ 5 late answer, #1785).
+    pub fn closing_answer(&self, n: u64, entries: &[Entry]) -> Option<u64> {
+        if self.task.state == State::Ask { return None; }
+        let (id, kind) = entries.iter().filter(|e| self.accepted.contains(&e.id)).filter_map(|e| Some((e.id, parse(n, &e.body)?.kind)))
+            .filter(|(_, k)| matches!(*k, "ask" | "answer")).max_by_key(|(id, _)| *id)?;
+        (kind == "answer").then_some(id)
+    }
 }
 
 pub fn executions(n: u64, entries: &[Entry]) -> Vec<Execution> { project(n, entries, false).executions }
@@ -327,6 +334,7 @@ pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {
     let k = parse(n, &e.body).and_then(|l| if l.bare { pick(&card, l.args[0]) } else { l.args.first()?.parse::<usize>().ok() });
     options(&card).into_iter().find(|o| Some(o.0) == k).map(|o| o.1).unwrap_or_else(|| head.trim().to_string())
 }
+
 
 /// Whether attempt `a` wrote `ask`, `result` or `requeue` after entry `after`: its child then exits clean (§ 4 step 1).
 pub fn handed_in(n: u64, entries: &[Entry], a: u64, after: u64) -> bool {

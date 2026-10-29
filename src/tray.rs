@@ -271,6 +271,8 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
                 let reason = op["text"].as_str().filter(|s| !s.trim().is_empty() && !s.contains(['\r', '\n'])).ok_or("supply one requeue reason line")?;
                 ("requeue", format!("Reason: {reason}"))
             }
+            // #1785: after another actor's answer won the race, the owner's kept draft steers the running worker
+            "steer" => ("steer", op["text"].as_str().ok_or("supply steer text")?.to_string()),
             "close" if op["confirmed"] == true && op.get("text").is_none() => ("later", "Reason: Owner confirmed cancellation without publication from the tray.".into()),
             _ => return Err("unsupported or unconfirmed tray action".into()),
         };
@@ -321,6 +323,7 @@ fn answer_snapshot(s: &Value, m: &Value) -> Result<(), String> {
     if op.get("action").is_some() {
         if row["revision"] != op["revision"] { return Err("question changed; refresh before acting".into()); }
         if op["action"] == "close" && row["state"] == "later" { return Ok(()); } // only a matching later op can succeed again
+        if op["action"] == "steer" { return if row["state"] == "doing" { Ok(()) } else { Err("steer needs a running worker; check the board".into()) }; }
         if row["state"] != "ask" || row["question"]["choices"].as_array().is_some_and(|c| !c.is_empty()) {
             return Err("fallback actions require an ask without choices; check the board for partial cancellation".into());
         }
@@ -395,8 +398,25 @@ fn answer(install: &Path, m: &Value) -> Value {
             Err(e) => json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": e, "next": "Check the board; retry the same operation id."}),
         }
     });
-    let reason = r["reason"].as_str().filter(|s| !s.is_empty()).or_else(|| r["state"].as_str()).unwrap_or("");
-    response(r["outcome"].as_str().unwrap_or("unknown"), reason, r["next"].as_str().unwrap_or(""))
+    answer_receipt(m, &r)
+}
+
+/// The tray receipt of CLI receipt `r`. #1785: a stale one speaks plain words, never revisions or CLI commands, and
+/// carries who answered first.
+fn answer_receipt(m: &Value, r: &Value) -> Value {
+    let outcome = r["outcome"].as_str().unwrap_or("unknown");
+    // § 5 late answer: a stale or rejected receipt that names the answer that won shows only that answer, no revision or CLI advice.
+    let won = r["answered"].is_object();
+    let (reason, next) = if won { ("", "") } else if outcome == "stale" {
+        ("The question changed before this arrived", "Review the question, then answer again.")
+    } else {
+        (r["reason"].as_str().filter(|s| !s.is_empty()).or_else(|| r["state"].as_str()).unwrap_or(""), r["next"].as_str().unwrap_or(""))
+    };
+    let mut out = json!({"answerReceipt": {"root": m["root"], "id": m["op"]["id"], "state": outcome, "reason": reason, "next": next}});
+    if won {
+        out["answerReceipt"]["answered"] = json!({"by": r["answered"]["by"], "text": r["answered"]["text"]});
+    }
+    out
 }
 
 /// One opaque revision of a policy: equal content, equal revision.
@@ -3054,6 +3074,44 @@ mod tests {
         s["complete"] = json!(false);
         s["reason"] = json!("permission denied");
         assert_eq!(answer_snapshot(&s, &m).unwrap_err(), "permission denied");
+    }
+
+    // Chain: lost answer race -> CLI stale receipt -> tray receipt -> steer. Risk (#1785): the tray showed revision
+    // ids and CLI advice instead of who answered, and offered no way to pass the losing answer on.
+    #[test]
+    fn answer_bridge_stale_receipt_names_the_winner_and_steers() {
+        let m = json!({"root": "/p", "op": {"id": "tray.1", "task": 7, "revision": 20, "text": "use y"}});
+        let cli = json!({"task": 7, "op_id": "tray.1", "outcome": "stale", "revision": 22, "reason": "revision 20 is stale; current is 22",
+            "next": "Read `taskq inbox 7`; retry with --revision 22", "answered": {"by": "alex", "text": "use x"}});
+        let r = answer_receipt(&m, &cli)["answerReceipt"].clone();
+        assert_eq!((r["state"].as_str(), r["answered"]["by"].as_str(), r["answered"]["text"].as_str()), (Some("stale"), Some("alex"), Some("use x")));
+        let mut lost = cli.clone();
+        lost.as_object_mut().unwrap().remove("answered");
+        // A late answer the fold rejects (task already doing) names the winner too, not the CLI refusal text.
+        let rejected = json!({"task": 7, "op_id": "tray.1", "outcome": "rejected", "reason": "#7 already answered by alex: use x",
+            "next": "To add to it: `taskq steer 7 --text T`.", "answered": {"by": "alex", "text": "use x"}});
+        let late = answer_receipt(&m, &rejected)["answerReceipt"].clone();
+        assert_eq!((late["state"].as_str(), late["answered"]["by"].as_str(), late["reason"].as_str()), (Some("rejected"), Some("alex"), Some("")));
+        for r in [r, answer_receipt(&m, &lost)["answerReceipt"].clone(), late] {
+            let words = r.to_string();
+            assert!(!words.contains("revision") && !words.contains("taskq") && !words.contains("22"), "{words}");
+        }
+        let install = std::env::temp_dir().join(format!("taskq-tray-steer-{}", std::process::id()));
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("projects"), "/p").unwrap();
+        let mut m = json!({"root": "/p", "board": "https://github.com/o/r/issues", "op": {"id": "tray.2", "task": 7, "revision": 22, "action": "steer", "text": "use y"}});
+        assert_eq!(answer_args(&install, &m).unwrap(), ["steer", "7", "--text", "use y", "--json", "--op-id", "tray.2", "--revision", "22"]);
+        let mut s = json!({"complete": true, "board": {"url": m["board"]}, "tasks": [{"n": 7, "state": "doing", "revision": 22}]});
+        assert!(answer_snapshot(&s, &m).is_ok());
+        s["tasks"][0]["state"] = json!("review");
+        assert!(answer_snapshot(&s, &m).unwrap_err().contains("running worker"));
+        m["op"]["text"] = json!("1
+2
+3
+4
+5");
+        assert!(answer_args(&install, &m).is_err(), "steer keeps the CLI text limits");
+        fs::remove_dir_all(install).unwrap();
     }
 
     // Chain: no-choice ask -> tray IPC -> CLI dispatch -> board readback. Risk: cancellation publishes a result,
