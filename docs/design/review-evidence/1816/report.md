@@ -12,7 +12,7 @@ Before the oversized transport change, `cargo test --locked --bin taskq oversize
 
 Choice, stale-card, draft preservation, cancellation, worker fencing, operation identity, reserved metadata and worker Reason/Next validation remain protected. Only the accepted § 5 human-reply length decision changed. Test assertions and timing deadlines were not weakened.
 
-## Tested source and delivery identity
+## Earlier-attempt evidence (historical)
 
 The implementation is rebased onto `5d3540af629c51138b2a561c4511c495719c2b06`. Main's `--transcript`, `later --until`, transcript formatting, credential masking and service-delivered author attribution remain. A range comparison confirms the implementation and regression-test patches are unchanged through the final rebase; only evidence conflicts needed resolution.
 
@@ -31,7 +31,7 @@ The remaining checks completed separately on the final source:
 - Isolated offline `cargo +stable run --locked -- selftest`: 105 golden traces, formats and nine committed capture observations pass. Board access remains unknown/offline.
 - Screenshot-provenance, release-tag and exact-source release-check instruments pass. The unchanged artifact scripts reuse their checks from the preceding base. The README capture uses the fixture/capture/manifest pipeline from `docs/shots/update.sh`, with a scratch debug-build variant that reuses the tested binary. The manifest names the debug renderer and pins this source, the binary, UI blobs and all image digests; explicit verification passes.
 
-## Four evidence screens
+## Earlier-attempt screens (historical)
 
 The two composer screens use invented board data in the actual workspace bundle, Chromium headless shell on Windows. The success receipt is substituted; this is browser/IPC evidence, not a live board write.
 
@@ -43,3 +43,9 @@ The two composer screens use invented board data in the actual workspace bundle,
 The native README captures use Windows WebView2 and `docs/shots/fixture.sh` in an isolated temporary installation, refreshed immediately before capture. They were rendered with `cargo +stable run --locked -- tray --snapshot DIR --route project,icon` from the tested source. `docs/shots/manifest.json` binds that source's UI blobs, the exact debug binary digest and the image bytes. All four screens were refreshed and visually inspected on this source. Explicit digest verification passed for the binary, all UI Git blobs and every manifest image; the screenshot guard alone does not verify image bytes.
 
 Live Telegram transport, installed native Send clicks and deployment were not exercised. Review and green `merge_group` CI remain required for publication under § 7/R12; these source, browser and native captures do not replace that gate.
+
+## Current continuation
+
+Rebased onto `2c20d3ce58a8b680ecc3754863bb80ed573a3fc8` under § 7. The earlier task commits remain in a preservation ref; this branch contains one implementation commit. Generated `docs/shots/*` and `*.sources.json` edits were dropped as required by § 7 step 4. The earlier screenshots and test observations above are historical, not acceptance of the rebased candidate (R12).
+
+The accepted human-reply decision changes § 5 under R13. No other rule changes are intended. The current candidate's canonical gate and affected browser checks are recorded below after completion. Native installed Send, live Telegram and deployment remain unverified.
