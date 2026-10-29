@@ -1,0 +1,57 @@
+{
+  "version": "4.6.40",
+  "sourceCommit": "f22d7b24758e9e1431f612c21a39d51a2123ba13",
+  "binarySha256": "e71b53df6d1898240d55ebe92b619fc570b6e32e6bcf1743a76c891015abd6b5",
+  "environment": {
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot"
+  },
+  "uiSources": {
+    "src/tray.rs": "c31fddb1a631a6eb4ce809e33dcc548a482609c6",
+    "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
+    "src/tray-app.js": "4580b732bbb7a72baa90b61e89d3e5d1ea9c66f7",
+    "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
+    "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
+    "src/task-workspace.css": "e7ac9720333c075c9a5d3c67015a1067822c8807",
+    "src/tray-view-state.js": "60aa47c370c775e949ea6ce2924b4bfd7ae2894a",
+    "src/tray-web.js": "5f8ac6545d2df180f384d78cb9f6ccc5b09b0973",
+    "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
+    "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
+    "src/task-dashboard.js": "24f85b08192d2ca9f2054613a00f2e16c1f4fe4e",
+    "src/task-dashboard.css": "b65089c0d5075aa096e6348a78caefc2678b89a4",
+    "src/task-views.js": "4c91d78f01fd6612a811d0106cd2a934d0a72742",
+    "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
+    "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
+    "src/ui-icons.json": "61995c6c646a3ddfea818632b3f80c9564a790e6",
+    "src/project-blocks.js": "a521262830113305b09fadb17ab6ca857d20b190",
+    "src/project-blocks.css": "b102da2c23f040025b22c6008fa2f0d6dca0fde5",
+    "src/conversations.rs": "ec04fd33a992e01361b2a244e92df3c45f70cada",
+    "src/conversations.js": "a0055958aabf518ec4a2cd8d46ed3188c8e8dd5c",
+    "src/reports.js": "d78daaf09443802be15bba1144900b424299fcd7",
+    "src/conversations.css": "d6bc8467f8185bab3a0db25cc9c5e5ae1b37498f",
+    "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
+    "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
+    "src/workspace.js": "a45524d79e80ddd408d077462fdc041d1e27b834",
+    "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
+    "src/workspace-answers.js": "4a03c3bf98a703bcbd7fc8fa39d992a68d4f4e92",
+    "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
+    "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
+    "src/icon.rs": "ba597bc26768c4544aaa8132003922646cfb1e02"
+  },
+  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
+  "images": [
+    {
+      "file": "../header.webp",
+      "sha256": "5a33dc8bd2d09a2a7a290e2686fd629bdc527d38ffc07c7200195e0e9e7c2ec7"
+    },
+    {
+      "file": "icon-summary-run-dark.png",
+      "sha256": "b723921e4eb1d8c66fdb9f7b73cf5ca29b0537966650ac0a7a8bdd07fd03d654"
+    },
+    {
+      "file": "popover-dark-project-16.png",
+      "sha256": "4c176ddb3e10c30d0fb8b9ea8a51cb2842c025e975ac55c3c5f8f25eb728cda8"
+    }
+  ]
+}
