@@ -15,6 +15,7 @@ The first canonical gate also caught the root contract exceeding 60 KiB and the 
 |---|---|
 | `cargo test --locked --bin taskq tray::tests::opacity` | Pass: 2 tests; value validation, file reload, unknown-key preservation, state readback and composed color-pair contrast. |
 | `node tests/tray-settings.test.cjs` | Fail before; pass after. |
+| `tests/*.test.cjs` (all 25 component files) | Pass after refreshing current source-provenance manifests, including their dependency on the changed visual-style specification; assertions remain intact. |
 | `node tests/tray-opacity.browser.cjs` | Pass: keyboard range/Off IPC, route adoption, shared body tokens, visible refusal, opaque Settings and narrow/large-text layout. |
 | `cargo run --locked -- tray --snapshot DIR --route opacity` with isolated fixture | Native macOS alpha readback matched all six Off/95%/90% cases. Composition capture is sandbox-blocked: `Screen Recording not allowed (TCC); no prompt requested`. Exit 1 is not a pass. |
 | `cargo run --locked -- tray --snapshot DIR --route appearance` with isolated saved 90% fixture | Pass: startup loads 90%, native alpha readback matches, WKWebView renders both themes at 16/20 px without overflow; saved preference remains 90%. |

@@ -1,14 +1,14 @@
 {
   "version": "4.6.40",
-  "sourceCommit": "04b1899513815aa18e8f6cc1f69087deb16ff7af",
-  "binarySha256": "3835ad61e88a226c42ed4b70f19c5fa4013806eed0ba7b92bfc7c9dda3d4d6a0",
+  "sourceCommit": "8e7f0b59ea39d3ac67f30ff3fc39343751fab574",
+  "binarySha256": "09e83457c61ae6b953ca6a25a4c58d3b30b5a40d3c7bbda6600c0e5548941289",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "d442329438e93cc9b42f3ce65394e2866e42ab8f",
+    "src/tray.rs": "22f2348c33b9f70e7998e9520bb8baca4ff212be",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
     "src/tray-app.js": "8f0d2245047db5fbbb2a1b007f007890809a487e",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
