@@ -338,7 +338,10 @@ fn worker_page(root:&Path,local:&str,status:&Value,n:u64,m:&Value,read:impl FnOn
     let attempt=m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?;
     let ended=||Ok(json!({"ended":true,"items":[]}));
     let Some(row)=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n)) else {return ended()};
-    if row["attempt"]!=attempt || row["state"]!="doing" || row["role"]!="worker" {return ended()}
+    if row["attempt"]!=attempt || row["role"]!="worker" {return ended()}
+    // § 2: Ask retains the attempt; a fast answer can resume it before the browser receives an Ask snapshot.
+    if row["state"]=="ask" {return Err("Worker is waiting for an owner answer".into())}
+    if row["state"]!="doing" {return ended()}
     let session=row["session"].as_str().ok_or("Worker session unknown")?;
     let words:Vec<_>=session.split_whitespace().collect();
     let Some((rt,id))=words.first().and_then(|s|s.split_once(':')) else {return Err("Worker session unknown".into())};
@@ -440,6 +443,8 @@ mod tests {
             assert_eq!(session,"codex:native-from-attempt");assert_eq!(before,None);assert_eq!(after,Some(123));Ok(json!({"read":true}))
         });
         assert_eq!(read(&status).unwrap()["read"],true);
+        status["tasks"][0]["state"]=json!("ask");assert!(read(&status).unwrap_err().contains("waiting for an owner answer"));
+        status["tasks"][0]["state"]=json!("doing");assert_eq!(read(&status).unwrap()["read"],true,"an answer resumes the same attempt");
         for (field,value) in [("attempt",json!(72)),("state",json!("review")),("role",json!("reviewer"))] {
             let mut changed=status.clone();changed["tasks"][0][field]=value;
             assert_eq!(read(&changed).unwrap()["ended"],true,"{field}");
