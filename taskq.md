@@ -66,7 +66,7 @@ Looks/sound: one line each (R13).
 - Screenshots: dark theme from `taskq tray --snapshot` over `docs/shots/fixture.sh`, pinned by `docs/shots/manifest.json`; the owner accepts them from before/after evidence. Detail: [UI acceptance][uia].
 - Formatting: a few unicode icons where they help scanning; no emoji clutter, no badges.
 - Last README line: `If taskq saves you time, [buy me a coffee](…).`
-### [M1.1][menu]
+### [menu]
 ## 1. Tasks
 A task is an open issue by a trusted author (GitHub `OWNER|MEMBER|COLLABORATOR`, GitLab Reporter+) labelled `taskq` (`taskq start` sets it; on the board a person adds it). Other issues never start: a PM files a task from one with `taskq add` and comments on it at close. A closed issue is done, unless the board records that it closed without completing (GitHub `state_reason` not `completed`): such a dependency reads unknown, never done (R12; GitLab records no reason). The issue text is for people and may be
 edited by hand: `## Goal`, `## Acceptance`, optional `## Scope`, one line `Depends on #N` per dependency; `Depends on <repo>#N` names an issue of another repository on the board's host, read with the board's token (`<repo>`: `name` under the board's owner, or `owner/name`). An unreadable dependency reads unknown. Acceptance items `A1.`, `A2.` are never renumbered; each is an observable result a reviewer checks without code.
@@ -79,7 +79,6 @@ Labels: `q-<state>` (projection; `waiting`: `q-blocked`); type `code|docs|resear
 `assignee-only` (start only when the board's user is an assignee); any other. Reserved: `taskq-host`.
 ## 2. Log and states
 A log entry is a comment by a trusted author whose first line is `taskq: <kind> [<arg>] [attempt <id>]`; the rest is its text. Entries are read in comment-id order. An edited comment (`updated_at` after `created_at`) or an unknown kind is ignored. A person can type an entry by hand; it counts like a command. The CLI form `taskq answer K` or `taskq answer N.K` (no colon, N = this task) counts as `answer K`. In `ask` a comment whose whole body is K or option K's text (trimmed, any case, `K. ` optional) of the open card counts as `answer K` if one option matches; `fold` ignores other comments.
-
 `core.rs` is one pure function `fold(n, entries, deps_open) -> Task {state, attempt, role, session, retries, card, result, inbox, publication, enqueued, gate, pick}`; `inbox`: current attempt's accepted `answer`/`steer` ids. The accepted `spawn` id fences the attempt. `attempt <id>` is accepted only for the current attempt. Entries invalid in the current state change nothing.
 Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields, not text; without the op id line a `revision:` line is text. The task's revision is the id of the entry that set its open card, else its attempt, else its last accepted entry (0: none). `fold` ignores an entry whose op id an earlier entry carried; a writer whose entry read back at another revision or ignored edits it (§ 5).
 | State | Entry | Next | Notes | ID |
@@ -109,7 +108,6 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next spawn or owner `requeue` outside `later`/`failed`; N-1: `later` | 23 |
 | any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended | 24 |
 | `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits | 25 |
-
 - `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1).
 - `gone` in `review` replaces only the reviewer; keeps result. ([E1–E5](docs/design/emergency-recovery.md)): § 3 hold forbids host `spawn` except E3 selected recovery; unknown liveness forbids `gone`; `service recover --apply` fences each `gone attempt` with `--op-id`/`--revision` (§ 4).
 - One retry counter: attempt `requeue` at 3 or `gone` at 2 ends in `ask`; answer goes to ready. Unless already a card, append `Problem:` with the limit, recommended `1. requeue: ...`, `2. later: ...`, and `To answer:` with `taskq answer N.K` only; reason `K. ` lines become `K) ` (N-1 folds the same card). Ready clears attempt, card, result, publication. `requeue main-moved` and `usage-limit` keep retries and add no limit card.
@@ -142,7 +140,6 @@ TaskQ sources: the §2 transition table, `tests/golden/*.json` traces (`fold.jso
 ## 4. Service
 `taskq service run`: one host process for `<install>/projects`, one loop thread per root; `service install` registers a project and persists the process (§ 8). A project panic restarts only its thread, reattaching running children; three panics in 10 min quarantine it (reap, heartbeat, `status.json` only) until `service restart`. Service exits log the reason.
 One loop:
-
 1. Reap exact executions per the [adapter matrix][arm]. Missing/unsupported reads stay unknown. Terminal turns request owned-tree stop where needed; confirm exit before release. On current-attempt exit without `ask`/`result`/`requeue` since start, post `gone` with exit code and bounded last worker line (§7 rule 6); a [usage limit](docs/design/capacity.md#usage-limit) before work posts `usage-limit` and holds the runtime. Release saves quota reason/deadline for recovery. Hand-ins keep outcomes; step 6 handles input.
 2. Stop children whose attempt is no longer current (R11). Hourly [worktree tidy](docs/design/worktrees.md) (§ 7).
 3. Write heartbeat issue `taskq host <name>` (label `taskq-host`) every `ttl / 3` (60 s with `execution` rows) or on change, `at`/diagnostics times aside (rate-limited: stale, no exit): lines `version <v>`, `service <id>` (12 hex of SHA-256 of `<install>/installation-id`), `machine <hostname>[ wsl]` (agentq `host.name`; `wsl` under WSL; DashQ joins Hosts by it, [H2](https://github.com/taskqorg/dashq/blob/main/docs/design/hosts.md)), `#<N> <id>` per live child or gate-held launch, `session #<N> <id> <url>` per live Claude child with Remote Control URL, `focus off|unknown` when focus admits nothing, `limit <rt> until|probe <time>` or `login <rt> off` per held runtime, `tray <code>` on tray fault, `at <board time>` (same-body edits keep `updated_at`). It closes other open `taskq host` issues with its `service <id>` (renamed host), commenting the new name. Freshness: board `updated_at`, response `Date`, never local clocks.
@@ -192,7 +189,6 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail][prof] |
 | `taskq agents` | per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only, never logs in, no token value; unreadable: `unknown` (R12); no board; `not logged in` admits nothing ([runtime login](docs/design/capacity.md#runtime-login)) |
 | `taskq selftest` | load config, fold `tests/golden` fixtures built into the binary, read the board; no writes |
-
 - Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its full diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
 - Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
@@ -227,7 +223,6 @@ Worker brief: task, attempt, branch, commands, contract path (release URL if abs
 `--text`: literal Changed/Open, optional Done/Problem (§ 2), `--option`/`--recommend`/`--link`; absent: no card. `--checks` prefixes Checks. SHA: log header. Changed may link one PR/evidence with [risk](https://github.com/taskqorg/specq/blob/main/caveman/rules/changes.md#merge-request-description-markdown), either route.
 `close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA). Outcome (events, notices, `--closed`): `delivered`, `no change` (Changed none) or `replaced by #M (<state>)` (`superseded by #M`), plus `N items unverified`. Closing for held #M starts it; an agent asks instead.
 Review Acceptance/contract. Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). No research/proposal ask and owner answer before result/close: task-fit gap. Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim, linked.
-
 `close`: board API, except private fallback rebase/push:
 - `direct`: branch `taskq-<N>` = result SHA, `main` its ancestor, CI green on it; move `main` to it without force, read back, close. GitLab (no fast-forward ref API): `direct` merges a fast-forward MR.
 - GitHub `pr`: one PR at result SHA; no rebase check. `close` records `publish`, ends review. Service readies drafts, enqueues at expected SHA; attempt host polls, others once its heartbeat is stale. Close: merge + green `merge_group` CI; failed push CI: noted. Conflict: `main-moved`; unknown: pending; merged on failed CI or dequeued: `publication-blocked` at once. Cancel dequeues, hand-typed too. Closed unmerged: dequeue, close open `taskq-<N>` PRs; one comment (task link, reason), keep branch; skip merged/closed; log unknown; requeue/later/failed keep PRs.
