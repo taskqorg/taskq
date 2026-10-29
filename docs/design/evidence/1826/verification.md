@@ -16,6 +16,7 @@ Finished research delivers a reviewed report. The owner can read it later and cr
 - Reverified all eight after-frame SHA-256 values against their manifests. Both platforms used source `f22d7b24758e9e1431f612c21a39d51a2123ba13`; the Reports layout and fixture remain unchanged. The resumed correction changes only an error notice; native frames do not qualify the exact final binary or current main's unrelated UI changes.
 - Read-only Astra review traced authority, exact-SHA reads, claim/reservation ordering and UI/IPC connections. It found an omitted known issue number after uncertain draft creation. `node tests/reports.test.cjs` failed before with `known issue survives an unknown held-state readback`, then passed after the card displayed `Unverified draft: #21`. Confirmed held receipts remain separate; the report stays visible and claim/permission guards remain.
 - `python scripts/check.test.py` passed after the rebase, including ordinary section citations and current main's selected-answer, trust, revision and attempt fences. Final build/browser/Rust/gate observations are in the result comment.
+- The first resumed canonical gate took 209.672 s: 650 Rust tests passed, 38 were ignored and only the unchanged R8 size guard failed. The contract was 61,463 bytes, 23 over the limit; removing the redundant report path from the new §7 line leaves its linked specification and worker instructions intact. The final result records the rerun, with the 60 KiB assertion unchanged.
 
 ## Initial attempt verification
 
