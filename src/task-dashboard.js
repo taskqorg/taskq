@@ -6,7 +6,7 @@ const outcomes={success:['circle-check','','Completed'],not_planned:['circle-sla
 module.exports=execution.module('taskDashboard',{
  // P-W4: `owned` is the View window surface; the menu sends `views-open` when native offers that window, else keeps the overlay.
  create:function(view,{menu,present,send,app,owned=false,window=globalThis,document=window.document}){
-  const crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;let restore=true,requests=0;
+  const crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;let restore=true,requests=0;const pinReads=new Map();let transcript=null;
   const api=execution.module('taskDashboard.instance',{
    model:function(){const m=view.dashboard||(view.dashboard=views.normalize(null,{taskFilter:view.taskFilter}));m.collapsed=m.collapsed.filter(id=>view.S.projects.some(p=>views.identity(p)===id));return m;},
    current:function(){return views.current(api.model());},
@@ -33,10 +33,33 @@ module.exports=execution.module('taskDashboard',{
      searching&&h('div',{class:'task-search'},icon('search'),h('input',{id:'task-query',type:'search','data-task-query':'',maxLength:1024,'aria-label':'Search tasks',placeholder:'Search tasks',value:c.query}),c.query&&button('x','Clear task search',{'data-a':'search-clear'})));
    },
    // P-W1: global pins once, first, as ordinary rows in the one shared scroll; unavailable references keep a sourced outcome or explicit unknown.
-   pins:function(){const m=api.model();if(!m.pins.length)return null;const live=api.live(),done=api.history().rows;
-    return h('section',{class:'task-pins','aria-label':'Pinned tasks'},h('h2',null,icon('pin'),' Pinned'),m.pins.map(pin=>{const t=live.find(t=>api.ref(t)===pin.ref);if(t)return app.taskRow(t,true);const c=done.find(c=>c.ref===pin.ref);
-     return h('div',{class:'task-row completed-row',key:pin.ref,'data-pin':pin.ref},icon(c?api.outcome(c)[0]:'circle-question-mark'),h('a',{class:'detail-title',href:pin.url,'data-url':pin.url},pin.title||pin.ref),h('div',{class:'meta'},c?api.outcome(c)[2]:'Unavailable · state unknown',' ',button('pin-off','Unpin '+(pin.title||pin.ref),{'data-a':'task-unpin','data-ref':pin.ref})));}));
+   // Exact reads use canonical board identity, never a pin URL or the loaded Completed page.
+   pinRead:function(pin,retry=false){
+    let e=pinReads.get(pin.ref);const now=Date.now();if(e?.loading||e&&!retry&&now-e.at<60000)return e;
+    const cut=pin.ref.lastIndexOf('#'),n=Number(pin.ref.slice(cut+1)),p=view.S.projects.find(p=>views.identity(p)===pin.ref.slice(0,cut));
+    if(!p||!Number.isSafeInteger(n)||n<=0)return {reason:'Registered board unavailable'};
+    e={...e,ref:pin.ref,root:p.root,task:n,kind:p.board_kind,project:p.name,id:'pin-'+(++requests),at:now,loading:true,reason:null};pinReads.set(pin.ref,e);
+    e.timer=ui.defer(()=>api.receive({root:e.root,id:e.id,reason:'No board response within 65 seconds'}),65000);
+    send({a:'completed',root:e.root,id:e.id,task:n});return e;
    },
+   unpin:function(ref){ui.cancel(pinReads.get(ref)?.expiry);api.model().pins=api.model().pins.filter(p=>p.ref!==ref);},
+   pins:function(){const m=api.model();if(!m.pins.length)return null;const live=api.live();
+    const rows=m.pins.map(pin=>{const t=live.find(t=>api.ref(t)===pin.ref);if(t){delete pin.closedSeen;const prior=pinReads.get(pin.ref);ui.cancel(prior?.timer);ui.cancel(prior?.expiry);pinReads.delete(pin.ref);return app.taskRow(t,true);}
+     const e=api.pinRead(pin),c=e?.value,closed=c?.state==='closed';
+     if(closed){pin.closedSeen=Number.isFinite(c.closed)&&c.closed>0?c.closed:pin.closedSeen||view.S.now;const remaining=pin.closedSeen+86400-view.S.now;if(!e.expiry&&remaining>0)e.expiry=ui.defer(()=>{const current=pinReads.get(pin.ref);if(current)current.expiry=null;if(current?.value?.state==='closed'&&!api.live().some(t=>api.ref(t)===pin.ref)){api.unpin(pin.ref);present();}},remaining*1000);if(Number.isFinite(remaining)&&remaining<=0){api.unpin(pin.ref);return null;}}
+     const [mark,tone,label]=closed?api.outcome(c):['circle-question-mark','',c?.state==='open'?'Open · refresh project':e?.loading?'Reading board…':'Unavailable · state unknown'];
+     return h('div',{class:'task-row completed-row',key:pin.ref,'data-pin':pin.ref},h('span',{class:tone,title:label,'aria-label':label},icon(mark)),h('a',{class:'detail-title',href:c?.url||pin.url,'data-url':c?.url||pin.url,'data-pin-open':pin.ref},c?.title||pin.title||pin.ref),
+      h('div',{class:'meta'},e.project?e.project+' #'+e.task+' · ':'',label,closed&&c.close?' · '+c.close:'',e?.reason?' · '+e.reason:'',closed&&c.error?' · Details unavailable: '+c.error:'',e?.reason&&h('button',{'data-a':'pin-retry','data-ref':pin.ref},'Retry board read')),
+      h('div',{class:'row-actions'},closed&&h(Fragment,null,h('a',{href:c.url,'data-url':c.url,'data-pin-open':pin.ref},'Open issue'),c.pr&&h('a',{href:c.pr,'data-url':c.pr,'data-pin-open':pin.ref},'Open PR'),h('button',{'data-a':'pin-transcript','data-ref':pin.ref},'Open transcript')),button('pin-off','Unpin '+(c?.title||pin.title||pin.ref),{'data-a':'task-unpin','data-ref':pin.ref})));
+    });return rows.some(Boolean)&&h('section',{class:'task-pins','aria-label':'Pinned tasks'},h('h2',null,icon('pin'),' Pinned'),rows);
+   },
+   readTranscript:function(e,before){
+    transcript={...transcript,root:e.root,task:e.task,title:e.value?.title||transcript?.title,id:'transcript-'+(++requests),loading:true,reason:null};const r=transcript;
+    r.timer=ui.defer(()=>api.receive({root:r.root,id:r.id,reason:'No transcript response within 65 seconds'}),65000);
+    send({a:'completed',root:r.root,id:r.id,task:r.task,transcript:true,...(before==null?{}:{before})});
+   },
+   transcript:function(){const t=transcript,p=t?.page;return h(Fragment,null,h('div',{class:'popover-heading'},h('strong',null,t?.title||'Task transcript'),button('x','Close transcript',{'data-a':'popup-close'})),h('p',{class:'meta'},'Read-only native transcript'),t?.loading&&h('p',{role:'status'},'Reading transcript…'),t?.reason&&h('p',{role:'status'},'Transcript unavailable: '+t.reason),p&&h('div',{class:'pin-transcript'},p.start>0&&h('button',{'data-a':'pin-transcript-earlier',disabled:t.loading},'Load earlier'),p.items.map((i,k)=>h('p',{key:k},h('strong',null,i.role+' · '),i.text)),!p.items.length&&h('p',{class:'meta'},'No messages in this chunk.')));},
+
    list:function(){if(api.current().id==='completed')return h(Fragment,null,api.pins(),api.bar(),api.completed());
     const ps=api.projects(),c=api.criteria(),all=api.rows(),pinned=new Set(api.model().pins.map(p=>p.ref)),matching=all.filter(t=>!c.states.length||c.states.includes(t.state)),rows=matching.filter(t=>!pinned.has(api.ref(t))),live=api.live();
     // #1592: partial names and the deduplicated, ordered rows come from the display model; the view only filters them.
@@ -59,7 +82,11 @@ module.exports=execution.module('taskDashboard',{
      view.completed={key,entries:api.unique(api.projects()).map(p=>{const old=prior?.entries.find(e=>e.identity===views.identity(p));return {root:p.root,name:p.name,kind:p.board_kind,identity:views.identity(p),page:0,more:true,tasks:old?.tasks||[],shown:old?.shown||[],replace:true,since};})};view.completed.entries.forEach(api.request);}
     const entries=view.completed?.entries||[];return {entries,rows:entries.flatMap(e=>e.tasks.map(t=>({...t,project:e.name,kind:e.kind,ref:e.identity+'#'+t.n})))};
    },
-   receive:function(page){const e=view.completed?.entries.find(e=>e.id===page.id&&e.root===page.root);if(!e?.loading)return;ui.cancel(e.timer);e.loading=false;
+   receive:function(page){
+    if(transcript?.id===page.id&&transcript.root===page.root){ui.cancel(transcript.timer);transcript.loading=false;transcript.reason=page.reason||page.transcript?.reason;transcript.page=page.transcript?.items?page.transcript:transcript.page;present();return;}
+    const pin=[...pinReads.values()].find(e=>e.id===page.id&&e.root===page.root);
+    if(pin){if(!pin.loading)return;ui.cancel(pin.timer);pin.loading=false;pin.reason=page.reason;pin.value=!page.reason&&page.tasks?.[0]?.n===pin.task?page.tasks[0]:null;if(!pin.value&&!pin.reason)pin.reason='Board response omitted the task';present();return;}
+    const e=view.completed?.entries.find(e=>e.id===page.id&&e.root===page.root);if(!e?.loading)return;ui.cancel(e.timer);e.loading=false;
     if(page.reason)e.reason=page.reason;
     else{if(e.replace){e.tasks=[];e.replace=false;}e.page=page.page||e.page+1;e.more=page.more===true;e.tasks.push(...(page.tasks||[]).filter(t=>!e.tasks.some(x=>x.n===t.n)));}present();},
    outcome:function(t){return t.outcome==='success'&&typeof t.merged==='string'&&t.merged?['git-merge','review','Merged']:outcomes[t.outcome]||outcomes.unknown;},
@@ -112,12 +139,12 @@ module.exports=execution.module('taskDashboard',{
    },
    // P-W4: the menu takes the View window's model whole; a switched view restores its own scroll and open task.
    adopt:function(value){const prior=view.dashboard?.selected;view.dashboard=views.normalize(value);if(prior!==view.dashboard.selected){view.restoreScroll=api.current().scroll;restore=true;}present();},
-   popup:function(){const p=view.popup;if(!p||p.kind==='task'&&api.live().some(t=>t.key===p.key&&t.state==='ask'))return null;return popover.render({label:p.kind==='task'?'Task details':p.kind==='editor'?'View editor':'Saved views',children:p.kind==='task'?api.detail():p.kind==='editor'?api.editor():api.presets()});},
+   popup:function(){const p=view.popup;if(!p||p.kind==='task'&&api.live().some(t=>t.key===p.key&&t.state==='ask'))return null;return popover.render({label:p.kind==='task'?'Task details':p.kind==='transcript'?'Task transcript':p.kind==='editor'?'View editor':'Saved views',children:p.kind==='task'?api.detail():p.kind==='transcript'?api.transcript():p.kind==='editor'?api.editor():api.presets()});},
    place:function(){
     // A3: the view's open task returns on view switch and restart, never on a data refresh.
     if(restore&&view.S&&view.page==='home'){restore=false;const key=api.current().open,trigger=key&&menu.querySelector('[data-a="task-detail"][data-key="'+CSS.escape(key)+'"]');if(!view.popup&&trigger){api.open('task',trigger,key,false);return;}}
     if(view.popup){const selector=view.popup.kind==='task'?'[data-a="task-detail"][data-key="'+CSS.escape(view.popup.key)+'"]':'[data-a="'+(view.popup.kind==='views'?'view-list':'view-editor')+'"]',trigger=menu.querySelector(selector);if(trigger)view.popup.anchor=api.anchor(trigger);}for(const b of menu.querySelectorAll('[data-a="task-detail"]')){const inline=!!b.closest('[data-card]')?.querySelector('.question-shortcut');b.setAttribute('aria-expanded',String(view.popup?.kind==='task'&&view.popup.key===b.dataset.key));b.setAttribute('aria-controls',inline?'taskq-question-details':'taskq-popover');if(inline)b.removeAttribute('aria-haspopup');}if(view.popup)popover.place(menu.querySelector('#taskq-popover'),view.popup.anchor);},
-   click:function(e){const b=e.target.closest('button');if(!b||b.disabled)return false;const d=b.dataset,m=api.model();if(d.a==='search-open'){view.searchOpen=!!api.criteria().query||!view.searchOpen;present();menu.querySelector(view.searchOpen?'[data-task-query]':'[data-a=search-open]')?.focus({preventScroll:true});return true;}if(d.a==='search-clear'){api.criteria().query='';view.searchOpen=false;present();menu.querySelector('[data-a=search-open]')?.focus({preventScroll:true});return true;}
+   click:function(e){const link=e.target.closest('[data-pin-open]');if(link&&pinReads.get(link.dataset.pinOpen)?.value?.state==='closed'){api.unpin(link.dataset.pinOpen);ui.defer(present,0);return false;}const b=e.target.closest('button');if(!b||b.disabled)return false;const d=b.dataset,m=api.model();if(d.a==='search-open'){view.searchOpen=!!api.criteria().query||!view.searchOpen;present();menu.querySelector(view.searchOpen?'[data-task-query]':'[data-a=search-open]')?.focus({preventScroll:true});return true;}if(d.a==='search-clear'){api.criteria().query='';view.searchOpen=false;present();menu.querySelector('[data-a=search-open]')?.focus({preventScroll:true});return true;}
     if(d.a==='project-collapse'){const closing=!m.collapsed.includes(d.project);m.collapsed=closing?[...m.collapsed,d.project]:m.collapsed.filter(id=>id!==d.project);if(closing&&view.popup?.kind==='task'&&api.live().some(t=>t.key===view.popup.key&&t.boardIdentity===d.project))api.close(false);else present();return true;}
     if(d.a==='task-detail'){if(view.popup?.kind==='task'&&view.popup.key===d.key)api.close();else api.open('task',b,d.key,true);return true;}
     if((d.a==='view-editor'||d.a==='view-list')&&view.viewsWindow){send({a:'views-open'});return true;}
@@ -125,7 +152,10 @@ module.exports=execution.module('taskDashboard',{
     if(d.a==='popup-close'){if(owned)send({a:'hide'});else api.close();return true;}
     // P-W1: pinning or unpinning closes the details; the pin is a global reference, not a detail latch.
     if(d.a==='task-pin'){const t=api.live().find(t=>t.key===view.popup?.key);if(t)views.toggle(m,{ref:api.ref(t),title:t.title,url:t.url});api.close();return true;}
-    if(d.a==='task-unpin'){views.toggle(m,{ref:d.ref});present();return true;}
+    if(d.a==='task-unpin'){api.unpin(d.ref);present();return true;}
+    if(d.a==='pin-retry'){api.pinRead({ref:d.ref},true);present();return true;}
+    if(d.a==='pin-transcript'){const entry=pinReads.get(d.ref);if(entry?.value?.state==='closed'){transcript=null;api.readTranscript(entry);api.unpin(d.ref);api.open('transcript',b,d.ref);}return true;}
+    if(d.a==='pin-transcript-earlier'){if(transcript?.page?.start>0&&!transcript.loading){api.readTranscript(transcript,transcript.page.start);present();}return true;}
     if(d.a==='view-select'){if(!owned)api.current().scroll=menu.querySelector('.content')?.scrollTop||0;m.selected=d.id;view.popup=null;view.restoreScroll=api.current().scroll;restore=true;present();menu.querySelector('[data-a="view-list"]')?.focus();return true;}
     if(d.a==='view-pin'){const v=m.views.find(v=>v.id===d.id);if(v)v.pinned=!v.pinned;present();return true;}
     if(d.a==='view-delete'){if(views.remove(m,d.id)){if(m.selected==='all')view.restoreScroll=api.current().scroll;present();menu.querySelector((owned?'':'#taskq-popover ')+'[data-a="view-undo"]')?.focus();}return true;}

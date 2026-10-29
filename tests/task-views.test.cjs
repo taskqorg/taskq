@@ -24,3 +24,8 @@ assert.deepEqual(views.normalize(null).collapsed,[]);
 assert.deepEqual(views.normalize({collapsed:[views.identity(a),false,views.identity(a),'x'.repeat(2049)]}).collapsed,[views.identity(a)]);
 const collapsed=views.normalize({...m,collapsed:[views.identity(a)]});assert.deepEqual(views.normalize(JSON.parse(JSON.stringify(collapsed))).collapsed,collapsed.collapsed);
 console.log('PASS O2/O3 canonical comparator, OR/project/search scope, migration, independent working views, Save/Reset/restart');
+
+// #1829 A3: navigation retains only the pin reference and verified-closure preference, never task truth.
+const closedPin={ref:views.identity(a)+'#7',title:'Closed task',url:a.issues+'/7',closedSeen:123};
+assert.deepEqual(views.normalize({pins:[closedPin]}).pins,[closedPin]);
+assert.equal(views.normalize({pins:[{...closedPin,closedSeen:-1}]}).pins[0].closedSeen,undefined);

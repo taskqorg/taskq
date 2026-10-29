@@ -63,7 +63,7 @@
 .menu .tqp .review,.menu .review{color:var(--review)}
 .task-pins{border-bottom:2px solid var(--divider)}.task-pins>h2,.completed-more{font-size:.8em;color:var(--muted);margin:4px 2px;font-weight:600}
 .task-more>summary{font-size:.85em;color:var(--muted);min-height:var(--target)}.task-more dl{display:grid;grid-template-columns:auto minmax(0,1fr);gap:2px 8px;font-size:.85em;margin:4px 0}.task-more dd{margin:0}
-.completed-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 6px;padding:5px 2px}.completed-row .meta{grid-column:2;font-size:.85em}.view-receipt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.85em}.view-receipt strong{min-width:0;overflow-wrap:anywhere}.view-receipt button{flex:none}
+.menu .completed-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:0 6px;padding:5px 2px}.completed-row .row-actions{grid-column:2;align-items:center}.pin-transcript{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}.completed-row .meta{grid-column:2;font-size:.85em}.view-receipt{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.85em}.view-receipt strong{min-width:0;overflow-wrap:anywhere}.view-receipt button{flex:none}
 /* P-W4: the View window footer stays outside its one content scroll. */
 .menu:has(.view-window) .head h1{max-width:100%;overflow-wrap:anywhere}
 .view-window fieldset{margin:0;padding:4px 0}

@@ -842,6 +842,8 @@ fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
 }
 fn history_args(m:&Value)->Vec<String> {
     let mut a=vec!["status".into(),"--closed".into(),"--page".into(),m["page"].as_u64().unwrap_or(1).max(1).to_string()];
+    if let Some(n)=m["task"].as_u64().filter(|n|*n>0) {a.extend(["--task".into(),n.to_string()]);}
+    if m["transcript"]==true {a.push("--transcript".into());if let Some(b)=m["before"].as_u64(){a.extend(["--before".into(),b.to_string()]);}}
     if let Some(t)=m["since"].as_i64() {a.extend(["--since".into(),t.to_string()]);}
     a
 }
@@ -2819,6 +2821,8 @@ mod tests {
             let a=crate::Args::parse(&history_args(&m)).unwrap();
             assert_eq!((a.pos.as_slice(),a.flags.contains_key("closed"),a.one("page"),a.one("since")),(&["status".to_string()][..],true,Some(page),since),"{m}");
         }
+        let a=crate::Args::parse(&history_args(&json!({"task":7,"transcript":true,"before":80}))).unwrap();
+        assert_eq!((a.one("task"),a.flags.contains_key("transcript"),a.one("before")),(Some("7"),true,Some("80")),"#1829: exact native read retains task and byte cursor; no session-open command");
     }
 
     #[test]

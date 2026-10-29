@@ -49,6 +49,7 @@ fn parse_issue(v: &Value) -> Issue {
         assignees: names(&v["assignees"], "login"),
         updated: iso(&s(v, "updated_at")).unwrap_or(0),
         created: iso(&s(v, "created_at")).unwrap_or(0),
+        closed: iso(&s(v, "closed_at")),
         open: v["state"] == "open",
         trusted: trusted(v),
         reason: v["state_reason"].as_str().map(String::from),

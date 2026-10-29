@@ -3928,11 +3928,11 @@ Open: none")).unwrap();
         assert!(body.lines().any(|l| l.starts_with("diagnostics ")));
         let diagnostics:Value=serde_json::from_str(body.lines().find_map(|l|l.strip_prefix("diagnostics ")).unwrap()).unwrap();
         let at=diagnostics["observed"].as_i64().unwrap();
-        let issue=crate::board::Issue {number:1,title:"taskq host mac".into(),body,labels:vec![],assignees:vec![],updated:at,created:at,open:true,trusted:true,reason:None};
+        let issue=crate::board::Issue {number:1,title:"taskq host mac".into(),body,labels:vec![],assignees:vec![],updated:at,created:at,closed:None,open:true,trusted:true,reason:None};
         let snapshot=crate::snapshot::from_views("board",&b,&c,at,&[],&[issue]);
         assert_eq!(snapshot.json()["hosts"][0]["diagnostics"]["running"]["value"],"4.0.0");
         let stale=crate::snapshot::from_views("board",&b,&c,at+c.ttl as i64+1,&[],&[crate::board::Issue {
-            number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,created:at,open:true,trusted:true,reason:None}]);
+            number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,created:at,closed:None,open:true,trusted:true,reason:None}]);
         assert_eq!(stale.json()["hosts"][0]["diagnostics"]["running"]["state"],"stale");
     }
 
@@ -3949,7 +3949,7 @@ Open: none")).unwrap();
         std::fs::write(dir.join("tray.fault"), "ack-timeout").unwrap();
         let body = s.heartbeat_body();
         assert!(body.lines().any(|l| l == "tray ack-timeout"), "{body}");
-        let issue = crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 100, created: 100, open: true, trusted: true, reason: None };
+        let issue = crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 100, created: 100, closed: None, open: true, trusted: true, reason: None };
         let text = crate::snapshot::from_views("board", &b, &c, 100, &[], &[issue]).text(&c, &json!({})).unwrap();
         assert!(text.lines().any(|l| l.starts_with("Hosts: win v4.0.0 ") && l.ends_with(" tray ack-timeout")), "{text}");
         std::fs::write(dir.join("tray.fault"), "C:\\Users\\x secret").unwrap();
@@ -3992,7 +3992,7 @@ Open: none")).unwrap();
         s.pending.insert((7, 42));
         s.kids.push(Kid { unknown:None, stopping:false, session_url:Some("https://claude.ai/code/session_014abc".into()), task:7,attempt:42,execution:42,rt:"claude".into(),proc:Box::new(FakeProc(Default::default())) });
         assert_eq!(legacy(&s), "version 4.0.0\nservice abc123\n#7 42\nsession #7 42 https://claude.ai/code/session_014abc");
-        let host = |body: String| crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 0, created: 0, open: true, trusted: true, reason: None };
+        let host = |body: String| crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 0, created: 0, closed: None, open: true, trusted: true, reason: None };
         let urls = crate::snapshot::session_urls(&[host(s.heartbeat_body()), host("session #8 43 https://evil.example/x".into())]);
         assert_eq!(urls.into_iter().collect::<Vec<_>>(), vec![(("win".to_string(), 42), "https://claude.ai/code/session_014abc".to_string())]);
     }
