@@ -7,7 +7,7 @@ Finished research delivers a reviewed report. The owner can read it later and cr
 - The owner answer on #1826 authorizes the research gate changes in §7 and §7 Result and close verdicts. R13's linked rule-ID detail accepts ordinary section citations while preserving section/subsection boundaries.
 - R1 is preserved: trusted issue comments own read/decision state and immutable create claims; there is no report database or local decision store. Reports do not change §2 queue transitions, admission, focus or capacity.
 - The implementation uses the same Reports view in Menu and Conversations, exact result-SHA report content, close-time pagination and SHA-bound decisions. Make tasks validates proposals and creation prerequisites, then creates linked held drafts through the existing §1 claims. Unknown writes retain the report and any created issue numbers.
-- Source candidate: `60dff8cd1b33263b84b8565491875d7f57037c26`, rebased on `bbeeae9af4acff3a4148def94e054ce5cf80f32c`. Snapshot provenance is recorded separately when capture completes.
+- Final implementation is rebased on `9683b9ae586ca17a7d2d51977cf47b621b522402`, preserving the shared Conversations changes. The native capture manifest pins its source commit and binary hash. Earlier checks below name the previous base where applicable; they do not qualify the rebased candidate.
 
 ## Verification
 
