@@ -2203,6 +2203,9 @@ exit 0
                 let mut data=vec![0;length];reader.read_exact(&mut data).unwrap();
                 if request==0{assert!(data==expected,"POST changed or truncated the large JSON body");}
                 write!(peer,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",reply.len()).unwrap();peer.write_all(&reply).unwrap();
+                // Finish the response before dropping both Windows socket handles; keep the peer's close observable.
+                peer.shutdown(std::net::Shutdown::Write).unwrap();
+                let mut trailing=Vec::new();reader.read_to_end(&mut trailing).unwrap();assert!(trailing.is_empty(),"unexpected bytes after the HTTP request");
             }
         });
         let got=curl("POST",&format!("{root}/upload"),"Authorization: Bearer invented",Some(&payload),None).unwrap();
