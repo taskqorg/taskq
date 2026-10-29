@@ -14,7 +14,7 @@ The owner [selected Inline actions](https://github.com/taskqorg/taskq/issues/180
 
 ## Review set
 
-Ten screens across two bounded stages; images are browser fixtures, not installed screenshots.
+Stage 1 is the historical six-screen design set. The current set has four browser screens plus the two mandatory README icon captures below (six images, within the review-set cap). No image qualifies an installed host.
 
 Stage 1: [before](00-before.png), [Menu comparison](01-menu.png), [selected Inline reference](02-inline.png), [collapsed search](03-search.png), [Archive/Restore](04-archive.png), [narrow List/Back](05-narrow-light.png). The [editable comparison](../../exploration/conversations-sidebar.html) embeds the v7 bundle; its data and effects are isolated.
 
@@ -24,6 +24,7 @@ Stage 2, actual production bundle with invented native receipts:
 2. [Search across a collapsed group](implemented/02-search.png).
 3. [Archive with ordinary task threads](implemented/03-archive.png).
 4. [Narrow list and keyboard actions](implemented/04-narrow-list.png).
+5. Required README icon refresh: [before](implemented/05-readme-icon-before.png) and [after](implemented/06-readme-icon-after.png), each 68×68. `docs/shots/update.sh` captured the isolated WKWebView/renderer output from `c8af96a3742fde9aca6e3fe200bce8cc1b9eba42`; `docs/shots/check.sh` confirms every UI source blob. The generated icon fixture differs while the icon renderer is unchanged; the cause was not investigated in this sidebar task. Owner acceptance of this generated refresh is included in the Product ask.
 
 Unchanged: workspace chrome, toolbar destinations, Details, reading area and composer; bundled Lucide assets and the accepted palette/type scale. Intentional differences are the CS1–CS6 headings, ordering, counts, row actions, search and wrapping. The frozen reference is untouched. Final browser images were inspected at actual size; source rendering is distinct from native acceptance (R12).
 
@@ -40,15 +41,15 @@ Filtered Rust protection:
 
 Existing browser checks pass: `conversations.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`, `dialogue.browser.cjs`, `workspace-communication.browser.cjs`. They retain draft/caret/files, Archive/Undo/Restore, immutable sends, source choices, scoped receipts, growing input, history, transcript paging, watch, late/failed read and reload protection. The stage 1 prototype check remains separate from production proof.
 
-The full gate is not PASS. The current candidate is blocked by the Product rule-ID gate before later steps. The earlier stage 1 full run was sandbox-blocked after 109.157 s (574 Rust pass, 18 host/capacity/lifecycle failures, 33 ignored, including explicit worker refusals); it does not qualify this implementation. Worker identity and permission markers were kept. CI must still pass on the merge result (§7/R12).
+The full gate is not PASS. `python3 scripts/check.py --base c761cc2ed608b26638bc295dc5f3e5a6690ffb68` stopped after 1.765 s on the current candidate at the Product rule-ID gate; later steps did not run. The earlier stage 1 full run was sandbox-blocked after 109.157 s (574 Rust pass, 18 host/capacity/lifecycle failures, 33 ignored, including explicit worker refusals); it does not qualify this implementation. Worker identity and permission markers were kept. CI must still pass on the merge result (§7/R12).
 
 | Acceptance / boundary | Status |
 |---|---|
 | A1 design package, owner visual choice | Pass; Inline selected |
 | A2–A6 source implementation and listed fixture flows | Pass in browser/Rust fixtures |
 | Whole affected workspace visual comparison | Pass in browser fixtures; four build images inspected |
-| Product rule-ID authorization | Pending; exact ID absent from task/answer |
+| Product rule-ID and refreshed capture authorization | Pending; exact ID absent from task/answer; capture pair shown above |
 | Canonical gate and merge-result CI | Blocked / not qualified |
 | A7 installed Mac/Windows | Not tested; owner-approved §7.8 release batch |
 
-After the owner answer names Product, rerun the selected canonical gate on the rebased candidate, refresh the required source screenshot manifest, publish the result and let review/merge-group CI gate completion. No live installation is part of this task.
+The required source screenshot manifest is refreshed and its source check passes. After the owner answer names Product and accepts the captures, rerun the selected canonical gate on the rebased candidate, publish the result and let review/merge-group CI gate completion. No live installation is part of this task.
