@@ -110,7 +110,7 @@ def typo_only(old, new):
 
 
 def id_pattern(rule):
-    body = r'\s+'.join(re.escape(w) for w in rule.split()).replace('§', '§ ?')
+    body = r'\s+'.join(re.escape(w) for w in rule.split()).replace('§', r'(?:§ ?|[Ss]ection\s+)')
     return re.compile(r'(?<![\w.])' + body + r'(?!\w|\.\d)')
 
 

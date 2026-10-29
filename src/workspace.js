@@ -14,6 +14,7 @@ const {create}=execution.module('workspace',{
   const pm=require('./pm-composer.js');
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,steer:pm.composer,changed:()=>{if(view.page==='conversations'&&view.answer&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
   const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
+  const reports=require('./reports.js').create({draw:()=>api.draw()});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const {session,keyed}=execution.module('workspace.links',{session:function(url){return !!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);},
@@ -25,9 +26,9 @@ const {create}=execution.module('workspace',{
     const threads=api.threads(),id=conversations.sync(threads,view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null),row=threads.find(t=>t.id===id),selected=row?.id;
     const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
-    return conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    return [reports.section(snapshot.value.projects||[]),conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      // #1819: the window's one stale-data line sits in the status footer, which is already a live region
-     footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]});
+     footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]})];
    },
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
    task:function(row){
@@ -169,6 +170,7 @@ const {create}=execution.module('workspace',{
    },
    back:function(){const prior=renderer.pop()||{page:'conversations',open:{},scroll:0};state.apply(prior);api.draw();menu.querySelector('.shell-overflow')?.removeAttribute('open');state.focus(prior.focus);},
    receive:function(s){
+    if(s.reportReceipt){reports.receive(s.reportReceipt);return;}
     if(s.workspacePin!==undefined||s.workspaceMaximized!==undefined){if(s.workspacePin!==undefined)view.workspacePin=s.workspacePin;if(s.workspaceMaximized!==undefined)view.workspaceMaximized=s.workspaceMaximized;api.draw();return;}
     if(conversations.receive(s)) {api.draw();return;}
     if(s.messageReceipt){
@@ -213,6 +215,7 @@ const {create}=execution.module('workspace',{
       if(operations.operationAction(b.dataset))return;
      }
      if(conversations.click(b))return;
+     if(reports.click(b,snapshot.value?.projects||[]))return;
      if(b.dataset.a==='home'){if(view.page!=='conversations')api.navigate('conversations');return;}
      if(b.dataset.a==='workspace-pin'||b.dataset.a==='workspace-enlarge'){ui.send({a:'workspace-window',action:b.dataset.a==='workspace-pin'?'pin':'enlarge'});return;}
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}

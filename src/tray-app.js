@@ -493,7 +493,7 @@ runningAgents:function(compact=false){
 home:function(){
   const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
   const line=api.runningAgents(true);
-  return f(api.staleLine(),h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
+  return f(api.staleLine(),h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list(),reports.section(view.S.projects));
 },
 routeBody:function(){
   switch(view.page){
@@ -691,6 +691,7 @@ settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeigh
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}tick();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
 receive:function(s){
+  if(s.reportReceipt){reports.receive(s.reportReceipt);return;}
   if(Object.hasOwn(s,'settingsWindow')){if(ports.settings)view.settingsChrome=s.settingsWindow;else{view.settingsWindow=s.settingsWindow===true;view.viewsWindow=s.viewsWindow===true;}if(view.S)present();return;}
   // P-W4: the menu adopts the View window's edits; the View window takes the menu's model when opened or while it is not being used.
   // ponytail: focus decides the writer, so edits made in both windows within one push can race; add a revision if that matters.
@@ -755,6 +756,7 @@ ui.listen(menu,'click',e=>{
   if(TaskqProjectBlocks.handle(e,{open:url=>send({a:'open',url}),project:id=>navigate(id),tasks:(id,state)=>{const c=dashboard.criteria();if(view.page!=='home'){c.projects=id?[require('./task-views.js').identity(view.S.projects.find(p=>p.root===id))]:[];c.states=[state];navigate('home');}else dashboard.set({states:c.states.includes(state)?c.states.filter(s=>s!==state):[...c.states,state]});}}))return;
   const a=e.target.closest('a[data-url]');if(a){e.preventDefault();send({a:'open',url:a.dataset.url});return;}
   const b=e.target.closest('button');if(!b||b.disabled)return;const d=b.dataset;
+  if(reports.click(b,view.S.projects))return;
   if(d.historyBin!==undefined){view.historyBin=d.historyBin;present();return;}
   if(!ports.workspace&&api.operationTarget(d)){send({a:'workspace',open:{page:'operations',operation:api.operationTarget(d),root:d.root||null}});return;}
   if(d.a==='filter-reset'){view.taskFilter=[];present();return;}
@@ -817,6 +819,7 @@ const TaskqProjectBlocks=require('./project-blocks.js'),TaskqTaskControls=requir
 const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
 const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
+const reports=require('./reports.js').create({send,draw:()=>present(),defer});
 const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
 const renderer=shell.create(menu);
 const color=st=>({doing:'work',review:'review',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted');

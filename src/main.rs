@@ -47,6 +47,7 @@ mod transcript;
 mod messages;
 mod conversations;
 mod snapshot;
+mod reports;
 #[cfg(any(target_os = "macos", windows))]
 mod icon;
 #[cfg(any(target_os = "macos", windows))]
@@ -85,6 +86,7 @@ const USAGE: &str = "taskq agents
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N
+ taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -129,7 +131,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "reports" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -2793,6 +2795,20 @@ fn run(argv: &[String]) -> Res<()> {
     }
 }
 
+fn create_claim_issue(b: &dyn Board, raw: &Value, op: &Op) -> Result<u64, Receipt> {
+    let read = |reason: String| Receipt {
+        outcome: "unknown", next: "Retry the identical add with the same --op-id for read-only discovery.".into(),
+        ..Receipt::rejected(0, op, reason)
+    };
+    let claim_issue = raw["create_claim_issue"].as_u64().filter(|n| *n > 0)
+        .ok_or_else(|| Receipt::rejected(0, op, "configure create_claim_issue before idempotent create"))?;
+    let issue = b.issue(claim_issue).map_err(read)?;
+    if !issue.trusted || service::is_task(&issue) || service::is_held(&issue) || issue.labels.iter().any(|l| l == "taskq-host") {
+        return Err(Receipt::rejected(0, op, "create_claim_issue must be trusted and outside the queue/hosts"));
+    }
+    Ok(claim_issue)
+}
+
 /// §1 create claim: only the invocation that reads back its winning claim may POST an issue.
 fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &[String], later_text: &str, op: &Op) -> Result<u64, Receipt> {
     let id = op.id.as_deref().expect("claimed create needs an op id");
@@ -2801,12 +2817,7 @@ fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &
         ..Receipt::rejected(n, op, reason)
     };
     let read = |e| unknown(0, e);
-    let claim_issue = raw["create_claim_issue"].as_u64().filter(|n| *n > 0)
-        .ok_or_else(|| Receipt::rejected(0, op, "configure create_claim_issue before idempotent create"))?;
-    let issue = b.issue(claim_issue).map_err(read)?;
-    if !issue.trusted || service::is_task(&issue) || service::is_held(&issue) || issue.labels.iter().any(|l| l == "taskq-host") {
-        return Err(Receipt::rejected(0, op, "create_claim_issue must be trusted and outside the queue/hosts"));
-    }
+    let claim_issue = create_claim_issue(b, raw, op)?;
     let request = json!({"actor": b.me().map_err(read)?, "title": title, "body": body, "labels": labels, "later_text": later_text}).to_string();
     let hash: String = ring::digest::digest(&ring::digest::SHA256, request.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
     let header = format!("taskq: create-claim {id}");
@@ -2949,6 +2960,19 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--revision names one task".into());
     }
     match cmd {
+        "reports" => {
+            if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json"].contains(&k.as_str())||v.len()!=1) {return Err("reports: use --action, --sha, --page, --before and --json once each".into());}
+            let value=if a.pos.len()==1 {
+                if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
+                let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
+                let before=a.one("before").map(|s|s.split_once(':').and_then(|(t,n)|Some((t.parse::<i64>().ok()?,n.parse::<u64>().ok()?))).ok_or("report cursor must be TIME:N")).transpose()?;
+                reports::list_before(b,page,before)?
+            } else {
+                if a.one("page").is_some()||a.one("before").is_some() {return Err("--page/--before list reports without a task number".into());}
+                reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
+            };
+            println!("{value}"); Ok(())
+        }
         "labels" => {
             let mut names = labels::FIXED.iter().map(|s| s.to_string()).collect::<Vec<_>>();
             names.extend(b.issues(None)?.into_iter().flat_map(|i| i.labels));
@@ -3056,7 +3080,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if links.iter().any(|l| l.starts_with('!') || media(l).is_some()) { return Err("--link takes links; images and videos go through --image".into()); }
             result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &links)?;
             image_files(&images)?;
-            let body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
+            let report = reports::prepare(b, root, n, sha)?;
+            let mut body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
+            if report {body+=&format!("\nReport: docs/research/{n}.md");if body.lines().filter(|l|!l.trim().is_empty()).count()>12 {return Err("report result exceeds 12 lines; shorten the verdict".into());}}
             emit(&[act(b, root, n, "result", &[sha], &body, &op)], json)
         }
         "requeue" => {
