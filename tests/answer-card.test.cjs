@@ -23,7 +23,7 @@ for (const c of fx.cases) {
   assert(card.STATES.includes(got[got.length - 1].status));
   console.log('PASS', c.name);
 }
-// #1782: ask images show as thumbnails outside Details and open full size; without the app's copy the link stays;
+// #1782: ask images show as thumbnails above the question context and open full size; without the app's copy the link stays;
 // only a data:image source renders. Risk: the owner decides a visual ask without seeing its images.
 {
   const q = {parsed: true, problem: 'p', choices: [{id: 1, text: 'a', recommended: true}, {id: 2, text: 'b'}], limits: {lines: 4, chars: 240}, evidence: [
@@ -32,9 +32,9 @@ for (const c of fx.cases) {
   const row = {n: 7, title: 'T', state: 'ask', revision: 1, url: 'https://g/7', question: q};
   const html = card.render('b', row, card.fresh(row), {answer: true});
   const img = html.indexOf('<img class="qac-thumb" src="data:image/png;base64,AAAA" alt="front">');
-  assert(img > 0 && img < html.indexOf('<details'), html);
+  assert(img > 0 && img < html.indexOf('<section class="qac-context"'), html);
   assert(html.includes('href="https://g/-/project/1/uploads/s/f.png#upload=2"') && html.includes('side ↗</a>') && html.includes('bad ↗</a>') && !html.includes('javascript:'), html);
-  assert(html.indexOf('>#1</a>') > html.indexOf('<details class="qac-context"'), 'links stay behind Details');
+  assert(html.indexOf('>#1</a>') > html.indexOf('<section class="qac-context"'), '#1781: links stay in the visible question context, after the images');
   console.log('PASS ask images');
 }
 // A2: the published assets match the checksums the design doc records
