@@ -1,16 +1,16 @@
 {
   "version": "4.6.40",
-  "sourceCommit": "f1c9e387eae8686570b9a86ce9512e0b682cb72e",
-  "binarySha256": "2737e3e07570ecf3d93cb5b1766b71b82ea079a2c92138b511f7e3a6bfeee8c0",
+  "sourceCommit": "9517a96a632b09a45e3e8caa9d3eafd4ec133bba",
+  "binarySha256": "939daed9c3aadd9cc66cc7dce8bdc2447f2d838664ee9da78b7c7cd0e85c7eae",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "ce33e51d3bad3da470345e22f8008e62e4a3e2d8",
+    "src/tray.rs": "02abf660dd68f0b23742ab61cebb64b11fed4463",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "8f0d2245047db5fbbb2a1b007f007890809a487e",
+    "src/tray-app.js": "eefec6088e5236b401cb35bd0b8f8a8e68553a53",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "af5747739a29b5f0a40f9f95d9a894a2db1e7afd",
@@ -31,7 +31,7 @@
     "src/conversations.css": "d6bc8467f8185bab3a0db25cc9c5e5ae1b37498f",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
-    "src/workspace.js": "8dcfd51c2fccbf95098e4fcf3ac9f79ddc9e020c",
+    "src/workspace.js": "febc4cf71040e1884c1d14869c90dacfdd63d424",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "4a03c3bf98a703bcbd7fc8fa39d992a68d4f4e92",
     "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "37ea07e2f14f63252dda3db1da9ce027feb39f14ea9596a59fba5e31263acd5b"
+      "sha256": "723b8ecfdcf7019750b506455c819d6cf1384cb5bf78fe4a72458e0ae1ad8026"
     },
     {
       "file": "popover-dark-project-16.png",
