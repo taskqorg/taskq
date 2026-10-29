@@ -35,6 +35,7 @@ UX07 Conversations: the selected thread prioritizes its heading, reading content
 
 ## Conversations sidebar (#1808)
 
+Reading stays first; secondary controls stay in Details ([UX07](ai-workspace.md)).
 Approved: the owner selected Inline actions in [the stage 1 answer](https://github.com/taskqorg/taskq/issues/1808#issuecomment-6490535339). CS1–CS6 extend TW5/TW6 without changing TW7. The [review and editable mockup](conversations-usability-review.md#sidebar-grouping-1808) preserve the current v7 workspace; Inline is the implementation reference.
 
 - CS1 Groups: Recent contains Pinned, then one group per recorded project, then Other. Each nonarchived conversation appears exactly once, regardless of whether it is an owner, task or event thread. Pin takes precedence over project membership. Omit empty groups. Use recorded project identity (registered root and board), never a guessed path or name match. An unavailable former project goes to Other with its recorded name and “Project unavailable”; a global conversation says “No project”.
