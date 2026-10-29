@@ -34,6 +34,8 @@ pub(crate) fn preferences(install:&Path)->Res<Value> {
     }
     if v["draft"].is_null(){v["draft"]=json!("");}if v["history"].is_null(){v["history"]=json!([]);}
     rows(&v)?;
+    sidebar_value(&v["conversation_sidebar"])?;
+    if !v["conversation_updated"].is_null() && !v["conversation_updated"].as_object().is_some_and(|m|m.iter().all(|(k,v)|crate::setup::owner_id(k)&&v.as_u64().is_some_and(|n|n<=9_007_199_254_740_991))) {return Err("Conversation update times invalid; kept".into());}
     if !valid_navigation(&v["conversation_navigation"]) {return Err("Workspace navigation invalid; existing data kept".into());}Ok(v)
 }
 fn rows(v:&Value)->Res<BTreeMap<String,Draft>> {
@@ -174,15 +176,16 @@ pub(crate) fn snapshot(install:&Path)->Value {
         let mut items=vec![];
         for (id,d) in drafts {
             if crate::messages::request_deleted(install,&id)? && !d.deleting && !crate::messages::request_deleting(install,&id)? {continue;}
-            let mut row=serde_json::to_value(d).map_err(|_|"Draft readback encoding failed")?;row["id"]=json!(id);
+            let mut row=serde_json::to_value(d).map_err(|_|"Draft readback encoding failed")?;row["id"]=json!(id);row["updated"]=p["conversation_updated"][&id].clone();
             if crate::messages::request_deleting(install,&id)? {row["deleting"]=json!(true);}
             if let Some(r)=requests.iter().find(|r|r.id==id) {
                 row["request"]=crate::setup::view(r);
-                if r.state=="launched" {row["dialogue"]=crate::dialogue::status(install,r,false,&crate::dialogue::NATIVE);}
+                if r.state=="launched" {row["dialogue"]=crate::dialogue::status(install,r,false,&crate::dialogue::NATIVE);row["updated"]=Value::Null;}
+                else if row["updated"].is_null() {row["updated"]=json!(r.created);}
             }
             items.push(row);
         }
-        Ok(json!({"items":items,"navigation":p["conversation_navigation"],"complete":bad.is_empty(),"reason":if bad.is_empty(){""}else{"Some owner requests are unreadable; existing data kept"},"limits":{"files":4,"file_bytes":FILE_BYTES,"draft_bytes":4*FILE_BYTES,"store_bytes":STORE_BYTES,"pdf_pages":0}}))
+        Ok(json!({"items":items,"navigation":p["conversation_navigation"],"sidebar":sidebar_value(&p["conversation_sidebar"])?,"complete":bad.is_empty(),"reason":if bad.is_empty(){""}else{"Some owner requests are unreadable; existing data kept"},"limits":{"files":4,"file_bytes":FILE_BYTES,"draft_bytes":4*FILE_BYTES,"store_bytes":STORE_BYTES,"pdf_pages":0}}))
     })();result.unwrap_or_else(|reason|json!({"items":[],"complete":false,"reason":reason}))
 }
 
@@ -224,6 +227,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             let mut p=preferences(install)?;let mut drafts=rows(&p)?;let d=drafts.entry(id.into()).or_default();
             if d.deleting&&action!="delete" {return Err("Deletion incomplete; retry Delete without restoring history".into());}
             if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
+            let prior=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone());
             match action {
                 "save"=>{
                     let v=&m["draft"];
@@ -266,7 +270,13 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
                 }
                 _=>return Err("Unsupported draft action".into()),
             }
+            let changed=prior!=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone())||d.revision==0||action=="send";
             d.revision=d.revision.checked_add(1).ok_or("Draft revision overflow")?;let sent=d.sent.clone();
+            if changed {
+                if p["conversation_updated"].is_null() {p["conversation_updated"]=json!({});}
+                let now=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"Conversation clock unavailable")?.as_millis();
+                p["conversation_updated"][id]=json!(now);
+            }
             p["conversations"]=json!(drafts);persist(install,&p)?;Ok(sent)
         })?;
         if ["archive","restore"].contains(&action) {request_marks(install,id,action)?;}
@@ -295,6 +305,7 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
                 let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
                 Ok(crate::dialogue::status(install,&r,true,&crate::dialogue::NATIVE))
             }
+            "activity"=>{let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;Ok(crate::dialogue::activity(&r))},
             "transcript"=>crate::dialogue::transcript(install,id,m["before"].as_u64(),m["after"].as_u64()),
             _=>Err("Unsupported dialogue read".into()),
         }
@@ -309,6 +320,41 @@ fn request_marks(install:&Path,id:&str,action:&str)->Res<()> {
     let receipt=crate::messages::act(install,&[],action,&keys);
     if receipt["outcomes"].as_array().is_some_and(|outcomes|outcomes.len()==keys.len()&&outcomes.iter().all(|r|r["state"]=="accepted")){Ok(())}
     else {Err("Message action incomplete; refresh History and retry without resending".into())}
+}
+
+// CS4/CS5: content-free local view metadata shares the existing locked preference store, not the 4 KiB navigation.
+fn thread_id(id:&str)->bool {
+    if crate::setup::owner_id(id) {return true;}
+    if id.len()>8192||id.chars().any(char::is_control) {return false;}
+    if let Some(key)=id.strip_prefix("event:") {return key.len()==64&&key.bytes().all(|b|b.is_ascii_hexdigit());}
+    id.strip_prefix("task:").and_then(|s|s.rsplit_once('/')).is_some_and(|(b,n)|(b.starts_with("https://")||b.starts_with("http://"))&&n.parse::<u64>().is_ok_and(|n|n>0))
+}
+fn project_id(id:&str)->bool {
+    id.len()<=8192&&serde_json::from_str::<Vec<String>>(id).is_ok_and(|p|p.len()==2&&!p[0].is_empty())
+}
+fn sidebar_value(v:&Value)->Res<Value> {
+    let v=if v.is_null(){json!({"pins":[],"collapsed":[],"archived":{}})}else{v.clone()};
+    if !v.is_object()||v.as_object().unwrap().keys().any(|k|!["pins","collapsed","archived"].contains(&k.as_str()))
+        ||!v["pins"].as_array().is_some_and(|a|a.iter().all(|s|s.as_str().is_some_and(thread_id)))
+        ||!v["collapsed"].as_array().is_some_and(|a|a.iter().all(|s|s.as_str().is_some_and(project_id)))
+        ||!v["archived"].as_object().is_some_and(|m|m.iter().all(|(k,v)|k.starts_with("task:")&&thread_id(k)&&v.as_str().is_some_and(|s|s.len()<=8192))) {return Err("Conversation sidebar metadata invalid; kept".into());}
+    Ok(v)
+}
+pub(crate) fn sidebar(install:&Path,m:&Value)->Value {
+    let result=crate::setup::locked(install,|| {
+        let mut p=preferences(install)?;let mut v=sidebar_value(&p["conversation_sidebar"])?;
+        let action=m["sidebar"]["action"].as_str().unwrap_or("");let key=m["sidebar"]["key"].as_str().ok_or("Sidebar identity missing")?;
+        if !match action {"pin"=>thread_id(key),"collapse"=>project_id(key),"archive"|"restore"=>key.starts_with("task:")&&thread_id(key),_=>false} {return Err("Invalid sidebar action or identity".into());}
+        if ["archive","restore"].contains(&action) {
+            if action=="archive" {let root=m["sidebar"]["root"].as_str().filter(|s|s.len()<=8192).ok_or("Sidebar project identity missing")?;v["archived"][key]=json!(root);}
+            else {v["archived"].as_object_mut().unwrap().remove(key);}
+        } else {
+            let value=m["sidebar"]["value"].as_bool().ok_or("Sidebar choice must be boolean")?;
+            let a=v[if action=="pin"{"pins"}else{"collapsed"}].as_array_mut().unwrap();a.retain(|s|s!=key);if value {a.push(json!(key));}
+        }
+        p["conversation_sidebar"]=v.clone();persist(install,&p)?;Ok(v)
+    });
+    match result {Ok(sidebar)=>json!({"id":m["id"],"state":"accepted","sidebar":sidebar}),Err(reason)=>json!({"id":m["id"],"state":"unknown","reason":reason})}
 }
 
 pub(crate) fn navigation(install:&Path,value:&Value)->Res<()> {
@@ -479,4 +525,30 @@ mod tests {
         f.act("repeat","archive",json!({}));assert_eq!(f.act("repeat","delete",json!({}))["state"],"accepted");
         assert!(rows(&preferences(&f.0).unwrap()).unwrap().values().any(|d|d.text=="same text"&&d.sent.is_none()),"an independently retyped identical draft is not deleted sent history");
     }
+    // Chain: R1/R12, CS2–CS6. Risk: view organization writes a request, loses drafts or lies about recency.
+    #[test]
+    fn sidebar_marks_and_activity_survive_reopen_without_execution_effects() {
+        let f=Fixture::new();f.save("owner","kept draft");
+        let mut p=preferences(&f.0).unwrap();p["conversation_updated"]["owner"]=json!(100);persist(&f.0,&p).unwrap();
+        let same=f.act("owner","save",json!({"draft":{"title":"","text":"kept draft","root":f.0,"caret":[1,2],"scroll":8}}));
+        assert_eq!(same["state"],"accepted");assert_eq!(preferences(&f.0).unwrap()["conversation_updated"]["owner"],100,"caret/scroll never manufacture activity");
+        let before=fs::read(f.0.join("tray-requests.json")).unwrap();
+        let task="task:https://example.org/r/issues/12";let group=json!([f.0.to_str().unwrap(),"https://example.org/r/issues"]).to_string();
+        for data in [json!({"action":"pin","key":"owner","value":true}),json!({"action":"pin","key":task,"value":true}),json!({"action":"collapse","key":group,"value":true}),json!({"action":"archive","key":task,"root":f.0})] {
+            let r=sidebar(&f.0,&json!({"id":"write","sidebar":data}));assert_eq!(r["state"],"accepted","{r}");
+        }
+        let now=snapshot(&f.0);assert_eq!(now["sidebar"]["pins"],json!(["owner",task]));assert_eq!(now["sidebar"]["collapsed"],json!([group]));assert_eq!(now["sidebar"]["archived"][task],json!(f.0));
+        assert_eq!(now["items"][0]["text"],"kept draft");assert_eq!(now["items"][0]["updated"],100);
+        assert!(crate::setup::all(&f.0).unwrap().0.is_empty(),"pin/collapse/archive never enqueue a request");
+        let saved=fs::read(f.0.join("tray-requests.json")).unwrap();assert_ne!(saved,before);
+        for data in [json!({"action":"pin","key":"../escape","value":true}),json!({"action":"pin","key":"owner","value":"true"}),json!({"action":"collapse","key":"alpha","value":true}),json!({"action":"delete","key":task})] {
+            assert_eq!(sidebar(&f.0,&json!({"id":"bad","sidebar":data}))["state"],"unknown");assert_eq!(fs::read(f.0.join("tray-requests.json")).unwrap(),saved,"invalid metadata must preserve the entire store");
+        }
+        assert_eq!(sidebar(&f.0,&json!({"id":"restore","sidebar":{"action":"restore","key":task}}))["state"],"accepted");
+        assert!(snapshot(&f.0)["sidebar"]["archived"].get(task).is_none());assert_eq!(snapshot(&f.0)["sidebar"]["pins"],json!(["owner",task]),"restore keeps pins");
+        f.save("owner","changed content");assert!(snapshot(&f.0)["items"][0]["updated"].as_u64().unwrap()>100);
+        let mut old=preferences(&f.0).unwrap();old.as_object_mut().unwrap().remove("conversation_sidebar");old.as_object_mut().unwrap().remove("conversation_updated");persist(&f.0,&old).unwrap();
+        assert!(snapshot(&f.0)["items"][0]["updated"].is_null(),"historical drafts have unknown activity, not poll time");
+    }
+
 }

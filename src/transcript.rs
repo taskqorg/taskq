@@ -89,7 +89,10 @@ fn records(codex: bool, base: u64, bytes: &[u8]) -> Vec<(u64, Vec<Value>)> {
     let mut at = base;
     for l in bytes.split_inclusive(|b| *b == b'\n') {
         let mut items = vec![];
-        if let Ok(v) = serde_json::from_slice::<Value>(l) { if codex { codex_item(&v, &mut items) } else { claude_item(&v, &mut items) } }
+        if let Ok(v) = serde_json::from_slice::<Value>(l) {
+            if codex { codex_item(&v, &mut items) } else { claude_item(&v, &mut items) }
+            if v["timestamp"].is_string() {for item in &mut items {item["updated"]=v["timestamp"].clone();}}
+        }
         if !items.is_empty() {
             for (i, item) in items.iter_mut().enumerate() { item["at"] = json!(at); item["i"] = json!(i); }
             out.push((at, items));
@@ -140,6 +143,11 @@ fn codex_item(v: &Value, out: &mut Vec<Value>) {
         (Some("local_shell_call"), _) => out.push(tool("shell", &p["action"])),
         _ => {}
     }
+}
+
+/// CS2: timestamp on the newest visible native record; a missing timestamp stays unknown.
+pub fn last_update(codex:bool,path:&Path)->Res<Value> {
+    Ok(before(codex,path,None)?.items.last().map_or(Value::Null,|i|i["updated"].clone()))
 }
 
 /// D7: the last assistant line from the transcript's last chunk; none when that chunk has no assistant text.
@@ -326,4 +334,19 @@ mod tests {
         assert_eq!(after(false, &path, size).unwrap_err(), "transcript shrank; view unknown");
         fs::remove_dir_all(dir).unwrap();
     }
+    // CS2/R12: native record time, not read time or trailing progress/partial writes, orders conversations.
+    #[test]
+    fn sidebar_activity_uses_the_newest_visible_native_record() {
+        let dir=std::env::temp_dir().join(format!("taskq-activity-{}",crate::runtime::uuid()));fs::create_dir_all(&dir).unwrap();
+        let path=dir.join("transcript.jsonl");
+        for codex in [false,true] {
+            let record=|text:&str,time:&str|if codex {json!({"type":"response_item","timestamp":time,"payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":text}]}})}else{json!({"type":"assistant","timestamp":time,"message":{"content":[{"type":"text","text":text}]}})};
+            let a=record("First","2026-10-29T01:00:00.123Z");let b=record("Second","2026-10-29T01:01:00.456Z");
+            fs::write(&path,format!("{a}\n{b}\n{{\"type\":\"progress\",\"timestamp\":\"2026-10-29T03:00:00Z\"}}\npartial")).unwrap();
+            assert_eq!(last_update(codex,&path).unwrap(),"2026-10-29T01:01:00.456Z");assert_eq!(last_update(codex,&path).unwrap(),"2026-10-29T01:01:00.456Z","reading again never changes activity");
+            let mut missing=b.clone();missing.as_object_mut().unwrap().remove("timestamp");fs::write(&path,format!("{a}\n{missing}\n")).unwrap();assert!(last_update(codex,&path).unwrap().is_null(),"do not substitute an older known timestamp");
+        }
+        fs::remove_file(&path).unwrap();assert!(last_update(false,&path).is_err());fs::remove_dir_all(dir).unwrap();
+    }
+
 }

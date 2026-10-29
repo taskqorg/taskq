@@ -1405,10 +1405,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             _=>{}
                         }
                     }
+                    Some("conversation-navigation") if m["sidebar"].is_object()=>{let receipt=crate::conversations::sidebar(&install,&m);web_eval(wv,&format!("taskq.receive({})",json!({"conversationSidebarReceipt":receipt})),"tray.web.receive",&proxy,calls);}
                     Some("conversation-navigation")=>{let error=if surface=="main" {crate::conversations::navigation(&install,&m["navigation"]).err()}else{None};web_eval(wv,&format!("taskq.receive({})",json!({"conversationNavigationError":error})),"tray.web.receive",&proxy,calls);}
                     Some("conversation-action")=>{
                         let id=m["conversation"].as_str().unwrap_or("");
-                        let allowed=if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
+                        // CS5: local archive/restore may organize a detached chat; draft edits stay with its owner.
+                        let allowed=matches!(m["action"].as_str(),Some("archive"|"restore"))||if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
                         let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
                         shown.clear();workspace_shown.clear();

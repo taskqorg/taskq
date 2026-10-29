@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Conversations sidebar · #1808 stage 1</title>
+<style>
+body{margin:0;background:#252b32;color:#eef2f5;font:16px system-ui}header{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px}header label{display:flex;align-items:center;gap:4px}header button,header select{font:inherit}iframe{display:block;width:100%;height:calc(100vh - 90px);border:0}p{margin:0;padding:0 8px 8px;font-size:14px}
+</style>
+<header><b>Sidebar proposal</b><label>Row actions <select id="variant"><option value="menu">Menu · recommended</option><option value="inline">Inline on hover / focus</option></select></label><label>Theme <select id="theme"><option>dark</option><option>light</option></select></label><button id="update">New DashQ task event</button><button id="reset">Reset fixture</button></header>
+<p>Stage 1 · invented data · view actions only. Native sessions, messages and tasks are never changed.</p>
+<iframe title="Current v7 workspace with proposed sidebar" src="../../../build/web/workspace.html"></iframe>
+<script>
+'use strict';
+const frame=document.querySelector('iframe'),variant=document.querySelector('#variant'),theme=document.querySelector('#theme');
+const seed=[
+ {id:'pm-taskq',title:'Daily PM',project:'taskq',status:'Ready',at:80,pinned:true},
+ {id:'personal',title:'Weekend ideas',project:null,status:'Draft',at:70,pinned:true},
+ {id:'taskq-question',title:'#841 Keep the old API?',project:'taskq',status:'Needs reply',at:90},
+ {id:'taskq-release',title:'Next release checks',project:'taskq',status:'Working',at:60},
+ {id:'taskq-long',title:'Review the conversation reading position after a long project update',project:'taskq',status:'Ready',at:40},
+ {id:'dashq-question',title:'#217 Overview counters',project:'dashq',status:'Needs reply',at:85},
+ {id:'dashq-pm',title:'Dashboard PM',project:'dashq',status:'Ready',at:50},
+ {id:'global',title:'Compare runtime notes',project:null,status:'Draft',at:75},
+ {id:'missing',title:'Earlier setup request',project:null,unavailable:'Old project',status:'Start interrupted',at:null},
+ {id:'archive',title:'Previous release',project:'taskq',status:'Ready',at:30,archived:true}
+];
+const key='taskq-review-sidebar-1808';
+let rows=structuredClone(seed),collapsed={},selected='pm-taskq',list='recent',search='',icons={},doc,notice='';
+function restore(){try{const s=JSON.parse(localStorage.getItem(key));if(s){rows=s.rows;collapsed=s.collapsed;}}catch{} }
+function save(){localStorage.setItem(key,JSON.stringify({rows,collapsed}));}
+function icon(name){if(!icons[name])throw Error('Missing bundled icon: '+name);return '<span class="ui-icon" aria-hidden="true">'+icons[name]+'</span>';}
+function el(tag,props={},text){const n=doc.createElement(tag);for(const [k,v] of Object.entries(props))n.setAttribute(k,v);if(text)n.textContent=text;return n;}
+function button(label,name,action){const b=el('button',{'aria-label':label,title:label,type:'button',class:'compact-action'});b.innerHTML=icon(name);b.onclick=action;return b;}
+function sort(a,b){return (b.at??-1)-(a.at??-1)||a.id.localeCompare(b.id);}
+function groups(){
+ const active=rows.filter(r=>!!r.archived===(list==='archive')),matches=r=>!search||[r.title,r.project,r.unavailable,r.status].join(' ').toLowerCase().includes(search.toLowerCase());
+ const group=(id,name,members)=>({id,name,total:members.length,newest:Math.max(-1,...members.map(r=>r.at??-1)),rows:members.filter(matches).sort(sort)});
+ if(list==='archive')return [group('archive','Archived',active)].filter(g=>g.rows.length);
+ const projects=[...new Set(active.filter(r=>!r.pinned&&r.project).map(r=>r.project))].map(p=>group('project:'+p,p,active.filter(r=>!r.pinned&&r.project===p)));
+ projects.sort((a,b)=>b.newest-a.newest||a.id.localeCompare(b.id));
+ return [group('pinned','Pinned',active.filter(r=>r.pinned)),...projects,group('other','Other',active.filter(r=>!r.pinned&&!r.project))].filter(g=>g.rows.length);
+}
+function action(r,kind){
+ if(kind==='pin')r.pinned=!r.pinned;
+ if(kind==='archive')r.archived=true;
+ if(kind==='restore')r.archived=false;
+ notice=(kind==='pin'?(r.pinned?'Pinned':'Unpinned'):kind==='archive'?'Archived':'Restored')+' · '+r.title+' · local view only';save();render();
+ doc.querySelector('[data-row="'+r.id+'"] [data-select]')?.focus();
+}
+function render(){
+ const aside=doc.querySelector('.conversation-list');aside.replaceChildren();
+ const tabs=el('div',{class:'conversation-tools list-tabs'});
+ for(const [id,label,name] of [['recent','Recent','inbox'],['archive','Archive','archive']]){const b=button(label,name,()=>{list=id;search='';render();});b.className='';b.append(label);b.setAttribute('aria-pressed',String(list===id));tabs.append(b);}aside.append(tabs);
+ const find=el('input',{type:'search',placeholder:'Search all groups','aria-label':'Search all groups',value:search});
+ find.oninput=()=>{search=find.value;renderGroups();};const searchBox=el('div',{class:'conversation-search'});searchBox.append(find);aside.append(searchBox);
+ aside.append(el('div',{class:'conversation-rows'}));renderGroups();
+}
+function renderGroups(){
+ const target=doc.querySelector('.conversation-rows');target.replaceChildren();
+ for(const g of groups()){
+  const section=el('section',{'data-group':g.id,'aria-label':g.name}),head=el(g.id.startsWith('project:')?'button':'div',{class:'sidebar-group-title'});
+  const closed=!search&&collapsed[g.id];
+  if(g.id.startsWith('project:')){head.innerHTML=icon('arrow-down');head.setAttribute('aria-expanded',String(!closed));head.onclick=()=>{collapsed[g.id]=!collapsed[g.id];save();renderGroups();};}
+  head.append(el('span',{},g.name),el('small',{},search?g.rows.length+'/'+g.total:String(g.total)));section.append(head);
+  if(!closed)for(const r of g.rows){
+   const row=el('div',{class:'sidebar-row','data-row':r.id}),select=el('button',{class:'conversation-row','data-select':'',...(selected===r.id?{'aria-current':'page'}:{})});
+   select.append(el('span',{},r.title));
+   const context=g.id==='pinned'||g.id==='other'||list==='archive'?(r.project||(r.unavailable?r.unavailable+' · Project unavailable':'No project'))+' · ':'';
+   const meta=el('small',{},context+r.status+' · '+(r.at===null?'Update time unknown':(100-r.at)+'m ago'));if(r.status==='Needs reply')meta.className='sidebar-attention';select.append(meta);
+   select.onclick=()=>{selected=r.id;doc.querySelector('.conversations').classList.remove('list-only');doc.querySelector('.thread-title').textContent=r.title;doc.querySelector('.conversation-record').textContent='Invented conversation preview. Pin, Archive and grouping do not send a message or change a task.';renderGroups();};
+   row.append(select);
+   const actions=el('div',{class:'sidebar-actions'}),entries=list==='archive'?[['Restore','archive-restore','restore']]:[[r.pinned?'Unpin':'Pin','pin','pin'],['Archive','archive','archive']];
+   if(variant.value==='menu'){
+    const details=el('details'),trigger=el('summary',{'aria-label':'Actions for '+r.title,title:'Conversation actions'});trigger.innerHTML=icon('ellipsis');details.append(trigger);
+    const popup=el('div',{class:'sidebar-popup'});for(const [label,name,kind] of entries){const b=button(label,name,()=>action(r,kind));b.className='';b.append(label);popup.append(b);}details.append(popup);actions.append(details);
+    details.onkeydown=e=>{if(e.key==='Escape'){details.open=false;trigger.focus();e.stopPropagation();}};
+   }else for(const [label,name,kind] of entries)actions.append(button(label,name,()=>action(r,kind)));
+   row.append(actions);section.append(row);
+  }
+  target.append(section);
+ }
+ if(!target.children.length)target.append(el('p',{},search?'No matches':list==='archive'?'No archived conversations':'No conversations yet'));
+ doc.querySelector('.conversation-status').textContent=notice;
+ doc.body.dataset.sidebarVariant=variant.value;
+ const archived=!!rows.find(r=>r.id===selected)?.archived;
+ for(const c of doc.querySelectorAll('.conversation-composer,.conversation-send'))c.hidden=archived;
+ doc.querySelector('.sidebar-archived-note')?.remove();
+ if(archived)doc.querySelector('.conversation-record').prepend(el('p',{class:'sidebar-archived-note',role:'status'},'Archived in TaskQ only. Restore before reply.'));
+}
+frame.onload=async()=>{
+ doc=frame.contentDocument;icons=await (await fetch('../../../src/ui-icons.json')).json();restore();
+ frame.contentWindow.ipc={postMessage:()=>{}};
+ frame.contentWindow.taskq.receive({font:16,theme:theme.value,host:'fixture',version:'stage-1-fixture',projects:['taskq','dashq'].map(name=>({root:'fixture-'+name,name,alive:true,complete:true,tasks:[]})),messages:{complete:true,count:0,entries:[]},ai:{history:[],runtime:{id:'codex',name:'Codex',available:true}},conversations:{complete:true,items:rows.map(r=>({id:r.id,title:r.title,root:r.project?'fixture-'+r.project:'',text:r.id==='pm-taskq'?'What needs my attention today?':'',archived:!!r.archived,revision:1,caret:[0,0],scroll:0,files:[]})),navigation:{selected:'pm-taskq',list:'recent'}}});
+ await new Promise(resolve=>requestAnimationFrame(resolve));
+ const style=doc.createElement('style');style.textContent=`
+ .menu{--work:light-dark(#087f5b,#38e8a0);--ask:light-dark(#995200,#ffc247)}.conversations [hidden]{display:none!important}
+ .sidebar-group-title{display:flex;align-items:center;gap:4px;width:100%;padding:6px 7px;margin-top:4px;font:inherit;font-weight:600;text-align:left;border:0;background:transparent;min-height:32px}.sidebar-group-title>span:not(.ui-icon){flex:1;min-width:0;overflow-wrap:anywhere}.sidebar-group-title small{color:var(--muted);font-weight:400}.sidebar-group-title[aria-expanded=false]>.ui-icon{transform:rotate(-90deg)}
+ .sidebar-row{display:flex;position:relative;align-items:flex-start}.sidebar-row>.conversation-row{flex:1;min-width:0;width:auto;padding:6px 7px}.sidebar-row:has([aria-current=page]){background:var(--hover)}.sidebar-actions{display:flex;flex:none}.sidebar-actions summary{display:flex;align-items:center;justify-content:center;width:32px;height:32px;cursor:pointer;list-style:none;border-radius:5px}.sidebar-actions summary::-webkit-details-marker{display:none}.sidebar-actions summary:hover{background:var(--hover)}.sidebar-popup{position:absolute;right:2px;top:34px;z-index:20;background:var(--raised,#323b45);border:1px solid var(--edge);box-shadow:0 4px 12px #0005;padding:4px;border-radius:6px}.sidebar-popup button{display:flex;gap:6px;width:100%;white-space:nowrap;justify-content:flex-start;min-height:32px}.sidebar-attention{color:var(--ask)!important}.sidebar-row .conversation-row small{font-size:max(12px,.85em)}
+ [data-sidebar-variant=inline] .sidebar-actions{opacity:0;pointer-events:none}.sidebar-row:hover .sidebar-actions,.sidebar-row:focus-within .sidebar-actions{opacity:1;pointer-events:auto}.sidebar-row .conversation-row{white-space:normal}.sidebar-row .conversation-row>span{white-space:normal;text-overflow:clip;overflow:visible}.conversation-search{padding:4px 7px}.sidebar-row:focus-within{z-index:1}.sidebar-actions summary:after{content:none}.sidebar-popup{min-width:132px}.sidebar-popup button{align-items:center}.list-tabs>button{display:flex;gap:6px;align-items:center}
+ `;doc.head.append(style);
+ // Freeze the fixture after mount: host refreshes and provider turns are outside this design instrument.
+ frame.contentWindow.taskq.receive=()=>{};
+ doc.addEventListener('click',e=>{if(!e.target.closest('.conversation-list')){
+  e.preventDefault();e.stopImmediatePropagation();
+  const b=e.target.closest('[data-c]');if(b?.dataset.c==='list'){const open=doc.querySelector('.conversations').classList.toggle('list-only');b.innerHTML=icon(open?'arrow-left':'rows-3');b.setAttribute('aria-label',open?'Back':'List');}
+  if(b?.dataset.c==='search-open'){doc.querySelector('.conversations').classList.add('list-only');doc.querySelector('.conversation-search input').focus();}
+ }},true);
+ doc.querySelector('.conversation-record').innerHTML='<article class="dialogue-item user"><p class="meta">You</p><p>What needs my attention today?</p></article><article class="dialogue-item assistant"><p class="meta">Project manager · invented preview</p><p>Two questions need your reply. Work continues while you decide. Your pinned daily conversations stay above the project groups.</p></article>';
+ if(!new URLSearchParams(location.search).has('baseline'))render();window.sidebarReady=true;
+};
+variant.onchange=render;
+theme.onchange=()=>{doc.documentElement.style.colorScheme=theme.value;};
+document.querySelector('#update').onclick=()=>{const r=rows.find(r=>r.id==='dashq-question');r.at=100;const open=doc.querySelector('details[open]')?.closest('[data-row]')?.dataset.row;notice='New task event · DashQ rises · selected conversation unchanged';renderGroups();if(open)doc.querySelector('[data-row="'+open+'"] details').open=true;};
+document.querySelector('#reset').onclick=()=>{localStorage.removeItem(key);rows=structuredClone(seed);collapsed={};selected='pm-taskq';list='recent';search='';notice='';render();};
+</script></html>

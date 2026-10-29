@@ -143,6 +143,8 @@ pub struct Row {
     pub task: Task,
     /// § 2 revision: the expected `--revision` of the next command.
     pub revision: u64,
+    /// Latest trusted board comment or issue creation, never the snapshot/poll time (CS2).
+    pub updated: Option<i64>,
     /// An unresolved external execution blocks the next submission even after a task state change.
     pub execution_wait: Option<String>,
     pub executions: Vec<Value>,
@@ -303,6 +305,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         url: b.url(v.issue.number),
         task: v.projection.task.clone(),
         revision: v.projection.revision,
+        updated: v.comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.created).chain(Some(v.issue.created)).filter(|t|*t>0).max(),
         execution_wait: executions.iter().find(|x|x["state"]!="running" || x["attempt"].as_u64()!=v.projection.task.attempt)
             .map(|x|format!("execution {} on {}: {}: {}",x["id"],x["host"].as_str().unwrap_or("?"),
                 x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable")))
@@ -432,7 +435,7 @@ impl Row {
     }
 
     pub fn json(&self) -> Value {
-        let mut row = json!({"n": self.n, "title": self.title, "state": self.task.state.name(), "labels": self.labels, "url": self.url, "revision": self.revision,
+        let mut row = json!({"n": self.n, "title": self.title, "state": self.task.state.name(), "labels": self.labels, "url": self.url, "revision": self.revision, "updated": self.updated,
             "session": self.task.session, "attempt": self.task.attempt, "role": self.task.role,
             "deps": self.deps.iter().filter(|b| b.dep.repo.is_none() && b.reason == "open").map(|b| b.dep.n).collect::<Vec<_>>(),
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
@@ -686,7 +689,7 @@ mod tests {
     #[test]
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
-        let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, execution_wait: None,
+        let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
             executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
@@ -710,7 +713,7 @@ mod tests {
     fn codex_thread_links_only_on_its_host_else_dashq_progress() {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
-        let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, execution_wait: None,
+        let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
             executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
@@ -757,7 +760,7 @@ mod tests {
 
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
-        let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0,
+        let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
             execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
@@ -916,4 +919,16 @@ mod tests {
             assert_eq!((v["state"].as_str(), v["reason"].as_str()), (Some("unknown"), Some(STALE)), "{name} stale");
         }
     }
+    // CS2/R12: poll, labels, edited and untrusted comments cannot manufacture conversation activity.
+    #[test]
+    fn sidebar_activity_projects_trusted_comment_time_not_observation() {
+        let log=vec![];let mut v=View {issue:board::Issue{number:1,created:100,updated:999,..Default::default()},projection:crate::core::project(1,&log,false),log,comments:vec![
+            board::Comment{id:1,created:150,trusted:true,edited:false,..Default::default()},
+            board::Comment{id:2,created:500,trusted:false,edited:false,..Default::default()},
+            board::Comment{id:3,created:600,trusted:true,edited:true,..Default::default()}],blockers:vec![]};
+        let read=|v:View|from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),1000,&[v],&[]).json()["tasks"][0]["updated"].clone();
+        assert_eq!(read(View{issue:v.issue.clone(),projection:crate::core::project(1,&[],false),log:vec![],comments:v.comments.clone(),blockers:vec![]}),150);
+        v.comments.clear();assert_eq!(read(v),100);
+    }
+
 }
