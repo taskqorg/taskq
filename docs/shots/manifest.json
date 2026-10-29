@@ -1,11 +1,11 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "bdcb433a72fa8567d9cb356a15930b5ab9d58626",
-  "binarySha256": "d81f04f7e6a44b236213ad84ee9f2e2c0f10da96af8d851e3c93f6ac6f8a9b74",
+  "sourceCommit": "dc674232db23548cd6108dbd48f10d850456574c",
+  "binarySha256": "3e1bb97840db713a89792c9e3b692380eb9aba92e225d770357710af9da24c0e",
   "environment": {
-    "os": "macOS 27.0.1",
-    "arch": "arm64",
-    "renderer": "WKWebView snapshot"
+    "os": "Windows",
+    "arch": "x86_64",
+    "renderer": "WebView2 snapshot"
   },
   "uiSources": {
     "src/tray.rs": "71739dcdf90a7e0afb925091cd7bd688e406527e",
@@ -34,7 +34,7 @@
     "src/workspace.js": "767454f4c1b291ae9b263f3a6b28dad56c1b579c",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "cfdd6efde5f68e25af2d74283a7c09312505fe1f",
-    "src/answer-card.js": "4bf705c13eec95ce3361f3fb07fb653827f816a0",
+    "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
     "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e"
   },
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "b723921e4eb1d8c66fdb9f7b73cf5ca29b0537966650ac0a7a8bdd07fd03d654"
+      "sha256": "985205153fe80862129aebc2d4377dc46b757d7599ab4e0f7ac6cc96e6a63a13"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "9c9c72d91e14b73c97aab95fe1d5896e55a3533673502f5a3e01181fb70902d3"
+      "sha256": "090caa5b5371c4f29877ecbd203217607a876900883bbc152844c4ece2e826b4"
     }
   ]
 }
