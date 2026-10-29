@@ -47,3 +47,7 @@ Main moved to `47297c724e7295202178c2b3840f1832505eb29e` (#1814) during validati
 `sh docs/shots/update.sh` regenerated native project/icon captures and source hashes from `f1c9e387eae8686570b9a86ce9512e0b682cb72e`; the actual manifest freshness check passes. All 25 component files and the opacity browser instrument pass on the latest bundle. All six regenerated Off/95%/90% model frames were visually inspected; controls, body text and footer remain visible. Their composition remains a model, not A3 evidence.
 
 `python3 scripts/check.py --base 47297c724e7295202178c2b3840f1832505eb29e` remains FAIL/sandbox-blocked: 579 passed, the same 18 worker-context host-policy/lifecycle failures, 33 ignored; 232.684 s on this macOS worker. The unchanged R8 trace/size guard and both opacity tests pass. Offline selftest again passes 99 traces, formats and private telemetry without reading the board. The final commit records these observations and the already-tested root formatting/assets; it changes no implementation or dependency. Native A3 and merge-result CI remain open.
+
+## Native composition (PM)
+
+macOS composition, contrast at 90% and Off restoration: Pass; Windows WebView2: Not tested. Details and screens: [native/](native/README.md).
