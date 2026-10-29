@@ -78,6 +78,14 @@ pub struct Answered {
     pub text: String,
 }
 
+impl Answered {
+    /// The one § 5 wording every surface reads: `already answered by <by>: <text>`.
+    fn line(&self) -> String {
+        let by = if self.by.is_empty() { String::new() } else { format!(" by {}", self.by) };
+        format!("already answered{by}: {}", self.text)
+    }
+}
+
 /// § 5 `answered` of `log` from its `comments`: the answer that closed the last question, its writer and delivered text.
 pub fn answered_in(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::Comment]) -> Option<Answered> {
     let id = p.closing_answer(n, log)?;
@@ -96,9 +104,8 @@ impl Receipt {
     /// § 5 late answer: `already answered by <by>: <text>` in place of stale or refusal advice; no other receipt changes.
     fn late(self, answered: Option<Answered>) -> Receipt {
         let Some(a) = answered else { return self };
-        let by = if a.by.is_empty() { String::new() } else { format!(" by {}", a.by) };
         let next = if self.state == Some("doing") { format!("To add to it: `taskq steer {} --text T`.", self.task) } else { format!("Read `taskq inbox {}`.", self.task) };
-        Receipt { reason: format!("#{} already answered{by}: {}", self.task, a.text), next, answered: Some(a), ..self }
+        Receipt { reason: format!("#{} {}", self.task, a.line()), next, answered: Some(a), ..self }
     }
     fn new(n: u64, op: &Op, outcome: &'static str, reason: impl Into<String>, next: impl Into<String>) -> Receipt {
         Receipt { task: n, op_id: op.id.clone(), outcome, state: None, revision: None, reason: reason.into(), next: next.into(), extra: String::new(), answered: None, note: None }
@@ -122,10 +129,11 @@ impl Receipt {
         }
         self
     }
-    /// The § 5 text: `#N <state>` (plus extra lines), else `Error:` and `Next:`.
+    /// The § 5 text: `#N <state>` (plus extra lines and, once, who answered first), else `Error:` and `Next:`.
     pub fn text(&self) -> String {
         if self.ok() {
-            join(&[&format!("#{} {}", self.task, self.state.unwrap_or("unknown")), &self.extra, &self.reason, &self.next]).replace("\n\n", "\n")
+            let won = self.answered.as_ref().map(Answered::line).unwrap_or_default();
+            join(&[&format!("#{} {}", self.task, self.state.unwrap_or("unknown")), &self.extra, &won, &self.reason, &self.next]).replace("\n\n", "\n")
         } else {
             let why = if self.reason.starts_with('#') { self.reason.clone() } else { format!("#{}: {}", self.task, self.reason) };
             format!("Error: {}\nNext: {}", crate::compact(&why, 153), crate::compact(&self.next, 154))
@@ -137,24 +145,49 @@ impl Receipt {
 }
 
 /// Preserve a late answer's original meaning; a reused option number never answers a newer card (§ 2/§ 5).
-fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op: &Op, log: &[Entry]) -> Receipt {
+/// `now`: the task's state and revision. A repeat of the winning answer writes nothing (#1861); a closed task takes no note.
+#[allow(clippy::too_many_arguments)]
+fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op: &Op, log: &[Entry], now: (State, u64)) -> Receipt {
     let source = op.revision.or_else(|| {
         let p = core::project(n, log, false);
         let id = p.closing_answer(n, log)?;
-        Some(core::revision(n, &log.iter().filter(|e| e.id < id).cloned().collect::<Vec<_>>()))
+        Some(core::revision(n, &before(log, id)))
     });
     let said = if let Some(k) = args.first() {
-        let Some(r) = source else { return Receipt::rejected(n, op, "original question revision unavailable; answer text is required") };
-        let old: Vec<_> = log.iter().filter(|e| e.id <= r).cloned().collect();
-        let p = core::project(n, &old, false);
-        if p.revision != r { return Receipt::rejected(n, op, "original question revision unavailable") }
-        let Some(choice) = p.task.card.as_deref().and_then(|card| options(card).into_iter().find(|o| o.0.to_string() == *k)) else {
-            return Receipt::rejected(n, op, "choice not found in the original question");
-        };
-        choice.1
-    } else { text.to_string() };
-    let r = source.unwrap_or(0).to_string();
-    act_as(b, root, n, "steer", &["answer", &r], &said, &Op { id: op.id.clone(), revision: None }, None, None)
+        source.ok_or("original question revision unavailable; answer text is required").and_then(|r| {
+            let p = core::project(n, &log.iter().filter(|e| e.id <= r).cloned().collect::<Vec<_>>(), false);
+            if p.revision != r { return Err("original question revision unavailable") }
+            p.task.card.as_deref().and_then(|card| options(card).into_iter().find(|o| o.0.to_string() == *k)).map(|o| o.1)
+                .ok_or("choice not found in the original question")
+        })
+    } else { Ok(text.to_string()) };
+    if let Some(id) = said.as_ref().ok().zip(source).and_then(|(said, r)| same_answer(n, log, r, said)) {
+        let by = b.comments(n).unwrap_or_default().into_iter().find(|c| c.id == id).map(|c| c.author).unwrap_or_default();
+        let answered = Answered { by, text: core::delivery(n, log, id) };
+        return Receipt { reason: "Same answer; nothing saved".into(), answered: Some(answered), ..Receipt::accepted(n, op, now.0, now.1) };
+    }
+    match said {
+        _ if now.0 == State::Closed => Receipt::rejected(n, op, format!("#{n} is closed")),
+        Err(why) => Receipt::rejected(n, op, why),
+        Ok(said) => {
+            let r = source.unwrap_or(0).to_string();
+            act_as(b, root, n, "steer", &["answer", &r], &said, &Op { id: op.id.clone(), revision: None }, None, None)
+        }
+    }
+}
+
+/// The entries of `log` before entry `id`.
+fn before(log: &[Entry], id: u64) -> Vec<Entry> {
+    log.iter().filter(|e| e.id < id).cloned().collect()
+}
+
+/// The accepted answer of `log` to the question at revision `source` that delivered `said`, whitespace aside (#1861).
+fn same_answer(n: u64, log: &[Entry], source: u64, said: &str) -> Option<u64> {
+    let p = core::project(n, log, false);
+    let words = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    log.iter().filter(|e| p.accepts(e.id) && core::kind(n, &e.body) == "answer")
+        .find(|e| core::revision(n, &before(log, e.id)) == source && words(&core::delivery(n, log, e.id)) == words(said))
+        .map(|e| e.id)
 }
 
 fn note_receipt(b: &dyn Board, mut r: Receipt, n: u64, log: &[Entry], op: &Op) -> Receipt {
@@ -162,7 +195,6 @@ fn note_receipt(b: &dyn Board, mut r: Receipt, n: u64, log: &[Entry], op: &Op) -
         r.note = Some(true);
         r.reason = if r.state == Some("doing") { "Saved as a task note; queued to steer the worker" } else { "Saved as a task note; the current question is unchanged" }.into();
         if e.body.starts_with("taskq: steer answer ") { r.answered = answered(b, n, "answer", log, false); }
-        if let Some(a) = &r.answered { r.reason.push_str(&format!("; already answered by {}: {}", a.by, a.text)); }
     }
     r
 }
@@ -216,6 +248,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         bound = Op { id: op.id.clone(), revision: Some(rev) }; &bound
     } else { op };
     if !issue.open {
+        if kind == "answer" && attempt.is_none() { return answer_note(b, root, n, args, text, op, &log, (State::Closed, rev)); }
         return Receipt::rejected(n, op, format!("#{n} is closed"));
     }
     // § 1: only `start` or a person admits an issue; a `ready` without `taskq` would never spawn or show in status
@@ -224,7 +257,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         return Receipt { state: Some(before.state.name()), revision: Some(rev), next: format!("Owner: add the {} label to #{n} on the board, then retry.", service::TASK_LABEL), ..r };
     }
     if kind == "answer" && attempt.is_none() && (op.revision.is_some_and(|r| r != rev) || before.state != State::Ask) {
-        return answer_note(b, root, n, args, text, op, &log);
+        return answer_note(b, root, n, args, text, op, &log, (before.state, rev));
     }
     let owner_note = kind == "steer" && attempt.is_none();
     if !owner_note && op.revision.is_some_and(|r| r != rev) {
@@ -280,7 +313,8 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         }
         log[i].edited = true;
         if kind == "answer" && attempt.is_none() {
-            return answer_note(b, root, n, args, &text, op, &log);
+            let p = core::project(n, &log, deps);
+            return answer_note(b, root, n, args, &text, op, &log, (p.task.state, p.revision));
         }
         let projection = core::project(n, &log, deps);
         let (t, rev) = (projection.task, projection.revision);
@@ -981,7 +1015,18 @@ g", &["taskq".into()]).unwrap();
         let late = act(&b,&root,n,"answer",&["2"],"",&op("late",card));
         assert_eq!((late.outcome,late.state),("accepted",Some("doing")));
         assert_eq!(late.answered.as_ref().unwrap().text,"old x");
-        assert!(late.reason.contains("task note") && late.reason.contains("already answered by alex"));
+        assert!(late.reason.contains("task note") && !late.reason.contains("old x"), "{}", late.reason);
+        assert_eq!(late.text().matches("old x").count(), 1, "#1861: the receipt names the winner once
+{}", late.text());
+        assert!(late.text().contains("already answered by alex: old x"));
+        let written = count();
+        for (id, args, text) in [("same", &["1"][..], ""), ("same-text", &[][..], " old  x ")] {
+            let same = act(&b,&root,n,"answer",args,text,&op(id,card));
+            assert_eq!((same.outcome,same.state,same.reason.as_str()),("accepted",Some("doing"),"Same answer; nothing saved"),"{id}");
+            assert_eq!(same.text().matches("old x").count(), 1, "{id}: {}", same.text());
+            assert_eq!(same.answered.as_ref().map(|a| a.by.as_str()), Some("alex"));
+        }
+        assert_eq!(count(),written,"#1861: a repeat of the winning answer saves no note and steers nothing");
         let log = entries(&b,n).unwrap();
         assert_eq!(core::delivery(n,&log,*fold(n,&log,false).inbox.last().unwrap()),"old y");
         let written = count();
@@ -1011,6 +1056,21 @@ g", &["taskq".into()]).unwrap();
         for text in ["A1. no loss","old x","old y","new x","new y","ask once immediately","Before hand-in"] {assert!(context.contains(text),"{text}");}
         let v:serde_json::Value=serde_json::from_str(&r.json()).unwrap();
         assert_eq!((v["task"].as_u64(),v["op_id"].as_str()),(Some(n),Some("raced")));
+        let third = b.comment(n,&entry("ask",&[],Some(a),"Problem: Third
+1. z
+2. w")).unwrap();
+        b.state.borrow_mut().race = Some(core::with_fields(entry("answer",&["1"],None,"z"),Some("winner-z"),Some(third)));
+        let notes = |b: &Fake| entries(b,n).unwrap().iter().filter(|e| core::kind(n,&e.body) == "steer").count();
+        let noted = notes(&b);
+        let r = act(&b,&root,n,"answer",&["1"],"",&op("raced-same",third));
+        assert_eq!((r.outcome,r.reason.as_str()),("accepted","Same answer; nothing saved"),"{}",r.text());
+        assert_eq!(notes(&b),noted,"#1861: losing the race to the same answer writes no note");
+        b.close(n).unwrap();
+        let written = count();
+        assert_eq!(act(&b,&root,n,"answer",&["1"],"",&op("closed-same",third)).outcome,"accepted");
+        let other = act(&b,&root,n,"answer",&["2"],"",&op("closed-other",third));
+        assert_eq!((other.outcome,other.reason.as_str()),("rejected",format!("#{n} is closed").as_str()));
+        assert_eq!(count(),written,"a closed task takes no note");
         std::fs::remove_dir_all(root).unwrap();
     }
 

@@ -78,6 +78,26 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   assert(thread.includes('Answered by alex: use x')&&thread.includes('Saved as a task note')&&!thread.includes('data-a="answer-steer"'),thread);
   assert(!/revision|taskq|alert/.test(thread),thread);
   assert(call('answerNotices').includes('#900 · Answered by alex: use x'),'Attention names the winner too');
+  // #1861 A2/A4: the owner repeating the PM's answer got a duplicate note, a red error and the option twice.
+  // The same answer is now a quiet no-op receipt that names the winner once; a stale control reads amber, not red.
+  const same={id:'race-same',task:900,revision:7,text:'use x'};
+  const samePromise=call('answerSend',board,same);
+  call('answerReceipt',{root:'project',id:same.id,state:'accepted',reason:'Same answer; nothing saved',next:'',answered:{by:'alex',text:'use x'}});
+  assert.equal((await samePromise).state,'accepted');
+  assert(call('answerToast').includes('#900 · already answered'),call('answerToast'));
+  const sameLine=call('answerNotices').split('<div').find(l=>l.includes('Same answer'))||'';
+  assert(sameLine.includes('#900 · Answered by alex: use x · Same answer; nothing saved'),sameLine);
+  assert(!/already answered|alert/.test(sameLine),'the winner is named once, never red: '+sameLine);
+  const stale={id:'race-stale',task:900,revision:7,action:'start'};
+  call('answerSend',board,stale);
+  call('answerReceipt',{root:'project',id:stale.id,state:'stale',reason:'',next:''});
+  const notice=id=>call('answerNotices').split('<div').find(l=>l.includes('project#'+id))||'';
+  const staleLine=notice(stale.id);
+  assert(staleLine.includes('task changed; action not sent')&&!/alert/.test(staleLine),staleLine);
+  const refused={id:'race-closed',task:900,revision:7,action:'start'};
+  call('answerSend',board,refused);
+  call('answerReceipt',{root:'project',id:refused.id,state:'rejected',reason:'#900 is closed',next:''});
+  assert(/alert/.test(notice(refused.id)),'a real refusal stays red');
   assert.equal(call('answerSteerComposer',board,{...running,state:'review'}),'','steer needs a running worker');
   assert.equal(call('answerWon',board,{...running,state:'ask'}),'','a new question replaces the answered line');
   call('save',board,{n:900},{draft:'one new instruction'});
