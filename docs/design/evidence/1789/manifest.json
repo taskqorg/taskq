@@ -12,8 +12,50 @@
   "sha256": {
     "src/icon.rs": "e7ad9c3eb30fe536be4abe6691bd8f0006d07ecc166473eb32bf68a783a5d2cf",
     "src/tray.rs": "dcff456d22cc08c1dce12310f69f3fc85461cfb09731d49b0f1a6c920c1ee7e2",
-    "docs/design/evidence/1789/12.png": "e2bb7421a1d1929450de4ee2d1dfa1c285848a7d701218ce05b50adcf9a1d9ae",
-    "docs/design/evidence/1789/8.png": "e8b6ee3cbe6c7ff61900635eacc5fee720ec039a988380052f26984876bc814a",
-    "docs/design/evidence/1789/mixed.png": "eaf60940d2dc4d186a75014d50cc9018d0554e0d74959dfef5bb00e3ebcfb1e1"
-  }
+    "docs/design/evidence/1789/12.png": "aa127a155459714c9a203ae44cc9779e46a8ec77ea8244de1976eb7ba9432b63",
+    "docs/design/evidence/1789/8.png": "79a2eec62288da61f9eb9bbb1fd89ecb984300f7eba7025eb38711cd104285e3",
+    "docs/design/evidence/1789/mixed.png": "d392ee461d19a3bc3d5d8ba2becee0f109eb78964567b37dbf2bdb8d013985b4"
+  },
+  "review": "Three light-theme before/after sheets (six views); dark matrix inspected but not retained as duplicate variants.",
+  "testedCandidate": "3a33a1a5",
+  "gate": {
+    "command": "python3 scripts/check.py --base origin/main",
+    "outcome": "sandbox-blocked",
+    "passed": 565,
+    "failedHostAuthorityCases": 18,
+    "ignored": 33,
+    "elapsedSeconds": 155.279,
+    "budgetSeconds": 900,
+    "integration": "not reached"
+  },
+  "componentArtifactChecks": [
+    "node tests/answer-card.test.cjs",
+    "node tests/display-model.test.cjs",
+    "node tests/finding-composer.test.cjs",
+    "node tests/pm-composer.test.cjs",
+    "node tests/project-blocks.test.cjs",
+    "node tests/resource-controls.test.cjs",
+    "node tests/task-controls.test.cjs",
+    "node tests/task-views.test.cjs",
+    "node tests/task-workspace.test.cjs",
+    "node tests/tray-action.test.cjs",
+    "node tests/tray-agentq.test.cjs",
+    "node tests/tray-agents.test.cjs",
+    "node tests/tray-answer.test.cjs",
+    "node tests/tray-home-ai.test.cjs",
+    "node tests/tray-incidents.test.cjs",
+    "node tests/tray-navigation.test.cjs",
+    "node tests/tray-press.test.cjs",
+    "node tests/tray-resources.test.cjs",
+    "node tests/tray-running.test.cjs",
+    "node tests/tray-settings.test.cjs",
+    "node tests/tray-setup.test.cjs",
+    "node tests/tray-view-state.test.cjs",
+    "node tests/tray-web.test.cjs",
+    "node tests/ui-architecture.test.cjs",
+    "node tests/ui-runtime.test.cjs",
+    "sh docs/shots/check.test.sh",
+    "sh .github/release-tag.test.sh",
+    "python3 .github/release-check.test.py"
+  ]
 }

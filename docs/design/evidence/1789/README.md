@@ -10,7 +10,7 @@ A temporary Cargo example compiled the baseline `src/icon.rs` and candidate rend
 
 The initial development test incorrectly treated the baseline as the bottom ink bound; SF numeral overshoot made its 9.01 pt assertion fail on a single digit. The corrected bound is the chart's first possible mark at y=10.5. The independent baseline/candidate instrument then confirmed the actual overflow defect above. No chart, font or overlap protection was weakened.
 
-The three inline panels show original 2× rasters, nearest-neighbor detail and square Dock exports. All activity is synthetic. These are **canonical renderer exports, not installed menu-bar or Dock screenshots**. The native SF outlines are real; OS placement, translucency and presentation are not qualified.
+The three inline panels retain the light-theme before/after pairs: six views total, with original 2× rasters, nearest-neighbor detail and square Dock exports. Dark-theme matrix exports were inspected but are not retained as duplicate review variants. All activity is synthetic. These are **canonical renderer exports, not installed menu-bar or Dock screenshots**. The native SF outlines are real; OS placement, translucency and presentation are not qualified.
 
 ![8: preserved single digit](8.png)
 
@@ -45,3 +45,11 @@ The expanded pause mask retains the original cleared Q region and also covers th
 - The first release build refused the inline dynamic-mask `write!` with `instrumentation changed source lines`. The equivalent multiline `push_str(format!(...))` form passed instrumentation and the release build; the mask geometry is unchanged.
 
 The first canonical gate on `4f77e899` ran 233.243 s: 564 passed, 19 failed, 33 ignored. All icon checks, including the expanded pause mask, and the native-canvas adapter check passed. One failure was ours: Product prose grew the 61,438-byte contract beyond its 60 KiB R8 limit. Product now links exact counts compactly; the six-bin decision remains in I3. The 18 other failures exercise host install, capacity, recovery or Stop under worker authority. No permission guard or test assertion was relaxed. The corrected contract is exactly 61,440 bytes and 300 lines.
+
+## Corrected candidate receipt
+
+On `3a33a1a5`, `python3 scripts/check.py --base origin/main` is **sandbox-blocked, not PASS**: 565 passed, 18 host-authority cases failed, 33 ignored; 155.279 s / 900 s. The R8 contract-size/golden-table check and all icon/canvas tests passed. Explicit refusals include `a worker cannot install the host service`, `a worker cannot change host policy` and worker Stop/restart refusal. Integration tests were not reached. Worker authority and every assertion remain unchanged.
+
+The gate stopped before its later stages. Those were run separately: all 25 `tests/*.test.cjs` component scripts and three artifact scripts passed (28 checks, 55.493 s; exact commands in the manifest). Isolated `TASKQ_INSTALL`, `TASKQ_SELFTEST_OFFLINE=1` with `cargo +stable run --locked -- selftest` passed 99 golden traces and formats, committed 9 staged observations and intentionally left the board unknown. The running collector was not used.
+
+Final evidence edits only reduce the review set to three light before/after pairs and record receipts/hashes. The tested Rust and contract bytes are unchanged. `8` was also compared byte-for-byte before/after in both themes and is identical. The three final sheets and both README captures were opened and inspected. Installed Mac menu-bar/Dock evidence and Windows native availability remain Not tested; publication needs green merge-result `merge_group` CI (R12, §7).
