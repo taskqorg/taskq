@@ -192,7 +192,7 @@ module.exports=execution.module('conversations',{
     return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime),
      h('div',{class:'dialogue-transcript',role:'log','aria-label':'Live worker session'},
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
-      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):live.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
+      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):live.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
    },
    workerRead:function(){
     const l=live;if(!l)return;l.timer=null;

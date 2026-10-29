@@ -1266,8 +1266,29 @@ pub fn recover(root:&Path,install:&Path,task:u64,x:&crate::core::Execution)->Res
 
 fn turn_text(env: &Env, l: &Launch, fetch: impl FnMut(&str) -> Result<String, String>) -> Result<String, StartError> {
     let mut task = brief(env, l);
-    if let Some(answer) = &l.resume { task.push_str(&format!("\nContinue this same attempt with the following inbox message:\n{answer}")); }
+    match &l.resume {
+        Some(answer) => {
+            task.push_str(&format!("\nContinue this same attempt with the following inbox message:\n{answer}"));
+            if turn_inbox(answer).is_none() { task.push_str(&format!("\n{}", turn_marker(&[("answer", answer)]))); }
+        }
+        None => task.push_str(&format!("\n{}", turn_marker(&[]))),
+    }
     rule_text(env.root, &task, l.resume.is_some(), fetch)
+}
+
+const TURN_MARKER: &str = "taskq-turn ";
+
+/// #1834: the last line of every input the service composes for a worker session marks TaskQ as its author and lists
+/// the owner's inbox entries it delivers (§ 4 step 6), so the live worker view labels turns by author, not by wording.
+pub fn turn_marker(inbox: &[(&str, &str)]) -> String {
+    let inbox: Vec<serde_json::Value> = inbox.iter().map(|(kind, text)| serde_json::json!({"kind": kind, "text": text})).collect();
+    format!("{TURN_MARKER}{}", serde_json::json!({"inbox": inbox}))
+}
+
+/// The inbox entries named by the marker on the last line of `text`; None when it has none (an older input).
+pub fn turn_inbox(text: &str) -> Option<Vec<serde_json::Value>> {
+    let line = text.trim_end().rsplit('\n').next()?.strip_prefix(TURN_MARKER)?;
+    serde_json::from_str::<serde_json::Value>(line).ok()?["inbox"].as_array().cloned()
 }
 
 /// Keep OS failure classes until the service decides whether a start failure is TaskQ's fault.
@@ -1348,7 +1369,7 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
             Some(_) => {
                 if let Err(message) = turn.queue() { turn.queue_error = Some(format!("{message}; submission outcome unknown")); }
             }
-            None => turn.hand = Some(start(env, l, &turn.log, &format!("{}\n{HANDSHAKE}", session_name(l)), &access)?),
+            None => turn.hand = Some(start(env, l, &turn.log, &format!("{}\n{HANDSHAKE}{}", session_name(l), turn_marker(&[])), &access)?),
         }
         return Ok(Box::new(turn));
     }
@@ -4154,8 +4175,10 @@ mod tests {
                     assert_eq!(bodies, 1 + SPECQ_CORE.len());
                     assert!(rules.contains(&format!("\n{CONTRACT}\n")), "{rt} {role}: whole current contract");
                     for file in SPECQ_CORE { assert_eq!(rules.matches(&format!("\n--- specq/{file} ---\n{}\n", rule(&url(file)).unwrap())).count(), 1); }
-                    if let Some(answer) = &l.resume { assert!(task.ends_with(answer)); }
-                    else { assert_eq!(task, brief(&env, &l)); }
+                    // #1834: the service's author marker is the last line; a resume still delivers the answer verbatim.
+                    let inbox = turn_inbox(task).unwrap();
+                    if let Some(answer) = &l.resume { assert!(task.contains(answer)); assert_eq!(inbox, vec![serde_json::json!({"kind": "answer", "text": answer})]); }
+                    else { assert_eq!(task, format!("{}\n{}", brief(&env, &l), turn_marker(&[]))); assert!(inbox.is_empty()); }
                     assert_eq!(l.session, "same-session");
                     // Native sessions do not inherit the child env; without the prefix `result` is refused as a non-worker.
                     let prefix = if cfg!(windows) && rt == "codex-app" { "$env:TASKQ_TASK='7'; $env:TASKQ_ATTEMPT='42'; " } else { "env TASKQ_TASK=7 TASKQ_ATTEMPT=42 " };

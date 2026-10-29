@@ -54,7 +54,7 @@ Prototype path: the owner writes in the existing steer composer under the live p
 The board records a `steer` entry (R1: the board stays the only state), the service resumes the live attempt session with that text as the next user turn, and the live panel shows it within about a second of the runtime recording it.
 Answers to asks follow the same rules unchanged: the answer card is the only way to answer, and permissions stay those of the worker (R9).
 
-Authorship: user turns that start with the taskq brief prefix ("Before any work, ") are labeled "TaskQ brief for this turn"; other user turns are labeled "You · via the board"; assistant text is labeled "Worker".
+Authorship ([#1834](https://github.com/taskqorg/taskq/issues/1834)): the service ends every input it composes for a worker session with one marker line, `taskq-turn {"inbox":[{"kind":"answer"|"steer","text":…}]}`, listing the owner's board entries that input delivers. The view reads the marker from the user turn itself (Codex CLI) or from the turn input file its pointer names (Claude, Codex app). A marked turn is labeled "TaskQ brief for this turn" and is followed by one item per delivered entry: an answer is labeled "Your answer · via the board", a steer "You · via the board". Only the last line counts, so text an owner wrote above it cannot pose as a marker. Turns without a marker (inputs written before #1834, or whose input file was pruned) keep the older labels: a pointer ("Before any work, ") is the brief, any other user turn the owner. Assistant text is labeled "Worker".
 The probe showed a free-text prompt labeled as the owner. The steer delivery itself is the shipped path and was not re-run against a live board task, because that writes to the public board.
 
 Timing: with today's launch modes owner input reaches the session at the next turn, never mid-turn: Claude `--bg` has no input channel and Codex `exec` reads its prompt once.
@@ -70,11 +70,11 @@ Mid-turn delivery exists only on the interactive surfaces (Claude `stream-json` 
 - Secrets in command output: command output (tool results) is never shown in the view. Tool lines mask `NAME=value` when the name ends in TOKEN, SECRET, PASSWORD or API_KEY, and token-shaped words with known prefixes (GitHub, GitLab, OpenAI-style `sk-`, Slack, AWS key ids). Not covered: secrets inside assistant or owner text, other formats such as JSON bodies or base64, and local file paths in tool lines. The view is local to the host and none of it is written to the board.
 - Reach: the panel works only when the worker runs on the host of the viewing service. Remote workers need the host link to carry the read.
 - Codex tool lines currently show raw tool code (for example `exec text(await tools.exec_command(...`) because newer Codex records commands as custom tool calls; a readable summary is follow-up work.
-- Author labels are a text heuristic: service-generated next-turn texts other than the brief (for example answer deliveries) are labeled as the owner.
+- Author labels of inputs without the #1834 marker stay a text heuristic: a delivery in such an input is labeled as the owner, or hidden inside the brief when its input file was pruned.
 
 ## A5. Architecture options
 
-One runtime-neutral item schema serves all options: `{at, i, role: worker|owner|brief|tool, text, tool?, state?}`, where `at` and `i` are the D4 record identity. The prototype already returns this shape.
+One runtime-neutral item schema serves all options: `{at, i, role: worker|owner|brief|tool, text, kind?, tool?, state?}`, where `at` and `i` are the D4 record identity and `kind` (answer or steer) names a delivered owner entry. The prototype already returns this shape.
 
 ### A. Transcript tail (prototype)
 

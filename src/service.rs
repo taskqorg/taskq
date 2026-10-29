@@ -1675,8 +1675,9 @@ impl<'a> Service<'a> {
                 session = crate::runtime::codex_thread(&crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
             }
             let text: Vec<String> = new.iter().map(|c| core::delivery(n, &v.log, c.id)).collect();
+            let inbox: Vec<(&str, &str)> = new.iter().zip(&text).map(|(c, t)| (core::kind(n, &c.body), t.as_str())).collect();
             l.session = session;
-            l.resume = Some(text.join("\n\n"));
+            l.resume = Some(format!("{}\n{}", text.join("\n\n"), crate::runtime::turn_marker(&inbox)));
             if l.session.is_empty() {
                 self.execution_waits.insert(n,"session identity unknown; recover the original native session".into());
                 pending.insert((n,a));
@@ -2417,6 +2418,9 @@ mod tests {
             recovered.pass().unwrap();
             assert_eq!(calls.borrow().len(),refused as usize + 1);
             assert!(calls.borrow().iter().all(|(input,_)|input.contains("retained user input")));
+            // #1834: the input's marker names the delivered steer as the owner's, for the live worker view.
+            let inbox = crate::runtime::turn_inbox(&calls.borrow().last().unwrap().0).unwrap();
+            assert_eq!(inbox[0], serde_json::json!({"kind":"steer","text":"retained user input"}));
             assert!(core::delivered(n,&entries(&b,n).unwrap(),a).unwrap() >= cursor);
             let execution = recovered.kids[0].execution;
             assert_eq!(calls.borrow().last().unwrap().1,execution,"adapter receives the exact continuation intent");
