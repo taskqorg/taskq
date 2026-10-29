@@ -646,7 +646,7 @@ pub fn sweep(install: &Path, shim: &Path) {
         match version {Ok(version)=>keep.push(version),Err(_)=>unknown=true}
     }
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "installation-id", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
@@ -1516,10 +1516,11 @@ mod tests {
         // H-A5: update keeps policy, interrupted writes, exact native recovery and the qualified rollback floor.
         let protected=[("host.json","{\"limits\":{\"codex\":2},\"owner_field\":\"keep\"}"),
             ("host.json.pending","interrupted policy; preserve"),("service","123"),("service.lock",""),("poke","wake"),
-            ("restart","restart requested"),("update","update requested"),("projects.lock","")];
+            ("restart","restart requested"),("update","update requested"),("projects.lock",""),("link-key","host link key; keep")];
         for (name,text) in protected {fs::write(install.join(name),text).unwrap();}
         fs::create_dir_all(install.join("host-policy-migration")).unwrap();
         fs::write(install.join("host-policy-migration/original.json"),"original configuration").unwrap();
+        fs::create_dir_all(install.join("link")).unwrap();
         let native=crate::kids_path(&install,&root).unwrap();fs::create_dir_all(native.parent().unwrap()).unwrap();
         let owner=coreq::process::identity(std::process::id()).unwrap().unwrap();
         let recovery=format!("pid {} {} executor-v1\n7 41 codex 123 child 43 40\n",owner.pid,owner.started);
@@ -1544,7 +1545,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&native).unwrap(),recovery);
         assert_eq!(crate::kids_file(&install,&root).unwrap()[0].execution,43,"native execution identity survives update");
         assert_eq!(fs::read_to_string(install.join("rollback-floor")).unwrap(),"4.2.0");
-        let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resource-state", "resources", "taskq", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor"];
+        let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resource-state", "resources", "taskq", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor", "link"];
         owned.extend(protected.iter().map(|(name,_)|*name));owned.sort();
         assert_eq!(ls(&install),owned);
         assert_eq!(crate::admission::hold(&install).as_deref(), Some("invented incident hold"), "update cleanup must never release an emergency hold");

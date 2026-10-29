@@ -66,6 +66,31 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.evaluate(()=>taskq.receive({workerPanelClosed:true}));await reply(m,{items:[],end:0});await page.waitForTimeout(1200);
    assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-dialogue'&&m.action==='transcript').length),0,'A3: native close cancels polling too');
   }
-  assert.deepEqual(errors,[]);console.log('#1831 live worker panel: first render, append, attempt fence and teardown passed for Claude/Codex');
+  {
+   // #1832 A1/A3: a worker on another host gets the same panel and request; its host answers over the host link, and
+   // a host that does not answer reads unknown with the reason, never an empty session.
+   const board='https://example.org/alpha/issues',thread='task:'+board+'/7';
+   const task={n:7,title:'Remote worker',state:'doing',role:'worker',attempt:81,runtime:'codex',local_session:false,host:'other-host',session:'codex:invented-native other-host'};
+   await page.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+   await page.evaluate(()=>{window.sent=[];window.ipc={postMessage:text=>sent.push(JSON.parse(text))};});
+   await page.evaluate(s=>taskq.receive(s),{font:16,theme:'dark',host:'fixture-host',projects:[{root:'fixture-alpha',name:'Alpha',issues:board,alive:true,complete:true,tasks:[task]}],ai:{history:[]},conversations:{complete:true,items:[]},messages:{complete:true,entries:[]}});
+   await page.evaluate(board=>taskq.receive({open:{page:'conversations',board,task:7,root:'fixture-alpha'}}),board);
+   const take=async()=>{await page.waitForFunction(()=>sent.some(m=>m.a==='conversation-dialogue'&&m.action==='transcript'));return page.evaluate(()=>{const i=sent.findIndex(m=>m.a==='conversation-dialogue'&&m.action==='transcript');return sent.splice(i,1)[0];});};
+   const panel=page.locator('.worker-live');
+   let m=await take();
+   assert.deepEqual([m.attempt,m.root,m.session,m.host],[81,'fixture-alpha',undefined,undefined],'A2: the browser names the attempt, never a session or host');
+   assert.match(await panel.innerText(),/Live session · codex on other-host/);
+   await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'unknown',reason:'host other-host did not answer within 5 s'});
+   await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('did not answer'));
+   const text=await panel.innerText();
+   assert.match(text,/Live session unknown: host other-host did not answer within 5 s/);
+   assert.doesNotMatch(text,/No messages|Reading session/,'A3: unknown is never shown as an empty session');
+   m=await take();
+   await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'accepted',value:{items:[{at:0,i:0,role:'assistant',text:'Remote worker line'}],start:0,end:10,size:10}});
+   await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Remote worker line'));
+   assert.doesNotMatch(await panel.innerText(),/unknown/,'the next answered read clears the unknown reason');
+   m=await take();assert.equal(m.after,10,'D4: the next read continues after the remote page');
+  }
+  assert.deepEqual(errors,[]);console.log('#1831/#1832 live worker panel: first render, append, attempt fence, teardown and remote host passed');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

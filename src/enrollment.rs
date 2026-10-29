@@ -271,8 +271,12 @@ impl Sender {
 }
 
 /// Create once, outside release folders; a corrupt identity never silently becomes a new installation.
-pub fn installation_id(install: &Path) -> Res<String> {
-    let path = install.join("installation-id");
+pub fn installation_id(install: &Path) -> Res<String> { random_file(install, "installation-id") }
+
+/// 32 random bytes as hex in `<install>/<name>`, created once and kept when corrupt: the installation id and the host
+/// link key (#1832).
+pub fn random_file(install: &Path, name: &str) -> Res<String> {
+    let path = install.join(name);
     let read = || -> Res<Option<String>> {
         let bytes = fs::File::open(&path).and_then(|f| {
             let mut bytes = Vec::new();
@@ -282,17 +286,17 @@ pub fn installation_id(install: &Path) -> Res<String> {
         match bytes {
             Ok(b) if b.len() == 64 && b.iter().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c)) =>
                 Ok(Some(String::from_utf8(b).unwrap())),
-            Ok(_) => Err("installation-id: corrupt; file kept".into()),
+            Ok(_) => Err(format!("{name}: corrupt; file kept")),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(format!("installation-id: unreadable ({e}); file kept")),
+            Err(e) => Err(format!("{name}: unreadable ({e}); file kept")),
         }
     };
     if let Some(id) = read()? { return Ok(id) }
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
     let mut bytes = [0; 32];
-    SystemRandom::new().fill(&mut bytes).map_err(|_| "installation-id: randomness unavailable")?;
+    SystemRandom::new().fill(&mut bytes).map_err(|_| format!("{name}: randomness unavailable"))?;
     let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let temp = install.join(format!("installation-id-{id}.tmp"));
+    let temp = install.join(format!("{name}-{id}.tmp"));
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)] {
@@ -307,13 +311,13 @@ pub fn installation_id(install: &Path) -> Res<String> {
         match fs::hard_link(&temp, &path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-            Err(e) => Err(format!("installation-id: publish failed ({e})")),
+            Err(e) => Err(format!("{name}: publish failed ({e})")),
         }
     };
     let result = publish();
     let _ = fs::remove_file(&temp);
     result?;
-    read()?.ok_or("installation-id: missing after publication".into())
+    read()?.ok_or(format!("{name}: missing after publication"))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]

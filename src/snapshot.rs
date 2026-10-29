@@ -286,6 +286,8 @@ pub struct Host {
     pub limits: Vec<String>,
     /// The code of this host's tray interface fault (§ 4 step 3, #1755).
     pub tray: Option<String>,
+    /// Heartbeat `link <installation-id> <public key>` line ([host link](../docs/design/host-link.md), #1832).
+    pub link: Option<String>,
 }
 
 pub struct Snapshot {
@@ -356,6 +358,8 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),
         limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ")).map(str::to_string).collect(),
         tray: h.body.lines().find_map(|l| l.strip_prefix("tray ")).map(str::to_string),
+        // only a heartbeat the board trusts may name a key a host serves
+        link: h.body.lines().find_map(|l| l.strip_prefix("link ")).filter(|_| h.trusted).map(str::to_string),
     }).collect();
     Snapshot { source, observed, reason: None, board: identity(b, cfg), tasks, hosts }
 }
@@ -560,7 +564,11 @@ impl Snapshot {
         let caps: &[&str] = if self.source == "host" { &HOST_CAPS } else { &BOARD_CAPS };
         json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason,
             "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
-            "hosts": self.hosts.iter().map(|h| json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics})).collect::<Vec<_>>(),
+            "hosts": self.hosts.iter().map(|h| {
+                let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
+                if let Some(l) = &h.link { r["link"] = json!(l) }
+                r
+            }).collect::<Vec<_>>(),
             "capabilities": caps})
     }
 
@@ -826,6 +834,16 @@ mod tests {
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
         assert!(line.contains("mac v1.0 ") && !line.split(", ").next().unwrap().contains("stale") && line.split(", ").nth(1).unwrap().ends_with(" stale"), "{line}");
+    }
+
+    // Chain: § 4 Host link heartbeat key. Risk: an untrusted `taskq host` issue publishes a key that hosts then serve.
+    #[test]
+    fn host_link_keys_come_only_from_trusted_heartbeats() {
+        let beat = |title: &str, trusted| board::Issue { title: title.into(), body: "version 4
+link aa bb".into(), updated: 1000, trusted, ..Default::default() };
+        let snap = from_views("board", &crate::board::Fake::default(), &crate::tests::cfg(), 1000, &[], &[beat("taskq host mac", true), beat("taskq host evil", false)]);
+        let hosts = snap.json()["hosts"].clone();
+        assert_eq!((hosts[0]["link"].clone(), hosts[1].get("link")), (json!("aa bb"), None));
     }
 
     // Chain: R6 timed park -> status `Later:` line and JSON row (#1823). Risk: a timed park reads as open-ended, or

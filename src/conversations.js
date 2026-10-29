@@ -183,13 +183,14 @@ module.exports=execution.module('conversations',{
    },
    workerStop:function(){if(live){ui.cancel(live.timer);ui.cancel(live.timeout);}live=null;},
    workerClose:function(){workerPaused=true;api.workerStop();},
-   // The browser names only a registered project and attempt. The native adapter selects the session (A2).
+   // The browser names only a registered project and attempt. The native adapter selects the session (A2); a worker on
+   // another host answers through the host link (#1832), and a host that does not answer reads unknown, never empty.
    worker:function(thread,t,p){
-    if(workerPaused||!p?.alive||p.complete===false||!t?.local_session||t.state!=='doing'||t.role!=='worker'||!t.attempt){api.workerStop();return null;}
+    if(workerPaused||!p?.alive||p.complete===false||!(t?.local_session||t?.host)||t.state!=='doing'||t.role!=='worker'||!t.attempt){api.workerStop();return null;}
     if(live?.attempt!==t.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();live={thread,root:p.root,attempt:t.attempt,items:[],end:null,reason:'',busy:null,timer:null,timeout:null,ended:false,stick:true,anchor:null};}
     if(!live.ended&&!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null&&!live.reason?0:1000);
     const label={assistant:'Worker',owner:'You · via the board'};
-    return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime),
+    return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime+(t.local_session?'':' on '+t.host)),
      !live.stick&&h('button',{'data-c':'worker-latest',class:'dialogue-latest'},'Jump to latest'),
      h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Live worker session','data-id':thread},
       live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),

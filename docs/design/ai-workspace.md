@@ -30,7 +30,7 @@ The [#1580 owner answer](https://github.com/taskqorg/taskq/issues/1580#issuecomm
 
 **Live task worker panel (#1831).**
 
-A Doing task's Conversations thread shows its worker's live native transcript on the viewing host. The native read adapter resolves the session from the service's fresh, complete task/attempt snapshot and the attempt log; client session IDs never select a transcript. Each read is fenced to that attempt and registered project. Remote workers have no panel. Missing transcripts and stale or unreadable observations stay explicitly unavailable.
+A Doing task's Conversations thread shows its worker's live native transcript on the viewing host. The native read adapter resolves the session from the service's fresh, complete task/attempt snapshot and the attempt log; client session IDs never select a transcript. Each read is fenced to that attempt and registered project. A worker on another host of the board is read through the [host link](host-link.md) with the same request, answered by that host's own adapter; a host that does not answer within 5 s reads unknown with the reason. Missing transcripts and stale or unreadable observations stay explicitly unavailable.
 
 The open panel reads once a second and appends worker messages, owner turns delivered through the board, and one tool-name line per call. Tool arguments and command output are omitted. Closing or leaving the thread cancels polling; an ended or replaced attempt stops reads and discards late replies. Owner input continues through the next-turn steer path, never a native resume from this panel (D3).
 
