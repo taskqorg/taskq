@@ -87,7 +87,7 @@ pub fn label(kind: &str) -> &'static str {
     crate::display::NOTIFY.iter().find(|k| k.0 == kind).map_or("Event", |k| k.1)
 }
 
-/// Events of the tray's projects (`root`, `name`, `tasks`, `events` lines `[time, kind, attempt, n]`) after each
+/// Events of the tray's projects (`root`, `name`, `tasks`, `events` lines `[time, kind, attempt, n, outcome?]`) after each
 /// project's cursor, as posts; the cursor moves past every handled line, Off and Silent included. A project seen for
 /// the first time starts at `now`: older events never notify. The 4th banner within 10 s (sliding) opens one summary
 /// under one identifier, which the OS replaces as it grows. Task titles come from `tasks`, else from `titles`: the
@@ -168,10 +168,16 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
             let num = e[3].as_u64();
             let key = num.map(|x| x.to_string()).unwrap_or_default();
             let title = n["titles"][root][&key].as_str().or(known[&key].as_str()).map(String::from);
-            let body = match (num, &title) {
-                (Some(x), Some(t)) => format!("#{x} {t}"),
+            // § 7: a close names its outcome, never a bare `Closed` (#1800)
+            let head = match (num, e[4].as_str()) {
+                (Some(x), Some(o)) => format!("#{x} closed: {o}"),
                 (Some(x), None) => format!("#{x}"),
                 _ => String::new(),
+            };
+            let body = match &title {
+                Some(t) if e[4].is_string() => format!("{head} · {t}"),
+                Some(t) => format!("{head} {t}"),
+                None => head,
             };
             out.push(Post { root: root.into(), n: num, title: format!("{name} · {}", label(e[1].as_str().unwrap_or(""))), body, sound: m == "sound", id: json!({"root": root, "n": num, "k": e[1], "t": title, "e": line(e)}).to_string() });
         }
@@ -503,9 +509,11 @@ mod tests {
         let mut n = json!({"kinds": {"close": "banner"}});
         due(&mut n, &[proj(json!([]))], 100, &mut Bursts::new());
         let mut saved: Value = serde_json::from_str(&n.to_string()).unwrap();
-        let gone = json!({"root": "/p", "name": "p", "tasks": [], "events": [[200, "close", "6", 7]]});
+        let gone = json!({"root": "/p", "name": "p", "tasks": [], "events": [[200, "close", "6", 7], [201, "close", "8", 90, "replaced by #104 (ready)"]]});
         let p = due(&mut saved, &[gone], 210, &mut Bursts::new());
         assert_eq!(p[0].body, "#7 Fix it");
+        // #1800 (pilotq#90): a replaced close names its successor's state instead of a bare `Closed`
+        assert_eq!(p[1].body, "#90 closed: replaced by #104 (ready)");
         assert_eq!(serde_json::from_str::<Value>(&p[0].id).unwrap()["t"], "Fix it", "the click opens a card with its title");
         assert_eq!(saved["titles"]["/p"], json!({}), "only open tasks stay: bounded by the open tasks");
     }

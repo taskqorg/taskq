@@ -20,6 +20,39 @@ pub fn name(state: &str) -> &str {
     STATES.iter().find(|s| s.0 == state).map_or(if state == "closed" { "Closed" } else { state }, |s| s.1)
 }
 
+/// § 7 the successor a close verdict names: `superseded by #M` or `replaced by #M`, any case.
+pub fn successor(verdict: &str) -> Option<u64> {
+    let v = verdict.to_lowercase();
+    ["superseded by #", "replaced by #"].iter().find_map(|p| {
+        let rest = &v[v.find(p)? + p.len()..];
+        rest[..rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len())].parse().ok()
+    })
+}
+
+/// § 7 close outcome, the text after `closed: ` in events, notifications and `status --closed`: `replaced by #M
+/// (<its state>)`, `no change` (Changed `none`) or `delivered`, plus `, N items unverified` for each distinct
+/// `A<k> gap|unknown` of its Checks lines (moved items of a replaced task are not counted). No verdict: the issue
+/// closed on the board without `taskq: close`.
+pub fn close_outcome(verdict: Option<&str>, successor_state: Option<&str>) -> String {
+    let Some(v) = verdict else { return "closed on the board".into() };
+    if let Some(m) = successor(v) {
+        return format!("replaced by #{m} ({})", successor_state.unwrap_or("unknown"));
+    }
+    let changed = v.lines().find_map(|l| l.trim().strip_prefix("Changed:")).map(str::trim);
+    let what = if changed.is_some_and(|c| c.to_lowercase().starts_with("none")) { "no change" } else { "delivered" };
+    let mut items: Vec<&str> = v.lines().filter(|l| l.trim_start().starts_with("Checks:")).flat_map(|l| {
+        let w: Vec<&str> = l.split(|c: char| c.is_whitespace() || c == ',' || c == ';').filter(|w| !w.is_empty()).collect();
+        w.windows(2).filter(|p| p[0].starts_with('A') && p[0].len() > 1 && p[0][1..].bytes().all(|b| b.is_ascii_digit()) && matches!(p[1], "gap" | "unknown")).map(|p| p[0]).collect::<Vec<_>>()
+    }).collect();
+    items.sort();
+    items.dedup();
+    match items.len() {
+        0 => what.into(),
+        1 => format!("{what}, 1 item unverified"),
+        k => format!("{what}, {k} items unverified"),
+    }
+}
+
 /// Short age (menu.md M3): `<1m`, `5m`, `2h`, `3d`; a negative age reads as `<1m`.
 pub fn age(secs: i64) -> String {
     match secs.max(0) {
@@ -136,6 +169,22 @@ pub fn model(ps: &mut [Value], now: i64) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Chain: § 7 close outcome. Risk: a superseded, unchanged or partly unverified close reads as delivered work.
+    #[test]
+    fn close_outcome_names_successor_no_change_and_unverified_items() {
+        // pilotq#90 verbatim shape: closed for #104 with all items moved
+        let p90 = "Changed: none; owner chose option 2, #90 closes as superseded by #104, which delivers voice input\nChecks: Task fit: A1 unknown, A2 unknown, A3 unknown, A4 unknown; owner answer 2 moves all four to open #104\nOpen: #104 is held";
+        assert_eq!(successor(p90), Some(104));
+        assert_eq!(close_outcome(Some(p90), Some("ready")), "replaced by #104 (ready)");
+        assert_eq!(close_outcome(Some("Changed: Replaced by #7"), None), "replaced by #7 (unknown)");
+        assert_eq!(close_outcome(Some("Changed: none\nChecks: A1 ok"), None), "no change");
+        let partly = "Changed: icon ships\nChecks: A1 ok, A2 gap\nChecks: A3 unknown; A4 unknown; A2 gap\nOpen: none";
+        assert_eq!(close_outcome(Some(partly), None), "delivered, 3 items unverified");
+        assert_eq!(close_outcome(Some("Changed: x\nChecks: A1 ok\nOpen: A2 unknown"), None), "delivered", "only Checks lines count");
+        assert_eq!(close_outcome(None, None), "closed on the board");
+        assert_eq!(successor("closes #12 after #13"), None);
+    }
 
     fn project(name: &str, tasks: Value) -> Value {
         json!({"name": name, "issues": "https://github.com/o/r/issues/", "board_kind": "github", "complete": true, "focus": [], "saved": false, "tasks": tasks})

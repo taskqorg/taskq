@@ -498,9 +498,12 @@ fn project(install: &Path, root: &str) -> Value {
     let since = text.lines().next().and_then(|l| l.strip_prefix("since ")?.parse::<i64>().ok());
     // #1712 A3: the Source line names why a project's history is unknown
     let events_error = events_error.or_else(|| since.is_none().then(|| "events file has no since line".to_string()));
+    // `[time, kind, attempt, n]`, a close with its § 7 outcome text as a 5th item
     let events: Vec<Value> = text.lines().skip(1).filter_map(|l| {
-        let w: Vec<&str> = l.split(' ').collect();
-        Some(json!([w.first()?.parse::<i64>().ok()?, w.get(2)?, w.get(3)?, w.get(1)?.strip_prefix('#')?.parse::<u64>().ok()?]))
+        let w: Vec<&str> = l.splitn(5, ' ').collect();
+        let mut e = json!([w.first()?.parse::<i64>().ok()?, w.get(2)?, w.get(3)?, w.get(1)?.strip_prefix('#')?.parse::<u64>().ok()?]);
+        if let Some(o) = w.get(4) { e.as_array_mut()?.push(json!(o)); }
+        Some(e)
     }).collect();
     // the local host's saved capacity, for `Edit limits` and its readback (§ 4 Capacity)
     let (cap_host, cap_saved, cap_revision,board_kind, project_limits) = match crate::load(r) {
@@ -3557,8 +3560,10 @@ mod tests {
         fs::write(crate::dot(&root).join("events"), "1000 #9 ask 3\n").unwrap();
         assert_eq!(project(&install, r)["events_error"], "events file has no since line");
         // the first ask before the window; an answer, then a second ask and a close of the same task inside it
-        fs::write(crate::dot(&root).join("events"), "since 0\n1000 #9 ask 11\n5000 #9 ask 22\n6000 #9 close 33\n").unwrap();
+        fs::write(crate::dot(&root).join("events"), "since 0\n1000 #9 ask 11\n5000 #9 ask 22\n6000 #9 close 33 replaced by #10 (ready)\n").unwrap();
         let p = project(&install, r);
+        // #1800: a close carries its § 7 outcome as a 5th item; other events keep 4
+        assert_eq!((p["events"][2].clone(), p["events"][1].as_array().unwrap().len()), (json!([6000, "close", "33", 9, "replaced by #10 (ready)"]), 4));
         assert_eq!((p["since"].clone(), p["events_error"].clone()), (json!(0), Value::Null));
         let s = summary_at(&[p], (3600, 7200), 7200);
         assert_eq!((0..4).map(|k| s.bins.iter().map(|b| b.counts[k]).sum::<u32>()).collect::<Vec<_>>(), [1, 0, 1, 0], "closed, failed, ask, blocked");

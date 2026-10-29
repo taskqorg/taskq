@@ -226,7 +226,7 @@ Worker brief: task, attempt, branch, commands, contract path (release URL if abs
 ### Result and close verdicts
 `result` body: `Changed: <user effect>` (1-2 lines), `Checks: <command -- outcome>` (one line per check, 1-8 lines), then `Open: <remaining item|none>` (1-2 lines); 12 lines max, 240 characters each. Keep exact commands and platform qualifications (R12).
 `--text`: literal Changed/Open, optional Done/Problem (§ 2), `--option`/`--recommend`/`--link`; absent: no card. `--checks` prefixes Checks. SHA: log header. Changed may link one PR/evidence with [risk](https://github.com/taskqorg/specq/blob/main/caveman/rules/changes.md#merge-request-description-markdown), either route.
-`close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA).
+`close --text`: same limits/fields; Checks: each `A<k> ok|gap|unknown`, merge-result CI (queued: pending; private fallback: exact-SHA). Outcome (events, notices, `--closed`): `delivered`, `no change` (Changed none) or `replaced by #M (<state>)` (`superseded by #M`), plus `N items unverified`. Closing for held #M starts it; an agent asks instead.
 Review Acceptance/contract. Checks follows [review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review). No research/proposal ask and owner answer before result/close: task-fit gap. Requeue only Acceptance/contract gaps; advisories: Open. Close with verdict, requeue with fixes, or ask. PM relays verbatim, linked.
 
 `close`: board API, except private fallback rebase/push:
