@@ -1,6 +1,6 @@
 # taskq contract
 taskq queues GitHub/GitLab agents; linked `Contract detail` applies; board state (R1).
-**v4**: Rust in `src/`. [Menu][menu].
+**v4**: Rust in `src/`. [Alpha][menu].
 ## Principles (R1–R13)
 ### Change rule
 Rule changes name the R-number, edit this file with code and list amended R-numbers in the result. Changed rules keep numbers; new rules get the next one. A rule conflicting with this file elsewhere is a defect. No history, dates or decision logs.

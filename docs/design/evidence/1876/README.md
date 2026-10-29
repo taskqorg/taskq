@@ -15,7 +15,7 @@ R12 and § 7: model, browser, native and publication evidence remain separate. N
 
 ## Native capture
 
-UI source: `ab884a42aa53b101c3807d237ad2d11bce5518a4`. Only the root preamble link was shortened after capture; every captured UI source file is unchanged. Based on `fa212bc16e32da742f027c11ca42ac26c59ea3a7`. macOS Darwin 27.0.0 arm64, 2× display, WKWebView, Node 22.18.0 and Cargo 1.98.1. The signed cargo runner starts the candidate. `docs/shots/fixture.sh` supplies invented projects in an isolated installation; no board actions or real agent sessions run.
+UI source: `ab884a42aa53b101c3807d237ad2d11bce5518a4`. The root preamble was restored to its original text after review; every captured UI source file is unchanged. Based on `fa212bc16e32da742f027c11ca42ac26c59ea3a7`. macOS Darwin 27.0.0 arm64, 2× display, WKWebView, Node 22.18.0 and Cargo 1.98.1. The signed cargo runner starts the candidate. `docs/shots/fixture.sh` supplies invented projects in an isolated installation; no board actions or real agent sessions run.
 
 Commands, with example temporary directories:
 
@@ -50,9 +50,11 @@ All six native window images were inspected individually. Appearance, mode selec
 - `node tests/tray-opacity.browser.cjs`: Pass (60%, 1% keyboard steps, Off, IPC, shared text and window isolation).
 - `node tests/tray-background.browser.cjs`: Pass after the hover fix (fill/foreground checks, mutation sensitivity, mode hints and window isolation).
 - `node tests/task-workspace.test.cjs`: Pass (same released bundle and stylesheet).
-- Canonical selected gate: first run failed only `core::tests::every_table_row_has_a_golden_trace`: the added root link made `taskq.md` 61,504 bytes, above the R8 60 KiB limit. Reusing the existing Menu link reduces it to 61,433 bytes; the limit and its assertion are unchanged. The repeat is justified by that failure, not by a move of main. Its outcome follows below.
+- Canonical selected gate: first run failed only `core::tests::every_table_row_has_a_golden_trace`: the added root link made `taskq.md` 61,504 bytes, above the R8 60 KiB limit. Restoring the original root contract keeps it at 61,434 bytes; the limit and its assertion are unchanged. The repeat is justified by that failure, not by a move of main. Its outcome follows below.
 
 
 Canonical repeat: `python3 scripts/check.py --base fa212bc16e32da742f027c11ca42ac26c59ea3a7` completed in 49.487 s on this Mac with a warm cache. **sandbox-blocked, not Pass**: 674 unit tests passed, 35 ignored; integration had 19 passed, 1 ignored and 1 sandbox-blocked (`telemetry_process::resume_records_its_result_without_releasing_the_host_hold`: `sandbox-exec: sandbox_apply: Operation not permitted`). No sandbox or permission override was attempted. The rule gate accepts only the named M1.1/M1.2 changes. The first run's R8 size failure is fixed; its focused rerun passes.
 
 The remaining selected checks ran separately because the sandbox refusal stops the canonical runner: all `tests/*.test.cjs`, screenshot-manifest checks, release-tag/exact-source checks and both changed transparency browser instruments passed. Offline selftest in an isolated installation passed 107 golden traces, owner-text formats and committed telemetry capture. Its board and tool probes are intentionally unknown/offline. No tests or assertions were relaxed for the sandbox refusal. Review set: six successful native images plus one distinct failed capture, seven screens total.
+
+Review correction (R13, § 7): byte comparison against the original base failed before restoring `[Alpha][menu]` and passed after. The root contract now has no task diff. No implementation, test, dependency or native artifact changed in this correction; the earlier checks and captures remain applicable. The focused R8 trace/size check and rule gate pass without changing a guarding assertion.
