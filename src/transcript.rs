@@ -107,8 +107,19 @@ fn line(role: &str, text: &str) -> Value { json!({"role": role, "text": text}) }
 fn tool(name: &str, input: &Value) -> Value {
     let arg = ["description", "command", "file_path", "pattern", "url", "cmd"].iter().find_map(|k| input[k].as_str().map(String::from))
         .unwrap_or_else(|| input.as_str().map_or_else(|| input.to_string(), String::from));
-    let arg: String = arg.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(160).collect();
+    let arg: String = arg.split_whitespace().map(redact).collect::<Vec<_>>().join(" ").chars().take(160).collect();
     line("tool", format!("{name} {arg}").trim())
+}
+
+/// #1825 A4: a tool line never shows a token-shaped word or the value of a credential assignment; command output
+/// is never in the view.
+fn redact(w: &str) -> String {
+    let (name, value) = w.rsplit_once('=').unwrap_or(("", w));
+    let value = value.trim_matches(|c| c == '"' || c == '\'');
+    let upper = name.to_ascii_uppercase();
+    let secret = (!value.is_empty() && ["TOKEN", "SECRET", "PASSWORD", "API_KEY"].iter().any(|k| upper.ends_with(k)))
+        || value.len() >= 20 && ["ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "glpat-", "sk-", "xoxb-", "xoxp-", "AKIA"].iter().any(|p| value.starts_with(p));
+    match (secret, name.is_empty()) { (false, _) => w.into(), (true, true) => "[redacted]".into(), (true, false) => format!("{name}=[redacted]") }
 }
 
 fn claude_item(v: &Value, out: &mut Vec<Value>) {
@@ -232,6 +243,14 @@ mod tests {
         assert_eq!(text(&before(true, &path, None).unwrap().items), vec![json!({"role":"user","text":"hello"}), json!({"role":"tool","text":"exec_command ls"}), json!({"role":"assistant","text":"done\nall good"})]);
         assert_eq!(last_line(true, &path).unwrap().as_deref(), Some("all good"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    // #1825 A4: a token-shaped word or a credential assignment in a tool call never reaches the view
+    #[test]
+    fn tool_lines_redact_credentials() {
+        let token = format!("ghp_{}", "a".repeat(36));
+        let input = json!({"command": format!("GH_TOKEN={token} gh api -H \"Authorization: token {token}\" x; DB_PASSWORD='p' run; sk-short; KEY=v")});
+        assert_eq!(tool("Bash", &input)["text"], "Bash GH_TOKEN=[redacted] gh api -H \"Authorization: token [redacted] x; DB_PASSWORD=[redacted] run; sk-short; KEY=v");
     }
 
     /// Writes invented records in the native format and returns the view text they must produce, in file order.

@@ -1884,6 +1884,15 @@ pub fn claude_background(root: &Path, session: &str) -> Result<bool, String> {
         text.lines().filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok()).any(|v| v["sessionKind"] == "bg")))
 }
 
+/// #1825 prototype: a task worker's native transcript on this host and whether it is in Codex's format. The homes are
+/// the service's own (`claude_home`, `codex_home`), which a Windows probe of both runtimes confirmed (#1825 A2).
+pub fn worker_transcript(rt: &str, session: &str) -> Result<(bool, PathBuf), String> {
+    let a = of(rt);
+    if a.name != rt { return Err(format!("runtime {rt:?} has no transcript adapter")); }
+    if a.codex { Ok((true, owner::codex_transcript_in(&codex_home().ok_or("transcript unknown: no Codex home")?, session)?)) }
+    else { Ok((false, claude_transcript_in(&claude_home().ok_or("transcript unknown: no Claude home")?, session)?)) }
+}
+
 pub(crate) const HANDSHAKE: &str = "taskq handshake: reply OK and do nothing else. The task follows in this thread.\n";
 
 /// A `codex-app` attempt stays owned until its exact native input and turn completion are observed.
