@@ -13,6 +13,23 @@ for paths, expected in [([], 'full'), (['README.md'], 'docs'), (['AGENTS.md'], '
     assert select(paths) == expected, (paths, select(paths), expected)
 print('PASS change selection; unknown impact broadens')
 
+# Owner-operation fixtures must not inherit a live worker identity or board credential; the launching session stays bound.
+import json
+import os
+import subprocess
+import sys
+import tempfile
+with tempfile.TemporaryDirectory(prefix='taskq-check-context-') as install:
+    parent = {**os.environ, 'TASKQ_TASK': '1840', 'TASKQ_ATTEMPT': 'invented-attempt', 'TASKQ_ROLE': 'worker',
+              'TASKQ_ROOT': 'invented-project', 'TASKQ_INSTALL': 'invented-production-install', 'CODEX_THREAD_ID': 'invented-thread', 'GH_TOKEN': 'invented-token', 'CARGO_BUILD_JOBS': '2'}
+    child = check['test_environment'](check['check_environment'](parent), install)
+    observed = json.loads(subprocess.check_output([sys.executable, '-c',
+        'import os,json;print(json.dumps({k:os.environ.get(k) for k in ["TASKQ_TASK","TASKQ_ATTEMPT","TASKQ_ROLE","TASKQ_ROOT","CODEX_THREAD_ID","GH_TOKEN","TASKQ_INSTALL","CARGO_BUILD_JOBS"]}))'], env=child))
+    assert observed == {'TASKQ_TASK': None, 'TASKQ_ATTEMPT': None, 'TASKQ_ROLE': None, 'TASKQ_ROOT': None, 'CODEX_THREAD_ID': None,
+                        'GH_TOKEN': None, 'TASKQ_INSTALL': install, 'CARGO_BUILD_JOBS': '2'}
+    assert parent['TASKQ_TASK'] == '1840' and parent['GH_TOKEN'] == 'invented-token' and parent['TASKQ_INSTALL'] == 'invented-production-install'
+print('PASS isolated fixture installation, worker identity and credentials; launching context preserved')
+
 assert names('src/tray.rs', 'if rt == "claude" {}') == ['src/tray.rs:1: if rt == "claude" {}']
 assert names('src/tray.rs', 'of(rt).remote\n#[cfg(test)]\nmod tests {\nlet rt = "codex";\n}') == []
 # Code after a test-only item or test module is still scanned.
