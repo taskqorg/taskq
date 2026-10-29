@@ -3,11 +3,13 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
-## Unreleased
+## v4.6.40
 
 taskq pins coreq v0.14.10: a telemetry client waits 5 s for the writer's commit receipt and retries the same writer, so Windows service and tray stop losing batches (#1764). No board change.
 
 TaskQ behaves as one normal app (#1758). macOS: TaskQ.app is always a Dock app with About, Hide, Restart TaskQ and Quit TaskQ in its app menu. Windows: `<install>\taskq.exe` with no arguments opens TaskQ without a console window; the Start menu `TaskQ`, its taskbar pin and the tray run it, so pins keep their path across updates, and the `taskq-tray.exe` copy is gone. The tray menu adds Open and Restart TaskQ. A tray of a temp install no longer rewrites the Start menu link. No board change.
+
+Also in this release: drain Stop passes released attempts and keeps every project's status fresh (#1769, #1767); Conversations stay responsive on long history, keep reading and answer controls stable and retain threads (#1746, #1745, #1727, #1756, #1759, #1765, #1772, #1774); the tray loop stall no longer reads as Interface error and tray faults reach the heartbeat (#1760); the menu host strip, filters, View conditions and Completed rows follow the approved design (#1705, #1706, #1710, #1716, #1726, #1731, #1776); ask cards use short option labels, one render on every surface and inline images for visual choices (#1793, #1783); tasks added on a labelled-only host keep that host and `add --host` refuses unknown names (#1788, #1722); publication asks once and offers close with no merge when merged PRs supersede a result (#1778, #1780); a review without a leased reviewer shows as stuck (#1754); `requeue` refuses issues without the taskq label (#1737); `add` refuses acceptance lines typed with an A<n>. label (#1697). No board change.
 
 ## v4.6.39
 
