@@ -45,8 +45,14 @@ const state={font:20,theme:'dark',host:'fixture-host',version:'fixture',projects
  assert.equal(await page.locator('.attach-label').count(),0,'text-only answers hide unusable Attach');
  assert.doesNotMatch(await page.locator('.answer-composer').innerText(),/Attachments: none|A number typed/);
  await shot('after-question-940-light');
- await page.locator('.thread-detail .conversation-info>summary').click();
- assert.match(await page.locator('.conversation-info').innerText(),/text only|Numbers typed/);
+ // #1781: the text-only limit moved from Task info to the answer help icon right of Send (input-scroll 04); history sits bottom-left
+ assert.equal(await page.locator('.answer-composer .composer-bottom>details.command-history-menu:first-child .lucide-history').count(),1);
+ const help=page.locator('.answer-composer .composer-help');assert.equal(await help.evaluate(e=>e.open),false);
+ await help.locator('summary').click();
+ assert.match(await help.innerText(),/text only|Numbers typed/);
+ await page.locator('.answer-composer .command-history-menu>summary').click();await page.locator('[data-a=answer-history]').first().click();
+ assert.equal(await page.locator('.answer-composer textarea').inputValue(),state.ai.history[0],'history fills the answer draft only');
+ assert.deepEqual(await page.evaluate(()=>[...new Set(sent.filter(m=>/answer/.test(m.a||'')).map(m=>m.a))]),['answer-local'],'history saves the local draft and never sends an answer');
  assert.equal(await page.locator('[data-qac=choose]').count(),question.question.choices.length,'source options retained');
  // A4: the same CSS raises usable controls to 44 px for touch; no palette/type/icon change.
  const touch=await browser.newPage({viewport:{width:350,height:740},hasTouch:true});

@@ -33,7 +33,7 @@ const {create}=execution.module('workspace',{
     const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
     // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
     const ev=row.event,url=row.board+'/'+row.task,busy=!!view.messageBusy;
-    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('div',{class:'conversation-tools'},api.eventButtons(ev)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
+    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('div',{class:'conversation-tools'},api.eventButtons(ev)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
      h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),
       h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':'github')),
       ev&&!ev.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
@@ -102,7 +102,11 @@ const {create}=execution.module('workspace',{
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
      // #1781: an empty draft shows no validation line, and Send is the arrow icon (input-scroll 04)
      reason:off||c.draft?why:'',
-     tools:h('div',{class:'conversation-tools composer-bottom'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action compact-action',title:c.send,'aria-label':c.send,disabled:off||!!c.problem},icons.icon('arrow-up'))),
+     // #1781: the bottom row matches the chat composer: command history left; Send, then the answer help icon, right (input-scroll 04)
+     tools:h('div',{class:'conversation-tools composer-bottom'},
+      h('details',{'data-view-key':'answer-history',class:'command-history-menu'},h('summary',{class:'compact-action',title:'History','aria-label':'History'},icons.icon('history')),h('div',{class:'conversation-history'},(view.S.ai?.history||[]).map((text,i)=>h('button',{'data-a':'answer-history','data-index':i,disabled:off},text)),h('p',{class:'meta'},'History fills the draft only; nothing is sent.'))),
+      c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action compact-action',title:c.send,'aria-label':c.send,disabled:off||!!c.problem},icons.icon('arrow-up')),
+      h('details',{class:'composer-help','data-view-key':'answer-help'},h('summary',{class:'compact-action',title:'Answer help','aria-label':'Answer help'},icons.icon('info')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.'))),
      onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
@@ -205,6 +209,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='new-request')api.navigate('conversations',{fresh:true,root:view.aiRoot});
      else if(b.dataset.a==='answer-send')api.answerAct('submit');
      else if(b.dataset.a==='answer-requeue')api.answerAct('requeue');
+     else if(b.dataset.a==='answer-history'){const c=view.answer,text=view.S.ai?.history?.[Number(b.dataset.index)];if(c&&typeof text==='string'){b.closest('details')?.removeAttribute('open');answers.answerInput(c.board,c.task,text,[text.length,text.length]);api.draw();}}
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){conversations.flush();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
