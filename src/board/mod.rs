@@ -1118,6 +1118,54 @@ mod tests {
             assert!(i.trusted && i.closed.unwrap()<i.updated);
         }
     }
+    // Chain: §5 `inbox N --json` -> board adapters -> answer writer, board time and question revision, attempt progress.
+    // Risk: a client sees an answer without who wrote it or which question it answered, or the read costs more requests than `inbox`.
+    #[test]
+    fn inbox_json_lists_answers_with_writer_time_and_question_revision() {
+        use crate::core::entry;
+        let root = std::env::temp_dir().join(format!("taskq-inbox-json-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".taskq")).unwrap();
+        std::fs::write(crate::runtime::attempt_log(&root, "worker", 7, 1), "progress").unwrap();
+        let log = [(1, "worker", entry("spawn", &["worker", "claude:abc", "mac"], None, "")),
+            (2, "worker", entry("ask", &[], Some(1), "Which way?\nBecause.\n1. left\n2. right ★")),
+            (3, "owner", entry("answer", &["2"], None, "")),
+            (4, "owner", entry("steer", &["answer", "2"], None, "left after all")),
+            (5, "worker", entry("ask", &[], Some(1), "Second?\n1. up\n2. down")),
+            (6, "pm", "down".to_string())];
+        for kind in BOARDS {
+            let board = |calls: std::rc::Rc<RefCell<usize>>, log: Vec<(u64, &'static str, String)>| http(kind, Some(true), Box::new(move |method, url, _| {
+                assert_eq!(method, "GET", "a read only: {url}");
+                *calls.borrow_mut() += 1;
+                let at = |id: u64| format!("2026-10-30T00:00:0{id}Z");
+                let v = if url.contains("/members/") { json!({"access_level": 30}) }
+                    else if url.contains("/comments") || url.contains("/notes") {
+                        json!(log.iter().map(|(id, by, body)| json!({"id": id, "body": body, "created_at": at(*id), "updated_at": at(*id),
+                            "author_association": "OWNER", "user": {"login": by}, "author": {"id": 1, "username": by}, "system": false})).collect::<Vec<_>>())
+                    } else {
+                        assert!(url.ends_with("/issues/7"), "{url}");
+                        json!({"number": 7, "iid": 7, "title": "Pick", "body": "Goal: g", "state": if kind.name == "github" { "open" } else { "opened" }, "author_association": "OWNER",
+                            "author": {"id": 1}, "labels": ["taskq"], "created_at": at(0), "updated_at": at(6)})
+                    };
+                Ok(Reply {status: 200, headers: vec![], body: v.to_string(), operation: "read"})
+            }));
+            let (json_calls, human_calls) = (std::rc::Rc::new(RefCell::new(0)), std::rc::Rc::new(RefCell::new(0)));
+            let v = crate::inbox_json(&*board(json_calls.clone(), log.to_vec()), &root, "mac", 7).unwrap();
+            let human = crate::inbox(&*board(human_calls.clone(), log.to_vec()), &root, 7).unwrap();
+            assert_eq!(*json_calls.borrow(), *human_calls.borrow(), "{}: same reads as the human inbox", kind.name);
+            assert!(human.starts_with("#7 Pick\n") && human.contains("\nLog:\n"), "human inbox unchanged: {human}");
+            let at = |id: u64| iso(&format!("2026-10-30T00:00:0{id}Z")).unwrap();
+            assert_eq!(v["answers"], json!([
+                {"id": 3, "by": "owner", "at": at(3), "revision": 2, "option": 2, "text": "right", "late": false},
+                {"id": 4, "by": "owner", "at": at(4), "revision": 2, "option": null, "text": "left after all", "late": true},
+                {"id": 6, "by": "pm", "at": at(6), "revision": 5, "option": 2, "text": "down", "late": false}]), "{}: {v}", kind.name);
+            let attempt = &v["attempt"];
+            assert_eq!((v["open"].clone(), v["state"].clone(), attempt["id"].clone(), attempt["host"].clone(), attempt["runtime"].clone(), attempt["started"].clone()),
+                (json!(true), json!("doing"), json!(1), json!("mac"), json!("claude"), json!(at(1))), "{}: {v}", kind.name);
+            assert!(attempt["log_updated"].is_u64(), "the attempt's own host reads its log time: {v}");
+            assert_eq!(v["last"], json!({"id": 6, "at": at(6)}));
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
     // Chain: §7 Reports -> board adapters -> immutable source and close time. Risk: opening reads moving main,
     // or read/decision comments change the report order through updated_at.
     #[test]

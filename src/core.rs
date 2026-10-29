@@ -272,10 +272,22 @@ pub struct Projection {
     accepted: Vec<u64>,
     /// Accepted answers and steers in board order, across all attempts (§ 2).
     pub notes: Vec<u64>,
+    /// Accepted answers in board order, across all attempts (§ 5 `inbox --json`).
+    pub answers: Vec<Answer>,
     pub executions: Vec<Execution>,
     pub changes: Vec<(u64, Task, Task)>,
     /// Review entries that start or end a deferred publication: the merge queue, a profile-only state (#1344)
     pub queue: Vec<(u64, Task, Task)>,
+}
+
+/// An accepted answer (§ 2 row 20) or a late answer saved as a note (`steer answer <R>`, § 5): its entry id, the
+/// question revision it answered (0: unknown) and the chosen option number, if any.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Answer {
+    pub id: u64,
+    pub revision: u64,
+    pub option: Option<usize>,
+    pub late: bool,
 }
 
 impl Projection {
@@ -483,6 +495,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut resume = None; // the state an `ask` entry left; None when a retry limit asked
     let mut accepted = vec![];
     let mut notes = vec![];
+    let mut answers = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
@@ -538,6 +551,13 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                 last = e.id;
                 accepted.push(e.id);
                 if note || l.kind == "answer" { notes.push(e.id); }
+                if l.kind == "answer" {
+                    let card = before.card.as_deref().unwrap_or("");
+                    let option = if l.bare { pick(card, l.args[0]) } else { l.args.first().and_then(|k| k.parse().ok()) };
+                    answers.push(Answer { id: e.id, revision: card_at.unwrap_or(0), option, late: false });
+                } else if note && l.args.first() == Some(&"answer") {
+                    answers.push(Answer { id: e.id, revision: l.args.get(1).and_then(|r| r.parse().ok()).unwrap_or(0), option: None, late: true });
+                }
                 if t.card.is_some() && t.card != before.card {
                     card_at = Some(e.id);
                 }
@@ -551,7 +571,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, accepted, notes, executions, changes, queue }
+    Projection { task:t, revision:rev, accepted, notes, answers, executions, changes, queue }
 }
 
 /// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).
