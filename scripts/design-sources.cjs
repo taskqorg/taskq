@@ -1,5 +1,6 @@
 // Design source manifests (#1841): docs/design/<name>.sources.json lists the pinned files and icons;
-// the build derives their SHA-256 (UTF-8, LF) into build/web/<name>.sources.json, which the release publishes.
+// `npm run build` derives their SHA-256 (UTF-8, LF) into build/web/<name>.sources.json, which the release publishes.
+// Kept out of build-web.cjs: that file is a README shots UI source (docs/shots/update.sh), and this step changes no tray byte.
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const root=path.resolve(__dirname,'..');
@@ -15,3 +16,4 @@ function derive(name){
  return derived;
 }
 module.exports={names,derive,render};
+if(require.main===module){const out=path.resolve(process.argv[2]||path.join(root,'build/web'));fs.mkdirSync(out,{recursive:true});for(const name of names)fs.writeFileSync(path.join(out,name+'.sources.json'),render(derive(name)));}
