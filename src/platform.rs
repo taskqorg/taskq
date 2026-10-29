@@ -702,9 +702,20 @@ pub fn gui_probe() -> Result<(), String> {
         fn CGPreflightScreenCaptureAccess() -> bool;
     }
     // SAFETY: no arguments; reads this process's TCC state without a prompt
-    if !unsafe { CGPreflightScreenCaptureAccess() } {
-        return Err("Screen Recording not allowed (TCC)".into());
-    }
+    gated(unsafe { CGPreflightScreenCaptureAccess() }, capture_png)
+}
+
+/// The gui probe's preflight refusal: Screen Recording is not allowed for this process.
+pub const NOT_ALLOWED: &str = "Screen Recording not allowed (TCC)";
+
+/// #1803 A4: the capture runs only after an allowed preflight, so the probe never raises a Screen Recording prompt.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn gated(preflight: bool, capture: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    if preflight { capture() } else { Err(NOT_ALLOWED.into()) }
+}
+
+#[cfg(target_os = "macos")]
+fn capture_png() -> Result<(), String> {
     use std::os::unix::fs::DirBuilderExt;
     let dir = std::env::temp_dir().join(format!("taskq-gui-{}", crate::runtime::uuid()));
     fs::DirBuilder::new().mode(0o700).create(&dir).map_err(|e| format!("GUI capture directory: {e}"))?;
@@ -724,6 +735,24 @@ pub fn gui_probe() -> Result<(), String> {
 #[cfg(not(target_os = "macos"))]
 pub fn gui_probe() -> Result<(), String> {
     Err("no gui probe on this OS".into())
+}
+
+/// Stale grant (#1803, [worker permissions](docs/design/worker-permissions.md#macos-signing-identity)): the preflight
+/// is refused while `<install>/taskq` meets the stable requirement (`org.taskq.taskq` and the local identity's
+/// certificate leaf), so the TCC row still pins an older cdhash. An unreadable keychain or signature reads false.
+#[cfg(target_os = "macos")]
+pub fn stale_grant(install: &Path, probe: &Result<(), String>) -> bool {
+    use std::process::Command;
+    if probe.as_ref().err().is_none_or(|e| e != NOT_ALLOWED) { return false; }
+    let Ok(ids) = coreq::process::output("signing.identity", Command::new("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30)) else { return false };
+    let Ok(Some(sha1)) = identity_hash(SIGNING_IDENTITY, &ids) else { return false };
+    coreq::process::output("signing.command", Command::new("codesign").arg(format!("-R=identifier \"org.taskq.taskq\" and certificate leaf = H\"{sha1}\""))
+        .args(["-v", "--strict"]).arg(install.join("taskq")), std::time::Duration::from_secs(30)).is_ok()
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn stale_grant(_: &Path, _: &Result<(), String>) -> bool {
+    false
 }
 
 #[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
@@ -888,6 +917,15 @@ pub fn host_memory() -> Option<(f64, u32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Defect #1803 A4: a gui probe that captured without an allowed preflight raised a Screen Recording prompt.
+    #[test]
+    fn gui_capture_runs_only_after_an_allowed_preflight() {
+        let mut ran = false;
+        assert_eq!(gated(false, || { ran = true; Ok(()) }), Err(NOT_ALLOWED.to_string()));
+        assert!(!ran, "capture ran after a refused preflight");
+        assert_eq!(gated(true, || Err("screencapture wrote no PNG".into())), Err("screencapture wrote no PNG".to_string()));
+    }
 
     // Defect #1445: service and status.json were written in place without a flush; a power cut left zeros.
     #[test]
