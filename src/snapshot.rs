@@ -922,6 +922,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
             ("execution 3 on mac: recovery unknown: io", 5), ("multiple unresolved executions; verify native ownership before recovery", 4),
             ("native execution evidence missing; reconcile the owning runtime", 5), ("session identity unknown; recover the original native session", 5),
             ("Claude returned no valid background ID; launch outcome unknown; reconcile the original input", 2),
+            ("spawn 3 not started on mac: input not accepted; lost spawn released no-start 300 s after the spawn", 2),
         ];
         for (raw, k) in cases { assert_eq!(wait_text(raw), WAIT_TEXTS[k], "{raw}"); }
         // status text and row JSON: owner text only in the row, raw reason kept in --json
