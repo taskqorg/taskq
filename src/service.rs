@@ -2821,6 +2821,44 @@ mod tests {
         assert_eq!(b.state.borrow().publications, calls, "no publication after close");
     }
 
+    // Chain: section 7 publication-blocked ask -> `answer N --text "close: .."` is option close (#1820, pilotq #106).
+    // Risk: the owner's `close:` text reads as free text, publication resumes and the same block asks again.
+    #[test]
+    fn blocked_publication_answer_text_with_an_option_key_applies_it_or_refuses() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let blocked = |kind: &str| {
+            let n = b.create("Invented blocked publication", "", &["taskq".into()]).unwrap();
+            let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+            b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+            let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+            b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x
+Checks: A1 ok
+Open: none")).unwrap();
+            b.state.borrow_mut().publish = kind.into();
+            Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a blocked publication"))).pass().unwrap();
+            assert_eq!(task(&b, n).state, State::Ask, "{kind}");
+            b.state.borrow_mut().publish = String::new();
+            n
+        };
+        let op = crate::dispatch::Op::default();
+        let n = blocked("superseded");
+        let calls = b.state.borrow().publications;
+        let got = crate::dispatch::answer_text(&b, &c, n, "close: superseded by #86, no merge", &op).unwrap().remove(0);
+        assert!(got.ok(), "{got:?}");
+        assert_eq!(task(&b, n).state, State::Closed);
+        assert_eq!(b.state.borrow().publications, calls, "no merge");
+        let n = blocked("queue-blocked");
+        let err = crate::dispatch::answer_text(&b, &c, n, "Close: drop it", &op).unwrap_err();
+        assert!(err.contains(&format!("#{n} has no `close` option")) && err.contains(&format!("`taskq answer {n}.1` (retry)")), "{err}");
+        assert_eq!(task(&b, n).state, State::Ask, "a refusal writes nothing");
+        let got = crate::dispatch::answer_text(&b, &c, n, "later: after the freeze", &op).unwrap().remove(0);
+        assert!(got.ok(), "{got:?}");
+        assert_eq!(task(&b, n).state, State::Later);
+        let n = blocked("queue-blocked");
+        let got = crate::dispatch::answer_text(&b, &c, n, "token renewed, publish again", &op).unwrap().remove(0);
+        assert_eq!(got.state, Some("review"), "free text still resumes publication: {got:?}");
+    }
+
     // Chain: R1 hand-typed cancellation -> queue readback -> allow replacement; unknown never starts a new worker.
     #[test]
     fn hand_typed_cancellation_dequeues_before_another_attempt() {

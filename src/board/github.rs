@@ -365,19 +365,24 @@ impl GitHub {
         if prs.is_empty() {
             // § 7 merged, not closed: a merged PR at the result SHA into any base (a release branch too) is the publication; no second merge
             let closed = self.api.call("GET", &format!("/pulls?head={owner}:{branch}&state=closed"), None)?.json()?;
-            if let Some(pr) = closed.as_array().into_iter().flatten().find(|p| p["head"]["sha"] == sha && !p["merged_at"].is_null()) {
+            let merged_prs: Vec<&Value> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null()).collect();
+            // #1820 (pilotq #106): a PR merged at a rebased head is the publication when it carries the result's patch
+            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha).map(|p| (*p, String::new()))
+                .or_else(|| merged_prs.iter().find(|p| self.same_patch(p, sha).unwrap_or(false))
+                    .map(|p| (*p, format!(" (head {:.7}, the result's patch-id)", s(&p["head"], "sha")))));
+            if let Some((pr, note)) = found {
                 let merged = s(pr, "merge_commit_sha");
+                let head = s(&pr["head"], "sha");
                 let ci = if queue || enqueued {
                     match self.merge_ci(&merged)? {
                         Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
                         Ok(note) => format!("merge-result CI green{note}"),
                     }
-                } else if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {sha}") };
-                return Ok(Publish::Done(format!("merged #{}{} as {}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
+                } else if let Some(fail) = self.ci(&head)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {head}") };
+                return Ok(Publish::Done(format!("merged #{}{} as {}{note}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
             }
             // #1777: superseded by PRs merged at other heads; `Failed` would cancel a PR that is gone and retry each pass
-            let merged: Vec<_> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null())
-                .map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha"))).collect();
+            let merged: Vec<_> = merged_prs.iter().map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha"))).collect();
             if merged.is_empty() { return Ok(Publish::Blocked(format!("no open {branch} PR at result {sha}; merged {branch} PRs: none"))); }
             let merged = merged.join(", ");
             return Ok(Publish::Superseded { reason: format!("no open {branch} PR at result {sha}; merged {branch} PRs: {merged}"), merged });
@@ -428,6 +433,46 @@ impl GitHub {
         }
         if back["merged"] == true { Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet")) }
     }
+}
+
+impl GitHub {
+    /// § 7 (#1820): PR `pr`, merged at another head, carries the result `sha`'s patch. Both diffs start at the merge
+    /// commit's first parent, so merge, squash and rebase merges compare alike; any unknown reads as a different patch.
+    fn same_patch(&self, pr: &Value, sha: &str) -> Result<bool> {
+        let merge = s(pr, "merge_commit_sha");
+        if !hex40(&merge) { return Ok(false); }
+        let base = self.api.call("GET", &format!("/commits/{merge}"), None)?.json()?["parents"][0]["sha"].as_str().map(String::from).ok_or("merge parent unknown")?;
+        let id = |head: &str| -> Result<Option<[u8; 20]>> { Ok(patch_id(&self.api.call("GET", &format!("/compare/{base}...{head}"), None)?.json()?)) };
+        Ok(matches!((id(&s(&pr["head"], "sha"))?, id(sha)?), (Some(a), Some(b)) if a == b))
+    }
+}
+
+/// `git patch-id --stable` over a compare reply's per-file diffs: per file, SHA-1 of its header and hunk lines without
+/// whitespace or `@@` line numbers; file hashes summed with carry, so file order does not matter.
+/// None when GitHub omits a file's patch (binary, too large) or may have truncated the list (300 files).
+fn patch_id(compare: &Value) -> Option<[u8; 20]> {
+    let files = compare["files"].as_array().filter(|f| !f.is_empty() && f.len() < 300)?;
+    let mut sum = [0u8; 20];
+    for f in files {
+        let name = f["filename"].as_str()?;
+        let old = f["previous_filename"].as_str().unwrap_or(name);
+        let (from, to) = match f["status"].as_str() { Some("added") => ("/dev/null".into(), format!("b/{name}")),
+            Some("removed") => (format!("a/{old}"), "/dev/null".into()), _ => (format!("a/{old}"), format!("b/{name}")) };
+        // GitHub sends no file mode: an added or removed file reads as a regular one (100644)
+        let mode = match f["status"].as_str() { Some("added") => "new file mode 100644", Some("removed") => "deleted file mode 100644", _ => "" };
+        let header = [format!("diff --git a/{old} b/{name}"), mode.into(), format!("--- {from}"), format!("+++ {to}")];
+        let mut ctx = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+        for line in header.iter().map(String::as_str).filter(|l| !l.is_empty()).chain(f["patch"].as_str()?.lines().filter(|l| !l.starts_with("@@"))) {
+            ctx.update(line.chars().filter(|c| !c.is_whitespace()).collect::<String>().as_bytes());
+        }
+        let mut carry = 0u16;
+        for (s, d) in sum.iter_mut().zip(ctx.finish().as_ref()) {
+            carry += *s as u16 + *d as u16;
+            *s = carry as u8;
+            carry >>= 8;
+        }
+    }
+    Some(sum)
 }
 
 /// #1820 (pilotq #106): a PR pushed after the result (a rebase in review) is unreviewed and never merges; silence held it 50 minutes.
@@ -675,6 +720,24 @@ mod token_tests {
 #[cfg(test)]
 mod image_tests {
     use super::*;
+
+    // Chain: §7 Result and close verdicts: the patch-id of a merged head (#1820) is Git's own `git patch-id --stable`.
+    // Risk: a home-made hash that drops what Git keeps (context, file names, modes) closes a task on another patch.
+    #[test]
+    fn patch_id_is_gits_stable_patch_id() {
+        let hex = |id: [u8; 20]| id.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let modified = json!({"filename": "src/a.rs", "status": "modified", "patch": "@@ -1,2 +1,2 @@
+ fn a() {
+-old();
++new();"});
+        let added = json!({"filename": "b.txt", "status": "added", "patch": "@@ -0,0 +1 @@
++hi"});
+        // expected: `git patch-id --stable` over the same diffs as `git diff` prints them
+        assert_eq!(patch_id(&json!({"files": [modified]})).map(hex).as_deref(), Some("ee8eda765c6017d8c75984d367ee840dff07151a"));
+        assert_eq!(patch_id(&json!({"files": [added, modified]})).map(hex).as_deref(), Some("91a982717c3ffcb3a0c0b1404c10f5ecfada4861"));
+        assert_eq!(patch_id(&json!({"files": [{"filename": "x.png", "status": "added"}]})), None, "an omitted patch is unknown");
+        assert_eq!(patch_id(&json!({"files": []})), None);
+    }
 
     // Chain: § 2 visual evidence on GitHub (#1782). Risk: the load check or the app copy reads a URL outside this
     // repository's commit-pinned evidence, or a relative link passes as an image.

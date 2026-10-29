@@ -1120,6 +1120,47 @@ mod tests {
         assert!(calls.borrow().iter().all(|m| m == "GET"), "no publication write");
     }
 
+    // Chain: §7 Result and close verdicts: a task PR merged only at another head closes when it carries the result's patch-id.
+    // #1820 (pilotq #106, PR #114): a rebase in review moved the head, the PR merged there and the owner was asked to close it.
+    // Retained: a patch that differs (a conflict resolved in the rebase) or an omitted file patch still asks the owner.
+    #[test]
+    fn a_pr_merged_at_a_rebased_head_with_the_result_patch_closes() {
+        let patch = |sp: &str| json!({"files": [{"filename": "src/a.rs", "status": "modified", "patch": format!("@@ -1,2 +1,2 @@
+ fn a() {{
+-{sp}old();
++{sp}new();")}]});
+        for case in ["same", "other", "binary"] {
+            let calls = std::rc::Rc::new(RefCell::new(vec![]));
+            let captured = calls.clone();
+            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+                captured.borrow_mut().push(method.to_string());
+                let value = if url.contains("/compare/main...") { json!({"status": "diverged"}) }
+                    else if url.ends_with("/rules/branches/main") { json!([]) }
+                    else if url.contains("state=open") { json!([]) }
+                    else if url.contains("state=closed") {
+                        json!([{"number": 114, "head": {"sha": "d".repeat(40)}, "merged_at": "x", "merge_commit_sha": "b".repeat(40), "base": {"ref": "main"}}])
+                    } else if url.ends_with(&format!("/commits/{}", "b".repeat(40))) { json!({"parents": [{"sha": "c".repeat(40)}]}) }
+                    // the rebased head: other line numbers and indentation, same change
+                    else if url.contains(&format!("...{}", "d".repeat(40))) { patch("    ").to_string().replace("-1,2 +1,2", "-40,2 +40,2").parse().unwrap() }
+                    else if url.contains(&format!("...{}", "a".repeat(40))) {
+                        match case { "same" => patch(""), "other" => patch("").to_string().replace("new()", "merged()").parse().unwrap(),
+                            _ => json!({"files": [{"filename": "src/a.rs", "status": "modified"}]}) }
+                    }
+                    else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
+                    else if url.ends_with("/status") { json!({"total_count": 0}) }
+                    else { panic!("unexpected {method} {url}") };
+                Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+            }));
+            let sha = "a".repeat(40);
+            let got = h.resume_publication(1, &sha, "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
+            match case {
+                "same" => assert_eq!(got, Publish::Done(format!("merged #114 as {} (head ddddddd, the result's patch-id); exact-SHA CI green on {}", "b".repeat(40), "d".repeat(40)))),
+                _ => assert!(matches!(&got, Publish::Superseded { merged, .. } if merged == "#114 at ddddddd"), "{case}: {got:?}"),
+            }
+            assert!(calls.borrow().iter().all(|m| m == "GET"), "no publication write");
+        }
+    }
+
     // Chain: section 7 intent -> expected-head admission -> merge_group CI -> observed merge receipt.
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
     // #1820 (pilotq #106): a PR rebased in review, a conflict after a sibling merged, or a refused enqueue left the task in review,
