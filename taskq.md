@@ -57,13 +57,13 @@ Looks/sound: one line each (R13).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
 - UI: Preact/Signals/Wouter O1–O3 [palette A; exact counts; no Custom; History-only Ask](docs/design/icon-summary.md).
 - Conversations: reading first; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
-- Closed task pins read their outcome directly from the board, outside Completed paging; offer issue/PR and read-only transcript, never session continuation. Remove the pin after its first explicit open or 24 h after board closure (first verified observation if the close time is missing); Completed retains it. Archived task threads reopen in Archive, read-only with explicit Restore ([P-W1](docs/design/menu-product.md#windows-and-task-pins)).
+- Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows; growing input ([menu]). Group headers follow M2.
-- Standalone: [onboarding][onb]; [telemetry][tel]: local SQLite/WAL, 30 days; sent async only under revocable `taskq-telemetry/1`. `profile export` feeds analysis, `guide` guides agents. Migration keeps legacy rows; board is task truth (R1).
-- README is the whole page: header, setup phrase, one sentence, what you get, screenshots, use cases, one link to taskq.md, release checksum and provenance verification, license, donate.
+- Standalone: [onboarding][onb]; [telemetry][tel]: local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export` for analysis, `guide` for agents. Migration keeps legacy rows (R1).
+- README page: header, setup phrase, one sentence, features, screenshots, use cases, one taskq.md link, release checksum/provenance verification, license, donate.
 - Header: `docs/header.webp` with the caption `Agents working.` stays at the top, verbatim.
 - Setup phrase: one `text` block, verbatim `Install taskq from https://github.com/taskqorg/taskq and set it up for this project.`; new-project variant beside it.
-- What you get and use cases list shipped behavior only; three linked illustrative conversations (UC-02/03/07, UC-09, UC-14) show context, request, clarification, owner decision, action, outcome. Real output: taskq from any agent chat, a task moved to another runtime. Illustration is not session evidence; historical phrase checks qualify proposed commands only.
+- What you get/use cases: shipped behavior only. 3 linked chats (UC-02/03/07, UC-09, UC-14): context, request, clarification, owner decision, action, outcome. Real output: taskq in any agent chat; task moved to another runtime. Illustrations are not session evidence; historical phrase checks cover proposed commands only.
 - Screenshots: dark theme from `taskq tray --snapshot` over `docs/shots/fixture.sh`, pinned by `docs/shots/manifest.json`; the owner accepts them from before/after evidence. Detail: [UI acceptance][uia].
 - Formatting: a few unicode icons where they help scanning; no emoji clutter, no badges.
 - Last README line: `If taskq saves you time, [buy me a coffee](…).`
@@ -178,7 +178,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq later N [--text T] [--blocker #M\|--until UTC]` / `taskq failed N --text R` | park (§ 7) / hold |
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | owner gate approval of the current result (§ 7; refused with `TASKQ_ATTEMPT`) / recipe run (§ 7) |
-| `taskq status [--only L,..] [--json]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | R6 report of tasks with one of the labels (none: all); no write. `--json` snapshot and `--closed` page: [menu] |
+| `taskq status [--only L,..] [--json]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | Read-only R6; `--only`: any label (absent: all). JSON/history: [menu] |
 | `taskq inbox N` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `retro`: an owner session (§ 4) on use-case proposals and board `ask`/`answer`/`requeue` history; files accepted ones with `add` |
 | `taskq wait [--window MIN] [--only L,..]` | PM: block until a task moves to `ask`, `review` with options, closed or `failed`; print `ask #N` etc. or `tick` |
 | `taskq cleanup [--force]` | remove clean worktrees and branches of closed tasks; `--force` also dirty ones (R11) |
