@@ -86,12 +86,16 @@
           {
             "id": 1,
             "text": "left",
+            "label": "left",
+            "detail": null,
             "recommended": false,
             "consequential": false
           },
           {
             "id": 2,
             "text": "right",
+            "label": "right",
+            "detail": null,
             "recommended": true,
             "consequential": false
           }

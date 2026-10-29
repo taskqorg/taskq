@@ -37,6 +37,16 @@ for (const c of fx.cases) {
   assert(html.indexOf('>#1</a>') > html.indexOf('<details class="qac-context"'), 'links stay behind Details');
   console.log('PASS ask images');
 }
+// #1787: a labelled fixture option (the Russian card included) stays within § 2 limits, counted in characters, and
+// its button shows only N. and the label. Risk: a long or cut option on a narrow surface hides what the owner picks.
+for (const c of fx.cases) for (const r of c.rows) for (const ch of (r.question && r.question.choices) || []) {
+  if (ch.detail == null) continue;
+  assert([...ch.label].length <= 32 && [...(ch.id + '. ' + ch.text + ' ★')].length <= 160, c.name + ': option ' + ch.id + ' over § 2 limits');
+  const html = card.render(c.board, r, card.fresh(r), c.capability), b = html.indexOf('data-choice="' + ch.id + '"');
+  const button = html.slice(b, html.indexOf('</button>', b));
+  assert(button.includes(ch.label) && !button.includes(ch.detail) && html.includes('>' + ch.detail + '</span>'), c.name + ': option ' + ch.id + ' button or detail');
+}
+console.log('PASS labelled options');
 // A2: the published assets match the checksums the design doc records
 const doc = fs.readFileSync('docs/design/answer-card.md', 'utf8');
 for (const f of ['src/answer-card.js', 'src/answer-card.css', 'tests/fixtures/answer-card.json']) {

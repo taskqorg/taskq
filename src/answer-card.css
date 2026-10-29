@@ -16,7 +16,12 @@
 .qac button:focus-visible,.qac textarea:focus-visible,.qac a:focus-visible{outline:2px solid var(--qac-ask);outline-offset:1px}
 .qac-star{color:var(--qac-ask)}
 .qac-why,.qac-link{font-size:.875em;padding-left:.6em;flex-basis:100%}
+.qac-detail{flex-basis:100%;padding:0 .6em 4px}
+.qac-icon{color:var(--qac-muted)}
+.qac-problem .qac-icon{color:var(--qac-ask)}
 .qac-images{display:flex;gap:6px;flex-wrap:wrap}
+.qac-shot{display:flex;flex-direction:column;align-items:center;gap:2px}
+.qac-caption{font-variant-numeric:tabular-nums}
 .qac-thumb{display:block;max-width:160px;max-height:120px;border:1px solid var(--qac-edge);border-radius:4px}
 .qac-text-form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.4em;align-items:start}
 .qac textarea{font:inherit;color:inherit;background:none;border:1px solid var(--qac-edge);border-radius:4px;padding:.3em;resize:vertical;min-width:0;width:100%}

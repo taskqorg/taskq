@@ -663,7 +663,7 @@ const SANDBOX_CHECKS: &str = "Host tests blocked by the worker sandbox: record s
      Their Acceptance gate is green CI on the GitHub PR merge result (merge_group); private fallback uses exact-SHA CI; other routes follow taskq.md section 7 (R12).\n";
 
 fn ask(q: &impl std::fmt::Display, n: u64) -> String {
-    format!("`{q} ask {n} --text \"Done: <checked or not started>\nProblem: <decision and user effect>\" --option A --option B --recommend K [--link URL]`")
+    format!("`{q} ask {n} --text \"Done: <checked or not started>\nProblem: <decision and user effect>\" --option \"<label> - + <gain>; - <cost>\".. --recommend K [--link URL]`")
 }
 
 pub fn contract(root: &Path) -> String {
