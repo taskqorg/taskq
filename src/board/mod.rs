@@ -33,6 +33,8 @@ pub struct Comment {
     pub body: String,
     pub trusted: bool,
     pub edited: bool,
+    /// The writer's board login; empty when the board does not say (§ 5 `answered`).
+    pub author: String,
 }
 
 pub trait Board {
@@ -678,7 +680,7 @@ impl Fake {
         if let Ok(i) = st.get(n) {
             i.updated = t;
         }
-        st.comments.push((n, Comment { id, created: t, body: body.into(), trusted, edited }));
+        st.comments.push((n, Comment { id, created: t, body: body.into(), trusted, edited, author: String::new() }));
         id
     }
 }
