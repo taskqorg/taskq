@@ -35,4 +35,13 @@ const report={...row,read:true,body:'# Question\n\nHow should interrupted reques
   assert.deepEqual(errors,[]);cells++;await page.close();
  }
  console.log('PASS Reports buttons and theme/width/text matrix: '+cells+' cells; Chromium instrument, native platforms separate');
+ // Reuse the native fixture with a WebView2-shaped sink. Risk: a capture silently leaves Reports collapsed.
+ for(const surface of ['tray','workspace']){
+  const page=await browser.newPage();await page.setContent(fs.readFileSync('build/web/'+surface+'.html','utf8'));
+  await page.evaluate(state=>{window.chrome={webview:{postMessage(t){if(JSON.parse(t).a==='reports')throw Error('fixture reached native IPC');}}};window.ipc=Object.freeze({postMessage:t=>window.chrome.webview.postMessage(t)});taskq.receive(state);},fx.state);
+  await page.evaluate(fs.readFileSync('tests/fixtures/reports-shots.js','utf8')+'taskqReportShot('+JSON.stringify(surface)+','+JSON.stringify(fx.state)+')');
+  await page.locator('.report-card').waitFor({timeout:5000});assert((await page.locator('.report-card').innerText()).includes('Retry limits'));
+  assert.equal(await page.locator('[data-report=make]').isEnabled(),true);await page.close();
+ }
+ console.log('PASS native Reports fixture invocation and WebView2-shaped IPC on both surfaces');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
