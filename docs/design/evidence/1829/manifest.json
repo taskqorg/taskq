@@ -1,5 +1,5 @@
 {
-  "base": "9683b9ae586ca17a7d2d51977cf47b621b522402",
+  "base": "80945075e52d045b3bf8725ac9f55f7b06cfd2f5",
   "renderer": "Playwright Chromium headless; bundled production tray/workspace HTML; invented board/native receipts",
   "environment": {
     "os": "Darwin",
@@ -16,12 +16,12 @@
     ]
   },
   "sources": {
-    "src/task-dashboard.js": "62211d5815451070fb528a870bf9c357a23678b425a220e2959ee3461fb8c3ee",
+    "src/task-dashboard.js": "79f29dabefeecdafbcc303e84bc5635db99218f44ba351a3d8910c4f9d11ce4d",
     "src/task-dashboard.css": "00023c26506f50a867d2533a09854eac1d71cdfa83de7424f9d0a7fe96cc37a2",
     "src/task-views.js": "bbeaed25fb1a1d1b5a21408a9f95b638a595d5635b02fdb1262871e349b23806",
     "src/workspace.js": "4b8999ed7d591af3a1607440810f40f7ea63e3ece105d421fcc8795f5a842083",
     "src/tray.rs": "ecf6fba8d1795f36dbdcb1324253d4b33f1f7580719e38faa274285cbb267309",
-    "src/main.rs": "9dbdb41aaab5fb8caa5a23d53b854c17a51cb2233cccd6706fa594ec3d7ab6e4",
+    "src/main.rs": "899b1fb1be754928aa5cd4727d5ca3e52494bf94610bae3a30854ed876d77b9a",
     "src/board/mod.rs": "a4ffe9953d0f057431943c65f189011fc2cb22835867ec948fac3ab6877ec4d1",
     "src/board/github.rs": "f06d080f6b0fa5f8163f32225f114270e218202aedcb1d32a278e53e2141c483",
     "src/board/gitlab.rs": "2fd7b48f047b7c9c43ce6d8478448c183b84292fd42ad942a3f895e9c4f6f500",
@@ -30,8 +30,8 @@
   "images": {
     "01-closed-pins-and-unreadable.png": "fe8edde98d9d4b8278c85fca89df54e5348d9a941ae3b823ca6602f8d1b3b578",
     "02-read-only-transcript.png": "febfc735e088caa7e07a19b34daf4075561563239272c87d670c017c63d58073",
-    "03-archived-menu-entry.png": "0203d148e31466b4028f2fc1584b0301783df9cc0352123a4698a004e1cfd1db",
+    "03-archived-menu-entry.png": "0cbc27bca14deae71c2e8cc103bf5517a3bb7d1ed9c0cbd361cd4111e2151cc9",
     "04-completed-after-unpin.png": "cf5e9612dc241716c794635f253dd10d7eb0c4971de455c705183691bd278c0b"
   },
-  "candidateBase": "bbeeae9af4acff3a4148def94e054ce5cf80f32c"
+  "candidateBase": "636e2ba06bddfe508667f337edc41d27c5d53f56"
 }
