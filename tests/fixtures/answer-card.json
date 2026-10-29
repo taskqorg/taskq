@@ -46,7 +46,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -146,7 +145,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           },
@@ -226,7 +224,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -296,7 +293,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -387,7 +383,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -448,7 +443,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -499,7 +493,7 @@
       ]
     },
     {
-      "name": "text limits",
+      "name": "human text has no line-count cap",
       "board": "github.com/o/r",
       "capability": {
         "answer": true
@@ -537,7 +531,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -560,12 +553,10 @@
         },
         {
           "type": "check",
-          "status": "actionable",
-          "sent": 0,
-          "has": [
-            "<button type=\"submit\" disabled>Send",
-            "At most 4 lines</span>"
-          ]
+          "status": "sending",
+          "sent": 1,
+          "op": {"text": "1\n2\n3\n4\n5"},
+          "not": ["At most 4 lines"]
         }
       ]
     },
@@ -616,7 +607,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -672,7 +662,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -738,7 +727,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -814,7 +802,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -880,7 +867,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -980,7 +966,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1017,7 +1002,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1106,7 +1090,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1182,7 +1165,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1223,7 +1205,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1291,7 +1272,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1389,7 +1369,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1477,7 +1456,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1567,7 +1545,6 @@
             "evidence": [],
             "choices": [],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1652,7 +1629,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1730,7 +1706,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }
@@ -1803,7 +1778,6 @@
               }
             ],
             "limits": {
-              "lines": 4,
               "chars": 240
             }
           }

@@ -25,10 +25,10 @@ pub(crate) struct Draft {
 pub(crate) fn preferences(install:&Path)->Res<Value> {
     let path=install.join("tray-requests.json");
     if !crate::messages::plain(&path)? {return Ok(json!({"draft":"","history":[]}));}
-    if fs::metadata(&path).map_err(|_|"Workspace draft size unavailable")?.len()>8*1024*1024 {return Err("Workspace metadata exceeds 8 MiB; existing data kept".into());}
     let bytes=fs::read(&path).map_err(|_|"Workspace drafts unavailable; existing data kept")?;
     let mut v:Value=serde_json::from_slice(&bytes).map_err(|_|"Workspace drafts unreadable; existing data kept")?;
     if !v.is_object() {return Err("Workspace drafts have an unsupported format; existing data kept".into());}
+    if metadata_bytes(&v)>8*1024*1024 {return Err("Workspace metadata exceeds 8 MiB; existing data kept".into());}
     for (key,valid) in [("draft",v["draft"].is_null()||v["draft"].is_string()),("history",v["history"].is_null()||v["history"].as_array().is_some_and(|a|a.iter().all(Value::is_string))),("answers",v["answers"].is_null()||v["answers"].is_object())] {
         if !valid {return Err(format!("Workspace {key} has an unsupported format; existing data kept"));}
     }
@@ -46,10 +46,23 @@ fn rows(v:&Value)->Res<BTreeMap<String,Draft>> {
         ||d.files.iter().chain(d.sent.iter().flat_map(|s|&s.files)).any(|f|!valid_file(f))) {return Err("Workspace draft metadata invalid; kept".into());}
     Ok(rows)
 }
-fn persist(install:&Path,v:&Value)->Res<()> {
+/// § 5: count the metadata envelope without imposing a total cap on task reply payloads.
+fn metadata_bytes(v:&Value)->usize {
+    let mut text=0usize;
+    for answer in v["answers"].as_object().into_iter().flat_map(|m|m.values()) {
+        for value in [&answer["draft"],&answer["op"]["text"],&answer["receipt"]["answered"]["text"]] {
+            if value.is_string() {text=text.saturating_add(value.to_string().len());}
+        }
+        if answer["receipt"]["answered"]["text"].is_string() && answer["receipt"]["reason"].is_string() {
+            text=text.saturating_add(answer["receipt"]["reason"].to_string().len());
+        }
+    }
+    v.to_string().len().saturating_sub(text)
+}
+pub(crate) fn persist(install:&Path,v:&Value)->Res<()> {
     let path=install.join("tray-requests.json");crate::messages::plain(&path)?;crate::messages::plain(&path.with_extension("tmp"))?;
     let bytes=serde_json::to_vec(v).map_err(|_|"Workspace draft encoding failed")?;
-    if bytes.len()>8*1024*1024 {return Err("Workspace metadata full (8 MiB); delete archived records before saving more".into());}
+    if metadata_bytes(v)>8*1024*1024 {return Err("Workspace metadata full (8 MiB); delete archived records before saving more".into());}
     crate::platform::write_atomic(&path,&String::from_utf8(bytes).map_err(|_|"Workspace draft encoding failed")?)?;
     if preferences(install)?!=*v {return Err("Workspace save readback unknown; keep the draft".into());}Ok(())
 }

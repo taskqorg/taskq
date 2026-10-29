@@ -127,13 +127,10 @@ impl Publish {
 
 /// The trusted log of issue `n` (§ 2).
 pub fn entries(board: &dyn Board, n: u64) -> Result<Vec<Entry>> {
-    Ok(board
-        .comments(n)?
-        .into_iter()
-        .filter(|c| c.trusted)
-        .map(|c| Entry { id: c.id, body: c.body, edited: c.edited })
-        .collect())
+    reply::log(n, &board.comments(n)?)
 }
+
+pub mod reply;
 
 /// § 4 Profiling board operations: each call of the inner board is one `taskq-board` record; cached clock, user
 /// and label-schema reads are not operations and pass through; `ensure_labels` is a `label` operation.

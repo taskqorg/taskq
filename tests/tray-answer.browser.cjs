@@ -11,7 +11,8 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       await page.setContent(html);
       await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:s=>window.messages.push(JSON.parse(s))};});
       const board='https://github.com/o/r/issues',root='project',rows=fx.cases.find(c=>c.name.startsWith('stale')).rows;
-      const state={font,theme,projects:[{root,name:'project',issues:board,alive:true,complete:true,focus:[],labels:[],tasks:[rows[0]],cap_saved:{error:'not configured'}}],ai:{draft:''},notify:{projects:{}}};
+      const palette=theme==='dark'?'--work:#38E8A0;--ask:#FFC247;--failed:#FF6378;--ready:#B9C6D8;--muted:#B9C6D8;--review:#BCA3EB':'--work:#087F5B;--ask:#995200;--failed:#C92641;--ready:#536171;--muted:#536171;--review:#8250DF';
+      const state={font,theme,palette,projects:[{root,name:'project',issues:board,alive:true,complete:true,focus:[],labels:[],tasks:[rows[0]],cap_saved:{error:'not configured'}}],ai:{draft:''},notify:{projects:{}}};
       await page.evaluate(s=>taskq.receive(s),state);
       await page.evaluate(c=>taskq.receive({open:c}),{page:'answer',board,task:rows[0].n,revision:rows[0].revision});
       // #1430: every poll rebuilt the menu and the card, so the textarea being typed in was replaced and native edits
@@ -24,14 +25,18 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       for(const ch of 'yes'){await page.keyboard.type(ch);await page.evaluate(s=>taskq.receive(s),state);}
       assert(await typed.evaluate(t=>t.isConnected&&document.activeElement===t&&t.value==='yes'),'refreshes keep the node being typed in');
       assert.equal(await page.locator('[data-a=answer-send]').isDisabled(),false,'Send enables for a valid answer');
-      // #1456: a custom answer over the § 5 answer limits (4 lines, 240 characters) disabled Send with an empty card,
-      // so the owner could not tell why. Risk kept: Send disabled while the card shows no reason.
+      // #1816 / § 5: long replies send; an empty reply still explains how to enable Send.
       const why=()=>page.locator('#answer-draft-reason').textContent(),send=page.locator('[data-a=answer-send]');
       await text.fill('');await typed.focus();
       for(const line of ['1. one','2. two','3. three','4. four','5. five']){await page.keyboard.type(line);await page.keyboard.press('Shift+Enter');await page.evaluate(s=>taskq.receive(s),state);}
-      assert(await send.isDisabled());assert.match(await why(),/At most 4 lines/,'a disabled Send states why');
-      await text.fill('x'.repeat(241));await page.evaluate(s=>taskq.receive(s),state);
-      assert(await send.isDisabled());assert.match(await why(),/At most 240 characters/);
+      assert.equal(await send.isDisabled(),false);assert.equal(await why(),'');
+      await text.fill('word\n'.repeat(400));await page.evaluate(s=>taskq.receive(s),state);
+      assert.equal(await send.isDisabled(),false);assert.equal(await why(),'');
+      const long='word '.repeat(53)+'ok';assert.equal(long.length,267);
+      await text.fill(long);await page.evaluate(s=>taskq.receive(s),state);
+      assert.equal(await send.isDisabled(),false);assert.equal(await why(),'');
+      if(process.env.TASKQ_EVIDENCE_1816&&theme==='dark'&&font===16)await page.screenshot({path:process.env.TASKQ_EVIDENCE_1816+'/01-before-send.png'});
+      await text.fill('');assert(await send.isDisabled());assert.match(await why(),/Type an answer/);
       await text.fill('a valid answer');await page.evaluate(s=>taskq.receive(s),state);
       assert.equal(await send.isDisabled(),false);assert.equal(await why(),'');
       await text.fill('keep draft');await text.focus();
@@ -49,14 +54,14 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await text.inputValue(),'keep draft');
       assert(await send.isDisabled());
       assert.match(await page.locator('.qac-receipt').textContent(),/question changed/,'a stale card states why Send is off');
-      await page.locator('[data-qac=review]').click();await text.fill('2');
+      await page.locator('[data-qac=review]').click();await text.fill(long);
       await send.click();
       await page.waitForFunction(()=>messages.some(m=>m.a==='answer'));
       const op=await page.evaluate(()=>messages.find(m=>m.a==='answer').op);
-      assert.equal(op.text,'2');assert.equal(op.choice,undefined);assert.equal(op.revision,rows[1].revision);
+      assert.equal(op.text,long);assert.equal(op.choice,undefined);assert.equal(op.revision,rows[1].revision);
       assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'sending');
       await page.evaluate(s=>taskq.receive(s),state);
-      assert.equal(await text.inputValue(),'2');
+      assert.equal(await text.inputValue(),long);
       // A1: no question card remains outside ask, even while its receipt is pending.
       state.projects[0].tasks=[{...rows[1],state:'doing',revision:rows[1].revision+1}];
       await page.evaluate(s=>taskq.receive(s),state);
@@ -77,6 +82,7 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await rowTop(),before,'a receipt must not move task rows');
       assert.equal(await page.locator('.qac').count(),0);
       assert.equal(await page.locator('.qac textarea, [data-c-field=answer]').count(),0);
+      if(process.env.TASKQ_EVIDENCE_1816&&theme==='dark'&&font===16)await page.screenshot({path:process.env.TASKQ_EVIDENCE_1816+'/02-after-success.png'});
       assert.equal(await page.locator('.conversation-detail .body a[data-url]').first().getAttribute('href'),board+'/'+rows[1].n);
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
       // Receipt technical details retain their explicit toggle through refresh and Back.
@@ -97,11 +103,11 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(await page.locator('.qac').count(),1);
       const reason=page.getByRole('textbox',{name:'Requeue reason'});
       assert(await page.getByRole('button',{name:'Requeue',exact:true}).isDisabled());
-      await reason.fill('Retry after fixing the check');
+      await reason.fill('word\n'.repeat(400).trim());
       await page.getByRole('button',{name:'Requeue',exact:true}).click();
       await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===4);
       const fallback=await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op);
-      assert.equal(fallback.action,'requeue');assert.equal(fallback.text,'Retry after fixing the check');
+      assert.equal(fallback.action,'requeue');assert.equal(fallback.text,'word\n'.repeat(400).trim());
       await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:fallback.id,state:'rejected',reason:'test refusal'});
       await page.getByRole('button',{name:'Close…',exact:true}).click();
       assert.equal(await page.evaluate(()=>messages.filter(m=>m.a==='answer').length),4,'opening confirmation writes nothing');
@@ -146,6 +152,8 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       assert.equal(action.text,'Token added');assert.equal(action.action,undefined);
       // #1662 A4: a bridge refusal before dispatch read as delivery unknown. Risk kept: unsent read as maybe sent, or a new id on retry.
       await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:action.id,state:'failed',reason:'Answer queue is full',next:'Nothing reached the board; send again'});
+      assert.match(await why(),/Answer queue is full.*Nothing reached the board; send again/,'the exact refusal and fix stay beside Send');
+      assert(await page.evaluate(()=>messages.some(m=>m.a==='web-observation'&&m.row.operation==='js.workspace.answer.refused.failed')),'telemetry records the refusal kind');
       assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'failed');
       assert.match(await page.locator('.qac-receipt').textContent(),/#70 text answer · Not sent/);
       await page.locator('.qac [data-qac=retry]').click();
@@ -154,6 +162,17 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       // the composer repaints on the next tick after the card saves
       await page.waitForFunction(()=>['send','requeue'].every(a=>document.querySelector('[data-a=answer-'+a+']').disabled),null,{timeout:2000});
       if(process.env.TASKQ_EVIDENCE_1662&&font===16)await page.screenshot({path:process.env.TASKQ_EVIDENCE_1662+'/owner-action-'+theme+'.png'});
+      // A long kept answer can steer the working agent after another client answered first.
+      await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:action.id,state:'stale',answered:{by:'other client',text:'Continue'}});
+      state.projects[0].tasks=[{...own,state:'doing',revision:2,answered:{by:'other client',text:'Continue'}}];
+      await page.evaluate(s=>taskq.receive(s),state);
+      const steer=page.locator('[data-c-field=steer]');
+      await steer.fill(long);await page.getByRole('button',{name:'Steer',exact:true}).click();
+      await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===9);
+      const steering=await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op);
+      assert.equal(steering.action,'steer');assert.equal(steering.text,long);
+      await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:steering.id,state:'rejected',reason:'Worker is no longer running',next:'Refresh the task'});
+      assert.match(await page.locator('#steer-draft-reason').textContent(),/Worker is no longer running.*Refresh the task/);
       assert.deepEqual(errors,[]);
       console.log('PASS tray HTML draft/focus, stale review, literal text, sending refresh, same-ID retry, accepted readback, board link;',theme,font+'px');
       await page.close();

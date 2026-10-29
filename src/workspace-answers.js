@@ -16,6 +16,7 @@ answerReceipt:function(r){
   const previous=answerFeedback.get(key);
   if(!request&&previous?.state!=='unknown')return;
   const item=request||previous;
+  api.answerRefusal(r.state);
   answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next,answered:r.answered});
   const local=saved[item.board+'#'+item.op.task];
   if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
@@ -32,6 +33,15 @@ answerReceipt:function(r){
   }else answerCards.get(item.board+'/'+item.op.task)?.ui.receiveReceipt(item.board,r.id,r);
   draw();
 
+},
+answerRefusal:function(state){
+  switch(state){
+   case 'rejected':execution.action('workspace.answer.refused.rejected',()=>{})();break;
+   case 'failed':execution.action('workspace.answer.refused.failed',()=>{})();break;
+   case 'stale':execution.action('workspace.answer.refused.stale',()=>{})();break;
+   case 'partial':execution.action('workspace.answer.refused.partial',()=>{})();break;
+   case 'unknown':execution.action('workspace.answer.refused.unknown',()=>{})();break;
+  }
 },
 answerReadback:function(){
   for(const [key,r] of answerRequests){
@@ -63,7 +73,7 @@ answerSteerComposer:function(board,t){
   const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));
   if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim())return null;
   const text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
-  const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'');
+  const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'');
   return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason,
    tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!text.trim()},'Steer')),
    onInput:e=>{steers[key]=e.currentTarget.value;draw();}}));
@@ -94,7 +104,7 @@ mountAnswers:function(){
 answerSend:function(board,op){
   const kept=saved[board+'#'+op.task];
   const p=api.project(board,kept?.op?.id===op.id?kept.projectRoot:undefined);
-  if(!p)return Promise.resolve({state:'rejected',reason:'Project is no longer registered'});
+  if(!p){api.answerRefusal('rejected');return Promise.resolve({state:'rejected',reason:'Project is no longer registered',next:'Select a registered project, then send again'});}
   const key=p.root+'#'+op.id;
   if(answerRequests.has(key))return answerRequests.get(key).promise;
   let resolve;

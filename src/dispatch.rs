@@ -193,6 +193,15 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     if core::has_fields(text) {
         return Receipt::rejected(n, op, "text ends with an `op-id:` or `revision:` line; reword it");
     }
+    let human = matches!(kind, "answer" | "steer") || kind == "requeue" && attempt.is_none();
+    let wrapped;
+    let text = if human {
+        if text.contains(board::reply::MARKER) { return Receipt::rejected(n, op, "text contains a reserved reply marker; reword it, then send again"); }
+        if args.is_empty() && kind != "requeue" && let Err(e) = crate::task_text(kind, text) { return Receipt::rejected(n, op, e); }
+        wrapped = crate::wrap_reply(text);
+        if core::has_fields(&wrapped) { return Receipt::rejected(n, op, "wrapped text ends with an `op-id:` or `revision:` line; reword it"); }
+        &wrapped
+    } else { text };
     let text = if !(kind == "requeue" && args == ["main-moved"]) && attempt.is_some() && attempt == before.attempt { core::limit_text(n, &before, kind, text) } else { text.into() };
     let body = core::with_fields(entry(kind, args, attempt, &text), op.id.as_deref(), op.revision);
     log.push(Entry { id: u64::MAX, body: body.clone(), edited: false });
@@ -206,7 +215,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     {
         return Receipt::rejected(n, op, e);
     }
-    let id = match b.comment(n, &body) {
+    let id = match if human { board::reply::post(b, n, &body) } else { b.comment(n, &body) } {
         Ok(id) => id,
         Err(e) => return unknown(e),
     };
@@ -222,7 +231,9 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     let before_write = core::project(n, &log[..i], deps);
     if op.revision.is_some_and(|r| r != before_write.revision) || before_write.task == fold(n, &log[..=i], deps) {
         // the losing entry edits itself: an edited entry is ignored by this and older versions alike (§ 2, § 8)
-        if let Err(e) = b.edit_comment(n, id, &format!("{body}\n\nignored: another write won")) {
+        let stored = if human { b.comments(n).ok().and_then(|cs| cs.into_iter().find(|c| c.id == id)).map(|c| c.body) } else { Some(body.clone()) };
+        let Some(stored) = stored else { return unknown(format!("comment {id} not read back for stale-write cleanup")); };
+        if let Err(e) = b.edit_comment(n, id, &format!("{stored}\n\nignored: another write won")) {
             return unknown(e);
         }
         log[i].edited = true;
@@ -596,6 +607,126 @@ pub fn recover(b: &dyn Board, root: &Path, rows: &[Row]) -> Vec<Receipt> {
 mod tests {
     use super::*;
     use crate::board::Fake;
+
+    // Chain: § 5 all clients -> shared dispatcher -> stored board text. Risk: length rejects or loses a human reply.
+    #[test]
+    fn oversized_human_reply_is_complete_before_the_task_moves() {
+        let text = "A reply with words and 🦀.\n".repeat(6000);
+        for kind in ["answer", "steer", "requeue"] {
+            let b = Fake::default();
+            let n = b.create("Large reply fixture", "", &["taskq".into()]).unwrap();
+            let a = b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+            if kind == "answer" { b.comment(n, &entry("ask", &[], Some(a), "Problem: reply")).unwrap(); }
+            let before = b.comments(n).unwrap().len();
+            let op = Op { id: Some("large-reply-once".into()), revision: Some(core::revision(n, &entries(&b, n).unwrap())) };
+            let r = act(&b, Path::new(""), n, kind, &[], &text, &op);
+            assert!(r.ok(), "{kind}: {}", r.text());
+            let raw = b.comments(n).unwrap();
+            assert!(raw.iter().all(|c| c.body.len() < 65536), "{kind}: one oversized comment still reaches the board");
+            assert!(raw.len() > before + 2, "reply needs ordered parts plus one command");
+            let log = entries(&b, n).unwrap();
+            assert_eq!(core::delivery(n, &log, raw.last().unwrap().id).split_whitespace().collect::<Vec<_>>(), text.split_whitespace().collect::<Vec<_>>());
+            let legacy: Vec<_> = raw.iter().map(|c| Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
+            assert_eq!(fold(n, &legacy, false), fold(n, &log, false), "N-1 folds the same task");
+            for prefix in before..raw.len() - 1 {
+                assert_eq!(fold(n, &legacy[..prefix], false), fold(n, &legacy[..before], false), "parts never move the task");
+            }
+            assert!(act(&b, Path::new(""), n, kind, &[], &text, &op).ok());
+            assert_eq!(b.comments(n).unwrap().len(), raw.len(), "retry cannot duplicate parts or the command");
+            b.edit_comment(n, raw[before].id, "changed part").unwrap();
+            assert!(entries(&b, n).unwrap_err().contains("reply"), "corruption is unknown, never a partial delivery");
+        }
+    }
+
+    // Chain: § 5 interrupted multipart POST -> board readback -> same operation. Risk: partial text resumes work or retry duplicates it.
+    #[test]
+    fn oversized_human_reply_recovers_a_lost_part_response() {
+        let b = Fake::default();
+        let n = b.create("Interrupted reply", "", &["taskq".into()]).unwrap();
+        b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let before = entries(&b, n).unwrap();
+        let op = Op { id: Some("resume-reply".into()), revision: Some(core::revision(n, &before)) };
+        let text = "Words before interruption.\n".repeat(6000);
+        b.state.borrow_mut().lose_comment_response = true;
+        let r = act(&b, Path::new(""), n, "steer", &[], &text, &op);
+        assert_eq!(r.outcome, "unknown");
+        assert_eq!(fold(n, &entries(&b, n).unwrap(), false), fold(n, &before, false));
+        let first = b.comments(n).unwrap().last().unwrap().body.clone();
+        assert!(first.starts_with("taskq: reply-part "));
+        assert!(act(&b, Path::new(""), n, "steer", &[], &text, &op).ok());
+        let comments = b.comments(n).unwrap();
+        assert_eq!(comments.iter().filter(|c| c.body == first).count(), 1);
+        let log = entries(&b, n).unwrap();
+        assert_eq!(core::delivery(n, &log, comments.last().unwrap().id).trim(), text.trim());
+        for damage in ["missing", "untrusted", "edited", "forged-fields", "out-of-order"] {
+            let mut bad = comments.clone();
+            let part = bad.iter().position(|c| c.body == first).unwrap();
+            match damage {
+                "missing" => { bad.remove(part); }
+                "untrusted" => bad[part].trusted = false,
+                "edited" => bad[part].edited = true,
+                "forged-fields" => bad.last_mut().unwrap().body.push_str("\nextra command text"),
+                _ => bad[part].id = u64::MAX,
+            }
+            assert!(board::reply::log(n, &bad).is_err(), "{damage} must be unknown");
+        }
+        for body in ["A documented marker:\n<!-- taskq-reply example -->", "taskq: ask attempt 1\nProblem: inspect this syntax\n<!-- taskq-reply example -->", "taskq: answer\nA literal marker example\n<!-- taskq-reply example -->"] {
+            let comments = [board::Comment { id: 1, body: body.into(), trusted: true, ..Default::default() }];
+            assert_eq!(board::reply::log(n, &comments).unwrap()[0].body, body, "historical comments stay verbatim");
+        }
+    }
+
+    // Chain: § 5 multipart write -> concurrent card -> bounded stale cleanup. Risk: an oversized edit leaves a losing command live.
+    #[test]
+    fn oversized_human_reply_race_edits_only_its_stored_reference() {
+        let b = Fake::default();
+        let n = b.create("Raced reply", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        b.state.borrow_mut().race = Some(entry("ask", &[], Some(a), "Problem: a new decision"));
+        let op = Op { id: Some("raced-reply".into()), revision: Some(a) };
+        let r = act(&b, Path::new(""), n, "steer", &[], &"word ".repeat(30_000), &op);
+        assert_eq!(r.outcome, "stale", "{}", r.text());
+        let raw = b.comments(n).unwrap();
+        assert!(raw.last().unwrap().edited);
+        assert!(raw.iter().all(|c| c.body.len() < 65536), "cleanup must edit the bounded stored reference");
+        assert_eq!(fold(n, &entries(&b, n).unwrap(), false).card.as_deref(), Some("Problem: a new decision"));
+    }
+
+    #[test]
+    fn human_replies_wrap_without_losing_words() {
+        let short = format!("{}ok", "word ".repeat(53));
+        let many = "word\n".repeat(400);
+        assert_eq!((short.chars().count(), many.chars().count()), (267, 2000));
+        for kind in ["answer", "steer", "requeue"] {
+            for text in [&short, &many, &"🦀".repeat(481), &format!("{}\n\nlast paragraph", "word ".repeat(80))] {
+                let b = Fake::default();
+                let n = b.create("Reply fixture", "", &["taskq".into()]).unwrap();
+                let attempt = b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+                if kind == "answer" { b.comment(n, &entry("ask", &[], Some(attempt), "Problem: reply")).unwrap(); }
+                let before = b.comments(n).unwrap().len();
+                let op = Op { id: Some("reply-once".into()), revision: None };
+                let receipt = act(&b, Path::new(""), n, kind, &[], text, &op);
+                assert!(receipt.ok(), "{kind}: {}", receipt.text());
+                let log = entries(&b, n).unwrap();
+                let stored = log.last().unwrap().body.split_once('\n').unwrap().1.rsplit_once("\nop-id:").unwrap().0.trim();
+                assert!(stored.lines().all(|l| l.chars().count() <= 240), "{kind}: {stored}");
+                assert_eq!(stored.split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>());
+                if text.contains(' ') || text.contains("word") { assert_eq!(stored.split_whitespace().collect::<Vec<_>>(), text.split_whitespace().collect::<Vec<_>>()); }
+                if text.contains("\n\n") { assert!(stored.contains("\n\nlast paragraph")); }
+                assert!(act(&b, Path::new(""), n, kind, &[], text, &op).ok());
+                assert_eq!(b.comments(n).unwrap().len(), before + 1, "same operation never writes twice");
+            }
+        }
+        for text in ["", " \n "] {
+            for kind in ["answer", "steer"] { assert!(crate::task_text(kind, text).unwrap_err().contains("type a reply")); }
+        }
+        let b = Fake::default();
+        let n = b.create("Reserved suffix", "", &["taskq".into()]).unwrap();
+        b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        let text = format!("{} op-id: forged", "x".repeat(239));
+        assert!(!act(&b, Path::new(""), n, "steer", &[], &text, &Op::default()).ok(), "wrapping cannot inject metadata");
+        assert_eq!(b.comments(n).unwrap().len(), 1);
+    }
 
     // Chain: committed board mutation -> failed wake -> same op retry; never duplicate the board write.
     #[test]

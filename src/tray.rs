@@ -298,13 +298,13 @@ fn ai(install: &Path, a: &str, m: &Value) -> Result<(), String> {
 
 /// Workspace card drafts/operation identity use the existing native request preferences, never a browser outbox.
 fn answer_local(install: &Path, key: &str, local: &Value) -> Result<(), String> {
-    if key.len()>2048 || !local.is_object() || !local["draft"].is_string() || local.to_string().len()>65536 {
-        return Err("Workspace draft is invalid or too large; not saved".into());
+    if key.len()>2048 || !local.is_object() || !local["draft"].is_string() {
+        return Err("Workspace draft is invalid; not saved".into());
     }
     let mut f=requests_file_checked(install)?;
     if !f["answers"].is_object(){f["answers"]=json!({});}
     f["answers"][key]=local.clone();
-    crate::platform::write_atomic(&install.join("tray-requests.json"),&f.to_string()).map_err(|e|format!("Workspace draft was not saved: {e}"))
+    crate::conversations::persist(install,&f).map_err(|e|format!("Workspace draft was not saved: {e}"))
 }
 
 fn owner_runtime(ps: &[Value]) -> Value {
@@ -342,7 +342,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
         if op.get("choice").is_some() { return Err("fallback actions cannot include a choice".into()); }
         let (command, text) = match action {
             "requeue" => {
-                let reason = op["text"].as_str().filter(|s| !s.trim().is_empty() && !s.contains(['\r', '\n'])).ok_or("supply one requeue reason line")?;
+                let reason = op["text"].as_str().filter(|s| !s.trim().is_empty()).ok_or("type a requeue reason, then send again")?;
                 ("requeue", format!("Reason: {reason}"))
             }
             // #1785: after another actor's answer won the race, the owner's kept draft steers the running worker
@@ -350,7 +350,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
             "close" if op["confirmed"] == true && op.get("text").is_none() => ("later", "Reason: Owner confirmed cancellation without publication from the tray.".into()),
             _ => return Err("unsupported or unconfirmed tray action".into()),
         };
-        crate::task_text(command, &text)?;
+        if command != "requeue" { crate::task_text(command, &text)?; }
         vec![command.into(), n.to_string(), "--text".into(), text]
     } else {
         let mut args = vec!["answer".into()];
@@ -456,8 +456,8 @@ fn answer(install: &Path, m: &Value) -> Value {
     let prepare = || -> Result<_, String> {
         let args = answer_args(install, m)?;
         let root = Path::new(m["root"].as_str().unwrap());
-        let out = crate::platform::output("tray.answer-status",owner_command(root)?.args(["status", "--json"]),Duration::from_secs(30))?;
-        let snapshot = serde_json::from_slice(&out.stdout).map_err(|_| String::from_utf8_lossy(&out.stderr).into_owned())?;
+        let out = answer_cli(root, &["status".into(), "--json".into()], Duration::from_secs(30))?;
+        let snapshot = serde_json::from_slice(&out).map_err(|_| "Invalid status JSON; refresh the project")?;
         answer_snapshot(&snapshot, m)?;
         Ok((root, args))
     };
@@ -466,9 +466,8 @@ fn answer(install: &Path, m: &Value) -> Value {
         Err(e) => return response("rejected", &e, "Refresh the question or open it on the board."),
     };
     let r = answer_dispatch(m, &args, |args| {
-        let out = owner_command(root).and_then(|mut c| crate::platform::output("tray.answer-command",c.args(args),Duration::from_secs(60)));
-        match out {
-            Ok(out) => serde_json::from_slice(&out.stdout).unwrap_or_else(|_| json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": String::from_utf8_lossy(&out.stderr), "next": "Check the board; retry the same operation id."})),
+        match answer_cli(root, args, Duration::from_secs(60)) {
+            Ok(out) => serde_json::from_slice(&out).unwrap_or_else(|_| json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": "Invalid CLI receipt JSON", "next": "Check the board; retry the same operation id."})),
             Err(e) => json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": e, "next": "Check the board; retry the same operation id."}),
         }
     });
@@ -479,6 +478,36 @@ fn answer(install: &Path, m: &Value) -> Value {
     let mut out = answer_receipt(m, &r);
     out["sync"] = json!({"state": r["state"], "revision": r["revision"]});
     out
+}
+
+/// § 5: keep text and JSON outside bounded process pipes; only the child lifetime/output diagnostics use CoreQ limits.
+fn answer_cli(root: &Path, args: &[String], budget: Duration) -> Result<Vec<u8>, String> {
+    let dir = std::env::temp_dir().join(format!("taskq-reply-{}", crate::runtime::uuid()));
+    let mut options = fs::DirBuilder::new();
+    #[cfg(unix)] { use std::os::unix::fs::DirBuilderExt; options.mode(0o700); }
+    options.create(&dir).map_err(|e| format!("Cannot prepare reply transport: {e}"))?;
+    let input_path = dir.join("input");
+    let output_path = dir.join("receipt.json");
+    let result = (|| {
+        let (mut argv, input) = answer_input(args, &input_path);
+        if let Some(input) = input { fs::write(&input_path, input).map_err(|e| format!("Cannot write reply file: {e}"))?; }
+        argv.extend(["--json-file".into(), output_path.to_string_lossy().into_owned()]);
+        let out = crate::platform::output("tray.answer-command", owner_command(root)?.args(&argv), budget)?;
+        fs::read(&output_path).map_err(|e| if out.stderr.is_empty() { format!("JSON receipt unavailable: {e}") } else { String::from_utf8_lossy(&out.stderr).into_owned() })
+    })();
+    for path in [&input_path, &output_path, &output_path.with_extension("tmp")] { let _ = fs::remove_file(path); }
+    let _ = fs::remove_dir(&dir);
+    result
+}
+
+/// § 5: file transport avoids OS argument and bounded process-exchange input limits.
+fn answer_input(args: &[String], path: &Path) -> (Vec<String>, Option<String>) {
+    let mut argv = args.to_vec();
+    let input = if matches!(args.first().map(String::as_str), Some("answer" | "steer" | "requeue")) && let Some(i) = argv.iter().position(|a| a == "--text") {
+        argv[i] = "--text-file".into();
+        Some(std::mem::replace(&mut argv[i + 1], path.to_string_lossy().into_owned()))
+    } else { None };
+    (argv, input)
 }
 
 /// The tray receipt of CLI receipt `r`. #1785: a stale one speaks plain words, never revisions or CLI commands, and
@@ -806,7 +835,9 @@ impl ActionQueue {
             }
             let mut frozen=message.clone();frozen.as_object_mut().map(|m|m.remove("context"));
             let bytes=serde_json::to_vec(&frozen).map_err(|_|("request-too-large","Command payload too large; action not submitted"))?;
-            if bytes.len()>20<<10 {return Err(("request-too-large","Command payload too large; action not submitted"));}
+            // § 5: the envelope stays bounded; a person's literal reply has no length cap.
+            let reply_bytes=if action=="answer" && frozen["op"]["text"].is_string() {frozen["op"]["text"].to_string().len()} else {0};
+            if bytes.len().saturating_sub(reply_bytes)>20<<10 {return Err(("request-too-large","Command payload too large; action not submitted"));}
             let root=message["root"].as_str().filter(|root|!root.is_empty()).ok_or(("invalid-root","Project root missing; action not submitted"))?;
             if self.worker.is_finished() {return Err(("worker-unavailable","Command worker unavailable; action not submitted"));}
             let key=format!("{root}#{id}");let mut pending=self.pending.lock().unwrap_or_else(|e|e.into_inner());
@@ -2845,8 +2876,14 @@ mod tests {
         assert_eq!(observed["answers"]["https://example.org/issues#42"],local);
         assert_eq!(observed["local"]["caret"],json!([1,5]));
         assert!(crate::setup::all(&base).unwrap().0.is_empty(),"view persistence must not replay effects");
+        let large=json!({"draft":"word ".repeat(1_700_000),"op":{"text":"word ".repeat(1_700_000)}});
+        answer_local(&base,"large-draft",&large).unwrap();
+        crate::conversations::navigation(&base,&json!({"search":"after a large reply"})).unwrap();
+        answer_local(&base,"another-draft",&local).unwrap();
+        assert_eq!(requests_file_checked(&base).unwrap()["answers"]["large-draft"],large,"§ 5: a large reply is saved without a length cap");
         let bytes=fs::read(base.join("tray-requests.json")).unwrap();
-        assert!(answer_local(&base,"x",&json!({"draft":"x".repeat(65537)})).is_err());
+        assert!(answer_local(&base,"x",&json!({"draft":7})).is_err(),"invalid draft types are still refused");
+        assert!(answer_local(&base,"x",&json!({"draft":"ok","extra":"x".repeat(8*1024*1024)})).is_err(),"non-reply metadata retains its 8 MiB budget");
         assert_eq!(fs::read(base.join("tray-requests.json")).unwrap(),bytes);
         fs::write(base.join("tray-requests.json"),"broken kept bytes").unwrap();
         assert!(ai(&base,"ai-draft",&json!({"text":"replacement"})).is_err());
@@ -3137,13 +3174,14 @@ mod tests {
     #[test]
     fn answer_resend_keeps_its_pending_correlation() {
         crate::with_test_capture(|_store,dir| {
+          // § 5: 30 KiB crosses this queue's old 20 KiB cap; file/storage checks cover the larger boundaries.
+          for op in [json!({"id":"ws.1","task":7,"revision":20,"choice":2}),json!({"id":"ws.1","task":7,"revision":20,"text":"word 🦀\n".repeat(3_000)})] {
             let root=dir.join("project");let install=dir.join("install");
             fs::create_dir_all(&root).unwrap();fs::create_dir_all(&install).unwrap();
             fs::write(install.join("projects"),format!("{}
 ",root.display())).unwrap();
             let (entered_tx,entered_rx)=std::sync::mpsc::channel();let (release_tx,release_rx)=std::sync::mpsc::channel();
             let queue=ActionQueue::start(install.clone(),&["answer"],true,move |_,_,_| {entered_tx.send(()).unwrap();release_rx.recv_timeout(Duration::from_secs(3)).unwrap();Ok(json!({}))},|_,_,_|{}).unwrap();
-            let op=json!({"id":"ws.1","task":7,"revision":20,"choice":2});
             let first=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op,"local":{"draft":"","receipt":{"state":"sending"}}});
             queue.submit(&answer_request(&first)).unwrap();entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
             let readback=json!({"a":"answer","root":root,"board":"https://github.com/o/r/issues","op":op});
@@ -3156,8 +3194,13 @@ mod tests {
             queue.submit(&answer_request(&check)).unwrap();
             let mut other=readback.clone();other["op"]["choice"]=json!(1);
             assert!(queue.submit(&answer_request(&other)).unwrap_err().contains("already pending"),"the correlation guard stays");
+            let mut oversized=readback.clone();oversized["extra"]=json!("x".repeat(21<<10));
+            assert!(queue.submit(&answer_request(&oversized)).unwrap_err().contains("payload too large"),"non-reply envelope fields retain their bound");
+            release_tx.send(()).unwrap();
+            entered_rx.recv_timeout(Duration::from_secs(3)).unwrap(); // the deliberately unnormalized ws.0 job
             release_tx.send(()).unwrap();
             let ActionQueue{sender,worker,..}=queue;drop(sender);worker.join().unwrap();
+          }
         });
     }
 
@@ -3241,6 +3284,33 @@ mod tests {
         m["root"] = json!(root);
         m["op"]["revision"] = Value::Null;
         assert!(answer_args(&install, &m).is_err());
+        m["op"]["revision"] = json!(20);
+        m["op"].as_object_mut().unwrap().remove("choice");
+        m["op"]["text"] = json!("word ".repeat(53) + "ok");
+        assert_eq!(answer_args(&install, &m).unwrap()[3], "word ".repeat(53) + "ok");
+        m["op"]["action"] = json!("requeue");
+        m["op"]["text"] = json!("word\n".repeat(400));
+        assert_eq!(answer_args(&install, &m).unwrap()[3], format!("Reason: {}", "word\n".repeat(400)));
+        for action in ["answer", "steer", "requeue"] {
+            if action == "answer" { m["op"].as_object_mut().unwrap().remove("action"); } else { m["op"]["action"] = json!(action); }
+            let text = "word 🦀\n".repeat(200_000);
+            m["op"]["text"] = json!(text);
+            let args = answer_args(&install, &m).unwrap();
+            let path = install.join("reply-input");
+            let (argv, input) = answer_input(&args, &path);
+            let input = input.unwrap();
+            let expected = if action == "requeue" { format!("Reason: {text}") } else { text };
+            assert_eq!(input, expected, "§ 5: the entire reply uses file transport, above the old 1 MiB exchange limit");
+            assert!(argv.contains(&"--text-file".into()) && argv.iter().map(String::len).sum::<usize>() < 512);
+            fs::write(&path, input.as_bytes()).unwrap();
+            let mut parsed = crate::Args::parse(&argv).unwrap();
+            parsed.read_text(&mut std::io::empty()).unwrap();
+            assert_eq!(parsed.one("text"), Some(expected.as_str()));
+        }
+        for cmd in ["later", "close"] {
+            let original = vec![cmd.into(), "7".into(), "--text".into(), "Reason: cancelled".into()];
+            assert_eq!(answer_input(&original, Path::new("unused")), (original, None), "§ 5: cancellation commands retain literal text");
+        }
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -3303,7 +3373,7 @@ mod tests {
 3
 4
 5");
-        assert!(answer_args(&install, &m).is_err(), "steer keeps the CLI text limits");
+        assert!(answer_args(&install, &m).is_ok(), "§ 5: steer accepts multiline human text");
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -3403,9 +3473,9 @@ mod tests {
         assert!(answer_args(&install, &m).is_err());
         m["op"] = json!({"id":"action.1","task":n,"revision":rev,"action":"requeue"});
         m["op"]["text"] = json!("x".repeat(233));
-        assert!(answer_args(&install, &m).is_err());
+        assert!(answer_args(&install, &m).is_ok(), "§ 5: owner requeue is wrapped by dispatch");
         m["op"]["text"] = json!("a\nb");
-        assert!(answer_args(&install, &m).is_err());
+        assert!(answer_args(&install, &m).is_ok(), "§ 5: owner requeue accepts multiple lines");
         // #1506 published controls: the DashQ fixture argv and state table are what the tray dispatches and offers.
         let f: Value = serde_json::from_str(include_str!("../tests/fixtures/task-controls.json")).unwrap();
         assert_eq!(f["version"], crate::snapshot::CONTROLS_VERSION);
@@ -3415,7 +3485,10 @@ mod tests {
         for (st, offered) in f["states"].as_object().unwrap() { assert_eq!(json!(crate::snapshot::controls(st)), *offered, "{st}"); }
         for c in f["cases"].as_array().unwrap() {
             m["op"] = c["op"].clone();
-            assert_eq!(json!(answer_args(&install, &m).unwrap()), c["argv"]);
+            let args = answer_args(&install, &m).unwrap();
+            assert_eq!(json!(args), c["argv"]);
+            let mut file_args = args;file_args.extend(["--json-file".into(), "receipt.json".into()]);
+            assert!(crate::Args::parse(&file_args).is_ok(), "§ 5: every published control supports file receipts: {}", c["action"]);
             snapshot["tasks"] = json!([c["row"]]);
             assert!(answer_snapshot(&snapshot, &m).is_ok());
             snapshot["tasks"][0]["state"] = json!("closed");
