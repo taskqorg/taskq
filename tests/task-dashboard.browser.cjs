@@ -42,7 +42,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   assert.equal(await p.locator('[data-a=row-menu],.row-menu').count(),0,'no right ellipsis or action column');
   const identity=p.locator('[data-a=task-detail]').filter({hasText:'Alpha #5'});
   // #1659 A2: the remote mark (proven remote run) then the Claude mark sit right before the current-stage elapsed time.
-  assert.deepEqual(await list().filter({has:identity}).locator('.task-when').evaluate(e=>[...e.querySelectorAll('[data-icon],.tqp-age')].map(x=>x.dataset.icon||x.textContent)),['play','network','claude','4m']);
+  assert.deepEqual(await list().filter({has:identity}).locator('.tqp-task-head').evaluate(e=>[...e.querySelectorAll('[data-icon],.tqp-age')].map(x=>x.dataset.icon||x.textContent)),['play','github','network','claude','4m']);
   assert.equal(await list().filter({hasText:'Beta #1'}).locator('.task-stage.review').count(),1,'Review uses the purple review tone');
   // #1659 A1: hover and focus never open details; Enter does. IDs, age and steps stay behind a disclosure; no pin latch.
   await identity.hover();await identity.focus();assert.equal(await editor().count(),0,'hover/focus open nothing');assert.equal(await identity.getAttribute('aria-expanded'),'false');
