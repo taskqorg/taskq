@@ -24,3 +24,12 @@ for(const action of ['later','make','drop']){
 r.act('later');op=sent.at(-1);r.receive({id:op.id,root:'fixture',report:{...row,read:true,decision:'later',visible:true}});assert.equal(r.rows().length,1);
 r.act('make');op=sent.at(-1);r.receive({id:op.id,root:'fixture',report:{...row,decision:'made',visible:false,tasks_made:[20]}});assert.equal(r.rows().length,0);
 assert(paints>0);console.log('PASS Reports: source-bound receipts, read, Later, partial/unknown protection, Make tasks and Drop dispatch');
+const aliases=[],a=create({send:m=>aliases.push(m),draw(){},defer(){},id:()=>String(aliases.length+1)});
+a.toggle([...projects,{...projects[0],root:'same-board'}]);assert.equal(aliases.length,1,'one Reports read per board, not per registration');
+a.receive({id:aliases[0].id,root:aliases[0].root,reports:[row,{...row,n:13}],more:false});assert.equal(a.rows().length,2);
+a.open(projects[0].root,12);let aliasOp=aliases.at(-1);a.receive({id:aliasOp.id,root:aliasOp.root,report:{...row,body:'Report',tasks:[]}});
+a.act('drop');aliasOp=aliases.at(-1);a.receive({id:aliasOp.id,root:aliasOp.root,report:{...row,decision:'drop',visible:false}});
+assert.deepEqual(a.rows().map(r=>r.n),[13],'Drop cannot leave the same report under another registration');
+const unread=[{root:'new-project',name:'New',issues:'https://github.com/o/new/issues'}];
+assert(!JSON.stringify(a.section(unread)).includes('No reports waiting for a decision.'),'an uncollected project is unknown, not empty');
+assert.equal(a.rows().length,0,'removed registrations cannot leave actionable cached reports');
