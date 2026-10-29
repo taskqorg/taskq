@@ -1201,7 +1201,9 @@ impl ProjectEdit {
             Err(e)=>return Err(format!("project registry metadata unknown: {e}")),
         }
         let target=root.canonicalize().map_err(|e|format!("project root unknown: {e}"))?;
-        let target_text=target.to_str().ok_or("project root is not UTF-8")?;
+        // #1858: stored as older entries are, without `\\?\`; matching stays canonical
+        let plain=crate::platform::plain_path(&target);
+        let target_text=plain.to_str().ok_or("project root is not UTF-8")?;
         if target_text.contains(['\n','\r']) {return Err("project root cannot be represented by the line registry".into());}
         let entries=project_entries(original.as_deref().unwrap_or(""))?;
         let removed:Vec<PathBuf>=entries.iter().filter(|(_,canonical)|*canonical==target).map(|(path,_)|path.clone()).collect();
@@ -1830,7 +1832,7 @@ mod tests {
         ProjectEdit::new(&install,&a,true).unwrap().commit().unwrap();
         let path=install.join("projects");
         let before=fs::read_to_string(&path).unwrap();
-        assert_eq!(before,format!("{}\n",a.canonicalize().unwrap().display()));
+        assert_eq!(before,format!("{}\n",crate::platform::plain_path(&a.canonicalize().unwrap()).display()));
         assert!(install.join("poke").exists());
         #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;fs::set_permissions(&path,fs::Permissions::from_mode(0o640)).unwrap();}
         let owner=ownership(&path).unwrap();
@@ -1854,6 +1856,28 @@ mod tests {
         fs::write(&path,b"\xff").unwrap();
         assert!(ProjectEdit::new(&install,&a,true).is_err());
         assert_eq!(fs::read(&path).unwrap(),b"\xff");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    // Risk (#1858): Windows registration stored `\\?\C:\...` beside older plain entries, so path and trust checks missed.
+    #[cfg(windows)]
+    #[test]
+    fn windows_registry_stores_plain_roots_and_matches_verbatim_entries() {
+        let base=temp("registry-plain");let install=base.join("install");let a=base.join("a");let b=base.join("b");
+        for path in [&install,&a,&b] {fs::create_dir_all(path).unwrap();}
+        let verbatim=|p:&Path|{let c=p.canonicalize().unwrap();assert!(c.to_str().unwrap().starts_with(r"\\?\"));c};
+        let plain=|p:&Path|crate::platform::plain_path(&verbatim(p));
+        ProjectEdit::new(&install,&verbatim(&a),true).unwrap().commit().unwrap();
+        let path=install.join("projects");
+        assert_eq!(fs::read_to_string(&path).unwrap(),format!("{}\n",plain(&a).display()),"stored without the verbatim prefix");
+        // an older prefixed entry and a plain one of the same root resolve to one project, and re-adding writes nothing
+        fs::write(&path,format!("{}\n{}\n{}\n",verbatim(&a).display(),plain(&a).display(),plain(&b).display())).unwrap();
+        assert_eq!(projects(&install).unwrap(),vec![verbatim(&a),verbatim(&b)]);
+        let before=fs::read(&path).unwrap();
+        ProjectEdit::new(&install,&plain(&a),true).unwrap().commit().unwrap();
+        assert_eq!(fs::read(&path).unwrap(),before);
+        ProjectEdit::new(&install,&plain(&a),false).unwrap().commit().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(),format!("{}\n",plain(&b).display()),"removal drops both spellings");
         fs::remove_dir_all(base).unwrap();
     }
 

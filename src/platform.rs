@@ -103,6 +103,14 @@ pub fn is_home(install: &Path, home: Option<&Path>) -> bool {
     home.is_some_and(|h| h == install || fs::canonicalize(h).is_ok_and(|h| fs::canonicalize(install).is_ok_and(|i| i == h)))
 }
 
+/// #1858: a Windows path without the verbatim prefix canonicalize adds (`\\?\C:\` is `C:\`, `\\?\UNC\s\x` is
+/// `\\s\x`), the form older registry entries and Claude's project keys use; other platforms keep the path.
+pub fn plain_path(p: &Path) -> PathBuf {
+    let Some(text) = p.to_str().filter(|_| cfg!(windows)) else { return p.into() };
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") { return PathBuf::from(format!(r"\\{rest}")); }
+    text.strip_prefix(r"\\?\").map_or_else(|| p.into(), PathBuf::from)
+}
+
 static SERVICE_LOG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// From here on this process is the service: each log line is stamped and folded (§ 4).
