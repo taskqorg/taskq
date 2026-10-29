@@ -2,7 +2,7 @@
 
 Design for [#1812](https://github.com/taskqorg/taskq/issues/1812). The [owner answer](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6490519452) approves stronger translucent text. R13 is applied in the root Product Menu opacity decision and M1.1; existing Off behavior and guarding assertions are retained.
 
-## Current implementation
+## Baseline before implementation
 
 `src/tray.rs` creates an undecorated, transparent Tao window and transparent Wry webview for the menu. `src/task-workspace.css` paints the menu surface and its custom chrome. `Settings` loads, validates and saves local appearance preferences in `tray.json`; Settings forwards appearance actions to the menu. The menu's routes share one native window. Settings, View and Conversations have separate native windows.
 
@@ -18,7 +18,7 @@ There is no opacity preference, slider or native alpha application. Implementati
 | WebView2 transparent background | Transparent web pixels reveal the host; opaque page content remains opaque. | Already used by the menu. `DefaultBackgroundColor` accepts only alpha 0 or 255; it is not a continuous whole-window opacity control. |
 | Windows Mica / Acrylic | Mica incorporates wallpaper; Acrylic provides a translucent backdrop. Foreground content remains separate. | These materials change the background, not the complete window's alpha, and have system-dependent fallbacks. |
 
-Choose native constant alpha on each OS if the whole-window requirement remains. Use the same persisted percentage on both; validate it before native calls and report application/save failures rather than claiming success. Off restores alpha 1.0 / 255. Apply only to the menu window, independent of its route; retain the other windows and tray icon at their existing opacity. A Claude reviewer must cross-check this recommendation; that review has not happened.
+Choose native constant alpha on each OS for the whole-window requirement. Use the same persisted percentage on both; validate it before native calls and report application/save failures rather than claiming success. Off restores alpha 1.0 / 255. Apply only to the menu window, independent of its route; retain the other windows and tray icon at their existing opacity. The [Claude review](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6491722381) accepted the route comparison (A1); Windows WebView2 composition remains unproved.
 
 Sources: Apple [window alpha](https://developer.apple.com/documentation/appkit/nswindow/alphavalue) and [visual effects](https://developer.apple.com/documentation/appkit/nsvisualeffectview); Microsoft [layered-window alpha](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setlayeredwindowattributes), [WebView2 background](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller2) and [materials](https://learn.microsoft.com/en-us/windows/apps/develop/ui/materials).
 
