@@ -52,6 +52,7 @@ Stop workers/reviewers only after close/parking/replacement, except owner-confir
 Follow [shared verification][sq-verify]. Gate `python3 scripts/check.py` ([selection](docs/testing.md)): PRs Linux; `merge_group` affected-OS matrix, the merge gate; main push none. Release needs exact-source CI and staged offline selftest. [Live acceptance](docs/runtime-qualification.md) reruns for changed runtime paths, permissions or clients. Prototypes are instruments; [UI acceptance][uia] owns browser/screenshot/native scope.
 ### R13. Spec first
 Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and its [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps stay in [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); the [implementation brief](docs/design/implementation-brief.md) maps the accepted product to code. Security: [SECURITY.md](SECURITY.md) (private GitHub reporting, 7 calendar days); [baseline](https://github.com/taskqorg/specq/blob/main/engineering/security.md).
+Rule IDs, the rule-change gate and coverage: [rule IDs](docs/design/rule-ids.md#contract-detail).
 ## Product
 Looks/sound: one line each (R13).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
@@ -82,33 +83,33 @@ A log entry is a comment by a trusted author whose first line is `taskq: <kind> 
 
 `core.rs` is one pure function `fold(n, entries, deps_open) -> Task {state, attempt, role, session, retries, card, result, inbox, publication, enqueued, gate, pick}`; `inbox`: current attempt's accepted `answer`/`steer` ids. The accepted `spawn` id fences the attempt. `attempt <id>` is accepted only for the current attempt. Entries invalid in the current state change nothing.
 Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields, not text; without the op id line a `revision:` line is text. The task's revision is the id of the entry that set its open card, else its attempt, else its last accepted entry (0: none). `fold` ignores an entry whose op id an earlier entry carried; a writer whose entry read back at another revision or ignored edits it (§ 5).
-| State | Entry | Next | Notes |
-|---|---|---|---|
-| (none) | — | `ready`, `waiting` if `Depends on` names an open issue | start of every task |
-| (none) | `hold` | `held` | only as the first accepted entry; N-1 ignores the kind |
-| `held` | `start` | `ready`, `waiting` if `Depends on` names an open issue | then the writer adds `taskq` (§ 1) |
-| `held`, `ready` | `gate` | same | owner gate `required` (§ 7); N-1 ignores the kind |
-| `review`, `ask` | `approve <sha>` | same | gate `approved`; owner only (no `attempt`); `<sha>` is the current result |
-| `ready` | `spawn worker <rt>:<session> <host>` | `doing` | attempt = this id, role worker |
-| `doing` | `result <sha> attempt` | `review` | text: verdict (§ 7); option lines make a card (§ 2) |
-| `doing` | `ask attempt` | `ask` | text: ask card below |
-| `doing`, `review` | `requeue [main-moved] attempt` | `ready` | reason/fixes; `main-moved` keeps retries, else +1; 3rd: `ask` with the limit card |
-| `doing`, `review` | `gone attempt` | `ready` / `review` | service: child exited or lease expired; emergency recovery (§ 4); `retries += 1`; 2nd: `ask` with the limit card |
-| `doing`, `review` | `usage-limit attempt` | `ready` / `review` | pre-work quota/dead login; keep retries/review result |
-| `doing` | `steer` | `doing` | text for the worker |
-| `review` | `spawn reviewer <rt>:<session> <host>` | `review` | no live reviewer/pending publication; attempt = this id |
-| `review` | `ask attempt` | `ask` | reviewer's card; result kept |
-| `review` | `publish [attempt]` | `review` | save `publication` verdict, end reviewer; service publishes; ignore duplicate |
-| `review` | `publication-failed` / `publication-blocked` | `ready` / `ask` | CI failure: +1 retry, 3rd asks / owner-only blocker; answer resumes |
-| `review` | `enqueued <id>` | `review` | queue receipt; ignore duplicate |
-| `review` | `rebased <sha>` | `review` | private fallback: update result, stale gate, clear publication; review |
-| `review` | `close attempt` or `close` | closed | verdict text; written after publication (§ 7); ignored while a gate is not `approved` |
-| `ask` | `answer [K]` | state before `ask`, else `ready` | `retries = 0`; delivered: text, else option K, else first line |
-| `ask` | `pick K` | `ask` | PM view: option K, reason in text; no `attempt`; cleared by a card change or leaving `ask` |
-| any open | `requeue` | `ready` | by PM/owner: result, card and attempt cleared; `retries = 0` |
-| `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next spawn or owner `requeue` outside `later`/`failed`; N-1: `later` |
-| any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended |
-| `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits |
+| State | Entry | Next | Notes | ID |
+|---|---|---|---|---|
+| (none) | — | `ready`, `waiting` if `Depends on` names an open issue | start of every task | 1 |
+| (none) | `hold` | `held` | only as the first accepted entry; N-1 ignores the kind | 2 |
+| `held` | `start` | `ready`, `waiting` if `Depends on` names an open issue | then the writer adds `taskq` (§ 1) | 3 |
+| `held`, `ready` | `gate` | same | owner gate `required` (§ 7); N-1 ignores the kind | 4 |
+| `review`, `ask` | `approve <sha>` | same | gate `approved`; owner only (no `attempt`); `<sha>` is the current result | 5 |
+| `ready` | `spawn worker <rt>:<session> <host>` | `doing` | attempt = this id, role worker | 6 |
+| `doing` | `result <sha> attempt` | `review` | text: verdict (§ 7); option lines make a card (§ 2) | 7 |
+| `doing` | `ask attempt` | `ask` | text: ask card below | 8 |
+| `doing`, `review` | `requeue [main-moved] attempt` | `ready` | reason/fixes; `main-moved` keeps retries, else +1; 3rd: `ask` with the limit card | 9 |
+| `doing`, `review` | `gone attempt` | `ready` / `review` | service: child exited or lease expired; emergency recovery (§ 4); `retries += 1`; 2nd: `ask` with the limit card | 10 |
+| `doing`, `review` | `usage-limit attempt` | `ready` / `review` | pre-work quota/dead login; keep retries/review result | 11 |
+| `doing` | `steer` | `doing` | text for the worker | 12 |
+| `review` | `spawn reviewer <rt>:<session> <host>` | `review` | no live reviewer/pending publication; attempt = this id | 13 |
+| `review` | `ask attempt` | `ask` | reviewer's card; result kept | 14 |
+| `review` | `publish [attempt]` | `review` | save `publication` verdict, end reviewer; service publishes; ignore duplicate | 15 |
+| `review` | `publication-failed` / `publication-blocked` | `ready` / `ask` | CI failure: +1 retry, 3rd asks / owner-only blocker; answer resumes | 16 |
+| `review` | `enqueued <id>` | `review` | queue receipt; ignore duplicate | 17 |
+| `review` | `rebased <sha>` | `review` | private fallback: update result, stale gate, clear publication; review | 18 |
+| `review` | `close attempt` or `close` | closed | verdict text; written after publication (§ 7); ignored while a gate is not `approved` | 19 |
+| `ask` | `answer [K]` | state before `ask`, else `ready` | `retries = 0`; delivered: text, else option K, else first line | 20 |
+| `ask` | `pick K` | `ask` | PM view: option K, reason in text; no `attempt`; cleared by a card change or leaving `ask` | 21 |
+| any open | `requeue` | `ready` | by PM/owner: result, card and attempt cleared; `retries = 0` | 22 |
+| `doing`, `review` | `later <ref> attempt` | `ready`, `waiting` | worker park (§ 7): `<ref>` is a `Depends on` until next spawn or owner `requeue` outside `later`/`failed`; N-1: `later` | 23 |
+| any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended | 24 |
+| `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits | 25 |
 
 - `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1).
 - `gone` in `review` replaces only the reviewer; keeps result. ([E1–E5](docs/design/emergency-recovery.md)): § 3 hold forbids host `spawn` except E3 selected recovery; unknown liveness forbids `gone`; `service recover --apply` fences each `gone attempt` with `--op-id`/`--revision` (§ 4).
@@ -158,7 +159,7 @@ One loop:
 - Poke: [shared command receipts](docs/design/profiling.md#service-wakeups); signals use `<root>/.taskq/poke` or `<install>/poke`. Each pass writes `<root>/.taskq/status.json` for `service status`, tray and DashQ: coreq.md common keys, service state, § 5 snapshot (`tasks` with § 2 `revision`; failed passes keep rows with `complete` false), `capacity` (limits, gate, admission, reservations), `requests`, `incident`, `agents` (§ 5, probed at most every 5 min) and § 8 `access`. `diagnostics`: selected `current` (CoreQ), health `healthy` (§8), lifecycle (consumer), CoreQ (Cargo.lock); [detail](docs/design/service-version-producer.md#contract-detail). Capacity publishes on each sample; missing or older than `ttl` reads unknown ([specq](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy)). Failed publication is logged, blocks release-health marking and preserves supervision.
 - Events: a pass appends to `<root>/.taskq/events` one line `<board time> #<N> close|failed|ask|blocked|gone <id>` per observed move to closed, `failed`, `ask` or `waiting` and per new `gone` entry; 30-day bound; moves while no service ran are missing. An R6 stuck task (`review` too) logs `#N event stuck <state> <age>` once until it moves. Detail: [menu].
 - One host owner holds `<install>/service.lock`; `<install>/service` projects native identity. Live/unknown owners of any age block startup; project threads wait too. This host's heartbeat under `ttl` naming another `service <id>` refuses writes: `another service <id> runs as host <name>`. Restart reconciles board/native executions (§3), never `gone`. `service restart|stop` tracks one host receipt; Mac `stop --mode drain|full` persists the reviewed hold (E2), full cancels owned work before board reconciliation; `--request ID` reconciles it. Legacy restart flags stay untracked until H-A5 retirement (§8 step3).
-- Tray (macOS, Windows; [menu] M1–M15): one normal TaskQ app per host: Open starts all; hide/close keeps work; Quit drain-stops; Restart: Quit+Open; app text never says service. Service starts it if `<install>/tray` pid >30 s old. Reads `<install>/projects`, each `<root>/.taskq/status.json` and `events`; no board/token. View state/settings: `<install>/tray.json` (M8/UI02), no task truth. Writes: target/effect first; success only on readback. Menu/detail/views: [task workspace](docs/design/task-workspace.md) `taskq.task-workspace/1` (`taskq.receive(state)` in, ipc JSON out), same build: tray, DashQ.
+- Tray (macOS, Windows; [menu] M1–M15): one normal TaskQ app per host; detail: [menu].
 - Agentq ([detail][onb]): `<install>/tray-agentq.json`: dismissal, warning, request id; verified running alone resets; unknown never replays. OK uses §4 setup.
 - Owner sessions: [setup/AI/retro](docs/design/ai-workspace.md#contract-detail) launch once, visible; C1 threads/D1–D8, no §3 admission controls. PM: [opt-in grant](docs/design/pm-requests.md#contract-detail).
 - Incident reports ([incidents](docs/design/incidents.md#contract-detail)): `incident_reports` (§ 9) defaults to true; `false` or `TASKQ_INCIDENT_REPORTS=off` disables. Setup and the shipping update disclose destination and opt-out before any send. Only a catalog fault reports, with an allowlisted payload; a report never changes a task, the queue or an exit code.
