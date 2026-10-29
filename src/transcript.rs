@@ -107,12 +107,115 @@ fn line(role: &str, text: &str) -> Value { json!({"role": role, "text": text}) }
 fn tool(name: &str, input: &Value) -> Value {
     let arg = ["description", "command", "file_path", "pattern", "url", "cmd"].iter().find_map(|k| input[k].as_str().map(String::from))
         .unwrap_or_else(|| input.as_str().map_or_else(|| input.to_string(), String::from));
-    let arg: String = arg.split_whitespace().map(redact).collect::<Vec<_>>().join(" ").chars().take(160).collect();
+    let arg: String = mask(&arg).chars().take(160).collect();
     line("tool", format!("{name} {arg}").trim())
 }
 
-/// #1825 A4: a tool line never shows a token-shaped word or the value of a credential assignment; command output
-/// is never in the view.
+/// #1825 A4, #1833 A2: a tool line never shows a token-shaped word, the value of a credential assignment or JSON
+/// field, or the credential of an Authorization header or bearer scheme; command output is never in the view.
+fn mask(arg: &str) -> String {
+    let (mut out, mut header, mut secret) = (vec![], false, false);
+    for w in json_masked(arg).split_whitespace() {
+        let bare = w.replace(['"', '\''], "").to_ascii_lowercase();
+        let scheme = ["bearer", "basic", "token", "digest"].contains(&bare.as_str());
+        out.push(if secret || header && !scheme { "[redacted]".into() } else { redact(w) });
+        // `Authorization: <scheme> <credential>` or `Authorization: <credential>`; `Bearer <credential>` anywhere
+        (secret, header) = (!secret && (header && scheme || bare == "bearer"), bare.ends_with("authorization:"));
+    }
+    out.join(" ")
+}
+
+/// `"<name>": "<value>"`, also backslash-escaped as JSON inside a quoted command, with a credential-like name.
+fn json_masked(s: &str) -> String {
+    let (mut out, mut rest) = (String::new(), s);
+    // every quote may open a key: a shell quote around the JSON never shifts the pairing
+    while let Some(i) = rest.find('"') {
+        out.push_str(&rest[..=i]);
+        rest = &rest[i + 1..];
+        let Some(j) = rest.find('"') else { break };
+        let quote = if rest[..j].ends_with('\\') { "\\\"" } else { "\"" };
+        let name = rest[..j].trim_end_matches('\\').to_ascii_lowercase();
+        let named = name.chars().all(|c| c.is_ascii_alphanumeric() || "_-.".contains(c))
+            && ["token", "secret", "password", "passwd", "api_key", "apikey", "authorization"].iter().any(|n| name.contains(n));
+        let value = rest[j + 1..].trim_start().strip_prefix(':').map(str::trim_start).and_then(|v| v.strip_prefix(quote)).filter(|_| named);
+        let end = value.and_then(|v| if quote == "\"" { v.match_indices('"').map(|(k, _)| k).find(|k| !v[..*k].ends_with('\\')) } else { v.find(quote) });
+        if let (Some(v), Some(k)) = (value, end) {
+            out.push_str(&rest[..rest.len() - v.len()]);
+            out.push_str("[redacted]");
+            out.push_str(quote);
+            rest = &v[k + quote.len()..];
+        }
+    }
+    out + rest
+}
+
+/// #1833 A1: newer Codex runs commands through its `exec` tool as JavaScript; the line shows what the script calls,
+/// `tools.exec_command({cmd})` as the command, other tools by name and target, never the script. None: no tool call.
+fn codex_script(js: &str) -> Option<String> {
+    let s: Vec<char> = js.chars().collect();
+    let (mut i, mut calls, mut key) = (0, Vec::<(String, Option<String>)>::new(), None::<String>);
+    let ident = |i: usize| s[i..].iter().take_while(|c| c.is_alphanumeric() || **c == '_' || **c == '$').collect::<String>();
+    let colon = |i: usize| s[i..].iter().find(|c| !c.is_whitespace()) == Some(&':');
+    while i < s.len() {
+        match s[i] {
+            '/' if s.get(i + 1) == Some(&'/') => while i < s.len() && s[i] != '\n' { i += 1 },
+            '/' if s.get(i + 1) == Some(&'*') => i = (i + 3..s.len()).find(|&k| s[k - 1] == '*' && s[k] == '/').map_or(s.len(), |k| k + 1),
+            q @ ('"' | '\'' | '`') => {
+                let (lit, end) = literal(&s, i + 1, q);
+                i = end;
+                if colon(i) { key = Some(lit); continue; }
+                if let Some((name, target @ None)) = calls.last_mut() {
+                    if matches!((name.as_str(), key.as_deref()), ("exec_command", Some("cmd")) | ("view_image", Some("path")) | ("apply_patch", None)) { *target = Some(lit); }
+                }
+                key = None;
+            }
+            c if c.is_alphabetic() || c == '_' || c == '$' => {
+                let word = ident(i);
+                i += word.chars().count();
+                if word == "tools" && s.get(i) == Some(&'.') {
+                    let name = ident(i + 1);
+                    i += 1 + name.chars().count();
+                    if s.get(i) == Some(&'(') { calls.push((name, None)); key = None; }
+                } else if colon(i) { key = Some(word); }
+            }
+            _ => i += 1,
+        }
+    }
+    let line: Vec<String> = calls.into_iter().map(|(name, target)| match (name.as_str(), target) {
+        ("exec_command", Some(cmd)) => cmd,
+        ("apply_patch", Some(patch)) => format!("apply_patch {}", patch_files(&patch)),
+        (_, Some(target)) => format!("{name} {target}"),
+        (_, None) => name,
+    }).collect();
+    (!line.is_empty()).then(|| line.join(" · "))
+}
+
+/// The JavaScript string literal that starts at `i`, closed by `q`, and the index after it; an open one ends the script.
+fn literal(s: &[char], mut i: usize, q: char) -> (String, usize) {
+    let mut out = String::new();
+    while i < s.len() && s[i] != q {
+        if s[i] == '\\' && i + 1 < s.len() {
+            i += 1;
+            let hex = |n: usize| s.get(i + 1..i + 1 + n).and_then(|h| u32::from_str_radix(&h.iter().collect::<String>(), 16).ok()).and_then(char::from_u32);
+            match s[i] {
+                'n' => out.push('\n'),
+                't' => out.push('\t'),
+                'r' => out.push('\r'),
+                'u' if hex(4).is_some() => { out.push(hex(4).unwrap()); i += 4; }
+                'x' if hex(2).is_some() => { out.push(hex(2).unwrap()); i += 2; }
+                c => out.push(c),
+            }
+        } else { out.push(s[i]); }
+        i += 1;
+    }
+    (out, (i + 1).min(s.len()))
+}
+
+/// The files an `apply_patch` envelope adds, updates or deletes.
+fn patch_files(patch: &str) -> String {
+    patch.lines().filter_map(|l| ["*** Add File: ", "*** Update File: ", "*** Delete File: "].iter().find_map(|p| l.strip_prefix(p))).collect::<Vec<_>>().join(" ")
+}
+
 fn redact(w: &str) -> String {
     let (name, value) = w.rsplit_once('=').unwrap_or(("", w));
     let value = value.trim_matches(|c| c == '"' || c == '\'');
@@ -147,9 +250,13 @@ fn codex_item(v: &Value, out: &mut Vec<Value>) {
             if role == "user" && (text.starts_with('<') || text.starts_with("# AGENTS.md")) { return; }
             out.push(line(role, &text));
         }
-        (Some("function_call" | "custom_tool_call"), _) => {
-            let input = p["arguments"].as_str().or(p["input"].as_str()).map_or(Value::Null, |a| serde_json::from_str(a).unwrap_or_else(|_| json!(a)));
-            out.push(tool(p["name"].as_str().unwrap_or("tool"), &input));
+        (Some(kind @ ("function_call" | "custom_tool_call")), _) => {
+            let raw = p["arguments"].as_str().or(p["input"].as_str());
+            let name = p["name"].as_str().unwrap_or("tool");
+            // a custom tool's input is free text: an exec script or an apply_patch envelope, never shown as is
+            let summary = raw.filter(|_| kind == "custom_tool_call").and_then(|a| if name == "apply_patch" { Some(patch_files(a)) } else { codex_script(a) });
+            let input = match summary { Some(cmd) => json!({"cmd": cmd}), None => raw.map_or(Value::Null, |a| serde_json::from_str(a).unwrap_or_else(|_| json!(a))) };
+            out.push(tool(name, &input));
         }
         (Some("local_shell_call"), _) => out.push(tool("shell", &p["action"])),
         _ => {}
@@ -251,6 +358,69 @@ mod tests {
         let token = format!("ghp_{}", "a".repeat(36));
         let input = json!({"command": format!("GH_TOKEN={token} gh api -H \"Authorization: token {token}\" x; DB_PASSWORD='p' run; sk-short; KEY=v")});
         assert_eq!(tool("Bash", &input)["text"], "Bash GH_TOKEN=[redacted] gh api -H \"Authorization: token [redacted] x; DB_PASSWORD=[redacted] run; sk-short; KEY=v");
+    }
+
+    // #1833 A2/A3: bearer tokens, Authorization headers and credential-named JSON fields never reach the view;
+    // other words and fields stay readable. Values are invented.
+    #[test]
+    fn tool_lines_mask_headers_bearer_and_json_fields() {
+        let line = |cmd: &str| tool("Bash", &json!({"command": cmd}))["text"].as_str().unwrap().to_string();
+        assert_eq!(line("curl -H 'Authorization: Bearer abc.def' u"), "Bash curl -H 'Authorization: Bearer [redacted] u");
+        assert_eq!(line("curl -H \"authorization: s3cr3t\" -H 'Accept: json' u"), "Bash curl -H \"authorization: [redacted] -H 'Accept: json' u");
+        assert_eq!(line("http u Bearer xyz next"), "Bash http u Bearer [redacted] next");
+        assert_eq!(line("requests.get(u, headers={'Authorization': 'Basic dXNlcg=='})"), "Bash requests.get(u, headers={'Authorization': 'Basic [redacted]");
+        assert_eq!(line(r#"curl -d '{"access_token":"t1","name":"n","Password": "p w","max_tokens":5,"client_secret":"s"}' u"#),
+            r#"Bash curl -d '{"access_token":"[redacted]","name":"n","Password": "[redacted]","max_tokens":5,"client_secret":"[redacted]"}' u"#);
+        assert_eq!(line(r#"curl -d "{\"api_key\":\"k\",\"q\":\"x\"}" u"#), r#"Bash curl -d "{\"api_key\":\"[redacted]\",\"q\":\"x\"}" u"#);
+        assert_eq!(line(r#"x '{"Authorization":"Bearer z","a":"b \" c"}'"#), r#"Bash x '{"Authorization":"[redacted]","a":"b \" c"}'"#);
+        // a tool input without a known command field is shown as JSON and masked the same way
+        assert_eq!(tool("mcp", &json!({"token": "t2", "repo": "r"}))["text"], r#"mcp {"token":"[redacted]","repo":"r"}"#);
+    }
+
+    // #1833 A1/A3: a Codex custom tool call shows the commands its script runs, never the script; other tools show
+    // their name and target. Records follow the native rollout shape; paths and values are invented.
+    #[test]
+    fn codex_custom_tool_calls_read_as_commands() {
+        let dir = tmp();
+        let path = dir.join("rollout.jsonl");
+        let call = |name: &str, input: &str| json!({"type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"c","name":name,"input":input}});
+        let lines = [
+            call("exec", "text(await tools.exec_command({cmd:\"echo two\",max_output_tokens:2000}));\n"),
+            call("exec", "// @exec: {\"yield_time_ms\": 1000}\nconst r=await Promise.allSettled([\ntools.exec_command({cmd:'git log -1 --format=\\'%H\\'', workdir:w}),\ntools.exec_command({\"cmd\": `rg -n \"tools.exec_command(\" src`}),\ntools.write_stdin({session_id:7,chars:\"secret\\n\"})\n]); r.forEach((v,i)=>text({i,...v}));\n"),
+            call("exec", "text(await tools.apply_patch(\"*** Begin Patch\\n*** Update File: src/a.rs\\n@@\\n-x\\n+y\\n*** Add File: docs/b.md\\n+z\\n*** End Patch\\n\"));"),
+            call("exec", "const r=await tools.view_image({path:\"shots/a.png\"});image(r.image_url);"),
+            call("exec", "text(await tools.exec_command({cmd:\"GH_TOKEN=ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa gh api -H 'Authorization: Bearer q' x\"}));"),
+            call("apply_patch", "*** Begin Patch\n*** Delete File: old.txt\n*** End Patch\n"),
+            call("exec", "let x = 1;"),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls\"}"}}),
+        ];
+        fs::write(&path, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+        let tools: Vec<Value> = text(&before(true, &path, None).unwrap().items).into_iter().map(|i| i["text"].clone()).collect();
+        assert_eq!(tools, vec![
+            json!("exec echo two"),
+            json!("exec git log -1 --format='%H' · rg -n \"tools.exec_command(\" src · write_stdin"),
+            json!("exec apply_patch src/a.rs docs/b.md"),
+            json!("exec view_image shots/a.png"),
+            json!("exec GH_TOKEN=[redacted] gh api -H 'Authorization: Bearer [redacted] x"),
+            json!("apply_patch old.txt"),
+            json!("exec let x = 1;"),
+            json!("exec_command ls"),
+        ]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// #1833 review: a quote that never closes (a regex literal, a cut script) read past the script and panicked.
+    #[test]
+    fn codex_scripts_with_open_quotes_and_comments_read_without_panic() {
+        assert_eq!(codex_script("text(r.replace(/'/g, ''))"), None);
+        assert_eq!(codex_script("text('abc"), None);
+        assert_eq!(codex_script("text(await tools.exec_command({cmd:\"echo a"), Some("echo a".into()));
+        assert_eq!(codex_script("/* tools.exec_command({cmd:\"x\"}) 'it's */ text(await tools.exec_command({cmd:\"y\"}))"), Some("y".into()));
+        assert_eq!(codex_script("/* open"), None);
+        assert_eq!(codex_script("/*/ tools.exec_command({cmd:\"x\"})"), None);
+        // every cut of a real script reads: Codex records may end mid-literal
+        let js = "/* c */ const r=await tools.exec_command({cmd:'a \\'b\\' \\u00e9',\"workdir\": `w`}); // x\ntools.view_image({path:\"p\"})";
+        for (k, _) in js.char_indices() { codex_script(&js[..k]); }
     }
 
     /// Writes invented records in the native format and returns the view text they must produce, in file order.
