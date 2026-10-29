@@ -1,0 +1,66 @@
+{
+  "coordinates": {
+    "thumb": [
+      42,
+      1192
+    ],
+    "backing": [
+      100,
+      1180
+    ]
+  },
+  "method": "RGBA pixels from WKWebView PNG; source-over the adverse wallpaper, then WCAG relative-luminance contrast",
+  "samples": [
+    {
+      "file": "before-light-range.png",
+      "thumb": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "backing": [
+        250,
+        251,
+        252,
+        250
+      ],
+      "adverseWallpaper": 0,
+      "contrast": 1.0812657994822619
+    },
+    {
+      "file": "light-appearance-20.png",
+      "thumb": [
+        8,
+        127,
+        91,
+        255
+      ],
+      "backing": [
+        250,
+        251,
+        252,
+        255
+      ],
+      "adverseWallpaper": 0,
+      "contrast": 4.829318794836254
+    },
+    {
+      "file": "dark-appearance-20.png",
+      "thumb": [
+        56,
+        232,
+        160,
+        255
+      ],
+      "backing": [
+        37,
+        43,
+        50,
+        255
+      ],
+      "adverseWallpaper": 255,
+      "contrast": 8.990453817530572
+    }
+  ]
+}

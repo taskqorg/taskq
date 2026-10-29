@@ -1,6 +1,6 @@
 {
-  "source": "c32296d1575721e05672371ebb16f252f43519f9",
-  "binarySha256": "bd989f7b3395e03d1e6ff5d7856037d0b0e0741954f5b4cefe6d4a94f2adcfb0",
+  "source": "c802f8973cc8bedfb4eea952abe765c932b97714",
+  "binarySha256": "bd701f76a349b3b67165eaeeec3bce8be1010c4a06621130cf086fa6b98899c6",
   "renderer": "WKWebView page snapshot; not desktop composition",
   "os": "macOS 27.0.1 arm64",
   "font": 20,
@@ -11,7 +11,7 @@
     "backing_strength": 98
   },
   "files": {
-    "light-appearance-20.png": "30496e7985e14561af0f295ca150f9d9f7fd53af0c80a2bc1e8ae97c8142edea",
-    "dark-appearance-20.png": "9cb506b0c5938b490bbfa80917425a57105e9054fbc9b7139ecb918036794896"
+    "light-appearance-20.png": "d7f760bcb0b428a0abc83aa6ba0326a0e9df78e2cabc5401dec2aa639e77f83c",
+    "dark-appearance-20.png": "57a475d86c17efeeff71421e9ace25aa1bc0c5c0ed7baeb93b1c74f2ae1aa198"
   }
 }

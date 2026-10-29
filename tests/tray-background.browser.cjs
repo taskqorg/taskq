@@ -75,6 +75,7 @@ function inspect(){
   await page.setViewportSize({width:320,height:960});await page.evaluate(s=>taskq.receive(s),{...s,font:20});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'320 px / 20 px reflows');
   assert.deepEqual(await page.locator('.opacity-setting > *').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.tagName)),[],'new controls do not clip at 320 px / 20 px');
+  assert.deepEqual(await page.locator('.opacity-setting input').evaluateAll(es=>es.filter(e=>e.getBoundingClientRect().right>e.parentElement.getBoundingClientRect().right+.5).map(e=>e.id)),[],'range endpoints stay inside their backing');
   assert.deepEqual((await page.evaluate(inspect)).opacity,[]);assert.deepEqual(errors,[]);await page.close();
   for(const surface of ['settings','views','workspace']){
    const p=await browser.newPage();await p.setContent(surface==='workspace'?fs.readFileSync('build/web/workspace.html','utf8'):html.replace('<head>',`<head><script>window.taskqSurface='${surface}';</script>`));await p.evaluate(s=>taskq.receive(s),s);
