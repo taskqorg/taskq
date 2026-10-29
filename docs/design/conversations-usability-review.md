@@ -19,6 +19,24 @@ Status: proposal for owner review. This document changes no active product contr
 
 ## Findings
 
+### Sidebar grouping (#1808)
+
+Stage 1 proposal, continuing the accepted v7 workspace rather than the historical replacement prototype. [CS1–CS6](tray-workspace.md#conversations-sidebar-proposal-1808-stage-1) own the proposed behavior; [the editable mockup](exploration/conversations-sidebar.html) offers Menu and Inline actions on identical invented conversations. Serve the repository with `python3 -m http.server --bind 127.0.0.1 8080` after `npm ci --ignore-scripts --no-audit --no-fund && npm run build`, then open `/docs/design/exploration/conversations-sidebar.html`. The fixture never dispatches a task, message, native session or filesystem action.
+
+Baseline at `51c19f9e95f0b5aaf494c732abc24ad75b2f110c`: `conversations.js` renders task/event rows followed by owner rows, without a shared sort, project sections, pin marks or row actions. `workspace.js::threads` supplies task/event identity and metadata but no activity timestamp. Archive/Restore already exist in thread details; preserve their receipts and TW7 safety boundary instead of inventing a second execution control.
+
+| Scenario | Expected result | Risk covered |
+|---|---|---|
+| Find the daily PM among task questions and unrelated chats | Pinned first; project groups ordered by activity; Other last | Mixed source order hides the useful conversation |
+| Pin a project thread, then unpin it | One row moves to Pinned and back; no duplicate | Pin plus project grouping duplicates identity |
+| New message or task event in a lower project | Row and project rise; current reading and draft remain | Poll time masquerades as activity; refresh changes selection |
+| Collapse a project, reopen, then search it | Collapse persists; search finds it; clearing restores collapse | Saved collapse hides search matches |
+| Archive a pinned, unresolved task thread | It leaves all groups; Archive offers Restore; pin survives | Local organization accidentally changes a task/session |
+| Unknown project or timestamp, equal times, long title | Other keeps unavailable context; unknown time last; stable ties; title wraps | Invented project/recency or unreadable row |
+| Narrow list, keyboard actions, empty groups/search | List/Back works; actions remain focusable; distinct empty text | Hover-only or clipped controls |
+
+Recommend **Menu actions**: one stable trigger preserves title width and keeps infrequent actions secondary. **Inline actions** save one click but need two hit targets per row and make dense lists busier. Both use existing bundled Lucide assets, palette, typography, Archive tab and selected-thread layout; no feature removal is proposed. The comparison changes action placement only. Evidence and Pass/Fail/Not tested results: [stage 1 review](evidence/conversations-1808/README.md). Owner selection is required before stage 2; all native checks remain for the release batch (§7.8).
+
 Priorities describe the proposed work order. Source-confirmed mechanisms are distinguished from runtime hypotheses.
 
 | ID | Priority | Evidence and consequence | Required disposition |
