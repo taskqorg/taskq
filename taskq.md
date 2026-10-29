@@ -110,7 +110,7 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 | any open | `later` / `failed` | `later` / `failed` | text: reason; attempt ended |
 | `later`, `failed` | `requeue` / `close` | `ready` / closed | the only exits |
 
-- `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1); else it stays waiting.
+- `waiting` becomes `ready` when every `Depends on` issue (park too) is done (§ 1).
 - `gone` in `review` replaces only the reviewer; keeps result. ([E1–E5](docs/design/emergency-recovery.md)): § 3 hold forbids host `spawn` except E3 selected recovery; unknown liveness forbids `gone`; `service recover --apply` fences each `gone attempt` with `--op-id`/`--revision` (§ 4).
 - One retry counter: attempt `requeue` at 3 or `gone` at 2 ends in `ask`; answer goes to ready. Unless already a card, append `Problem:` with the limit, recommended `1. requeue: ...`, `2. later: ...`, and `To answer:` with `taskq answer N.K` only; reason `K. ` lines become `K) ` (N-1 folds the same card). Ready clears attempt, card, result, publication. `requeue main-moved` and `usage-limit` keep retries and add no limit card.
 - `answer K` whose option starts with `close` or `later` runs `close` (§ 7) or `later` instead, only through `taskq answer N.K`: a bare board comment `K` folds as a plain answer; an owner pick of `approve <sha7|sha> ...` approves a gated task only when that SHA matches its current result, including a bare board comment in `ask`. An attempt-bound answer cannot approve.
@@ -120,11 +120,11 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 `ask` writes, in order, ≤ 9 nonblank lines, without headings or blank lines:
 1. `Done: <what was checked or attempted>` -- one line, ≤ 160 characters; say `not started` when true.
 2. `Problem: <decision needed and user effect>` -- 1-2 lines, ≤ 240 characters each.
-3. Optional `Evidence: [<label>](<url>)` -- one line, ≤ 2 screenshot/video/issue/PR links, labels ≤ 40 characters each.
+3. Optional `Evidence: [<label>](<url>), ![<name>](<url>)` -- one line, ≤ 2 links (labels ≤ 40 characters), ≤ 4 images; absolute URLs; visual evidence as images.
 4. 2-4 options, `1. <action and trade-off>` etc.; one line each, ≤ 160 characters, exactly one ends in `★`. A Problem or option line holds ≤ 1 `[label](url)` link (label ≤ 40 characters), no bare URL; limits count visible text, not the URL; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
 5. To answer: `taskq answer N.K` or comment `K` or the option text; an owner action: `taskq answer N --text <done>`. Last line; substitute this task's number for N.
-Presentation and tray card rules: [answer card](docs/design/answer-card.md#contract-detail).
-`--text` supplies literal Done and Problem lines; `--link` supplies Evidence; `--option` and `--recommend` supply the options/star.
+Presentation, tray card, image rules: [answer card](docs/design/answer-card.md#contract-detail).
+`--text`: literal Done/Problem lines; `--link`/`--image`: Evidence; `--option`/`--recommend`: options/star.
 ### Executable behavioral model
 Apply the [shared behavioral-model method](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#state-driven-systems).
 TaskQ sources: the §2 transition table, `tests/golden/*.json` traces (`fold.json`: entries in, expected task out; `admit.json`: free slots in, admitted runtimes out), `fold`, then adapters.

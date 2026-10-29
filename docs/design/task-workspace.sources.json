@@ -4,12 +4,12 @@
   "schema": "taskq.task-workspace/1",
   "files": {
     "src/anchored-popover.js": "107ca8d6b289e661ee5bc609f37a05f88c02c2c7151618fea2bacbb10a3492af",
-    "src/answer-card.js": "a85c7b5a073371f3025500da737cccb3bcd36bb7972ccddd1a2135f5950c5303",
+    "src/answer-card.js": "9e60d32c2fd52f950030bb3efec9a6a3e195151c710ef866548d1ebaaf811442",
     "src/app-shell.js": "69aa242f93a816847a6eb33486fd941a52a4db3f604624511a97a9b6e3bedf21",
     "src/project-blocks.js": "9c2d4cc5e853f7ad4af521aa3e8953a268db27a0b42a3c5a5e5f263167e5b478",
     "src/resource-controls.js": "87b3d7d931ffbef6b11d90ac30da8ec62879c7d6a21e6d909f660e735988aec0",
     "src/task-controls.js": "679670cf90ee3ce889f3e4182b81a8e4dc240ec7f04f24f0127a62d3aba80782",
-    "src/task-dashboard.js": "2dedda2abaac9edc5ed4016edab0f47ba7fbb0df4a0a29a7d825bbe396c7aaa7",
+    "src/task-dashboard.js": "53dc4345745cd54996c6e6086a29f8aaf7f3cdac2d2b99d9a471190b7280718c",
     "src/task-views.js": "63a64709d292519e326e5a4a1996f11e2075a22be1bbeb7c9c25aa7055b6471b",
     "src/task-workspace.js": "ac818736f7490c9afd6070c15462b6e74826da6886547cb01eb3ff080282105d",
     "src/tray-app.js": "53712f7d323d42d884d6cdc8edf997b697a6f9f8047dcefaff26feea9aaef4df",
@@ -19,11 +19,11 @@
     "src/ui-runtime.js": "84ab02032fba8256b81926aca9198b02ece701b9cbee402f183113bf25fb9a8a",
     "src/workspace-answers.js": "13649b36f226e1a9ce0723c4a1a9791bcd08c7474c9fc5d8ab47d337a9f8b186",
     "src/task-workspace.css": "a17c6a9e1e20023f123189147e5f5df29b09a804567bc76e70743197f2b76461",
-    "src/answer-card.css": "8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc",
+    "src/answer-card.css": "32183e4b805f4d55f9224365784fefa9b3e0235e7a8b5088ee33ba9e538691bb",
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
     "src/resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
     "src/app-shell.css": "0f48ac56c0d038d5f074356cd2d28889905624fd18b5cae760a479ad726de349",
-    "src/task-dashboard.css": "5be5e9d256000552b5553f897ec6c55416c65e1783678b596905dcf9383626f7",
+    "src/task-dashboard.css": "f01a827f2041e4d18f33a7b8d69fc630a1940fdaac441648645bccb3a0906826",
     "tests/fixtures/task-workspace.json": "4cbb1c89400f91b4450af154b82c73c700e728f1609f4364f502758a6b8f64d8"
   },
   "hashEncoding": "UTF-8, LF; tag assigns release version; pin candidate commit until release"

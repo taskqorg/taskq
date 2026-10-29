@@ -1,6 +1,6 @@
 //! GitHub issues (taskq.md § 1, § 2, § 7): REST v3 on github.com or a GitHub Enterprise host, owner-installed token.
 
-use super::{Api, Board, Comment, Issue, Kind, Publish, Result, encode, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
+use super::{Api, Board, image_name, Comment, Issue, Kind, Publish, Result, encode, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 
 pub const KIND: Kind = Kind {
@@ -528,6 +528,61 @@ impl Board for GitHub {
         let web = self.api.root.replace("api.github.com", "github.com").replace("/api/v3", "");
         format!("{web}/{}/issues/{n}", self.api.sibling("/repos/", repo))
     }
+
+    /// One commit on the orphan `taskq-evidence` branch per image; the URL pins that commit, so it never moves.
+    /// ponytail: a concurrent upload moving the branch fails the PATCH (not a fast-forward); the caller retries the command.
+    fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> {
+        use base64::Engine;
+        let bytes = std::fs::read(path).map_err(|e| format!("image {}: {e}", path.display()))?;
+        let digest: String = ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
+        let file = format!("{n}/{digest}-{}", image_name(path));
+        let parent = match self.api.call("GET", &format!("/git/ref/heads/{EVIDENCE}"), None) {
+            Ok(r) => Some(s(&r.json()?["object"], "sha")),
+            Err(e) if e.contains("HTTP 404") => None,
+            Err(e) => return Err(e),
+        };
+        let blob = self.api.call("POST", "/git/blobs", Some(json!({"content": base64::engine::general_purpose::STANDARD.encode(&bytes), "encoding": "base64"})))?.json()?;
+        let mut tree = json!({"tree": [{"path": file, "mode": "100644", "type": "blob", "sha": blob["sha"]}]});
+        if let Some(p) = &parent {
+            tree["base_tree"] = self.api.call("GET", &format!("/git/commits/{p}"), None)?.json()?["tree"]["sha"].clone();
+        }
+        let tree = self.api.call("POST", "/git/trees", Some(tree))?.json()?;
+        let commit = self.api.call("POST", "/git/commits", Some(json!({"message": format!("taskq evidence #{n}"), "tree": tree["sha"], "parents": parent.iter().collect::<Vec<_>>()})))?.json()?;
+        let sha = s(&commit, "sha");
+        match parent {
+            Some(_) => self.api.call("PATCH", &format!("/git/refs/heads/{EVIDENCE}"), Some(json!({"sha": sha})))?,
+            None => self.api.call("POST", "/git/refs", Some(json!({"ref": format!("refs/heads/{EVIDENCE}"), "sha": sha})))?,
+        };
+        Ok(raw_url(&self.api.root, &self.api.base, &sha, &file))
+    }
+
+    fn image(&self, url: &str) -> Result<Vec<u8>> {
+        use base64::Engine;
+        let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| format!("image unknown: {url} is not a taskq evidence image of this repository"))?;
+        // the contents API carries files up to 1 MB inline; the blob API reads larger ones by sha
+        let meta = self.api.call("GET", &format!("/contents/{}?ref={sha}", file.split('/').map(encode).collect::<Vec<_>>().join("/")), None)?.json()?;
+        let blob = self.api.call("GET", &format!("/git/blobs/{}", s(&meta, "sha")), None)?.json()?;
+        base64::engine::general_purpose::STANDARD.decode(s(&blob, "content").replace('\n', "")).map_err(|e| format!("image {url}: {e}"))
+    }
+}
+
+/// The branch that holds § 2 visual evidence images: an orphan, so no code history reaches it.
+const EVIDENCE: &str = "taskq-evidence";
+
+fn web(root: &str, base: &str) -> String {
+    format!("{}/{}", root.replace("api.github.com", "github.com").replace("/api/v3", ""), base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default())
+}
+
+/// § 2 visual evidence (#1782): the absolute, commit-pinned URL of an evidence image; GitHub renders it for every
+/// reader of the repository.
+fn raw_url(root: &str, base: &str, sha: &str, file: &str) -> String {
+    format!("{}/raw/{sha}/{file}", web(root, base))
+}
+
+/// The commit and file of an evidence image URL of this repository; none for any other URL.
+fn raw_path<'a>(root: &str, base: &str, url: &'a str) -> Option<(&'a str, &'a str)> {
+    let (sha, file) = url.strip_prefix(&format!("{}/raw/", web(root, base)))?.split_once('/')?;
+    (hex40(sha) && !file.is_empty() && !file.split('/').any(|p| p.is_empty() || p == "..")).then_some((sha, file))
 }
 
 #[cfg(test)]
@@ -554,5 +609,27 @@ mod token_tests {
         std::fs::create_dir(dir.join("token")).unwrap();
         assert_eq!(KIND.worker_env(&tool, "github.com").unwrap_err(), TOKEN_ERROR);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    // Chain: § 2 visual evidence on GitHub (#1782). Risk: the load check or the app copy reads a URL outside this
+    // repository's commit-pinned evidence, or a relative link passes as an image.
+    #[test]
+    fn github_evidence_urls_are_absolute_and_commit_pinned() {
+        let (root, base) = ("https://api.github.com", "https://api.github.com/repos/o/r");
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let url = raw_url(root, base, sha, "1782/abc-front.png");
+        assert_eq!(url, format!("https://github.com/o/r/raw/{sha}/1782/abc-front.png"));
+        assert_eq!(raw_path(root, base, &url), Some((sha, "1782/abc-front.png")));
+        assert_eq!(raw_path(root, base, "https://github.com/o/r/raw/taskq-evidence/1782/a.png"), None, "branch, not commit");
+        assert_eq!(raw_path(root, base, &format!("https://github.com/o/x/raw/{sha}/a.png")), None, "other repository");
+        assert_eq!(raw_path(root, base, &format!("https://github.com/o/r/raw/{sha}/../a.png")), None);
+        assert_eq!(raw_path(root, base, "/uploads/x/a.png"), None, "relative link");
+        let ghe = ("https://ghe.example/api/v3", "https://ghe.example/api/v3/repos/o/r");
+        assert_eq!(raw_url(ghe.0, ghe.1, sha, "1/a.png"), format!("https://ghe.example/o/r/raw/{sha}/1/a.png"));
     }
 }

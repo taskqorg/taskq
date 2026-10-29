@@ -493,7 +493,7 @@ fn fields(text: &str, spec: &[(&str, usize, usize, usize)]) -> Res<Vec<Vec<Strin
 
 /// `--link`: `[label](url)` as given, else the URL labelled `#N` by its trailing number, else `link`.
 fn evidence(l: &str) -> String {
-    if l.starts_with('[') && l.contains("](") {
+    if l.starts_with('[') && l.contains("](") || l.starts_with("![") {
         return l.to_string();
     }
     let tail = l.trim_end_matches('/').rsplit('/').next().unwrap_or_default();
@@ -515,6 +515,32 @@ fn card_links(what: &str, lines: &[String]) -> Res<()> {
     }))
 }
 
+/// § 2 visual evidence: `--image` files, at most four images of at most 10 MB each.
+fn image_files(paths: &[String]) -> Res<()> {
+    if paths.len() > 4 { return Err("Evidence: at most four --image".into()); }
+    all(paths.iter().map(|p| {
+        let head = std::fs::File::open(p).and_then(|f| { let mut b = vec![]; std::io::Read::read_to_end(&mut std::io::Read::take(f, 16), &mut b).map(|_| b) }).map_err(|e| format!("--image {p}: {e}"))?;
+        board::image_kind(&head).ok_or(format!("--image {p}: not a PNG, JPEG, GIF or WebP file"))?;
+        let size = std::fs::metadata(p).map_err(|e| format!("--image {p}: {e}"))?.len();
+        if size > 10 << 20 { return Err(format!("--image {p}: {size} bytes, at most 10 MB")); }
+        Ok(())
+    }))
+}
+
+/// § 2 visual evidence: uploads each `--image` to the board and embeds it as `![name](absolute URL)` only after the board
+/// serves the same bytes back (the load check); a failed check publishes nothing.
+fn upload_images(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<String>> {
+    image_files(paths)?;
+    paths.iter().map(|p| {
+        let url = b.upload_image(n, Path::new(p))?;
+        let sent = std::fs::read(p).map_err(|e| format!("--image {p}: {e}"))?;
+        let back = b.image(&url).map_err(|e| format!("image load check failed for {url}: {e}"))?;
+        if back != sent { return Err(format!("image load check failed: {url} serves {} bytes, {} uploaded", back.len(), sent.len())); }
+        let name: String = Path::new(p).file_stem().map(|s| s.to_string_lossy().replace([']', '[', ',', ')'], " ")).unwrap_or_default().chars().take(30).collect();
+        Ok(format!("![{}]({url})", if name.trim().is_empty() { "image".into() } else { name }))
+    }).collect()
+}
+
 /// § 2 ask card: Done, Problem, optional Evidence, 2-4 options with one ★ or none (an owner action), the answer line.
 fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
     let f = fields(text, &[("Done", 1, 1, 160), ("Problem", 1, 2, 240)])?;
@@ -529,13 +555,18 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
         recommend.and_then(|k| k.parse().ok()).filter(|k| (1..=opts.len()).contains(k)).ok_or(format!("--recommend needs one option number 1-{}", opts.len()))?
     };
     one_line("--link", links)?;
-    if links.len() > 2 {
+    if links.iter().filter(|l| !l.starts_with("![")).count() > 2 {
         return Err("Evidence: at most two --link".into());
     }
-    let ev: Vec<String> = links.iter().map(|l| evidence(l)).collect();
+    let ev: Vec<String> = links.iter().filter(|l| !l.starts_with("![")).map(|l| evidence(l)).collect();
     if ev.iter().any(|e| e.split_once("](").is_some_and(|(l, _)| l.chars().count() > 41)) {
         return Err("Evidence: link labels at most 40 characters".into());
     }
+    // § 2: a link must open from the board and every app; a relative path renders as a broken repository link (#1782)
+    if let Some(e) = ev.iter().find(|e| !e.split_once("](").is_some_and(|(_, u)| u.starts_with("https://") || u.starts_with("http://"))) {
+        return Err(format!("Evidence: {e} needs an absolute http(s) URL"));
+    }
+    let ev = [ev, links.iter().filter(|l| l.starts_with("![")).cloned().collect()].concat();
     if !ev.is_empty() {
         lines.push(format!("Evidence: {}", ev.join(", ")));
     }
@@ -553,7 +584,7 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
 /// § 7 result: Changed, one `Checks:` line per check, Open; a decision appends the § 2 card (Done/Problem in `--text`).
 fn result_text(n: u64, text: &str, checks: &[String], opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
     let d = !opts.is_empty() as usize;
-    if d == 0 && (recommend.is_some() || !links.is_empty()) {
+    if d == 0 && (recommend.is_some() || links.iter().any(|l| !l.starts_with("!["))) {
         return Err("--recommend and --link need --option".into());
     }
     let f = fields(text, &[("Changed", 1, 2, 240), ("Open", 1, 2, 240), ("Done", d, d, 160), ("Problem", d, 2 * d, 240)])?;
@@ -561,7 +592,7 @@ fn result_text(n: u64, text: &str, checks: &[String], opts: &[String], recommend
     limit("Checks", &checks, 1, 8, 240)?;
     let verdict = [f[0].clone(), checks, f[1].clone()].concat();
     limit("result", &verdict, 3, 12, 240)?;
-    let card = if d == 1 { ask_card(n, &[f[2].clone(), f[3].clone()].concat().join("\n"), opts, recommend, links)? } else { String::new() };
+    let card = if d == 1 { ask_card(n, &[f[2].clone(), f[3].clone()].concat().join("\n"), opts, recommend, links)? } else if links.is_empty() { String::new() } else { format!("Evidence: {}", links.join(", ")) };
     Ok(join(&[&verdict.join("\n"), &card]))
 }
 
@@ -2775,7 +2806,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "ask" => {
             let n = a.num(1)?;
-            let body = ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &a.all("link"))?;
+            let (links, images) = (a.all("link"), a.all("image"));
+            if links.iter().any(|l| l.starts_with('!')) { return Err("--link takes links; images go through --image".into()); }
+            // validate the card and the files before any upload
+            ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &links)?;
+            image_files(&images)?;
+            let body = ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
             emit(&[act(b, root, n, "ask", &[], &body, &op)], json)
         }
         "answer" if a.pos.get(1).is_some_and(|p| p.contains('.')) => {
@@ -2789,8 +2825,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "result" => {
             let n = a.num(1)?;
             let sha = a.need("sha")?;
-            let body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &a.all("link"))?;
+            let (links, images) = (a.all("link"), a.all("image"));
+            if links.iter().any(|l| l.starts_with('!')) { return Err("--link takes links; images go through --image".into()); }
+            result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &links)?;
+            image_files(&images)?;
             shots_gate("git", root, sha)?;
+            let body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
             emit(&[act(b, root, n, "result", &[sha], &body, &op)], json)
         }
         "requeue" => {
@@ -3768,6 +3808,26 @@ mod tests {
         assert_eq!(c.board.issues(None).unwrap().len(), 3, "rejected input writes nothing");
     }
 
+    // Chain: § 2 visual evidence (#1782). Defect: csgo#378 published image links the board could not render.
+    // Risk: an image that the board does not serve back is embedded, or a non-image file is uploaded.
+    #[test]
+    fn ask_images_embed_only_after_the_load_check() {
+        let dir = std::env::temp_dir().join(format!("taskq-ask-images-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("front view.png");
+        fs::write(&png, b"\x89PNG\r\n\x1a\n0123456789").unwrap();
+        let txt = dir.join("notes.png");
+        fs::write(&txt, "not an image").unwrap();
+        let b = Fake::default();
+        let p = png.display().to_string();
+        assert_eq!(upload_images(&b, 7, std::slice::from_ref(&p)).unwrap(), vec!["![front view](https://board.example/7/0-front-view.png)".to_string()]);
+        assert!(upload_images(&b, 7, &[txt.display().to_string()]).unwrap_err().contains("not a PNG"));
+        assert!(upload_images(&b, 7, &vec![p.clone(); 5]).unwrap_err().contains("at most four"));
+        b.state.borrow_mut().bad_image = true;
+        assert!(upload_images(&b, 7, &[p]).unwrap_err().starts_with("image load check failed"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     // Chain: § 2 Ask card. Risk: a card breaks the template or limits.
     #[test]
     fn ask_card_follows_section_2() {
@@ -3794,6 +3854,12 @@ mod tests {
         assert_eq!(ask_card(7, &format!("Done: d\nProblem: p\n[{}](https://x)", "l".repeat(41)), &o(2), Some("1"), &[]).unwrap_err(), "Problem line 2: link label at most 40 characters");
         assert!(ask_card(7, "Done: d\nProblem: p", &["a".into(), "c".repeat(158)], Some("1"), &[]).unwrap_err().contains("option line 2: 161 characters, limit 160"));
         assert_eq!(width("see [#12](https://very/long/url) and `cargo test --locked` https://x/y"), 15, "link targets and code are exempt; outside whitespace counts");
+        // #1782: uploaded images embed inline after the links; a relative link would render broken on the board
+        let img = "![front](https://gitlab.example/-/project/39/uploads/ab/front.png#upload=214)".to_string();
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &o(2), Some("1"), &["[#1](https://x/1)".into(), img.clone()]).unwrap().lines().nth(2), Some(format!("Evidence: [#1](https://x/1), {img}").as_str()));
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &o(2), Some("1"), &["[shot](/uploads/ab/front.png)".into()]).unwrap_err(), "Evidence: [shot](/uploads/ab/front.png) needs an absolute http(s) URL");
+        assert_eq!(result_text(7, "Changed: c\nOpen: none", &["t -- ok".into()], &[], None, std::slice::from_ref(&img)).unwrap(), format!("Changed: c\nChecks: t -- ok\nOpen: none\n\nEvidence: {img}"));
+        assert!(result_text(7, "Changed: c\nOpen: none", &["t -- ok".into()], &[], None, &["https://x/1".into()]).is_err(), "--link still needs --option");
     }
 
     // H-A5: one registry owner covers preflight/effects/commit; a later remover reads the preceding writer's roots.
@@ -4654,6 +4720,8 @@ mod tests {
         assert_eq!(fx, want, "TASKQ_BLESS=1 rewrites {}", path.display());
         let q = snapshot::question("Done: d\nProblem: p\nmore\nEvidence: [#1](https://x/1), [shot](https://x/s.png)\n1. close: ship ★\n2. redo\nTo answer: `taskq answer 7.K`");
         assert_eq!((q["parsed"].clone(), q["problem"].clone(), q["evidence"][1]["url"].clone(), q["choices"][0]["consequential"].clone()), (json!(true), json!("p more"), json!("https://x/s.png"), json!(true)));
+        let img = snapshot::question("Problem: p\nEvidence: [#1](https://x/1), ![front](https://x/f.png#upload=2)\n1. a ★\n2. b")["evidence"].clone();
+        assert_eq!(img, json!([{"label": "#1", "url": "https://x/1", "image": false}, {"label": "front", "url": "https://x/f.png#upload=2", "image": true}]), "#1782 images");
         assert_eq!(snapshot::question("1. a ★\n2. b")["parsed"], json!(false), "no Problem: read only");
         assert_eq!(snapshot::question("Problem: p\n1. a\n2. b")["parsed"], json!(false), "no star: read only");
         // #1662 A4: a repeated or skipped number names no single option, so the card stays read only

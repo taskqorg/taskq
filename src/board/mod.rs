@@ -81,6 +81,10 @@ pub trait Board {
     fn requests(&self) -> crate::requests::Budget { Default::default() }
     /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
     fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}")) }
+    /// § 2 visual evidence: stores the image file `path` for task `n` on the board and returns its absolute https URL.
+    fn upload_image(&self, _n: u64, _path: &std::path::Path) -> Result<String> { Err("image upload unsupported on this board".into()) }
+    /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
+    fn image(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
 }
 
 #[derive(Debug, PartialEq)]
@@ -179,6 +183,8 @@ impl Board for Profiled {
     fn foreign_url(&self, repo: &str, n: u64) -> String { self.0.foreign_url(repo, n) }
     fn requests(&self) -> crate::requests::Budget { self.0.requests() }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
+    fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_image(n, path)) }
+    fn image(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.image(url)) }
 }
 
 // ---------- time ----------
@@ -291,6 +297,24 @@ pub mod gitlab;
 /// ` into <base>` of a § 7 receipt whose PR/MR merged into a branch other than `main`.
 fn into(base: &str) -> String {
     if base.is_empty() || base == "main" { String::new() } else { format!(" into {base}") }
+}
+
+/// § 2 visual evidence: the image kind of `bytes` by signature (PNG, JPEG, GIF, WebP), else none.
+pub fn image_kind(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [0x89, b'P', b'N', b'G', ..] => Some("png"),
+        [0xff, 0xd8, 0xff, ..] => Some("jpeg"),
+        [b'G', b'I', b'F', b'8', ..] => Some("gif"),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("webp"),
+        _ => None,
+    }
+}
+
+/// The file name an uploaded image keeps: ASCII letters, digits, `.`, `-`, `_`; anything else becomes `-`.
+fn image_name(path: &std::path::Path) -> String {
+    let name: String = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+        .chars().map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '-' }).collect();
+    if name.trim_matches(['.', '-']).is_empty() { "image".into() } else { name }
 }
 
 fn s(v: &Value, k: &str) -> String {
@@ -455,6 +479,27 @@ impl Api {
         }
     }
 
+    /// A binary GET, or a multipart POST of the file `form` (GitLab uploads), under the same token, API and budget
+    /// rules as [`Api::send`]; any HTTP error fails. ponytail: no test transport, the URL builders around it are tested.
+    fn raw(&self, url: &str, form: Option<&std::path::Path>) -> Result<Vec<u8>> {
+        let url = if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) };
+        if !url.starts_with(&format!("{}/", self.root)) { return Err(format!("refused: {url} is outside the board API")); }
+        if let Some(reason) = &self.budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
+        if let Some(reset) = self.budget.borrow_mut().paused(std::time::Instant::now()) { return Err(format!("{url}: {}", crate::requests::paused_text(reset))); }
+        let method = if form.is_some() { "POST" } else { "GET" };
+        let op = self.op(method, &url);
+        self.budget.borrow_mut().count(op.clone());
+        crate::requests::tally(&op);
+        let mut cfg = format!("silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n", quote(&url), quote(&self.auth));
+        if let Some(f) = form { cfg += &format!("form = {}\n", quote(&format!("file=@{}", f.display()))); }
+        let out = match coreq::process::exchange("board.http", Command::new("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(125)) {
+            Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
+            Err(e) => return Err(format!("curl: {e}")),
+        };
+        if !out.status.success() { return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim())); }
+        Ok(out.stdout)
+    }
+
     fn all(&self, url: &str) -> Result<Vec<Value>> {
         let mut out = vec![];
         let op = self.op("GET", url);
@@ -603,6 +648,9 @@ pub struct FakeState {
     /// Comment-list reads and publication attempts, for request-count checks (#1359).
     pub comment_reads: usize,
     pub publications: usize,
+    /// Uploaded images by URL; `bad_image` makes the board serve other bytes back.
+    pub images: Vec<(String, Vec<u8>)>,
+    pub bad_image: bool,
 }
 
 #[cfg(test)]
@@ -637,6 +685,18 @@ impl Fake {
 
 #[cfg(test)]
 impl Board for Fake {
+    fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> {
+        let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+        let mut st = self.state.borrow_mut();
+        let url = format!("https://board.example/{n}/{}-{}", st.images.len(), image_name(path));
+        st.images.push((url.clone(), bytes));
+        Ok(url)
+    }
+    fn image(&self, url: &str) -> Result<Vec<u8>> {
+        let st = self.state.borrow();
+        let b = st.images.iter().find(|i| i.0 == url).map(|i| i.1.clone()).ok_or(format!("image unknown: {url}"))?;
+        Ok(if st.bad_image { b[..b.len() / 2].to_vec() } else { b })
+    }
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
         let mut all: Vec<Issue> = self.state.borrow().issues.iter().filter(|i| !i.open && since.is_none_or(|t| i.updated >= t)).cloned().collect();
         all.sort_by_key(|i| std::cmp::Reverse(i.updated));
