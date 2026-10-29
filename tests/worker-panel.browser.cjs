@@ -37,6 +37,10 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('New while reading above'));
    assert(Math.abs((await panel.locator('[data-key="90:0"]').boundingBox()).y-anchor.y)<=2,'D4: append preserves the reading anchor');
    await page.locator('[data-c=worker-latest]').click();assert(await reader.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'D4: explicit latest resumes following');
+   m=await read();await reply(m,{items:[],end:310});
+   await page.setViewportSize({width:540,height:720});await page.locator('[data-c=list]').click();await page.waitForTimeout(1200);
+   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='conversation-dialogue'&&m.action==='transcript').length),0,'A3: the narrow list stops reading its hidden thread');
+   await page.locator('[data-c=list]').click();await page.setViewportSize({width:900,height:720});
    m=await read();await reply(m,{ended:true,items:[]});
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Worker attempt ended'));
    await page.waitForTimeout(1200);

@@ -198,7 +198,7 @@ module.exports=execution.module('conversations',{
    },
    workerRead:function(){
     const l=live;if(!l)return;l.timer=null;
-    if(workerPaused||l.ended||!menu.querySelector('.worker-live')){api.workerStop();return;}
+    if(workerPaused||l.ended||!menu.querySelector('.worker-live')?.checkVisibility()){api.workerStop();return;}
     const id=api.id();l.busy=id;
     ui.send({a:'conversation-dialogue',id,conversation:l.thread,root:l.root,attempt:l.attempt,action:'transcript',...(l.end===null?{}:{after:l.end})});
     l.timeout=ui.defer(()=>{if(live===l&&l.busy===id){l.busy=null;l.reason='Live read receipt missing';draw();}},30000);
@@ -521,7 +521,7 @@ module.exports=execution.module('conversations',{
     if(reader)reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight*.45);
    },
    afterDraw:function(){
-    if(!menu.querySelector('.worker-live'))api.workerStop();
+    if(!menu.querySelector('.worker-live')?.checkVisibility())api.workerStop();
     api.pollActivity();
     api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
