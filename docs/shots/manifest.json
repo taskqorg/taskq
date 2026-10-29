@@ -1,16 +1,16 @@
 {
   "version": "4.6.40",
-  "sourceCommit": "8ba4675cc68fd5b47a952023399f8228f33f2175",
-  "binarySha256": "df770a541bb27dee20af6cc973b5e75614e687f66117af190896bb9a8bf34e29",
+  "sourceCommit": "c802f8973cc8bedfb4eea952abe765c932b97714",
+  "binarySha256": "f9b656a0d2e15a9dd1dd9af33f222c809db0083d6c5e654144d30911ed00182c",
   "environment": {
     "os": "macOS 27.0.1",
     "arch": "arm64",
     "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "c56db577ac6ea7740908deb11d99b3d48adc68a1",
+    "src/tray.rs": "ec2f40dc59dee5c3481ec7aa92763fd0ea1269b2",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "eefec6088e5236b401cb35bd0b8f8a8e68553a53",
+    "src/tray-app.js": "750550c4ad981538c2ec30c89b4acce1c00cc46f",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "af5747739a29b5f0a40f9f95d9a894a2db1e7afd",
@@ -19,7 +19,7 @@
     "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
     "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
     "src/task-dashboard.js": "24f85b08192d2ca9f2054613a00f2e16c1f4fe4e",
-    "src/task-dashboard.css": "587d5134d43bb0f243220c1371ea9e53ac22a7fe",
+    "src/task-dashboard.css": "b65089c0d5075aa096e6348a78caefc2678b89a4",
     "src/task-views.js": "4c91d78f01fd6612a811d0106cd2a934d0a72742",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
+      "sha256": "45079520040127a6ce2f9f4e6e4ed958191737e8212fccfdb334db1dc64347fb"
     },
     {
       "file": "popover-dark-project-16.png",
