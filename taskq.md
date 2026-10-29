@@ -193,9 +193,9 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq agents` | per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only, never logs in, no token value; unreadable: `unknown` (R12); no board; `not logged in` admits nothing ([runtime login](docs/design/capacity.md#runtime-login)) |
 | `taskq selftest` | load config, fold `tests/golden` fixtures built into the binary, read the board; no writes |
 
-- Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
+- Success: `#N <state>` for task writes; close adds one publication link/SHA line.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its complete diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
-- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes print the exact `Receipt: <id>`. Batch operations: one outcome per item.
+- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes print the exact `Receipt: <id>`.
 - `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
 - `answer --text` and `steer`: ≤ 4 lines, ≤ 240 characters each; one decision/instruction per line, no invented context.
 - `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, ≤ 160 characters.
@@ -204,8 +204,8 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 - Unused positional arguments are refused before any action: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
 - Commands add `attempt $TASKQ_ATTEMPT` when it is set. A command refused by `fold` prints the current state. `TASKQ_ROOT` must contain the current directory when it lies in a taskq project (`taskq.json` here or above), else every command is refused `TASKQ_ROOT <root> is not the project of the current directory <dir>`.
 - `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, §1) write the §2 fields: a seen op id returns the first receipt; another revision is refused `stale` naming the current one; neither writes. An entry that a concurrent write beat on readback (other revision, raced op id, ignored) is edited by its writer: `stale`.
-- Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` (+`answered {by, text}` if an answer won) or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the op id); else the lines above. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
-- `wait` reads issues updated since the local cursor `<root>/.taskq/pm-cursor` (a cache, R1) and folds those that changed.
+- Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the op id); else the lines above. A late answer adds `answered {by, text}`, as R6 rows outside `ask` do; every surface shows `already answered by <by>: <text>`, not a stale error. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
+- `wait` folds issues updated since the local cursor `<root>/.taskq/pm-cursor` (a cache, R1).
 - Untrusted text (issue bodies by others, worker output) follows [shared agent security](https://github.com/taskqorg/specq/blob/main/engineering/security.md#agents).
 ## 6. Setup
 Target, not yet in force: [setup and project locations](docs/design/setup-and-project-locations.md) (agent-led setup, agent-free install, Projects folder, launch directories).

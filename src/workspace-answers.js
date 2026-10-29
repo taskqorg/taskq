@@ -52,15 +52,17 @@ answerNotices:function(board,task){
   const answered=shown.filter(([,r])=>r.state==='accepted').reverse();
   return [shown.filter(([,r])=>r.state!=='accepted').map(x=>line(x,'status')),answered.length>0&&h('details',{class:'group answered','data-view-key':'answered'},h('summary',null,'Answered'+counter(answered.length,'muted','Answered')),answered.map(x=>line(x,null)))];
 },
-// #1785 A1: a question another actor answered first names that answer, never revisions or CLI advice
+// #1785 A1: a question another actor answered first names that answer, never revisions or CLI advice;
+// the status row's `answered` (§ 5 late answer) names it before this client sends anything
 answerWon:function(board,t){
-  const r=t.state==='ask'?null:[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.answered).at(-1);
+  const r=t.state==='ask'?null:[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.answered).at(-1)||(t.answered&&{answered:t.answered});
   return r?h('p',{class:'body answered',role:'status'},won(r)):null;
 },
-// ...and while its worker runs, the owner's unsent answer can steer it instead, in the consumer's composer `steer`
+// ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
 answerSteerComposer:function(board,t){
-  if(!steer||t.state!=='doing'||!api.answerWon(board,t))return null;
-  const key=board+'#'+t.n,text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
+  const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));
+  if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim())return null;
+  const text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
   const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'');
   return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason,
    tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!text.trim()},'Steer')),

@@ -84,6 +84,14 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   call('answerReceipt',{root:'project',id:sent[steerAt].op.id,state:'accepted'});
   assert(call('answerToast').includes('#900 · steer sent'));
   assert(call('answerSteerComposer',board,running).includes('Steer sent to the agent.')&&!call('answerSteerComposer',board,running).includes('use y'),'a sent steer clears the composer');
+  // #1785 A2: an answer from another client reached this tray only as a receipt, so the thread kept offering a closed question.
+  // The refreshed status row's `answered` names it before anything is sent; steer stays for an unsent draft only.
+  const elsewhere={n:901,state:'doing',revision:9,answered:{by:'sam',text:'ship it'}};project.tasks=[elsewhere];
+  assert(call('answerWon',board,elsewhere).includes('Answered by sam: ship it'));
+  assert.equal(call('answerSteerComposer',board,elsewhere),'','no draft, no steer offer');
+  call('save',board,{n:901},{draft:'wait'});
+  assert(call('answerSteerComposer',board,elsewhere).includes('wait'),'a kept draft becomes steer');
+  call('save',board,{n:901},{draft:''});
   delete project.tasks;
   context.S.projects=[];
   // Run the consumer's capability across shared stale/lost-response fixtures; component owns draft and op state.

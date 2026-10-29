@@ -405,13 +405,15 @@ fn answer(install: &Path, m: &Value) -> Value {
 /// carries who answered first.
 fn answer_receipt(m: &Value, r: &Value) -> Value {
     let outcome = r["outcome"].as_str().unwrap_or("unknown");
-    let (reason, next) = if outcome == "stale" {
-        if r["answered"].is_object() { ("", "") } else { ("The question changed before this arrived", "Review the question, then answer again.") }
+    // § 5 late answer: a stale or rejected receipt that names the answer that won shows only that answer, no revision or CLI advice.
+    let won = r["answered"].is_object();
+    let (reason, next) = if won { ("", "") } else if outcome == "stale" {
+        ("The question changed before this arrived", "Review the question, then answer again.")
     } else {
         (r["reason"].as_str().filter(|s| !s.is_empty()).or_else(|| r["state"].as_str()).unwrap_or(""), r["next"].as_str().unwrap_or(""))
     };
     let mut out = json!({"answerReceipt": {"root": m["root"], "id": m["op"]["id"], "state": outcome, "reason": reason, "next": next}});
-    if outcome == "stale" && r["answered"].is_object() {
+    if won {
         out["answerReceipt"]["answered"] = json!({"by": r["answered"]["by"], "text": r["answered"]["text"]});
     }
     out
@@ -3085,7 +3087,12 @@ mod tests {
         assert_eq!((r["state"].as_str(), r["answered"]["by"].as_str(), r["answered"]["text"].as_str()), (Some("stale"), Some("alex"), Some("use x")));
         let mut lost = cli.clone();
         lost.as_object_mut().unwrap().remove("answered");
-        for r in [r, answer_receipt(&m, &lost)["answerReceipt"].clone()] {
+        // A late answer the fold rejects (task already doing) names the winner too, not the CLI refusal text.
+        let rejected = json!({"task": 7, "op_id": "tray.1", "outcome": "rejected", "reason": "#7 already answered by alex: use x",
+            "next": "To add to it: `taskq steer 7 --text T`.", "answered": {"by": "alex", "text": "use x"}});
+        let late = answer_receipt(&m, &rejected)["answerReceipt"].clone();
+        assert_eq!((late["state"].as_str(), late["answered"]["by"].as_str(), late["reason"].as_str()), (Some("rejected"), Some("alex"), Some("")));
+        for r in [r, answer_receipt(&m, &lost)["answerReceipt"].clone(), late] {
             let words = r.to_string();
             assert!(!words.contains("revision") && !words.contains("taskq") && !words.contains("22"), "{words}");
         }

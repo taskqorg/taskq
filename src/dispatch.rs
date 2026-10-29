@@ -64,26 +64,40 @@ pub struct Receipt {
     /// Extra success lines, e.g. the publication of `close`.
     #[serde(skip)]
     pub extra: String,
-    /// A `stale` answer that an earlier accepted answer beat: who wrote that one and what it delivered.
+    /// A late answer (§ 5): who wrote the answer that closed the question first and what it delivered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answered: Option<Answered>,
 }
 
 /// § 5 `answered`: the board login and delivered text of the answer that closed the question.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Answered {
     pub by: String,
     pub text: String,
 }
 
-/// The answer that beat a `stale` `answer` write on `log` (#1785); one more comment read names its writer.
+/// § 5 `answered` of `log` from its `comments`: the answer that closed the last question, its writer and delivered text.
+pub fn answered_in(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::Comment]) -> Option<Answered> {
+    let id = p.closing_answer(n, log)?;
+    Some(Answered { by: comments.iter().find(|c| c.id == id).map(|c| c.author.clone()).unwrap_or_default(), text: core::delivery(n, log, id) })
+}
+
+/// The answer that beat a late `answer` on `log` (#1785); one more comment read names its writer, when it can.
 fn answered(b: &dyn Board, n: u64, kind: &str, log: &[Entry], deps: bool) -> Option<Answered> {
-    let id = (kind == "answer").then(|| core::closing_answer(n, log, deps)).flatten()?;
-    let by = b.comments(n).ok()?.into_iter().find(|c| c.id == id).map(|c| c.author).unwrap_or_default();
-    Some(Answered { by, text: core::delivery(n, log, id) })
+    let p = core::project(n, log, deps);
+    p.closing_answer(n, log).filter(|_| kind == "answer")?;
+    let comments = b.comments(n).unwrap_or_default();
+    answered_in(n, log, &p, &comments)
 }
 
 impl Receipt {
+    /// § 5 late answer: `already answered by <by>: <text>` in place of stale or refusal advice; no other receipt changes.
+    fn late(self, answered: Option<Answered>) -> Receipt {
+        let Some(a) = answered else { return self };
+        let by = if a.by.is_empty() { String::new() } else { format!(" by {}", a.by) };
+        let next = if self.state == Some("doing") { format!("To add to it: `taskq steer {} --text T`.", self.task) } else { format!("Read `taskq inbox {}`.", self.task) };
+        Receipt { reason: format!("#{} already answered{by}: {}", self.task, a.text), next, answered: Some(a), ..self }
+    }
     fn new(n: u64, op: &Op, outcome: &'static str, reason: impl Into<String>, next: impl Into<String>) -> Receipt {
         Receipt { task: n, op_id: op.id.clone(), outcome, state: None, revision: None, reason: reason.into(), next: next.into(), extra: String::new(), answered: None }
     }
@@ -173,8 +187,8 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     }
     if op.revision.is_some_and(|r| r != rev) {
         let next = format!("Read `taskq inbox {n}`; retry with --revision {rev} if still wanted.");
-        let answered = answered(b, n, kind, &log, deps);
-        return Receipt { state: Some(before.state.name()), revision: Some(rev), answered, ..Receipt::new(n, op, "stale", format!("revision {} is stale; current is {rev}", op.revision.unwrap_or(0)), next) }.wake(root);
+        let late = answered(b, n, kind, &log, deps);
+        return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::new(n, op, "stale", format!("revision {} is stale; current is {rev}", op.revision.unwrap_or(0)), next) }.late(late).wake(root);
     }
     if core::has_fields(text) {
         return Receipt::rejected(n, op, "text ends with an `op-id:` or `revision:` line; reword it");
@@ -183,7 +197,8 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     let body = core::with_fields(entry(kind, args, attempt, &text), op.id.as_deref(), op.revision);
     log.push(Entry { id: u64::MAX, body: body.clone(), edited: false });
     if fold(n, &log, deps) == before {
-        return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::rejected(n, op, format!("#{n} is {}: `{kind}` not accepted", before.state.name())) };
+        let late = answered(b, n, kind, &log[..log.len() - 1], deps);
+        return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::rejected(n, op, format!("#{n} is {}: `{kind}` not accepted", before.state.name())) }.late(late);
     }
     let unknown = |e: String| Receipt::new(n, op, "unknown", e, format!("Run `taskq inbox {n}`, then retry with the same --op-id."));
     if before.publication.is_some() && matches!(kind, "requeue" | "later" | "failed" | "publication-failed")
@@ -213,8 +228,8 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         log[i].edited = true;
         let projection = core::project(n, &log, deps);
         let (t, rev) = (projection.task, projection.revision);
-        let answered = answered(b, n, kind, &log, deps);
-        return Receipt { state: Some(t.state.name()), revision: Some(rev), answered, ..Receipt::new(n, op, "stale", "another write won; this entry is ignored", format!("Read `taskq inbox {n}`; current revision is {rev}.")) }.wake(root);
+        let late = answered(b, n, kind, &log, deps);
+        return Receipt { state: Some(t.state.name()), revision: Some(rev), ..Receipt::new(n, op, "stale", "another write won; this entry is ignored", format!("Read `taskq inbox {n}`; current revision is {rev}.")) }.late(late).wake(root);
     }
     let projection = core::project(n, &log, deps);
     let (t, rev) = (projection.task, projection.revision);
@@ -410,10 +425,12 @@ pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> R
     let mut plan = vec![];
     for p in picks {
         let (n, k) = p.trim_start_matches('#').split_once('.').and_then(|(n, k)| Some((n.parse::<u64>().ok()?, k.parse::<usize>().ok()?))).ok_or(format!("not N.K: {p}"))?;
-        let (_, t, _) = current(b, n)?;
+        let (_, t, deps) = current(b, n)?;
         let log = entries(b, n)?;
+        // a late answer (§ 5) goes to `act`, which writes nothing and names the answer that closed the question
         if op.id.as_deref().is_some_and(|id| log.iter().any(|e| !e.edited && core::op_id(n, &e.body) == Some(id)))
             || op.revision.is_some_and(|r| r != core::revision(n, &log))
+            || !(matches!(t.state, State::Ask | State::Review) && t.card.is_some()) && core::project(n, &log, deps).closing_answer(n, &log).is_some()
         {
             plan.push((n, k, None));
             continue;
@@ -758,6 +775,25 @@ g", &["taskq".into()]).unwrap();
         let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card));
         let v: serde_json::Value = serde_json::from_str(&r.json()).unwrap();
         assert_eq!((v["outcome"].as_str(), v["answered"]["by"].as_str(), v["answered"]["text"].as_str()), (Some("stale"), Some("alex"), Some("x")));
+        // § 5 late answer, every surface: the CLI printed `revision X is stale` plus inbox advice; it now names the winner
+        let late = |r: &Receipt| { let t = r.text(); assert!(t.contains("already answered by alex: x") && !t.contains("stale") && !t.contains("--revision"), "{t}"); };
+        late(&r);
+        // without --revision the fold refuses the answer to a doing task; that refusal names the winner too and offers steer
+        let count = b.comments(n).unwrap().len();
+        let r = act(&b, &root, n, "answer", &["2"], "y", &Op::default());
+        late(&r);
+        assert!(r.text().contains(&format!("taskq steer {n}")) && b.comments(n).unwrap().len() == count, "{}", r.text());
+        // `answer N.K` on the closed question takes the same path, not `#N is doing without a question`
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("taskq.json"), r#"{"repo":"o/r"}"#).unwrap();
+        let (cfg, _) = crate::load(&root).unwrap();
+        let r = answer_picks(&b, &cfg, &[format!("{n}.2")], &Op::default()).unwrap().remove(0);
+        late(&r);
+        assert_eq!(b.comments(n).unwrap().len(), count);
+        // the status row carries the same answer (snapshot reads `answered_in`)
+        let log = entries(&b, n).unwrap();
+        let a = answered_in(n, &log, &core::project(n, &log, false), &b.comments(n).unwrap());
+        assert_eq!(a, Some(Answered { by: "alex".into(), text: "x".into() }));
         // a stale revision while the question is still open names no answer
         let (n, card) = task("T2");
         let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card - 1));
