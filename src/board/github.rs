@@ -304,12 +304,12 @@ impl GitHub {
         };
         let read = |args: &[&str]| -> Result<String> {
             let out = git(args)?;
-            if !out.status.success() { return Err("private fallback Git read failed; worktree kept".into()); }
+            if !out.status.success() { return Err(format!("private fallback `git {}` failed: {}: {}; worktree kept", args.join(" "), out.status, String::from_utf8_lossy(&out.stderr).trim())); }
             String::from_utf8(out.stdout).map(|s| s.trim().to_string()).map_err(|_| "private fallback Git output unknown".into())
         };
         let common = read(&["rev-parse", "--git-common-dir"])?;
         let common = path.join(common).canonicalize().map_err(|_| "private fallback ownership unknown")?;
-        let project = Command::new("git").current_dir(root).args(["rev-parse", "--git-common-dir"]).output().map_err(|_| "private fallback project unknown")?;
+        let project = Command::new("git").current_dir(root).args(["rev-parse", "--git-common-dir"]).output().map_err(|e| format!("private fallback project unknown: `git rev-parse --git-common-dir` failed: {e}"))?;
         if !project.status.success() || root.join(String::from_utf8_lossy(&project.stdout).trim()).canonicalize().ok().as_ref() != Some(&common) {
             return Err("private fallback worktree belongs to another repository".into());
         }

@@ -36,6 +36,7 @@ mod profile;
 mod telemetry;
 mod telemetry_sync;
 mod tidy;
+mod tools;
 mod runtime;
 mod service;
 mod setup;
@@ -211,7 +212,11 @@ fn hostname() -> String {
     // ponytail: first nonempty name per process (#1297: was one `hostname` child per call); a renamed host needs a service restart.
     static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     if let Some(name) = NAME.get() { return name.clone(); }
-    let name = coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)).ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let name = match coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)) {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        // #1856: an empty name falls back to TASKQ_HOST or config; the log keeps the failed call
+        Err(e) => { platform::log(&format!("host.identity: `hostname` failed: {e}")); String::new() }
+    };
     if !name.is_empty() { let _ = NAME.set(name.clone()); }
     name
 }
@@ -2293,6 +2298,8 @@ fn service(args: &Args) -> Res<()> {
             }
         }
         #[cfg(windows)] runtime::windows_process::exit_with_launcher(&install.join(platform::tool(&install).exe_name()));
+        // #1856: a service start (install, update, logon) logs each host tool gap with its fix
+        for l in tools::gaps(&install,None) {platform::log(&l);}
         return host::run(&install);
     }
     let root = find_root()?;
@@ -2346,6 +2353,7 @@ fn service(args: &Args) -> Res<()> {
         "install" => {
             let (cfg, _) = load(&root)?;
             println!("{}",host::install_project(&cfg.install,&root)?);
+            for l in tools::gaps(&cfg.install,Some(&root)) {println!("{l}");}
             // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
             if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
                 for l in runtime::owner::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
@@ -2385,7 +2393,8 @@ fn onboard_cmd(install: &Path) -> Res<()> {
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or("home folder unknown")?;
         gaps.extend(runtime::owner::trust(install, &home, runtime::owner::claude_pids)?);
     }
-    if gaps.is_empty() { gaps.push(format!("Ready: {} project(s) on {}; logins, access and trust in place", roots.len(), hostname())); }
+    gaps.extend(tools::gaps(install, None));
+    if gaps.is_empty() { gaps.push(format!("Ready: {} project(s) on {}; tools, logins, access and trust in place", roots.len(), hostname())); }
     for l in gaps {println!("{l}");}
     Ok(())
 }
@@ -2722,7 +2731,12 @@ fn run(argv: &[String]) -> Res<()> {
             // #1419: entry.rs gave the offline (staged release) selftest a private store.
             if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some() {println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]);}
             else {println!("telemetry: local capture committed {} observations",capture["committed"]);}
-            Ok(())
+            // #1856: the release staging selftest is offline; a host gap must not hold the update that may fix it
+            if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some() {println!("tools: unknown (TASKQ_SELFTEST_OFFLINE set; no tool probe)");return Ok(());}
+            let rows=tools::rows(&platform::default_install(),find_root().ok().as_deref());
+            for (line,failed) in &rows {println!("tool {}{line}",if *failed {"FAIL "} else {""});}
+            let failed:Vec<_>=rows.iter().filter(|r|r.1).map(|r|r.0.split(':').next().unwrap_or("?")).collect();
+            if failed.is_empty() {Ok(())} else {Err(format!("tools: FAIL {}; fix steps above (docs/design/host-service.md#host-tools)",failed.join(", ")))}
         }
         "update" => {
             let install = platform::default_install();
@@ -2733,6 +2747,7 @@ fn run(argv: &[String]) -> Res<()> {
                 Some(v) => println!("updated to {v}; the service restarts on its next update check"),
                 None => println!("up to date ({})", platform::tool(&install).current().unwrap_or_else(|| platform::VERSION.into())),
             }
+            if !check {for l in tools::gaps(&install, find_root().ok().as_deref()) {println!("{l}");}}
             Ok(())
         }
         // § 5: read-only probes on this host, no board

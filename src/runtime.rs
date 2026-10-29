@@ -2273,7 +2273,8 @@ fn probe_within(name: &'static str, bin: &Path, args: &[&str], budget: std::time
     if budget.is_zero() {return None;}
     let out = match coreq::process::output(name, Command::new(bin).args(args), budget) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
-        Err(_) => return None,
+        // #1856: the row reads unknown; the log keeps the command and why
+        Err(e) => { crate::platform::log(&format!("{name}: `{} {}` failed: {e}", bin.display(), args.join(" "))); return None }
     };
     Some((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
@@ -2363,14 +2364,22 @@ pub struct Adapter {
     pub setup: &'static str,
     pub login: &'static str,
     pub sessions: &'static str,
+    /// Oldest qualified CLI version and the owner's update step ([host tools](../docs/design/host-service.md#host-tools)).
+    pub min: &'static str,
+    pub update: &'static str,
 }
 
 const ADAPTERS: [Adapter; 3] = [
-    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`" },
-    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads" },
-    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads" },
+    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`" },
+    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
+    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
 ];
-const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "" };
+const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "" };
+
+/// The CLI runtimes a host can run as service children, one per binary: the runtime rows of host tools.
+pub fn clis() -> impl Iterator<Item = &'static Adapter> {
+    ADAPTERS.iter().filter(|a| a.child)
+}
 
 /// The adapter of `rt`; an unknown name gets one that answers no to every question.
 pub fn of(rt: &str) -> &'static Adapter {
