@@ -1,14 +1,14 @@
 {
   "version": "4.6.40",
-  "sourceCommit": "01238bc2a0493584c1b26f46a5f6228f08b6b104",
-  "binarySha256": "634f21372d78494b8b1f56855ac76456e0b572b3e6eb7a537b3a8c845a7a12da",
+  "sourceCommit": "b10805ee9140705d064c4ca129339d4041f5adbe",
+  "binarySha256": "2d3641ef204de269ebda8e58689c5e364bb08ac1c3301fd2bc31250c440bb104",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "02abf660dd68f0b23742ab61cebb64b11fed4463",
+    "src/tray.rs": "c56db577ac6ea7740908deb11d99b3d48adc68a1",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
     "src/tray-app.js": "eefec6088e5236b401cb35bd0b8f8a8e68553a53",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
@@ -36,7 +36,7 @@
     "src/workspace-answers.js": "4a03c3bf98a703bcbd7fc8fa39d992a68d4f4e92",
     "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
-    "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e"
+    "src/icon.rs": "ba597bc26768c4544aaa8132003922646cfb1e02"
   },
   "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",
   "images": [
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "ad29063788093126d3f2871419c51499e983d912372940c19b4e8a4a0c57d000"
+      "sha256": "d13212f54666b34f88056406cd8252e1e9f0ca17d7c5d7c6a4997611f54045a7"
     },
     {
       "file": "popover-dark-project-16.png",
