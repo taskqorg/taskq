@@ -299,6 +299,8 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
 pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
     let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
     let result=(||->Res<Value>{
+        // #1825 prototype: a task thread reads its worker's live transcript on this host
+        if id.starts_with("task:")&&thread_id(id)&&action=="transcript" {return crate::dialogue::worker_transcript(m["session"].as_str().unwrap_or(""),m["before"].as_u64(),m["after"].as_u64());}
         if !crate::setup::owner_id(id){return Err("Invalid or reserved draft identity".into());}
         match action {
             "status"=>{

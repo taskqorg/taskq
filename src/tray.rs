@@ -661,8 +661,10 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
         }
         return;
     }
-    let (_, url) = crate::runtime::session_link(root, own, rt, id, row["n"].as_u64().unwrap_or(0), row["attempt"].as_u64().unwrap_or(0), row["role"].as_str().unwrap_or(""), published);
+    let (id, url) = crate::runtime::session_link(root, own, rt, id, row["n"].as_u64().unwrap_or(0), row["attempt"].as_u64().unwrap_or(0), row["role"].as_str().unwrap_or(""), published);
     row["session_url"] = json!(url);
+    // #1825 prototype: the resolved native id lets the task thread follow the worker's transcript on this host
+    if own && crate::runtime::plain_thread(&id) { row["session_id"] = json!(id); }
 }
 
 /// What the icon and the history show: in work, `ask`, ready, failed over all projects (one task per board and issue), whether

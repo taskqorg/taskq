@@ -15,6 +15,8 @@ module.exports=execution.module('conversations',{
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
   const measured=new WeakMap();
   let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,observed=null,resize=null;
+  // #1825 prototype: the live worker session of the open task thread on this host
+  let live=null;
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    note:function(text,id=selected){notices[id||'list']=text;},
@@ -179,6 +181,35 @@ module.exports=execution.module('conversations',{
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
+   // #1825 prototype (A2/A3): a task thread shows its worker's native transcript while it runs on this host, newest
+   // last, read every second; owner input (answers, steers) shows with its author, the tail keeps the last WINDOW items
+   worker:function(thread,t){
+    const session=t?.local_session&&t.session_id&&t.runtime?t.runtime+':'+t.session_id:null;
+    if(!session)return null;
+    if(live?.session!==session||live.thread!==thread)live={thread,session,items:[],end:null,reason:'',busy:null,timer:null};
+    if(!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null?0:1000);
+    const label={assistant:'Worker',owner:'You · via the board'};
+    return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime),
+     h('div',{class:'dialogue-transcript',role:'log','aria-label':'Live worker session'},
+      live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
+      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):live.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
+   },
+   workerRead:function(){
+    const l=live;if(!l)return;l.timer=null;
+    if(!menu.querySelector('.worker-live'))return;
+    const id=api.id();l.busy=id;
+    ui.send({a:'conversation-dialogue',id,conversation:l.thread,action:'transcript',session:l.session,...(l.end===null?{}:{after:l.end})});
+    ui.defer(()=>{if(l.busy===id){l.busy=null;l.reason='Live read receipt missing';draw();}},30000);
+   },
+   workerSettle:function(r){
+    const l=live;if(!l||l.busy!==r.id)return false;l.busy=null;
+    const was=l.reason,first=l.end===null;let fresh=[];
+    if(r.state!=='accepted')l.reason=r.reason||'Transcript unknown';
+    else {l.reason='';const have=new Set(l.items.map(api.key));fresh=r.value.items.filter(i=>!have.has(api.key(i)));l.items=[...l.items,...fresh].slice(-WINDOW);l.end=r.value.end;}
+    // a quiet read schedules the next one without a repaint, so the steer composer below is not disturbed
+    if(first||fresh.length||was!==l.reason)draw();else if(!l.timer)l.timer=ui.defer(api.workerRead,1000);
+    return true;
+   },
    // #1775: a tool line keeps the file name of an absolute path, never the local directories
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
@@ -245,7 +276,7 @@ module.exports=execution.module('conversations',{
     if(s.dialogueReceipt){
      const r=s.dialogueReceipt;
      if(r.id===activityRead?.id){const id=activityRead.conversation;activityRead=null;activityTimes[id]=r.state==='accepted'?r.value:{updated:null,reason:r.reason||'Activity unknown'};activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},100);return true;}
-     if(r.action==='activity')return true;
+     if(r.action==='activity'||api.workerSettle(r))return true;
      api.settle(r);return true;
     }
     if(s.workspaceOwner){owner=s.workspaceOwner;if(owner.conversation||owner.select){selected=owner.conversation||owner.select;onSelect?.(selected);listOnly=false;focusDraft=true;}draw();return true;}

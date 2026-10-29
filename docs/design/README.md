@@ -33,6 +33,8 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 
 [Comparative workflow review](comparative-workflow-review.md): VibeCrew, Moshi, Conductor and cmux; evidence, recommendations and implementation gaps.
 
+[Live worker session stream](live-worker-stream.md): #1825 experiment; runtime capability matrix, transcript-tail prototype, limits and relay options.
+
 | Material | Purpose |
 |---|---|
 | [App UI v2](ui-rules-v2.md) | Approved shared 38-check profile; TaskQ routes/values/filters and preservation map; upstream review pending |

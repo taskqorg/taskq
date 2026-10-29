@@ -254,6 +254,23 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
+/// #1825 prototype (A2/A3): the live view of a task worker's session `<rt>:<id>` on this host, read like an owner
+/// transcript (D1, D4). A worker turn's user input is TaskQ's per-turn brief pointer or owner input that the service
+/// delivered from the board (an answer or a steer, § 4 step 6), so each user item names which one it is.
+pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
+    let (rt, id) = session.split_once(':').ok_or("worker session unknown")?;
+    let (codex, path) = crate::runtime::worker_transcript(rt, id)?;
+    let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
+    worker_roles(&mut page.items);
+    Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+}
+
+fn worker_roles(items: &mut [Value]) {
+    for i in items.iter_mut().filter(|i| i["role"] == "user") {
+        i["role"] = json!(if i["text"].as_str().is_some_and(|t| t.starts_with("Before any work, ")) { "brief" } else { "owner" });
+    }
+}
+
 /// #1773 A4: the launch brief TaskQ sent as the first native input is the setup brief, not an owner message.
 fn mark_brief(items: &mut [Value], brief: &str) {
     let Some(head) = brief.lines().map(str::trim).find(|l| !l.is_empty()) else { return };
@@ -310,6 +327,33 @@ mod tests {
     }
 
     // D-A1/A2 source: the input persists before dispatch; the outcome comes from the result record only.
+    // #1825 A3: in a worker transcript the per-turn brief pointer is TaskQ's and every other input is the owner's
+    #[test]
+    fn worker_inputs_name_their_author() {
+        let mut items = vec![json!({"role": "user", "text": "Before any work, use Read to read \"x\" in full."}), json!({"role": "assistant", "text": "ok"}), json!({"role": "user", "text": "Also say PINEAPPLE"})];
+        worker_roles(&mut items);
+        assert_eq!(items.iter().map(|i| i["role"].as_str().unwrap()).collect::<Vec<_>>(), ["brief", "assistant", "owner"]);
+    }
+
+    // #1825 A2 live probe, run by hand: TASKQ_PROBE_SESSION=<rt>:<id> follows a session on this host with the task
+    // thread's 1 s poll and prints each new item's arrival in Unix milliseconds, to compare with the native stream.
+    #[test]
+    #[ignore]
+    fn live_worker_stream_probe() {
+        let session = std::env::var("TASKQ_PROBE_SESSION").expect("TASKQ_PROBE_SESSION");
+        let (mut end, until) = (None, std::time::Instant::now() + std::time::Duration::from_secs(60));
+        while std::time::Instant::now() < until {
+            match worker_transcript(&session, None, end) {
+                Ok(v) => {
+                    for i in v["items"].as_array().unwrap() { println!("{} {} {}", now(), i["role"], i["text"].as_str().unwrap_or_default().chars().take(40).collect::<String>().replace('\n', " ")); }
+                    end = v["end"].as_u64();
+                }
+                Err(e) => println!("{} unknown: {e}", now()),
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+    }
+
     #[test]
     fn send_dispatches_one_turn_and_reads_its_outcome() {
         let install = tmp();
