@@ -37,3 +37,5 @@ Environment: macOS 27.0.1, arm64, SF system font Medium 9 pt; rustc/cargo 1.98.1
 - `cargo test --locked --bin taskq icon::tests`: 6 passed, 1 subprocess helper ignored; 19.23 s execution after the warm build.
 - `cargo test --locked --bin taskq two_digit`: 2 passed, including cap and native-canvas checks; 3.14 s execution, 60 s warm rebuild.
 - The temporary baseline/candidate export instrument confirmed the old single-plus signature and the corrected two-glyph ink for 10 in both themes; 8 stayed identical.
+
+The expanded pause mask retains the original cleared Q region and also covers the extended canvas. A pixel check requires counter ink beyond the former 22 pt edge while paused, preventing a new clipping regression.

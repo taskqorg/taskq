@@ -173,7 +173,7 @@ pub fn svg(d:&Data,dark:bool)->String {
         *x=x.min(right-*w);right=*x-1.5;
     }
     let mut out=format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} 22">"#);
-    if d.paused {out.push_str(r#"<defs><mask id="pause-clear"><rect width="22" height="22" fill="white"/><rect x="3.5" y="3.5" width="15" height="17.7" fill="black"/></mask></defs><g mask="url(#pause-clear)">"#);}
+    if d.paused {write!(out,r#"<defs><mask id="pause-clear"><rect width="{width}" height="22" fill="white"/><rect x="3.5" y="3.5" width="15" height="17.7" fill="black"/></mask></defs><g mask="url(#pause-clear)">"#).unwrap();}
     let empty=d.counts.iter().all(|n|*n==Some(0))&&d.blocked==Some(0)&&d.bins.iter().all(|b|b.complete()&&b.counts==[0;4]);
     write!(out,r#"<g id="summary-data" visibility="{}"><g id="chart" shape-rendering="crispEdges">"#,if empty {"hidden"}else{"visible"}).unwrap();
     for (i,b) in d.bins.iter().enumerate() {
@@ -487,6 +487,10 @@ mod tests {
                     }
                 }
             }
+            data.counts=[Some(100);4];data.paused=true;
+            let paused=raster_slot(&svg(&data,dark),44).unwrap();
+            assert!((0..20).any(|y|(44..paused.w).any(|x|paused.px[((y*paused.w+x)*4+3) as usize]>0)),"pause mask must retain the extended counters");
+            data.paused=false;
         }
     }
 

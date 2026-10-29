@@ -3499,7 +3499,6 @@ mod tests {
         }
     }
 
-    // A7: removed Custom resolves to Summary; unrelated settings survive a subsequent save.
     // #1789 A1/A3: macOS can widen its slot; Windows retains a square notification-area image.
     #[test]
     fn two_digit_summary_uses_the_native_canvas() {
@@ -3510,6 +3509,7 @@ mod tests {
         assert_eq!(draw_svg(&icon::svg(&icon_data(&sum),false),1.0,2.0).unwrap().px,image.px,"published/native paths agree");
     }
 
+    // A7: removed Custom resolves to Summary; unrelated settings survive a subsequent save.
     #[test]
     fn saved_custom_resolves_to_summary_without_losing_settings() {
         let install=std::env::temp_dir().join(format!("taskq-icon-{}",std::process::id()));
