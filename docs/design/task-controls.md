@@ -15,7 +15,7 @@ Version `taskq.task-controls/1`. Each `status --json` / `status.json` task row l
 
 Every command adds `--json --op-id <id> --revision <row revision>`. The receipt is § 5's `{task, op_id, outcome, state, revision, reason, next}`: another revision is refused `stale`; a seen op id returns the first receipt and writes nothing, as in the tray. An op carries no free text or choice; the fixed text is the whole reason. Stop holds the task as `failed`; the service stops a running child.
 
-Close is not a control. It is consequential (cancellation or publication), like a close choice on the [answer card](answer-card.md): consumers show the task's board link (`Close on board ↗`) instead. Ordinary answers keep the answer card's gates; resource controls keep [theirs](shared-resource-controls.md).
+Close is not a control. It is consequential (cancellation or publication), like a close choice on the [answer card](answer-card.md): consumers show the task's board link instead (board icon, label `Close #n on the board`). Controls render as icon buttons with `<Action> #n` labels, as in the [approved details panel](review-evidence/conversations-input-scroll-2026-10-28/05-task-actions-and-provider-board-icon.png). Ordinary answers keep the answer card's gates; resource controls keep [theirs](shared-resource-controls.md).
 
 ## Component and fixtures
 

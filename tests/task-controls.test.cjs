@@ -7,7 +7,7 @@ assert.deepEqual(Object.keys(c.LABELS),fx.controls.map(x=>x.action));
 for(const [state,controls] of Object.entries(fx.states)){
   const html=c.render({n:7,revision:20,state,controls},{key:'b/7',url:'https://github.com/o/r/issues/7'});
   assert.deepEqual([...html.matchAll(/data-control="(\w+)"/g)].map(m=>m[1]),controls,state);
-  assert.ok(!/data-control="close"/.test(html)&&html.includes('Close on board ↗'),'Close is only a board link');
+  assert.ok(!/data-control="close"/.test(html)&&html.includes('aria-label="Close #7 on the board"'),'Close is only a board link');
 }
 assert.equal(c.render({n:7,revision:20,controls:['start','stop']},{except:['start']}).match(/data-control/g).length,1);
 assert.equal(c.render({n:7,revision:20}),'');
