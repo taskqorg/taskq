@@ -1,0 +1,39 @@
+{
+  "sourceCommit": "f22d7b24758e9e1431f612c21a39d51a2123ba13",
+  "capture": "Isolated TASKQ_INSTALL from docs/shots/fixture.sh; tests/fixtures/reports-shots.js invented report receipts; no board decisions. Menu at the start of the reader; Conversations scrolled to actions. Routes reports and reports-conversations run separately.",
+  "profile": "release",
+  "fixtureBlob": "458c3994595c33c6dbbfcd70db70ebfc15d1cf14",
+  "fixtureScriptBlob": "fa252d0a1782cedc598fef9f7f9b862fff801b36",
+  "binarySha256": "e71b53df6d1898240d55ebe92b619fc570b6e32e6bcf1743a76c891015abd6b5",
+  "environment": {
+    "os": "macOS 27.0.1 (26A434)",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot",
+    "webkitVersion": "22625.1.29.11.28",
+    "scale": "not measured"
+  },
+  "images": [
+    {"file": "mac-menu-dark.png", "surface": "menu", "theme": "dark", "font": 16, "pixels": "640x1844", "sha256": "eddfd462e0fbf838d481bef3700aa37e443b57a42ec7a855d8b765719a92869b"},
+    {"file": "mac-menu-light.png", "surface": "menu", "theme": "light", "font": 16, "pixels": "640x1844", "sha256": "1a9b6a6bc474fa7327bc637723839e0dd3d619c176ef8aa3fef2ab9d5e9bf777"},
+    {"file": "mac-conversations-dark.png", "surface": "conversations", "theme": "dark", "font": 16, "pixels": "1600x1200", "sha256": "5634fe47ff2eab19cedcae2890530d00be70d25a3e81d4fd78ce1e2db37c59c3"},
+    {"file": "mac-conversations-light.png", "surface": "conversations", "theme": "light", "font": 16, "pixels": "1600x1200", "sha256": "67fe884d2bcca2ba451fdd234a0c55b297788187b91de65d8633e4eeef7865d8"}
+  ],
+  "menuScrollObservation": {
+    "result": "Make tasks, Later and Drop visible above the fixed status footer in light and dark",
+    "fixtureChange": "scratch only: after open, scrollIntoView({block:'end'}) on [data-report=drop]; not committed",
+    "binarySha256": "e0bed91366efa5d46c9882828dcdeb315f5b465a9189e2f4eb10a330b7843e81",
+    "images": {
+      "dark": "10366af2fafbd97a29c3f33a8f7c874966ebc5d47ffff8df90655cb8704ddf02",
+      "light": "97c4bb98e5f88e258974e3516c67ad0101b43017ff2e539ccbbea461d465d478"
+    }
+  },
+  "shotsUpdate": {
+    "command": "sh docs/shots/update.sh",
+    "updateBlob": "9b6c405ceb3374014c23bf916eda133c79d3ef21",
+    "manifest": "shots-update-manifest.json",
+    "manifestSha256": "bb5a1bbb5a834af483d8627ba8b72171e68c99de14a7d9fc873d7055ff5352fa",
+    "checkBefore": "docs/shots/check.sh exit 2 (stale uiSources)",
+    "checkAfter": "docs/shots/check.sh exit 0",
+    "committedReadmeShots": false
+  }
+}
