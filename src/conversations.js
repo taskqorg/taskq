@@ -10,6 +10,7 @@ const WINDOW=600,SAVED=24,SAVED_BYTES=1536,FILL=8;
 module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect}){
   let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,focusSearch=false,searchOpen=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
+  let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
   const measured=new WeakMap();
@@ -20,6 +21,7 @@ module.exports=execution.module('conversations',{
    current:function(){return items.find(c=>c.id===selected);},
    ids:function(){return items.map(c=>c.id);},
    opened:function(){return opened;},
+   sidebarState:function(){return sidebar;},
    remember:function(id,root){const prior=opened.find(r=>r.id===id);if(prior)prior.root=root||prior.root;else opened.push({id,root:root||null});search='';searchOpen=false;api.nav();},
    // C2/C7: one selected identity for owner, task and event rows; only view identities persist.
    sync:function(rows,legacy){
@@ -62,7 +64,7 @@ module.exports=execution.module('conversations',{
     const op=reads[r.id];if(!op)return;delete reads[r.id];
     if(view?.id!==op.conversation)return;if(view.busy[op.kind]===r.id)view.busy[op.kind]=null;
     const v=r.value,el=menu.querySelector('.conversation-reader');
-    if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
+    if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';const c=api.current();if(c&&Object.hasOwn(v,'updated')){c.updated=v.updated;activityTimes[c.id]={updated:v.updated,reason:v.updated_reason};}api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
     if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';return;}
     // Q-A3/A5: a reply for a replaced window, or for a cursor the window no longer ends at, is obsolete
     if(op.gen!==view.gen)return;
@@ -183,7 +185,7 @@ module.exports=execution.module('conversations',{
    local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next};},
    // #1773 A4: the host refuses fractional scroll offsets and navigation over 4096 bytes; whole pixels and the newest opened threads fit
    nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>{const whole=Object.fromEntries(Object.entries(scrolls).map(([k,v])=>[k,Math.max(0,Math.round(v)||0)]));let navigation;do navigation={list,search,selected:api.current()?.id||null,listOnly,scrolls:whole,threads:{selected,selection,opened,positions}};while(JSON.stringify(navigation).length>4096&&opened.shift());ui.send({a:'conversation-navigation',navigation});},100);},
-   select:function(id,focus=true){const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
+   select:function(id,focus=true){revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
    // #1699 A2: open one owner conversation in its list without acknowledging anything
    reveal:function(id,focus=true){const c=items.find(c=>c.id===id);if(!c)return false;list=c.archived?'archive':'recent';search='';searchOpen=false;api.select(id,focus);return true;},
    // #1699 A7: a restored task or event thread opens in Recent
@@ -203,27 +205,55 @@ module.exports=execution.module('conversations',{
    },
    next:function(){
     if(pending||!queue.length||failure)return;
-    const op=queue.shift(),c=items.find(c=>c.id===op.conversation);if(!api.editable(c)){api.next();return;}
+    const op=queue.shift(),c=items.find(c=>c.id===op.conversation);if(!c||!api.editable(c)&&!['archive','restore'].includes(op.action)){api.next();return;}
     if(op.action!=='save')api.note('',op.conversation);
     pending={...op,id:api.id(),revision:c.revision||0,version:c.version||0};
     ui.send({a:op.action==='window'?'conversation-window':'conversation-action',...pending});
     ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;api.note(failure.reason,failure.conversation);draw();}},30000);
    },
-   action:function(action,extra={}){
-    const c=api.current();if(!api.editable(c)||failure||c.archived&&!['restore','delete','preview'].includes(action))return;
+   action:function(action,extra={},id=selected){
+    const c=items.find(c=>c.id===id);if(!c||!api.editable(c)&&!['archive','restore'].includes(action)||failure||c.archived&&!['restore','delete','preview'].includes(action))return;
     ui.cancel(saveTimer);api.save(c);
     if(action==='send'&&(c.sending||c.sent||c.request)||action==='reply'&&c.sending)return;
     if(action==='send'||action==='reply')c.sending=true;
     queue.push({conversation:c.id,action,...extra});api.next();draw();
    },
+   pollActivity:function(){
+    if(activityRead||activityTimer||!menu.querySelector('.conversation-list'))return;
+    const candidates=items.filter(c=>api.launched(c)&&!!c.archived===(list==='archive')&&!c.deleted).sort((a,b)=>(activityChecks[a.id]||0)-(activityChecks[b.id]||0));
+    if(!candidates.length)return;const c=candidates[0],wait=(activityChecks[c.id]||0)+10000-Date.now();
+    if(wait>0){activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},wait);return;}
+    const id=api.id();activityChecks[c.id]=Date.now();activityRead={id,conversation:c.id};
+    ui.send({a:'conversation-dialogue',id,conversation:c.id,action:'activity'});
+    ui.defer(()=>{if(activityRead?.id===id){activityTimes[c.id]={updated:null,reason:'Activity read receipt missing'};activityRead=null;draw();}},30000);
+   },
+   sidebar:function(action,key,value,root){
+    if(sidebarPending)return;revealed=null;
+    const id=api.id();sidebarPending={id,action,key,root};
+    ui.send({a:'conversation-navigation',id,sidebar:{action,key,value,root}});
+    ui.defer(()=>{if(sidebarPending?.id===id){sidebarPending=null;api.note('Sidebar save unknown; refresh before retrying.');draw();}},30000);draw();
+   },
    receive:function(s){
-    if(s.dialogueReceipt){api.settle(s.dialogueReceipt);return true;}
+    if(s.conversationSidebarReceipt){
+     const r=s.conversationSidebarReceipt;if(r.id!==sidebarPending?.id)return true;
+     const op=sidebarPending;sidebarPending=null;
+     if(r.state==='accepted'&&r.sidebar){sidebar=r.sidebar;if(snapshot.conversations)snapshot.conversations.sidebar=sidebar;
+      if(op.action==='restore'){api.remember(op.key,op.root);api.show('recent');api.select(op.key,false);}
+      api.note({pin:'Pin saved',collapse:'Group saved',archive:'Archived',restore:'Restored'}[op.action]+' · local view only');
+     }else api.note(r.reason||'Sidebar save unknown; refresh before retrying.');return true;
+    }
+    if(s.dialogueReceipt){
+     const r=s.dialogueReceipt;
+     if(r.id===activityRead?.id){const id=activityRead.conversation;activityRead=null;activityTimes[id]=r.state==='accepted'?r.value:{updated:null,reason:r.reason||'Activity unknown'};activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},100);return true;}
+     if(r.action==='activity')return true;
+     api.settle(r);return true;
+    }
     if(s.workspaceOwner){owner=s.workspaceOwner;if(owner.conversation||owner.select){selected=owner.conversation||owner.select;onSelect?.(selected);listOnly=false;focusDraft=true;}draw();return true;}
     if(s.conversationNavigationError!==undefined){if(s.conversationNavigationError)api.note(s.conversationNavigationError);return true;}
     if(s.conversationReceipt){
      const r=s.conversationReceipt;if(r.id!==pending?.id)return true;
      const op=pending;pending=null;ui.cancel(timer);const c=items.find(c=>c.id===op.conversation),native=r.snapshot?.items?.find(c=>c.id===op.conversation);
-     if(c&&native){c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;if(['attach','remove'].includes(op.action))c.files=native.files;}
+     if(c&&native){c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;c.updated=native.updated;if(['attach','remove'].includes(op.action))c.files=native.files;}
      if(r.state!=='accepted'&&['reply','watch','unwatch'].includes(op.action)){
       // D3: a refused turn or watch change is definite; its text shows and the draft stays.
       if(c)c.sending=false;api.note(op.action==='reply'?'Not sent: '+(r.reason||'delivery unknown')+'. Draft kept.':r.reason||'Watch change unknown',op.conversation);api.next();
@@ -233,7 +263,7 @@ module.exports=execution.module('conversations',{
      }else {
       if(c&&op.action==='save')c.saved=op.version;
       if(c&&op.action==='send'){c.sending=false;if(c.text===c.sent?.text&&!c.next){c.text='';c.caret=[0,0];for(const f of c.sent.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=c.files.filter(f=>!c.sent.files.some(sent=>sent.id===f.id));c.version=(c.version||0)+1;api.save(c);}api.note('Request saved. Native launch and replies are separate.',op.conversation);}
-      if(op.action==='archive'&&c){c.archived=true;undo=c.id;const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;api.note('Archived');api.nav();}
+      if(op.action==='archive'&&c){c.archived=true;undo=c.id;if(selected===c.id){const next=api.visible().find(row=>row.id!==c.id);selected=next?.id||null;selection[list]=selected;}api.note('Archived · '+api.title(c));api.nav();}
       if(op.action==='restore'&&c){c.archived=false;list='recent';search='';searchOpen=false;api.select(c.id);api.note('Restored',op.conversation);undo=null;}
       if(op.action==='delete'){items=items.filter(c=>c.id!==op.conversation);selected=api.visible()[0]?.id||null;api.note('Permanently deleted');confirmDelete=false;undo=null;api.nav();}
       if(op.action==='fork'&&r.value?.forked){if(c&&c.version===op.version)Object.assign(c,native);for(const row of r.snapshot.items)if(!items.some(c=>c.id===row.id))items.push({...row,version:0,saved:0});api.select(r.value.forked);api.note('Draft and files moved to a separate request. Nothing sent.');}
@@ -253,6 +283,7 @@ module.exports=execution.module('conversations',{
     if(!s.projects)return false;
     snapshot=s;
     const incoming=s.conversations;
+    if(incoming?.sidebar&&!sidebarPending)sidebar=incoming.sidebar;
     if(incoming){
      for(const n of incoming.items||[]){const c=items.find(c=>c.id===n.id);if(c){c.request=n.request;c.sent=n.sent;c.dialogue=n.dialogue;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
      if(incoming.complete)for(const c of items){if(c.revision>0&&!incoming.items.some(n=>n.id===c.id)){c.deleted=true;if(c.text===c.sent?.text)c.text='';c.sent=null;c.request=null;c.files=[];queue=queue.filter(o=>o.conversation!==c.id);if(pending?.conversation===c.id){pending=null;ui.cancel(timer);}if(failure?.conversation===c.id)failure=null;}}
@@ -301,13 +332,43 @@ module.exports=execution.module('conversations',{
      });
     }
    },
+   // CS1–CS6: the three source types share one identity, project assignment and activity order.
+   sidebarGroups:function(extra){
+    const projects=snapshot.projects||[],time=v=>typeof v==='string'?Date.parse(v):typeof v==='number'&&v>0?v:NaN;
+    const source=[...(extra.rows||[]).map(r=>({...r,thread:true})),...items.filter(c=>!c.deleted).map(c=>({...c,root:c.sent?.root||c.request?.root||c.root,title:api.title(c),meta:api.rowStatus(c)+((owner.detached||[]).includes(c.id)?' · Detached':''),marker:extra.marks?.[c.id]}))];
+    const all=source.filter(r=>!!r.archived===(list==='archive')).map(r=>{
+     const p=projects.find(p=>p.root===r.root&&(!r.board||p.issues===r.board)),group=p?JSON.stringify([p.root,p.issues||'']):'other';
+     return {...r,p,group,at:time(activityTimes[r.id]?.updated??(activityTimes[r.id]?null:r.updated)),pin:sidebar.pins.includes(r.id)};
+    });
+    const compare=(a,b)=>(Number.isFinite(b.at)?b.at:-1)-(Number.isFinite(a.at)?a.at:-1)||a.id.localeCompare(b.id);
+    const make=(id,name,rows)=>({id,name,total:rows.length,at:Math.max(-1,...rows.map(r=>Number.isFinite(r.at)?r.at:-1)),rows:rows.filter(r=>!search||[r.title,r.meta,r.root,r.id,r.p?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase())).sort(compare)});
+    let groups;
+    if(list==='archive')groups=[make('archive','Archived',all)];
+    else {
+     const projectGroups=[...new Set(all.filter(r=>!r.pin&&r.p).map(r=>r.group))].map(id=>make(id,all.find(r=>r.group===id).p.name,all.filter(r=>!r.pin&&r.group===id)));
+     projectGroups.sort((a,b)=>b.at-a.at||a.id.localeCompare(b.id));
+     groups=[make('pinned','Pinned',all.filter(r=>r.pin)),...projectGroups,make('other','Other',all.filter(r=>!r.pin&&!r.p))];
+    }
+    return groups.filter(g=>g.rows.length).map(g=>{
+     const project=g.id.startsWith('['),open=!project||!!search||!sidebar.collapsed.includes(g.id)||g.rows.some(r=>r.id===revealed);
+     return h('section',{key:g.id,'data-conversation-group':g.id,'aria-label':g.name},
+      h(project?'button':'div',{class:'conversation-group-head',...(project?{'data-c':'group-collapse','data-group':g.id,'aria-expanded':String(open),disabled:!!sidebarPending}:{})},project&&icons.icon('arrow-down'),h('span',null,g.name),h('small',null,search?g.rows.length+'/'+g.total:String(g.total))),
+      open&&g.rows.map(r=>{
+       const own=items.find(c=>c.id===r.id),context=!r.p?(r.root||r.board||r.project?(r.project?r.project+' · ':'')+'Project unavailable':'No project'):(g.id==='pinned'||list==='archive'?r.p.name:''),meta=r.thread?(r.status??r.meta??''):r.meta;
+       const age=Number.isFinite(r.at)?Math.max(0,Math.floor(((snapshot.now?Number(snapshot.now)*1000:Date.now())-r.at)/60000)):null;
+       const when=age===null?'Update time unknown':age===0?'Now':age<60?age+'m ago':age<1440?Math.floor(age/60)+'h ago':Math.floor(age/1440)+'d ago';
+       const blocked=!!sidebarPending||!!pending||!!failure||!!extra.busy;
+       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',{title:age===null?'Update time unknown: '+(activityTimes[r.id]?.reason||'The source did not supply an update time'):api.when(r.at)},[context,meta,when].filter(Boolean).join(' · '),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
+        h('div',{class:'conversation-row-actions'},icons.button(r.pin?'pin-off':'pin',r.pin?'Unpin':'Pin',{'data-c':'row-pin','data-id':r.id,class:'compact-action',disabled:blocked}),
+         icons.button(r.archived?'archive-restore':'archive',r.archived?'Restore':'Archive',{'data-c':'row-archive','data-id':r.id,class:'compact-action',disabled:blocked,onClick:()=>{if(blocked)return;if(own)api.action(r.archived?'restore':'archive',{},r.id);else extra.archive?.(r);}})));
+      }));
+    });
+   },
    // #1699 A1/A4: one thread list: owner conversations plus the task and event threads the workspace passes in
    body:function(extra={}){
     const thread=extra.selected,c=thread?null:api.current(),disabled=!api.editable(c)||c.deleting||c.archived,bad=api.problem(c),button=icons.button,dialogue=api.launched(c);
     if(c?.deleted)return h('section',{class:'conversations'},h('p',{role:'status'},'History permanently deleted. Sent content cannot be restored. Independent saved drafts remain in Recent.'),c.text&&h('label',null,'Unsent local text',h('textarea',{readOnly:true,value:c.text})),owner.conversation?h('button',{'data-c':'return'},'Return to main'):h('button',{'data-c':'new'},'New request'));
-    const find=text=>!search||text.toLowerCase().includes(search.toLowerCase()),threads=(extra.rows||[]).filter(r=>!!r.archived===(list==='archive')&&find([r.title,r.meta].join(' '))),own=api.visible();
-    const rows=[...threads.map(r=>h('button',{key:r.id,class:'conversation-row','data-a':'thread','data-thread':r.id,'aria-current':r.id===thread?'page':null},h('span',null,r.title),h('small',null,r.meta,r.marker&&h('b',{class:'thread-marker'},' · '+r.marker)))),
-     ...own.map(row=>h('button',{key:row.id,class:'conversation-row','data-c':'select','data-id':row.id,'aria-current':!thread&&row.id===selected?'page':null},h('span',null,api.title(row)),h('small',null,(snapshot.projects?.find(p=>p.root===row.root)?.name||'Project unavailable')+' · '+api.rowStatus(row)+((owner.detached||[]).includes(row.id)?' · Detached':''),extra.marks?.[row.id]&&h('b',{class:'thread-marker'},' · '+extra.marks[row.id]))))];
+    const rows=api.sidebarGroups(extra);
     // A6: the session runtime is the one the request recorded at launch, not the current owner default
     const runtime=c?.request?.runtime||c?.sent?.runtime;
     // #1773 A3: the composer bottom row holds the attach, new-from-draft and history icons and the send arrow
@@ -349,7 +410,10 @@ module.exports=execution.module('conversations',{
    sessions:function(){return [h('p',{class:'meta'},'Recorded workers and reviewers. Opening a target sends no input.'),(snapshot.projects||[]).map(p=>h('section',{key:p.root},h('h2',null,p.name),(!p.alive||p.complete===false)&&h('p',{role:'status'},'Session state unknown: project snapshot stale or incomplete.'),(p.tasks||[]).filter(t=>t.session).map(t=>h('article',{key:t.n},h('a',{href:p.issues+'/'+t.n},'#'+t.n+' '+t.title),h('p',{class:'meta'},(t.role||'Attempt')+' · '+(t.runtime||t.session)+' · '+(t.host||'Host unknown')+' · '+t.state),t.session_url?h('a',{href:t.session_url,'data-url':t.session_url},'Open recorded session'):h('p',{class:'meta'},t.session_reason||'Verified session target unavailable.'))))),h('p',{class:'meta'},'Remote/headless dialogue uses the native runtime or existing CLI. No local session or gateway is created.')];},
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();
-    if(action==='new'&&!owner.conversation)api.fresh();
+    if(action==='row-pin'){api.sidebar('pin',b.dataset.id,!sidebar.pins.includes(b.dataset.id));}
+    else if(action==='group-collapse')api.sidebar('collapse',b.dataset.group,!sidebar.collapsed.includes(b.dataset.group));
+    else if(action==='row-archive'){return true;}
+    else if(action==='new'&&!owner.conversation)api.fresh();
     else if(action==='select'){if((owner.detached||[]).includes(b.dataset.id))ui.send({a:'conversation-window',action:'raise',conversation:b.dataset.id});else api.select(b.dataset.id);}
     else if(action==='search-open'){listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
     else if(action==='list'){listOnly=!listOnly;api.nav();draw();}
@@ -418,6 +482,7 @@ module.exports=execution.module('conversations',{
     if(reader)reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight*.45);
    },
    afterDraw:function(){
+    api.pollActivity();
     api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
     if(detail&&!log){const p=positions[selected];detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;}

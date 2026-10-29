@@ -24,7 +24,7 @@ const {create}=execution.module('workspace',{
     const threads=api.threads(),id=conversations.sync(threads,view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null),row=threads.find(t=>t.id===id),selected=row?.id;
     const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
-    return conversations.body({rows:threads,selected,marks,notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    return conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      footer:[api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]});
    },
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
@@ -69,19 +69,22 @@ const {create}=execution.module('workspace',{
    threadNotice:function(id){return view.threadNotice?.thread===id?h('p',{class:'meta thread-notice',role:'status'},view.threadNotice.text):null;},
    // #1699 A1: one task thread per board task with a question event, plus the task opened from the menu; an owner conversation's request events stay on it
    threads:function(){
-    const S=snapshot.value,rows=new Map(),owned=new Set(conversations.ids());
+    const S=snapshot.value,rows=new Map(),owned=new Set(conversations.ids()),local=conversations.sidebarState();
     for(const r of S.messages?.entries||[]){
      if(r.kind==='question'){const id='task:'+r.board+'/'+r.task,prior=rows.get(id);if(!prior||prior.event.archived&&!r.archived)rows.set(id,{id,task:r.task,board:r.board,root:r.root,title:'#'+r.task+' '+(r.title||''),project:r.project,revision:r.revision,event:r,archived:r.archived});}
-     else if(r.kind==='request'&&!owned.has(r.id))rows.set('event:'+r.key,{id:'event:'+r.key,title:r.title||'Request',event:r,archived:r.archived,meta:(r.host||'Host unknown')+' · '+api.plain(r.state),marker:!r.read&&!r.archived?'Unread':''});
+     else if(r.kind==='request'&&!owned.has(r.id))rows.set('event:'+r.key,{id:'event:'+r.key,title:r.title||'Request',root:r.root,updated:r.updated??r.created,event:r,archived:r.archived,meta:(r.host||'Host unknown')+' · '+api.plain(r.state),marker:!r.read&&!r.archived?'Unread':''});
     }
     const a=view.answer,refs=new Map(conversations.opened().map(r=>[r.id,r]));
     if(a&&!refs.has('task:'+a.board+'/'+a.task))refs.set('task:'+a.board+'/'+a.task,{id:'task:'+a.board+'/'+a.task,root:a.root});
+    for(const [id,root] of Object.entries(local.archived||{}))if(!refs.has(id))refs.set(id,{id,root});
     for(const {id,root} of refs.values()){if(!rows.has(id)){const cut=id.lastIndexOf('/'),task=Number(id.slice(cut+1)),board=id.slice(5,cut);rows.set(id,{id,task,board,root,title:'#'+task});}else if(root)rows.get(id).root=root;}
     for(const row of rows.values())if(row.task){
-     const p=S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
-     if(t){row.title='#'+t.n+' '+t.title;row.revision=t.revision;}
+     const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=p?.tasks?.find(t=>t.n===row.task);
+     if(t){row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=typeof t.updated==='number'?t.updated*1000:null;}
+     if(p){row.root=p.root;row.project=p.name;}
+     if(!row.event)row.archived=Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
-     const state=t?.state||row.event?.state;row.meta=(p?.name||row.project||'Board')+(!state||state==='ask'&&!row.archived?'':' · '+api.plain(state));
+     const state=t?.state||row.event?.state;row.status=!state||state==='ask'&&!row.archived?'':api.plain(state);row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     return [...rows.values()];

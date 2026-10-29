@@ -202,6 +202,12 @@ fn dispatch(install: &Path, own: &Path, r: &Request, t: &mut Turn, native: &Nati
     store(&own.join("turn.json"), t)
 }
 
+/// CS2: called on the existing background read channel, never during the tray snapshot/UI pass.
+pub fn activity(r:&Request)->Value {
+    let updated=r.session.as_deref().ok_or("native session unknown".to_string()).and_then(|s|crate::runtime::owner::transcript(&r.runtime,s)).and_then(|p|crate::transcript::last_update(crate::runtime::of(&r.runtime).codex,&p));
+    match updated {Ok(updated)=>json!({"updated":updated}),Err(reason)=>json!({"updated":null,"reason":reason})}
+}
+
 /// D5/D7 status for one conversation: state, last turn, watch. `live` adds the holder probe and the transcript's last
 /// assistant line; a missing transcript is unknown.
 pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value {
@@ -219,6 +225,7 @@ pub fn status(install: &Path, r: &Request, live: bool, native: &Native) -> Value
         "watch": match &w { Ok(Some(w)) => json!(w), Ok(None) => json!("no watch"), Err(e) => json!({"unknown": e}) },
     });
     if live {
+        let activity=activity(r);v["updated"]=activity["updated"].clone();v["updated_reason"]=activity["reason"].clone();
         let path = r.session.as_deref().ok_or("native session unknown".to_string()).and_then(|s| crate::runtime::owner::transcript(&r.runtime, s));
         match path.and_then(|p| crate::transcript::last_line(crate::runtime::of(&r.runtime).codex, &p)) {
             Ok(line) => v["last_line"] = json!(line),

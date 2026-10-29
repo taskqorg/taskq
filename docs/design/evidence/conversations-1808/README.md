@@ -1,42 +1,54 @@
-# Conversations sidebar · #1808 stage 1
+# Conversations sidebar · #1808
 
-Proposal for owner selection, not runtime implementation. [CS1–CS6](../../tray-workspace.md#conversations-sidebar-proposal-1808-stage-1) specify the behavior; the [usability review](../../conversations-usability-review.md#sidebar-grouping-1808) records the baseline and scenarios. The [editable mockup](../../exploration/conversations-sidebar.html) embeds the actual v7 workspace bundle and replaces only its sidebar with an isolated invented fixture. Other product destinations are shown for context; this instrument does not qualify their behavior.
+The owner [selected Inline actions](https://github.com/taskqorg/taskq/issues/1808#issuecomment-6490535339). [CS1–CS6](../../tray-workspace.md#conversations-sidebar-1808) specify grouping, ordering and local actions; the [usability review](../../conversations-usability-review.md#sidebar-grouping-1808) records the scenarios. Source implementation exists in the draft PR. It is not merged, deployed or native-qualified.
 
-Recommendation: **Menu actions**. One permanent trigger per row preserves title width. The **Inline actions** comparison saves a click but reserves two targets and makes dense rows busier. Both keep the requested Pinned → projects → Other order. Approval of the selected variant also adopts CS1–CS6's stated edge cases; they remain proposals until the answer. No existing active rule or guarding assertion is changed.
+**Publication blocker (R13):** the rule gate identifies the root-contract amendment as `Product`, but #1808 and its answer do not name that exact ID. `python3 scripts/check.py --rules --base c761cc2ed608b26638bc295dc5f3e5a6690ffb68` refuses with `the task does not name Product (changed)`. The selected layout is settled; the remaining owner ask explicitly names the proposed Product sidebar clause. No gate was weakened or bypassed.
+
+## Changed behavior and boundaries
+
+- Owner, task and event rows share Pinned → projects → Other, unique membership and descending source activity. Project groups sort by their newest unpinned member. Unknown timestamps sort last with a reason; tie order uses identity. Launched chats retain their original project when the next-draft destination differs. Ambiguous or unavailable project identity is never guessed.
+- Project headers show counts and persistent collapse. Search temporarily reveals collapsed matches and restores collapse when cleared. Keyboard focus, selected identity, drafts and reading positions survive ordering updates. Inline Pin/Unpin and Archive/Restore are keyboard-accessible and visible on touch.
+- Pins, collapse and eventless-task archive use content-free metadata in the existing locked preference store, separate from bounded navigation. Writes validate identity and shape, read back, report failures and never replay uncertain receipts. Owner/message archives retain existing native receipts and deletion guards. Local organization also works when editing belongs to a detached window; draft ownership remains fenced.
+- Task recency comes from trusted, unedited board comments or issue creation, not labels or observation time. Draft content changes have a stored timestamp; caret, scroll, pin and archive do not manufacture activity. Native recency uses the latest visible transcript record, including fractional timestamps. Sidebar probes run one at a time on the existing background read channel; no synchronous transcript scan was added to the tray snapshot. Missing native times remain unknown, including unqualified Windows transcript paths.
+- Sessions, attempts, task state, native chats and source files are untouched by organization actions. Existing launch, reply, files, history, Archive/Restore, deletion, watch and source/revision guards remain in their existing owners.
 
 ## Review set
 
-Six screens, each with a distinct purpose; no native screenshots:
+Ten screens across two bounded stages; images are browser fixtures, not installed screenshots.
 
-1. [Before: ungrouped current source](00-before.png).
-2. [Menu actions, recommended](01-menu.png): three sections, newest first, one row menu.
-3. [Inline actions](02-inline.png): the same fixture and grouping, separate Pin/Archive targets exposed by keyboard focus.
-4. [Search inside a collapsed project](03-search.png): temporary expansion and matching/total count.
-5. [Archive and Restore](04-archive.png): removed from active groups, selected archived content read-only, pin retained.
-6. [Narrow List navigation](05-narrow-light.png): separate list page, Back, wrapped long title; light theme at 20 px.
+Stage 1: [before](00-before.png), [Menu comparison](01-menu.png), [selected Inline reference](02-inline.png), [collapsed search](03-search.png), [Archive/Restore](04-archive.png), [narrow List/Back](05-narrow-light.png). The [editable comparison](../../exploration/conversations-sidebar.html) embeds the v7 bundle; its data and effects are isolated.
 
-Unchanged geometry/assets: current workspace chrome, toolbar, title, reading area, Details and composer; bundled Lucide SVG bytes and the existing palette/type scale. Intentional differences are CS1–CS6's sidebar headings, order, counts, row controls, search and wrapping. The frozen reference is untouched. The preview uses existing arrow-down rotated on collapse rather than adding a new icon asset.
+Stage 2, actual production bundle with invented native receipts:
 
-## Verification
+1. [Inline grouping](build/01-inline-groups.png).
+2. [Search across a collapsed group](build/02-search.png).
+3. [Archive with ordinary task threads](build/03-archive.png).
+4. [Narrow list and keyboard actions](build/04-narrow-list.png).
 
-Environment: local macOS, Playwright Chromium headless shell, CSS-pixel viewports 1100×850 and 500×850, 16/20 px, light/dark. Production bundle base: `51c19f9e95f0b5aaf494c732abc24ad75b2f110c`; the candidate commit contains the fixture, specification and instrument together.
+Unchanged: workspace chrome, toolbar destinations, Details, reading area and composer; bundled Lucide assets and the accepted palette/type scale. Intentional differences are the CS1–CS6 headings, ordering, counts, row actions, search and wrapping. The frozen reference is untouched. Final browser images were inspected at actual size; source rendering is distinct from native acceptance (R12).
 
-`node tests/conversations-sidebar-design.browser.cjs`:
+## Checks
 
-- Before: current-source sidebar has zero groups and zero row-action menus (CS1/CS4 gaps). This is source-backed browser evidence, not an installed-app reproduction.
-- After, proposal only: unique membership; Pinned/project/Other order; descending row timestamps; Pin/Unpin; collapse across reopen; search revealing collapsed matches and restoring collapse; task-event/project reorder preserving selection; local Archive/Restore retaining pin; keyboard row-menu and inline actions; 16 visible-list geometry cells; zero page errors.
-- The instrument initially exposed overlapping labelled action targets and missing disclosure assets; it now uses normal labelled buttons and the existing bundled arrow asset. Visual inspection also found an archived composer and a hidden-list geometry check; the corrected instrument requires the archived composer to be absent and the tested list to be visible.
+Environment: local macOS, Playwright Chromium headless shell; actual-bundle geometry uses 1100×850 and 500×850 CSS px, 16/20 px, light/dark (8 cells). Stage 1 comparison additionally covers two action variants (16 cells).
 
-Canonical gate after rebase onto `c761cc2ed608b26638bc295dc5f3e5a6690ffb68`: `python3 scripts/check.py --base c761cc2ed608b26638bc295dc5f3e5a6690ffb68` — **sandbox-blocked**, not PASS, after 109.157 s on the local warm-cache Mac. Whitespace, selector/rule checks and web build passed; Rust reported 574 passed, 18 failed, 33 ignored. Failures cover host installation/policy/capacity, Stop/restart, recovery and resource assertions; explicit refusals include `a worker cannot install the host service`, `a worker cannot change host policy` and `a worker cannot restart the host service or request Stop`. The process retains its worker attempt identity; no permission marker was removed and no real host setting was changed. Later canonical steps did not run. The affected browser instrument was run separately after the failure and passed. CI remains required; this design checkpoint does not publish or merge the feature (§7/R12).
+Before: `node tests/conversations-sidebar.browser.cjs` failed `CS1: all three sources share ordered groups`, observing `[]` instead of Pinned/Beta/Alpha/Other. After: the same check passes mixed-source identity/order, pin/unpin receipts and refusal, collapse/reopen/search, board and unselected-native-message reorder, original-project ownership, detached local archive, Archive/Restore including eventless tasks, retained drafts/focus, keyboard and geometry. It asserts no send, reply, cancellation, task-control or session action.
 
-| Requirement / boundary | Status | Evidence or limitation |
-|---|---|---|
-| A1 usability/specification/variants | Pass | Review, CS1–CS6 and two action variants |
-| A2–A6 proposal interactions | Pass in fixture | Browser check above; no product implementation claim |
-| Whole affected workspace visual review | Pass | All six final images inspected at actual size; title/actions/groups readable, no overlapping popup targets |
-| Production timestamp projection and durable local metadata | Not tested | Stage 2 must connect all three source types to authoritative activity and existing native receipts |
-| Production search, archive safety, drafts, anchors, deletion | Not tested | Existing controls/guards must be retained and rerun in stage 2 |
-| Owner visual acceptance | Pending | Choose Menu or Inline on #1808 |
-| A7 installed Mac/Windows | Not tested | Owner answer moves native proof to the §7.8 release batch |
+Filtered Rust protection:
 
-R12 separates this fixture evidence from installed behavior. R13 leaves active decisions unchanged until the owner answer. Stage 2 updates taskq.md § Product first, implements the selected design, records failure/pass protection, then follows §7 publication; merge-result CI is still required for completion.
+- `cargo test --locked --bin taskq sidebar_`: 3 pass. Validated local metadata survives reopening; invalid writes preserve bytes and drafts; organization creates no request. Native Claude/Codex record timestamps ignore trailing progress/partial writes and remain unknown when missing. Board projection ignores observation/label time and untrusted/edited comments.
+- `cargo test --locked --bin taskq conversations::tests`: 6 pass, retaining attachment/path validation, immutable launch identity, deletion and source/execution preservation.
+
+Existing browser checks pass: `conversations.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`, `dialogue.browser.cjs`, `workspace-communication.browser.cjs`. They retain draft/caret/files, Archive/Undo/Restore, immutable sends, source choices, scoped receipts, growing input, history, transcript paging, watch, late/failed read and reload protection. The stage 1 prototype check remains separate from production proof.
+
+The full gate is not PASS. The current candidate is blocked by the Product rule-ID gate before later steps. The earlier stage 1 full run was sandbox-blocked after 109.157 s (574 Rust pass, 18 host/capacity/lifecycle failures, 33 ignored, including explicit worker refusals); it does not qualify this implementation. Worker identity and permission markers were kept. CI must still pass on the merge result (§7/R12).
+
+| Acceptance / boundary | Status |
+|---|---|
+| A1 design package, owner visual choice | Pass; Inline selected |
+| A2–A6 source implementation and listed fixture flows | Pass in browser/Rust fixtures |
+| Whole affected workspace visual comparison | Pass in browser fixtures; four build images inspected |
+| Product rule-ID authorization | Pending; exact ID absent from task/answer |
+| Canonical gate and merge-result CI | Blocked / not qualified |
+| A7 installed Mac/Windows | Not tested; owner-approved §7.8 release batch |
+
+After the owner answer names Product, rerun the selected canonical gate on the rebased candidate, refresh the required source screenshot manifest, publish the result and let review/merge-group CI gate completion. No live installation is part of this task.
