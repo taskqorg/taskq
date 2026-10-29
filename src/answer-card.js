@@ -117,10 +117,10 @@ render:function(board, row, local, cap) {
     h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next, false, what);
     if (st === 'stale') h += '<button type="button" data-qac="review">I read the new question</button>';
     h += retry(st, local.receipt && local.receipt.reason);
-    // Q1: Done and evidence stay behind Details
-    if (q.done || q.evidence.length) h += '<details class="qac-context"><summary>Checked &amp; context</summary>' +
+    // #1781: Done and evidence stay visible with the question (input-scroll 04)
+    if (q.done || q.evidence.length) h += '<section class="qac-context">' +
       (q.done ? '<p class="qac-done"><span class="qac-muted">Done:</span> ' + esc(q.done) + '</p>' : '') +
-      (q.evidence.length ? '<p class="qac-evidence">' + q.evidence.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener">' + esc(e.label) + '</a>').join(' · ') + '</p>' : '') + '</details>';
+      (q.evidence.length ? '<p class="qac-evidence">' + q.evidence.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener">' + esc(e.label) + '</a>').join(' · ') + '</p>' : '') + '</section>';
     return h + '</section>';
   },
 compose:function(row, local, cap) {

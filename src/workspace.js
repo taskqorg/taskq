@@ -32,7 +32,7 @@ const {create}=execution.module('workspace',{
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
     const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
     return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title)),reading:[
-     h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,'Details'),h('div',{class:'conversation-tools'},h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
+     h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),h('div',{class:'conversation-tools'},h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
      api.threadNotice(row.id),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
@@ -88,7 +88,7 @@ const {create}=execution.module('workspace',{
     else if(!conversations.reveal(r.id,false)){conversations.show('recent');conversations.select('event:'+r.key,false);}
    },
    // A1: a record's technical identity, read only on demand
-   ids:function(r,controls){return h('details',{class:'ids conversation-info','data-view-key':'ids:'+r.key},h('summary',null,'Details'),controls,h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
+   ids:function(r,controls){return h('details',{class:'ids conversation-info','data-view-key':'ids:'+r.key},h('summary',null,...(r.kind==='question'?[icons.icon('info'),'Task info']:['Details'])),controls,h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
    plain:function(state){return {launched:'Launched in the native session',launching:'Launching',pending:'Waiting to launch',failed:'Launch failed',unknown:'Delivery unknown'}[state]||(state?String(state).replace(/[-_]/g,' '):'State unknown');},
    // A3: one composer for a task answer: context, validation and Send; the card above keeps choices, receipt and recovery
    answerComposer:function(p,t){

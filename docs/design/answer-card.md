@@ -39,7 +39,7 @@ Use the same fixtures in TaskQ and DashQ: choice and free text; long question; m
 - Conformance: [tests/fixtures/answer-card.json](../../tests/fixtures/answer-card.json); `cargo test` checks its `question` fields against TaskQ's parse, and each consumer runs `replay(case, capability)` over it (`node tests/answer-card.test.cjs`). `tests/answer-card.browser.cjs` checks 16/20 px, both themes, 280/480 px, refresh and keyboard with Playwright.
 - Release: `taskq-<version>-answer-card.js`, `.css` and `-fixtures.json` ship in each release, listed in `SHA256SUMS` with build provenance. DashQ pin (no v* release carries the assets yet, latest v4.1.11): vendor these three files from TaskQ commit `8715e1d2a63f725a290549234c720204d8234413` (#942, last change to all three) with that commit and these checksums as provenance; `git show <commit>:<file> | shasum -a 256` reproduces them. The historical pin above does not include the tray-only #1021 fallback. Checksums of the current source, checked by the node test:
 
-`src/answer-card.js` SHA-256: `a85c7b5a073371f3025500da737cccb3bcd36bb7972ccddd1a2135f5950c5303`
+`src/answer-card.js` SHA-256: `3c2cc58dde72c51135566dedc150b033ba3ec7be33361b838900a13803f6b91a`
 `src/answer-card.css` SHA-256: `8a9bf9e08bd73795f02021809a008a210d0ac61569c0e365107c77e6cca38bcc`
 `tests/fixtures/answer-card.json` SHA-256: `29b254f5497170f4c8c26de581a81171df08f265473e5e6bbc1df35ecbf12b57`
 
