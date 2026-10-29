@@ -197,8 +197,9 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
     }).collect()
 }
 
-fn git(dir: &std::path::Path, args: &[&str]) -> Option<Vec<u8>> {
-    coreq::process::output("seed.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60)).ok().map(|o| o.stdout)
+/// `git -C dir <args>`: stdout, else the command and its error (#1856: a failed call never reads as empty).
+fn git(dir: &std::path::Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    crate::tools::run("seed.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60))
 }
 
 /// #1620 (docs/testing.md#build-cache): before a worker's first start, create `.worktrees/taskq-<N>` (§ 7 rule 2) and
@@ -213,14 +214,14 @@ pub fn seed(root: &std::path::Path, n: u64) -> Option<String> {
     let others = std::fs::read_dir(root.join(".worktrees")).into_iter().flatten().flatten().map(|e| e.path().join("target/debug"));
     let src = std::iter::once(root.join("target/debug")).chain(others)
         .filter_map(|p| Some((std::fs::metadata(&p).ok().filter(|m| m.is_dir())?.modified().ok()?, p))).max()?.1;
-    git(root, &["fetch", "-q", "origin", "main"]).ok_or(format!("#{n} seed skipped: git fetch origin main failed")).ok()?;
+    if let Err(e) = git(root, &["fetch", "-q", "origin", "main"]) { return Some(format!("#{n} seed skipped: {e}")); }
     let rel = format!(".worktrees/{name}");
-    let added = if git(root, &["rev-parse", "--verify", "-q", &format!("refs/heads/{name}")]).is_some() {
+    let added = if git(root, &["rev-parse", "--verify", "-q", &format!("refs/heads/{name}")]).is_ok() {
         git(root, &["worktree", "add", "-q", &rel, &name])
     } else {
         git(root, &["worktree", "add", "-q", "-b", &name, &rel, "origin/main"])
     };
-    if added.is_none() { return Some(format!("#{n} seed skipped: git worktree add failed")); }
+    if let Err(e) = added { return Some(format!("#{n} seed skipped: {e}")); }
     let dst = wt.join("target/debug");
     if let Err(e) = std::fs::create_dir_all(wt.join("target")) { return Some(format!("#{n} seed skipped: {e}")); }
     let cloned = clone_dir(&src, &dst);
@@ -240,8 +241,8 @@ fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String>
 #[cfg(target_os = "linux")]
 fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
     // ponytail: reflink only (btrfs, XFS); ext4 fails at the first file and skips rather than copying gigabytes.
-    coreq::process::output("seed.cp", std::process::Command::new("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
-        .map(|_| ()).map_err(|_| "cp --reflink=always failed (no reflink on this volume)".into())
+    crate::tools::run("seed.cp", std::process::Command::new("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
+        .map(|_| ()).map_err(|e| format!("{e} (no reflink on this volume?)"))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -6145,6 +6146,10 @@ Open: none";
         if seed(&root, 8).unwrap() == "#8 seeded target/debug" {
             assert!(root.join(".worktrees/taskq-8/target/debug/newest").exists(), "the newest target/debug is the source");
         }
+        // #1856: a failed fetch logs the command and Git's error, never a silent skip
+        std::fs::remove_dir_all(&origin).unwrap();
+        let failed = seed(&root, 9).unwrap();
+        assert!(failed.starts_with("#9 seed skipped: `git -C ") && failed.contains("fetch -q origin main` failed: ") && failed.contains("origin"), "{failed}");
         let _ = std::fs::remove_dir_all(&base);
     }
 

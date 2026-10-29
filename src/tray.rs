@@ -2569,10 +2569,11 @@ fn pick_result(o:std::process::Output)->Result<Option<PathBuf>,String> {
     Ok((!p.is_empty()).then(|| PathBuf::from(p)))
 }
 
-/// `taskq selftest` in `dir`: its first error line on failure.
+/// `taskq selftest` in `dir`: its first error line on failure. A host tool gap is no project fault: `service install`
+/// prints it with its fix ([host tools](docs/design/host-service.md#host-tools)).
 fn selftest(dir: &Path) -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let o = crate::platform::output("tray.selftest",std::process::Command::new(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir),Duration::from_secs(30))?;
+    let o = crate::platform::output("tray.selftest",std::process::Command::new(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"),Duration::from_secs(30))?;
     let text = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
     if o.status.success() { Ok(()) } else { Err(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("selftest failed").chars().take(160).collect()) }
 }
@@ -2666,7 +2667,8 @@ fn is_dark(_w: &Window) -> bool {
     {
         let mut c = std::process::Command::new("reg");
         c.args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "SystemUsesLightTheme"]);
-        let out = crate::platform::output("tray.theme", &mut c, Duration::from_secs(10)).map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        // #1856: an unreadable setting is logged with its command and reads dark
+        let out = crate::tools::run("tray.theme", &mut c, Duration::from_secs(10)).map(|o| String::from_utf8_lossy(&o).into_owned()).map_err(|e| crate::platform::log(&format!("tray theme: {e}"))).unwrap_or_default();
         !out.contains("0x1")
     }
     #[cfg(not(windows))]

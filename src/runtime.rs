@@ -709,9 +709,10 @@ fn project_contract(root: &Path) -> Result<Option<PathBuf>, StartError> {
 /// `Some((_, None))`: the file is absent at that commit and this release's contract applies.
 fn base_contract(root: &Path) -> Result<Option<(String, Option<Vec<u8>>)>, StartError> {
     if !root.join(".git").try_exists().map_err(|e| refused("project contract", e))? { return Ok(None); }
-    let git = |args: &[&str]| coreq::process::output("rules.contract", Command::new("git").arg("-C").arg(root)
+    // #1856: each failed call is logged with its command and error, also where it means absent (no `origin/main`)
+    let git = |args: &[&str]| crate::tools::run("rules.contract", Command::new("git").arg("-C").arg(root)
         .args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(30))
-        .ok().filter(|o| o.status.success()).map(|o| o.stdout);
+        .map_err(|e| crate::platform::log(&format!("project contract: {e}"))).ok();
     // ponytail: a failed fetch keeps the last fetched commit; the header names it and the worker branches from the same ref
     git(&["fetch", "-q", "origin", "main"]);
     let Some(sha) = git(&["rev-parse", "--verify", "-q", "origin/main^{commit}"]) else { return Ok(None) };
@@ -1979,11 +1980,13 @@ impl AppTurn {
 
 /// Show `thread` in the Codex app and queue `text` on it (§ 8 Codex app); the caller has checked the id.
 pub(crate) fn app_submit(thread: &str, text: &str) -> Result<(), String> {
-    let ok = |c: &mut Command| coreq::process::output("runtime.app-submit", c, std::time::Duration::from_secs(10)).is_ok();
-    if open_link(&thread_url(thread), true).is_err() || !ok(codex_direct().args(["queue", "--thread", thread, "--message", text])) {
-        return Err(format!("codex queue failed for thread {thread}"));
+    open_link(&thread_url(thread), true).map_err(|e| format!("codex queue failed for thread {thread}: {e}"))?;
+    // #1856: the error names the queue call's exit and stderr; the brief itself stays out of it
+    match coreq::process::output("runtime.app-submit", codex_direct().args(["queue", "--thread", thread, "--message", text]), std::time::Duration::from_secs(10)) {
+        Ok(_) => Ok(()),
+        Err(coreq::process::Failure::Exit(o)) => Err(format!("codex queue failed for thread {thread}: {}: {}", o.status, String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => Err(format!("codex queue failed for thread {thread}: {e}")),
     }
-    Ok(())
 }
 
 /// Codex without a `cmd` in between: an npm `codex.cmd` shim runs its `codex.js` through `node`, since `cmd` caps a
@@ -2280,7 +2283,8 @@ fn probe_within(name: &'static str, bin: &Path, args: &[&str], budget: std::time
     if budget.is_zero() {return None;}
     let out = match coreq::process::output(name, Command::new(bin).args(args), budget) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
-        Err(_) => return None,
+        // #1856: the row reads unknown; the log keeps the command and why
+        Err(e) => { crate::platform::log(&format!("{name}: `{} {}` failed: {e}", bin.display(), args.join(" "))); return None }
     };
     Some((out.status.success(), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))))
 }
@@ -2370,14 +2374,22 @@ pub struct Adapter {
     pub setup: &'static str,
     pub login: &'static str,
     pub sessions: &'static str,
+    /// Oldest qualified CLI version and the owner's update step ([host tools](../docs/design/host-service.md#host-tools)).
+    pub min: &'static str,
+    pub update: &'static str,
 }
 
 const ADAPTERS: [Adapter; 3] = [
-    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`" },
-    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads" },
-    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads" },
+    Adapter { name: RUNTIMES[0], bin: "claude", client: "Claude Code", home: ".claude", child: true, remote: true, app: false, codex: false, setup: RUNTIMES[0], login: "claude auth login", sessions: "`claude agents`", min: "2.1.296", update: "run `claude update`" },
+    Adapter { name: RUNTIMES[1], bin: "codex", client: "Codex", home: ".codex", child: true, remote: false, app: false, codex: true, setup: RUNTIMES[2], login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
+    Adapter { name: RUNTIMES[2], bin: "codex", client: "Codex", home: ".codex", child: false, remote: false, app: true, codex: true, setup: "", login: "codex login", sessions: "the Codex app threads", min: "0.159.3", update: "update Codex CLI (https://github.com/openai/codex#installation)" },
 ];
-const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "" };
+const OTHER: Adapter = Adapter { name: "", bin: "", client: "", home: "", child: false, remote: false, app: false, codex: false, setup: "", login: "", sessions: "", min: "", update: "" };
+
+/// The CLI runtimes a host can run as service children, one per binary: the runtime rows of host tools.
+pub fn clis() -> impl Iterator<Item = &'static Adapter> {
+    ADAPTERS.iter().filter(|a| a.child)
+}
 
 /// The adapter of `rt`; an unknown name gets one that answers no to every question.
 pub fn of(rt: &str) -> &'static Adapter {
