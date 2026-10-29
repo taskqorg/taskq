@@ -112,8 +112,8 @@ const {create}=execution.module('workspace',{
     const c=answers.answerCompose(p.issues,t);if(!c)return {};
     const off=!c.live,why=c.live?c.problem||'':c.problem;
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
-     // #1781: an empty draft shows no validation line, and Send is the arrow icon (input-scroll 04)
-     reason:off||c.draft?why:'',
+     // #1816: explain an empty draft or a refused send beside the Send button.
+     reason:c.reason||why,
      // #1781: the bottom row matches the chat composer: command history left; Send, then the answer help icon, right (input-scroll 04)
      tools:h('div',{class:'conversation-tools composer-bottom'},
       h('details',{'data-view-key':'answer-history',class:'command-history-menu'},h('summary',{class:'compact-action',title:'History','aria-label':'History'},icons.icon('history')),h('div',{class:'conversation-history'},(view.S.ai?.history||[]).map((text,i)=>h('button',{'data-a':'answer-history','data-index':i,disabled:off},text)),h('p',{class:'meta'},'History fills the draft only; nothing is sent.'))),

@@ -193,8 +193,8 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 - Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its full diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
 - Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
-- `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
-- `answer --text` and `steer`: ≤ 4 lines, ≤ 240 characters each; one decision/instruction per line, no invented context.
+- Worker `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
+- [Human replies](docs/design/answer-card.md#human-replies): uncapped `answer`, `steer`, owner `requeue`.
 - `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, ≤ 160 characters.
 - `update`, `cleanup`, setup and `selftest`: one outcome per version/path/check ([Core Write][sq-write]).
 - Help keeps full command syntax; `inbox`, raw service logs/status JSON and original issue/log text are exempt from display caps ([verbatim diagnostics][sq-sink]).

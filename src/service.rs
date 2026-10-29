@@ -269,7 +269,7 @@ pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache) -
             _ => { let c = board.comments(issue.number)?; (board.now().unwrap_or(issue.updated), c) },
         };
         cache.insert(issue.number, (issue.updated, read, comments.clone()));
-        let log: Vec<_> = comments.iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
+        let log = crate::board::reply::log(issue.number, &comments)?;
         // only a task that would be ready reads its dependencies (§ 4 budget)
         let mut projection = core::project(issue.number, &log, false);
         let ready = !is_held(&issue) && projection.task.state == State::Ready;
@@ -2059,7 +2059,7 @@ impl<'a> Service<'a> {
         if !comments.iter().any(|c| c.id == id) {
             crate::incident::detect("adapter.read_after_write", concat!("src/service.rs:", line!()), rt, &[], &["spawn:missing"]);
         }
-        let log: Vec<_> = comments.into_iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body, edited: c.edited }).collect();
+        let log = crate::board::reply::log(n, &comments)?;
         let t = core::fold(n, &log, false); // only ready or review tasks are claimed
         if t.attempt != Some(id) {
             self.reserved.retain(|r| r.0 != n); // released

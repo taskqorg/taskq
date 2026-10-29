@@ -4,6 +4,11 @@
 const fs = require('node:fs'), crypto = require('node:crypto'), assert = require('node:assert/strict');
 const card = require('../src/answer-card.js');
 const fx = JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json', 'utf8'));
+// #1816 / § 5: human replies must send without imposing the board's formatting on the writer.
+for (const text of [('word '.repeat(53)+'ok'), 'word\n'.repeat(400)]) {
+  assert.equal(card.textProblem({limits:{lines:4,chars:240}},text),null);
+}
+assert.equal(card.textProblem({},''),'Type an answer');
 for (const c of fx.cases) {
   const checks = c.events.filter(e => e.type === 'check');
   const got = card.replay(c, (_, row) => row.capability || c.capability);

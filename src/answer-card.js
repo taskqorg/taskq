@@ -5,11 +5,7 @@ const execution=ui.execution;
 const {fresh,textProblem,status,step,render,compose,receipt,mount,replay}=execution.module("answer-card",{
 fresh:function(row) { return {draft: '', bound: row.revision, op: null, receipt: null}; },
 textProblem:function(q, text) {
-    const lines = text.split('\n').filter(l => l.trim());
-    if (!lines.length) return 'Type an answer';
-    if (lines.length > q.limits.lines) return 'At most ' + q.limits.lines + ' lines';
-    if (lines.some(l => [...l].length > q.limits.chars)) return 'At most ' + q.limits.chars + ' characters per line';
-    return null;
+    return text.trim() ? null : 'Type an answer';
   },
 status:function(row, local, cap) {
     const q = row.question;
@@ -131,7 +127,8 @@ compose:function(row, local, cap) {
     const q = row.question || {}, st = status(row, local, cap), text = !!(cap && cap.answer) && (fallback(row, cap) || !!q.parsed);
     if (!text) return null;
     const live = LIVE.includes(st);
-    return {draft: local.draft, caret: local.caret, state: st, live, problem: live ? textProblem(draftQuestion(row, cap), local.draft) : LABELS[st],
+    const refusal = local.receipt && ['rejected','failed','stale','partial','unknown'].includes(st) ? [local.receipt.reason,local.receipt.next].filter(Boolean).join(' · ') : '';
+    return {draft: local.draft, caret: local.caret, state: st, live, reason:refusal, problem: live ? textProblem(draftQuestion(row, cap), local.draft) : LABELS[st],
       send: fallback(row, cap) ? 'Requeue' : 'Send', choices: !!(q.choices && q.choices.length), requeue: manageable(row, cap) && !fallback(row, cap) ? live ? textProblem(REQUEUE, local.draft) || '' : LABELS[st] : null};
   },
 receipt:function(st, reason, url, id, next, action, what) {

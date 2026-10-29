@@ -500,8 +500,7 @@ pub fn controls(state: &str) -> Vec<&'static str> {
     CONTROLS.iter().filter(|c| c.3.contains(&state)).map(|c| c.0).collect()
 }
 
-/// Free-text answer limits (`answer N --text`, § 2): nonblank lines, characters per line.
-pub const ANSWER_LINES: usize = 4;
+/// § 5 board line width; human input has no line-count cap.
 pub const ANSWER_CHARS: usize = 240;
 
 /// § 2 visual evidence: the service's copy of an ask image `url`, which the app (no board token) shows inline.
@@ -536,7 +535,7 @@ pub fn question(card: &str) -> Value {
     let numbered = o.iter().enumerate().all(|(i, x)| x.0 == i + 1);
     let parsed = field("Problem: ").is_some() && numbered && (o.is_empty() || (2..=4).contains(&o.len()) && o.iter().filter(|x| x.2).count() == 1);
     json!({"parsed": parsed, "text": card, "done": field("Done: "), "problem": field("Problem: ").map(|_| brief(card)), "evidence": evidence,
-        "choices": choices, "limits": {"lines": ANSWER_LINES, "chars": ANSWER_CHARS}})
+        "choices": choices, "limits": {"chars": ANSWER_CHARS}})
 }
 
 impl Snapshot {

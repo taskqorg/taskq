@@ -74,6 +74,8 @@ const USAGE: &str = "taskq agents
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
+ Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text
+ JSON files: status, answer, steer, requeue, later, close, start, failed accept --json --json-file PATH
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
  taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC]
  taskq steer N --text T | taskq failed N --text T
@@ -112,7 +114,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -130,7 +132,28 @@ impl Args {
         if a.pos.len() > used {
             return Err(format!("unused positional arguments: {}", a.pos[used..].join(" ")));
         }
+        if a.flags.contains_key("text-stdin") || a.flags.contains_key("text-file") {
+            if ["text", "text-stdin", "text-file"].iter().filter(|k| a.flags.contains_key(**k)).count() != 1
+                || !matches!(a.pos.first().map(String::as_str), Some("answer" | "steer" | "requeue")) || a.pos.get(1).is_some_and(|n| n.contains('.')) {
+                return Err("use one text source (--text, --text-stdin or --text-file) for answer, steer or requeue without a numbered choice".into());
+            }
+        }
+        if a.flags.contains_key("json-file") && (!a.flags.contains_key("json") || a.flags.contains_key("closed")
+            || !matches!(a.pos.first().map(String::as_str), Some("status" | "answer" | "steer" | "requeue" | "later" | "close" | "start" | "failed"))) {
+            return Err("--json-file requires --json with status or a task control/reply command (not --closed)".into());
+        }
         Ok(a)
+    }
+    fn read_text(&mut self, input: &mut dyn std::io::Read) -> Res<()> {
+        if self.flags.remove("text-stdin").is_some() {
+            let mut text = String::new();
+            input.read_to_string(&mut text).map_err(|e| format!("cannot read UTF-8 reply from stdin: {e}"))?;
+            self.flags.insert("text".into(), vec![text]);
+        } else if let Some(path) = self.flags.remove("text-file") {
+            let text = fs::read_to_string(path.last().ok_or("--text-file needs a path")?).map_err(|e| format!("cannot read UTF-8 reply file: {e}"))?;
+            self.flags.insert("text".into(), vec![text]);
+        }
+        Ok(())
     }
     fn one(&self, k: &str) -> Option<&str> {
         self.flags.get(k).and_then(|v| v.last()).map(String::as_str)
@@ -470,15 +493,30 @@ fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, task: Opti
 }
 
 fn task_text(cmd: &str, text: &str) -> Res<()> {
-    if matches!(cmd, "requeue" | "later" | "failed") {
+    if matches!(cmd, "answer" | "steer") {
+        if text.trim().is_empty() { return Err(format!("{cmd}: empty text; type a reply, then send again")); }
+    } else if matches!(cmd, "requeue" | "later" | "failed") {
         if text.is_empty() && cmd != "failed" { return Ok(()); }
         let lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
         all([limit(cmd, &lines, 1, 2, 240), fields(text, &[("Reason", 1, 1, 240), ("Next", 0, 1, 240)]).map(drop)])?;
-    } else {
-        let lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
-        limit(cmd, &lines, 1, snapshot::ANSWER_LINES, snapshot::ANSWER_CHARS)?;
     }
     Ok(())
+}
+
+/// § 5: every human reply reaches the board through this Unicode-safe wrapper, without a line-count cap.
+fn wrap_reply(text: &str) -> String {
+    text.split('\n').map(|line| {
+        let mut rest = line;
+        let mut lines = Vec::new();
+        while let Some((end, _)) = rest.char_indices().nth(snapshot::ANSWER_CHARS) {
+            let split = rest[..end].char_indices().rev().find(|(i, c)| *i > 0 && c.is_whitespace());
+            let (at, skip) = split.map_or((end, 0), |(i, c)| (i, c.len_utf8()));
+            lines.push(&rest[..at]);
+            rest = &rest[at + skip..];
+        }
+        lines.push(rest);
+        lines.join("\n")
+    }).collect::<Vec<_>>().join("\n")
 }
 
 /// Labelled `--text` lines (`Label: ..`; an unlabelled line continues the field above) in `spec` order:
@@ -2545,6 +2583,11 @@ fn emit(rs: &[Receipt], json: bool) -> Res<()> {
     if rs.iter().all(Receipt::ok) { Ok(()) } else { Err(String::new()) } // already shown: exit 1 quietly
 }
 
+fn json_output(text: &str, file: Option<&str>) -> Res<()> {
+    if let Some(path) = file { platform::write_atomic(Path::new(path), text).map_err(|e| format!("JSON file write failed: {e}")) }
+    else { println!("{text}"); Ok(()) }
+}
+
 fn golden_selftest(traces: &str, published: bool) -> Res<usize> {
     let result = core::golden(traces);
     if published && result.is_err() {
@@ -2565,7 +2608,7 @@ fn restart_watch(since: &mut Option<u64>, stuck: bool, elapsed: u64, interval: u
 
 #[tracing::instrument(name="run",skip_all)]
 fn run(argv: &[String]) -> Res<()> {
-    let a = Args::parse(argv)?;
+    let mut a = Args::parse(argv)?;
     telemetry::diagnostic::poll(&platform::default_install());
     if let Some(selector)=a.one("diagnose") {
         let milliseconds=a.one("diagnose-ms").unwrap_or("60000").parse::<u64>().map_err(|_|"invalid --diagnose-ms")?;
@@ -2576,6 +2619,7 @@ fn run(argv: &[String]) -> Res<()> {
         println!("{USAGE}");
         return Ok(());
     }
+    a.read_text(&mut std::io::stdin().lock())?;
     let cmd = a.pos.first().map(String::as_str).unwrap_or("");
     if std::env::var_os("TASKQ_ROOT").is_some() {
         find_root()?; // § 5: a stale TASKQ_ROOT refuses every command, not only those that read the project
@@ -2805,7 +2849,7 @@ fn emit_finding(create: Receipt, start: Option<Receipt>, json: bool) -> Res<()> 
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
-    if matches!(cmd, "requeue" | "later" | "failed" | "steer") || (cmd == "answer" && !a.pos.get(1).is_some_and(|p| p.contains('.'))) {
+    if matches!(cmd, "later" | "failed" | "steer") || cmd == "requeue" && dispatch::agent() || (cmd == "answer" && !a.pos.get(1).is_some_and(|p| p.contains('.'))) {
         task_text(cmd, text)?;
     }
     if cmd == "add" && a.flags.contains_key("later") { task_text("later", text)?; }
@@ -2815,6 +2859,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--op-id: one word".into());
     }
     let json = a.flags.contains_key("json");
+    let emit = |rs: &[Receipt], json: bool| {
+        if let Some(path) = a.one("json-file") {
+            json_output(&rs.iter().map(Receipt::json).collect::<Vec<_>>().join("\n"), Some(path))?;
+            if rs.iter().all(Receipt::ok) { Ok(()) } else { Err(String::new()) }
+        } else { crate::emit(rs, json) }
+    };
     if revision.is_some() && (cmd == "close" && a.pos.len() > 2 || cmd == "answer" && a.pos.len() > 2) {
         return Err("--revision names one task".into());
     }
@@ -3026,7 +3076,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             }
             let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
             if a.flags.contains_key("json") {
-                println!("{}", serde_json::to_string_pretty(&snap.json()).map_err(|e| e.to_string())?);
+                json_output(&serde_json::to_string_pretty(&snap.json()).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
                 println!("{}", snap.text(cfg, &c.raw)?);
             }
@@ -4870,12 +4920,16 @@ mod tests {
         let e = task_text("requeue", &format!("Reason: {}\nNext: a\nb", "r".repeat(240))).unwrap_err();
         assert!(e.contains("requeue: 3 lines, allowed 1-2") && e.contains("Reason line 1: 248 characters, limit 240") && e.contains("Next: 2 lines, allowed 0-1"), "{e}");
         assert!(task_text("failed", "Reason: blocked\nNext: repair").is_ok());
-        assert!(task_text("steer", "1\n2\n3\n4\n5").is_err());
+        assert!(task_text("steer", "1\n2\n3\n4\n5").is_ok());
+        for cmd in ["answer", "steer"] {
+            assert!(task_text(cmd, &"x".repeat(267)).is_ok());
+            assert!(task_text(cmd, &"word\n".repeat(400)).is_ok());
+        }
         let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
         let n = c.board.create("T", "", &["taskq".into()]).unwrap();
         c.board.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
         let before = c.board.comments(n).unwrap();
-        for (cmd, text) in [("requeue", "bad"), ("later", "bad"), ("failed", "bad"), ("answer", "1\n2\n3\n4\n5"), ("steer", "1\n2\n3\n4\n5")] {
+        for (cmd, text) in [("later", "bad"), ("failed", "bad"), ("answer", ""), ("steer", " \n ")] {
             let a = Args::parse(&[cmd.into(), n.to_string(), "--text".into(), text.into()]).unwrap();
             assert!(command(&c, cmd, &a).is_err(), "{cmd}");
         }
@@ -4895,6 +4949,52 @@ mod tests {
         let report = report(c.board.as_ref(), &c.cfg, &c.raw, &["selected".into()]).unwrap();
         assert!(report.contains(&format!("#{blocked} blocked")));
         assert!(report.contains(&format!("blocked ([#{dep}](https://board/{dep}) open)")), "non-task dependency remains visible outside filter");
+    }
+
+    // Chain: § 5 piped owner reply -> CLI parsing -> shared dispatcher. Risk: OS arguments cap or alter the text.
+    #[test]
+    fn human_reply_stdin_preserves_unbounded_text_and_validation() {
+        let text = "Words and 🦀 from stdin.\n".repeat(6000);
+        for kind in ["answer", "steer", "requeue"] {
+            let mut a = Args::parse(&[kind.into(), "1".into(), "--text-stdin".into()]).unwrap();
+            a.read_text(&mut text.as_bytes()).unwrap();
+            assert_eq!(a.one("text"), Some(text.as_str()));
+            assert!(a.one("text-stdin").is_none());
+            assert!(Args::parse(&[kind.into(), "1".into(), "--text-stdin".into(), "--text".into(), "ambiguous".into()]).is_err());
+        }
+        assert!(Args::parse(&["answer".into(), "1.2".into(), "--text-stdin".into()]).is_err());
+        assert!(Args::parse(&["result".into(), "1".into(), "--text-stdin".into()]).is_err());
+        let mut a = Args::parse(&["answer".into(), "1".into(), "--text-stdin".into()]).unwrap();
+        assert!(a.read_text(&mut &[0xff_u8][..]).is_err(), "invalid UTF-8 must never become a changed reply");
+    }
+
+    // Chain: § 5 large stored answer -> next status/late receipt -> file JSON. Risk: a child stdout cap blocks the next Send.
+    #[test]
+    fn human_reply_json_files_preserve_large_status_and_receipts() {
+        let dir = std::env::temp_dir().join(format!("taskq-reply-json-{}", runtime::uuid()));
+        fs::create_dir(&dir).unwrap();
+        let path = dir.join("receipt.json");
+        let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };
+        let b = &*c.board;
+        let n = b.create("JSON reply fixture", "", &["taskq".into()]).unwrap();
+        let attempt = b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+        b.comment(n, &entry("ask", &[], Some(attempt), "Problem: reply")).unwrap();
+        let text = "word ".repeat(300_000);
+        assert!(act(b, Path::new(""), n, "answer", &[], &text, &Op::default()).ok());
+        let output = |cmd: &str| Args::parse(&[cmd.into(), "--json".into(), "--json-file".into(), path.to_string_lossy().into_owned()]).unwrap();
+        command(&c, "status", &output("status")).unwrap();
+        let bytes = fs::read(&path).unwrap();
+        assert!(bytes.len() > 1024 * 1024, "fixture crosses the bounded stdout buffer");
+        let status: Value = serde_json::from_slice(&bytes).unwrap();
+        let expected = wrap_reply(&text);
+        assert!(status["tasks"][0]["answered"]["text"].as_str() == Some(expected.trim()), "status lost or changed the wrapped reply");
+        let mut a = output("answer");a.pos.push(n.to_string());a.flags.insert("text".into(), vec!["late reply".into()]);
+        assert!(command(&c, "answer", &a).is_err(), "the already-answered refusal still fails the command");
+        let receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(receipt["answered"]["text"].as_str() == Some(expected.trim()), "receipt lost or changed the wrapped reply");
+        assert_eq!(receipt["outcome"], "rejected");
+        assert!(Args::parse(&["status".into(), "--json-file".into(), "out".into()]).is_err());
+        fs::remove_file(path).unwrap();fs::remove_dir(dir).unwrap();
     }
 
     // Chain: R6 compact report. Risk: compaction drops choices, links or evidence.
