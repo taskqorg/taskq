@@ -19,6 +19,7 @@ mod display;
 mod enrollment;
 mod incident;
 mod labels;
+mod link;
 mod recipe;
 mod requests;
 mod reply_files;
@@ -1127,6 +1128,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
     let mut pm_exchange = pm::Exchanger::default();
+    let mut link = link::Server::default();
     let mut panics = host::Panics::default();
     let pokes = [d.join("poke"), cfg.install.join("poke")];
     let mut observed_poke = None;
@@ -1260,6 +1262,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         // docs/design/shared-resource-controls.md § Host adapter: the same speaker exchanges resource operations
         if !quiet { for l in policy_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
         if !quiet { for l in pm_exchange.tick(&cfg.install, s.snapshot.as_ref(), at) { log!("{l}"); } }
+        // docs/design/host-link.md: the same speaker listens on the host link and publishes its key
+        if !quiet { s.link = link.tick(&cfg.install, &cfg.root, s.snapshot.as_ref()).to_string(); }
         // § 8 item 1: only the Mac thread of the taskq checkout on channel dev; merge_group CI read at most every 5 minutes per SHA
         let mut dev = Value::Null;
         #[cfg(target_os = "macos")]

@@ -328,11 +328,9 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
     match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason})}
 }
 
-/// #1831 A2/A3: resolve every read from the service projection of the current attempt, never a client session ID.
-fn worker_read(install:&Path,m:&Value)->Res<Value> {
-    let root=Path::new(m["root"].as_str().ok_or("Worker project missing")?);
-    if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Worker project is not registered".into());}
-    let (cfg,_)=crate::load(root)?;
+/// The live service status of a registered project: fresh, complete, with a fresh task read and a live pid.
+fn live_status(root:&Path)->Res<(crate::Config,Value,Value)> {
+    let (cfg,raw)=crate::load(root)?;
     let path=crate::dot(root).join("status.json");
     let status=crate::data::json(&path)?.ok_or("Worker service status unavailable")?;
     let age=crate::file_age(&path).ok_or("Worker service status age unknown")?;
@@ -341,15 +339,59 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
         || !status["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).is_some_and(crate::runtime::alive) {
         return Err("Worker service status stale, incomplete or unavailable".into());
     }
+    Ok((cfg,raw,status))
+}
+
+/// #1831 A2/A3: resolve every read from the service projection of the current attempt, never a client session ID.
+/// #1832: the worker's host answers; this host reads its own worker the same way, so one request serves both.
+fn worker_read(install:&Path,m:&Value)->Res<Value> {
+    let root=Path::new(m["root"].as_str().ok_or("Worker project missing")?);
+    if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Worker project is not registered".into());}
+    let (cfg,raw,status)=live_status(root)?;
     let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Worker board unknown")?;
     let id=m["conversation"].as_str().unwrap_or("");
     let n=id.strip_prefix("task:").and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Worker thread does not match its project")?;
+    let read=crate::link::Read{board:board.into(),task:n,attempt:m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?,before:m["before"].as_u64(),after:m["after"].as_u64()};
     let local=crate::host::Policy::read(install)?.me;
-    worker_page(root,&local,&status,n,m,|session,before,after|crate::dialogue::worker_transcript(session,before,after))
+    let row=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n&&r["attempt"]==read.attempt));
+    let host=row.and_then(|r|r["session"].as_str()).and_then(|s|s.split_whitespace().nth(1)).filter(|h|*h!=local);
+    let Some(host)=host else {return serve(install,&read)};
+    let allow=crate::link::allowed(&raw)?;
+    let peer=crate::link::peers(&status,cfg.ttl,allow.as_deref()).into_iter().find(|p|p.host==host).ok_or_else(||format!("Host {host} publishes no live host link"))?;
+    let (mut relay,_)=crate::link::Dash::new(install)?;
+    crate::link::ask(install,&crate::link::key(install)?,&peer,&read,&mut relay)
 }
 
-fn worker_page(root:&Path,local:&str,status:&Value,n:u64,m:&Value,read:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
-    let attempt=m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?;
+/// Principles 3 and 7 of the [host link](../docs/design/host-link.md): one bounded page of the named attempt's live
+/// worker on this host, from the registered project serving `read.board`.
+pub(crate) fn serve(install:&Path,read:&crate::link::Read)->Res<Value> {
+    let mut stale=None;
+    for root in crate::host::project_paths(install)? {
+        match live_status(&root) {
+            Ok((_,_,status)) if status["issues"]==read.board.as_str() => return serve_root(install,&root,&status,read),
+            Ok(_)=>{},
+            Err(e)=>stale=Some(e),
+        }
+    }
+    Err(stale.unwrap_or_else(||"Worker project is not served on this host".into()))
+}
+
+/// Principle 2: a peer is a live host of the listening project's board, so its read serves only that board, never
+/// another registered project of this host.
+pub(crate) fn serve_peer(install:&Path,root:&Path,read:&crate::link::Read)->Res<Value> {
+    let (_,_,status)=live_status(root)?;
+    if status["issues"]!=read.board.as_str() {return Err("Worker board is not the board of this host link".into())}
+    serve_root(install,root,&status,read)
+}
+
+fn serve_root(install:&Path,root:&Path,status:&Value,read:&crate::link::Read)->Res<Value> {
+    let local=crate::host::Policy::read(install)?.me;
+    let page=worker_page(root,&local,status,read,|session,before,after|crate::dialogue::worker_transcript(session,before,after))?;
+    Ok(crate::link::fit(page,read.after.is_some()))
+}
+
+fn worker_page(root:&Path,local:&str,status:&Value,read:&crate::link::Read,page:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
+    let (n,attempt)=(read.task,read.attempt);
     let ended=||Ok(json!({"ended":true,"items":[]}));
     let Some(row)=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n)) else {return ended()};
     if row["attempt"]!=attempt || row["role"]!="worker" {return ended()}
@@ -368,7 +410,7 @@ fn worker_page(root:&Path,local:&str,status:&Value,n:u64,m:&Value,read:impl FnOn
     }
     let id=crate::runtime::session_id(root,rt,id,n,attempt,"worker");
     if id=="-" || !crate::runtime::plain_thread(&id) {return Err("Worker native session unknown".into())}
-    read(&format!("{rt}:{id}"),m["before"].as_u64(),m["after"].as_u64())
+    page(&format!("{rt}:{id}"),read.before,read.after)
 }
 
 fn request_marks(install:&Path,id:&str,action:&str)->Res<()> {
@@ -452,8 +494,8 @@ mod tests {
         let f=Fixture::new();fs::create_dir(f.0.join(".taskq")).unwrap();
         fs::write(f.0.join(".taskq/T7-71.log"),"{\"type\":\"thread.started\",\"thread_id\":\"native-from-attempt\"}\n").unwrap();
         let mut status=json!({"tasks":[{"n":7,"state":"doing","role":"worker","attempt":71,"session":"codex:- local","executions":[{"attempt":71,"state":"running"}]}]});
-        let m=json!({"attempt":71,"session":"claude:forged","after":123});
-        let read=|s:&Value|worker_page(&f.0,"local",s,7,&m,|session,before,after|{
+        let m=crate::link::Read{board:"https://example.org/r/issues".into(),task:7,attempt:71,before:None,after:Some(123)};
+        let read=|s:&Value|worker_page(&f.0,"local",s,&m,|session,before,after|{
             assert_eq!(session,"codex:native-from-attempt");assert_eq!(before,None);assert_eq!(after,Some(123));Ok(json!({"read":true}))
         });
         assert_eq!(read(&status).unwrap()["read"],true);
@@ -493,6 +535,55 @@ mod tests {
         read(&status);let mut cross=m.clone();cross["conversation"]=json!("task:https://github.com/invented/other/issues/7");
         assert_eq!(dialogue(&f.0,&cross)["state"],"unknown");
         fs::write(&path,"corrupt").unwrap();assert_eq!(dialogue(&f.0,&m)["state"],"unknown");
+        // #1832 A3: a worker on another host is asked over the host link; without its key or a connection the read
+        // is unknown with the reason, never an empty page
+        status["tasks"]=json!([{"n":7,"state":"doing","role":"worker","attempt":71,"session":"codex:- win","executions":[{"attempt":71,"state":"running"}]}]);
+        let remote=read(&status);
+        assert_eq!((remote["state"].as_str(),remote["reason"].as_str()),(Some("unknown"),Some("Host win publishes no live host link")),"{remote}");
+        status["observed"]=json!(1000);
+        status["hosts"]=json!([{"name":"win","updated":1000,"link":format!("{} {}","ab".repeat(32),"cd".repeat(32))}]);
+        let remote=read(&status);
+        assert!(remote["state"]=="unknown"&&remote["reason"].as_str().unwrap().contains("DashQ connection"),"{remote}");
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/worker-panel","link_hosts":["mac"]}"#).unwrap();
+        assert_eq!(read(&status)["reason"],"Host win publishes no live host link","the project allowlist narrows peers");
+    }
+
+    // #1832 principle 7: the host link request and the local panel share one path; a board this host does not serve
+    // reads unknown, never another project's worker.
+    #[test]
+    fn host_link_requests_serve_only_the_named_board_on_this_host() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/worker-panel"}"#).unwrap();
+        fs::write(f.0.join("projects"),format!("{}
+",root.display())).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let status=json!({"pid":std::process::id(),"issues":"https://github.com/invented/worker-panel/issues","tasks_age_seconds":0,"complete":true,"tasks":[]});
+        fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
+        let read=|board:&str|serve(&f.0,&crate::link::Read{board:board.into(),task:7,attempt:71,before:None,after:None});
+        assert_eq!(read("https://github.com/invented/worker-panel/issues").unwrap()["ended"],true);
+        assert!(read("https://github.com/invented/other/issues").unwrap_err().contains("not served on this host"));
+    }
+
+    // #1832 principle 2: peers come from the listening project's heartbeats, so a board-A peer must not read a
+    // worker of board B, another project registered on the same host; the local panel still reads both.
+    #[test]
+    fn host_link_peers_read_only_the_listening_project_board() {
+        let f=Fixture::new();
+        let mut roots=vec![];
+        for repo in ["board-a","board-b"] {
+            let root=f.0.join(repo);fs::create_dir_all(root.join(".taskq")).unwrap();
+            fs::write(root.join("taskq.json"),format!(r#"{{"board":"github","repo":"invented/{repo}"}}"#)).unwrap();
+            let status=json!({"pid":std::process::id(),"issues":format!("https://github.com/invented/{repo}/issues"),"tasks_age_seconds":0,"complete":true,"tasks":[]});
+            fs::write(root.join(".taskq/status.json"),status.to_string()).unwrap();
+            roots.push(root);
+        }
+        fs::write(f.0.join("projects"),roots.iter().map(|r|format!("{}
+",r.display())).collect::<String>()).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let read=|repo:&str|crate::link::Read{board:format!("https://github.com/invented/{repo}/issues"),task:7,attempt:71,before:None,after:None};
+        assert_eq!(serve_peer(&f.0,&roots[0],&read("board-a")).unwrap()["ended"],true);
+        assert!(serve_peer(&f.0,&roots[0],&read("board-b")).unwrap_err().contains("not the board of this host link"));
+        assert_eq!(serve(&f.0,&read("board-b")).unwrap()["ended"],true,"the local panel path is unchanged");
     }
 
     // #1665 D4/D5: view reads of a launched conversation whose native transcript is missing stay unknown, never empty,
