@@ -783,6 +783,8 @@ pub struct FakeState {
     pub foreign: Vec<(String, Issue)>,
     /// Issue reads, `foreign` included, for budget checks.
     pub reads: usize,
+    /// The next open-list read returns this older snapshot, like a reused or lagging board list (#1873).
+    pub stale_list: Option<Vec<Issue>>,
     /// Open-list reads, visible outside the thread that owns this board.
     pub lists: Option<std::sync::Arc<std::sync::atomic::AtomicUsize>>,
     /// Comment-list reads and publication attempts, for request-count checks (#1359).
@@ -859,6 +861,7 @@ impl Board for Fake {
     }
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
         if let Some(lists) = &self.state.borrow().lists { lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }
+        if let Some(list) = self.state.borrow_mut().stale_list.take() { return Ok(list); }
         Ok(self.state.borrow().issues.iter().filter(|i| since.map_or(i.open, |t| i.updated >= t)).cloned().collect())
     }
     fn issue(&self, n: u64) -> Result<Issue> {
