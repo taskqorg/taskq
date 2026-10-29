@@ -2,6 +2,7 @@
 mod host_policy;
 mod host_restart;
 mod macos_runner;
+mod macos_tcc_evidence;
 mod resource_policy_contract;
 mod service_log;
 mod telemetry_process;
