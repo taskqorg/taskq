@@ -4,6 +4,7 @@ const execution=ui.execution;
 const shell=require('./app-shell.js');
 const {h,Fragment}=require('preact');
 const {icon,button}=require('./ui-icons.js');
+const syncView=require('./sync-view.js');
 
 const {createState,create}=execution.module("tray",{
 createState:function(snapshot=null){return {dashboard:null,popup:null,manualSize:null,agentqRuntime:null,agentqError:null,aiRoot:null,addConfirm:false,resourceNotice:null,persistenceError:null,toast:null,receivedAt:0,S:snapshot,page:'home',taskFilter:null,working:null,workCard:null,ask:null,noted:null,pending:{},hostCommand:null,recovery:{},confirming:null,updating:null,draft:null,disclosures:{},pressedAt:null,stale:false,resizing:null};},
@@ -221,7 +222,12 @@ mode:function(p){return p.mode;},
 counter:function(v,kind,label){return h('span',{class:'counter '+(v>0?kind+' filled':'zero'),'aria-label':label+': '+v,title:label},v);},
 known:function(){return !view.S.display.all.partial.length;},
 // O1: identity anchors details/actions; title remains a full-width issue link.
-taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)),dashboard?.attention(t));},
+taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)),api.syncLine(t.sync),dashboard?.attention(t));},
+// #1819: a row's shared pending operation; only a failed one offers Retry, which resends the same operation.
+syncLine:function(o){if(!o)return '';return h('p',{class:'meta sync '+o.phase,role:'status'},syncView.line(o),o.phase==='failed'&&h('button',{class:'compact-action','data-a':'sync-retry','data-root':o.root,'data-id':o.id},'Retry'));},
+staleLine:function(){const t=syncView.stale(view.S);return t?h('p',{class:'meta stale',role:'status'},t):'';},
+// #1819: the snapshot as received, with the shared pending store laid over it.
+adopt:function(s){view.raw=s;if(Array.isArray(s.sync))view.sync=s.sync;view.S=syncView.overlay(s,view.sync);},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
@@ -482,7 +488,7 @@ runningAgents:function(compact=false){
 home:function(){
   const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
   const line=api.runningAgents(true);
-  return f(h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
+  return f(api.staleLine(),h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list());
 },
 routeBody:function(){
   switch(view.page){
@@ -680,7 +686,9 @@ receive:function(s){
   if(s.dashboard){if(!ports.views)dashboard.adopt(s.dashboard);else if(s.initial||!document.hasFocus()){view.dashboard=require('./task-views.js').normalize(s.dashboard);view.sentDashboard=JSON.stringify(view.dashboard);present();}return;}
   if(s.settingsOpen){if(ports.settings&&view.S&&s.settingsOpen.page!==view.page)navigate(s.settingsOpen.page);return;}
   if(Object.hasOwn(s,'agentqError')){view.agentqError=s.agentqError;present();return;}
-  if(ports.workspace&&s.projects){view.S=s;focusReadback();api.lifecycleReadback();present();return;}
+  // #1819: the store changed; every window redraws at once instead of on the next tick
+  if(Array.isArray(s.sync)&&!s.projects){view.sync=s.sync;if(view.raw){view.S=syncView.overlay(view.raw,view.sync);present();}return;}
+  if(ports.workspace&&s.projects){api.adopt(s);focusReadback();api.lifecycleReadback();present();return;}
   if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
   if(s.workspaceError!==undefined){view.workspaceError=s.workspaceError;present();return;}
   if(s.viewStateError!==undefined){view.persistenceError=s.viewStateError;present();return;}
@@ -698,7 +706,7 @@ receive:function(s){
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
-  if(!ports.settings&&!ports.views)viewState.hydrate(s);view.S=s;view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
+  if(!ports.settings&&!ports.views)viewState.hydrate(s);api.adopt(s);view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.popup=null;view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;renderer.clear();view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields
@@ -748,6 +756,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='control'){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===d.key);if(t&&(t.controls||[]).includes(d.control))ui.effect('task.control',()=>answerSend(t.key.slice(0,-String(t.n).length-1),TaskqTaskControls.op(t,d.control,'tray')),()=>{});present();return;}
   if(d.a==='start'){for(const key of d.keys.split(' ')){const t=unique(view.S.projects.flatMap(tasks)).find(t=>t.key===key);if(t&&t.state==='held')ui.effect('task.start',()=>answerSend(t.key.slice(0,-String(t.n).length-1),{id:'tray.start.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action:'start'}),()=>{});}present();return;}
   if(d.a==='answer-retry'){startOperations.retry(d.key);present();return;}
+  if(d.a==='sync-retry'){send({a:'sync-retry',root:d.root,id:d.id});return;}
   if(d.a==='notify'||d.a==='notify-test'){send({a:d.a,kind:d.kind,value:d.v,root:d.root});return;}
   if(d.a==='work'){navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
   if(d.a==='back'){back();return;}

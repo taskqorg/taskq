@@ -1,5 +1,6 @@
 'use strict';
 const ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),shell=require('./app-shell.js'),{h}=require('preact'),{signal}=require('@preact/signals'),{execution}=ui;
+const syncView=require('./sync-view.js');
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
@@ -84,7 +85,8 @@ const {create}=execution.module('workspace',{
      if(p){row.root=p.root;row.project=p.name;}
      if(!row.event)row.archived=Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
-     const state=t?.state||row.event?.state;row.status=!state||state==='ask'&&!row.archived?'':api.plain(state);row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
+     // #1819: an answer's expected state shows here in the same frame, marked unconfirmed until the board shows it
+     const state=t?.state||row.event?.state,unconfirmed=['sending','waiting'].includes(t?.sync?.phase)?' ⟳':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     return [...rows.values()];
@@ -181,7 +183,10 @@ const {create}=execution.module('workspace',{
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
+    // #1819: the shared pending store changed; Conversations and the list show it in the same frame
+    if(Array.isArray(s.sync)&&!s.projects){view.sync=s.sync;if(view.raw){snapshot.value=view.S=operationView.S=syncView.overlay(view.raw,view.sync);api.draw();}return;}
     if(!Array.isArray(s.projects))return;
+    if(Array.isArray(s.sync))view.sync=s.sync;view.raw=s;s=syncView.overlay(s,view.sync);
     const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
