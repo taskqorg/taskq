@@ -1292,6 +1292,55 @@ mod tests {
         }
     }
 
+    // Chain: section 7 rule 4 publish once -> main moved after the push, no conflict -> enqueue at the result SHA -> merge_group CI on the merge result -> close (#1842).
+    // #1842: workers rebased and rechecked up to 5 times per attempt because main moved. Retained: a clean PR behind a moved main
+    // is enqueued at the unchanged result, never rebased or pushed, and closes on the merge result's CI.
+    #[test]
+    fn a_moved_main_without_conflict_publishes_the_result_unrebased() {
+        let state = std::rc::Rc::new(RefCell::new(recorded("queue-open")));
+        let head = state.borrow()["data"]["node"]["headRefOid"].as_str().unwrap().to_string();
+        state.borrow_mut()["data"]["node"]["mergeable"] = "MERGEABLE".into();
+        let runs = recorded("runs-green");
+        let merge = runs["workflow_runs"][0]["head_sha"].as_str().unwrap().to_string();
+        let mut pulls = recorded("pulls-open");
+        pulls[0]["head"]["sha"] = head.clone().into();
+        let writes = std::rc::Rc::new(RefCell::new(vec![]));
+        let (captured, read, sent, merged) = (writes.clone(), state.clone(), head.clone(), merge.clone());
+        let h = http(&github::KIND, None, Box::new(move |method, url, body| {
+            // GraphQL reads are POSTs too; only mutations and REST writes change the PR or its branch.
+            let read_only = body.as_ref().is_some_and(|b| b["query"].as_str().is_some_and(|q| q.starts_with("query")));
+            if method != "GET" && !read_only { captured.borrow_mut().push(format!("{method} {url} {}", body.clone().unwrap_or_default())); }
+            // Overlay: main moved after the push; the result is neither on main nor its ancestor.
+            let value = if url.contains("/compare/") { json!({"status": if url.ends_with(&merged) { "identical" } else { "diverged" }}) }
+                else if url.ends_with("/rules/branches/main") { recorded("rules-merge-queue") }
+                else if url.contains("/pulls?") { pulls.clone() }
+                else if url.ends_with("/graphql") {
+                    let body = body.unwrap();
+                    let query = body["query"].as_str().unwrap();
+                    if query.contains("enqueuePullRequest") { assert_eq!(body["variables"]["sha"], sent, "enqueued at the result SHA"); recorded("enqueue-admitted") }
+                    else if !query.contains("timelineItems") { recorded("readback-enqueued") }
+                    else { read.borrow().clone() }
+                }
+                else if url.contains("/actions/runs?") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); runs.clone() }
+                else if url.contains("/check-runs") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); recorded("checks-green") }
+                else if url.ends_with("/status") { recorded("status-none") }
+                else { panic!("unexpected {method} {url}") };
+            Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+        }));
+        // A rebase would need the task worktree; this host has none, so any rebase attempt fails the pass.
+        let root = std::path::Path::new("missing-worktree");
+        assert!(matches!(h.resume_publication(1, &head, "title", "Task: invented", root, false), Publish::Enqueued(_)));
+        assert!(writes.borrow().iter().all(|w| w.contains("enqueuePullRequest")), "only the enqueue writes: {:?}", writes.borrow());
+        // Overlay: the merge queue merged the PR at the result head; the merge result is the commit the CI recording ran on.
+        let mut done = recorded("queue-merged");
+        done["data"]["node"]["headRefOid"] = head.clone().into();
+        done["data"]["node"]["mergeCommit"]["oid"] = merge.clone().into();
+        *state.borrow_mut() = done;
+        let got = h.resume_publication(1, &head, "title", "Task: invented", root, true);
+        assert!(matches!(&got, Publish::Done(m) if m.contains(&format!("as {merge}; merge-result CI green"))), "{got:?}");
+        assert_eq!(writes.borrow().len(), 1, "one enqueue, no rebase or push: {:?}", writes.borrow());
+    }
+
     // Chain: section 7 private fallback real Git fetch/rebase/leased push, or conflict/dirty preservation.
     // An HTTP-only fixture cannot prove preservation of the worktree or the pushed branch.
     #[test]
