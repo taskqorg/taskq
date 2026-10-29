@@ -914,6 +914,30 @@ pub fn host_memory() -> Option<(f64, u32)> {
     None
 }
 
+/// Seconds east of UTC on this host's clock at board time `t` (R6 local time); 0 when the platform does not say.
+#[cfg(unix)]
+pub fn utc_offset(t: i64) -> i64 {
+    let (at, mut tm) = (t as libc::time_t, unsafe { std::mem::zeroed::<libc::tm>() });
+    if unsafe { libc::localtime_r(&at, &mut tm) }.is_null() { 0 } else { tm.tm_gmtoff as i64 }
+}
+
+#[cfg(windows)]
+pub fn utc_offset(t: i64) -> i64 {
+    // SYSTEMTIME: year, month, weekday, day, hour, minute, second, millisecond
+    #[link(name = "kernel32")]
+    unsafe extern "system" { fn SystemTimeToTzSpecificLocalTime(zone: *const std::ffi::c_void, utc: *const [u16; 8], local: *mut [u16; 8]) -> i32; }
+    let s = crate::board::stamp(t);
+    let f = |a: usize, b: usize| s.get(a..b).and_then(|x| x.parse::<u16>().ok()).unwrap_or(0);
+    let (utc, mut l) = ([f(0, 4), f(5, 7), 0, f(8, 10), f(11, 13), f(14, 16), f(17, 19), 0], [0u16; 8]);
+    if unsafe { SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut l) } == 0 { return 0; }
+    crate::board::iso(&format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", l[0], l[1], l[3], l[4], l[5], l[6])).map_or(0, |x| x - t)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn utc_offset(_: i64) -> i64 {
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
