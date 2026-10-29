@@ -1854,15 +1854,20 @@ pub fn link_ok(u: &str) -> bool { remote_url(u) || thread_of(u).is_some_and(plai
 /// resolved id and the link, None when unknown.
 pub fn session_link(root: &Path, own: bool, rt: &str, id: &str, task: u64, attempt: u64, role: &str, published: Option<String>) -> (String, Option<String>) {
     let a = of(rt);
-    let id = if own && (id == "-" || a.remote) {
-        let l = Launch { execution: None, task, title: String::new(), attempt, role: role.into(), rt: rt.into(), session: id.into(), url: String::new(), resume: None };
-        codex_thread(&log_path(root, &l)).unwrap_or_else(|| id.into())
-    } else { id.into() };
+    let id = if own {session_id(root,rt,id,task,attempt,role)} else {id.into()};
     let url = if id == "-" || !plain_thread(&id) { None }
         else if a.codex { own.then(|| thread_url(&id)) }
         else if a.remote { own.then(|| claude_remote(&id)).flatten().or(published.filter(|u| remote_url(u))) }
         else { None };
     (id, url)
+}
+
+/// Native identity from this attempt's log, without scanning the transcript for a Remote Control URL.
+pub fn session_id(root:&Path,rt:&str,id:&str,task:u64,attempt:u64,role:&str)->String {
+    if id=="-" || of(rt).remote {
+        let l=Launch {execution:None,task,title:String::new(),attempt,role:role.into(),rt:rt.into(),session:id.into(),url:String::new(),resume:None};
+        codex_thread(&log_path(root,&l)).unwrap_or_else(||id.into())
+    } else {id.into()}
 }
 
 /// The one opener (A2): a session link, web page or folder in this host's default app. `wait` bounds the opener's

@@ -48,7 +48,7 @@ const {create}=execution.module('workspace',{
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
       // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
-      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?h('p',{class:'conversation-text'},t.question?.text||t.card||'No recorded question.'):t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,conversations.worker(row.id,t),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?h('p',{class:'conversation-text'},t.question?.text||t.card||'No recorded question.'):t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -228,7 +228,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='answer-history'){const c=view.answer,text=view.S.ai?.history?.[Number(b.dataset.index)];if(c&&typeof text==='string'){b.closest('details')?.removeAttribute('open');answers.answerInput(c.board,c.task,text,[text.length,text.length]);api.draw();}}
      else if(b.dataset.a==='answer-steer'){const t=answers.project(b.dataset.board)?.tasks?.find(t=>t.n===+b.dataset.task);if(t)answers.answerSteer(b.dataset.board,t);}
      else if(b.dataset.a==='back')api.back();
-     else if(b.dataset.a==='hide'){conversations.flush();state.flush();ui.send({a:'hide'});}
+     else if(b.dataset.a==='hide'){conversations.workerClose();conversations.flush();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
      else if(b.dataset.a==='answer-retry')answers.retry(b.dataset.key);
      else if(b.dataset.a==='sync-retry')ui.send({a:'sync-retry',root:b.dataset.root,id:b.dataset.id});
@@ -240,7 +240,7 @@ const {create}=execution.module('workspace',{
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);
     ui.listen(document,'keydown',e=>{
      if(e.target.dataset?.cField==='answer'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();api.answerAct('submit');return;}
-     if(e.key==='Escape'){conversations.flush();const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}state.flush();ui.send({a:'hide'});}
+     if(e.key==='Escape'){conversations.flush();const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}conversations.workerClose();state.flush();ui.send({a:'hide'});}
      if(e.altKey&&e.key==='ArrowLeft'&&view.page!=='conversations'){e.preventDefault();api.back();}
     });
     // P-W3: the header drags the window; its controls never start a drag

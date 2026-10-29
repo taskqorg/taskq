@@ -28,6 +28,14 @@ The [#1580 owner answer](https://github.com/taskqorg/taskq/issues/1580#issuecomm
 
 ## Workspace dialogue (D1–D8)
 
+**Live task worker panel (#1831).**
+
+A Doing task's Conversations thread shows its worker's live native transcript on the viewing host. The native read adapter resolves the session from the service's fresh, complete task/attempt snapshot and the attempt log; client session IDs never select a transcript. Each read is fenced to that attempt and registered project. Remote workers have no panel. Missing transcripts and stale or unreadable observations stay explicitly unavailable.
+
+The open panel reads once a second and appends worker messages, owner turns delivered through the board, and one tool-name line per call. Tool arguments and command output are omitted. Closing or leaving the thread cancels polling; an ended or replaced attempt stops reads and discards late replies. Owner input continues through the next-turn steer path, never a native resume from this panel (D3).
+
+D1 keeps the native file as the only dialogue record: no transcript is saved by TaskQ. D4 keeps bounded whole-record cursor reads and at most 600 transient live items, in native order, with the newest at the bottom; the panel is a live tail. Scrolling up pauses following and keeps the message anchor; Jump to latest resumes it. Missing data remains unknown. This panel adds no writer, scheduler or acknowledgement.
+
 The Conversations window uses the adopted v7 look ([visual style](visual-style.md#geometry-and-type)); list rows show project and a plain status (Working, Ready, Status unknown, Draft, Delivery unknown), never `unknown`. A launch brief stays in the transcript as a collapsed Setup brief, not an owner message.
 
 Owner decision 2026-10-23 (target, not shipped): the owner talks to an owner session in the workspace without opening Claude or Codex. Any number of conversations; any one may do PM work; none is special. Phase 1 is the local workspace; DashQ follows.
