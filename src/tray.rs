@@ -1893,8 +1893,9 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
         for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
         if routes.iter().any(|r|r=="views") { for font in [16, 20] { v.extend(VIEWS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); } }
-        // ponytail: dark only keeps six screens inside the ten-screen review set; add light when a review asks for it
+        // #1781: light adds the empty-answer question (badge) and chat screens at 18 px, so both themes stay inside the ten-screen review set
         if *t=="dark" && routes.iter().any(|r|r=="conversations") { for font in [18, 20] { v.extend(CONVERSATIONS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); } }
+        if *t=="light" && routes.iter().any(|r|r=="conversations") { v.extend(CONVERSATIONS.iter().filter(|(n, _)| matches!(*n, "badge" | "chat")).map(|(_, js)| (*t, "home".to_string(), 18, *js))); }
         for route in &ROUTES[5..] {
             if *route=="views" || *route=="conversations" || route.starts_with("agentq-") && !routes.iter().any(|r|r==route){continue;}
             for font in [16, 20] { v.push((*t, route.to_string(), font, if *route=="recovery" {RECOVERY}else{""})); }
@@ -2992,7 +2993,7 @@ mod tests {
         assert_eq!(names(&["answers"]).len(), 8, "menu question and its details at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         assert_eq!(names(&["views"]), ["dark-views-top-16", "dark-views-states-16", "dark-views-top-20", "dark-views-states-20", "light-views-top-16", "light-views-states-16", "light-views-top-20", "light-views-states-20"], "P-W4: the View window in both themes and sizes");
-        assert_eq!(names(&["conversations"]), ["dark-conversations-badge-18", "dark-conversations-question-18", "dark-conversations-owner-18", "dark-conversations-chat-18", "dark-conversations-badge-20", "dark-conversations-question-20", "dark-conversations-owner-20", "dark-conversations-chat-20"], "#1699 A8: at most ten screens");
+        assert_eq!(names(&["conversations"]), ["dark-conversations-badge-18", "dark-conversations-question-18", "dark-conversations-owner-18", "dark-conversations-chat-18", "dark-conversations-badge-20", "dark-conversations-question-20", "dark-conversations-owner-20", "dark-conversations-chat-20", "light-conversations-badge-18", "light-conversations-chat-18"], "#1699 A8: at most ten screens");
         let all = names(&[]);
         assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")&&**r!="views"&&**r!="conversations").count() - 5)), "no filter keeps the menu matrix without scroll or answers");
         assert!(all.iter().all(|name|!name.contains("agentq-")&&!name.contains("-views-")&&!name.contains("-conversations-")),"invented agentq and View window evidence is opt-in only");
