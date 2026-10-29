@@ -269,11 +269,10 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
     if t.state == State::Closed || op.id.is_some() && entries(b, n).is_ok_and(|l| l.iter().any(|e| core::op_id(n, &e.body) == op.id.as_deref())) {
         return act(b, &cfg.root, n, "close", &[], verdict, op);
     }
-    if let Err(r) = successor_moving(b, &cfg.root, n, verdict, op, agent()) {
-        return Receipt { state: Some(t.state.name()), ..r };
-    }
+    // § 7: a named successor moves only once every other check passed, right before the close is written
+    let successor = || successor_moving(b, &cfg.root, n, verdict, op, agent()).map_err(|r| Receipt { state: Some(t.state.name()), ..r });
     match t.state {
-        State::Later | State::Failed => act(b, &cfg.root, n, "close", &[], verdict, op),
+        State::Later | State::Failed => successor().map_or_else(|r| r, |_| act(b, &cfg.root, n, "close", &[], verdict, op)),
         State::Review if needs_approval(cfg, &t) && t.gate != Some(Gate::Approved) => {
             // § 7: no publication before the owner's approval of this result; the current policy decides (B4 fencing)
             let sha = t.result.unwrap_or_default();
@@ -286,6 +285,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
             if op.revision.is_some_and(|r| r != rev) {
                 return act(b, &cfg.root, n, "close", &[], verdict, op); // the stale receipt, before any publication
             }
+            if let Err(r) = successor() { return r; }
             // § 4 Profiling: `checks` is the CI verification and merge call
             if b.defer_publication(&cfg.publish) {
                 if t.publication.is_some() {

@@ -5817,7 +5817,8 @@ Open: none";
         s.pass().unwrap();
         let ev = std::fs::read_to_string(root.join(".taskq/events")).unwrap();
         let lines: Vec<&str> = ev.lines().skip(1).map(|l| l.split_once(' ').unwrap().1).collect();
-        assert_eq!(lines, [format!("#{x} close {r}"), format!("#{y} failed {ay}")], "{ev}");
+        // #1800: a close line ends with its § 7 outcome (verdict `ok`: delivered)
+        assert_eq!(lines, [format!("#{x} close {r} delivered"), format!("#{y} failed {ay}")], "{ev}");
         let mut again = service(&b, &c, Default::default());
         again.pass().unwrap();
         again.pass().unwrap();
