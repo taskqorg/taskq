@@ -51,6 +51,10 @@ pub trait Board {
     /// One page (from 1) of closed `taskq` issues, most recently updated first, with each close time and whether another
     /// page follows: the Completed view reads board history on demand, never a local task store (MP14).
     fn closed_tasks(&self, _page: u32, _since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { Err("closed task history unsupported on this board".into()) }
+    /// §7 Reports: all closed research/report issues, with authoritative close times. Demand reads only.
+    fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { Err("research reports unsupported on this board".into()) }
+    /// Repository text at an immutable accepted result SHA; never the local checkout or moving main.
+    fn source(&self, _path: &str, _sha: &str) -> Result<String> { Err("report source unsupported on this board".into()) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>>;
     fn comment(&self, n: u64, body: &str) -> Result<u64>;
     /// Edits comment `id` of issue `n`: an edited entry is ignored by `fold` (§ 2).
@@ -155,6 +159,8 @@ impl Board for Profiled {
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> { self.op("list", |b| b.issues(since)) }
     fn issue(&self, n: u64) -> Result<Issue> { self.op("read", |b| b.issue(n)) }
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { self.op("list", |b| b.closed_tasks(page, since)) }
+    fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { self.op("list", |b| b.research_tasks()) }
+    fn source(&self, path: &str, sha: &str) -> Result<String> { self.op("read", |b| b.source(path, sha)) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>> { self.op("inbox", |b| b.comments(n)) }
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.op(if body.starts_with("taskq: spawn ") { "claim" } else { "comment" }, |b| b.comment(n, body))
@@ -787,6 +793,9 @@ pub struct FakeState {
     pub bad_image: bool,
     /// The board plays an uploaded video inline (GitLab), else it links one (GitHub).
     pub video_inline: bool,
+    /// Immutable repository text for the Reports source adapter (path, SHA, body).
+    pub report_sources: Vec<(String,String,String)>,
+    pub report_closed: std::collections::BTreeMap<u64,i64>,
 }
 
 #[cfg(test)]
@@ -821,6 +830,14 @@ impl Fake {
 
 #[cfg(test)]
 impl Board for Fake {
+    fn research_tasks(&self)->Result<Vec<(Issue,i64)>> {
+        let st=self.state.borrow();
+        Ok(st.issues.iter().filter(|i|!i.open&&i.labels.iter().any(|l|l=="research"||l=="report"))
+            .map(|i|(i.clone(),st.report_closed.get(&i.number).copied().unwrap_or(i.updated))).collect())
+    }
+    fn source(&self,path:&str,sha:&str)->Result<String> {
+        self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or("report source unavailable".into())
+    }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         let mut st = self.state.borrow_mut();
@@ -1096,6 +1113,28 @@ mod tests {
             let i=b.issue(7).unwrap();
             assert_eq!((i.number,i.open,i.closed),(7,false,iso("2026-10-28T00:00:00Z")));
             assert!(i.trusted && i.closed.unwrap()<i.updated);
+        }
+    }
+    // Chain: §7 Reports -> board adapters -> immutable source and close time. Risk: opening reads moving main,
+    // or read/decision comments change the report order through updated_at.
+    #[test]
+    fn research_reports_use_exact_source_and_native_close_time() {
+        use base64::{Engine,engine::general_purpose::STANDARD};
+        for kind in [&github::KIND,&gitlab::KIND] {
+            let sha="a".repeat(40);
+            let b=http(kind,Some(true),Box::new(move|method,url,_| {
+                assert_eq!(method,"GET");
+                let value=if url.contains("/members/all/") {json!({"access_level":20})} else if url.contains("/contents/")||url.contains("/repository/files/") {
+                    assert!(url.ends_with(&format!("?ref={}","a".repeat(40))));assert!(url.contains("docs%2Fresearch%2F12.md"));
+                    json!({"encoding":"base64","content":STANDARD.encode("# Question\nInvented source")})
+                }else {
+                    assert!(url.contains("state=closed&labels=taskq,"));
+                    json!([{"number":12,"iid":12,"title":"Invented research","state":"closed","closed_at":"2026-10-01T01:00:00Z","updated_at":"2026-10-29T01:00:00Z","labels":["taskq","research"]}])
+                };
+                Ok(Reply {status:200,headers:vec![],body:value.to_string(),operation:operation(method)})
+            }));
+            assert_eq!(b.source("docs/research/12.md",&sha).unwrap(),"# Question\nInvented source");
+            let rows=b.research_tasks().unwrap();assert_eq!(rows.len(),1,"deduplicate research plus report discovery");assert_eq!(rows[0].1,iso("2026-10-01T01:00:00Z").unwrap());
         }
     }
     /// A recorded GitHub response; tests/fixtures/github-merge-queue/README.md says how to re-record.

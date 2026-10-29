@@ -46,6 +46,7 @@ mod transcript;
 mod messages;
 mod conversations;
 mod snapshot;
+mod reports;
 #[cfg(any(target_os = "macos", windows))]
 mod icon;
 #[cfg(any(target_os = "macos", windows))]
@@ -84,6 +85,7 @@ const USAGE: &str = "taskq agents
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N
+ taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N] --json
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -128,7 +130,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "reports" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -2945,6 +2947,18 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--revision names one task".into());
     }
     match cmd {
+        "reports" => {
+            if a.flags.iter().any(|(k,v)|!["action","sha","page","json"].contains(&k.as_str())||v.len()!=1) {return Err("reports: use --action, --sha, --page and --json once each".into());}
+            let value=if a.pos.len()==1 {
+                if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
+                let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
+                reports::list(b,page)?
+            } else {
+                if a.one("page").is_some() {return Err("--page lists reports without a task number".into());}
+                reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
+            };
+            println!("{value}"); Ok(())
+        }
         "labels" => {
             let mut names = labels::FIXED.iter().map(|s| s.to_string()).collect::<Vec<_>>();
             names.extend(b.issues(None)?.into_iter().flat_map(|i| i.labels));
@@ -3052,8 +3066,11 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if links.iter().any(|l| l.starts_with('!') || media(l).is_some()) { return Err("--link takes links; images and videos go through --image".into()); }
             result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &links)?;
             image_files(&images)?;
+            let report = reports::prepare(b, root, n, sha)?;
             let body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
-            emit(&[act(b, root, n, "result", &[sha], &body, &op)], json)
+            let receipt=act(b, root, n, "result", &[sha], &body, &op);
+            if report&&receipt.ok() {reports::discover(b,n)?;}
+            emit(&[receipt], json)
         }
         "requeue" => {
             let n = a.num(1)?;

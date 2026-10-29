@@ -8,6 +8,7 @@
     "src/app-shell.js",
     "src/project-blocks.js",
     "src/reply-files.js",
+    "src/reports.js",
     "src/resource-controls.js",
     "src/sync-view.js",
     "src/task-controls.js",

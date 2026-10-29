@@ -526,6 +526,24 @@ impl Board for GitHub {
         Ok(parse_issue(&self.api.call("GET", &format!("/issues/{n}"), None)?.json()?))
     }
 
+    fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> {
+        let mut rows = std::collections::BTreeMap::new();
+        for label in ["research", "report"] {
+            for v in self.api.all(&format!("/issues?state=closed&labels=taskq,{label}&per_page=100"))? {
+                if v.get("pull_request").is_none() { let i=parse_issue(&v); rows.insert(i.number, (i, iso(&s(&v,"closed_at")).unwrap_or(0))); }
+            }
+        }
+        Ok(rows.into_values().collect())
+    }
+
+    fn source(&self, path: &str, sha: &str) -> Result<String> {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        let v=self.api.call("GET", &format!("/contents/{}?ref={}",encode(path),encode(sha)),None)?.json()?;
+        if v["encoding"]!="base64" {return Err("report source encoding unknown".into());}
+        let bytes=STANDARD.decode(s(&v,"content").replace(['\r','\n'],"")).map_err(|_|"report source encoding invalid")?;
+        String::from_utf8(bytes).map_err(|_|"report source is not UTF-8".into())
+    }
+
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
         Ok(self.api.all(&format!("/issues/{n}/comments?per_page=100"))?.iter().map(|v| Comment {
             id: v["id"].as_u64().unwrap_or(0),

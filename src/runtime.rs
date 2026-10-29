@@ -769,7 +769,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         format!(
             "Review the result SHA against each Acceptance item `A<k>` and taskq.md, and GitHub PR CI green on the merge result (merge_group); private fallback uses exact-SHA CI; other routes follow the contract. Requeue only for\n\
              Acceptance or contract gaps, not style.\n\
-             A research or proposal task without an ask and owner's answer before result/close is a task-fit gap (§ 7).\n\
+             Research/proposals need docs/research/<N>.md at the result SHA, not a prior owner answer. Only a decision blocking another task needs ask before close (§ 7).\n\
              {CI_WAIT}Then exactly one of:\n\
              - `{q} close {n} --text \"Changed: <user effect>\nChecks: Task fit: A1 ok|gap|unknown, A2 ..; merge-result CI <green|pending|unknown> on <SHA|pending>\nChecks: Implementation quality: <binding gaps|advisories|none>\nOpen: <item|none>\"` (it publishes),\n\
              - `{q} requeue {n} --text \"<exact fixes>\"`,\n\
@@ -783,8 +783,8 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         format!(
             "Work only in `.worktrees/taskq-{n}` on branch `taskq-{n}` from origin/main (continue an existing branch).\n\
              For implementation changes, commit with the line `Task: {url}` in the message, rebase on origin/main, run the project checks, then {push}.\n\
-             {PUBLISH_ONCE}{DEV_LOOP}Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer.\n\
-             After the answer, deliver the approved outcome or file approved dependent tasks (§ 7); no commit is needed for research-only output.\n\
+             {PUBLISH_ONCE}{DEV_LOOP}Research/proposals deliver docs/research/{n}.md by PR: Question, Findings with evidence, Options with pros/cons, Recommendation, Proposed tasks. Follow docs/design/reports.md for the taskq-tasks JSON array.\n\
+             Hand in the report with result; review closes it and the owner decides later in Reports. Ask only when another task waits on that decision (§ 7).\n\
              Do not wait for CI: `close` checks it. {CI_WAIT}{SANDBOX_CHECKS}Then exactly one of:\n\
              - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
              - {ask} (owner decision; Acceptance unclear or untestable; or a split R2 allows, never for diff size — before any code),\n\
@@ -4292,15 +4292,20 @@ mod tests {
         }
     }
 
-    // Chain: § 7 research decision handoff (#1234). Risk: a worker bypasses owner choice or a reviewer accepts that bypass.
+    // Chain: §7 research Reports handoff (#1826). Risk: finished research blocks the queue, loses its report,
+    // or a decision another task needs bypasses owner choice. The owner approved replacing the old ask gate.
     #[test]
-    fn research_decision_requires_ask_before_result() {
+    fn research_reports_close_without_answer_but_keep_blocking_decisions() {
         let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         for rt in ["claude", "codex", "codex-app"] {
             let mut l = Launch { files: String::new(), execution: None, task: 7, title: "Proposal".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
-            assert!(brief(&env, &l).contains("Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer."), "{rt}: worker");
+            let worker=brief(&env,&l);
+            assert!(worker.contains("Research/proposals deliver docs/research/7.md by PR"), "{rt}: report artifact");
+            assert!(worker.contains("Ask only when another task waits on that decision"), "{rt}: blocking decision");
             l.role = "reviewer".into();
-            assert!(brief(&env, &l).contains("A research or proposal task without an ask and owner's answer before result/close is a task-fit gap"), "{rt}: reviewer");
+            let reviewer=brief(&env,&l);
+            assert!(reviewer.contains("Research/proposals need docs/research/<N>.md at the result SHA, not a prior owner answer"), "{rt}: reviewer");
+            assert!(reviewer.contains("Only a decision blocking another task needs ask before close"), "{rt}: blocking decision review");
         }
     }
 
