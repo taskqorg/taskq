@@ -1509,9 +1509,9 @@ fn cap_changes(old: &service::Capacity, new: &service::Capacity) -> String {
     if out.is_empty() { "no change".into() } else { out.join(", ") }
 }
 
-/// § 9: a follow-up added inside an attempt on a `claim` `labelled` host keeps that host unless `--host` names one.
-fn add_host(given: Option<&str>, cfg: &Config, attempt: bool) -> Option<String> {
-    given.map(String::from).or_else(|| (attempt && cfg.labelled).then(|| cfg.me.clone()))
+/// § 9: a task added on a `claim` `labelled` host keeps that host unless `--host` names one.
+fn add_host(given: Option<&str>, cfg: &Config) -> Option<String> {
+    given.map(String::from).or_else(|| cfg.labelled.then(|| cfg.me.clone()))
 }
 
 /// host.json `claim` value (§ 9).
@@ -2756,7 +2756,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 kind: a.one("type").map(String::from),
                 runtime: a.one("runtime").map(String::from),
                 priority: a.one("priority").map(String::from),
-                host: add_host(a.one("host"), cfg, std::env::var_os("TASKQ_ATTEMPT").is_some()),
+                host: add_host(a.one("host"), cfg),
                 labels: vec![],
             };
             if finding {
@@ -3283,17 +3283,18 @@ mod tests {
         }
     }
 
-    // Chain: § 9 `claim` (#1493). Risk: a follow-up filed on a labelled host leaves it, or an explicit --host is lost.
+    // Chain: § 9 `claim` (#1493, #1786). Risk: a task filed on a labelled host (worker follow-up or owner/PM plan)
+    // leaves it for another host, an explicit --host is lost, or an any-claim host starts routing its adds.
     #[test]
-    fn follow_up_add_inherits_the_labelled_host() {
+    fn add_on_a_labelled_host_keeps_that_host() {
         let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         let mut c = cfg();
         c.labelled = true;
-        assert_eq!(add_host(None, &c, true).as_deref(), Some("mac"));
-        assert_eq!(add_host(Some("win"), &c, true).as_deref(), Some("win"));
-        assert_eq!(add_host(None, &c, false), None, "an owner add outside an attempt stays unrouted");
+        assert_eq!(add_host(None, &c).as_deref(), Some("mac"), "labelled host: add without --host gets host-mac");
+        assert_eq!(add_host(Some("win"), &c).as_deref(), Some("win"), "--host wins over the labelled default");
         c.labelled = false;
-        assert_eq!(add_host(None, &c, true), None);
+        assert_eq!(add_host(None, &c), None, "any-claim host: add stays unrouted");
+        assert_eq!(add_host(Some("win"), &c).as_deref(), Some("win"));
         let a = parse(&["service", "capacity", "--host", "mac", "--claim", "labelled"]).unwrap();
         assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(true));
         let bad = parse(&["service", "capacity", "--claim", "some"]).unwrap();
