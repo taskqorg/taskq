@@ -333,9 +333,9 @@ def test_environment(environment, install):
     """Owner-operation fixtures use their own installation, never the launching worker's identity or credentials."""
     env = dict(environment)
     for key in ('TASKQ_TASK', 'TASKQ_ATTEMPT', 'TASKQ_ROLE', 'TASKQ_ROOT', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID',
-                'CLAUDE_CODE_SESSION_ID', 'COREQ_TRACE_CONTEXT', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN'):
+                'CLAUDE_CODE_SESSION_ID', 'COREQ_TRACE_CONTEXT', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'TASKQ_INCIDENT_REPORTS'):
         env.pop(key, None)
-    return {**env, 'TASKQ_INSTALL': str(install), 'TASKQ_INCIDENT_REPORTS': 'off'}
+    return {**env, 'TASKQ_INSTALL': str(install)}
 
 
 def main():
@@ -388,7 +388,7 @@ def main():
                 run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']), environment=test_environment(env, install))
             if scope == 'full':
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
-                    run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_SELFTEST_OFFLINE':'1'}, environment=test_environment(env, install))
+                    run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'}, environment=test_environment(env, install))
             if os.environ.get('RUNNER_OS') in (None, 'Linux'):
                 for script in sorted((ROOT / 'tests').glob('*.test.cjs')):
                     run(['node', script.relative_to(ROOT).as_posix()])
