@@ -2,7 +2,26 @@
 
 Task: [#1817](https://github.com/taskqorg/taskq/issues/1817). The [owner's answer](https://github.com/taskqorg/taskq/issues/1817#issuecomment-6497639463) bounds this work to TaskQ and a PilotQ-shaped fake. Live PilotQ integration is [#1857](https://github.com/taskqorg/taskq/issues/1857), held on `hermes-fra1`, depending on #1817.
 
-## Rebase and current verification
+## Current candidate and verification
+
+While the first rebased candidate was being tested, main advanced to `b4369e44ca302bbe647ea32b6fc677a1547f813c` (#1866). PR readback and `git merge-tree` reproduced new conflicts in `src/dispatch.rs` and §5. A second rebase preserves main's concurrent-answer no-op and closed-task protections together with attachment forwarding. The immutable tested source is `f08ff83779bb0765b0438b8970bf17bfefa106fd`; only this evidence report changes afterward.
+
+The merged behavior had one attachment-specific defect: identical answer text could trigger the new text-only no-op and discard a new file. Before the fix, `cargo +stable test --locked --bin taskq reply_files::tests::new_files_keep_a_repeated_answer_distinct -- --exact` failed with `note: None`, expected `Some(true)`. After restricting that no-op to replies without files, the same check passes. The new case verifies the worker-readable image and that a retry with the accepted operation ID writes nothing. Main's existing text-only duplicate, race and closed-task assertions remain unchanged and pass.
+
+| Check on the current source | Observation |
+|---|---|
+| `python3 scripts/check.py --base b4369e44ca302bbe647ea32b6fc677a1547f813c` | **Failed**, 627 passed, 18 failed, 38 ignored; 142.546 s. Selector/rule gate and web build pass; Rust stops subsequent stages. |
+| Remaining failures | The same 18 worker-restricted host/lifecycle/resource/tray/security fixtures described below: sandbox-blocked (§7.4), never PASS. No permission or worker-authority guard was bypassed. |
+| Attachment and concurrent-answer checks | All six attachment checks pass, including the real 20 MiB HTTP transfer and the new same-text/new-file case; main's concurrent-answer checks pass. |
+| R8 guard in the full run | Pass, unchanged guard: contract is 61,438 bytes and 295 lines. |
+| `cargo +stable test --locked --test integration` | Pass: 17 passed, one ignored; 17.69 s test execution. |
+| Isolated offline `cargo +stable run --locked -- selftest` | Pass: 107 traces, formats and nine committed observations; board/tools unknown offline. |
+| Node and browser | Fresh run: all 27 `tests/*.test.cjs` files pass, as does `node tests/reply-files.browser.cjs` on both routes. Native bridge/board are fakes. The existing four screenshots are retained. |
+| Artifact scripts and whitespace | Earlier artifact-script passes below remain valid: those scripts and inputs are unchanged. Fresh `git diff --check b4369e44ca302bbe647ea32b6fc677a1547f813c` passes. |
+
+Amended rule: §5 under R13. Local merge-tree check against `b4369e44` is clean; this is not merge-result CI. Publication still requires review and green `merge_group` CI (R12/§7). Live PilotQ delivery remains unverified in #1857; no host was installed or restarted.
+
+## First rebase verification
 
 The reviewer returned [PR #1865](https://github.com/taskqorg/taskq/pull/1865) for a `src/runtime.rs` conflict with `c7008b76df6d60a4dad985608913aafc6838a668`. Rebase reproduced that conflict. The resolution keeps main's `session_id` helper and adds `files: String::new()` to its `Launch`; `git range-diff` shows no other change to the attachment patch. No assertion, runtime permission or lifecycle rule changed.
 
