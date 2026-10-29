@@ -43,7 +43,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
     await page.setViewportSize({width:360,height:900});
     await page.evaluate(s=>{messages.length=0;taskq.receive(s);},extra?{...state,page:undefined,projects:[{...project,complete:false,partial:['Alpha'],tasks:[...project.tasks,t(12,'held')]}]}:{...state,page:undefined});
     // #1775 M2: the held shortcut is a green play icon; its label stays the accessible name.
-    if(extra){assert.match(await page.locator('.content').innerText(),/Partial: refresh/,'added panels render');assert.equal(await page.getByRole('button',{name:'Start 2 held'}).count(),1,'held shortcut renders');}
+    if(extra){assert.match(await page.locator('.content').innerText(),/Alpha: Project snapshot incomplete or stale/,'named project cause renders (#1840 A2)');assert.equal(await page.getByRole('button',{name:'Start 2 held'}).count(),1,'held shortcut renders');}
     const h=await page.evaluate(()=>messages.filter(m=>m.a==='size').at(-1).h);
     await page.setViewportSize({width:360,height:h});
     const fit=await page.evaluate(()=>{const c=document.querySelector('.content'),rows=document.querySelectorAll('[data-card]'),last=rows[rows.length-1].getBoundingClientRect(),grip=document.querySelector('.menu .grip').getBoundingClientRect(),menu=document.querySelector('.menu').getBoundingClientRect();return {scroll:c.scrollHeight-c.clientHeight,last:last.bottom,content:c.getBoundingClientRect().bottom,grip:grip.bottom,menu:menu.bottom,vh:innerHeight};});
