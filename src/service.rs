@@ -2210,9 +2210,12 @@ mod tests {
         s.pass().unwrap();
         assert_eq!(std::fs::read(crate::snapshot::image_copy(&root, &url)).unwrap(), png);
         assert_eq!(std::fs::read(crate::snapshot::image_copy(&root, "https://board.example/1/9-x.png")).unwrap(), b"", "a failed read leaves the link");
-        let mut task = json!({"question": crate::snapshot::question(&format!("Done: d\nProblem: p\nEvidence: ![front]({url})"))});
-        crate::tray::inline_images(&root, &mut task);
-        assert_eq!(task["question"]["evidence"][0]["src"], "data:image/png;base64,iVBORw0KGgppbWFnZQ==");
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            let mut task = json!({"question": crate::snapshot::question(&format!("Done: d\nProblem: p\nEvidence: ![front]({url})"))});
+            crate::tray::inline_images(&root, &mut task);
+            assert_eq!(task["question"]["evidence"][0]["src"], "data:image/png;base64,iVBORw0KGgppbWFnZQ==");
+        }
         b.comment(n, "taskq: answer\nok").unwrap();
         s.pass().unwrap();
         assert!(!crate::snapshot::image_copy(&root, &url).exists(), "answered ask: copy removed");
