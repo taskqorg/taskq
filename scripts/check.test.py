@@ -80,6 +80,13 @@ assert findings(doc(spec), doc(spec), diff)['tests'] == ['§2'], findings(doc(sp
 assert uncovered({'R1': '', '§2': '', '§2.1': ''}, '// Chain: § 2 table, R1') == ['§2.1']
 print('PASS rule IDs, typo fixes and the gate on synthetic contracts')
 
+# #1826 R13: the owner named "section 7" and its exact subsection. Preserve ID boundaries and require both;
+# accepting the ordinary spelling must not approve another section, table row or unnamed change.
+report_rules = {'changed': ['§7', '§7 Result and close verdicts'], 'removed': [], 'tests': ['§7']}
+assert unnamed(report_rules, 'amend section 7 and section 7 Result and close verdicts') == []
+assert unnamed(report_rules, 'amend section 7 Result and close verdicts') == ['§7 (changed)', '§7 (tests)']
+assert unnamed(report_rules, 'amend section 70') == ['§7 (changed)', '§7 Result and close verdicts (changed)', '§7 (tests)']
+
 # Replays against their parents; the CI plan job checks out full history.
 for rev, listed in [('bf4a2be9', {'changed': ['M3'], 'tests': ['R12']}), ('ecb1e57d', {'removed': ['§7 Take requests'], 'changed': ['R1', '§7']})]:
     found = findings(check['git_docs'](rev + '^'), check['git_docs'](rev), check['test_diff'](rev + '^', rev))

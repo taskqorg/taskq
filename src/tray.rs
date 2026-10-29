@@ -817,7 +817,7 @@ impl ActionQueue {
         let operation=if allowed.contains(&"capacity") {"tray.capacity.execute"}else{"tray.focus.execute"};
         let worker=std::thread::Builder::new().name(operation.into()).spawn(move || {
             while let Ok(job)=receiver.recv() {
-                let operation=match job.message["a"].as_str() {Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("completed")=>"tray.history.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
+                let operation=match job.message["a"].as_str() {Some("reports")=>"tray.reports.execute",Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("completed")=>"tray.history.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
                 tracing::dispatcher::with_default(&job.dispatch,|| {
                     let _context=job.context.as_ref().map(|c|c.span().entered());
                     let result=coreq::telemetry::capture::operation(operation,||std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -835,7 +835,7 @@ impl ActionQueue {
     }
     fn submit(&self,message:&Value) -> crate::Res<()> {
         let action=message["a"].as_str().unwrap_or("");let id=message["id"].as_str().unwrap_or("");
-        let name=match action {"answer"=>"tray.answer.dispatch","completed"=>"tray.history.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
+        let name=match action {"reports"=>"tray.reports.dispatch","answer"=>"tray.answer.dispatch","completed"=>"tray.history.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
         coreq::telemetry::capture::operation(name,|| {
             if !self.allowed.contains(&action) {return Err(("invalid-command","Unsupported queued command"));}
             if id.is_empty() || id.len()>64 || !id.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'.')) {
@@ -878,6 +878,24 @@ fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let mut c=owner_command(root)?;c.args(history_args(m));
     let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
     serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
+}
+
+/// §7 Reports use the owner CLI, the registered project and its board token. Never trust task data as authority.
+fn queued_reports(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
+    let action=m["action"].as_str().ok_or("report action missing")?;
+    let mut command=owner_command(root)?;command.arg("reports");
+    if action=="list" {
+        if let Some(before)=m["before"].as_str() {command.args(["--before",before]);}
+        else {command.args(["--page",&m["page"].as_u64().filter(|p|*p>0).unwrap_or(1).to_string()]);}
+    } else {
+        if !["open","read","later","drop","make"].contains(&action) {return Err("unsupported report action".into());}
+        let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;
+        command.arg(n.to_string()).args(["--action",action,"--sha",m["sha"].as_str().ok_or("report SHA missing")?]);
+    }
+    command.arg("--json");
+    let out=crate::platform::output("tray.reports-command",&mut command,Duration::from_secs(180))?;
+    if !out.status.success() {return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}
+    serde_json::from_slice(&out.stdout).map_err(|_|"report receipt invalid; refresh before retrying".into())
 }
 fn history_args(m:&Value)->Vec<String> {
     let mut a=vec!["status".into(),"--closed".into(),"--page".into(),m["page"].as_u64().unwrap_or(1).max(1).to_string()];
@@ -1110,8 +1128,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Err(e) => eprintln!("taskq tray: Open left the service stopped: {e}"),
         });
     }
-    if let Some(r) = routes.iter().find(|r| r.as_str() != "icon" && !ROUTES.contains(&r.as_str())) {
-        return Err(format!("unknown route {r}; known: icon, {}", ROUTES.join(", ")));
+    if let Some(r) = routes.iter().find(|r| r.as_str() != "icon" && !ROUTES.contains(&r.as_str()) && !REPORT_SHOTS.iter().any(|(name,_)|r==name)) {
+        return Err(format!("unknown route {r}; known: icon, {}, reports, reports-conversations", ROUTES.join(", ")));
     }
     if snapshot.is_none(){crate::agentq::start(&install);}
     let opacity_shots=snapshot.is_some() && routes.iter().any(|r|r=="opacity");
@@ -1121,8 +1139,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations");
+    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
+    if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
     let mut settings = Settings::load(&install);
     #[allow(unused_mut)]
     let mut event_loop = EventLoopBuilder::<Ev>::with_user_event().build();
@@ -1194,6 +1213,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         let _=coreq::telemetry::capture::operation("tray.history.report",||replies.send_event(Ev::Answer(json!({"completed":page}))),|_|"ui-closed");
     })?;
     let add_actions=AddOwner::start(install.clone(),proxy.clone())?;
+    let replies=proxy.clone();
+    let report_actions=ActionQueue::start(install.clone(),&["reports"],true,queued_reports,move |root,id,result| {
+        let mut receipt=result.unwrap_or_else(|reason|json!({"reason":reason}));receipt["root"]=json!(root);receipt["id"]=json!(id);
+        let _=coreq::telemetry::capture::operation("tray.reports.report",||replies.send_event(Ev::Answer(json!({"reportReceipt":receipt}))),|_|"ui-closed");
+    })?;
     let mut ui: Option<(Window, WebView)> = None;
     let mut workspace: Option<(Window, WebView)> = None;
     let mut workspace_web: Option<WebCalls> = None;
@@ -1482,7 +1506,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 push(&mut web,&ui,&receipt);
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
                 // #1819: a detached conversation sees the answer it may show too
-                if receipt["answerReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
+                if receipt["answerReceipt"].is_object()||receipt["reportReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
             },
             Event::UserEvent(Ev::Sync) => {
                 let script=format!("taskq.receive({})",json!({"sync":sync.json()}));
@@ -1554,6 +1578,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if calls.failed {return;}
                 match m["a"].as_str() {
+                    Some("reports")=>{if let Err(reason)=report_actions.submit(&m) {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
                     Some("sync-retry") => {
                         if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
                     }
@@ -1844,6 +1869,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let page=if snapshot.is_some() {Some(json!({"tasks":[],"more":false,"reason":"snapshot: no board read"}))} else {history_reads.submit(&m).err().map(|reason|json!({"tasks":[],"more":false,"reason":reason}))};
                         if let Some(mut page)=page {page["root"]=m["root"].clone();page["id"]=m["id"].clone();reply!(&json!({"completed":page}));}
                     }
+                    "reports" => {
+                        if let Err(reason)=report_actions.submit(&m) {reply!(&json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}}));}
+                    }
                     "resources" => {
                         let id=format!("resources-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_nanos()));
                         let request=json!({"a":"resources","root":install,"id":id});
@@ -2032,7 +2060,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 }
                 let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null);
                 // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
-                let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script);
+                let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script)||REPORT_SHOTS.iter().any(|(_,s)|*s==script);
                 if merged {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
                 else {push(&mut web,&ui,&st);}
                 if let (Some((_, wv)), false) = (&ui, script.is_empty() || merged) {
@@ -2121,9 +2149,16 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,u64);3]=[("/* opacity: off */",100),("/* opacity: mid */",95),("/* opacity: minimum */",90)];
 const ROUTES: [&str; 25] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
+const REPORT_SHOTS:[(&str,&str);2]=[
+    ("reports",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'menu')")),
+    ("reports-conversations",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'conversations')")),
+];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
 fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &'static str)> {
+    if routes.iter().any(|r|REPORT_SHOTS.iter().any(|(name,_)|r==name)) {
+        return ["dark","light"].into_iter().flat_map(|theme|REPORT_SHOTS.iter().filter(|(name,_)|routes.iter().any(|r|r==name)).map(move |(_,js)|(theme,"home".into(),16,*js))).collect();
+    }
     if routes.iter().any(|r|r=="opacity") {
         return ["dark","light"].into_iter().flat_map(|theme|OPACITY_SHOTS.iter().map(move |(js,_)|(theme,"appearance".to_string(),16,*js))).collect();
     }
@@ -2146,11 +2181,13 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
 }
 
 fn route_of<'a>(page: &'a str, script: &str) -> &'a str {
+    if let Some((name,_))=REPORT_SHOTS.iter().find(|(_,js)|*js==script) {return name;}
     if script == RECOVERY { "recovery" } else if CONVERSATIONS.iter().any(|(_, s)| *s == script) { "conversations" } else if VIEWS.iter().any(|(_, s)| *s == script) { "views" } else if script == ACTIONS { "actions" } else if ANSWERS.iter().any(|(_, s)| *s == script) { "answers" } else if !script.is_empty() { "scroll" } else if Path::new(page).is_absolute() { "project" } else { page }
 }
 
 fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
     shots(install, routes).get(step).map_or(step.to_string(), |(t, p, f, js)| {
+        if let Some((name,_))=REPORT_SHOTS.iter().find(|(_,s)|s==js) {return format!("{t}-{name}-{f}");}
         if let Some((_,value))=OPACITY_SHOTS.iter().find(|(s,_)|s==js) {return format!("{t}-opacity-{value}-{f}");}
         if let Some((n, _))=VIEWS.iter().find(|(_, s)| s == js) {return format!("{t}-views-{n}-{f}");}
         if let Some((n, _))=CONVERSATIONS.iter().find(|(_, s)| s == js) {return format!("{t}-conversations-{n}-{f}");}
@@ -3278,6 +3315,18 @@ mod tests {
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
         }
         fs::remove_dir_all(&install).ok();
+    }
+
+    // Chain: §7 Reports -> native snapshot routes. Risk: reports lack a native capture or change the default matrix.
+    #[test]
+    fn reports_snapshots_are_opt_in_and_cover_both_surfaces_and_themes() {
+        let install=std::env::temp_dir();
+        for route in ["reports","reports-conversations"] {
+            let selected=vec![route.to_string()];let cases=shots(&install,&selected);
+            assert_eq!(cases.len(),2);assert_eq!(shot_name(&install,&selected,0),format!("dark-{route}-16"));
+            assert_eq!(shot_name(&install,&selected,1),format!("light-{route}-16"));
+        }
+        assert!(shots(&install,&[]).iter().all(|(_,p,_,js)|!route_of(p,js).starts_with("reports")));
     }
 
     // Chain: owner tray answer -> canonical CLI. Risk: IPC selects another project or inherits worker fencing.

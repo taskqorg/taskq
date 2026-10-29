@@ -1,0 +1,50 @@
+{
+    "sourceCommit":  "f22d7b24758e9e1431f612c21a39d51a2123ba13",
+    "capture":  "Isolated docs/shots/fixture.sh; invented report receipts; no board decisions. Conversations scrolled to actions.",
+    "profile":  "debug",
+    "fixtureBlob":  "458c3994595c33c6dbbfcd70db70ebfc15d1cf14",
+    "binarySha256":  "f24aed3468f611b9415b00667bf5e9555df5131dbeb3666455c36f172d63657a",
+    "environment":  {
+                        "dpi":  "not measured",
+                        "browserVersion":  "not collected",
+                        "os":  "Microsoft Windows NT 10.0.26300.0",
+                        "renderer":  "WebView2"
+                    },
+    "images":  [
+                   {
+                       "font":  16,
+                       "sha256":  "16f053ae30587e897e13882a1056d4f8c2b2b4537da8fe7b84d50ee6598875f1",
+                       "surface":  "menu",
+                       "file":  "windows-menu-dark.png",
+                       "theme":  "dark"
+                   },
+                   {
+                       "font":  16,
+                       "sha256":  "9fd2c4c89e629cdc959c3a3818ffd7e072b43f6c80f2c8e835013383da4998a2",
+                       "surface":  "menu",
+                       "file":  "windows-menu-light.png",
+                       "theme":  "light"
+                   },
+                   {
+                       "font":  16,
+                       "sha256":  "e9cf3a8013f930fedff5fab4266aabcebfee9ecdf2289fe83703827a09a87f25",
+                       "surface":  "conversations",
+                       "file":  "windows-conversations-dark.png",
+                       "theme":  "dark"
+                   },
+                   {
+                       "font":  16,
+                       "sha256":  "5c3ec119b47c48a97502bdf15287a3fef704d1572fa98ab0e95ad251a4a1c62d",
+                       "surface":  "conversations",
+                       "file":  "windows-conversations-light.png",
+                       "theme":  "light"
+                   }
+               ],
+    "beforeReader":  {
+                         "binarySha256":  "90f8743a09cd07c8395bf5f0a49137d14c8d570542a24dc46c98e9807bd4e601",
+                         "result":  "failed: report extends below fixed status footer",
+                         "sourceCommit":  "f470cbca2fb412923e725fa945a734a888e6d764",
+                         "profile":  "debug",
+                         "renderer":  "Windows WebView2"
+                     }
+}
