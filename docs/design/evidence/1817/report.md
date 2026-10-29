@@ -4,6 +4,27 @@ Task: [#1817](https://github.com/taskqorg/taskq/issues/1817). The [owner's answe
 
 ## Current candidate and verification
 
+The merge queue returned PR #1865 with `merge_conflict`. `git rebase origin/main` reproduced a conflict in `src/board/mod.rs` against `dbdcb74ec606acc95ec9c543b54d380b54e99a7a`. The resolution preserves main's refreshed `credentials.borrow().auth` and this task's file-backed HTTP response. Afterward, the rebase and `git merge-tree --write-tree origin/main HEAD` succeed. `git range-diff` shows only that credential-access adjustment to the prior HTTP patch; no test, assertion, deadline, permission or lifecycle behavior changed in this continuation.
+
+Tested source: `9e2fb1415d4758f2baeef74f6bfce6b55fafcddf`. Only this evidence report changes afterward. Windows, warm cache; Cargo 1.99.0, Python 3.12.10, Node 24.5.0, Playwright 1.64.1. Rust fixtures use the canonical checker's temporary-installation environment; the launching worker stays bound to its attempt.
+
+| Check | Observation |
+|---|---|
+| `python3 scripts/check.py --base dbdcb74ec606acc95ec9c543b54d380b54e99a7a` | **Failed**, 646 passed, 2 failed, 38 ignored; 591.328 s total, 431.58 s Rust execution. Selector/rule gate and web build pass; Rust stops later stages. |
+| Full-run failures | `lifecycle::tests::stop_keeps_original_receipts_and_requires_attributable_native_exit` exceeded its unchanged 10 s fixture-preparation deadline. `runtime::app_control::tests::cancellation_is_owner_bound_bounded_and_never_replays_work` reported `owner: fixture I/O: The pipe has been ended. (os error 109)`. These are failures, not sandbox-blocked passes. |
+| Isolated diagnostic runs of those exact two tests | Both pass without source changes: cancellation 4.45 s; lifecycle 1.30 s. Their full-run causes remain unconfirmed; these diagnostic passes do not turn the full gate green. |
+| Attachment checks in the full run | All six pass: real 20 MiB HTTP, CLI input, PilotQ-shaped handoff, private/Unicode copies, held worker submission, and repeated text with a new file. Existing concurrent-answer and credential-refresh checks pass. |
+| `cargo +stable test --locked --test integration` | Pass: 17 passed, one ignored; 18.29 s test execution. |
+| Isolated offline `cargo +stable run --locked -- selftest` | Pass: 107 traces, formats and eight committed observations; board/tools unknown offline. |
+| All 27 `tests/*.test.cjs` files | Pass after the rebase. |
+| `node tests/reply-files.browser.cjs` | Both entry routes pass image + 20 MiB, paste/drop/pick, mixed reply, copy identities, refusal/fix and telemetry privacy. Native bridge/board remain fakes. Existing four screenshots retained. `npm ci` removed the untracked browser dependency; the documented Playwright version was restored without package/lockfile edits. |
+| Artifact scripts | `sh docs/shots/check.test.sh`, `sh .github/release-tag.test.sh`, `python3 .github/release-check.test.py`: pass. An initial auxiliary wrapper timed out the shots test at 120 s; the separate diagnostic run completed in 26.922 s with unchanged assertions. |
+| Rule/size/whitespace guards | Pass: amended §5 under R13; unchanged R8 guard, 61,433 bytes and 295 lines; `git diff --check origin/main` clean. |
+
+The local full gate remains failed. Publication still needs review and green `merge_group` CI (R12/§7). Live PilotQ delivery remains unverified in #1857; no host installation or restart was performed.
+
+## Previous concurrent-answer rebase
+
 While the first rebased candidate was being tested, main advanced to `b4369e44ca302bbe647ea32b6fc677a1547f813c` (#1866). PR readback and `git merge-tree` reproduced new conflicts in `src/dispatch.rs` and §5. A second rebase preserves main's concurrent-answer no-op and closed-task protections together with attachment forwarding. The immutable tested source is `f08ff83779bb0765b0438b8970bf17bfefa106fd`; only this evidence report changes afterward.
 
 The merged behavior had one attachment-specific defect: identical answer text could trigger the new text-only no-op and discard a new file. Before the fix, `cargo +stable test --locked --bin taskq reply_files::tests::new_files_keep_a_repeated_answer_distinct -- --exact` failed with `note: None`, expected `Some(true)`. After restricting that no-op to replies without files, the same check passes. The new case verifies the worker-readable image and that a retry with the accepted operation ID writes nothing. Main's existing text-only duplicate, race and closed-task assertions remain unchanged and pass.
