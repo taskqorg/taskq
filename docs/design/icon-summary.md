@@ -4,13 +4,13 @@ The [owner-approved design](../reviews/visual-decisions.md) supersedes the forme
 
 ## I1 Composition
 
-One Rust SVG renderer owns the fixed 22 × 22 pt Summary, its counters and chart group. Menu bar and running Dock rasterize it once at target scale; picker and History embed its vector groups. All four surfaces share the selected History period, default 24 hours. Icon remains the compact Q. [Custom is removed](custom-icon.md); saved Custom resolves to Summary, preserving unrelated settings.
+One Rust SVG renderer owns the 22 pt-high Summary (minimum width 22 pt), its counters and chart group. Menu bar and running Dock rasterize it once at target scale; picker and History embed its vector groups. All four surfaces share the selected History period, default 24 hours. Icon remains the compact Q. [Custom is removed](custom-icon.md); saved Custom resolves to Summary, preserving unrelated settings.
 
-Work = doing + review, Ask = ask, third count = ready + blocked. Hide each known zero without shifting other positions; unknown is a dash. Preserve existing compact-Q fallback, pause/hold identity and overflow behavior. Current counts are not event totals.
+Work = doing + review, Ask = ask, third count = ready + blocked. Hide each known zero; unknown is a dash. Preserve existing compact-Q fallback and pause/hold identity. Current counts are not event totals.
 
 ## I2 Type
 
-System sans serif, weight 500, nominal 9 pt, baseline y = 9. Counter ink origins x = 1, 8.1, 15.4. Align measured glyph ink to fixed cells; retain ordinary lining numerals and native font curves. No per-update shrinking or container widening. Preserve the existing 9+ / + overflow fallback and exact tooltip/menu counts.
+System sans serif, weight 500, nominal 9 pt, baseline y = 9. Show 1–99 exactly and 100 or more as `99+`. Align measured glyph ink from preferred origins x = 1, 8.1, 15.4; retain ordinary lining numerals and native font curves. Preserve those origins when the ink fits. Reclaim hidden-zero cells before widening the menu-bar slot; keep at least 1.5 pt between visible counters and 1 pt at either edge. Never shrink menu-bar type or overlap counters or the chart. Dock fits the complete shared composition into its square canvas. Tooltip/menu counts remain exact.
 
 ## I3 Geometry
 
@@ -28,7 +28,7 @@ Exactly six separated columns, oldest left. For i = 0…5: x = 1 + 3.5i, width 2
 
 ## I5 Raster and acceptance
 
-Reference geometry scales to the actual menu-bar slot, then its backing scale. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins. Its CSS reveals the canonical SVG’s hidden Ask marks without changing Closed geometry or peak; failed, unknown, zero-Closed and ongoing marks remain distinct.
+Reference geometry scales to the actual menu-bar height, then its backing scale; slot width follows I2. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins. Its CSS reveals the canonical SVG’s hidden Ask marks without changing Closed geometry or peak; failed, unknown, zero-Closed and ongoing marks remain distinct.
 
 Use the frozen day/hour fixtures linked from the approved review, plus explicitly synthetic zero-peak, failed and unknown cases. Checks retain bin identities, exact counts, heights, colors and marks at every viewport. Inspect at most ten native screens for owner acceptance: font/DPR, separated columns, counter bounds, zero vs unknown, ongoing/failed, pause and overflow. Static references and source CI are not native acceptance.
 

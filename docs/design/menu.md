@@ -7,7 +7,7 @@ Approved layout; unimplemented capabilities remain design targets. Runtime follo
 
 - Start compact. Show Icon / Summary on both macOS and Windows; apply immediately and persist. The shared SVG and palette A follow I1–I6; Windows compact-only runtime is a migration baseline, not the target.
 - Fixed top strip: view, named host, admission state, icon-only pause/resume and Controls. Mixed/unknown state must remain explicit.
-- Summary: fixed six-bin closed-height square under [I1–I5](icon-summary.md); work = doing + review, answers = ask, third count = ready + blocked, six plain closed-height columns below. Hide zero counts without moving the other cells; use the corresponding K-A1–K-A6 counter colors. No active q/play overlay unless Summary would be empty; then show the existing compact Q.
+- Summary: six-bin closed-height chart and counters under [I1–I5](icon-summary.md); work = doing + review, answers = ask, third count = ready + blocked, six plain closed-height columns below. Hide zero counts; I2 owns exact values and slot fitting. Use the corresponding K-A1–K-A6 counter colors. No active q/play overlay unless Summary would be empty; then show the existing compact Q.
 - Pause keeps the same gray data and geometry with the existing compact q/pause centered. Partial pause is not full grayscale.
 - Work is green, questions amber, ready neutral, failures red under palette A. Unknown is explicit with cause; incomplete sums remain marked.
 - Menu font options 14/16/18/20, default 16; typography and bounded-window behavior follow visual-style.md. Icon sizing is independent.
