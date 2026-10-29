@@ -62,14 +62,14 @@ assert.deepEqual(w.recoveryPanel().match(/role="status">[^<]*/g).slice(0,3),['ro
 // #1812 A2 / M1.1: Appearance must expose a bounded, named opacity control and an explicit Off value.
 c.page='appearance';c.S.opacity=90;html=c.routeBody();
 assert(html.includes('id="menu-opacity"'),'Appearance must expose menu opacity');
-assert.match(html,/type="range"[^>]*min="90"[^>]*max="100"[^>]*step="1"/);
+assert.match(html,/type="range"[^>]*min="60"[^>]*max="100"[^>]*step="1"/);
 assert(html.includes('for="menu-opacity"'));assert(html.includes('90%'));
 c.S.opacity=100;html=c.routeBody();assert.match(html,/data-set="opacity"[^>]*data-v="100"[^>]*aria-pressed="true"[^>]*>Off</);
 console.log('PASS Settings: sign-in, access, versions, routes, recovery and bounded opacity with Off');
 
-// M1.2 / #1813 A2: the second mode exposes independent background and AA-safe backing values.
+// M1.2 / #1876 A2: retire backing without losing the independent background control.
 c.S.opacity_mode='background';c.S.background_opacity=0;c.S.backing_strength=98;html=c.routeBody();
 assert(html.includes('Background only'),'Appearance must expose background-only transparency');
 assert.match(html,/id="background-opacity"[^>]*type="range"[^>]*min="0"[^>]*max="100"/);
-assert.match(html,/id="backing-strength"[^>]*type="range"[^>]*min="98"[^>]*max="100"/);
-assert(html.includes('98%'),'the minimum readable backing is visible');
+assert(!html.includes('id="backing-strength"'),'legacy backing must not constrain fills');
+assert(html.includes('Select Whole window'),'the inactive slider explains how to enable it');

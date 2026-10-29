@@ -46,11 +46,11 @@ M1.1 is an approved exception to palette A while the menu opacity is below 100%.
 
 At 90% opacity, ordinary body and enabled semantic text must retain WCAG AA 4.5:1 after composition, including independently adverse background pixels beneath the text and surface. Check native byte quantization and all affected body surfaces. Native composition evidence is separate from webview snapshots; unsupported renderer/platform observations remain unknown (R12).
 
-## Background-only backing
+## Background-only fills
 
-M1.2 uses the existing transparent webview and CSS color alpha, with native window alpha fixed at 100%. Preserve the accepted foreground palette and geometry. The menu surface follows background opacity; content body, chrome, footer and floating content use Surface at the greater of background opacity and readability backing (98–100%). This is a bounded backing area, not a glyph halo or platform material. The floor cannot be disabled.
+M1.2 uses the existing transparent webview and CSS color alpha, with native window alpha fixed at 100%. Preserve the foreground palette and geometry. Every menu, block, card, chrome, footer and popover fill follows background opacity (0–100%), with no readability backing floor. At 0%, only the desktop shows behind foreground content; readability depends on that desktop.
 
-Buttons, inputs and count capsules use opaque Surface so semantic text retains AA on hover/selection; selection keeps its existing outline. Solid semantic action/badge fills retain their paired foreground colors. Range thumbs use the existing Work color, or Secondary while disabled, with a Secondary track; do not rely on platform accent-color support. Disabled elements retain full opacity and their disabled semantics. Chrome boundaries and decorative dividers follow background alpha; input boundaries and focus cues stay opaque. Preserve shared component foreground tokens. At the 98% backing floor on an independently adverse black/white backdrop, ordinary text must reach 4.5:1 and meaningful icons/control cues 3:1.
+Text, icons, buttons, badges and control glyphs retain full opacity, including disabled controls and range tracks/thumbs. Input fills follow background opacity. Keep paired semantic foreground/fill colors, input boundaries and focus cues opaque. Decorative borders, dividers and shadows follow background opacity. Separate windows and the tray icon keep their existing treatment. Whole-window opacity permits 60–100%; the 90% contrast protection above remains checked, but lower values do not promise AA over arbitrary wallpaper.
 
 ## Icon inventory
 
@@ -109,7 +109,7 @@ The review bundle retains [Lucide/Feather notices](exploration/assets/icon-revie
 ## Revision contract
 
 - The frozen `exploration/control-panels.html` reference in the implementation brief owns unaffected geometry, icon shapes and semantic colors. A new prototype must reuse these tokens/assets; a replacement theme or symbol is a product change, never a renderer convenience.
-- Task separators use a separate low-emphasis token: Text at 8% over Surface. Do not weaken control boundaries with the same token. Popovers use an opaque raised surface (#FFFFFF / #323B45), a distinct edge (#8996A2 / #8996A2) and shadow, above the list without reflow. Check both themes; stronger separation must not mean neon semantic colors.
+- Task separators use a separate low-emphasis token: Text at 8% over Surface. Do not weaken control boundaries with the same token. Outside M1.2 background mode, popovers use an opaque raised surface (#FFFFFF / #323B45), a distinct edge (#8996A2 / #8996A2) and shadow, above the list without reflow. Check both themes; stronger separation must not mean neon semantic colors.
 - Keep forge/issue identity as the compact clickable anchor; no new boxed status column, right ellipsis or disclosure arrow. Runtime marks and the remote network mark sit immediately before current-stage timing. Titles wrap from the full block edge.
 - Collapsed host summaries use one compact line with named hosts and separate Claude/Codex counters. CPU/memory mini-meters with units appear on expansion. Missing or stale values remain explicit; never infer host health or progress from task count. Detail discloses definitions and freshness.
 - Text entry, attachment chips, validation, context and send controls share one composer across every applicable surface. A task answer retains source numbers and exact-revision semantics; visual reuse does not grant file-answer transport or native reply support.
