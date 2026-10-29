@@ -348,6 +348,10 @@ pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {
     options(&card).into_iter().find(|o| Some(o.0) == k).map(|o| o.1).unwrap_or_else(|| head.trim().to_string())
 }
 
+/// The kind of log entry `body` of task `n`: `answer` for a bare comment (§ 2).
+pub fn kind(n: u64, body: &str) -> &str {
+    parse(n, body).map_or("answer", |l| l.kind)
+}
 
 /// Whether attempt `a` wrote `ask`, `result` or `requeue` after entry `after`: its child then exits clean (§ 4 step 1).
 pub fn handed_in(n: u64, entries: &[Entry], a: u64, after: u64) -> bool {

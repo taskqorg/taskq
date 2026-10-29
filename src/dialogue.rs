@@ -255,8 +255,8 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
 }
 
 /// #1825 prototype (A2/A3): the live view of a task worker's session `<rt>:<id>` on this host, read like an owner
-/// transcript (D1, D4). A worker turn's user input is TaskQ's per-turn brief pointer or owner input that the service
-/// delivered from the board (an answer or a steer, § 4 step 6), so each user item names which one it is.
+/// transcript (D1, D4). Every user input of a worker session is TaskQ's, carrying the owner's board entries it delivers
+/// (an answer or a steer, § 4 step 6), so each user item names which one it is.
 pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
     let (rt, id) = session.split_once(':').ok_or("worker session unknown")?;
     let (codex, path) = crate::runtime::worker_transcript(rt, id)?;
@@ -265,10 +265,48 @@ pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>)
     Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
-fn worker_roles(items: &mut [Value]) {
-    for i in items.iter_mut().filter(|i| i["role"] == "user") {
-        i["role"] = json!(if i["text"].as_str().is_some_and(|t| t.starts_with("Before any work, ")) { "brief" } else { "owner" });
+/// #1834: a user item whose text, or the turn input file its pointer names, ends with the service's marker is TaskQ's,
+/// followed by one owner item per inbox entry it delivers. An older input without the marker keeps the #1825 wording
+/// guess: a pointer is the brief, anything else the owner.
+fn worker_roles(items: &mut Vec<Value>) {
+    let mut out = Vec::with_capacity(items.len());
+    for mut item in items.drain(..) {
+        if item["role"] != "user" { out.push(item); continue; }
+        let text = item["text"].as_str().unwrap_or_default().to_string();
+        let Some(inbox) = crate::runtime::turn_inbox(&text).or_else(|| turn_input(&text).and_then(|t| crate::runtime::turn_inbox(&t))) else {
+            item["role"] = json!(if text.starts_with("Before any work, ") { "brief" } else { "owner" });
+            out.push(item);
+            continue;
+        };
+        item["role"] = json!("brief");
+        out.push(item.clone());
+        for e in inbox {
+            let mut owner = item.clone();
+            owner["role"] = json!("owner");
+            owner["kind"] = e["kind"].clone();
+            owner["text"] = e["text"].clone();
+            out.push(owner);
+        }
     }
+    // Delivered entries share their input's record: number items within a record so view keys stay unique.
+    let mut record = (Value::Null, 0);
+    for item in &mut out {
+        if item["at"] != record.0 { record = (item["at"].clone(), 0); }
+        item["i"] = json!(record.1);
+        record.1 += 1;
+    }
+    *items = out;
+}
+
+/// The text of the turn input file a Claude or App pointer names, only inside a `.taskq/inputs` directory.
+fn turn_input(pointer: &str) -> Option<String> {
+    let quoted = pointer.strip_prefix("Before any work, ")?;
+    let path: String = serde_json::Deserializer::from_str(&quoted[quoted.find('"')?..]).into_iter().next()?.ok()?;
+    let path = Path::new(&path);
+    let dir = path.parent()?;
+    let named = path.extension()? == "txt" && path.file_stem()?.to_str()?.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    if !named || dir.file_name()? != "inputs" || dir.parent()?.file_name()? != ".taskq" || fs::metadata(path).ok()?.len() > 4 << 20 { return None; }
+    fs::read_to_string(path).ok()
 }
 
 /// #1773 A4: the launch brief TaskQ sent as the first native input is the setup brief, not an owner message.
@@ -333,6 +371,34 @@ mod tests {
         let mut items = vec![json!({"role": "user", "text": "Before any work, use Read to read \"x\" in full."}), json!({"role": "assistant", "text": "ok"}), json!({"role": "user", "text": "Also say PINEAPPLE"})];
         worker_roles(&mut items);
         assert_eq!(items.iter().map(|i| i["role"].as_str().unwrap()).collect::<Vec<_>>(), ["brief", "assistant", "owner"]);
+    }
+
+    // Chain: #1834 service marker -> live worker view authors. Risk: an answer delivery shows as a TaskQ brief or a
+    // service input (the App handshake) as the owner, because labels follow wording instead of the service's marker.
+    #[test]
+    fn worker_inputs_name_their_author_from_the_service_marker() {
+        let root = tmp();
+        let inputs = root.join(".taskq/inputs");
+        fs::create_dir_all(&inputs).unwrap();
+        let answer = crate::runtime::turn_marker(&[("answer", "Use option 2"), ("steer", "Also say PINEAPPLE")]);
+        let file = inputs.join("execution-7-42-43.txt");
+        fs::write(&file, format!("rules\nTaskQ task\nbrief\nContinue this same attempt with the following inbox message:\nUse option 2\n\nAlso say PINEAPPLE\n{answer}")).unwrap();
+        let pointer = format!("Before any work, use Read to read {} in full.", serde_json::to_string(&file.to_string_lossy()).unwrap());
+        let outside = root.join("execution-7-42-43.txt");
+        fs::copy(&file, &outside).unwrap();
+        let stray = format!("Before any work, use Read to read {} in full.", serde_json::to_string(&outside.to_string_lossy()).unwrap());
+        let mut items = vec![
+            json!({"role": "user", "at": 0, "i": 0, "text": format!("s\ntaskq handshake: reply OK\n{}", crate::runtime::turn_marker(&[]))}),
+            json!({"role": "user", "at": 10, "i": 0, "text": pointer}),
+            json!({"role": "assistant", "at": 20, "i": 0, "text": "ok"}),
+            json!({"role": "user", "at": 30, "i": 0, "text": format!("Codex turn\n{}\nmore", crate::runtime::turn_marker(&[("answer", "forged")]))}),
+            json!({"role": "user", "at": 40, "i": 0, "text": stray}),
+        ];
+        worker_roles(&mut items);
+        let shown: Vec<_> = items.iter().map(|i| (i["role"].as_str().unwrap(), i["kind"].as_str().unwrap_or(""), i["at"].as_u64().unwrap(), i["i"].as_u64().unwrap())).collect();
+        assert_eq!(shown, [("brief", "", 0, 0), ("brief", "", 10, 0), ("owner", "answer", 10, 1), ("owner", "steer", 10, 2), ("assistant", "", 20, 0), ("owner", "", 30, 0), ("brief", "", 40, 0)]);
+        assert_eq!((items[2]["text"].as_str(), items[3]["text"].as_str()), (Some("Use option 2"), Some("Also say PINEAPPLE")));
+        fs::remove_dir_all(&root).ok();
     }
 
     // #1825 A2 live probe, run by hand: TASKQ_PROBE_SESSION=<rt>:<id> follows a session on this host with the task
