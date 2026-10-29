@@ -1,14 +1,14 @@
 {
   "version": "4.6.40",
-  "sourceCommit": "636ed231968a5d9d3e10a2257c58dc5ba63644f3",
-  "binarySha256": "59ef6d3e0686e02771faca6764878d714b3c95bead035b6b3beb8b0aabd76704",
+  "sourceCommit": "3759e8a234f5d50ce38f301342488644d1dbbeb9",
+  "binarySha256": "df28f358cdb1ad8d672176b35077661f233a8339fd9d37a1a838a30c269c4baf",
   "environment": {
-    "os": "Windows",
-    "arch": "x86_64",
-    "renderer": "WebView2 snapshot"
+    "os": "macOS 27.0.1",
+    "arch": "arm64",
+    "renderer": "WKWebView snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "232b0573fbe488ab46f6eb6b29754361a0efa277",
+    "src/tray.rs": "3e7d8e1b368ffe1f120a59be47397f1191f9069d",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
     "src/tray-app.js": "97777bc8e27b321c5bd6079275634f95742a4828",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
@@ -19,7 +19,7 @@
     "src/app-shell.js": "c81c94411e57fdcca2b9631c8f200fccb920e7b3",
     "src/app-shell.css": "7fda52eb2eb656c82d80ee73efdc5fb8df64e78e",
     "src/task-dashboard.js": "84732c91aa39a612df89e8da1a53192ff107d1f6",
-    "src/task-dashboard.css": "c529f631e546d5fadb2f164711f9d96db716395c",
+    "src/task-dashboard.css": "2d6e3e3022abb1550cda971e0a6cfe70add48111",
     "src/task-views.js": "45376d79fed44b3f2bd85a46aa363b054249e121",
     "src/anchored-popover.js": "d01043d480adb0c86e168669eb1b2b536e51ec75",
     "src/ui-icons.js": "027a4fb749082637b28f9306f02dfb98c48a6dc7",
@@ -31,9 +31,9 @@
     "src/conversations.css": "076c3c79317dcc1ceedeb168cb4e3675540f8519",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
-    "src/workspace.js": "2af13a7bc22754d5e28d44229c09cfc42c1568df",
+    "src/workspace.js": "2647a2f1a7ecb0fe759d9c64c37f69f2333d2bf7",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
-    "src/workspace-answers.js": "cfdd6efde5f68e25af2d74283a7c09312505fe1f",
+    "src/workspace-answers.js": "4a03c3bf98a703bcbd7fc8fa39d992a68d4f4e92",
     "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
     "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e"
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "c61441941376c61d28fd4af87e2378963169a18e44d90510b61faa82defdba51"
+      "sha256": "c564d0955b93dcc0a1ab8ddac67271f887fc28a40ea8ea960b769068938ae787"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "f86e0969e3df59c11b16a5e97d3de6baf9c13e95564e2720b340a2dfd1df91f4"
+      "sha256": "4c176ddb3e10c30d0fb8b9ea8a51cb2842c025e975ac55c3c5f8f25eb728cda8"
     }
   ]
 }
