@@ -528,7 +528,7 @@ impl Board for GitHub {
 
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> {
         let mut rows = std::collections::BTreeMap::new();
-        for label in ["research", "report"] {
+        for label in ["research", "docs"] {
             for v in self.api.all(&format!("/issues?state=closed&labels=taskq,{label}&per_page=100"))? {
                 if v.get("pull_request").is_none() { let i=parse_issue(&v); rows.insert(i.number, (i, iso(&s(&v,"closed_at")).unwrap_or(0))); }
             }

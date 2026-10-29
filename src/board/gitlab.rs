@@ -229,7 +229,7 @@ impl Board for GitLab {
 
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> {
         let mut rows=std::collections::BTreeMap::new();
-        for label in ["research", "report"] {
+        for label in ["research", "docs"] {
             for v in self.api.all(&format!("/issues?state=closed&labels=taskq,{label}&per_page=100"))? {
                 let i=self.parse_issue(&v); rows.insert(i.number,(i,iso(&s(&v,"closed_at")).unwrap_or(0)));
             }

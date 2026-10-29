@@ -885,7 +885,8 @@ fn queued_reports(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let action=m["action"].as_str().ok_or("report action missing")?;
     let mut command=owner_command(root)?;command.arg("reports");
     if action=="list" {
-        command.args(["--page",&m["page"].as_u64().filter(|p|*p>0).unwrap_or(1).to_string()]);
+        if let Some(before)=m["before"].as_str() {command.args(["--before",before]);}
+        else {command.args(["--page",&m["page"].as_u64().filter(|p|*p>0).unwrap_or(1).to_string()]);}
     } else {
         if !["open","read","later","drop","make"].contains(&action) {return Err("unsupported report action".into());}
         let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;

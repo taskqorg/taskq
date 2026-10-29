@@ -9,6 +9,10 @@ r.toggle(projects);assert.equal(sent[0].a,'reports');assert.equal(sent[0].action
 const row={n:12,title:'Retry research',sha:'a'.repeat(40),closed:40,read:false};
 r.receive({id:sent[0].id,root:'fixture',reports:[row],more:false});
 assert.equal(r.rows()[0].read,false);
+r.refresh();let refresh=sent.at(-1);r.open('fixture',12);assert.equal(r.current(),null,'pending refresh must not select an unloaded card');
+r.receive({id:refresh.id,root:'fixture',reports:[row],more:true,next:'40:12'});
+r.click({dataset:{report:'more',root:'fixture'}},projects);let more=sent.at(-1);assert.equal(more.before,'40:12','More carries the stable close-time boundary');
+r.receive({id:more.id,root:'fixture',reports:[],more:false,next:null});
 r.open('fixture',12);let op=sent.at(-1);assert.equal(op.action,'open');
 r.receive({id:'wrong',root:'fixture',report:{...row,read:true,body:'wrong',tasks:[]}});assert.equal(r.current().body,undefined);
 r.receive({id:op.id,root:'fixture',report:{...row,read:true,body:'# Question\nWhat works?',tasks:[{title:'Document limits'}]}});

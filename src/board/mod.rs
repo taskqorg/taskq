@@ -832,7 +832,7 @@ impl Fake {
 impl Board for Fake {
     fn research_tasks(&self)->Result<Vec<(Issue,i64)>> {
         let st=self.state.borrow();
-        Ok(st.issues.iter().filter(|i|!i.open&&i.labels.iter().any(|l|l=="research"||l=="report"))
+        Ok(st.issues.iter().filter(|i|!i.open&&i.labels.iter().any(|l|l=="research"||l=="docs"))
             .map(|i|(i.clone(),st.report_closed.get(&i.number).copied().unwrap_or(i.updated))).collect())
     }
     fn source(&self,path:&str,sha:&str)->Result<String> {

@@ -16,15 +16,15 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
   refresh(){notice='';for(const p of projects)request(p.root,'list',{page:1});},
   rows(){return [...pages].flatMap(([root,p])=>p.rows.map(r=>({...r,root}))).sort((a,b)=>(b.closed||0)-(a.closed||0)||b.n-a.n);},
   current(){return selected;},
-  open(root,n){const r=api.rows().find(r=>r.root===root&&r.n===n);if(!r)return;selected={...r};notice='';request(root,'open',{n,sha:r.sha});},
+  open(root,n){if([...pending.values()].some(p=>p.root===root))return;const r=api.rows().find(r=>r.root===root&&r.n===n);if(!r)return;selected={...r};notice='';request(root,'open',{n,sha:r.sha});},
   act(action){if(!selected)return;notice='';request(selected.root,action,{n:selected.n,sha:selected.sha});},
   receive(r){
    const op=pending.get(r.id);if(!op||op.root!==r.root)return false;pending.delete(r.id);
-   if(r.reason){notice=r.reason+(Array.isArray(r.receipts)&&r.receipts.length?' · Created held drafts: '+r.receipts.map(n=>'#'+n).join(', '):'');draw();return true;}
+   if(r.reason){if(selected&&selected.root===op.root&&selected.n===op.n&&r.report?.sha===op.sha)selected={...selected,pending_decision:r.report.pending_decision};notice=r.reason+(Array.isArray(r.receipts)&&r.receipts.length?' · Created held drafts: '+r.receipts.map(n=>'#'+n).join(', '):'');draw();return true;}
    if(op.action==='list'){
     if(!Array.isArray(r.reports)){notice='Report list unknown; refresh.';draw();return true;}
     const prior=op.page===1?[]:pages.get(r.root)?.rows||[];
-    pages.set(r.root,{rows:[...new Map([...prior,...r.reports].map(r=>[r.n,r])).values()],page:op.page,more:r.more===true});
+    pages.set(r.root,{rows:[...new Map([...prior,...r.reports].map(r=>[r.n,r])).values()],page:op.page,more:r.more===true,next:r.next});
    }else if(r.report?.n===op.n&&r.report.sha===op.sha){
     const p=pages.get(r.root),report=r.report;
     if(p)p.rows=p.rows.flatMap(row=>row.n!==op.n?[row]:report.visible===false?[]:[{...row,...report,closed:row.closed}]);
@@ -38,7 +38,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    if(action==='toggle')api.toggle(ps);
    else if(action==='refresh')api.refresh();
    else if(action==='open')api.open(b.dataset.root,Number(b.dataset.n));
-   else if(action==='more'){const p=pages.get(b.dataset.root);if(p?.more)request(b.dataset.root,'list',{page:p.page+1});}
+   else if(action==='more'){const p=pages.get(b.dataset.root);if(p?.more)request(b.dataset.root,'list',{page:p.page+1,before:p.next});}
    else if(action==='back'){selected=null;draw();}
    else if(['make','later','drop'].includes(action))api.act(action);
    return true;
@@ -53,8 +53,9 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
      selected?h('article',{class:'report-card','aria-label':'Research report'},h('h2',null,selected.title),h('p',{class:'meta'},project(selected.root)+' · ',h('a',{href:selected.url,'data-url':selected.url},'#'+selected.n),' · '+(selected.read?'Read':'Unread')),h('div',{class:'report-body'},selected.body?body(selected.body):h('p',null,'Report content unknown; opening requires a successful board read.')),
       selected.tasks&&h('div',null,h('h3',null,'Proposed tasks'),selected.tasks.length?selected.tasks.map((t,i)=>h('details',{key:i},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)),h('p',{class:'meta'},[t.type,t.runtime,t.priority&&'Priority '+t.priority].filter(Boolean).join(' · ')))):h('p',null,'No follow-up tasks proposed.')),
       h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),
-      h('div',{class:'options'},['make','later','drop'].map(action=>h('button',{'data-report':action,disabled:!!busy||!selected.body||action==='make'&&!selected.tasks?.length},{make:'Make tasks',later:'Later',drop:'Drop'}[action])))):
-     [rows.length?rows.map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},project(r.root)+' · #'+r.n+' · '+(r.read?'Read':'Unread')),h('span',null,r.title))):pending.size===0&&pages.size===projects.length&&h('p',null,'No reports waiting for a decision.'),projects.map(p=>{const page=pages.get(p.root);return page?.more&&h('button',{'data-report':'more','data-root':p.root,disabled:[...pending.values()].some(o=>o.root===p.root)},'More reports · '+p.name);})]));
+      selected.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry to reconcile the held drafts.'),
+      h('div',{class:'options'},['make','later','drop'].map(action=>h('button',{'data-report':action,disabled:!!busy||!selected.body||action==='make'&&!selected.tasks?.length||action==='drop'&&selected.pending_decision==='make'},{make:selected.pending_decision==='make'?'Retry Make tasks':'Make tasks',later:'Later',drop:'Drop'}[action])))):
+     [rows.length?rows.map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n),disabled:[...pending.values()].some(p=>p.root===r.root)},h('span',{class:'meta'},project(r.root)+' · #'+r.n+' · '+(r.read?'Read':'Unread')),h('span',null,r.title))):pending.size===0&&pages.size===projects.length&&h('p',null,'No reports waiting for a decision.'),projects.map(p=>{const page=pages.get(p.root);return page?.more&&h('button',{'data-report':'more','data-root':p.root,disabled:[...pending.values()].some(o=>o.root===p.root)},'More reports · '+p.name);})]));
   }
  };return api;
 },

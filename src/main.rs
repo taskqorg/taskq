@@ -85,7 +85,7 @@ const USAGE: &str = "taskq agents
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N
- taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N] --json
+ taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -2948,13 +2948,14 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     }
     match cmd {
         "reports" => {
-            if a.flags.iter().any(|(k,v)|!["action","sha","page","json"].contains(&k.as_str())||v.len()!=1) {return Err("reports: use --action, --sha, --page and --json once each".into());}
+            if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json"].contains(&k.as_str())||v.len()!=1) {return Err("reports: use --action, --sha, --page, --before and --json once each".into());}
             let value=if a.pos.len()==1 {
                 if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
                 let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
-                reports::list(b,page)?
+                let before=a.one("before").map(|s|s.split_once(':').and_then(|(t,n)|Some((t.parse::<i64>().ok()?,n.parse::<u64>().ok()?))).ok_or("report cursor must be TIME:N")).transpose()?;
+                reports::list_before(b,page,before)?
             } else {
-                if a.one("page").is_some() {return Err("--page lists reports without a task number".into());}
+                if a.one("page").is_some()||a.one("before").is_some() {return Err("--page/--before list reports without a task number".into());}
                 reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
             };
             println!("{value}"); Ok(())
@@ -3067,10 +3068,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &links)?;
             image_files(&images)?;
             let report = reports::prepare(b, root, n, sha)?;
-            let body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
-            let receipt=act(b, root, n, "result", &[sha], &body, &op);
-            if report&&receipt.ok() {reports::discover(b,n)?;}
-            emit(&[receipt], json)
+            let mut body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
+            if report {body+=&format!("\nReport: docs/research/{n}.md");if body.lines().filter(|l|!l.trim().is_empty()).count()>12 {return Err("report result exceeds 12 lines; shorten the verdict".into());}}
+            emit(&[act(b, root, n, "result", &[sha], &body, &op)], json)
         }
         "requeue" => {
             let n = a.num(1)?;
