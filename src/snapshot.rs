@@ -471,13 +471,26 @@ pub fn controls(state: &str) -> Vec<&'static str> {
 pub const ANSWER_LINES: usize = 4;
 pub const ANSWER_CHARS: usize = 240;
 
+/// § 2 visual evidence: the service's copy of an ask image `url`, which the app (no board token) shows inline.
+pub fn image_copy(root: &std::path::Path, url: &str) -> std::path::PathBuf {
+    let key: String = ring::digest::digest(&ring::digest::SHA256, url.as_bytes()).as_ref()[..8].iter().map(|b| format!("{b:02x}")).collect();
+    crate::dot(root).join("images").join(key)
+}
+
+/// The image URLs of a card's Evidence line.
+pub fn card_images(card: &str) -> Vec<String> {
+    question(card)["evidence"].as_array().into_iter().flatten().filter(|e| e["image"] == true).filter_map(|e| e["url"].as_str().map(String::from)).collect()
+}
+
 /// Canonical parsed fields of an open card (§ 2, docs/design/answer-card.md), the one parse every card UI reads.
 /// `parsed` false: a reader shows `text` with the board link and no write controls.
 pub fn question(card: &str) -> Value {
     let field = |p: &str| card.lines().find_map(|l| l.strip_prefix(p)).map(str::trim);
     let evidence: Vec<Value> = field("Evidence: ").unwrap_or("").split("), ").filter_map(|l| {
+        // `![alt](url)`: an image the card UIs show inline (§ 2 visual evidence)
+        let (image, l) = l.strip_prefix('!').map_or((false, l), |l| (true, l));
         let (label, url) = l.strip_prefix('[')?.split_once("](")?;
-        Some(json!({"label": label, "url": url.trim_end_matches(')')}))
+        Some(json!({"label": label, "url": url.trim_end_matches(')'), "image": image}))
     }).collect();
     let o = options(card);
     // an option that starts with `close` closes the task after the answer (dispatch::answer_picks): consequential

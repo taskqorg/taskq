@@ -1,6 +1,6 @@
 //! GitLab issues (taskq.md § 1, § 2, § 7): REST v4 on gitlab.com or a self-managed host, `glab` login.
 
-use super::{Api, Board, Comment, Issue, Kind, Publish, Result, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
+use super::{Api, Board, image_name, Comment, Issue, Kind, Publish, Result, hex40, into, iso, names, outcome, s, stamp, verify_assignment};
 use serde_json::{Value, json};
 use std::cell::RefCell;
 
@@ -295,5 +295,75 @@ impl Board for GitLab {
 
     fn foreign_url(&self, repo: &str, n: u64) -> String {
         format!("{}/{}/-/issues/{n}", self.api.root.trim_end_matches("/api/v4"), self.api.sibling("/projects/", repo))
+    }
+
+    fn upload_image(&self, _n: u64, path: &std::path::Path) -> Result<String> {
+        // the multipart part is named after the file: copy it under a plain ASCII name first
+        // and a unique one: GitLab 17.2 replies without the upload id, which the newest uploads list finds by name
+        let id = crate::runtime::uuid();
+        let dir = std::env::temp_dir().join(format!("taskq-image-{id}"));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("image: {e}"))?;
+        let name = format!("{}-{}", &id[..8], image_name(path));
+        let file = dir.join(&name);
+        let sent = std::fs::copy(path, &file).map_err(|e| format!("image {}: {e}", path.display()))
+            .and_then(|_| self.api.raw("/uploads", Some(&file)));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut reply: Value = serde_json::from_slice(&sent?).map_err(|e| format!("bad JSON from board: {e}"))?;
+        if reply["id"].is_null() {
+            let list = self.api.call("GET", "/uploads?per_page=20", None)?.json()?;
+            reply["id"] = list.as_array().into_iter().flatten().find(|u| u["filename"] == name.as_str()).map(|u| u["id"].clone()).unwrap_or_default();
+        }
+        upload_url(&self.api.root, self.project()?, &reply)
+    }
+
+    fn image(&self, url: &str) -> Result<Vec<u8>> {
+        let id = upload_id(&self.api.root, self.project()?, url).ok_or_else(|| format!("image unknown: {url} is not a taskq upload of this project"))?;
+        self.api.raw(&format!("/uploads/{id}"), None)
+    }
+}
+
+impl GitLab {
+    /// The numeric project id upload URLs carry.
+    fn project(&self) -> Result<u64> {
+        self.api.call("GET", "", None)?.json()?["id"].as_u64().ok_or_else(|| "project id unknown".into())
+    }
+}
+
+/// § 2 visual evidence (#1782): the absolute URL of a GitLab upload. The API's relative `url` and the `full_path` of
+/// GitLab 17.2 render as broken repository paths in issue notes, so taskq writes
+/// `https://<host>/-/project/<id>/uploads/<secret>/<file>` with `#upload=<upload id>`, the id the load check reads back.
+pub(super) fn upload_url(root: &str, project: u64, reply: &Value) -> Result<String> {
+    let rel = reply["url"].as_str().and_then(|u| u.strip_prefix("/uploads/")).filter(|r| r.split('/').count() == 2 && !r.contains(['(', ')', ' ']))
+        .ok_or("upload reply has no /uploads/<secret>/<file> url")?;
+    let id = reply["id"].as_u64().ok_or("upload id unknown: not in the reply nor the newest uploads; GitLab 17.2 or newer needed")?;
+    Ok(format!("{}/-/project/{project}/uploads/{rel}#upload={id}", root.trim_end_matches("/api/v4")))
+}
+
+/// The upload id of an image URL that [`upload_url`] wrote for this project; none for any other URL.
+pub(super) fn upload_id(root: &str, project: u64, url: &str) -> Option<u64> {
+    let (path, id) = url.split_once("#upload=")?;
+    path.strip_prefix(&format!("{}/-/project/{project}/uploads/", root.trim_end_matches("/api/v4")))?;
+    id.parse().ok()
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    // Chain: § 2 visual evidence on GitLab (#1782). Defect: csgo#378 embedded the upload API's relative url (and
+    // GitLab 17.2 full_path), which issue notes rewrite into broken repository paths. Risk: a relative or foreign URL is
+    // written or load-checked as if it were this project's upload.
+    #[test]
+    fn gitlab_uploads_embed_absolute_urls_and_only_own_uploads_load() {
+        let root = "https://gitlab.example/api/v4";
+        let reply = json!({"id": 214, "url": "/uploads/cef859da/front.png", "full_path": "/alex/csgo/uploads/cef859da/front.png", "markdown": "![front](/uploads/cef859da/front.png)"});
+        let url = upload_url(root, 39, &reply).unwrap();
+        assert_eq!(url, "https://gitlab.example/-/project/39/uploads/cef859da/front.png#upload=214");
+        assert_eq!(upload_id(root, 39, &url), Some(214));
+        assert_eq!(upload_id(root, 40, &url), None, "another project's upload");
+        assert_eq!(upload_id(root, 39, "/uploads/cef859da/front.png"), None, "relative link");
+        assert_eq!(upload_id(root, 39, "https://gitlab.example/alex/csgo/uploads/cef859da/front.png"), None, "full_path link");
+        assert!(upload_url(root, 39, &json!({"url": "/uploads/x/a.png"})).is_err(), "no id: no load check possible");
+        assert!(upload_url(root, 39, &json!({"id": 1, "full_path": "/alex/csgo/uploads/x/a.png"})).is_err());
     }
 }

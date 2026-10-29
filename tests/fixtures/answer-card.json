@@ -23,7 +23,8 @@
             "evidence": [
               {
                 "label": "#12",
-                "url": "https://github.com/o/r/pull/12"
+                "url": "https://github.com/o/r/pull/12",
+                "image": false
               }
             ],
             "choices": [
@@ -118,7 +119,8 @@
             "evidence": [
               {
                 "label": "#12",
-                "url": "https://github.com/o/r/pull/12"
+                "url": "https://github.com/o/r/pull/12",
+                "image": false
               }
             ],
             "choices": [
@@ -193,7 +195,8 @@
             "evidence": [
               {
                 "label": "shot",
-                "url": "https://github.com/o/r/pull/12"
+                "url": "https://github.com/o/r/pull/12",
+                "image": false
               }
             ],
             "choices": [
@@ -1139,7 +1142,8 @@
             "evidence": [
               {
                 "label": "bad",
-                "url": "javascript:alert(1"
+                "url": "javascript:alert(1",
+                "image": false
               }
             ],
             "choices": [
@@ -1222,7 +1226,8 @@
             "evidence": [
               {
                 "label": "#12",
-                "url": "https://github.com/o/r/pull/12"
+                "url": "https://github.com/o/r/pull/12",
+                "image": false
               }
             ],
             "choices": [

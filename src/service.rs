@@ -695,6 +695,7 @@ impl<'a> Service<'a> {
         let (views, hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
         let now = self.board.now()?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
+        self.copy_images();
         self.tasks_read = Some(std::time::Instant::now());
         self.beat_reduced(false)
     }
@@ -1275,6 +1276,7 @@ impl<'a> Service<'a> {
         self.limited.retain(|_, (at, _)| now < *at);
         self.observe_ownership(&views)?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
+        self.copy_images();
         self.tasks_read = Some(std::time::Instant::now());
         self.log_stuck(now);
         // Local eligibility only: another host's heartbeat cannot qualify this runtime or hide its refusal.
@@ -1847,6 +1849,26 @@ impl<'a> Service<'a> {
         Ok(())
     }
 
+    /// § 2 visual evidence: the app has no board token, so the service copies each open ask's images once into
+    /// `.taskq/images`; the tray shows them inline. A failed read leaves an empty file: the app keeps the link, and the
+    /// next service start retries. Copies of closed asks are removed.
+    fn copy_images(&self) {
+        let Some(s) = &self.snapshot else { return };
+        let urls: Vec<String> = s.tasks.iter().filter_map(|r| r.task.card.as_deref()).flat_map(crate::snapshot::card_images).collect();
+        let keep: Vec<PathBuf> = urls.iter().map(|u| crate::snapshot::image_copy(&self.cfg.root, u)).collect();
+        for (url, path) in urls.iter().zip(&keep) {
+            if path.exists() { continue; }
+            let bytes = match self.board.image(url) {
+                Ok(b) if crate::board::image_kind(&b).is_some() => b,
+                Ok(_) => { eprintln!("ask image {url}: not an image"); vec![] }
+                Err(e) => { eprintln!("ask image {e}"); vec![] }
+            };
+            if let Err(e) = std::fs::create_dir_all(path.parent().unwrap()).and_then(|_| std::fs::write(path, bytes)) { eprintln!("ask image copy {}: {e}", path.display()); }
+        }
+        for old in std::fs::read_dir(crate::dot(&self.cfg.root).join("images")).into_iter().flatten().flatten() {
+            if !keep.contains(&old.path()) { let _ = std::fs::remove_file(old.path()); }
+        }
+    }
     /// R6 stuck: one `#N event stuck <state> <age>` line per task, again only after it moves; observe only.
     fn log_stuck(&mut self, now: i64) {
         let Some(snapshot) = &self.snapshot else { return };
@@ -2169,6 +2191,35 @@ mod tests {
         fn id(&self) -> u32 {
             0
         }
+    }
+
+    // Chain: § 2 visual evidence -> service copy -> tray inline (#1782). Risk: the app, which has no board token, never
+    // gets the image of an open ask, or keeps copies of answered asks.
+    #[test]
+    fn open_ask_images_are_copied_for_the_app_and_dropped_after() {
+        let root = std::env::temp_dir().join(format!("taskq-1782-images-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".taskq")).unwrap();
+        let b = Fake::default(); let mut c = cfg("mac"); c.root = root.clone();
+        let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:session mac").unwrap();
+        let png = b"\x89PNG\r\n\x1a\nimage".to_vec();
+        let url = "https://board.example/1/0-front.png".to_string();
+        b.state.borrow_mut().images.push((url.clone(), png.clone()));
+        b.comment(n, &format!("taskq: ask attempt {a}\nDone: d\nProblem: p\nEvidence: ![front]({url}), ![gone](https://board.example/1/9-x.png)\nTo answer: `taskq answer {n} --text <done>`.")).unwrap();
+        let mut s = Service::new(&b, &c, "fixture", Box::new(|_| panic!("no launch")));
+        s.pass().unwrap();
+        assert_eq!(std::fs::read(crate::snapshot::image_copy(&root, &url)).unwrap(), png);
+        assert_eq!(std::fs::read(crate::snapshot::image_copy(&root, "https://board.example/1/9-x.png")).unwrap(), b"", "a failed read leaves the link");
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            let mut task = json!({"question": crate::snapshot::question(&format!("Done: d\nProblem: p\nEvidence: ![front]({url})"))});
+            crate::tray::inline_images(&root, &mut task);
+            assert_eq!(task["question"]["evidence"][0]["src"], "data:image/png;base64,iVBORw0KGgppbWFnZQ==");
+        }
+        b.comment(n, "taskq: answer\nok").unwrap();
+        s.pass().unwrap();
+        assert!(!crate::snapshot::image_copy(&root, &url).exists(), "answered ask: copy removed");
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     // Chain: #1386 boot release. Risk: a dead pre-boot execution holds capacity forever, or a live one is released.

@@ -445,6 +445,17 @@ fn resource_group(cap: &Value, saved: &Value, saved_revision:&Value, project_lim
     json!({"schema": "taskq.resources/1", "observed_at": observed_at, "targets": targets})
 }
 
+/// § 2 visual evidence: each ask image the service copied becomes a `src` data URL; without a copy the card keeps the link.
+pub(crate) fn inline_images(root: &Path, task: &mut Value) {
+    for e in task["question"]["evidence"].as_array_mut().into_iter().flatten().filter(|e| e["image"] == true) {
+        let Some(url) = e["url"].as_str() else { continue };
+        let Ok(bytes) = fs::read(crate::snapshot::image_copy(root, url)) else { continue };
+        // ponytail: the page rebuilds on each refresh, so copies over 2 MB stay links; serve files if owners need them inline
+        if bytes.len() > 2 << 20 { continue }
+        if let Some(kind) = crate::board::image_kind(&bytes) { e["src"] = json!(format!("data:image/{kind};base64,{}", base64(&bytes))); }
+    }
+}
+
 /// One project for the page: its `status.json`, saved focus, labels and `events` lines `[time, kind, attempt, task]`.
 fn project(install: &Path, root: &str) -> Value {
     let r = Path::new(root);
@@ -480,7 +491,7 @@ fn project(install: &Path, root: &str) -> Value {
     let mut tasks = s["tasks"].as_array().cloned().unwrap_or_default();
     let (hosts, tasks_live) = liveness(&s, age, ttl, &mut tasks);
     let page = crate::load(r).ok().and_then(|(c, _)| crate::enrollment::progress_page(install, &c.repo));
-    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task); }
+    for task in &mut tasks { task_session(r, cap_host.as_str().unwrap_or(""), page.as_deref(), task); inline_images(r, task); }
     let installation = fs::read_to_string(install.join("installation-id")).ok().filter(|i| i.len() == 64 && i.bytes().all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c)));
     let id: String = crate::project_name(r).chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).take(64).collect();
     let observed_at=s["at"].as_i64().filter(|at|crate::snapshot::live(now()-*at,ttl)).and(age.map(|a|now()-a as i64));
