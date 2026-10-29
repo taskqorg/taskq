@@ -269,6 +269,9 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
     if t.state == State::Closed || op.id.is_some() && entries(b, n).is_ok_and(|l| l.iter().any(|e| core::op_id(n, &e.body) == op.id.as_deref())) {
         return act(b, &cfg.root, n, "close", &[], verdict, op);
     }
+    if let Err(r) = successor_moving(b, &cfg.root, n, verdict, op, agent()) {
+        return Receipt { state: Some(t.state.name()), ..r };
+    }
     match t.state {
         State::Later | State::Failed => act(b, &cfg.root, n, "close", &[], verdict, op),
         State::Review if needs_approval(cfg, &t) && t.gate != Some(Gate::Approved) => {
@@ -372,6 +375,35 @@ fn blocked_card(n: u64, reason: &str, merged: Option<&str>) -> String {
     }
     card.push(format!("To answer: `taskq answer {n}.K` or comment `K`; `close` and `later` need the CLI form."));
     card.join("\n")
+}
+
+/// § 7: a close whose verdict names a successor (`superseded by #M`) leaves it moving. A held successor is started
+/// first, by the owner or PM only: an agent asks instead. An unreadable successor, or one closed without completing,
+/// refuses the close.
+fn successor_moving(b: &dyn Board, root: &Path, n: u64, verdict: &str, op: &Op, agent: bool) -> Result<(), Receipt> {
+    let Some(m) = crate::display::successor(verdict) else { return Ok(()) };
+    let refuse = |why: String, next: String| Err(Receipt { next, ..Receipt::rejected(n, op, why) });
+    let (issue, t, _) = match current(b, m) {
+        Ok(x) => x,
+        Err(e) => return refuse(format!("successor #{m} unreadable: {e}"), "Ask the owner, or name no successor in the verdict.".into()),
+    };
+    if !issue.open {
+        // § 1: GitLab records no reason, so a closed GitLab issue is done
+        return if issue.reason.as_deref().is_none_or(|r| r == "completed") { Ok(()) } else {
+            refuse(format!("successor #{m} closed without completing"), "Ask the owner which task carries the work.".into())
+        };
+    }
+    if !issue.trusted {
+        return refuse(format!("successor #{m} is not a trusted task"), "File the successor with `taskq add`, then close.".into());
+    }
+    if t.state != State::Held && !service::is_held(&issue) {
+        return Ok(());
+    }
+    if agent {
+        return refuse(format!("successor #{m} is held; an agent cannot start it"), format!("Ask the owner to start #{m}, then close."));
+    }
+    let r = crate::start_one(b, root, m, &Op { id: op.id.as_ref().map(|i| format!("{i}.start-{m}")), revision: None });
+    if r.ok() { Ok(()) } else { refuse(format!("successor #{m} not started: {}", r.reason), format!("Run `taskq start {m}`, then close again.")) }
 }
 
 /// § 7: a gated task or a `review-pr` project publishes only the owner's approved result.
@@ -606,6 +638,36 @@ g", &["taskq".into()]).unwrap();
         let other = act_child(&b, &root, n, "requeue", &[], "blocked", &op("rq2"), env);
         assert_eq!((other.outcome, count()), ("rejected", before));
         assert!(other.text().contains("is not the live attempt none"), "{}", other.text());
+    }
+
+    // Chain: § 7 superseded close (pilotq#90). Risk: #90 closed for #104 while #104 stayed held with nobody to start it.
+    #[test]
+    fn superseded_close_starts_a_held_successor_or_refuses() {
+        let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-successor-{}", std::process::id())));
+        let held = || {
+            let m = b.create("Successor", "## Goal\ng", &["q-held".into()]).unwrap();
+            b.comment(m, &entry("hold", &[], None, "")).unwrap();
+            m
+        };
+        let (old, m) = (b.create("Old", "## Goal\ng", &["taskq".into()]).unwrap(), held());
+        b.comment(old, &entry("later", &[], None, "parked")).unwrap();
+        let verdict = format!("Changed: none; #{old} closes as superseded by #{m}\nChecks: A1 unknown");
+        // an agent never starts work: it asks instead, and nothing is written to either task
+        let before = (b.comments(old).unwrap().len(), b.comments(m).unwrap().len());
+        let r = successor_moving(&b, &root, old, &verdict, &Op::default(), true).unwrap_err();
+        assert!(r.reason.contains("is held") && r.next.contains(&format!("start #{m}")), "{}", r.text());
+        assert_eq!((b.comments(old).unwrap().len(), b.comments(m).unwrap().len()), before);
+        // the owner's or PM's close starts it first, then closes
+        successor_moving(&b, &root, old, &verdict, &Op::default(), false).unwrap();
+        let (issue, t, _) = current(&b, m).unwrap();
+        assert_eq!((t.state, service::is_task(&issue)), (State::Ready, true));
+        assert_eq!(act(&b, &root, old, "close", &[], &verdict, &Op::default()).state, Some("closed"));
+        assert_eq!(crate::display::close_outcome(Some(&verdict), Some(t.state.name())), format!("replaced by #{m} (ready)"));
+        // a moving successor needs nothing; one closed without completing refuses
+        successor_moving(&b, &root, old, &verdict, &Op::default(), true).unwrap();
+        b.close(m).unwrap();
+        successor_moving(&b, &root, old, &verdict, &Op::default(), true).unwrap();
+        assert!(successor_moving(&b, &root, old, "Changed: replaced by #9999", &Op::default(), false).unwrap_err().reason.contains("unreadable"));
     }
 
     // Chain: § 1 admission over § 2 `requeue` (#1735). Risk: requeue of a legacy `q-later` issue without `taskq`

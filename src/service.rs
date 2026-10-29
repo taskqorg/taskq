@@ -641,17 +641,17 @@ impl Gate {
     }
 }
 
-/// Append `(task, kind, id)` moves to the events file at board time `now` (§ 4): one line per id and kind (`ask`: its
-/// card entry, else the attempt),
+/// Append `(task, kind, id, outcome)` moves to the events file at board time `now` (§ 4): one line per id and kind
+/// (`ask`: its card entry, else the attempt), a `close` followed by its § 7 outcome text;
 /// lines older than 30 days dropped. Returns the first time covered.
-pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64)]) -> Result<i64, String> {
+pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String)]) -> Result<i64, String> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut lines = text.lines();
     let since = lines.next().and_then(|l| l.strip_prefix("since ")?.parse().ok()).unwrap_or(now).max(now - MONTH);
     let mut keep: Vec<String> = lines.filter(|l| l.split(' ').next().and_then(|t| t.parse::<i64>().ok()).is_some_and(|t| t >= since)).map(String::from).collect();
-    for (n, kind, a) in moves {
-        if !keep.iter().any(|l| l.ends_with(&format!(" {kind} {a}"))) {
-            keep.push(format!("{now} #{n} {kind} {a}"));
+    for (n, kind, a, outcome) in moves {
+        if !keep.iter().any(|l| l.split(' ').skip(2).take(2).eq([*kind, a.to_string().as_str()])) {
+            keep.push(format!("{now} #{n} {kind} {a} {outcome}").trim_end().into());
         }
     }
     let out: String = std::iter::once(format!("since {since}")).chain(keep).map(|l| l + "\n").collect();
@@ -1764,7 +1764,7 @@ impl<'a> Service<'a> {
                 _ => continue,
             };
             if let Some(a) = a.filter(|_| self.seen.get(&n) != Some(&to)) {
-                moves.push((n, kind, a));
+                moves.push((n, kind, a, String::new()));
             }
         }
         // `gone`: each trusted `gone attempt` entry newer than the previous pass; the first pass adds none
@@ -1773,7 +1773,7 @@ impl<'a> Service<'a> {
             for v in views {
                 for c in v.comments.iter().filter(|c| c.trusted && c.id > after) {
                     if let Some(a) = c.body.lines().next().and_then(|l| l.strip_prefix("taskq: gone attempt ")).and_then(|a| a.parse().ok()) {
-                        moves.push((v.issue.number, "gone", a));
+                        moves.push((v.issue.number, "gone", a, String::new()));
                     }
                 }
             }
@@ -1810,11 +1810,16 @@ impl<'a> Service<'a> {
         }
         // § 7: a task closed without merging its PR leaves none open; `requeue`, `later` and `failed` keep it.
         // ponytail: a close while no service ran is not seen; a sweep of open `taskq-*` PRs is the upgrade path
-        for &(n, kind, _) in &moves {
-            if kind != "close" { continue; }
+        for (n, kind, _, outcome) in &mut moves {
+            let n = *n;
+            if *kind != "close" { continue; }
             let Some(comments) = views.iter().find(|v| v.issue.number == n).map(|v| &v.comments).or_else(|| closed.iter().find(|x| x.0 == n).map(|x| &x.2)) else { continue };
-            let reason = comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: close"))
-                .and_then(|c| c.body.lines().skip(1).find(|l| !l.trim().is_empty())).map_or("issue closed on the board".into(), |l| l.chars().take(160).collect::<String>());
+            let verdict = comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: close")).map(|c| c.body.split_once('\n').map_or("", |x| x.1));
+            // § 7 outcome: a replaced task names its successor's state, read from this pass or the board
+            let next = verdict.and_then(crate::display::successor).map(|m| views.iter().find(|v| v.issue.number == m).map(|v| v.projection.task.state.name())
+                .or_else(|| crate::dispatch::current(self.board, m).ok().map(|(i, t, _)| if i.open { t.state.name() } else { "closed" })).unwrap_or("unknown"));
+            *outcome = crate::display::close_outcome(verdict, next);
+            let reason = verdict.and_then(|v| v.lines().find(|l| !l.trim().is_empty())).map_or("issue closed on the board".into(), |l| l.chars().take(160).collect::<String>());
             match self.board.close_task_prs(n, &reason) {
                 Ok(prs) => self.log.extend(prs.iter().map(|p| format!("#{n} closed unmerged PR #{p}"))),
                 Err(e) => self.log.push(format!("#{n} task PR left open, state unknown: {e}")),
@@ -1843,8 +1848,8 @@ impl<'a> Service<'a> {
                 Err(e) => self.log.push(format!("events: {e}")),
             }
         }
-        for (n, kind, a) in moves {
-            self.log.push(format!("#{n} event {kind} {a}"));
+        for (n, kind, a, outcome) in moves {
+            self.log.push(format!("#{n} event {kind} {a} {outcome}").trim_end().into());
         }
         Ok(())
     }
@@ -5670,12 +5675,14 @@ Open: none";
     fn events_append_dedup_and_trim() {
         let p = std::env::temp_dir().join(format!("taskq-events-{}", std::process::id()));
         let _ = std::fs::remove_file(&p);
-        assert_eq!(record(&p, 1000, &[(1, "close", 7)]).unwrap(), 1000);
-        record(&p, 2000, &[(1, "close", 7), (2, "failed", 7), (3, "close", 8)]).unwrap();
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "since 1000\n1000 #1 close 7\n2000 #2 failed 7\n2000 #3 close 8\n", "same attempt and kind once");
+        let m = |n, k, a, o: &str| (n, k, a, o.to_string());
+        assert_eq!(record(&p, 1000, &[m(1, "close", 7, "delivered")]).unwrap(), 1000);
+        // #1800: the § 7 outcome follows a close and does not defeat the dedup; other kinds keep 4 fields
+        record(&p, 2000, &[m(1, "close", 7, "delivered"), m(2, "failed", 7, ""), m(3, "close", 8, "replaced by #4 (ready)")]).unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "since 1000\n1000 #1 close 7 delivered\n2000 #2 failed 7\n2000 #3 close 8 replaced by #4 (ready)\n", "same attempt and kind once");
         let late = 1500 + MONTH;
         assert_eq!(record(&p, late, &[]).unwrap(), 1500);
-        assert_eq!(std::fs::read_to_string(&p).unwrap(), "since 1500\n2000 #2 failed 7\n2000 #3 close 8\n", "older than 30 days dropped");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "since 1500\n2000 #2 failed 7\n2000 #3 close 8 replaced by #4 (ready)\n", "older than 30 days dropped");
         let _ = std::fs::remove_file(&p);
     }
 
@@ -5700,6 +5707,8 @@ Open: none";
             s.pass().unwrap();
             assert!(!b.issue(ns[0]).unwrap().open);
             assert_eq!(b.state.borrow().closed_task_prs, [(ns[0], "superseded by #9".to_string())], "once, closed task only");
+            // #1800: the close event names the successor and its state (#9 is not on the board)
+            assert!(s.log.iter().any(|l| l.starts_with(&format!("#{} event close ", ns[0])) && l.ends_with(" replaced by #9 (unknown)")), "{:?}", s.log);
             assert_eq!(s.log.iter().any(|l| l == &format!("#{} task PR left open, state unknown: PR state unknown", ns[0])), fail, "{:?}", s.log);
         }
     }

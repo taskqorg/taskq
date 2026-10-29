@@ -738,7 +738,11 @@ fn closed_history(b: &dyn Board, page: u32, since: Option<i64>, gitlab: bool) ->
             (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
         });
         let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
-        json!({"n": i.number, "title": i.title, "url": b.url(i.number), "closed": closed, "outcome": outcome, "result": result, "pr": pr, "merged": merged, "error": log.err()})
+        // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
+        let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| e.body.split_once('\n').map_or("", |x| x.1)));
+        let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
+        let close = log.is_ok().then(|| display::close_outcome(verdict, next));
+        json!({"n": i.number, "title": i.title, "url": b.url(i.number), "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "error": log.err()})
     }).collect();
     Ok(json!({"schema": 1, "source": "board", "page": page.max(1), "more": more, "tasks": tasks}))
 }
@@ -5031,5 +5035,31 @@ delivery auto-merge r0: merged #7 as x".to_string(),
         assert_eq!(merged(1), json!(format!("merged #7 as {sha}; merge-result CI green")));
         assert_eq!(merged(2), json!("merged !3"));
         for n in 3..=6 { assert_eq!(merged(n), Value::Null, "#{n}: no merge evidence stays unknown"); }
+    }
+
+    // Chain: #1800 § 7 close outcome -> `status --closed` `close`. Risk: a close for a successor or with unknown
+    // acceptance items reads as delivered work (pilotq#90 closed for #104 while #104 stayed held).
+    #[test]
+    fn completed_names_the_close_outcome() {
+        let b = Fake::default();
+        let succ = b.create("successor", "", &["q-held".into()]).unwrap();
+        b.comment(succ, &entry("hold", &[], None, "")).unwrap();
+        let bodies = [
+            format!("taskq: close\nChanged: none; closes as superseded by #{succ}\nChecks: A1 unknown, A2 unknown"),
+            "taskq: close attempt 9\nChanged: x\nChecks: A1 ok, A2 unknown, A3 gap, A4 unknown".into(),
+            "taskq: close\nChanged: none; duplicate".into(),
+        ];
+        let ns: Vec<u64> = bodies.iter().map(|body| {
+            let n = b.create("t", "", &["taskq".into()]).unwrap();
+            b.comment(n, body).unwrap();
+            b.close(n).unwrap();
+            n
+        }).collect();
+        let bare = b.create("t", "", &["taskq".into()]).unwrap();
+        b.close(bare).unwrap();
+        let page = closed_history(&b, 1, None, false).unwrap();
+        let close = |n: u64| page["tasks"].as_array().unwrap().iter().find(|t| t["n"] == n).unwrap()["close"].clone();
+        assert_eq!([close(ns[0]), close(ns[1]), close(ns[2]), close(bare)],
+            [json!(format!("replaced by #{succ} (held)")), json!("delivered, 3 items unverified"), json!("no change"), json!("closed on the board")]);
     }
 }
