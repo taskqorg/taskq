@@ -21,6 +21,14 @@ for(const action of ['later','make','drop']){
  r.act(action);op=sent.at(-1);assert.equal(op.action,action);assert.equal(op.sha,row.sha);
  r.receive({id:op.id,root:'fixture',reason:'Board unavailable'});assert.equal(r.rows().length,1,'failed '+action+' retains the report');
 }
+// A create POST can return an issue number before its held-state readback fails. Retain both receipts,
+// and distinguish that unverified issue from the prior confirmed held draft.
+r.act('make');op=sent.at(-1);
+r.receive({id:op.id,root:'fixture',reason:'Draft readback unknown',receipts:[20],receipt:{task:21,outcome:'unknown'}});
+const partial=JSON.stringify(r.section(projects));
+assert(partial.includes('Created held drafts: #20'),'confirmed drafts remain named');
+assert(partial.includes('Unverified draft: #21'),'known issue survives an unknown held-state readback');
+assert.equal(r.rows().length,1,'partial creation keeps the report available');
 r.act('later');op=sent.at(-1);r.receive({id:op.id,root:'fixture',report:{...row,read:true,decision:'later',visible:true}});assert.equal(r.rows().length,1);
 r.act('make');op=sent.at(-1);r.receive({id:op.id,root:'fixture',report:{...row,decision:'made',visible:false,tasks_made:[20]}});assert.equal(r.rows().length,0);
 assert(paints>0);console.log('PASS Reports: source-bound receipts, read, Later, partial/unknown protection, Make tasks and Drop dispatch');

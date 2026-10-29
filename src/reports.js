@@ -22,7 +22,12 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
   act(action){if(!selected)return;notice='';request(selected.root,action,{n:selected.n,sha:selected.sha});},
   receive(r){
    const op=pending.get(r.id);if(!op||op.root!==r.root)return false;pending.delete(r.id);
-   if(r.reason){if(selected&&selected.root===op.root&&selected.n===op.n&&r.report?.sha===op.sha)selected={...selected,pending_decision:r.report.pending_decision};notice=r.reason+(Array.isArray(r.receipts)&&r.receipts.length?' · Created held drafts: '+r.receipts.map(n=>'#'+n).join(', '):'');draw();return true;}
+   if(r.reason){
+    if(selected&&selected.root===op.root&&selected.n===op.n&&r.report?.sha===op.sha)selected={...selected,pending_decision:r.report.pending_decision};
+    const made=Array.isArray(r.receipts)?r.receipts:[],uncertain=r.receipt?.task;
+    notice=r.reason+(made.length?' · Created held drafts: '+made.map(n=>'#'+n).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: #'+uncertain:'');
+    draw();return true;
+   }
    if(op.action==='list'){
     if(!Array.isArray(r.reports)){notice='Report list unknown; refresh.';draw();return true;}
     const prior=op.page===1?[]:pages.get(r.root)?.rows||[];
