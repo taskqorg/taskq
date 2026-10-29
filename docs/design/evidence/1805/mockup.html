@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en" style="color-scheme:dark"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TaskQ #1805 · project headers</title>
+<link rel="stylesheet" href="../../../../src/task-workspace.css">
+<link rel="stylesheet" href="../../../../src/task-dashboard.css">
+<style>
+html,body{height:auto;overflow:auto;background:var(--surface)}body{padding:12px;font-size:16px;user-select:text}.intro{max-width:470px;margin:0 auto 10px}.intro h1{margin:0;font-size:1.05em}.intro p{margin:4px 0;font-size:.85em;color:var(--muted)}.menu{width:360px;max-width:100%;height:auto;margin:auto;border:1px solid var(--edge);border-radius:12px}.content{overflow:visible}.head{display:flex;align-items:center;gap:4px}.head strong{margin-right:auto;font-size:.85em}.head button,.preview-action{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;min-width:32px;min-height:32px;padding:6px}.ui-icon{width:16px;height:16px}.intro button{margin:3px 3px 3px 0;font-size:.85em}.group-header{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:4px;padding:3px 4px;margin-top:6px;border-radius:5px;background:light-dark(#e9edf1,#37424c)}.group-heading{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px;min-width:0}.group-name{min-width:0;border:0;padding:2px 0;min-height:32px;font-weight:600;text-align:left;overflow-wrap:anywhere;line-height:1.35}.counts{display:inline-flex;flex-wrap:wrap;gap:0 4px;color:var(--muted);font-size:max(12px,.85em);font-variant-numeric:tabular-nums}.counts span{white-space:nowrap}.group-actions{display:flex;align-self:start}.toggle{align-self:start}.toggle[aria-expanded=false] .ui-icon{transform:rotate(-90deg)}.variant-b .group-heading{display:block}.variant-b .counts{display:flex;margin-bottom:3px}.group-rows[hidden]{display:none}.task-row{padding:3px 2px}.task-meta{display:flex;align-items:center;gap:5px;font-size:.85em;color:var(--muted)}.task-meta time{margin-left:auto}.task-title{padding:3px 0;line-height:1.4}.note{margin:5px 3px;font-size:.85em;color:var(--muted)}button:focus-visible{outline:2px solid currentColor;outline-offset:1px}button:hover{background:light-dark(#dce0e5,#46505b)}.status-footer{padding:4px 8px}dialog{background:var(--surface);color:inherit;border:1px solid var(--edge);border-radius:8px;max-width:90vw;font:inherit}dialog p{overflow-wrap:anywhere}
+@media(pointer:coarse){.preview-action,.group-name{min-height:44px}.preview-action{min-width:44px}.group-header{grid-template-columns:44px minmax(0,1fr) auto}.menu{width:100%}}
+</style>
+<body><div class="intro"><h1 id="variant-title"></h1><p>Stage 1 mockup · invented tasks · actions are simulated.</p><p id="tradeoff"></p><nav aria-label="Preview controls"><button data-variant="a">A · Compact band</button><button data-variant="b">B · Counts below name</button><button id="theme">Light / dark</button></nav></div>
+<main class="menu"><header class="head"><span class="ui-icon" data-icon="house"></span><strong>TaskQ · fixture</strong><button aria-label="Search tasks"><span class="ui-icon" data-icon="search"></span></button><button aria-label="Edit view"><span class="ui-icon" data-icon="sliders-horizontal"></span></button></header><div class="content"><div class="viewbar"><div class="view-picks"><button>All tasks</button></div><span class="meta">By project</span></div><p class="note">Filter: Ready · group counts keep both values.</p><div id="groups"></div></div><footer class="status-footer">Design preview · no native actions</footer></main>
+<dialog><p id="destination"></p><button id="back">Back to task list</button></dialog>
+<template id="icon-arrow-down"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-arrow-down"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M12 5v14" />
+  <path d="m19 12-7 7-7-7" />
+</svg>
+</template><template id="icon-folder"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-folder"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
+</svg>
+</template><template id="icon-github"><svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>GitHub</title><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></template><template id="icon-gitlab"><svg role="img" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><title>GitLab</title><path d="m23.6004 9.5927-.0337-.0862L20.3.9814a.851.851 0 0 0-.3362-.405.8748.8748 0 0 0-.9997.0539.8748.8748 0 0 0-.29.4399l-2.2055 6.748H7.5375l-2.2057-6.748a.8573.8573 0 0 0-.29-.4412.8748.8748 0 0 0-.9997-.0537.8585.8585 0 0 0-.3362.4049L.4332 9.5015l-.0325.0862a6.0657 6.0657 0 0 0 2.0119 7.0105l.0113.0087.03.0213 4.976 3.7264 2.462 1.8633 1.4995 1.1321a1.0085 1.0085 0 0 0 1.2197 0l1.4995-1.1321 2.4619-1.8633 5.006-3.7489.0125-.01a6.0682 6.0682 0 0 0 2.0094-7.003z"/></svg></template><template id="icon-circle"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-circle"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <circle cx="12" cy="12" r="10" />
+</svg>
+</template><template id="icon-play"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-play"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z" />
+</svg>
+</template><template id="icon-search"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-search"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m21 21-4.34-4.34" />
+  <circle cx="11" cy="11" r="8" />
+</svg>
+</template><template id="icon-sliders-horizontal"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-sliders-horizontal"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M10 5H3" />
+  <path d="M12 19H3" />
+  <path d="M14 3v4" />
+  <path d="M16 17v4" />
+  <path d="M21 12h-9" />
+  <path d="M21 19h-5" />
+  <path d="M21 5h-7" />
+  <path d="M8 10v4" />
+  <path d="M8 12H3" />
+</svg>
+</template><template id="icon-house"><!-- @license lucide-static v1.17.0 - ISC -->
+<svg
+  class="lucide lucide-house"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8" />
+  <path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+</svg>
+</template>
+<script>
+const q=new URLSearchParams(location.search),variant=q.get('variant')==='b'?'b':'a';document.documentElement.style.colorScheme=q.get('theme')==='light'?'light':'dark';document.body.classList.add('variant-'+variant);document.querySelector('#variant-title').textContent=variant==='a'?'A · Compact band (recommended)':'B · Counts below name';document.querySelector('#tradeoff').textContent=variant==='a'?'Counts share the name line when they fit; wrap under it at narrow widths.':'Counts always have their own line: steadier alignment, taller groups.';
+const projects=[{id:'taskq',name:'taskq',kind:'github',shown:2,total:4,rows:[[1805,'Menu project groups: clear header, counters and collapse'],[1799,'Keep the complete task title readable at larger text sizes']]},{id:'agentq',name:'agentq',kind:'gitlab',shown:2,total:2,rows:[[120,'Preserve the active session on reconnect'],[121,'Report unavailable telemetry explicitly']]},{id:'long',name:'Infrastructure-and-agent-workflow-qualification',kind:'github',shown:1,total:1200,closed:true,rows:[[122,'Review the complete qualification report']]},{id:'unknown',name:'unavailable-project',kind:'github',shown:'?',total:'?',closed:true,rows:[],reason:'Tasks unknown · last snapshot unavailable'}];
+function icon(n){return '<span class="ui-icon" aria-hidden="true">'+document.querySelector('#icon-'+n).innerHTML+'</span>'}
+for(const p of projects){let closed=p.closed;try{const saved=localStorage.getItem('taskq-1805:'+variant+':'+p.id);if(saved!==null)closed=saved==='true'}catch{}const section=document.createElement('section');section.className='project-preview';section.dataset.project=p.id;section.innerHTML='<header class="group-header"><button class="preview-action toggle" aria-label="'+(closed?'Expand ':'Collapse ')+p.name+' tasks" aria-controls="rows-'+p.id+'" aria-expanded="'+!closed+'">'+icon('arrow-down')+'</button><div class="group-heading"><button class="group-name" data-destination="Project overview: '+p.name+'">'+p.name+'</button><span class="counts" title="'+(p.reason||'Matches the current filter; total open tasks')+'" aria-label="'+(p.reason?'Matching and total task counts unknown: '+p.reason:p.shown+' tasks match the current filter; '+p.total+' open tasks in total')+'"><span>'+p.shown+' shown</span><span>· '+p.total+' total</span></span></div><div class="group-actions"><button class="preview-action" data-destination="'+p.kind+' board: '+p.name+'" aria-label="Open '+p.name+' board on '+p.kind+'">'+icon(p.kind)+'</button><button class="preview-action" data-destination="Registered project folder: '+p.name+'" aria-label="Open '+p.name+' project folder on this computer">'+icon('folder')+'</button></div></header><div class="group-rows" id="rows-'+p.id+'"'+(closed?' hidden':'')+'>'+p.rows.map(([n,title])=>'<div class="task-row"><div class="task-meta">'+icon('circle')+icon(p.kind)+'<span>#'+n+'</span><time>5m</time></div><div class="task-title">'+title+'</div></div>').join('')+''+(p.reason?'<p class="note" role="status">'+p.reason+'</p>':'')+'</div>';section.querySelector('.toggle').onclick=e=>{const b=e.currentTarget,closed=b.getAttribute('aria-expanded')==='true';b.setAttribute('aria-expanded',String(!closed));b.setAttribute('aria-label',(closed?'Expand ':'Collapse ')+p.name+' tasks');section.querySelector('.group-rows').hidden=closed;try{localStorage.setItem('taskq-1805:'+variant+':'+p.id,String(closed))}catch{}};document.querySelector('#groups').append(section)}
+for(const el of document.querySelectorAll('[data-icon]'))el.innerHTML=document.querySelector('#icon-'+el.dataset.icon).innerHTML;
+for(const b of document.querySelectorAll('[data-variant]'))b.onclick=()=>{q.set('variant',b.dataset.variant);location.search=q.toString()};document.querySelector('#theme').onclick=()=>document.documentElement.style.colorScheme=document.documentElement.style.colorScheme==='dark'?'light':'dark';const dialog=document.querySelector('dialog');for(const b of document.querySelectorAll('[data-destination]'))b.onclick=()=>{document.querySelector('#destination').textContent='Simulated destination · '+b.dataset.destination;dialog.showModal()};document.querySelector('#back').onclick=()=>dialog.close();
+</script></body></html>
