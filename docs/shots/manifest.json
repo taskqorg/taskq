@@ -1,16 +1,16 @@
 {
   "version": "4.6.40",
-  "sourceCommit": "bd18971558c5c293604459dc83903fe54475ee83",
-  "binarySha256": "1e480b85d18ddbfcd88f02dd005be7c10e2d97b465d98c88a275165b80a2978f",
+  "sourceCommit": "0329d57fc1a7979af5562f27061841e2140b1b0c",
+  "binarySha256": "2d3871d9aae769e7b5cb0eb3ffd768756092a2ef92d96b93df67cab78ed97d5a",
   "environment": {
-    "os": "macOS 27.0.1",
-    "arch": "arm64",
-    "renderer": "WKWebView snapshot"
+    "os": "Windows",
+    "arch": "x86_64",
+    "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "5ea546aa085eaa20d63ccfff85e0e135ca5c3ea1",
+    "src/tray.rs": "0f8a8589ed3c0308e4090c8824ca744883b79509",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
-    "src/tray-app.js": "97777bc8e27b321c5bd6079275634f95742a4828",
+    "src/tray-app.js": "32cfd887084dd3a70dc893abd46151f0a1aac92a",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
     "src/task-workspace.js": "20ba975eedf8d28da35ef3e441665a0bf49a5fee",
     "src/task-workspace.css": "c2ac1f503d9837c43638aceff515954d561c15b4",
@@ -31,7 +31,7 @@
     "src/conversations.css": "076c3c79317dcc1ceedeb168cb4e3675540f8519",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
-    "src/workspace.js": "2647a2f1a7ecb0fe759d9c64c37f69f2333d2bf7",
+    "src/workspace.js": "dc4e1c65745052a294909774f3e369f68255976e",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "4a03c3bf98a703bcbd7fc8fa39d992a68d4f4e92",
     "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "b723921e4eb1d8c66fdb9f7b73cf5ca29b0537966650ac0a7a8bdd07fd03d654"
+      "sha256": "a43af84146ef36d936d176a70c381d59ef3bfe3093ba4dfa646e702a6531d8db"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "4c176ddb3e10c30d0fb8b9ea8a51cb2842c025e975ac55c3c5f8f25eb728cda8"
+      "sha256": "f86e0969e3df59c11b16a5e97d3de6baf9c13e95564e2720b340a2dfd1df91f4"
     }
   ]
 }
