@@ -116,9 +116,30 @@ Every accepted answer and steer is a durable task note in board order, across at
 
 - Answer, steer and requeue: one Send/action; validation stays inline. Owner steer always saves context on an open task, even if a question/state change races Send; its original operation ID and payload remain unchanged. Worker-originated commands keep attempt fencing.
 - Changed question: remove the disabled Send and `I read the new question` acknowledgement. Save old intent as a note and keep the newer question open.
-- Answered elsewhere: name the winning answer; save an already submitted answer as a note and steer the running worker without a second Send. A draft never submitted still needs its first Send.
+- Answered elsewhere: name the winning answer; save an already submitted answer as a note and steer the running worker without a second Send. A draft never submitted still needs its first Send. The same answer as the winner saves nothing (below).
 - No-choice cancellation: replace Close followed by confirmation with one explicitly named Close without publishing action. Keep separate, revision-fenced `later`/`close` readbacks and stop on partial/unknown delivery. A race that makes cancellation inapplicable is refused visibly; it never cancels a new attempt automatically.
 - Publication and exact-SHA approval choices remain unavailable here with the existing board link: removing a confirmation grants no publication or approval authority.
 - Delivery checks reconcile the original immutable ID, payload and revision. They are recovery after unknown delivery, not confirmation before sending.
 
 Consumer compatibility: the command/payload shape stays compatible; shared UI gains the `changed` state and no longer requires a confirmation flag on the tray cancellation action. Older dispatchers can still refuse stale answers: that receipt remains explicit, never presented as a saved note. Steer notes use the existing board entry and keep lifecycle folding compatible; older prompts do not provide the new context guarantee until updated.
+
+
+### Concurrent replies
+
+Two people answering one question seconds apart (owner in the menu, PM in the CLI, someone on the board) settle quietly (#1861). A race that ends in a valid board state is never shown as an error: the tray shows red only for a rejected, failed, partial or unknown delivery. A stale action reads as plain text: `task changed; action not sent`.
+
+| Reply path | Another actor acted first | Result |
+|---|---|---|
+| Answer, menu or CLI | answered with the same option or text | No write, outcome `accepted`, `answered` names the winner once; no note, no steer |
+| Answer, menu or CLI | answered with another option | Ordered `steer answer <revision>` note with the original option text, `note: true`; steers a `doing` worker; the receipt names the winner once |
+| Answer, menu or CLI | asked a newer question | Note as above; the newer question stays open |
+| Answer, menu or CLI | closed the task | Same answer: no write, `accepted`; another answer: rejected `#N is closed` |
+| Answer, menu or CLI | the post lost the race after writing | The losing comment edits itself `ignored: another write won`, then the first two rows apply |
+| Answer, board comment `K` or option text | answered or moved out of `ask` | `fold` ignores it; no note, no receipt |
+| Steer, menu or CLI | any state change on an open task | Note, `note: true`; a `doing` worker gets it |
+| Steer, menu or CLI | closed the task | Rejected `#N is closed` |
+| Requeue, CLI without `--revision` | any change on an open task | Accepted, task `ready` |
+| Start, Stop, Later, Retry, Requeue or Close without publishing, menu (revision-fenced) | any change | `stale`, nothing sent; plain, not red |
+| Close, CLI | closed the task | Rejected `#N is closed` |
+
+The receipt names each fact once: the CLI prints the state line, then `already answered by <by>: <text>` from `answered`, then the reason (`Saved as a task note; ...` or `Same answer; nothing saved`); `reason` never repeats the winner's text. The tray reads `Answered by <by>: <text>` plus that reason.
