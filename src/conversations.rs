@@ -319,9 +319,6 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let root=Path::new(m["root"].as_str().ok_or("Worker project missing")?);
     if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Worker project is not registered".into());}
     let (cfg,_)=crate::load(root)?;
-    let board=cfg.board.url(0);let board=board.strip_suffix("/0").ok_or("Worker board unknown")?;
-    let id=m["conversation"].as_str().unwrap_or("");
-    let n=id.strip_prefix("task:").and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Worker thread does not match its project")?;
     let path=crate::dot(root).join("status.json");
     let status=crate::data::json(&path)?.ok_or("Worker service status unavailable")?;
     let age=crate::file_age(&path).ok_or("Worker service status age unknown")?;
@@ -330,6 +327,9 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
         || !status["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).is_some_and(crate::runtime::alive) {
         return Err("Worker service status stale, incomplete or unavailable".into());
     }
+    let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Worker board unknown")?;
+    let id=m["conversation"].as_str().unwrap_or("");
+    let n=id.strip_prefix("task:").and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Worker thread does not match its project")?;
     let local=crate::host::Policy::read(install)?.me;
     worker_page(root,&local,&status,n,m,|session,before,after|crate::dialogue::worker_transcript(session,before,after))
 }
@@ -461,7 +461,7 @@ mod tests {
         fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
         fs::write(f.0.join("host.json"),"{}").unwrap();
         let m=json!({"root":root,"conversation":"task:https://github.com/invented/worker-panel/issues/7","attempt":71,"session":"codex:forged","action":"transcript","id":"read"});
-        let mut status=json!({"pid":std::process::id(),"tasks_age_seconds":0,"complete":true,"tasks":[]});
+        let mut status=json!({"pid":std::process::id(),"issues":"https://github.com/invented/worker-panel/issues","tasks_age_seconds":0,"complete":true,"tasks":[]});
         let path=root.join(".taskq/status.json");
         let read=|s:&Value|{fs::write(&path,s.to_string()).unwrap();dialogue(&f.0,&m)};
         assert_eq!(read(&status)["value"]["ended"],true,"an ended attempt returns before any native read");
