@@ -59,4 +59,10 @@ for(const route of html.match(/data-route="[^"]+"/g).map(x=>x.slice(12,-1))){c.p
 const w={operationController:true,S:{now:1000,host:'mac',projects:[{root:'a',name:'A'},{root:'b',name:'B'},{root:'c',name:'C'}]}};require('./tray-harness.cjs').install(w);
 w.recovery={b:{pending:true},c:{notice:'Recovery read failed'}};
 assert.deepEqual(w.recoveryPanel().match(/role="status">[^<]*/g).slice(0,3),['role="status">Not read · Next: read current recovery','role="status">Reading… · Next: wait for the receipt','role="status">Outcome unknown · Next: read current recovery']);
-console.log('PASS #1661 Settings: AS5 sign-in states, account vs method, remote unknown, effective access, one host service, grouped versions, admission, recovery read state, widget routes');
+// #1812 A2 / M1.1: Appearance must expose a bounded, named opacity control and an explicit Off value.
+c.page='appearance';c.S.opacity=90;html=c.routeBody();
+assert(html.includes('id="menu-opacity"'),'Appearance must expose menu opacity');
+assert.match(html,/type="range"[^>]*min="90"[^>]*max="100"[^>]*step="1"/);
+assert(html.includes('for="menu-opacity"'));assert(html.includes('90%'));
+c.S.opacity=100;html=c.routeBody();assert.match(html,/data-set="opacity"[^>]*data-v="100"[^>]*aria-pressed="true"[^>]*>Off</);
+console.log('PASS Settings: sign-in, access, versions, routes, recovery and bounded opacity with Off');

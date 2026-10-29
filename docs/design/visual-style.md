@@ -40,6 +40,12 @@ Use subtle counter fills, not colored text blocks. Always include a symbol or la
 Closed has the lowest visual emphasis without opacity; [counter semantics](task-counters.md).
 Paused data is gray; partial pause/unknown does not gray all counts. Unknown ([never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy)) is labelled.
 
+## Translucent menu text
+
+M1.1 is an approved exception to palette A while the menu opacity is below 100%. Preserve the surfaces and layout. Strengthen primary text to #12181C / #FFFFFF (light/dark); mix the existing semantic and secondary text tokens with 50% black in light mode and 90% white in dark mode, rounding channels to the nearest integer. Shared project, answer and resource bodies inherit the same primary/secondary text. Off restores the existing palette. The native alpha uniformly composites text, surfaces, icons and custom chrome; it does not simulate background-only translucency.
+
+At 90% opacity, ordinary body and enabled semantic text must retain WCAG AA 4.5:1 after composition, including independently adverse background pixels beneath the text and surface. Check native byte quantization and all affected body surfaces. Native composition evidence is separate from webview snapshots; unsupported renderer/platform observations remain unknown (R12).
+
 ## Icon inventory
 
 Use one outline family for actions, consistent 16 px optical size. Reuse the existing bundled Lucide static 1.17.0 catalog (ISC, with retained Feather MIT notices), 24-unit viewBox and source stroke width 2. Render the same SVG bytes on Mac and Windows; no Unicode, SF Symbols or platform font substitution. New assets must come from that pinned catalog, retain license/source metadata and be reviewed before use. Provider/forge marks remain separate licensed identity assets.
