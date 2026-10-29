@@ -224,8 +224,8 @@ known:function(){return !view.S.display.all.partial.length;},
 // O1: identity anchors details/actions; title remains a full-width issue link.
 taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);return h('div',{class:'task-row','data-card':t.key,tabindex:-1,key:t.key},raw(TaskqProjectBlocks.task(blockProject(p),t,global,true)),api.syncLine(t.sync),dashboard?.attention(t));},
 // #1819: a row's shared pending operation; only a failed one offers Retry, which resends the same operation.
-syncLine:function(o){if(!o)return '';return h('p',{class:'meta sync '+o.phase,role:'status'},syncView.line(o),o.phase==='failed'&&h('button',{class:'compact-action','data-a':'sync-retry','data-root':o.root,'data-id':o.id},'Retry'));},
-staleLine:function(){const t=syncView.stale(view.S);return t?h('p',{class:'meta stale',role:'status'},t):'';},
+syncLine:function(o){return syncView.row(o)||'';},
+staleLine:function(){return syncView.staleRow(view.S)||'';},
 // #1819: the snapshot as received, with the shared pending store laid over it.
 adopt:function(s){view.raw=s;if(Array.isArray(s.sync))view.sync=s.sync;view.S=syncView.overlay(s,view.sync);},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},

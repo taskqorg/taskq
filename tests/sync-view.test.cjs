@@ -53,4 +53,15 @@ assert.equal((line.match(/<button/g)||[]).length,1);
 assert.equal(context.syncLine(op('waiting')).includes('<button'),false,'only a failed operation retries');
 context.receive({...S,tasks_age_seconds:0});
 assert.equal(context.S.projects[0].tasks[0].sync.phase,'failed','a new snapshot keeps the store over it');
-console.log('PASS pending overlay: same-frame expected state, unconfirmed mark, failed Retry, conflict reason, stale line');
+// Conversations renders the same row and stale line as the menu (#1819 review): a failed answer there offers Retry,
+// and its status footer names the data age.
+const {html}=require('./tray-harness.cjs');
+assert.equal(html(view.row(op('failed',{reason:'service unreachable'}))),line,'Conversations and the menu show one sync row');
+assert.equal(view.row(undefined),null);
+assert.equal(view.staleRow(S),null);
+assert.match(html(view.staleRow(at(40))),new RegExp('role="status">Data from '+hhmm+'<'));
+const workspace=require('node:fs').readFileSync('src/workspace.js','utf8');
+assert.match(workspace,/syncView\.row\(t\?\.sync\)/,'the task thread shows its pending operation');
+assert.match(workspace,/footer:\[api\.staleText\(\)/,'the Conversations footer shows Data from');
+assert.match(workspace,/b\.dataset\.a==='sync-retry'\)ui\.send\(\{a:'sync-retry',root:b\.dataset\.root,id:b\.dataset\.id\}\)/,'Retry resends from Conversations');
+console.log('PASS pending overlay: same-frame expected state, unconfirmed mark, failed Retry, conflict reason, stale line, Conversations row');

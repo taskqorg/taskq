@@ -1,5 +1,6 @@
 'use strict';
 const {execution}=require('./ui-runtime.js');
+const {h}=require('preact');
 // #1819: the tray's shared pending operations over a status snapshot (docs/design/menu.md#shared-pending-operations-1819).
 // The board stays the truth: an overlaid row is marked unconfirmed, and counts stay the snapshot's.
 const PHASES={sending:'Sending',waiting:'Waiting GitHub',done:'Done',failed:'Failed',mismatch:'Not applied'};
@@ -34,6 +35,10 @@ stale:function(S){
     if(Number.isFinite(interval)&&age>2*interval){const at=(S.now-age)*1000;oldest=oldest===null?at:Math.min(oldest,at);}
   }
   return oldest!==null?'Data from '+api.clock(oldest):missing?'Data from: unknown':null;
-}
+},
+// A row's operation as shown in every window; only a failed one offers Retry, which resends the same operation.
+row:function(o){return o?h('p',{class:'meta sync '+o.phase,role:'status'},api.line(o),o.phase==='failed'&&h('button',{class:'compact-action','data-a':'sync-retry','data-root':o.root,'data-id':o.id},'Retry')):null;},
+// The window's one stale-data line, or nothing while every read is fresh.
+staleRow:function(S){const t=api.stale(S);return t?h('p',{class:'meta stale',role:'status'},t):null;}
 });
-module.exports={phases:PHASES,overlay:api.overlay,line:api.line,stale:api.stale};
+module.exports={phases:PHASES,overlay:api.overlay,line:api.line,stale:api.stale,row:api.row,staleRow:api.staleRow};

@@ -1081,6 +1081,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut workspace: Option<(Window, WebView)> = None;
     let mut workspace_web: Option<WebCalls> = None;
     let mut detached:std::collections::BTreeMap<String,(Window,WebView,WebCalls)>=Default::default();
+    // #1819: each detached window keeps the signature it last received, never the menu's
+    let mut detached_shown:std::collections::BTreeMap<String,String>=Default::default();
     let mut workspace_handoff=false;
     let mut workspace_open=Value::Null;
     let mut settings_window: Option<(Window, WebView)> = None;
@@ -1303,7 +1305,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) {
                     if sig!=views_shown && !calls.failed && calls.idle() {views_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
-                for (_,wv,calls) in detached.values_mut(){if sig!=shown && !calls.failed && calls.idle(){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
+                detached_shown.retain(|id,_|detached.contains_key(id));
+                for (id,(_,wv,calls)) in detached.iter_mut(){if take_due(detached_shown.entry(id.clone()).or_default(),&sig,!calls.failed && calls.idle()){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
                 if sig != shown && web.idle() {
                     shown = sig;
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
@@ -1459,7 +1462,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let allowed=matches!(m["action"].as_str(),Some("archive"|"restore"))||if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
                         let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                        shown.clear();workspace_shown.clear();
+                        shown.clear();workspace_shown.clear();detached_shown.clear();
                     }
                     Some("conversation-dialogue")=>{
                         // Reads only, off the event loop: the D3 holder probe starts the runtime CLI.
@@ -2190,6 +2193,13 @@ fn workspace_operation(action:&str)->bool {
 }
 
 /// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
+/// #1819: a window takes the snapshot when it differs from what this window last received and it can take it now.
+fn take_due(shown:&mut String,sig:&str,ready:bool)->bool {
+    if !ready || shown==sig {return false}
+    sig.clone_into(shown);
+    true
+}
+
 fn blur_refocuses(shown_for: Duration, workspace_handoff: bool) -> bool {
     !workspace_handoff && shown_for < Duration::from_millis(300)
 }
@@ -3312,6 +3322,18 @@ mod tests {
         assert!(blur_refocuses(Duration::from_millis(15),false));
         assert!(!blur_refocuses(Duration::from_millis(300),false) && !blur_refocuses(Duration::from_secs(5),false));
         assert!(!blur_refocuses(Duration::from_millis(15),true), "an intentional workspace handoff must not pull focus back to the tray");
+    }
+
+    // Chain: M8 one store feeds every window. Risk: a detached conversation compares against the menu's shown
+    // snapshot, so it misses a change the menu already took while the detached window was busy.
+    #[test]
+    fn each_window_takes_a_snapshot_it_has_not_received() {
+        let (mut menu, mut detached) = (String::new(), String::new());
+        assert!(take_due(&mut menu, "a", true));
+        assert!(!take_due(&mut detached, "a", false), "a busy window waits");
+        assert!(take_due(&mut detached, "a", true), "the menu having it does not skip the detached window");
+        assert!(!take_due(&mut detached, "a", true) && !take_due(&mut menu, "a", true));
+        assert!(take_due(&mut detached, "b", true));
     }
 
     // H-A2: host policy/readback cannot be confused with a project's lower ceiling or legacy writable scope.
