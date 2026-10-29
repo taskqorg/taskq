@@ -46,6 +46,12 @@ M1.1 is an approved exception to palette A while the menu opacity is below 100%.
 
 At 90% opacity, ordinary body and enabled semantic text must retain WCAG AA 4.5:1 after composition, including independently adverse background pixels beneath the text and surface. Check native byte quantization and all affected body surfaces. Native composition evidence is separate from webview snapshots; unsupported renderer/platform observations remain unknown (R12).
 
+## Background-only backing
+
+M1.2 uses the existing transparent webview and CSS color alpha, with native window alpha fixed at 100%. Preserve the accepted foreground palette and geometry. The menu surface follows background opacity; content body, chrome, footer and floating content use Surface at the greater of background opacity and readability backing (98–100%). This is a bounded backing area, not a glyph halo or platform material. The floor cannot be disabled.
+
+Buttons, inputs and count capsules use opaque Surface so semantic text retains AA on hover/selection; selection keeps its existing outline. Solid semantic action/badge fills retain their paired foreground colors. Disabled elements retain full opacity and their disabled semantics. Chrome boundaries and decorative dividers follow background alpha; input boundaries and focus cues stay opaque. Preserve shared component foreground tokens. At the 98% backing floor on an independently adverse black/white backdrop, ordinary text must reach 4.5:1 and meaningful icons/control cues 3:1.
+
 ## Icon inventory
 
 Use one outline family for actions, consistent 16 px optical size. Reuse the existing bundled Lucide static 1.17.0 catalog (ISC, with retained Feather MIT notices), 24-unit viewBox and source stroke width 2. Render the same SVG bytes on Mac and Windows; no Unicode, SF Symbols or platform font substitution. New assets must come from that pinned catalog, retain license/source metadata and be reviewed before use. Provider/forge marks remain separate licensed identity assets.

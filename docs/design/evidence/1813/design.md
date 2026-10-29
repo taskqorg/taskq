@@ -1,6 +1,6 @@
 # Background-only transparency · #1813
 
-Stage 1 proposal, not an adopted visual rule or implementation. Task: [#1813](https://github.com/taskqorg/taskq/issues/1813). Baseline: `6bf0a4aeca2ec679c7c3523c4f6cb4abfa00a34a`, including the delivered whole-window mode from #1812. R13 requires an owner answer before resolving the contrast tradeoff below; R12 keeps renderer and platform evidence separate.
+Stage 1 comparison; the owner selected AA-safe backing in [answer 1](https://github.com/taskqorg/taskq/issues/1813#issuecomment-6493358099). Task: [#1813](https://github.com/taskqorg/taskq/issues/1813). Baseline: `6bf0a4aeca2ec679c7c3523c4f6cb4abfa00a34a`, including the delivered whole-window mode from #1812. R13 is applied through Product, M1.2 and the linked backing treatment; R12 keeps renderer and platform evidence separate.
 
 ## Existing boundary
 
@@ -19,7 +19,7 @@ The second mode must restore native alpha to 100% before exposing background-onl
 
 Sources: Apple [behind-window blending](https://developer.apple.com/documentation/appkit/nsvisualeffectview/blendingmode-swift.enum/behindwindow) and [visual effects](https://developer.apple.com/documentation/appkit/nsvisualeffectview); WebKit [Safari 26 webview changes](https://webkit.org/blog/17333/webkit-features-in-safari-26-0/); Microsoft [WebView2 background](https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller2) and [materials](https://learn.microsoft.com/en-us/windows/apps/develop/ui/materials).
 
-## Decision needed: optional backing versus contrast
+## Contrast policy
 
 The task does not specify the new background range, default backing strength or a minimum backing strength. A2 calls the backing optional; A3 requires AA in the minimum-opacity shots. Shared D7 also requires text contrast of at least 4.5:1. Full foreground opacity alone cannot guarantee contrast when the background can disappear and the backing can be disabled. Blur alone cannot guarantee it either.
 
@@ -32,11 +32,11 @@ Read-only reproduction: composite the existing surface as `a * surface + (1 - a)
 
 Both minimum cases fail 4.5:1 despite foreground alpha 1. Semantic/secondary colors and selected/control surfaces need their own checks; these primary pairs do not qualify them. No fix or after-pass is claimed. Raising the new minimum until the effect is barely visible would conceal the product tradeoff rather than resolve it.
 
-Recommended owner choice: allow a transparent decorative background, but retain an AA-safe minimum backing behind readable content and chrome controls. The strength control may add backing; Off is available only where the background itself supplies the required contrast. Determine the numerical floor against every affected foreground/surface pair, preserving the accepted palette unless the owner explicitly approves another change. Cost: content regions cannot become arbitrarily transparent.
+Adopted owner choice: allow a transparent decorative background, but retain an AA-safe minimum backing behind readable content and chrome controls. The strength control may add backing; Off is available only where the background itself supplies the required contrast. The implementation uses a 98% Surface backing floor, with opaque Surface beneath controls and selected/hover content, preserving the accepted palette unless the owner explicitly approves another change. Cost: content regions cannot become arbitrarily transparent.
 
-Alternative: permit unrestricted low background opacity with backing Off, and explicitly approve conditional AA plus the D7 exception. Cost: some wallpapers make content unreadable; minimum-opacity screenshots with backing enabled would prove only that configuration, not the unsafe settings.
+Rejected alternative: permit unrestricted low background opacity with backing Off, and explicitly approve conditional AA plus the D7 exception. Cost: some wallpapers make content unreadable; minimum-opacity screenshots with backing enabled would prove only that configuration, not the unsafe settings.
 
-## Implementation and verification after the answer
+## Implementation and verification
 
 1. Record the answer in the root Product contract and its linked menu/visual specification before code (R13). Keep M1.1 and its existing range, persistence and native failure protection.
 2. Add the mutually exclusive background-only mode beside the whole-window mode, independent saved background opacity and backing strength, validated IPC and startup/readback. Switching modes must not leave native alpha below 100% in background-only mode; rollback and save errors remain visible.
@@ -49,6 +49,6 @@ Contrast sources: W3C [text minimum](https://www.w3.org/WAI/WCAG22/Understanding
 ## Checkpoint status
 
 - A1 comparison and technical recommendation: drafted above. Service-spawned Claude reviewer cross-check: Not tested; no reviewer was launched by this worker (R3).
-- A2 implementation: not started; waiting for the owner decision about the permitted contrast policy and backing floor.
-- A3 snapshots, rendered-opacity regression and native/platform qualification: Not tested. Existing source and read-only contrast calculations do not establish them.
-- Existing R1–R13, M1.1 and guarding assertions: unchanged. No application, host policy, permission, service or runtime operation was applied.
+- A2 implementation: controls, independent settings, native alpha restoration and shared backing are implemented. See [verification](verification.md) for observed checks.
+- A3 evidence and platform limits: [verification](verification.md).
+- Existing R1–R13 and M1.1 behavior: unchanged. Existing settings assertions now include the new default fields; their validation and preservation protection is retained. No host policy, permission, service or installed-runtime change was applied.

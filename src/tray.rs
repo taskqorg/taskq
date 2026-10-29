@@ -95,6 +95,9 @@ struct Settings {
     view: String,
     font: u64,
     opacity: u64,
+    opacity_mode: String,
+    background_opacity: u64,
+    backing_strength: u64,
     opacity_error: Option<String>,
     period: String,
     start: i64,
@@ -137,7 +140,7 @@ impl Settings {
         let size = v["size"][0].as_f64().zip(v["size"][1].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite() && *w >= 240.0 && *h >= 120.0);
         let size_anchor = v["size_anchor"].as_str().filter(|v| ["auto","fixed","bottom","top"].contains(v)).unwrap_or(if size.is_some() {"fixed"} else {"auto"}).to_string();
         let pin = Pin { size_anchor, attached_edge: "top".into(), auto_anchor: v["auto_anchor"].as_str().filter(|v| ["top","bottom"].contains(v)).unwrap_or("top").into(), top: v["top"].as_bool().unwrap_or(true), size, pinned: v["pinned"] == true, display: v["display"].as_str().unwrap_or("").into(), pos };
-        let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin,
+        let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, backing_strength: 98, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin,
             navigation: Value::Null, workspace_navigation: Value::Null, notify: if v["notify"].is_object() { v["notify"].clone() } else { Value::Null } };
         s.set(&v);
         s
@@ -155,6 +158,9 @@ impl Settings {
             self.view = if x == "custom" { "full" } else { x }.into();
         }
         if let Some(x) = v["opacity"].as_u64().filter(|x| (90..=100).contains(x)) { self.opacity = x; }
+        if let Some(x) = v["opacity_mode"].as_str().filter(|x| ["whole","background"].contains(x)) { self.opacity_mode = x.into(); }
+        if let Some(x) = v["background_opacity"].as_u64().filter(|x| *x <= 100) { self.background_opacity = x; }
+        if let Some(x) = v["backing_strength"].as_u64().filter(|x| (98..=100).contains(x)) { self.backing_strength = x; }
         if let Some(x) = v["font"].as_u64().filter(|x| FONTS.contains(x)) {
             self.font = x;
         }
@@ -170,6 +176,8 @@ impl Settings {
         }
     }
 
+    fn native_opacity(&self) -> u64 { if self.opacity_mode == "background" { 100 } else { self.opacity } }
+
     /// `[start, end)` of the period at `now`.
     fn range(&self, now: i64) -> (i64, i64) {
         if self.period == "custom" {
@@ -179,7 +187,7 @@ impl Settings {
     }
 
     fn save(&self, install: &Path) -> bool {
-        let fields = json!({"view": self.view, "font": self.font, "opacity": self.opacity, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz,
+        let fields = json!({"view": self.view, "font": self.font, "opacity": self.opacity, "opacity_mode": self.opacity_mode, "background_opacity": self.background_opacity, "backing_strength": self.backing_strength, "period": self.period, "start": self.start, "end": self.end, "tz": self.tz,
             "pinned": self.pin.pinned, "top": self.pin.top, "size": self.pin.size, "size_anchor": self.pin.size_anchor, "auto_anchor": self.pin.auto_anchor, "display": self.pin.display, "pos": self.pin.pos, "notify": self.notify, "navigation": self.navigation, "workspace_navigation": self.workspace_navigation});
         let p = install.join("tray.json");
         let mut v = crate::data::json(&p).ok().flatten().filter(Value::is_object).unwrap_or_else(||json!({}));
@@ -190,6 +198,19 @@ impl Settings {
         }
         crate::platform::write_atomic(&p, &v.to_string()).is_ok()
     }
+}
+
+// M1.1/M1.2: reject malformed appearance IPC before applying any part of the request.
+fn appearance_input(v: &Value) -> Result<(), String> {
+    for (key,min,max) in [("opacity",90,100),("background_opacity",0,100),("backing_strength",98,100)] {
+        if v.get(key).is_some() && !v[key].as_u64().is_some_and(|x| (min..=max).contains(&x)) {
+            return Err(format!("{key} refused: use an integer from {min} to {max}"));
+        }
+    }
+    if v.get("opacity_mode").is_some() && !v["opacity_mode"].as_str().is_some_and(|x| ["whole","background"].contains(&x)) {
+        return Err("Opacity mode refused: use whole or background".into());
+    }
+    Ok(())
 }
 
 /// M1.1: strengthen text without changing the tray icon's palette or geometry.
@@ -1239,9 +1260,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 });
                 match built {
                     Ok(x) => {
-                        if !views_shots && !conversation_shots && settings.opacity<100 && let Err(error)=window_opacity(&x.0,settings.opacity) {
+                        if !views_shots && !conversation_shots && (settings.opacity_mode=="background" || settings.opacity<100) && let Err(error)=window_opacity(&x.0,settings.native_opacity()) {
                             settings.opacity_error=Some(format!("Menu opacity unavailable: {error}; Off shown"));
                             settings.opacity=100;
+                            settings.opacity_mode="whole".into();
                             if let Err(error)=window_opacity(&x.0,100) {settings.opacity_error=Some(format!("Menu opacity unknown: {error}"));}
                         }
                         dark = is_dark(&x.0);
@@ -1794,24 +1816,25 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     }
                     "notify-os" => notify::open_settings(),
                     "set" => {
-                        if m.get("opacity").is_some() && !m["opacity"].as_u64().is_some_and(|v|(90..=100).contains(&v)) {
-                            settings.opacity_error=Some("Opacity refused: use an integer from 90 to 100".into());
+                        if let Err(error)=appearance_input(&m) {
+                            settings.opacity_error=Some(error);
                             reply!(&state(&install,&settings,dark,None,&adding));return;
                         }
-                        let previous=settings.opacity;
+                        let appearance=["opacity","opacity_mode","background_opacity","backing_strength"].iter().any(|key|m.get(*key).is_some());
+                        let previous=settings.clone();
                         settings.set(&m);
-                        if m.get("opacity").is_some() {
-                            settings.opacity_error=match window_opacity(w,settings.opacity) {
+                        if appearance {
+                            settings.opacity_error=match window_opacity(w,settings.native_opacity()) {
                                 Ok(())=>None,
                                 Err(error)=>{
-                                    settings.opacity=previous;
-                                    let rollback=window_opacity(w,previous).err().map(|e|format!("; restore unknown: {e}")).unwrap_or_default();
+                                    settings=previous;
+                                    let rollback=window_opacity(w,settings.native_opacity()).err().map(|e|format!("; restore unknown: {e}")).unwrap_or_default();
                                     Some(format!("Menu opacity was not applied: {error}{rollback}"))
                                 }
                             };
                         }
                         let saved = (m.get("navigation").is_none() || settings.navigation == m["navigation"]) && settings.save(&install);
-                        if !saved && m.get("opacity").is_some() {settings.opacity_error=Some("Opacity save failed; restart may restore the previous value".into());}
+                        if !saved && appearance {settings.opacity_error=Some("Opacity save failed; restart may restore the previous value".into());}
                         if m.get("navigation").is_some() {
                             if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) && !calls.failed && !calls.pending.contains_key(&0) && m["navigation"]["dashboard"].is_object() {web_eval(wv,&format!("taskq.receive({})",json!({"dashboard":m["navigation"]["dashboard"]})),"tray.web.receive",&proxy,calls);}
                             push(&mut web, &ui, &json!({"viewStateError": if saved { Value::Null } else { json!("tray.json: save failed; view state is not persisted") }}));
@@ -1949,6 +1972,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let mut s = settings.clone();
                 s.font = font;
                 if opacity_shots {
+                    s.opacity_mode="whole".into();
                     s.opacity=OPACITY_SHOTS.iter().find(|(js,_)|*js==script).expect("opacity snapshot").1;
                     if let Some((w,_))=&ui {
                         if let Err(error)=window_opacity(w,s.opacity) {capture_errors.push(error);}
@@ -2106,6 +2130,9 @@ fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, a
         "settings_error": crate::data::json(&install.join("tray.json")).err()});
     st["display"] = display;
     st["opacity"]=json!(s.opacity);
+    st["opacity_mode"]=json!(s.opacity_mode);
+    st["background_opacity"]=json!(s.background_opacity);
+    st["backing_strength"]=json!(s.backing_strength);
     st["opacity_error"]=json!(s.opacity_error);
     st["opacity_palette"]=json!(menu_palette(dark,s.opacity));
     {
@@ -3632,11 +3659,11 @@ mod tests {
     // Chain: § 4 tray settings input. Risk: webview input stores unknown values.
     #[test]
     fn settings_keep_only_known_values() {
-        let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null };
+        let mut s = Settings { view: "icon".into(), font: 16, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, backing_strength: 98, opacity_error: None, period: "1d".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null };
         s.set(&json!({"view": "full", "font": 18, "period": "1w"}));
         s.set(&json!({"view": "x", "font": 15, "period": "2y"}));
         s.set(&json!({"period": "custom", "start": 50, "end": 50, "tz": "UTC"}));
-        assert!(s == Settings { view: "full".into(), font: 18, opacity: 100, opacity_error: None, period: "1w".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null });
+        assert!(s == Settings { view: "full".into(), font: 18, opacity: 100, opacity_mode: "whole".into(), background_opacity: 100, backing_strength: 98, opacity_error: None, period: "1w".into(), start: 0, end: 0, tz: "local".into(), pin: Pin::default(), notify: Value::Null, navigation: Value::Null, workspace_navigation:Value::Null });
         assert_eq!(s.range(1000), (100800 - 604800, 100800), "whole 28 h bins, the newest holds now");
         s.set(&json!({"period": "custom", "start": 40, "end": 160, "tz": "UTC"}));
         assert_eq!((s.range(1000), s.tz.as_str()), ((40, 160), "UTC"));
@@ -3663,6 +3690,29 @@ mod tests {
         let saved:Value=serde_json::from_str(&fs::read_to_string(install.join("tray.json")).unwrap()).unwrap();
         assert_eq!(saved["future"]["keep"],true);
         fs::remove_dir_all(install).unwrap();
+    }
+
+    // Chain: M1.2 / #1813 A2. Risk: malformed input removes backing or mode switches leave native text faded.
+    #[test]
+    fn background_opacity_validation_and_reload() {
+        let install=std::env::temp_dir().join(format!("taskq-background-{}",std::process::id()));
+        fs::create_dir_all(&install).unwrap();
+        fs::write(install.join("tray.json"),r#"{"opacity":90,"font":20,"future":true}"#).unwrap();
+        let mut s=Settings::load(&install);
+        assert_eq!((s.opacity_mode.as_str(),s.native_opacity()),("whole",90),"legacy alpha survives");
+        for background in [0,50,100] {for backing in [98,99,100] {
+            let v=json!({"opacity_mode":"background","background_opacity":background,"backing_strength":backing});
+            assert!(appearance_input(&v).is_ok());s.set(&v);assert!(s.save(&install));s=Settings::load(&install);
+            assert_eq!((s.opacity,s.native_opacity(),s.background_opacity,s.backing_strength,s.font),(90,100,background,backing,20));
+        }}
+        for v in [json!({"opacity_mode":null}),json!({"opacity_mode":"other"}),json!({"background_opacity":-1}),json!({"background_opacity":101}),json!({"background_opacity":0.5}),json!({"backing_strength":97}),json!({"backing_strength":"98"}),json!({"backing_strength":null}),json!({"opacity":89})] {
+            assert!(appearance_input(&v).is_err(),"reject {v} before native application");
+        }
+        let st=state(&install,&s,false,None,&Value::Null);
+        assert_eq!((st["opacity_mode"].as_str(),st["background_opacity"].as_u64(),st["backing_strength"].as_u64()),(Some("background"),Some(100),Some(100)));
+        s.set(&json!({"opacity_mode":"whole"}));assert_eq!(s.native_opacity(),90,"switch restores the independent whole-window value");
+        let saved:Value=serde_json::from_str(&fs::read_to_string(install.join("tray.json")).unwrap()).unwrap();
+        assert_eq!(saved["future"],true);fs::remove_dir_all(install).unwrap();
     }
 
     // Chain: M1.1 / #1812 A3. Risk: native alpha washes primary, secondary or semantic body text below AA on a busy backdrop.
