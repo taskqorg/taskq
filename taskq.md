@@ -181,7 +181,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | owner gate approval of the current result (§ 7; refused with `TASKQ_ATTEMPT`) / recipe run (§ 7) |
 | `taskq status [--only L,..] [--json]` / `taskq status --closed [--page N] [--since T]` | R6 report of tasks with one of the labels (none: all); no write. `--json` snapshot and `--closed` page: [menu] |
-| `taskq inbox N` / `taskq retro` | task text, folded state and the log (a requeue says what to fix); `retro`: requests an owner session (§ 4) over the use-case proposals and the board's `ask`/`answer`/`requeue` history; it files accepted recommendations with `add` |
+| `taskq inbox N` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `retro`: requests an owner session (§ 4) over use-case proposals and the board's `ask`/`answer`/`requeue` history; it files accepted recommendations with `add` |
 | `taskq wait [--window MIN] [--only L,..]` | PM: block until a task moves to `ask`, `review` with options, closed or `failed`; print `ask #N` etc. or `tick` |
 | `taskq cleanup [--force]` | remove clean worktrees and branches of closed tasks; `--force` also dirty ones (R11) |
 | `taskq update [--check]` / `taskq enroll <https-url> [--headless] [--telemetry]` / `taskq connection status` / `taskq disconnect` | update: § 8 update (coreq) and sweep once; the rest: [DashQ connection][dq], approve this board's scope in the browser (`--headless`: print the code only), `connected` only after DashQ projects the first snapshot; status without network; disconnect, pairing, revoke, host observations, admission: [detail][dq] |
@@ -193,18 +193,18 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq agents` | per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only, never logs in, no token value; unreadable: `unknown` (R12); no board; `not logged in` admits nothing ([runtime login](docs/design/capacity.md#runtime-login)) |
 | `taskq selftest` | load config, fold `tests/golden` fixtures built into the binary, read the board; no writes |
 
-- Success: `#N <state>` for task writes; close adds one publication link/SHA line.
-- Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its complete diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
-- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes print the exact `Receipt: <id>`.
+- Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
+- Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its full diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
+- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
 - `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
 - `answer --text` and `steer`: ≤ 4 lines, ≤ 240 characters each; one decision/instruction per line, no invented context.
 - `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, ≤ 160 characters.
 - `update`, `cleanup`, setup and `selftest`: one outcome per version/path/check ([Core Write][sq-write]).
 - Help keeps full command syntax; `inbox`, raw service logs/status JSON and original issue/log text are exempt from display caps ([verbatim diagnostics][sq-sink]).
 - Unused positional arguments are refused before any action: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
-- Commands add `attempt $TASKQ_ATTEMPT` when it is set. A command refused by `fold` prints the current state. `TASKQ_ROOT` must contain the current directory when it lies in a taskq project (`taskq.json` here or above), else every command is refused `TASKQ_ROOT <root> is not the project of the current directory <dir>`.
+- Commands add `attempt $TASKQ_ATTEMPT` when set. A command refused by `fold` prints the current state. `TASKQ_ROOT` must contain the current directory when it lies in a taskq project (`taskq.json` here or above), else every command is refused `TASKQ_ROOT <root> is not the project of the current directory <dir>`.
 - `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, §1) write the §2 fields: a seen op id returns the first receipt; another revision is refused `stale` naming the current one; neither writes. An entry that a concurrent write beat on readback (other revision, raced op id, ignored) is edited by its writer: `stale`.
-- Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the op id); else the lines above. A late answer adds `answered {by, text}`, as R6 rows outside `ask` do; every surface shows `already answered by <by>: <text>`, not a stale error. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
+- Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the same op id); else the lines above. Late answers add `answered {by, text}`, like R6 rows outside `ask`; every surface reads `already answered by <by>: <text>`. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
 - `wait` folds issues updated since the local cursor `<root>/.taskq/pm-cursor` (a cache, R1).
 - Untrusted text (issue bodies by others, worker output) follows [shared agent security](https://github.com/taskqorg/specq/blob/main/engineering/security.md#agents).
 ## 6. Setup
