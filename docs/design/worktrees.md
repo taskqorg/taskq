@@ -30,12 +30,12 @@ A reviewer that needs a checkout uses `.worktrees/review-<N>`; no other reviewer
 Each root runs one tidy on the first service pass after start, then at most once an hour, and on `taskq cleanup` (which keeps `--force`). One root at a time; a root whose `.taskq` lock or Git lock is held skips the pass and says so.
 
 1. `git worktree prune`: drops registry entries whose directory is gone. Locked entries stay (Git's own rule).
-2. Task class: remove a clean worktree when its task is closed, or, for `review-<N>`, when the task is no longer in `review`. A live or unknown execution on this host keeps it (existing § 7 rule). Dirty: keep and report.
+2. Task class: remove a clean worktree when its task is closed, or, for `review-<N>`, when the task is no longer in `review`. A live or unknown execution on this host keeps it (existing § 7 rule). Dirty: keep and report. Submodules: clean means clean in the worktree and in every checked-out submodule (`git status --ignore-submodules=none`); a submodule with commits on no remote keeps the worktree, also under `--force`, because those commits live only in the worktree's Git dir. Git refuses to remove any worktree with submodules, so a clean one is removed with `--force` after a fresh clean read. Each kept line names its reason: locked, uncommitted changes (and the submodule), submodule commits on no remote, or Git's refusal.
 3. Unowned class: remove a clean worktree whose newest file and HEAD commit are older than 7 days. Its branch stays.
 4. Branches: delete a local `taskq-<N>` with no worktree when the task is closed. `git branch -D` only when the close receipt records a merge (`merged #P as SHA`) or the tip is an ancestor of `origin/main`; otherwise `git branch -d`, and a refusal keeps the branch and reports it. No other branch is deleted.
 5. Root: if HEAD is the branch `main`, run `git merge --ff-only origin/main` after the pass's `fetch`. Untracked or modified files that the merge does not touch stay as they are (the host's own `taskq.json` edits included). Divergence, a file the merge would overwrite, a detached HEAD, another branch or a Git operation in progress: no change, report `stale` with the reason and the behind count.
 
-Never: `reset`, `stash`, `checkout`, `clean`, `worktree remove --force` (only `taskq cleanup --force`, which saves a patch to `.taskq/trash`), deleting an unmerged branch, or touching a foreign entry.
+Never: `reset`, `stash`, `checkout`, `clean`, `worktree remove --force` (only `taskq cleanup --force`, which saves a patch of the worktree and of each submodule to `.taskq/trash`, or a clean worktree with submodules as in step 2), deleting an unmerged branch, or touching a foreign entry.
 
 `workspace: external` projects skip steps 2 to 4 (host-owned worktrees, § 9); steps 1 and 5 still run.
 

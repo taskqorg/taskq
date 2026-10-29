@@ -1,7 +1,8 @@
 //! Hourly worktree tidy and root freshness ([worktrees](../docs/design/worktrees.md)): the service owns
 //! `<root>/.worktrees` and the root's Git worktree registry; foreign entries are only reported. No command here can lose
 //! uncommitted work or unmerged commits: no reset, stash, checkout or clean, and `worktree remove --force` only for
-//! `taskq cleanup --force` after its patch is saved.
+//! `taskq cleanup --force` after its patch is saved, or for a worktree with submodules once it and each submodule read
+//! clean (Git refuses to remove those without it).
 
 use crate::board::Board;
 use crate::core::{self, State};
@@ -133,6 +134,23 @@ fn registry(root: &Path) -> Result<Vec<Entry>, String> {
     }).collect())
 }
 
+/// Uncommitted changes in `dir` or any submodule under it, as Git's own removal check reads them; unknown reads changed.
+fn changed(dir: &Path) -> bool {
+    git(dir, &["status", "--porcelain", "--ignore-submodules=none"]).map_or(true, |s| !s.trim().is_empty())
+}
+
+/// Checked-out submodules under `dir`, nested ones too, as `/` paths relative to `dir`.
+fn submodules(dir: &Path) -> Result<Vec<String>, String> {
+    let mut out = vec![];
+    for line in git(dir, &["ls-files", "-z", "--stage"])?.split('\0') {
+        let Some((meta, path)) = line.split_once('\t') else { continue };
+        if !meta.starts_with("160000 ") || !dir.join(path).join(".git").exists() { continue; }
+        out.push(path.to_string());
+        out.extend(submodules(&dir.join(path))?.into_iter().map(|s| format!("{path}/{s}")));
+    }
+    Ok(out)
+}
+
 /// Total file bytes and newest modification (Unix seconds) under `dir`, else of `dir` itself; symlinks are not followed.
 /// `ponytail:` a full walk each hour (a 32 GB Windows `.worktrees` of 55k files took 3 s); a size cache is the upgrade.
 fn walk(dir: &Path) -> (u64, u64) {
@@ -161,7 +179,7 @@ struct Item { name: String, path: PathBuf, class: Class, entry: Option<Entry>, d
 impl Item {
     fn new(name: String, path: PathBuf, class: Class, entry: Option<Entry>) -> Item {
         // a status that cannot run reads dirty: nothing is removed on an unknown
-        let dirty = entry.is_some() && git(&path, &["status", "--porcelain"]).map_or(true, |s| !s.trim().is_empty());
+        let dirty = entry.is_some() && changed(&path);
         let (bytes, newest) = walk(&path);
         Item { name, path, class, entry, dirty, bytes, newest, removed: false }
     }
@@ -294,20 +312,38 @@ impl Tidy<'_> {
         let closed = state == State::Closed;
         if !(closed || review && state != State::Review) { return None; }
         if it.entry.as_ref().is_some_and(|e| e.locked) { return Some(Err(format!("{what} kept: locked (git worktree unlock it first)"))); }
+        let subs = match submodules(&it.path) {
+            Ok(s) => s,
+            Err(e) => return Some(Err(format!("{what} kept: submodules unreadable: {e}"))),
+        };
         if it.dirty && !self.force {
-            return Some(Err(format!("{what} kept: uncommitted changes; inspect them before `taskq cleanup --force`")));
+            let at = subs.iter().find(|s| changed(&it.path.join(s))).map_or(String::new(), |s| format!(" in submodule {s}"));
+            return Some(Err(format!("{what} kept: uncommitted changes{at}; inspect them before `taskq cleanup --force`")));
+        }
+        // #1875: a submodule's commits live only in this worktree's Git dir, so removal would lose those on no remote
+        if let Some(s) = subs.iter().find(|s| git(&it.path.join(s), &["rev-list", "-n", "1", "HEAD", "--branches", "--not", "--remotes"]).map_or(true, |o| !o.trim().is_empty())) {
+            return Some(Err(format!("{what} kept: submodule {s} has commits on no remote; push them first")));
         }
         if let Err(e) = self.held(n, closed, log) { return Some(Err(format!("{what} kept: {e}"))); }
         let rel = format!(".worktrees/{}", it.name);
+        let force = || git(self.root, &["worktree", "remove", "--force", &rel]).map(drop);
         // the refusal line carries Git's first stderr line; the service logs it once while it stays the same
         let removed = if self.force && it.dirty {
             let trash = crate::dot(self.root).join("trash");
-            run(&it.path, &["add", "-A"]).and_then(|_| run(&it.path, &["diff", "--cached", "--binary"])).and_then(|patch| {
+            let save = |dir: &Path, file: String| run(dir, &["add", "-A"]).and_then(|_| run(dir, &["diff", "--cached", "--binary"])).and_then(|patch| {
                 if patch.is_empty() { return Ok(()); }
-                std::fs::create_dir_all(&trash).and_then(|_| std::fs::write(trash.join(format!("{}.patch", it.name)), &patch)).map_err(|e| format!("patch save failed: {e}"))
-            }).and_then(|_| git(self.root, &["worktree", "remove", "--force", &rel]).map(drop))
+                std::fs::create_dir_all(&trash).and_then(|_| std::fs::write(trash.join(file), &patch)).map_err(|e| format!("patch save failed: {e}"))
+            });
+            subs.iter().try_for_each(|s| save(&it.path.join(s), format!("{}--{}.patch", it.name, s.replace('/', "-"))))
+                .and_then(|_| save(&it.path, format!("{}.patch", it.name))).and_then(|_| force())
         } else {
-            git(self.root, &["worktree", "remove", &rel]).map(drop)
+            // #1875: Git refuses any worktree with submodules ("working trees containing submodules cannot be moved or
+            // removed"); a fresh clean read of it and its submodules stands in for Git's own check
+            git(self.root, &["worktree", "remove", &rel]).map(drop).or_else(|e| match e.contains("containing submodules") {
+                true if changed(&it.path) => Err(format!("{} contains modified or untracked files", rel)),
+                true => force(),
+                false => Err(e),
+            })
         };
         Some(match removed {
             Ok(()) => Ok(format!("{what} removed")),
@@ -616,6 +652,54 @@ mod tests {
         let o = r.tidy(&b, false).run(&mut |n| { if n == 2 { let _ = std::fs::write(&wip, "x"); } false }, &|_| None);
         assert!(!r.wt("taskq-1") && o.log.contains(&"#1 worktree removed".into()), "long ignored paths go: {:?}", o.log);
         assert!(r.wt("taskq-2") && o.log.iter().any(|l| l.starts_with("#2 worktree removal unconfirmed: fatal: '.worktrees/taskq-2' contains modified or untracked files")), "{:?}", o.log);
+    }
+
+    // Chain: tidy step 2 removal with submodules. Defect (#1875, hermes-fra1): `cleanup` and `cleanup --force` kept 13
+    // clean closed-task worktrees, since Git refuses any worktree with submodules ("working trees containing submodules
+    // cannot be moved or removed"), until the disk filled. Risk protected: removing uncommitted work in the parent or a
+    // submodule, or submodule commits on no remote (they live only in the worktree's Git dir), and a kept line
+    // without its reason.
+    #[test]
+    fn submodule_worktrees_leave_when_clean_and_keep_their_work() {
+        let r = Repo::new("sub");
+        let b = Fake::default();
+        for _ in 0..5 { b.create("T", "", &["taskq".into()]).unwrap(); }
+        let lib = r.base.join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        r.sh(&lib, &["init", "-q", "-b", "main"]);
+        std::fs::write(lib.join("l"), "1").unwrap();
+        r.sh(&lib, &["add", "l"]);
+        r.sh(&lib, &["commit", "-q", "-m", "lib"]);
+        for n in 1..=5 {
+            let wt = r.root.join(format!(".worktrees/taskq-{n}"));
+            r.sh(&r.root, &["worktree", "add", "-q", "-b", &format!("taskq-{n}"), wt.to_str().unwrap()]);
+            r.sh(&wt, &["-c", "protocol.file.allow=always", "submodule", "add", "-q", lib.to_str().unwrap(), "sub"]);
+            r.sh(&wt, &["commit", "-q", "-m", "sub"]);
+        }
+        let wt = |n: u64| r.root.join(format!(".worktrees/taskq-{n}"));
+        // 2: untracked file in the submodule; 3: modified file in the parent; 4: a submodule commit on no remote,
+        // recorded in the parent; 5: a modified submodule file, then `--force`
+        std::fs::write(wt(2).join("sub/wip"), "x").unwrap();
+        std::fs::write(wt(3).join("a"), "edited").unwrap();
+        std::fs::write(wt(4).join("sub/l"), "2").unwrap();
+        r.sh(&wt(4).join("sub"), &["commit", "-q", "-am", "local"]);
+        r.sh(&wt(4), &["commit", "-q", "-am", "bump"]);
+        std::fs::write(wt(5).join("sub/l"), "mine").unwrap();
+        for n in 1..=5 { b.close(n).unwrap(); }
+        let o = pass(&r.tidy(&b, false));
+        assert!(!r.wt("taskq-1") && o.log.contains(&"#1 worktree removed".into()), "a clean one goes: {:?}", o.log);
+        assert_eq!(r.sh(&r.root, &["branch", "--list", "taskq-1"]), "taskq-1", "its unmerged branch stays");
+        for (n, line) in [(2, "#2 worktree kept: uncommitted changes in submodule sub; inspect them before `taskq cleanup --force`"),
+            (3, "#3 worktree kept: uncommitted changes; inspect them before `taskq cleanup --force`"),
+            (4, "#4 worktree kept: submodule sub has commits on no remote; push them first"),
+            (5, "#5 worktree kept: uncommitted changes in submodule sub; inspect them before `taskq cleanup --force`")] {
+            assert!(r.wt(&format!("taskq-{n}")) && o.log.contains(&line.into()), "#{n}: {:?}", o.log);
+        }
+        assert_eq!(std::fs::read_to_string(wt(2).join("sub/wip")).unwrap(), "x");
+        // `--force` saves the submodule's patch first; commits on no remote still keep #4
+        let o = Tidy { force: true, ..r.tidy(&b, false) }.run(&mut |_| false, &|_| None);
+        assert!(!r.wt("taskq-5") && r.wt("taskq-4"), "{:?}", o.log);
+        assert!(std::fs::read_to_string(r.root.join(".taskq/trash/taskq-5--sub.patch")).unwrap().contains("+mine"), "{:?}", o.log);
     }
 
     // Chain: tidy step 3. Risk protected: removing recent or dirty unowned work.
