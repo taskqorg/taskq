@@ -18,6 +18,8 @@ Center the square Q body horizontally and vertically, excluding its descending t
 
 The app icon reuses the tray renderer and its existing state logic, including the compact-Q fallback for an empty Summary (#1326). The macOS Dock/app switcher and Windows window/taskbar icons follow the live tray view; static Finder/TCC/notification identity and EXE resources use the compact Q. Package ICNS at 16–1024 px and ICO at 16–256 px. Keep `org.taskq.tray` and sign only after writing resources; live updates never modify the signed bundle. Pinned-window visibility stays governed by M13.
 
+- M1.1 Whole-window opacity: Appearance offers Off (100%) and a labelled 90–100% opacity slider in 1% steps. Apply immediately to the menu, including its custom chrome and popovers, on every route; persist in local `tray.json`. Translucent text follows the [contrast palette](visual-style.md#translucent-menu-text). Settings, View, Conversations and the tray icon keep their existing opacity. Native or save failures are explicit; a failed application retains the prior value.
+
 ## M2 Scope and projects
 
 Project heading shortcuts retain direct project-overview navigation on the name; it never opens the folder, starts work or silently changes the saved task view. Board uses the registered provider and exact board URL; Folder uses the existing native action and registered root on this computer, never a worker worktree or inferred path. Missing root disables Folder with a reason; OS failures remain visible. Back restores list, filters, collapse choices and scroll. Each action has an explicit accessible name/tooltip and 32/44 px hit area.

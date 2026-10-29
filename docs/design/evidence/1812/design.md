@@ -1,6 +1,6 @@
 # Whole-window transparency: design checkpoint
 
-Proposal for [#1812](https://github.com/taskqorg/taskq/issues/1812), not an implemented or accepted appearance change. R13 requires a decision before changing the approved palette or the requested whole-window effect. No rules or guarding assertions change in this checkpoint.
+Design for [#1812](https://github.com/taskqorg/taskq/issues/1812). The [owner answer](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6490519452) approves stronger translucent text. R13 is applied in the root Product Appearance opacity decision and M1.1; existing Off behavior and guarding assertions are retained.
 
 ## Current implementation
 
@@ -37,10 +37,12 @@ Development calculation: composite each source channel as `alpha * source + (1 -
 
 The current unfilled Work and failure text pairs pass 4.5:1 at Off and fail at both proposed translucent values. No implementation fix or after-pass is claimed. A useful broad slider range therefore needs an owner choice about the palette or effect; choosing a barely translucent range solely to pass these pairs would hide that product tradeoff. This calculation does not qualify every existing text/surface pair.
 
-## Decision and remaining evidence
+## Owner decision
+
+The owner selected stronger translucent text (option 2 below). The adopted range is 90–100% in 1% steps, with Off at 100%. Primary text is #12181C / #FFFFFF; semantic and secondary tokens mix with 50% black / 90% white in light/dark mode. This is limited to the translucent menu. The following alternatives explain the original decision; they are not open choices.
 
 1. Keep the approved palette and uniform alpha. The range must stay close to opaque; determine its exact minimum against all affected text surfaces and Windows quantization before adopting it.
 2. Permit stronger text colors while translucent. Keep uniform alpha and determine a wider AA-safe range; this changes an approved visual decision. Recommended because it preserves the requested whole-window effect without making its range practically invisible.
 3. Make only the background translucent. Preserve foreground text contrast, but explicitly change the whole-window requirement; do not silently substitute vibrancy or a material.
 
-After the decision: update the canonical requirements first (R13), implement and verify persistence/route coverage, then capture Off, midpoint and minimum over an invented busy background in both themes, at most 10 screens. Native composition and text contrast must be checked on macOS and Windows. Ordinary WKWebView/WebView2 page snapshots omit native window alpha and cannot alone prove A3. No native transparency, screenshot, visual acceptance or Windows compatibility pass is claimed here (R12).
+Verification: persistence/route coverage, Off/midpoint/minimum over an invented busy background in both themes, at most 10 screens. `tray --snapshot DIR --route opacity` produces six explicitly selected cases; its webview captures remain separate from native screen captures. Native composition and text contrast must be checked on macOS and Windows. Ordinary WKWebView/WebView2 page snapshots omit native window alpha and cannot alone prove A3. Candidate checks and platform limitations are recorded in [verification](verification.md); source checks do not qualify a missing platform (R12).

@@ -15,7 +15,6 @@ One coherent outcome is one task, any diff size, with ≤ 1 live attempt (worker
 - **Worker** `T<N>`: a child of the service. Does one attempt, writes `result`, `ask`, `requeue` or `later`.
 - **Reviewer** `R<N>`: a child of the service, spawned on demand for a result. Checks the exact candidate, then `close`, `requeue` with fixes, or `ask`. No resident supervisor session.
 - **Owner session**: a new visible session the service opens for a person (setup, tray AI request, `retro`; § 4); after launch its runtime owns it; any may act as PM. Authority per [shared approval boundaries][sq-approval]; task-state writes use TaskQ commands.
-
 Session name `<work|review|setup> #<N> <title[:40]>`: Claude `--name`; Codex first input line.
 ### R4. Comments move the queue
 Each command that changes a task appends one `taskq:` comment, sets the projected labels and pokes the local service. Services poll the board every `poll` seconds. No sender session, timer or PM chat is on the critical path.
@@ -30,7 +29,6 @@ Result SHA, checks, questions and blockers go to the issue: `result`, `ask`, `re
 5. `Held: [#N title](url), ...`, then `Later:`, one line each; then `Failed:` with a reason table; then `Stuck: [#N title](url) (<state>, <age>), ...`: last log entry ≥ 2 h old in `held`, `ask`, `later`, unleased `doing`/`review` (§ 3), or at once `waiting` with every blocker closed; `--json` rows add `stuck` true and `age_s`. Observe only.
 6. Tray running agents follow [M3](docs/design/menu.md#running-agents) (target: Home panels, TW3). `Hosts: <host> v<version> <age>[ stale][ focus off|unknown][ <rt> limit until|probe <time>][ tray <code>], ...` from heartbeats (§ 4).
 7. `Next: 1 <action> ★ · 2 <action>` from the PM ([shared Next contract](https://github.com/taskqorg/specq/blob/main/design/workflow.md#ai-assisted-controls)).
-
 Display titles ≤ 60 characters, reasons ≤ 160, option text ≤ 120; an ellipsis links the issue for full text. Keep every row, option, count and answer token; no total report cap. One cell formatter: newline becomes space; `|`, `[`, `]`, `\` are escaped. Session links: [menu].
 ### R7. Style
 Follow [specq Core](https://github.com/taskqorg/specq/blob/main/caveman/rules/core.md) and its applicable profile; project documents follow [Documentation](https://github.com/taskqorg/specq/blob/main/caveman/rules/documentation.md) in English.
@@ -68,6 +66,8 @@ Looks/sound: one line each (R13).
 - Screenshots: dark theme from `taskq tray --snapshot` over `docs/shots/fixture.sh`, pinned by `docs/shots/manifest.json`; the owner accepts them from before/after evidence. Detail: [UI acceptance][uia].
 - Formatting: a few unicode icons where they help scanning; no emoji clutter, no badges.
 - Last README line: `If taskq saves you time, [buy me a coffee](…).`
+### Appearance opacity
+The menu supports Off (100%) and whole-window opacity from 90% to 100%, saved locally; translucent text uses stronger colors for AA contrast ([M1.1](docs/design/menu.md#m1-appearance)).
 ## 1. Tasks
 A task is an open issue by a trusted author (GitHub `OWNER|MEMBER|COLLABORATOR`, GitLab Reporter+) labelled `taskq` (`taskq start` sets it; on the board a person adds it). Other issues never start: a PM files a task from one with `taskq add` and comments on it at close. A closed issue is done, unless the board records that it closed without completing (GitHub `state_reason` not `completed`): such a dependency reads unknown, never done (R12; GitLab records no reason). The issue text is for people and may be
 edited by hand: `## Goal`, `## Acceptance`, optional `## Scope`, one line `Depends on #N` per dependency; `Depends on <repo>#N` names an issue of another repository on the board's host, read with the board's token (`<repo>`: `name` under the board's owner, or `owner/name`). An unreadable dependency reads unknown. Acceptance items `A1.`, `A2.` are never renumbered; each is an observable result a reviewer checks without code.

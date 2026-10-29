@@ -63,3 +63,10 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 /* The content body's margins stay inside its natural-height measurement. */
 .content-body{display:flow-root}
 .row-actions .task-controls{display:contents}
+
+/* M1.1: only the native menu fades; its body and shared components need stronger text. */
+.menu.translucent{color:light-dark(#12181c,#fff)}
+.menu.translucent .tqp{--ink:light-dark(#12181c,#fff);--secondary:var(--muted)}
+.menu.translucent .qac{--qac-fg:light-dark(#12181c,#fff);--qac-muted:var(--muted)}
+.menu.translucent .rsc{--rsc-fg:light-dark(#12181c,#fff);--rsc-muted:var(--muted)}
+.opacity-setting{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px;align-items:center}.opacity-setting input{grid-column:1/-1;width:100%;min-width:0;accent-color:var(--work)}
