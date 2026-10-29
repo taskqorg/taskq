@@ -71,3 +71,78 @@ for rev, listed in [('bf4a2be9', {'changed': ['M3'], 'tests': ['R12']}), ('ecb1e
     task = ' '.join(found['changed'] + found['tests'] + [f'{k} -> none' for k in found['removed']])
     assert unnamed(found, task) == [], (rev, unnamed(found, task))
 print('PASS replays of bf4a2be9 and ecb1e57d fail unnamed and pass named')
+
+
+# #1818 / #1805: the owner picked the design, but Product appeared only in the ask's context.
+# Keep the real task_text -> approval gate boundary; the subprocesses return invented board data.
+import json
+from types import SimpleNamespace
+subprocess = check['task_text'].__globals__['subprocess']
+old_run, old_output = subprocess.run, subprocess.check_output
+ask = {'id': 10, 'body': 'taskq: ask attempt 1\nProblem: Approval updates Product and M2.\n1. A; native at release - + compact; - later qualification\n2. B - + wider; - changes R9',
+       'author_association': 'OWNER', 'created_at': 'invented', 'updated_at': 'invented'}
+answer = {**ask, 'id': 11, 'body': 'taskq: answer 1\nA; native at release - + compact; - later qualification'}
+try:
+    subprocess.check_output = lambda *a, **k: b'Task: https://github.com/invented/project/issues/1\n'
+    def board_read(command, **kwargs):
+        if command[-1].endswith('/comments'):
+            out = json.dumps([[{**ask, 'id': 1, 'body': 'taskq: spawn worker codex:invented win'}, ask, answer]]) if '--slurp' in command else answer['body']
+        else:
+            out = 'Design A is approved by the owner.'
+        return SimpleNamespace(returncode=0, stdout=out.encode(), stderr=b'')
+    subprocess.run = board_read
+    approved, error = check['task_text']('invented-base')
+    assert error is None, error
+    assert unnamed({'changed': ['Product', 'M2'], 'removed': [], 'tests': []}, approved) == [], approved
+    assert 'R9' not in approved, 'the unchosen option is not approval'
+finally:
+    subprocess.run, subprocess.check_output = old_run, old_output
+print('PASS selected design approval reads its ask without asking the owner again')
+
+# Pair approvals with the accepted question, never stale revisions, ignored asks or other options.
+approval = lambda comments: check['approval_text'](comments, 99)
+comment = lambda i, body, **fields: {**ask, 'id': i, 'body': body, **fields}
+spawn = comment(1, 'taskq: spawn worker codex:invented win')
+for answer_body in ['taskq: answer 1', '1', '1. A; native at release - + compact; - later qualification',
+                    'taskq: answer\nPick 1. Proceed.', 'taskq answer 1', 'taskq answer 99.1', 'taskq answer #99.1']:
+    text = approval([spawn, ask, comment(11, answer_body)])
+    assert 'Product' in text and 'M2' in text and 'R9' not in text, (answer_body, text)
+for rejected in [comment(11, 'taskq: answer 1\nR12\nop-id: stale\nrevision: 9'),
+                 comment(11, 'taskq: answer 1 attempt 1'),
+                 comment(11, '1', updated_at='edited'),
+                 comment(11, '1', author_association='NONE')]:
+    assert approval([spawn, ask, rejected]) == '', rejected
+new_ask = comment(13, 'taskq: ask attempt 1\nProblem: New M3 choice\n1. keep\n2. change')
+text = approval([spawn, ask, comment(11, 'taskq answer 2'), new_ask, comment(14, '1')])
+assert 'M3' in text, text
+replacement = [spawn, comment(2, 'taskq: requeue'), comment(3, 'taskq: spawn worker codex:new win'),
+               comment(4, 'taskq: ask attempt 1\nProblem: Ignored R9\n1. old\n2. other'),
+               comment(5, 'taskq: ask attempt 3\nProblem: Current M2\n1. keep\n2. change'), comment(6, '1')]
+text = approval(replacement)
+assert 'M2' in text and 'R9' not in text, text
+for prefix in [
+    [spawn, comment(2, 'taskq: spawn worker codex:ignored win')],
+    [spawn, comment(2, 'taskq: result invalid attempt 1')],
+    [comment(1, 'taskq: hold'), comment(2, 'taskq: requeue')],
+    [spawn, comment(2, 'taskq: result ' + 'a'*40 + ' attempt 1'), comment(3, 'taskq: close'),
+     comment(4, 'taskq: later'), comment(5, 'taskq: requeue')],
+    [spawn, comment(2, 'taskq: requeue attempt 1')],
+]:
+    invalid = prefix + [comment(7, 'taskq: spawn reviewer codex:ignored win'),
+                        comment(8, 'taskq: ask attempt 7\nProblem: Ignored R9\n1. yes\n2. no'), comment(9, '1')]
+    assert 'R9' not in approval(invalid), invalid
+replacement[1] = comment(2, 'taskq: requeue\nop-id: reset\nrevision: 1')
+assert 'M2' in approval(replacement), 'a fenced reset must consume the old attempt'
+assert approval([spawn, comment(2, 'taskq: requeue attempt 1'),
+                 comment(3, 'taskq: ask attempt 1\nProblem: Ignored R9\n1. yes\n2. no'), comment(4, '1')]) == ''
+assert approval([spawn, comment(2, 'taskq:  requeue\tattempt 1'),
+                 comment(3, 'taskq: ask attempt 1\nProblem: Ignored R9\n1. yes\n2. no'), comment(4, '1')]) == ''
+assert 'R9' not in approval([spawn, comment(2, 'taskq: ask attempt 1\nProblem: Choose\n1. keep\n1. change R9\n2. other'),
+                            comment(3, 'taskq: answer 1')]), 'duplicate numbers retain the first option, as fold does'
+assert 'R9' not in approval([spawn, comment(2, 'taskq: ask attempt 1\nProblem: Choose\n  1. keep\n  2. change R9'),
+                            comment(3, 'taskq: answer 1')]), 'indented unchosen options are not ask context'
+assert 'R9' not in approval([spawn, comment(2, 'taskq: ask attempt 1\nProblem: First\n1. keep\n2. other'),
+                            comment(3, 'taskq: answer 1\nop-id: repeated id'),
+                            comment(4, 'taskq: ask attempt 1\nProblem: New\n1. change R9\n2. keep'),
+                            comment(5, 'taskq: answer 1\nop-id: repeated id')]), 'duplicate operations cannot approve a new ask'
+print('PASS approval association preserves revision, attempt, trust and selected-option fences')

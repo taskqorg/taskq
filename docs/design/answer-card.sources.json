@@ -1,0 +1,11 @@
+{
+  "component": "answer-card",
+  "componentVersion": 1,
+  "designRevision": "cf46e637d45f971dc83f1c1ea5f1e9a119a74256",
+  "files": [
+    "src/answer-card.js",
+    "src/answer-card.css",
+    "tests/fixtures/answer-card.json"
+  ],
+  "hashEncoding": "UTF-8, LF; the build derives the hashes (scripts/design-sources.cjs); the tag workflow assigns the release version"
+}

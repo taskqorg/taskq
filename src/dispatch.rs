@@ -67,6 +67,8 @@ pub struct Receipt {
     /// A late answer (§ 5): who wrote the answer that closed the question first and what it delivered.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub answered: Option<Answered>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<bool>,
 }
 
 /// § 5 `answered`: the board login and delivered text of the answer that closed the question.
@@ -99,7 +101,7 @@ impl Receipt {
         Receipt { reason: format!("#{} already answered{by}: {}", self.task, a.text), next, answered: Some(a), ..self }
     }
     fn new(n: u64, op: &Op, outcome: &'static str, reason: impl Into<String>, next: impl Into<String>) -> Receipt {
-        Receipt { task: n, op_id: op.id.clone(), outcome, state: None, revision: None, reason: reason.into(), next: next.into(), extra: String::new(), answered: None }
+        Receipt { task: n, op_id: op.id.clone(), outcome, state: None, revision: None, reason: reason.into(), next: next.into(), extra: String::new(), answered: None, note: None }
     }
     pub fn accepted(n: u64, op: &Op, state: State, revision: u64) -> Receipt {
         Receipt { state: Some(state.name()), revision: Some(revision), ..Receipt::new(n, op, "accepted", "", "") }
@@ -132,6 +134,37 @@ impl Receipt {
     pub fn json(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
+}
+
+/// Preserve a late answer's original meaning; a reused option number never answers a newer card (§ 2/§ 5).
+fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op: &Op, log: &[Entry]) -> Receipt {
+    let source = op.revision.or_else(|| {
+        let p = core::project(n, log, false);
+        let id = p.closing_answer(n, log)?;
+        Some(core::revision(n, &log.iter().filter(|e| e.id < id).cloned().collect::<Vec<_>>()))
+    });
+    let said = if let Some(k) = args.first() {
+        let Some(r) = source else { return Receipt::rejected(n, op, "original question revision unavailable; answer text is required") };
+        let old: Vec<_> = log.iter().filter(|e| e.id <= r).cloned().collect();
+        let p = core::project(n, &old, false);
+        if p.revision != r { return Receipt::rejected(n, op, "original question revision unavailable") }
+        let Some(choice) = p.task.card.as_deref().and_then(|card| options(card).into_iter().find(|o| o.0.to_string() == *k)) else {
+            return Receipt::rejected(n, op, "choice not found in the original question");
+        };
+        choice.1
+    } else { text.to_string() };
+    let r = source.unwrap_or(0).to_string();
+    act_as(b, root, n, "steer", &["answer", &r], &said, &Op { id: op.id.clone(), revision: None }, None, None)
+}
+
+fn note_receipt(b: &dyn Board, mut r: Receipt, n: u64, log: &[Entry], op: &Op) -> Receipt {
+    if let Some(e) = log.iter().rev().find(|e| !e.edited && op.id.as_deref().is_none_or(|id| core::op_id(n, &e.body) == Some(id))).filter(|e| e.body.starts_with("taskq: steer")) {
+        r.note = Some(true);
+        r.reason = if r.state == Some("doing") { "Saved as a task note; queued to steer the worker" } else { "Saved as a task note; the current question is unchanged" }.into();
+        if e.body.starts_with("taskq: steer answer ") { r.answered = answered(b, n, "answer", log, false); }
+        if let Some(a) = &r.answered { r.reason.push_str(&format!("; already answered by {}: {}", a.by, a.text)); }
+    }
+    r
 }
 
 /// R4: append one entry that `fold` accepts, set the projected label, poke the local service. A seen op id returns
@@ -172,11 +205,16 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         && log.iter().any(|e| !e.edited && core::op_id(n, &e.body) == Some(id.as_str()))
     {
         // a retry: the first write stands, no further board write (even after it cleared the attempt)
-        return accepted(if issue.open { before.state } else { State::Closed }, rev).wake(root);
+        return note_receipt(b, accepted(if issue.open { before.state } else { State::Closed }, rev), n, &log, op).wake(root);
     }
     if let Some(why) = child.and_then(|env| stale_child(n, kind, before.attempt, env)) {
         return Receipt { state: Some(before.state.name()), revision: Some(rev), next: "Run taskq from a fresh session of the live attempt, or unset TASKQ_TASK and TASKQ_ATTEMPT.".into(), ..Receipt::rejected(n, op, why) };
     }
+    // Even a plain CLI answer fences the question it read, including a write racing its POST.
+    let bound;
+    let op = if kind == "answer" && attempt.is_none() && before.state == State::Ask && op.revision.is_none() {
+        bound = Op { id: op.id.clone(), revision: Some(rev) }; &bound
+    } else { op };
     if !issue.open {
         return Receipt::rejected(n, op, format!("#{n} is closed"));
     }
@@ -185,7 +223,11 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         let r = Receipt::rejected(n, op, format!("#{n} lacks the {} label; requeue refused", service::TASK_LABEL));
         return Receipt { state: Some(before.state.name()), revision: Some(rev), next: format!("Owner: add the {} label to #{n} on the board, then retry.", service::TASK_LABEL), ..r };
     }
-    if op.revision.is_some_and(|r| r != rev) {
+    if kind == "answer" && attempt.is_none() && (op.revision.is_some_and(|r| r != rev) || before.state != State::Ask) {
+        return answer_note(b, root, n, args, text, op, &log);
+    }
+    let owner_note = kind == "steer" && attempt.is_none();
+    if !owner_note && op.revision.is_some_and(|r| r != rev) {
         let next = format!("Read `taskq inbox {n}`; retry with --revision {rev} if still wanted.");
         let late = answered(b, n, kind, &log, deps);
         return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::new(n, op, "stale", format!("revision {} is stale; current is {rev}", op.revision.unwrap_or(0)), next) }.late(late).wake(root);
@@ -205,7 +247,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     let text = if !(kind == "requeue" && args == ["main-moved"]) && attempt.is_some() && attempt == before.attempt { core::limit_text(n, &before, kind, text) } else { text.into() };
     let body = core::with_fields(entry(kind, args, attempt, &text), op.id.as_deref(), op.revision);
     log.push(Entry { id: u64::MAX, body: body.clone(), edited: false });
-    if fold(n, &log, deps) == before {
+    if !core::project(n, &log, deps).accepts(u64::MAX) {
         let late = answered(b, n, kind, &log[..log.len() - 1], deps);
         return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::rejected(n, op, format!("#{n} is {}: `{kind}` not accepted", before.state.name())) }.late(late);
     }
@@ -229,7 +271,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     let Some(i) = log.iter().position(|e| e.id == id) else { return unknown(format!("comment {id} not read back")) };
     // lost: an earlier entry moved the revision, or `fold` ignores this one (a raced op id included)
     let before_write = core::project(n, &log[..i], deps);
-    if op.revision.is_some_and(|r| r != before_write.revision) || before_write.task == fold(n, &log[..=i], deps) {
+    if !owner_note && op.revision.is_some_and(|r| r != before_write.revision) || !core::project(n, &log[..=i], deps).accepts(id) {
         // the losing entry edits itself: an edited entry is ignored by this and older versions alike (§ 2, § 8)
         let stored = if human { b.comments(n).ok().and_then(|cs| cs.into_iter().find(|c| c.id == id)).map(|c| c.body) } else { Some(body.clone()) };
         let Some(stored) = stored else { return unknown(format!("comment {id} not read back for stale-write cleanup")); };
@@ -237,6 +279,9 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
             return unknown(e);
         }
         log[i].edited = true;
+        if kind == "answer" && attempt.is_none() {
+            return answer_note(b, root, n, args, &text, op, &log);
+        }
         let projection = core::project(n, &log, deps);
         let (t, rev) = (projection.task, projection.revision);
         let late = answered(b, n, kind, &log, deps);
@@ -247,7 +292,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     if let Err(e) = service::project(b, &issue, &t) {
         return unknown(e);
     }
-    accepted(t.state, rev).wake(root)
+    note_receipt(b, accepted(t.state, rev), n, &log, op).wake(root)
 }
 
 /// § 7: publish a reviewed result, then `close`; later and failed tasks close without publication.
@@ -486,9 +531,11 @@ pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> R
     let mut plan = vec![];
     for p in picks {
         let (n, k) = p.trim_start_matches('#').split_once('.').and_then(|(n, k)| Some((n.parse::<u64>().ok()?, k.parse::<usize>().ok()?))).ok_or(format!("not N.K: {p}"))?;
-        let (_, t, deps) = current(b, n)?;
+        let issue = b.issue(n)?;
         let log = entries(b, n)?;
-        // a late answer (§ 5) goes to `act`, which writes nothing and names the answer that closed the question
+        let deps = deps_open(b, n, &issue.body, &log);
+        let t = fold(n, &log, deps);
+        // A late answer goes to `act`, which saves its original meaning as a durable note.
         if op.id.as_deref().is_some_and(|id| log.iter().any(|e| !e.edited && core::op_id(n, &e.body) == Some(id)))
             || op.revision.is_some_and(|r| r != core::revision(n, &log))
             || !(matches!(t.state, State::Ask | State::Review) && t.card.is_some()) && core::project(n, &log, deps).closing_answer(n, &log).is_some()
@@ -498,14 +545,16 @@ pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> R
         }
         let card = t.card.clone().filter(|_| matches!(t.state, State::Ask | State::Review)).ok_or(format!("#{n} is {} without a question", t.state.name()))?;
         let opt = options(&card).into_iter().find(|o| o.0 == k).ok_or(format!("#{n} has no option {k}"))?.1;
-        plan.push((n, k, Some((opt, t.state, needs_approval(cfg, &t), t.publication.is_some()))));
+        plan.push((n, k, Some((opt, t.state, needs_approval(cfg, &t), t.publication.is_some(), core::revision(n, &log)))));
     }
     let mut out = vec![];
     for (n, k, card) in plan {
-        let Some((opt, state, gated, pending)) = card else {
+        let Some((opt, state, gated, pending, revision)) = card else {
             out.push(act(b, &cfg.root, n, "answer", &[&k.to_string()], "", op));
             continue;
         };
+        let bound = Op { id: op.id.clone(), revision: Some(op.revision.unwrap_or(revision)) };
+        let op = &bound;
         let close = opt.to_lowercase().starts_with("close");
         if gated && opt.to_lowercase().starts_with("approve") {
             let Some(sha) = core::approval_sha(&opt) else {
@@ -519,19 +568,22 @@ pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> R
                 out.push(r);
                 continue;
             }
-            out.push(act(b, &cfg.root, n, "answer", &[&k.to_string()], &opt, &Op { id: op.id.clone(), revision: None }));
+            out.push(act(b, &cfg.root, n, "answer", &[&k.to_string()], &opt, op));
             continue;
         }
         out.push(match (state, close) {
             // § 2: an option that starts with `later` parks the task, like the retry limit card's (#1123)
-            _ if opt.to_lowercase().starts_with("later") => act(b, &cfg.root, n, "later", &[], &opt, op),
+            _ if opt.to_lowercase().starts_with("later") => {
+                let r = act(b, &cfg.root, n, "later", &[], &opt, op);
+                if r.outcome == "stale" { act(b, &cfg.root, n, "answer", &[&k.to_string()], &opt, op) } else { r }
+            }
             (State::Ask, _) => {
                 let r = act(b, &cfg.root, n, "answer", &[&k.to_string()], &opt, op);
                 // the close an option starts runs after the answer, as one more op of the same id
                 let then = Op { id: op.id.as_ref().map(|i| format!("{i}.close")), revision: None };
                 // a blocked publication's close (superseded, #1779) ends the task with no merge; a publish would block again
-                if close && r.ok() && r.state == Some("review") && pending { act(b, &cfg.root, n, "close", &[], &opt, &then) }
-                else if close && r.ok() && r.state == Some("review") { close_one(b, cfg, n, &opt, &then) } else { r }
+                if close && r.ok() && r.note != Some(true) && r.state == Some("review") && pending { act(b, &cfg.root, n, "close", &[], &opt, &then) }
+                else if close && r.ok() && r.note != Some(true) && r.state == Some("review") { close_one(b, cfg, n, &opt, &then) } else { r }
             }
             (_, true) => close_one(b, cfg, n, &opt, op),
             (_, false) => act(b, &cfg.root, n, "requeue", &[], &opt, op),
@@ -684,7 +736,7 @@ mod tests {
         let a = b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
         b.state.borrow_mut().race = Some(entry("ask", &[], Some(a), "Problem: a new decision"));
         let op = Op { id: Some("raced-reply".into()), revision: Some(a) };
-        let r = act(&b, Path::new(""), n, "steer", &[], &"word ".repeat(30_000), &op);
+        let r = act(&b, Path::new(""), n, "requeue", &[], &"word ".repeat(30_000), &op);
         assert_eq!(r.outcome, "stale", "{}", r.text());
         let raw = b.comments(n).unwrap();
         assert!(raw.last().unwrap().edited);
@@ -907,112 +959,135 @@ g", &["taskq".into()]).unwrap();
         assert!(pick("1", "x").is_err_and(|e| e.contains("closed")));
     }
 
-    // Chain: § 5 dispatch receipt and readback. Risk: a stale or retried op writes a second entry.
+    // Chain: § 2 § 5 owner send -> board readback -> durable note -> attempt inbox.
+    // Risk: a race drops intent, reuses a new option number, bypasses other revisions or duplicates delivery.
     #[test]
-    fn stale_revisions_and_retried_op_ids_write_nothing() {
-        let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-dispatch-{}", std::process::id())));
-        let n = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
-        b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
-        let a = fold(n, &entries(&b, n).unwrap(), false).attempt.unwrap();
-        let card = b.comment(n, &entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★")).unwrap();
-        let count = || b.comments(n).unwrap().len();
-        let before = count();
-        let op = |id: &str, r: u64| Op { id: Some(id.into()), revision: Some(r) };
-        // A2: a stale revision is refused, names the current one, and the board is unchanged (readback)
-        let r = act(&b, &root, n, "answer", &["1"], "x", &op("pm", a));
-        assert_eq!((r.outcome, r.revision, count()), ("stale", Some(card), before));
-        assert!(r.text().contains(&format!("revision {a} is stale; current is {card}")) && r.text().contains(&format!("--revision {card}")), "{}", r.text());
-        assert_eq!(fold(n, &entries(&b, n).unwrap(), false).state, State::Ask);
-        // the first answer at the shown revision is accepted; a second client at the same revision is stale
-        let r = act(&b, &root, n, "answer", &["1"], "x", &op("pm", card));
-        assert_eq!((r.outcome, r.state, count()), ("accepted", Some("doing"), before + 1));
-        assert_eq!(act(&b, &root, n, "answer", &["2"], "y", &op("tray", card)).outcome, "stale");
-        // A3: the same op id again returns the first receipt and writes no second entry
-        let again = act(&b, &root, n, "answer", &["1"], "x", &op("pm", card));
-        assert_eq!((again.outcome, again.state, count()), ("accepted", Some("doing"), before + 1));
-        // Numbered answers reconcile before looking for the card that the accepted write removed.
+    fn late_answers_preserve_meaning_and_reconcile_once() {
+        let b = Fake::default();
+        let root = std::env::temp_dir().join(format!("taskq-notes-{}", crate::runtime::uuid()));
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("taskq.json"), r#"{"repo":"o/r"}"#).unwrap();
         let (cfg, _) = crate::load(&root).unwrap();
-        let again = answer_picks(&b, &cfg, &[format!("{n}.1")], &op("pm", card)).unwrap().remove(0);
-        assert_eq!((again.outcome, count()), ("accepted", before + 1));
-        let stale = answer_picks(&b, &cfg, &[format!("{n}.2")], &op("tray2", card)).unwrap().remove(0);
-        assert_eq!((stale.outcome, count()), ("stale", before + 1));
-        // A5: one JSON object per receipt
-        let v: serde_json::Value = serde_json::from_str(&again.json()).unwrap();
-        assert_eq!((v["task"].as_u64(), v["op_id"].as_str(), v["outcome"].as_str(), v["state"].as_str()), (Some(n), Some("pm"), Some("accepted"), Some("doing")));
-        let spoof = act(&b, &root, n, "steer", &[], "do x\nop-id: pm", &Op::default());
-        assert_eq!((spoof.outcome, count()), ("rejected", before + 1), "user text never carries the fields");
-        let rej = act(&b, &root, n, "result", &["abc"], "", &Op::default());
-        assert_eq!(rej.outcome, "rejected");
-        assert!(rej.text().starts_with("Error: ") && rej.text().contains("\nNext: "), "{}", rej.text());
-        // a race: another client answers between the check and the write; the loser edits itself, N and N-1 agree
-        let n = b.create("T2", "## Goal\ng", &["taskq".into()]).unwrap();
-        b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
-        let a = fold(n, &entries(&b, n).unwrap(), false).attempt.unwrap();
-        let card = b.comment(n, &entry("ask", &[], Some(a), "Which?\n1. x\n2. y ★")).unwrap();
-        b.state.borrow_mut().race = Some(core::with_fields(entry("answer", &["1"], None, "x"), Some("pm"), Some(card)));
-        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card));
-        assert_eq!((r.outcome, r.state), ("stale", Some("doing")), "{}", r.text());
-        let log = entries(&b, n).unwrap();
-        assert!(log.last().unwrap().edited && fold(n, &log, false).inbox.len() == 1, "the losing entry is edited, so ignored");
-        // the same race on a retried op id: the second write edits itself too
-        b.comment(n, &entry("ask", &[], Some(a), "And?\n1. a\n2. b ★")).unwrap();
-        let rev = core::revision(n, &entries(&b, n).unwrap());
-        b.state.borrow_mut().race = Some(core::with_fields(entry("answer", &["1"], None, "a"), Some("pm2"), Some(rev)));
-        assert_eq!(act(&b, &root, n, "answer", &["1"], "a", &Op { id: Some("pm2".into()), revision: None }).outcome, "stale");
-        assert!(entries(&b, n).unwrap().last().unwrap().edited);
-        let _ = std::fs::remove_dir_all(&root);
+        let n = b.create("T", "## Goal\nkeep safe\n\n## Acceptance\nA1. no loss", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:s win").unwrap();
+        let card = b.comment(n, &entry("ask", &[], Some(a), "Problem: Which?\n1. old x\n2. old y")).unwrap();
+        let op = |id: &str, r| Op { id: Some(id.into()), revision: Some(r) };
+        let count = || b.comments(n).unwrap().len();
+        let before = count();
+        assert_eq!(act(&b,&root,n,"requeue",&[],"Reason: retry",&op("stale-action",a)).outcome,"stale");
+        assert_eq!(count(),before,"non-answer stale actions still write nothing");
+        assert_eq!(act(&b,&root,n,"answer",&["1"],"",&op("plain",card)).outcome,"accepted");
+        for (_, c) in b.state.borrow_mut().comments.iter_mut().filter(|(i, _)| *i == n) { c.author = "alex".into(); }
+        let late = act(&b,&root,n,"answer",&["2"],"",&op("late",card));
+        assert_eq!((late.outcome,late.state),("accepted",Some("doing")));
+        assert_eq!(late.answered.as_ref().unwrap().text,"old x");
+        assert!(late.reason.contains("task note") && late.reason.contains("already answered by alex"));
+        let log = entries(&b,n).unwrap();
+        assert_eq!(core::delivery(n,&log,*fold(n,&log,false).inbox.last().unwrap()),"old y");
+        let written = count();
+        for id in ["plain","late"] { assert!(act(&b,&root,n,"answer",&["2"],"",&op(id,card)).ok()); }
+        assert_eq!(count(),written,"lost receipts reconcile the same ID without another note");
+        let newer = b.comment(n,&entry("ask",&[],Some(a),"Problem: New question\n1. new x\n2. new y")).unwrap();
+        let r = answer_picks(&b,&cfg,&[format!("{n}.2")],&op("old-choice",card)).unwrap().remove(0);
+        assert_eq!((r.outcome,r.state,r.revision),("accepted",Some("ask"),Some(newer)));
+        assert!(r.answered.is_none(), "a newer unanswered question has no invented winner");
+        let log = entries(&b,n).unwrap();
+        assert_eq!(core::delivery(n,&log,*core::project(n,&log,false).notes.last().unwrap()),"old y");
+        assert!(fold(n,&log,false).card.unwrap().contains("New question"));
+        assert_eq!(act(&b,&root,n,"answer",&["9"],"",&op("invalid-choice",card)).outcome,"rejected");
+        assert_eq!(act(&b,&root,n,"answer",&["1"],"",&op("unknown-question",a)).outcome,"rejected");
+        assert_eq!(act(&b,&root,n,"steer",&[],"text\nop-id: spoof",&Op::default()).outcome,"rejected");
+        assert_eq!(act(&b,&root,n,"result",&["abc"],"",&Op::default()).outcome,"rejected");
+        b.state.borrow_mut().race = Some(core::with_fields(entry("answer",&["1"],None,"new x"),Some("winner"),Some(newer)));
+        let r = act(&b,&root,n,"answer",&["2"],"",&op("raced",newer));
+        assert_eq!((r.outcome,r.state),("accepted",Some("doing")));
+        let log = entries(&b,n).unwrap();
+        assert!(log.iter().any(|e| e.edited),"the losing answer is fenced before its note is written");
+        assert_eq!(core::delivery(n,&log,*fold(n,&log,false).inbox.last().unwrap()),"new y");
+        let written=count();
+        assert!(act(&b,&root,n,"answer",&["2"],"",&op("raced",newer)).ok());
+        assert_eq!(count(),written);
+        let context=core::task_context(n,&b.issue(n).unwrap().body,&log);
+        for text in ["A1. no loss","old x","old y","new x","new y","ask once immediately","Before hand-in"] {assert!(context.contains(text),"{text}");}
+        let v:serde_json::Value=serde_json::from_str(&r.json()).unwrap();
+        assert_eq!((v["task"].as_u64(),v["op_id"].as_str()),(Some(n),Some("raced")));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Chain: owner answer plan -> concurrent board write -> note receipt -> no consequential continuation.
+    // Risk: a note authorizes close/publication, reuses a new question number, or disappears on a steer race.
+    #[test]
+    fn review_note_never_closes_or_publishes() {
+      for action in ["close", "later"] {
+        for pending in [false,true] {
+            let b=Fake::default();
+            let root=std::env::temp_dir().join(format!("taskq-note-close-{}",crate::runtime::uuid()));
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("taskq.json"),r#"{"repo":"o/r"}"#).unwrap();
+            let (cfg,_)=crate::load(&root).unwrap();
+            let n=b.create("T","## Goal\ng",&["taskq".into()]).unwrap();
+            let a=b.comment(n,"taskq: spawn worker codex:s win").unwrap();
+            b.comment(n,&entry("result",&[&"a".repeat(40)],Some(a),"")).unwrap();
+            let text=format!("Problem: Publish?\n1. {action}: ship\n2. keep reviewing");
+            let card=if pending {
+                b.comment(n,"taskq: publish\nChanged: accepted\nChecks: pending\nOpen: none").unwrap();
+                b.comment(n,&entry("publication-blocked",&[],None,&text)).unwrap()
+            } else {
+                let r=b.comment(n,"taskq: spawn reviewer codex:r win").unwrap();
+                b.comment(n,&entry("ask",&[],Some(r),&text)).unwrap()
+            };
+            b.state.borrow_mut().race=Some(entry("answer",&["2"],None,"keep reviewing"));
+            let r=answer_picks(&b,&cfg,&[format!("{n}.1")],&Op{id:Some("close-race".into()),revision:Some(card)}).unwrap().remove(0);
+            assert_eq!(r.note,Some(true));
+            assert_eq!(fold(n,&entries(&b,n).unwrap(),false).state,State::Review,"a saved note cannot close");
+            assert_eq!(b.state.borrow().publications,0,"a saved note cannot authorize publication");
+            assert!(b.issue(n).unwrap().open);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+      }
     }
 
     #[test]
-    fn a_stale_answer_names_the_answer_that_won() {
-        // #1785: losing the answer race used to return only revisions and CLI advice; the receipt now carries who
-        // answered first and what, on both the early revision check and the readback race, and nothing else does.
-        let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-answered-{}", std::process::id())));
-        let op = |id: &str, r: u64| Op { id: Some(id.into()), revision: Some(r) };
-        let task = |title: &str| {
-            let n = b.create(title, "## Goal
-g", &["taskq".into()]).unwrap();
-            b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
-            let a = fold(n, &entries(&b, n).unwrap(), false).attempt.unwrap();
-            (n, b.comment(n, &entry("ask", &[], Some(a), "Which?
-1. x
-2. y ★")).unwrap())
-        };
-        let (n, card) = task("T");
-        assert_eq!(act(&b, &root, n, "answer", &["1"], "x", &op("phone", card)).outcome, "accepted");
-        for (_, c) in b.state.borrow_mut().comments.iter_mut().filter(|(i, _)| *i == n) { c.author = "alex".into(); }
-        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card));
-        let v: serde_json::Value = serde_json::from_str(&r.json()).unwrap();
-        assert_eq!((v["outcome"].as_str(), v["answered"]["by"].as_str(), v["answered"]["text"].as_str()), (Some("stale"), Some("alex"), Some("x")));
-        // § 5 late answer, every surface: the CLI printed `revision X is stale` plus inbox advice; it now names the winner
-        let late = |r: &Receipt| { let t = r.text(); assert!(t.contains("already answered by alex: x") && !t.contains("stale") && !t.contains("--revision"), "{t}"); };
-        late(&r);
-        // without --revision the fold refuses the answer to a doing task; that refusal names the winner too and offers steer
-        let count = b.comments(n).unwrap().len();
-        let r = act(&b, &root, n, "answer", &["2"], "y", &Op::default());
-        late(&r);
-        assert!(r.text().contains(&format!("taskq steer {n}")) && b.comments(n).unwrap().len() == count, "{}", r.text());
-        // `answer N.K` on the closed question takes the same path, not `#N is doing without a question`
+    fn review_note_keeps_a_numbered_answers_original_snapshot() {
+        let b=Fake::default();
+        let root=std::env::temp_dir().join(format!("taskq-note-read-{}",crate::runtime::uuid()));
         std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("taskq.json"), r#"{"repo":"o/r"}"#).unwrap();
-        let (cfg, _) = crate::load(&root).unwrap();
-        let r = answer_picks(&b, &cfg, &[format!("{n}.2")], &Op::default()).unwrap().remove(0);
-        late(&r);
-        assert_eq!(b.comments(n).unwrap().len(), count);
-        // the status row carries the same answer (snapshot reads `answered_in`)
-        let log = entries(&b, n).unwrap();
-        let a = answered_in(n, &log, &core::project(n, &log, false), &b.comments(n).unwrap());
-        assert_eq!(a, Some(Answered { by: "alex".into(), text: "x".into() }));
-        // a stale revision while the question is still open names no answer
-        let (n, card) = task("T2");
-        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card - 1));
-        assert_eq!((r.outcome, r.answered.is_none()), ("stale", true));
-        // the readback race: another client's answer lands between the check and the write
-        b.state.borrow_mut().race = Some(core::with_fields(entry("answer", &["1"], None, "x"), Some("pm"), Some(card)));
-        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card));
-        assert_eq!((r.outcome, r.answered.as_ref().map(|a| a.text.as_str())), ("stale", Some("x")), "{}", r.text());
-        let _ = std::fs::remove_dir_all(&root);
+        std::fs::write(root.join("taskq.json"),r#"{"repo":"o/r"}"#).unwrap();
+        let (cfg,_)=crate::load(&root).unwrap();
+        let n=b.create("T","## Goal\ng",&["taskq".into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker codex:s win").unwrap();
+        b.comment(n,&entry("ask",&[],Some(a),"Problem: First?\n1. original meaning\n2. other")).unwrap();
+        let read=b.state.borrow().comment_reads+1;
+        b.state.borrow_mut().after_comment_read=Some((n,read,vec![entry("answer",&["2"],None,"other"),entry("ask",&[],Some(a),"Problem: New question\n1. different meaning\n2. new other")]));
+        let r=answer_picks(&b,&cfg,&[format!("{n}.1")],&Op{id:Some("read-race".into()),revision:None}).unwrap().remove(0);
+        assert_eq!(r.note,Some(true));
+        let log=entries(&b,n).unwrap();
+        let p=core::project(n,&log,false);
+        assert_eq!(p.task.state,State::Ask);
+        assert!(p.task.card.unwrap().contains("New question"));
+        assert_eq!(core::delivery(n,&log,*p.notes.last().unwrap()),"original meaning");
+        std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    fn review_note_preserves_steers_across_question_races() {
+        for during_write in [false,true] {
+            let b=Fake::default();
+            let root=std::env::temp_dir().join(format!("taskq-note-steer-{}",crate::runtime::uuid()));
+            let n=b.create("T","## Goal\ng",&["taskq".into()]).unwrap();
+            let a=b.comment(n,"taskq: spawn worker codex:s win").unwrap();
+            let ask=entry("ask",&[],Some(a),"Problem: Still need a decision");
+            if during_write {b.state.borrow_mut().race=Some(ask);}else{b.comment(n,&ask).unwrap();}
+            let op=Op{id:Some("steer-race".into()),revision:Some(a)};
+            let r=act(&b,&root,n,"steer",&[],"Keep acceptance in scope",&op);
+            assert!(r.ok(),"{}",r.text());
+            let log=entries(&b,n).unwrap();let p=core::project(n,&log,false);
+            assert_eq!(p.task.state,State::Ask);
+            assert_eq!(core::delivery(n,&log,*p.notes.last().unwrap()),"Keep acceptance in scope");
+            let count=log.len();assert!(act(&b,&root,n,"steer",&[],"Keep acceptance in scope",&op).ok());
+            assert_eq!(entries(&b,n).unwrap().len(),count);
+            assert!(!act_as(&b,&root,n,"steer",&[],"wrong worker",&Op::default(),Some(a+99),None).ok());
+        }
+    }
+
 }

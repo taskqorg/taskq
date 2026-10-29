@@ -17,9 +17,9 @@ answerReceipt:function(r){
   if(!request&&previous?.state!=='unknown')return;
   const item=request||previous;
   api.answerRefusal(r.state);
-  answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next,answered:r.answered});
+  answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})});
   const local=saved[item.board+'#'+item.op.task];
-  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
+  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
   if(item.op.action==='steer'&&r.state==='accepted')steers[item.board+'#'+item.op.task]='';
   // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
   if(r.state==='accepted'){
@@ -29,7 +29,7 @@ answerReceipt:function(r){
   }
   if(request){
     cancel(request.timer);answerRequests.delete(key);
-    request.resolve({state:r.state,reason:r.reason,next:r.next});
+    request.resolve({state:r.state,reason:r.reason,next:r.next,...(r.note?{note:true}:{})});
   }else answerCards.get(item.board+'/'+item.op.task)?.ui.receiveReceipt(item.board,r.id,r);
   draw();
 
@@ -73,6 +73,7 @@ answerSteerComposer:function(board,t){
   const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));
   if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim())return null;
   const text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
+  if(!text.trim()&&!r&&[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&r.answered&&r.state==='accepted'))return null;
   const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'');
   return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason,
    tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!text.trim()},'Steer')),
@@ -86,7 +87,7 @@ answerSteer:function(board,t){
 },
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);
-  return r?h('div',{class:'toast',role:'status'},'#'+r.op.task+' · '+({start:'started',stop:'stopped',later:'parked',retry:'requeued',steer:'steer sent'}[r.op.action]||'answer accepted')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'toast-dismiss','aria-label':'Dismiss',title:'Dismiss'},'×')):null;
+  return r?h('div',{class:'toast',role:'status'},'#'+r.op.task+' · '+(r.note?'task note saved':{start:'started',stop:'stopped',later:'parked',retry:'requeued',steer:'steer sent'}[r.op.action]||'answer accepted')+' ',h('a',{href:r.board+'/'+r.op.task,'data-url':r.board+'/'+r.op.task},'Board ↗'),h('button',{'data-a':'toast-dismiss','aria-label':'Dismiss',title:'Dismiss'},'×')):null;
 },
 mountAnswers:function(){
   for(const slot of menu.querySelectorAll('[data-answer]')){
@@ -132,8 +133,8 @@ dismiss:function(key){answerFeedback.delete(key);if(view.toast===key)view.toast=
  const {answerCapability,answerReceipt,answerReadback,answerSlot,answerNotices,answerToast,mountAnswers,answerSend,load,save}=api;
  // #1699 A4: the bridge's retained correlation guard (tray.rs ActionQueue::submit), named in user terms
  const CONFLICT='Correlation id is already pending for a different request';
- const won=r=>'Answered by '+(r.answered.by||'another client')+': '+r.answered.text;
- const STATE={sending:'sending',accepted:'accepted',rejected:'not accepted',stale:'question changed, review it',unknown:'delivery unknown',failed:'not sent',partial:'partly applied'};
+ const won=r=>'Answered by '+(r.answered.by||'another client')+': '+r.answered.text+(r.state==='accepted'&&r.reason?' · '+r.reason:'');
+ const STATE={sending:'sending',accepted:'accepted',rejected:'not accepted',stale:'task changed; action not sent',unknown:'delivery unknown',failed:'not sent',partial:'partly applied'};
  const component=()=>require('./answer-card.js');
  const {tasks,unique,counter}=execution.module('workspace.answers.helpers',{
  tasks:p=>(p.tasks||[]).map(t=>({...t,key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n})),

@@ -1157,12 +1157,14 @@ pub(crate) mod tests {
         let now=SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         let line=|at:u64|{
             fs::write(root.join(".taskq/status.json"),serde_json::json!({"at":at,"poll":60}).to_string()).unwrap();
-            health(&dir).lines().find(|l|l.starts_with("frozen: status")).map(String::from).unwrap()
+            status_line("frozen",&crate::data::json(&root.join(".taskq/status.json")),now)
         };
         assert_eq!(line(now-30),"frozen: status <1m old · refresh 60s");
+        assert!(health(&dir).contains("frozen: status <1m old · refresh 60s"));
         assert_eq!(line(now-120),"frozen: status 2m old · refresh 60s","two refreshes are not yet stale");
         assert_eq!(line(now-121),"frozen: status 2m old · refresh 60s · stale");
         assert_eq!(line(now-1500),"frozen: status 25m old · refresh 60s · stale");
+        assert!(health(&dir).contains("frozen: status 25m old · refresh 60s · stale"));
         assert_eq!(status_line("old",&Ok(Some(serde_json::json!({"at":now-200}))),now),"old: status 3m old · refresh 60s · stale","pre-#1766 status: § 9 default poll");
         fs::remove_file(root.join(".taskq/status.json")).unwrap();
         assert!(health(&dir).contains("frozen: status unknown (status.json missing)"));

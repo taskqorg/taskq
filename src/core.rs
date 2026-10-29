@@ -233,6 +233,8 @@ pub struct Projection {
     pub task: Task,
     pub revision: u64,
     accepted: Vec<u64>,
+    /// Accepted answers and steers in board order, across all attempts (§ 2).
+    pub notes: Vec<u64>,
     pub executions: Vec<Execution>,
     pub changes: Vec<(u64, Task, Task)>,
     /// Review entries that start or end a deferred publication: the merge queue, a profile-only state (#1344)
@@ -240,6 +242,7 @@ pub struct Projection {
 }
 
 impl Projection {
+    pub fn accepts(&self, id: u64) -> bool { self.accepted.contains(&id) }
     pub fn delivered(&self, attempt: u64) -> Option<u64> {
         self.executions.iter().filter(|x| x.attempt == attempt && x.accepted).map(|x| x.through).max()
     }
@@ -442,6 +445,7 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
     let mut t = Task::default();
     let mut resume = None; // the state an `ask` entry left; None when a retry limit asked
     let mut accepted = vec![];
+    let mut notes = vec![];
     let mut executions: Vec<Execution> = vec![];
     let (mut changes, mut queue) = (vec![], vec![]);
     let (mut ops, mut card_at, mut last) = (std::collections::HashSet::new(), None, 0);
@@ -491,9 +495,12 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
                     }
                 }
             }
-            if t != before {
+            let note = l.kind == "steer" && before.state != State::Closed && !l.text.is_empty()
+                && l.attempt.is_none_or(|a| Some(a) == before.attempt);
+            if t != before || note {
                 last = e.id;
                 accepted.push(e.id);
+                if note || l.kind == "answer" { notes.push(e.id); }
                 if t.card.is_some() && t.card != before.card {
                     card_at = Some(e.id);
                 }
@@ -507,7 +514,14 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
         t.state = State::Waiting;
     }
     let rev = t.card.as_ref().and(card_at).or(t.attempt).unwrap_or(last);
-    Projection { task:t, revision:rev, accepted, executions, changes, queue }
+    Projection { task:t, revision:rev, accepted, notes, executions, changes, queue }
+}
+
+/// The board-backed context repeated at every attempt/resume and before hand-in (§ 7).
+pub fn task_context(n: u64, body: &str, entries: &[Entry]) -> String {
+    let p = project(n, entries, false);
+    let notes: Vec<String> = p.notes.iter().map(|id| format!("Note {id}:\n{}", delivery(n, entries, *id))).collect();
+    format!("Task goal and acceptance (binding):\n{body}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Check every note now; if one conflicts with acceptance, ask once immediately. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
 }
 
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
@@ -666,6 +680,8 @@ struct Trace {
     deps_open: bool,
     entries: Vec<Entry>,
     expect: Task,
+    #[serde(default)]
+    notes: Option<Vec<u64>>,
 }
 
 /// Fold every golden trace; Ok(count) or the first mismatch.
@@ -675,6 +691,9 @@ pub fn golden(json: &str) -> Result<usize, String> {
         let got = fold(tr.task, &tr.entries, tr.deps_open);
         if got != tr.expect {
             return Err(format!("{}: got {:?}, want {:?}", tr.name, got, tr.expect));
+        }
+        if tr.notes.as_ref().is_some_and(|notes| *notes != project(tr.task, &tr.entries, tr.deps_open).notes) {
+            return Err(format!("{}: task notes differ", tr.name));
         }
     }
     Ok(traces.len())

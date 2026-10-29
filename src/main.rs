@@ -770,7 +770,7 @@ fn inbox(b: &dyn Board, n: u64) -> Res<String> {
     let log = entries(b, n)?;
     let projection = core::project(n, &log, deps_open(b, n, &issue.body, &log));
     let t = &projection.task;
-    let mut out = vec![format!("#{n} {}\n{}", issue.title, b.url(n)), issue.body.trim().to_string(), format!("Folded: {}", serde_json::to_string(&t).unwrap_or_default())];
+    let mut out = vec![format!("#{n} {}\n{}", issue.title, b.url(n)), core::task_context(n, issue.body.trim(), &log), format!("Folded: {}", serde_json::to_string(&t).unwrap_or_default())];
     out.push(format!("Revision: {}", projection.revision));
     if let Some((k, why)) = &t.pick {
         // § 2: the worker's star and the PM's pick, side by side
@@ -1042,8 +1042,12 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let cfg = &c.cfg;
     let exe = launcher(&cfg.install);
     let board_env = cfg.board.worker_env(&platform::tool(&cfg.install), &cfg.web_host)?;
-    let env = runtime::Env { board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, publish: &cfg.delivery, jobs: None };
+    let env = runtime::Env { context: "", board_env: &board_env, root: &cfg.root, exe: &exe, install: &cfg.install, permission_mode: &cfg.permission_mode, codex: &cfg.codex, publish: &cfg.delivery, jobs: None };
     let start = |l: &runtime::Launch| {
+        let issue = c.board.issue(l.task).map_err(runtime::StartError::admission)?;
+        let log = board::entries(c.board.as_ref(), l.task).map_err(runtime::StartError::admission)?;
+        let context = core::task_context(l.task, &issue.body, &log);
+        let env = runtime::Env { context: &context, ..env };
         if let Some(host) = &host {
             let h = host.lock().map_err(|_| runtime::StartError::admission("host admission poisoned"))?;
             if let Some(reason)=&h.held {return Err(runtime::StartError::admission(reason.clone()));}
@@ -4317,7 +4321,11 @@ mod tests {
     fn commands_write_only_accepted_entries_and_close_publishes() {
         let (b, c) = (Fake::default(), cfg());
         let n = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
-        assert!(act(&b, &c.root, n, "steer", &[], "x", &Op::default()).reason.contains("ready"), "steer needs a live worker");
+        let note = act(&b, &c.root, n, "steer", &[], "x", &Op::default());
+        assert!(note.ok() && note.note == Some(true), "an owner steer saves context before work starts");
+        let log = entries(&b, n).unwrap();
+        assert_eq!(fold(n, &log, false).state, State::Ready, "saving a note never starts work");
+        assert_eq!(core::task_context(n, "## Goal\ng", &log).matches("Note ").count(), 1);
         let before = b.comments(n).unwrap().len();
         b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
         let a = fold(n, &entries(&b, n).unwrap(), false).attempt.unwrap();
@@ -5088,10 +5096,13 @@ mod tests {
         let expected = wrap_reply(&text);
         assert!(status["tasks"][0]["answered"]["text"].as_str() == Some(expected.trim()), "status lost or changed the wrapped reply");
         let mut a = output("answer");a.pos.push(n.to_string());a.flags.insert("text".into(), vec!["late reply".into()]);
-        assert!(command(&c, "answer", &a).is_err(), "the already-answered refusal still fails the command");
+        assert!(command(&c, "answer", &a).is_ok(), "a late reply is saved as a note without reconfirmation");
         let receipt: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(receipt["answered"]["text"].as_str() == Some(expected.trim()), "receipt lost or changed the wrapped reply");
-        assert_eq!(receipt["outcome"], "rejected");
+        assert_eq!(receipt["outcome"], "accepted");
+        assert_eq!(receipt["note"], true);
+        let log = entries(b, n).unwrap();
+        assert_eq!(core::delivery(n, &log, *core::project(n, &log, false).notes.last().unwrap()), "late reply");
         assert!(Args::parse(&["status".into(), "--json-file".into(), "out".into()]).is_err());
         fs::remove_file(path).unwrap();fs::remove_dir(dir).unwrap();
     }

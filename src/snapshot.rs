@@ -2,7 +2,7 @@
 //! `status.json` tasks and totals, `service status` and the tray counts.
 
 use crate::board::{self, Board};
-use crate::core::{State, Task, options};
+use crate::core::{self, State, Task, options};
 use crate::service::{self, Config, View};
 use crate::{Res, age, cell, compact, runtime};
 use serde_json::{Value, json};
@@ -528,17 +528,26 @@ pub fn question(card: &str) -> Value {
         Some(json!({"label": label, "url": url, "image": image && !video}))
     }).collect();
     let o = options(card);
-    // an option that starts with `close` closes the task after the answer (dispatch::answer_picks): consequential
+    // Publication and exact-SHA approval choices stay on the board.
     // § 2: `<label> - <detail>`; a card without ` - ` (written before #1787, or a service card) shows its whole text as the label
     let choices: Vec<Value> = o.iter().map(|(k, t, star)| {
         let (label, detail) = t.split_once(" - ").map_or((t.as_str(), None), |(l, d)| (l.trim(), Some(d.trim())));
-        json!({"id": k, "text": t, "label": label, "detail": detail, "recommended": star, "consequential": t.to_lowercase().starts_with("close")})
+        json!({"id": k, "text": t, "label": label, "detail": detail, "recommended": star, "consequential": t.to_lowercase().starts_with("close") || core::approval_sha(t).is_some()})
     }).collect();
     // § 2: options numbered 1..n in order, no gap or repeat; none is an owner action answered with text
     let numbered = o.iter().enumerate().all(|(i, x)| x.0 == i + 1);
     let parsed = field("Problem: ").is_some() && numbered && (o.is_empty() || (2..=4).contains(&o.len()) && o.iter().filter(|x| x.2).count() == 1);
     json!({"parsed": parsed, "text": card, "done": field("Done: "), "problem": field("Problem: ").map(|_| brief(card)), "evidence": evidence,
         "choices": choices, "limits": {"chars": ANSWER_CHARS}})
+}
+
+#[test]
+fn review_approval_choices_require_the_board() {
+    for action in ["close: ship".to_string(), format!("approve {}", "a".repeat(40))] {
+        let q = question(&format!("Problem: Decide\n1. {action} ★\n2. keep reviewing"));
+        assert_eq!(q["choices"][0]["consequential"], true);
+        assert_eq!(q["choices"][1]["consequential"], false);
+    }
 }
 
 impl Snapshot {

@@ -143,8 +143,10 @@ pub(super) mod tests {
             let path=std::path::PathBuf::from(format!(r"\\.\pipe\taskq-pipe-{}",super::super::super::uuid()));
             let listener=Listener::bind(&path).unwrap();
             let (finished,completion)=std::sync::mpsc::channel();
-            let peer=std::thread::spawn(move|| {let (_stream,_)=listener.accept().unwrap();let _=completion.recv_timeout(Duration::from_secs(5));});
+            let (ready,started)=std::sync::mpsc::channel();
+            let peer=std::thread::spawn(move|| {let (_stream,_)=listener.accept().unwrap();ready.send(()).unwrap();let _=completion.recv_timeout(Duration::from_secs(5));});
             let mut stream=Stream::connect(&path,Instant::now()+Duration::from_secs(1)).unwrap();
+            started.recv_timeout(Duration::from_secs(5)).unwrap();
             stream.set_read_timeout(Some(Duration::from_millis(100))).unwrap();stream.set_write_timeout(Some(Duration::from_millis(100))).unwrap();
             let began=Instant::now();
             let error=if mode=="read" {stream.read_exact(&mut [0]).unwrap_err()} else {stream.write_all(&vec![0;1024*1024]).unwrap_err()};

@@ -37,14 +37,13 @@ const fx = JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json', 'utf8')
       const kept = {draft: c.querySelector('textarea').value, focus: document.activeElement === c.querySelector('textarea'), sel: [document.activeElement.selectionStart, document.activeElement.selectionEnd]};
       ui.update([{board: 'b', row: rows[1]}]);
       const stale = {state: c.querySelector('.qac').dataset.qacState, draft: c.querySelector('textarea').value, send: c.querySelector('[type=submit]').disabled};
-      c.querySelector('[data-qac=review]').click();
       c.querySelector('[data-choice="2"]').click(); c.querySelector('[data-choice="2"]').click();
       await new Promise(r => setTimeout(r, 0));
       const sending = c.querySelector('.qac').dataset.qacState;
       release({state: 'accepted'}); await new Promise(r => setTimeout(r, 0));
       return {kept, stale, sending, sent: sent.length, done: c.querySelector('.qac').dataset.qacState};
     }, fx.cases.find(c => c.name.startsWith('stale')).rows);
-    assert.deepEqual(r, {kept: {draft: 'keep it', focus: true, sel: [2, 4]}, stale: {state: 'stale', draft: 'keep it', send: true}, sending: 'sending', sent: 1, done: 'accepted'}, at);
+    assert.deepEqual(r, {kept: {draft: 'keep it', focus: true, sel: [2, 4]}, stale: {state: 'changed', draft: 'keep it', send: false}, sending: 'sending', sent: 1, done: 'accepted'}, at);
     // keyboard: Tab walks choices in source order, then the Other answer and context disclosures (Q1)
     await page.evaluate(row => { TaskqAnswerCard.mount(document.getElementById('c'), {capability: () => ({answer: true}), send: () => new Promise(() => {})}).update([{board: 'k', row}]); document.querySelector('.qac-head a').focus(); }, fx.cases[0].rows[0]);
     const order = [];

@@ -928,7 +928,7 @@
       ]
     },
     {
-      "name": "stale revision keeps the draft until review",
+      "name": "stale revision sends the retained draft as a note without review",
       "board": "github.com/o/r",
       "capability": {
         "answer": true
@@ -1017,6 +1017,19 @@
           "row": 1
         },
         {
+          "type": "check",
+          "status": "changed",
+          "sent": 0,
+          "draft": "keep it",
+          "has": [
+            "Two clients still use v1",
+            "Send saves your draft as a task note"
+          ],
+          "not": [
+            "data-qac=\"review\""
+          ]
+        },
+        {
           "type": "submit"
         },
         {
@@ -1025,34 +1038,31 @@
         },
         {
           "type": "check",
-          "status": "stale",
-          "sent": 0,
-          "draft": "keep it",
-          "has": [
-            "Two clients still use v1",
-            "data-qac=\"review\"",
-            "data-choice=\"1\" disabled"
-          ]
-        },
-        {
-          "type": "review"
-        },
-        {
-          "type": "submit"
-        },
-        {
-          "type": "check",
           "status": "sending",
           "sent": 1,
           "op": {
             "text": "keep it",
-            "revision": 6
+            "revision": 4
           }
+        },
+        {
+          "type": "receipt",
+          "state": "accepted",
+          "reason": "Saved as a task note"
+        },
+        {
+          "type": "check",
+          "status": "actionable",
+          "sent": 1,
+          "draft": "",
+          "has": [
+            "Saved as a task note"
+          ]
         }
       ]
     },
     {
-      "name": "producer stale receipt needs review",
+      "name": "producer stale receipt permits a direct new send without review",
       "board": "github.com/o/r",
       "capability": {
         "answer": true
@@ -1106,23 +1116,45 @@
           "reason": "revision 5 is newer"
         },
         {
-          "type": "choose",
-          "id": 2
-        },
-        {
           "type": "check",
           "status": "stale",
           "sent": 1,
           "has": [
             "revision 5 is newer"
+          ],
+          "not": [
+            "data-qac=\"review\""
           ]
         },
         {
-          "type": "review"
+          "type": "choose",
+          "id": 2
         },
         {
           "type": "check",
-          "status": "actionable"
+          "status": "sending",
+          "sent": 2,
+          "new_op": true,
+          "op": {
+            "choice": 2
+          }
+        },
+        {
+          "type": "receipt",
+          "state": "accepted",
+          "note": true,
+          "reason": "Saved as a task note"
+        },
+        {
+          "type": "check",
+          "status": "accepted",
+          "sent": 2,
+          "has": [
+            "Task note saved on the board"
+          ],
+          "not": [
+            "Answer accepted on the board"
+          ]
         }
       ]
     },

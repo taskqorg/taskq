@@ -28,7 +28,7 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let install = own.parent().and_then(Path::parent).unwrap_or(own);
     let codex = crate::host::Policy::read_for_hostname(install, crate::hostname).map_or(vec![], |p| p.codex);
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: own, exe: &exe, install, permission_mode: "", codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = match super::access(&env, a.setup) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -78,7 +78,7 @@ fn claude_launch(own: &Path, r: &Request) -> Launched {
     let policy = crate::host::Policy::read_for_hostname(install, crate::hostname).ok();
     let mode = policy.as_ref().map_or("dontAsk".to_string(), |p| p.permission_mode.clone());
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &[], publish: "", board_env: &[], jobs: None };
     let access = match super::access(&env, &r.runtime) { Ok(a) => a, Err(e) => return Launched::NoStart(e.message) };
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
@@ -129,7 +129,7 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     // the same folder and grant as the launch, so the turn resumes where the session started
     let workdir = if a.codex { own } else { r.root.as_deref().map_or(own, Path::new) };
     let exe = std::env::current_exe().unwrap_or_default();
-    let env = super::Env { root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
+    let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
     crate::platform::quiet(&mut c);
