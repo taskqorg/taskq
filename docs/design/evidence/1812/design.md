@@ -1,6 +1,6 @@
 # Whole-window transparency: design checkpoint
 
-Design for [#1812](https://github.com/taskqorg/taskq/issues/1812). The [owner answer](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6490519452) approves stronger translucent text. R13 is applied in the root Product Appearance opacity decision and M1.1; existing Off behavior and guarding assertions are retained.
+Design for [#1812](https://github.com/taskqorg/taskq/issues/1812). The [owner answer](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6490519452) approves stronger translucent text. R13 is applied in the root Product Menu opacity decision and M1.1; existing Off behavior and guarding assertions are retained.
 
 ## Current implementation
 

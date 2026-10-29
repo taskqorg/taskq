@@ -1,11 +1,13 @@
 # Whole-window opacity verification · #1812
 
-The owner approved stronger translucent text in [answer 2](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6490519452). The [design note](design.md) compares the native routes. R13 is applied through the new Product Appearance opacity decision, M1.1 and the translucent text exception; R1–R13 and existing guarding assertions are unchanged.
+The owner approved stronger translucent text in [answer 2](https://github.com/taskqorg/taskq/issues/1812#issuecomment-6490519452). The [design note](design.md) compares the native routes. R13 is applied through the new Product Menu opacity decision, M1.1 and the translucent text exception; R1–R13 and existing guarding assertions are unchanged.
 
 ## Before and after
 
 - Before implementation, `node tests/tray-settings.test.cjs` failed with `Appearance must expose menu opacity`. The same check now passes, retaining its existing sign-in, access, route and recovery protection.
 - The prior light Work color gives a calculated 3.96:1 at 95% opacity on independently adverse backdrop pixels. The retained contrast check verifies strengthened primary, secondary and semantic colors at every integer opacity from 90% through 99%, in both themes, on body/header/selected/popover surfaces, using both floating-point and Windows byte alpha. Each pair must be at least 4.5:1. Off retains the original palette.
+
+The first canonical gate also caught the root contract exceeding 60 KiB and the new opt-in snapshot route entering the default-catalog count. The root now links M1.1 within its existing byte/line limits. The snapshot check retains the prior default matrix and adds the exact six opacity cases. Neither size guard nor prior snapshot coverage is weakened.
 
 ## Checks and limits
 

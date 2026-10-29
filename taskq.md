@@ -66,8 +66,8 @@ Looks/sound: one line each (R13).
 - Screenshots: dark theme from `taskq tray --snapshot` over `docs/shots/fixture.sh`, pinned by `docs/shots/manifest.json`; the owner accepts them from before/after evidence. Detail: [UI acceptance][uia].
 - Formatting: a few unicode icons where they help scanning; no emoji clutter, no badges.
 - Last README line: `If taskq saves you time, [buy me a coffee](…).`
-### Appearance opacity
-The menu supports Off (100%) and whole-window opacity from 90% to 100%, saved locally; translucent text uses stronger colors for AA contrast ([M1.1](docs/design/menu.md#m1-appearance)).
+### Menu opacity
+[M1.1][menu].
 ## 1. Tasks
 A task is an open issue by a trusted author (GitHub `OWNER|MEMBER|COLLABORATOR`, GitLab Reporter+) labelled `taskq` (`taskq start` sets it; on the board a person adds it). Other issues never start: a PM files a task from one with `taskq add` and comments on it at close. A closed issue is done, unless the board records that it closed without completing (GitHub `state_reason` not `completed`): such a dependency reads unknown, never done (R12; GitLab records no reason). The issue text is for people and may be
 edited by hand: `## Goal`, `## Acceptance`, optional `## Scope`, one line `Depends on #N` per dependency; `Depends on <repo>#N` names an issue of another repository on the board's host, read with the board's token (`<repo>`: `name` under the board's owner, or `owner/name`). An unreadable dependency reads unknown. Acceptance items `A1.`, `A2.` are never renumbered; each is an observable result a reviewer checks without code.

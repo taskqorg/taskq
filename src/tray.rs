@@ -3170,9 +3170,10 @@ mod tests {
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         assert_eq!(names(&["views"]), ["dark-views-top-16", "dark-views-states-16", "dark-views-top-20", "dark-views-states-20", "light-views-top-16", "light-views-states-16", "light-views-top-20", "light-views-states-20"], "P-W4: the View window in both themes and sizes");
         assert_eq!(names(&["conversations"]), ["dark-conversations-badge-18", "dark-conversations-question-18", "dark-conversations-owner-18", "dark-conversations-chat-18", "dark-conversations-badge-20", "dark-conversations-question-20", "dark-conversations-owner-20", "dark-conversations-chat-20", "light-conversations-badge-18", "light-conversations-chat-18"], "#1699 A8: at most ten screens");
+        assert_eq!(names(&["opacity"]), ["dark-opacity-100-16","dark-opacity-95-16","dark-opacity-90-16","light-opacity-100-16","light-opacity-95-16","light-opacity-90-16"], "M1.1: six explicit native-alpha cases");
         let all = names(&[]);
-        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")&&**r!="views"&&**r!="conversations").count() - 5)), "no filter keeps the menu matrix without scroll or answers");
-        assert!(all.iter().all(|name|!name.contains("agentq-")&&!name.contains("-views-")&&!name.contains("-conversations-")),"invented agentq and View window evidence is opt-in only");
+        assert_eq!(all.len(), 2 * (4 + 2 * (ROUTES.iter().filter(|r|!r.starts_with("agentq-")&&**r!="views"&&**r!="conversations"&&**r!="opacity").count() - 5)), "no filter keeps the menu matrix without scroll or answers");
+        assert!(all.iter().all(|name|!name.contains("agentq-")&&!name.contains("-views-")&&!name.contains("-conversations-")&&!name.contains("-opacity-")),"invented agentq, View and opacity evidence is opt-in only");
         for route in ROUTES {
             if route.starts_with("agentq-"){assert_eq!(names(&[route]).len(),4,"one state, both themes and sizes");}
             assert!(!names(&[route]).is_empty(), "{route} names a captured page");
