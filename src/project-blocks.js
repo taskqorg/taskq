@@ -38,7 +38,7 @@ task:function(p,row,global=false,compact=false){
     const metadata=[since,global?esc(p.name):'',row.host?esc(row.host):'',badges].filter(Boolean).join(' · ');
     // #1524: only the owner text `wait`; the raw `execution_wait` stays in status --json and the service log.
     const wait=row.wait?'<small class="tqp-execution-wait" role="status">'+esc(row.wait)+'</small>':'';
-    const parked=row.until?'<small class="tqp-parked">'+esc(parkedText(row))+'</small>':'';
+    const parked=(row.stage?'<small class="tqp-stage" title="First open stage of the Acceptance items">Stage '+esc(row.stage.k)+'/'+esc(row.stage.n)+'</small>':'')+(row.until?'<small class="tqp-parked">'+esc(parkedText(row))+'</small>':'');
     if(compact){
       const elapsed=row.age!=null?'<span class="tqp-age">'+esc(row.age)+'</span>':'<span class="tqp-age" title="Current stage elapsed unknown">?</span>';
       // MP13: the runtime mark, and the remote mark only for a proven remote run, sit right before the elapsed time.
