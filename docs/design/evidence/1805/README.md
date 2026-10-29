@@ -1,8 +1,8 @@
 # Project group headers · #1805 · stage 1
 
-A compact project band makes the group boundary, counts and four independent targets recognizable. The [owner answer](https://github.com/taskqorg/taskq/issues/1805#issuecomment-6489847031) approves moving Board and Folder together to the right, retaining name → overview and adding a separate collapse arrow. Visual selection remains open. Runtime is unchanged.
+A compact project band makes the group boundary, counts and four independent targets recognizable. The [owner answer](https://github.com/taskqorg/taskq/issues/1805#issuecomment-6489847031) approves moving Board and Folder together to the right, retaining name → overview and adding a separate collapse arrow. The [second owner answer](https://github.com/taskqorg/taskq/issues/1805#issuecomment-6490154306) selects A and moves A7 installed Mac/Windows evidence to the version PR under §7.8. The browser implementation is now included; deployment remains separate.
 
-Canonical candidate: [menu M2](../../menu.md#m2-scope-and-projects). Editable reference: [mockup](mockup.html), `?variant=a` or `?variant=b`. Open it from a checkout; it uses the existing product stylesheets and bundled icon bytes. The mockup uses invented tasks and local preview-only disclosure storage. Its board, folder and overview buttons show simulated destinations, never perform native actions.
+Canonical rule: [menu M2](../../menu.md#m2-scope-and-projects). Editable reference: [mockup](mockup.html), `?variant=a` or `?variant=b`. Open it from a checkout; it uses the existing product stylesheets and bundled icon bytes. The mockup uses invented tasks and local preview-only disclosure storage. Its board, folder and overview buttons show simulated destinations, never perform native actions.
 
 ## Usability and preservation
 
@@ -43,6 +43,28 @@ Commands: `npm run build`; `node docs/design/evidence/1805/check.cjs --evidence 
 
 Intentional differences from the pinned `control-panels.html` direction are confined to A2–A6: header band/name emphasis, grouped right actions, explicit shown/total counts and a separate disclosure. Task titles and metadata retain their full-width flow, existing palette, icon family and text scale. Coarse-pointer targets use the existing 44 px policy; native scaling and assistive-technology behavior remain unqualified.
 
-## Next checkpoint
+## Accepted delivery and implementation
 
-Choose the visual candidate and reconcile A7 with taskq.md §7.8: A7 demands installed Mac/Windows screenshots on this task, whereas the self-fix contract defers live-host checks to the owner batch in the version PR. Keeping A7 requires an explicit §7.8 exception and access to both native hosts. The recommended normal route uses A, updates Product/M2 under R13 before implementation, preserves the existing M8 store, and follows merge-result CI plus the release native batch. No install, restart or host-policy write has occurred.
+The owner selected A and the normal §7.8 self-fix route: installed Mac/Windows checks belong to the release batch in the version PR, not this task. Product and M2 record the accepted behavior before implementation. The existing native navigation document now carries a normalized `dashboard.collapsed` list keyed by canonical board identity; no new storage adapter, configuration or dependency.
+
+The production change is confined to the dashboard header/rendering, its local presentation model and source manifests. Names, board links and registered-root dispatch retain existing targets. M8's save/readback/error handling and the task rows remain intact. Count and disclosure controls write no task, admission or host policy.
+
+### Failure before and pass after (R12, §7.4)
+
+`node tests/menu-project-groups.browser.cjs` against the unchanged product bundle failed at `M2: each deduplicated group needs an independent collapse control` (`0 !== 2`). The same instrument passes after the implementation. Retained protections: exact board/root targets, independent name navigation, full task titles, known/unknown counts, deduplication and pins, existing navigation IPC, keyboard focus and target sizes. No existing guard or assertion was removed or weakened.
+
+- `node tests/task-views.test.cjs`: Pass; legacy navigation defaults expanded, malformed collapse input is rejected, normalized choices round-trip.
+- `node tests/tray-view-state.test.cjs`: Pass; existing navigation boundaries remain protected.
+- `node tests/task-dashboard.browser.cjs`: Pass; existing dashboard/view/filter/pin/navigation scenarios remain protected.
+- `node tests/menu-project-groups.browser.cjs`: Pass; 48 Mac/Windows projection × theme × font × width cells, 44 px touch targets, keyboard collapse/reopen, filter disappearance/return, Back, view switches, exact destinations, matching pins, unknown counts, missing root and removed project handling. The browser accessibility tree exposes separately named controls; actual screen-reader qualification remains deferred.
+- `node tests/task-workspace.test.cjs`: Pass after its documented source-manifest refresh; published-bundle/source-byte protection remains enabled.
+
+Actual product bundle captures, invented fixtures, dark 16 px at 360 × 900 CSS px:
+
+![Implemented header with filtered and total counts](after.png)
+
+![Collapsed project keeps only its header and counts](collapsed.png)
+
+![Long project name wraps while Board and Folder remain adjacent](after-long.png)
+
+Visual screenlist QA inspected these three captures at actual size against A: band, name emphasis, arrow position, count wrapping and right-side adjacent shortcuts match the accepted reference. Existing chrome and task rows are preserved. Browser evidence is not installed/native acceptance; per the owner answer and §7.8 that remains in the version PR. No live service install, restart or host-policy change.

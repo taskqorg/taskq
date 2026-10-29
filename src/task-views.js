@@ -16,7 +16,7 @@ const api=execution.module('taskViews',{
   // P-W1: one global list in insertion order; migration unions earlier per-view pins without duplicates.
   const pins=[...new Map([...(Array.isArray(value?.pins)?value.pins:[]),...found.flatMap(v=>Array.isArray(v.pins)?v.pins:[])].map(api.pin).filter(Boolean).map(p=>[p.ref,p])).values()].slice(0,256);
   const u=value?.undo,undo=u&&valid(u.view)&&!api.builtin(u.view.id)?{view:api.view(u.view),index:Number.isInteger(u.index)?u.index:views.length,selected:u.selected===true,fallback:typeof u.fallback==='string'?u.fallback:''}:null;
-  return {schema:1,selected:views.some(v=>v.id===value?.selected)?value.selected:'all',views,pins,undo};
+  return {schema:1,collapsed:[...new Set(Array.isArray(value?.collapsed)?value.collapsed.filter(p=>typeof p==='string'&&p.length<=2048):[])],selected:views.some(v=>v.id===value?.selected)?value.selected:'all',views,pins,undo};
  },
  current:function(model){return model.views.find(v=>v.id===model.selected)||model.views[0];},
  dirty:function(view){return JSON.stringify(view.saved)!==JSON.stringify(view.working);},
