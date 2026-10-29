@@ -452,6 +452,24 @@ pub fn pm_pick(b: &dyn Board, root: &Path, pick: &str, reason: &str, op: &Op) ->
     Ok(act(b, root, n, "pick", &[&k.to_string()], reason, op))
 }
 
+/// `answer N --text`: on a blocked publication's card (#1820, pilotq #106), text that starts with an option key
+/// (`close:`, `later:`, `retry:`) is that option; as free text it resumed the publication, which blocked again.
+/// A key the card lacks is refused with the `N.K` form.
+pub fn answer_text(b: &dyn Board, cfg: &Config, n: u64, text: &str, op: &Op) -> Res<Vec<Receipt>> {
+    let key = text.split_once(':').map(|(k, _)| k.trim().to_lowercase()).filter(|k| ["close", "later", "retry"].contains(&k.as_str()));
+    let card = match key {
+        Some(_) => { let (_, t, _) = current(b, n)?; t.card.filter(|_| t.state == State::Ask && t.publication.is_some()) }
+        None => None,
+    };
+    let (Some(key), Some(card)) = (key, card) else { return Ok(vec![act(b, &cfg.root, n, "answer", &[], text, op)]) };
+    let opts = core::options(&card);
+    let Some((k, ..)) = opts.iter().find(|o| o.1.to_lowercase().starts_with(&format!("{key}:"))) else {
+        let forms: Vec<String> = opts.iter().map(|o| format!("`taskq answer {n}.{}` ({})", o.0, o.1.split(':').next().unwrap_or(""))).collect();
+        return Err(format!("#{n} has no `{key}` option; answer {}", forms.join(" or ")));
+    };
+    answer_picks(b, cfg, &[format!("{n}.{k}")], op)
+}
+
 /// `answer N.K [M.K..]`: every pick is checked before any is written (§ 5).
 pub fn answer_picks(b: &dyn Board, cfg: &Config, picks: &[String], op: &Op) -> Res<Vec<Receipt>> {
     let mut plan = vec![];

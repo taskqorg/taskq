@@ -2902,8 +2902,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "pick" => emit(&[dispatch::pm_pick(b, root, a.pos.get(1).ok_or("N.K missing")?, text, &op)?], json),
         "answer" => {
-            let n = a.num(1)?;
-            emit(&[act(b, root, n, "answer", &[], a.need("text")?, &op)], json)
+            emit(&dispatch::answer_text(b, cfg, a.num(1)?, a.need("text")?, &op)?, json)
         }
         "result" => {
             let n = a.num(1)?;

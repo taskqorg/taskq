@@ -884,6 +884,7 @@ impl Board for Fake {
             "failed" => Publish::Failed("CI failed".into()),
             "queue-admitted" => Publish::Enqueued("MQ_1".into()),
             "queue-waiting" => Publish::Pending("merge_group CI pending".into()),
+            "queue-refused" => Publish::Pending("merge queue did not admit PR #7: Required status check build is in progress; CI build pending".into()),
             "queue-conflict" => Publish::MainMoved("queue merge conflict".into()),
             "queue-blocked" => Publish::Blocked("PR #7 merged, merge_group CI tests failure".into()),
             "superseded" => Publish::Superseded { reason: "no open taskq-1 PR at result; merged taskq-1 PRs: #86 at ddddddd".into(), merged: "#86 at ddddddd".into() },
@@ -1119,22 +1120,71 @@ mod tests {
         assert!(calls.borrow().iter().all(|m| m == "GET"), "no publication write");
     }
 
+    // Chain: §7 Result and close verdicts: a task PR merged only at another head closes when it carries the result's patch-id.
+    // #1820 (pilotq #106, PR #114): a rebase in review moved the head, the PR merged there and the owner was asked to close it.
+    // Retained: a patch that differs (a conflict resolved in the rebase) or an omitted file patch still asks the owner.
+    #[test]
+    fn a_pr_merged_at_a_rebased_head_with_the_result_patch_closes() {
+        let patch = |sp: &str| json!({"files": [{"filename": "src/a.rs", "status": "modified", "patch": format!("@@ -1,2 +1,2 @@
+ fn a() {{
+-{sp}old();
++{sp}new();")}]});
+        for case in ["same", "other", "binary"] {
+            let calls = std::rc::Rc::new(RefCell::new(vec![]));
+            let captured = calls.clone();
+            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+                captured.borrow_mut().push(method.to_string());
+                let value = if url.contains("/compare/main...") { json!({"status": "diverged"}) }
+                    else if url.ends_with("/rules/branches/main") { json!([]) }
+                    else if url.contains("state=open") { json!([]) }
+                    else if url.contains("state=closed") {
+                        json!([{"number": 114, "head": {"sha": "d".repeat(40)}, "merged_at": "x", "merge_commit_sha": "b".repeat(40), "base": {"ref": "main"}}])
+                    } else if url.ends_with(&format!("/commits/{}", "b".repeat(40))) { json!({"parents": [{"sha": "c".repeat(40)}]}) }
+                    // the rebased head: other line numbers and indentation, same change
+                    else if url.contains(&format!("...{}", "d".repeat(40))) { patch("    ").to_string().replace("-1,2 +1,2", "-40,2 +40,2").parse().unwrap() }
+                    else if url.contains(&format!("...{}", "a".repeat(40))) {
+                        match case { "same" => patch(""), "other" => patch("").to_string().replace("new()", "merged()").parse().unwrap(),
+                            _ => json!({"files": [{"filename": "src/a.rs", "status": "modified"}]}) }
+                    }
+                    else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
+                    else if url.ends_with("/status") { json!({"total_count": 0}) }
+                    else { panic!("unexpected {method} {url}") };
+                Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+            }));
+            let sha = "a".repeat(40);
+            let got = h.resume_publication(1, &sha, "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
+            match case {
+                "same" => assert_eq!(got, Publish::Done(format!("merged #114 as {} (head ddddddd, the result's patch-id); exact-SHA CI green on {}", "b".repeat(40), "d".repeat(40)))),
+                _ => assert!(matches!(&got, Publish::Superseded { merged, .. } if merged == "#114 at ddddddd"), "{case}: {got:?}"),
+            }
+            assert!(calls.borrow().iter().all(|m| m == "GET"), "no publication write");
+        }
+    }
+
     // Chain: section 7 intent -> expected-head admission -> merge_group CI -> observed merge receipt.
     // Risks: divergent heads spend retries, lost mutations count as admission, or head CI closes an unmerged task.
+    // #1820 (pilotq #106): a PR rebased in review, a conflict after a sibling merged, or a refused enqueue left the task in review,
+    // silent, for 50 minutes. Retained: each such pass ends requeued with the PR, files or check named, re-enqueued, or waiting with a reason.
     #[test]
     fn github_queue_qualifies_the_merge_result_and_preserves_unknowns() {
-        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict", "enqueue-race", "merged-flag-lag"] {
+        for scenario in ["new", "draft", "waiting", "merged", "conflict", "failed", "removed", "unknown", "readback", "public", "graphql", "rules-unknown", "merge-ci-missing", "merge-ci-failed", "merge-ci-pending", "merge-push-pending", "merge-push-failed", "merge-check-failed", "enqueue-conflict", "enqueue-race", "merged-flag-lag",
+            "head-moved", "conflicting", "conflict-cleared", "conflict-unknown", "enqueue-checks-running", "enqueue-checks-failed"] {
             // #1595: every body is a recorded GitHub response; invented removal reasons once hid GitHub's lowercase codes.
             let merged = scenario == "merged" || scenario.starts_with("merge-");
             let mut state = recorded(if scenario == "waiting" { "queue-enqueued" } else if merged { "queue-merged" } else { "queue-open" });
             // Overlay: GitHub keeps no unmerged PR after a removal, so the open PR takes a recorded removal timeline.
-            let removal = match scenario { "conflict" => Some(recorded("removal-merge-conflict")), "failed" => Some(recorded("removal-failed-checks")),
+            let removal = match scenario { "conflict" | "conflict-cleared" | "conflict-unknown" => Some(recorded("removal-merge-conflict")), "failed" => Some(recorded("removal-failed-checks")),
                 "removed" => Some(recorded("removal-manual")), "merged-flag-lag" => Some(recorded("queue-merged")), _ => None };
             if let Some(r) = removal { state["data"]["node"]["timelineItems"] = r["data"]["node"]["timelineItems"].clone(); }
+            // Overlay: GitHub's mergeability after a sibling PR merged (CONFLICTING) or the conflicting entry ahead left (MERGEABLE).
+            match scenario { "conflict" | "conflicting" => state["data"]["node"]["mergeable"] = "CONFLICTING".into(), "conflict-cleared" => state["data"]["node"]["mergeable"] = "MERGEABLE".into(), _ => {} }
+            // Overlay: no recording holds a non-conflict refusal; only its UNPROCESSABLE type matters, never its wording.
+            let mut refusal = recorded("enqueue-already-queued");
+            refusal["errors"][0]["message"] = "Required status check build is in progress".into();
             let (runs, mut checks) = match scenario {
                 "merge-ci-missing" => (recorded("runs-none"), Value::Null),
-                "merge-ci-failed" => (recorded("runs-failed"), recorded("checks-failed")),
-                "merge-ci-pending" => (recorded("runs-checks-queued"), recorded("checks-queued")),
+                "merge-ci-failed" | "enqueue-checks-failed" => (recorded("runs-failed"), recorded("checks-failed")),
+                "merge-ci-pending" | "enqueue-checks-running" => (recorded("runs-checks-queued"), recorded("checks-queued")),
                 _ => (recorded("runs-green"), recorded("checks-green")),
             };
             // Overlay: the merge result is the commit the CI recording ran on.
@@ -1152,6 +1202,9 @@ mod tests {
             // Overlay: the PR list names the recorded PR state's head.
             let mut pulls = recorded("pulls-open");
             pulls[0]["head"]["sha"] = head.clone().into();
+            // Overlay: #106 the reviewer pushed a rebased head after the result.
+            let moved = "f".repeat(40);
+            if scenario == "head-moved" { pulls[0]["head"]["sha"] = moved.clone().into(); }
             pulls[0]["draft"] = (scenario == "draft").into();
             let pr = pulls[0]["node_id"].clone();
             let writes = std::rc::Rc::new(RefCell::new(vec![]));
@@ -1161,7 +1214,13 @@ mod tests {
             let sent = head.clone();
             let h = http(&github::KIND, None, Box::new(move |method, url, body| {
                 if method != "GET" { captured.borrow_mut().push(body.clone().unwrap_or_default()); }
-                let value = if url.contains("/compare/") { json!({"status": if !merge.is_empty() && url.ends_with(&merge) { "identical" } else { "diverged" }}) }
+                let value = if url.contains("/compare/") {
+                    // Overlay: compare bodies with a merge base and changed files; the PR and main both changed src/service.rs.
+                    let base = "c".repeat(40);
+                    let files = if url.contains(&format!("/compare/{base}...main")) { json!([{"filename": "src/service.rs"}, {"filename": "docs/x.md"}]) }
+                        else { json!([{"filename": "README.md"}, {"filename": "src/service.rs"}]) };
+                    json!({"status": if !merge.is_empty() && url.ends_with(&merge) { "identical" } else { "diverged" }, "merge_base_commit": {"sha": base}, "files": files})
+                }
                     else if url.ends_with("/rules/branches/main") { *ruled.borrow_mut() += 1; if scenario == "rules-unknown" { return Err("HTTP 403".into()); } recorded(if scenario == "public" { "rules-none" } else { "rules-merge-queue" }) }
                     else if url.ends_with("/repos/o/r") { assert_eq!(scenario, "public"); recorded("repo-public") }
                     else if url.contains("/pulls?") { pulls.clone() }
@@ -1172,7 +1231,8 @@ mod tests {
                         if scenario == "graphql" { recorded("node-not-found") }
                         else if query.contains("enqueuePullRequest") {
                             assert_eq!(body["variables"]["sha"], head);
-                            recorded(match scenario { "enqueue-conflict" => "enqueue-conflict", "enqueue-race" => "enqueue-already-queued", _ => "enqueue-admitted" })
+                            match scenario { "enqueue-checks-running" | "enqueue-checks-failed" => refusal.clone(),
+                                _ => recorded(match scenario { "enqueue-conflict" => "enqueue-conflict", "enqueue-race" => "enqueue-already-queued", _ => "enqueue-admitted" }) }
                         } else if query.contains("markPullRequestReadyForReview") { recorded("ready-for-review") }
                         else if !query.contains("timelineItems") { recorded(if scenario == "readback" { "readback-none" } else { "readback-enqueued" }) }
                         else { state.clone() }
@@ -1183,15 +1243,19 @@ mod tests {
                     else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
-            let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race");
+            let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race" | "head-moved" | "conflicting" | "enqueue-checks-running" | "enqueue-checks-failed");
             let got = h.resume_publication(1, &sent, "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
             match scenario {
-                "new" | "draft" | "waiting" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
+                "new" | "draft" | "waiting" | "conflict-cleared" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
+                "conflict" | "enqueue-conflict" | "conflicting" => assert_eq!(got, Publish::MainMoved("PR #1590 conflicts with main; conflict files: src/service.rs".into()), "{scenario}"),
+                "head-moved" => assert_eq!(got, Publish::MainMoved(format!("PR #1590 head {moved:.7} is not the result {sent:.7}; deliver the PR head as a new result"))),
+                "enqueue-checks-running" => assert!(matches!(&got, Publish::Pending(m) if m.starts_with("merge queue did not admit PR #1590: Required status check build is in progress; CI ") && m.contains(" pending on ")), "{got:?}"),
+                "conflict-unknown" => assert_eq!(got, Publish::Pending("merge queue removed PR #1590 as merge_conflict; mergeability not computed yet".into())),
+                "enqueue-checks-failed" => assert!(matches!(&got, Publish::Failed(m) if m.starts_with("merge queue did not admit PR #1590: ")), "{got:?}"),
                 "merged" | "merge-push-pending" => assert!(matches!(&got, Publish::Done(m) if !m.contains("push CI")), "{scenario}: {got:?}"),
                 "merge-push-failed" => assert!(matches!(&got, Publish::Done(m) if m.ends_with("merge-result CI green; push CI build failure ignored")), "{got:?}"),
                 // #1413: merged with failed merge-result CI or removed from the queue: only the owner can unblock it
                 "merge-ci-failed" | "merge-check-failed" | "removed" => assert!(matches!(got, Publish::Blocked(_)), "{scenario}: {got:?}"),
-                "conflict" | "enqueue-conflict" => assert!(matches!(got, Publish::MainMoved(_)), "{scenario}: {got:?}"),
                 "failed" => assert!(matches!(got, Publish::Failed(_)), "{got:?}"),
                 // #1489: reason merged before the merged flag rereads next pass instead of asking; an enqueue race rereads too
                 _ => assert!(matches!(got, Publish::Pending(_)), "{scenario}: {got:?}"),
@@ -1202,7 +1266,7 @@ mod tests {
                 assert_eq!(*rules.borrow(), 1, "main rules reread");
             }
             assert!(!writes.borrow().iter().any(|b| b.get("merge_method").is_some()), "queue never calls REST merge");
-            assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback" | "enqueue-conflict" | "enqueue-race")), "{scenario}: one enqueue call");
+            assert_eq!(writes.borrow().iter().filter(|b| b["query"].as_str().is_some_and(|q| q.contains("enqueuePullRequest"))).count(), usize::from(matches!(scenario, "new" | "draft" | "readback" | "enqueue-conflict" | "enqueue-race" | "conflict-cleared" | "enqueue-checks-running" | "enqueue-checks-failed")), "{scenario}: one enqueue call");
         }
     }
 

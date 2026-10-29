@@ -170,7 +170,10 @@ impl GitHub {
 
     fn graphql(&self, query: &str, variables: Value) -> Result<Value> {
         let v = self.api.call("POST", &format!("{}/graphql", self.api.root), Some(json!({"query": query, "variables": variables})))?.json()?;
-        if v["errors"].as_array().is_some_and(|e| !e.is_empty()) { return Err(format!("publication GraphQL: {}", v["errors"])); }
+        if let Some(e) = v["errors"].as_array().filter(|e| !e.is_empty()) {
+            // #1820: type and message become a surfaced publication reason; raw JSON hid it.
+            return Err(format!("publication GraphQL: {}", e.iter().map(|e| format!("{} {}", s(e, "type"), s(e, "message")).trim().to_string()).collect::<Vec<_>>().join("; ")));
+        }
         if !v["data"].is_object() { return Err("publication GraphQL data unknown".into()); }
         Ok(v["data"].clone())
     }
@@ -204,11 +207,31 @@ impl GitHub {
         Ok(Ok(if ignored.is_empty() { String::new() } else { format!("; push CI {} ignored", ignored.join(", ")) }))
     }
 
+    /// #1820: the files main and the PR both changed since their merge base, read Git-free (a public board has no worktree).
+    fn conflict_files(&self, sha: &str) -> String {
+        let files = |v: &Value| v["files"].as_array().into_iter().flatten().filter_map(|f| f["filename"].as_str().map(String::from)).collect::<Vec<_>>();
+        let read = |range: &str| self.api.call("GET", &format!("/compare/{range}"), None).and_then(|r| r.json());
+        let Ok(ours) = read(&format!("main...{sha}")) else { return "conflict files unknown".into() };
+        let Some(base) = ours["merge_base_commit"]["sha"].as_str().filter(|b| hex40(b)) else { return "conflict files unknown".into() };
+        let Ok(theirs) = read(&format!("{base}...main")) else { return "conflict files unknown".into() };
+        let theirs = files(&theirs);
+        let both: Vec<String> = files(&ours).into_iter().filter(|f| theirs.contains(f)).collect();
+        match both.len() {
+            0 => "conflict files unknown".into(),
+            n if n <= 5 => format!("conflict files: {}", both.join(", ")),
+            n => format!("conflict files: {} +{} more", both[..5].join(", "), n - 5),
+        }
+    }
+
     fn queue(&self, pr: &Value, sha: &str, enqueued: bool) -> Result<Publish> {
         let id = pr["node_id"].as_str().ok_or("PR node id unknown")?;
-        let v = self.graphql("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefOid merged mergeCommit { oid } mergeQueueEntry { id } timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { reason } } } } } }", json!({"id": id}))?;
+        let number = &pr["number"];
+        // #1820 (pilotq #106): a conflicting PR is never admitted; requeue in this pass, naming the files, instead of waiting silently.
+        let conflict = || Publish::MainMoved(format!("PR #{number} conflicts with main; {}", self.conflict_files(sha)));
+        let v = self.graphql("query($id: ID!) { node(id: $id) { ... on PullRequest { headRefOid mergeable merged mergeCommit { oid } mergeQueueEntry { id } timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { reason } } } } } }", json!({"id": id}))?;
         let p = &v["node"];
-        if p["headRefOid"].as_str().ok_or("queued PR head unknown")? != sha { return Err("queued PR head changed; publication needs review".into()); }
+        let head = p["headRefOid"].as_str().ok_or("queued PR head unknown")?;
+        if head != sha { return Ok(head_moved(number, head, sha)); }
         if p.get("mergeQueueEntry").is_none() { return Err("queue entry state unknown".into()); }
         if p["merged"] == true {
             let merged = p["mergeCommit"]["oid"].as_str().ok_or("merge result unknown")?;
@@ -226,19 +249,32 @@ impl GitHub {
             let lower = reason.to_lowercase();
             // #1489: GitHub records the merge removal before the merged flag; reread next pass, never ask.
             if lower.contains("merged") { return Err(format!("merge queue removed PR as {reason}; merged state not read back yet")); }
-            return Ok(if ["conflict", "base branch", "out of date"].iter().any(|s| lower.contains(s)) {
-                Publish::MainMoved(format!("merge queue removed PR: {reason}"))
-            } else if lower.contains("failed") || lower.contains("failure") {
-                Publish::Failed(format!("merge queue removed PR: {reason}"))
-            } else { Publish::Blocked(format!("merge queue removed PR: {reason}")) });
+            if lower.contains("failed") || lower.contains("failure") { return Ok(Publish::Failed(format!("merge queue removed PR: {reason}"))); }
+            if !["conflict", "base branch", "out of date"].iter().any(|s| lower.contains(s)) { return Ok(Publish::Blocked(format!("merge queue removed PR: {reason}"))); }
+            // #1820: a conflict removal is final only while the PR still conflicts; a clean PR (the conflicting entry ahead left) re-enqueues below.
+            match p["mergeable"].as_str() {
+                Some("MERGEABLE") => {},
+                Some("CONFLICTING") => return Ok(conflict()),
+                _ => return Err(format!("merge queue removed PR #{number} as {reason}; mergeability not computed yet")),
+            }
         }
+        if p["mergeable"] == "CONFLICTING" { return Ok(conflict()); }
         if pr["draft"] == true {
             let v = self.graphql("mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }", json!({"id": id}))?;
             if v["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] != false { return Err("PR is still a draft".into()); }
         }
         // #1372: GitHub refuses to enqueue a conflicting head; only the worker can fix it, so retrying each pass never helps.
         match self.graphql("mutation($id: ID!, $sha: GitObjectID!) { enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) { mergeQueueEntry { id } } }", json!({"id": id, "sha": sha})) {
-            Err(e) if e.contains("UNPROCESSABLE") && e.contains("Pull request has merge conflicts") => return Ok(Publish::MainMoved(format!("merge queue refused PR: {e}"))),
+            Err(e) if e.contains("UNPROCESSABLE") && e.contains("Pull request has merge conflicts") => return Ok(conflict()),
+            // #1820: any other refusal (a required check still running) waits with its reason; a failed head check requeues instead of waiting forever.
+            Err(e) if e.contains("UNPROCESSABLE") && !e.contains("already in the queue") => {
+                let refused = format!("merge queue did not admit PR #{number}: {}", e.trim_start_matches("publication GraphQL: UNPROCESSABLE "));
+                return match self.ci(sha) {
+                    Ok(Some(fail)) => Ok(Publish::Failed(format!("{refused}; {fail}"))),
+                    Ok(None) => Err(refused),
+                    Err(wait) => Err(format!("{refused}; {wait}")),
+                };
+            }
             r => { r?; }
         }
         // Read back admission: a mutation response alone is not proof (R12); a retry recovers it after a lost response.
@@ -329,19 +365,24 @@ impl GitHub {
         if prs.is_empty() {
             // § 7 merged, not closed: a merged PR at the result SHA into any base (a release branch too) is the publication; no second merge
             let closed = self.api.call("GET", &format!("/pulls?head={owner}:{branch}&state=closed"), None)?.json()?;
-            if let Some(pr) = closed.as_array().into_iter().flatten().find(|p| p["head"]["sha"] == sha && !p["merged_at"].is_null()) {
+            let merged_prs: Vec<&Value> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null()).collect();
+            // #1820 (pilotq #106): a PR merged at a rebased head is the publication when it carries the result's patch
+            let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha).map(|p| (*p, String::new()))
+                .or_else(|| merged_prs.iter().find(|p| self.same_patch(p, sha).unwrap_or(false))
+                    .map(|p| (*p, format!(" (head {:.7}, the result's patch-id)", s(&p["head"], "sha")))));
+            if let Some((pr, note)) = found {
                 let merged = s(pr, "merge_commit_sha");
+                let head = s(&pr["head"], "sha");
                 let ci = if queue || enqueued {
                     match self.merge_ci(&merged)? {
                         Err(fail) => return Ok(Publish::Blocked(format!("PR #{} merged as {merged}, {fail}", pr["number"]))),
                         Ok(note) => format!("merge-result CI green{note}"),
                     }
-                } else if let Some(fail) = self.ci(sha)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {sha}") };
-                return Ok(Publish::Done(format!("merged #{}{} as {}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
+                } else if let Some(fail) = self.ci(&head)? { return Ok(Publish::Failed(fail)); } else { format!("exact-SHA CI green on {head}") };
+                return Ok(Publish::Done(format!("merged #{}{} as {}{note}; {ci}", pr["number"], into(&s(&pr["base"], "ref")), merged)));
             }
             // #1777: superseded by PRs merged at other heads; `Failed` would cancel a PR that is gone and retry each pass
-            let merged: Vec<_> = closed.as_array().into_iter().flatten().filter(|p| !p["merged_at"].is_null())
-                .map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha"))).collect();
+            let merged: Vec<_> = merged_prs.iter().map(|p| format!("#{} at {:.7}", p["number"], s(&p["head"], "sha"))).collect();
             if merged.is_empty() { return Ok(Publish::Blocked(format!("no open {branch} PR at result {sha}; merged {branch} PRs: none"))); }
             let merged = merged.join(", ");
             return Ok(Publish::Superseded { reason: format!("no open {branch} PR at result {sha}; merged {branch} PRs: {merged}"), merged });
@@ -349,10 +390,8 @@ impl GitHub {
         if prs.len() != 1 {
             return Ok(Publish::Failed(format!("{} open PRs of {branch}, want exactly one", prs.len())));
         }
-        if prs[0]["head"]["sha"].as_str().ok_or("PR head SHA unknown")? != sha {
-            // shortcut: an unrecorded/foreign head stays unknown; use a board-backed rebase intent if automatic recovery is needed.
-            return Err(format!("PR head differs from result {sha}; publication unknown; verify the branch before retrying"));
-        }
+        let head = prs[0]["head"]["sha"].as_str().ok_or("PR head SHA unknown")?;
+        if head != sha { return Ok(head_moved(&prs[0]["number"], head, sha)); }
         if queue { return self.queue(&prs[0], sha, enqueued); }
         match self.api.call("GET", "", None)?.json()?["private"].as_bool() {
             Some(true) => {},
@@ -394,6 +433,52 @@ impl GitHub {
         }
         if back["merged"] == true { Ok(Publish::Done(format!("merged #{p} as {}; exact-SHA CI green on {sha}", s(&back, "merge_commit_sha")))) } else { Err(format!("#{p} not merged yet")) }
     }
+}
+
+impl GitHub {
+    /// § 7 (#1820): PR `pr`, merged at another head, carries the result `sha`'s patch. Both diffs start at the merge
+    /// commit's first parent, so merge, squash and rebase merges compare alike; any unknown reads as a different patch.
+    fn same_patch(&self, pr: &Value, sha: &str) -> Result<bool> {
+        let merge = s(pr, "merge_commit_sha");
+        if !hex40(&merge) { return Ok(false); }
+        let base = self.api.call("GET", &format!("/commits/{merge}"), None)?.json()?["parents"][0]["sha"].as_str().map(String::from).ok_or("merge parent unknown")?;
+        let id = |head: &str| -> Result<Option<[u8; 20]>> { Ok(patch_id(&self.api.call("GET", &format!("/compare/{base}...{head}"), None)?.json()?)) };
+        Ok(matches!((id(&s(&pr["head"], "sha"))?, id(sha)?), (Some(a), Some(b)) if a == b))
+    }
+}
+
+/// `git patch-id --stable` over a compare reply's per-file diffs: per file, SHA-1 of its header and hunk lines without
+/// whitespace or `@@` line numbers; file hashes summed with carry, so file order does not matter.
+/// None when GitHub omits a file's patch (binary, too large) or may have truncated the list (300 files).
+fn patch_id(compare: &Value) -> Option<[u8; 20]> {
+    let files = compare["files"].as_array().filter(|f| !f.is_empty() && f.len() < 300)?;
+    let mut sum = [0u8; 20];
+    for f in files {
+        let name = f["filename"].as_str()?;
+        let old = f["previous_filename"].as_str().unwrap_or(name);
+        let (from, to) = match f["status"].as_str() { Some("added") => ("/dev/null".into(), format!("b/{name}")),
+            Some("removed") => (format!("a/{old}"), "/dev/null".into()), _ => (format!("a/{old}"), format!("b/{name}")) };
+        // GitHub sends no file mode: an added or removed file reads as a regular one (100644)
+        let mode = match f["status"].as_str() { Some("added") => "new file mode 100644", Some("removed") => "deleted file mode 100644", _ => "" };
+        let header = [format!("diff --git a/{old} b/{name}"), mode.into(), format!("--- {from}"), format!("+++ {to}")];
+        let mut ctx = ring::digest::Context::new(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY);
+        for line in header.iter().map(String::as_str).filter(|l| !l.is_empty()).chain(f["patch"].as_str()?.lines().filter(|l| !l.starts_with("@@"))) {
+            ctx.update(line.chars().filter(|c| !c.is_whitespace()).collect::<String>().as_bytes());
+        }
+        let mut carry = 0u16;
+        for (s, d) in sum.iter_mut().zip(ctx.finish().as_ref()) {
+            carry += *s as u16 + *d as u16;
+            *s = carry as u8;
+            carry >>= 8;
+        }
+    }
+    Some(sum)
+}
+
+/// #1820 (pilotq #106): a PR pushed after the result (a rebase in review) is unreviewed and never merges; silence held it 50 minutes.
+/// `main-moved` requeues the task; the worker reviews the PR head and delivers it as a new result.
+fn head_moved(number: &Value, head: &str, sha: &str) -> Publish {
+    Publish::MainMoved(format!("PR #{number} head {head:.7} is not the result {sha:.7}; deliver the PR head as a new result"))
 }
 
 impl Board for GitHub {
@@ -635,6 +720,24 @@ mod token_tests {
 #[cfg(test)]
 mod image_tests {
     use super::*;
+
+    // Chain: §7 Result and close verdicts: the patch-id of a merged head (#1820) is Git's own `git patch-id --stable`.
+    // Risk: a home-made hash that drops what Git keeps (context, file names, modes) closes a task on another patch.
+    #[test]
+    fn patch_id_is_gits_stable_patch_id() {
+        let hex = |id: [u8; 20]| id.iter().map(|b| format!("{b:02x}")).collect::<String>();
+        let modified = json!({"filename": "src/a.rs", "status": "modified", "patch": "@@ -1,2 +1,2 @@
+ fn a() {
+-old();
++new();"});
+        let added = json!({"filename": "b.txt", "status": "added", "patch": "@@ -0,0 +1 @@
++hi"});
+        // expected: `git patch-id --stable` over the same diffs as `git diff` prints them
+        assert_eq!(patch_id(&json!({"files": [modified]})).map(hex).as_deref(), Some("ee8eda765c6017d8c75984d367ee840dff07151a"));
+        assert_eq!(patch_id(&json!({"files": [added, modified]})).map(hex).as_deref(), Some("91a982717c3ffcb3a0c0b1404c10f5ecfada4861"));
+        assert_eq!(patch_id(&json!({"files": [{"filename": "x.png", "status": "added"}]})), None, "an omitted patch is unknown");
+        assert_eq!(patch_id(&json!({"files": []})), None);
+    }
 
     // Chain: § 2 visual evidence on GitHub (#1782). Risk: the load check or the app copy reads a URL outside this
     // repository's commit-pinned evidence, or a relative link passes as an image.

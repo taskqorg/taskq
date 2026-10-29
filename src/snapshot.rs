@@ -167,6 +167,18 @@ pub struct Row {
     pub admission: Option<Admission>,
     /// § 5 late answer: outside `ask`, the answer that closed the last question, its writer and text (#1785).
     pub answered: Option<crate::dispatch::Answered>,
+    /// #1820 a published review this host's service pass left without a merge-queue entry; `None` otherwise.
+    pub publication: Option<PublicationWait>,
+}
+
+/// #1820 (pilotq #106): why a publication waits, from this host's last service pass; never inferred from silence.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublicationWait {
+    pub reason: String,
+    /// Board time of the `publish` entry; `None`: not in the log read.
+    pub since: Option<i64>,
+    /// Seconds from `since` to the snapshot's board time.
+    pub age_s: Option<i64>,
 }
 
 /// #1616 fixed admission vocabulary of ready and waiting rows (docs/design/enrollment.md#contract-detail): code and
@@ -230,6 +242,9 @@ fn board_admission(t: &Task, labels: &[String], deps: &[service::Blocker], hosts
 /// Owner texts of a row's wait (docs/design/menu.md M3 Task row text, #1524); the raw reason stays in `execution_wait`.
 pub const WAIT_TEXTS: [&str; 6] = ["Waiting for a free slot", "Waiting for GUI access", "Waiting for the agent to accept input",
     "Waiting for your answer", "Waiting for the previous run to end", "Run state unknown; see service log"];
+
+/// #1820 owner text of a publication wait, followed by its age and reason.
+pub const PUBLICATION_WAIT: &str = "Publication waiting";
 
 /// The owner text of a raw wait diagnostic; text no class names reads as the previous run's end.
 pub fn wait_text(raw: &str) -> &'static str {
@@ -317,6 +332,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         deps: v.blockers.clone(),
         admission: board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed),
         answered: crate::dispatch::answered_in(v.issue.number, &v.log, &v.projection, &v.comments),
+        publication: None,
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
@@ -422,9 +438,13 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
-    /// The owner text of the row's wait: the execution diagnostic, else a capacity refusal with its runtime (#1685),
+    /// The owner text of the row's wait: a publication wait, else the execution diagnostic, else a capacity refusal with its runtime (#1685),
     /// else the board's own host refusal (R6, #1721).
     fn wait(&self) -> Option<String> {
+        // #1820: the reviewer has ended, so a publication wait outranks its execution diagnostic
+        if let Some(p) = &self.publication {
+            return Some(format!("{} {} · {}", PUBLICATION_WAIT, p.age_s.map_or("?".into(), crate::display::age), compact(&p.reason, 200)));
+        }
         if let Some(reason) = &self.execution_wait { return Some(wait_text(reason).into()); }
         let a = self.admission.as_ref()?;
         match (a.code, &a.host) {
@@ -454,6 +474,7 @@ impl Row {
         if let Some(a) = self.stuck { row["age_s"] = json!(a); }
         if let Some(a) = &self.admission { row["admission"] = a.json(); }
         if let Some(a) = &self.answered { row["answered"] = json!(a); }
+        if let Some(p) = &self.publication { row["publication"] = json!({"reason": p.reason, "since": p.since, "age_s": p.age_s}); }
         row
     }
 }
@@ -690,7 +711,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -714,7 +735,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -761,7 +782,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, publication: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");
