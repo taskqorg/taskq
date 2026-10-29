@@ -1,51 +1,38 @@
 # Long conversation replies
 
-Task: [#1816](https://github.com/taskqorg/taskq/issues/1816). Authority: § 5 (human replies), R13 (spec first), R12 (separate evidence) and § 7 (result candidate).
+Task: [#1816](https://github.com/taskqorg/taskq/issues/1816). Authority: § 5 human replies, R13 spec first, R12 evidence and § 7 delivery.
 
-Long answers, steers and owner requeue replies have no input length cap. The shared dispatcher wraps board lines at 240 Unicode characters and splits oversized replies into verified, ordered board comments before posting the command. Native transport files avoid process argument and output limits. Draft persistence exempts reply text from metadata budgets; unrelated metadata bounds remain.
+Answers, steers and owner requeue replies have no input length cap. One dispatcher wraps board lines at 240 Unicode characters and stores oversized replies in verified, ordered comments before posting the command. Private transport files preserve long input and JSON receipts outside process argument/output limits. Worker verdict, metadata, fencing and retry guards remain.
 
 ## Failure before and pass after
 
-Before the implementation change, `node tests/answer-card.test.cjs` failed on the new 267-character case: expected no problem, received `At most 240 characters per line`. The same component check now passes, including a 2000-character multiline reply and empty-input guidance.
+Before the fix, `node tests/answer-card.test.cjs` failed on the 267-character case with `At most 240 characters per line`. Before multipart transport, `cargo test --locked --bin taskq oversized_human_reply_is_complete_before_the_task_moves` failed with `answer: one oversized comment still reaches the board`. Those failures were recorded in the [earlier attempt](https://github.com/taskqorg/taskq/blob/1e6ae5543d9c35cdd83ee40434ced2083a913115/docs/design/review-evidence/1816/report.md).
 
-Before the oversized transport change, `cargo test --locked --bin taskq oversized_human_reply_is_complete_before_the_task_moves` failed with `answer: one oversized comment still reaches the board`. Its regression now passes with word order, Unicode, paragraph breaks, complete readback before transition, N-1 fold equality, lost-response recovery and same-operation deduplication. Changed, missing, untrusted or edited parts remain unknown.
+Both regressions pass on the rebased candidate. Protection includes 267-character and 2000-character multiline replies, empty-input guidance, word order, Unicode, paragraphs, multipart completeness, N-1 folding, lost-response recovery, same-operation retries, stale-card races and reserved metadata. No assertion or timing deadline was weakened.
 
-Choice, stale-card, draft preservation, cancellation, worker fencing, operation identity, reserved metadata and worker Reason/Next validation remain protected. Only the accepted § 5 human-reply length decision changed. Test assertions and timing deadlines were not weakened.
+## Current candidate
 
-## Earlier-attempt evidence (historical)
+Base: `2c20d3ce58a8b680ecc3754863bb80ed573a3fc8`. Tested source: `e84b41c2038a5592f5ac90f8feb367600d23d059`. Delivery changes only this evidence report afterward. Generated `docs/shots/*` and `*.sources.json` edits were dropped under § 7 step 4; release derives them. The amended contract rule is § 5 under R13.
 
-The implementation is rebased onto `5d3540af629c51138b2a561c4511c495719c2b06`. Main's `--transcript`, `later --until`, transcript formatting, credential masking and service-delivered author attribution remain. A range comparison confirms the implementation and regression-test patches are unchanged through the final rebase; only evidence conflicts needed resolution.
+Windows, stable GNU Rust toolchain, warm dependency cache, worker authority retained:
 
-Code candidate: `37bd078baf6c1f4f04c959c654d4af037baada07`. The delivery changes only evidence and provenance after this source was tested. Its product, test, dependency and contract blobs are checked unchanged before handoff (R12).
+- `python3 scripts/check.py --base 2c20d3ce58a8b680ecc3754863bb80ed573a3fc8`: FAILED in 559.125 s, within the unchanged 900 s budget. Rust: 598 passed, 23 failed, 38 ignored. Setup, selected-gate checks and the rule-change gate passed. All six human-reply regressions passed in this run. The canonical gate is not green.
+- Eighteen host-policy, installation, lifecycle, resource, tray-capacity and Windows security-restore failures are sandbox-blocked under worker authority. Diagnostics include `a worker cannot change host policy`, `a worker cannot install the host service`, `a worker cannot restart the host service or request Stop` and `Windows security restore requires an unrestricted operator`. Authority was not removed to run them.
+- Three dialogue failures reported `program not found`: their fixture launches `sh`. With Git Bash tools on the process PATH, `cargo +stable test --locked --bin taskq dialogue::tests` passed 7 tests, with 1 ignored. The missing tool also affected the watch fixture's expected outcome.
+- Two IPC fixture failures reported deadlines during the full run. `cargo +stable test --locked --bin taskq runtime::app_control::` passed 3 tests, with 1 ignored, including both failures. Assertions and deadlines are unchanged. This focused pass does not erase the full-run failures.
+- `cargo +stable test --locked --test integration`: PASS, 17 passed, 1 ignored, 19.81 s in the harness.
+- Every `node tests/*.test.cjs` file: PASS, all 26 files. The canonical runner stopped at Rust; these component checks ran separately.
+- `node tests/tray-answer.browser.cjs`: PASS, all four light/dark and 16/20 px cases at 320/360 px. Playwright was restored as an unlisted test tool after `npm ci`; project dependency files are unchanged. Receipt delivery is substituted, not a live board write.
+- Isolated offline `cargo +stable run --locked -- selftest`: PASS, 105 golden traces, formats and 9 committed capture observations. Board access is unknown/offline; the running host store was not used.
+- `sh docs/shots/check.test.sh`, `sh .github/release-tag.test.sh` (Git Bash) and `python3 .github/release-check.test.py`: PASS.
 
-`python3 scripts/check.py --base 5d3540af629c51138b2a561c4511c495719c2b06` timed out after 900.141 s on Windows during Rust compilation, before the test harness started. Worker authority and the 900 s budget were retained. The canonical gate is not green; its setup and rule checks do not establish a full Rust-suite pass.
+The full gate remains failed. The focused passes and blocked-host classification do not qualify the full suite or native installation. Review and green merge-result CI (`merge_group`) remain required under § 7/R12.
 
-The earlier source `1bf7c4a37e6208e96408853958b42716c872af67`, on base `fdc61b84`, completed its canonical gate in 651.015 s: 594 passed, 20 failed and 38 ignored. Eighteen host-policy, installation, lifecycle, resource and security-restore failures were sandbox-blocked under worker authority; the other two passed individually with unchanged assertions. That failed earlier-source run is separate from the final source's evidence and is not claimed as a pass.
+## Composer evidence
 
-The remaining checks completed separately on the final source:
-
-- `cargo +stable test --locked --bin taskq human_repl`: all six human-reply regressions pass, covering wrapping and word order, multipart readback, concurrent card replacement, lost-response recovery, stdin and large JSON receipts. The additional `reply` filter passed seven cases with two native probes ignored.
-- `cargo +stable test --locked --test integration`: 17 passed, none failed and one ignored; 17.83 s in the harness.
-- Every `node tests/*.test.cjs` file: all 26 pass, including provenance and architecture guards.
-- `node tests/tray-answer.browser.cjs`: all four light/dark, 16/20 px cases pass at 320/360 px. Long answer, multiline requeue, long steer, empty input, exact refusal/fix, telemetry and draft preservation are covered. The two composer screens were refreshed.
-- Isolated offline `cargo +stable run --locked -- selftest`: 105 golden traces, formats and nine committed capture observations pass. Board access remains unknown/offline.
-- Screenshot-provenance, release-tag and exact-source release-check instruments pass. The unchanged artifact scripts reuse their checks from the preceding base. The README capture uses the fixture/capture/manifest pipeline from `docs/shots/update.sh`, with a scratch debug-build variant that reuses the tested binary. The manifest names the debug renderer and pins this source, the binary, UI blobs and all image digests; explicit verification passes.
-
-## Earlier-attempt screens (historical)
-
-The two composer screens use invented board data in the actual workspace bundle, Chromium headless shell on Windows. The success receipt is substituted; this is browser/IPC evidence, not a live board write.
-
-1. [Before Send: 267 characters, enabled Send](01-before-send.png).
+1. [Before Send: 267 characters, Send enabled](01-before-send.png).
 2. [After the matching success receipt](02-after-success.png).
-3. [Native project route](../../../shots/popover-dark-project-16.png).
-4. [Native icon route](../../../shots/icon-summary-run-dark.png).
 
-The native README captures use Windows WebView2 and `docs/shots/fixture.sh` in an isolated temporary installation, refreshed immediately before capture. They were rendered with `cargo +stable run --locked -- tray --snapshot DIR --route project,icon` from the tested source. `docs/shots/manifest.json` binds that source's UI blobs, the exact debug binary digest and the image bytes. All four screens were refreshed and visually inspected on this source. Explicit digest verification passed for the binary, all UI Git blobs and every manifest image; the screenshot guard alone does not verify image bytes.
+Both images were regenerated from the rebased workspace bundle and visually inspected. Their SHA-256 digests exactly match the committed images: `a2bd5c3dc48c9093cc6685d4928ae036d870639a5c1bd6b16f4c83190d095a22` and `a96bcbd1460bf1a266570101b8d13c9abdb6641b4c75afc0c4d94407efea3724`. This two-screen set uses invented board data in Chromium headless shell on Windows and a substituted success receipt. Earlier native README captures are historical and are not shipped by this task.
 
-Live Telegram transport, installed native Send clicks and deployment were not exercised. Review and green `merge_group` CI remain required for publication under § 7/R12; these source, browser and native captures do not replace that gate.
-
-## Current continuation
-
-Rebased onto `2c20d3ce58a8b680ecc3754863bb80ed573a3fc8` under § 7. The earlier task commits remain in a preservation ref; this branch contains one implementation commit. Generated `docs/shots/*` and `*.sources.json` edits were dropped as required by § 7 step 4. The earlier screenshots and test observations above are historical, not acceptance of the rebased candidate (R12).
-
-The accepted human-reply decision changes § 5 under R13. No other rule changes are intended. The current candidate's canonical gate and affected browser checks are recorded below after completion. Native installed Send, live Telegram and deployment remain unverified.
+Live Telegram, installed native Send and deployment remain unverified. No live host configuration or service was changed.
