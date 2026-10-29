@@ -144,6 +144,38 @@ A bad/unsupported navigation schema defaults to Home without resetting other
 settings. Snapshot capture explicitly overrides navigation and does not save it.
 Save failure is shown as Settings unknown; it never reports persistence as applied.
 
+### Shared pending operations (#1819)
+
+Owner decision on #1819 (option 1, pending overlay without a queue). The tray keeps
+one native pending-operation store in memory, keyed by project root and operation id.
+Every answer, steer and task control (`taskq.task-controls/1`) enters it when the
+bridge accepts the request. Each change to the store goes to every open window
+(menu, Conversations, request windows, Settings, View) at once, never on the 2 s
+tick; a window opened later receives it with its first snapshot.
+
+- Phases: `sending` (the CLI write runs), `waiting` (Waiting GitHub: the write was
+  accepted; the next status snapshot has not shown it yet), `done` (the snapshot row
+  shows the receipt revision; shown 5 s, then dropped), `failed` (not sent, unknown or
+  refused; a Retry button resends the same operation once on click).
+- Rows show the expected state at once, marked unconfirmed: `Doing ⟳`. The expected
+  state comes from the control (start: Ready, stop: Failed, later: Later, retry:
+  Ready; an answer: Doing with a live run, else Ready) and is replaced by the receipt's
+  readback state. A refused or stale write shows the real state and a short reason;
+  it never asks to confirm again. Unverified stays unknown (R12): the overlay never
+  changes counts, the board or `status.json`.
+- An accepted write appends its task to `<root>/.taskq/reread` and pokes the service;
+  the next pass drops that task's cached comments and skips the 304 shortcut, so it
+  rereads that task.
+- No outbox and no replay: a failed answer keeps its draft with one Send button;
+  nothing resends after a reconnect or restart. The store is memory only.
+- While any window is open the tray touches `<install>/menu-open` every tick; the
+  service then sleeps at most 15 s (§ 4 step 8). Board reads reuse ETags, so an
+  unchanged board costs no rate-limit requests.
+- Stale data: when a project snapshot is older than two poll intervals or missing,
+  every window shows one line `Data from HH:MM` (the oldest observation time).
+- Telemetry: CoreQ operation `tray.sync` records each write's latency from request to
+  confirmation and its outcome (`done`, `failed`, `mismatch`); no second collector.
+
 Deferred follow-up contracts (not acceptance claims for this slice):
 - Selective recovery: E-A1–E-A9, including durable hold, owned-process identity, unknown-liveness refusal and selected fenced restart with readback. Keep ordinary pause distinct.
 

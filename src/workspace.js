@@ -1,5 +1,6 @@
 'use strict';
 const ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),shell=require('./app-shell.js'),{h}=require('preact'),{signal}=require('@preact/signals'),{execution}=ui;
+const syncView=require('./sync-view.js');
 const {create}=execution.module('workspace',{
  create:function(window=globalThis){
   const document=window.document,menu=document.querySelector('.menu'),renderer=shell.create(menu),snapshot=signal(null);
@@ -25,7 +26,8 @@ const {create}=execution.module('workspace',{
     const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
     return conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
-     footer:[api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]});
+     // #1819: the window's one stale-data line sits in the status footer, which is already a live region
+     footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]});
    },
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
    task:function(row){
@@ -39,6 +41,8 @@ const {create}=execution.module('workspace',{
       ev&&!ev.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
       ev&&!ev.archived&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
      api.threadNotice(row.id),
+     // #1819: the task's pending operation (Sending, Waiting GitHub, Done, Failed with Retry), as on the menu row
+     syncView.row(t?.sync),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
@@ -66,6 +70,7 @@ const {create}=execution.module('workspace',{
    // #1699 A2/A7: Mark read is explicit; Archive offers Undo; an archived event restores or deletes
    eventButtons:function(r){const busy=!!view.messageBusy;return r&&h('span',{class:'options'},!r.read&&!r.archived&&h('button',{'data-a':'message-read','data-key':r.key,disabled:busy},'Mark read'),r.archived?[h('button',{'data-a':'message-restore','data-key':r.key,disabled:busy},'Restore'),h('button',{'data-a':'message-delete','data-key':r.key,disabled:busy},'Delete permanently')]:h('button',{'data-a':'message-archive','data-key':r.key,disabled:busy},'Archive'));},
    // #1699 A6: a message receipt shows in the thread it acted on, never in the shared status line
+   staleText:function(){const t=syncView.stale(snapshot.value);return t?h('span',{class:'meta stale'},t):null;},
    threadNotice:function(id){return view.threadNotice?.thread===id?h('p',{class:'meta thread-notice',role:'status'},view.threadNotice.text):null;},
    // #1699 A1: one task thread per board task with a question event, plus the task opened from the menu; an owner conversation's request events stay on it
    threads:function(){
@@ -84,7 +89,8 @@ const {create}=execution.module('workspace',{
      if(p){row.root=p.root;row.project=p.name;}
      if(!row.event)row.archived=Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
-     const state=t?.state||row.event?.state;row.status=!state||state==='ask'&&!row.archived?'':api.plain(state);row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
+     // #1819: an answer's expected state shows here in the same frame, marked unconfirmed until the board shows it
+     const state=t?.state||row.event?.state,unconfirmed=['sending','waiting'].includes(t?.sync?.phase)?' ⟳':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     return [...rows.values()];
@@ -181,7 +187,10 @@ const {create}=execution.module('workspace',{
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
+    // #1819: the shared pending store changed; Conversations and the list show it in the same frame
+    if(Array.isArray(s.sync)&&!s.projects){view.sync=s.sync;if(view.raw){snapshot.value=view.S=operationView.S=syncView.overlay(view.raw,view.sync);api.draw();}return;}
     if(!Array.isArray(s.projects))return;
+    if(Array.isArray(s.sync))view.sync=s.sync;view.raw=s;s=syncView.overlay(s,view.sync);
     const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
@@ -219,6 +228,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='hide'){conversations.flush();state.flush();ui.send({a:'hide'});}
      else if(b.dataset.a==='refresh'){view.notice='Refreshing workspace status…';ui.send({a:'refresh'});api.draw();}
      else if(b.dataset.a==='answer-retry')answers.retry(b.dataset.key);
+     else if(b.dataset.a==='sync-retry')ui.send({a:'sync-retry',root:b.dataset.root,id:b.dataset.id});
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
     ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);});

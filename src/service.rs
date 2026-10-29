@@ -1203,6 +1203,11 @@ impl<'a> Service<'a> {
         lines.join("\n")
     }
 
+    /// #1819: the next pass reads `task`'s comments from the board, not from the cache.
+    pub fn reread(&mut self, task: u64) {
+        self.cache.remove(&task);
+    }
+
     /// One pass of § 4. Tasks written to in a step are left alone by later steps until the next pass re-reads them.
     #[tracing::instrument(name="service.Service.pass",skip_all)]
     pub fn pass(&mut self) -> Result<(), String> {

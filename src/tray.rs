@@ -66,6 +66,8 @@ enum Ev {
     /// M15: a second Open shows the running tray's window.
     Raise,
     Ipc(String),
+    /// #1819: the shared pending store changed; every window gets it at once, not on the next tick.
+    Sync,
     Workspace(String, String),
     /// R22: IPC from the one Settings window (the tray page as its `settings` surface).
     Settings(String),
@@ -398,7 +400,13 @@ fn answer(install: &Path, m: &Value) -> Value {
             Err(e) => json!({"task": m["op"]["task"], "op_id": args[args.len()-3], "outcome": "unknown", "reason": e, "next": "Check the board; retry the same operation id."}),
         }
     });
-    answer_receipt(m, &r)
+    // #1819: an accepted write rereads its task at once; the readback feeds the shared pending store
+    if r["outcome"] == "accepted" && let Some(n) = m["op"]["task"].as_u64() {
+        if let Err(e) = crate::ask_reread(root, n) { eprintln!("taskq tray: {e}"); }
+    }
+    let mut out = answer_receipt(m, &r);
+    out["sync"] = json!({"state": r["state"], "revision": r["revision"]});
+    out
 }
 
 /// The tray receipt of CLI receipt `r`. #1785: a stale one speaks plain words, never revisions or CLI commands, and
@@ -530,6 +538,8 @@ fn project(install: &Path, root: &str) -> Value {
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO});
     out["events_error"] = json!(events_error);
+    // #1819: the stale line compares the board read age with the service poll
+    out["poll"] = s["poll"].clone();
     out
 }
 
@@ -765,6 +775,16 @@ fn history_args(m:&Value)->Vec<String> {
 /// #1662 A1: a readback or Check delivery resend omits or changes `local`; with it the same op read as id-mismatch.
 fn answer_request(m:&Value)->Value {let mut request=m.clone();request["id"]=m["op"]["id"].clone();request.as_object_mut().map(|r|r.remove("local"));request}
 fn answer_reply(root:PathBuf,id:String,result:crate::Res<Value>)->Value {result.unwrap_or_else(|error|json!({"answerReceipt":{"root":root,"id":id,"state":"unknown","reason":error,"next":"Check delivery with the same operation"}}))}
+/// #1819: hands `request` to the answer queue and the shared pending store, then pushes the store to every window.
+fn send_answer(queue:&ActionQueue,sync:&mut crate::pending::Pending,request:&Value,projects:&Value,proxy:&tao::event_loop::EventLoopProxy<Ev>)->crate::Res<()> {
+    let result=queue.submit(request);
+    match &result {
+        Ok(())=>sync.begin(request,projects),
+        Err(reason)=>{sync.receipt(&json!({"answerReceipt":{"root":request["root"],"id":request["op"]["id"],"state":"failed","reason":reason}}));}
+    }
+    let _=proxy.send_event(Ev::Sync);
+    result
+}
 fn resources_reply(result:crate::Res<Value>)->Value {match result {Ok(_)=>json!({"resources_receipt":{"state":"submitted","reason":"Resources terminal submitted"}}),Err(reason)=>json!({"resources_receipt":{"state":"unknown","reason":reason}})}}
 
 // The page owns asynchronous work; a submission result cannot acknowledge its execution.
@@ -1061,6 +1081,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut workspace: Option<(Window, WebView)> = None;
     let mut workspace_web: Option<WebCalls> = None;
     let mut detached:std::collections::BTreeMap<String,(Window,WebView,WebCalls)>=Default::default();
+    // #1819: each detached window keeps the signature it last received, never the menu's
+    let mut detached_shown:std::collections::BTreeMap<String,String>=Default::default();
     let mut workspace_handoff=false;
     let mut workspace_open=Value::Null;
     let mut settings_window: Option<(Window, WebView)> = None;
@@ -1087,6 +1109,9 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let mut bursts = notify::Bursts::new();
     let mut shot_wait=None;
     let mut web=WebCalls::new();
+    // #1819: the owner's in-flight writes, and the projects of the last tick they are matched against
+    let mut sync=crate::pending::Pending::default();
+    let mut seen_projects=Value::Null;
     // M15: `Quitting` or `Restarting` while the drain-stop runs
     let (work_item, mut quitting) = (MenuItem::new("No active work", false, None), None::<&str>);
     event_loop.run(move |event, target, flow| {
@@ -1257,7 +1282,15 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if std::mem::take(&mut moved) {
                     settings.save(&install);
                 }
-                let st = state(&install, &settings, dark, None, &adding);
+                let mut st = state(&install, &settings, dark, None, &adding);
+                sync.observe(&st["projects"], Instant::now());
+                st["sync"]=sync.json();
+                seen_projects=st["projects"].clone();
+                // #1819: while any window is open the service polls the board every 15 s
+                let visible=|o:&Option<(Window,WebView)>|o.as_ref().is_some_and(|(w,_)|w.is_visible());
+                if visible(&ui) || visible(&workspace) || visible(&settings_window) || visible(&views_window) || detached.values().any(|(w,_,_)|w.is_visible()) {
+                    crate::touch(&install.join("menu-open"));
+                }
                 if !web.failed {refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));}
                 notes(&install, &mut settings, &st, &mut asked, &mut bursts);
                 work_item.set_text(quit_label(&st, quitting));
@@ -1272,7 +1305,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if let (Some((_,wv)),Some(calls))=(&views_window,&mut views_web) {
                     if sig!=views_shown && !calls.failed && calls.idle() {views_shown=sig.clone();web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}
                 }
-                for (_,wv,calls) in detached.values_mut(){if sig!=shown && !calls.failed && calls.idle(){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
+                detached_shown.retain(|id,_|detached.contains_key(id));
+                for (id,(_,wv,calls)) in detached.iter_mut(){if take_due(detached_shown.entry(id.clone()).or_default(),&sig,!calls.failed && calls.idle()){web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,calls);}}
                 if sig != shown && web.idle() {
                     shown = sig;
                     if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&format!("taskq.receive({st})"),TICK,&proxy,&mut web);}
@@ -1321,8 +1355,19 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 shown_at = Instant::now();
             }
             Event::UserEvent(Ev::Answer(receipt)) => {
+                if receipt["answerReceipt"].is_object() && sync.receipt(&receipt) {let _=proxy.send_event(Ev::Sync);}
                 push(&mut web,&ui,&receipt);
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
+                // #1819: a detached conversation sees the answer it may show too
+                if receipt["answerReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
+            },
+            Event::UserEvent(Ev::Sync) => {
+                let script=format!("taskq.receive({})",json!({"sync":sync.json()}));
+                if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&script,"tray.web.receive",&proxy,&mut web);}
+                for (window,calls) in [(&workspace,&mut workspace_web),(&settings_window,&mut settings_web),(&views_window,&mut views_web)] {
+                    if let (Some((_,wv)),Some(calls))=(window,calls) && !calls.failed {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
+                }
+                for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
             },
             // a notification click opens the menu (or raises the pinned window) on that card (M14)
             Event::UserEvent(Ev::Note(id)) => {
@@ -1386,7 +1431,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if calls.failed {return;}
                 match m["a"].as_str() {
+                    Some("sync-retry") => {
+                        if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
+                    }
                     Some("ready") | Some("refresh") => {
+                        let _=proxy.send_event(Ev::Sync);
                         calls.finish(0,"ok");
                         web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
                         if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
@@ -1413,7 +1462,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let allowed=matches!(m["action"].as_str(),Some("archive"|"restore"))||if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
                         let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                        shown.clear();workspace_shown.clear();
+                        shown.clear();workspace_shown.clear();detached_shown.clear();
                     }
                     Some("conversation-dialogue")=>{
                         // Reads only, off the event loop: the D3 holder probe starts the runtime CLI.
@@ -1439,7 +1488,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     }
                     Some("answer") => {
                         let key=format!("{}#{}",m["board"].as_str().unwrap_or(""),m["op"]["task"]);
-                        let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|answer_actions.submit(&answer_request(&m)));
+                        let result=if m["local"].is_object(){answer_local(&install,&key,&m["local"])}else{Ok(())}.and_then(|_|send_answer(&answer_actions,&mut sync,&answer_request(&m),&seen_projects,&proxy));
                         if let Err(error)=result {let r=json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
                     }
                     Some("open") => {if let Some(url)=m["url"].as_str().filter(|u|openable(u)){open(url);}}
@@ -1583,10 +1632,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         reply!(&json!({"workspaceError":Value::Null}));
                     }
                     "answer" if snapshot.is_none() && crate::snapshot::CONTROLS.iter().any(|c| m["op"]["action"]==c.0) => {
-                        if let Err(error)=answer_actions.submit(&answer_request(&m)){reply!(&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}}));}
+                        if let Err(error)=send_answer(&answer_actions,&mut sync,&answer_request(&m),&seen_projects,&proxy){reply!(&json!({"answerReceipt":{"root":m["root"],"id":m["op"]["id"],"state":"failed","reason":error,"next":"Nothing reached the board; send again"}}));}
+                    }
+                    "sync-retry" if snapshot.is_none() => {
+                        if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
                     }
                     "overflow" if snapshot.is_some() => overflow.push(format!("{} by {} px", m["shot"].as_str().unwrap_or("?"), m["x"])),
                     "ready" => {
+                        let _=proxy.send_event(Ev::Sync);
                         web.finish(0,"ok");
                         if snapshot.is_some() {
                             let _ = proxy.send_event(Ev::Shot);
@@ -2140,6 +2193,13 @@ fn workspace_operation(action:&str)->bool {
 }
 
 /// A blur this soon after opening can be the Windows hidden-icons flyout retaking focus.
+/// #1819: a window takes the snapshot when it differs from what this window last received and it can take it now.
+fn take_due(shown:&mut String,sig:&str,ready:bool)->bool {
+    if !ready || shown==sig {return false}
+    sig.clone_into(shown);
+    true
+}
+
 fn blur_refocuses(shown_for: Duration, workspace_handoff: bool) -> bool {
     !workspace_handoff && shown_for < Duration::from_millis(300)
 }
@@ -3262,6 +3322,18 @@ mod tests {
         assert!(blur_refocuses(Duration::from_millis(15),false));
         assert!(!blur_refocuses(Duration::from_millis(300),false) && !blur_refocuses(Duration::from_secs(5),false));
         assert!(!blur_refocuses(Duration::from_millis(15),true), "an intentional workspace handoff must not pull focus back to the tray");
+    }
+
+    // Chain: M8 one store feeds every window. Risk: a detached conversation compares against the menu's shown
+    // snapshot, so it misses a change the menu already took while the detached window was busy.
+    #[test]
+    fn each_window_takes_a_snapshot_it_has_not_received() {
+        let (mut menu, mut detached) = (String::new(), String::new());
+        assert!(take_due(&mut menu, "a", true));
+        assert!(!take_due(&mut detached, "a", false), "a busy window waits");
+        assert!(take_due(&mut detached, "a", true), "the menu having it does not skip the detached window");
+        assert!(!take_due(&mut detached, "a", true) && !take_due(&mut menu, "a", true));
+        assert!(take_due(&mut detached, "b", true));
     }
 
     // H-A2: host policy/readback cannot be confused with a project's lower ceiling or legacy writable scope.

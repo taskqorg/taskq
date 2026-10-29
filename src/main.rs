@@ -50,6 +50,8 @@ mod icon;
 mod notify;
 #[cfg(any(target_os = "macos", windows))]
 mod tray;
+#[cfg(any(target_os = "macos", windows, test))]
+mod pending;
 
 use board::{Board, entries};
 use core::{Entry, State, Task, entry, fold};
@@ -832,6 +834,32 @@ fn sleep_until_poke(paths: &[PathBuf; 2], start: [Option<SystemTime>; 2], until:
     }
 }
 
+/// § 4 step 8 (#1819): the board is read at most this many seconds apart while a tray window is open.
+const MENU_POLL: u64 = 15;
+
+/// A tray window touches `<install>/menu-open` every tick while open.
+fn menu_open(install: &Path) -> bool {
+    file_age(&install.join("menu-open")).is_some_and(|a| a < 30)
+}
+
+/// The tray asks the next pass to reread `task` after its write (#1819), then wakes the service.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+fn ask_reread(root: &Path, task: u64) -> Res<()> {
+    use std::io::Write;
+    let mut f = fs::OpenOptions::new().create(true).append(true).open(dot(root).join("reread")).map_err(|e| format!("reread: {e}"))?;
+    writeln!(f, "{task}").map_err(|e| format!("reread: {e}"))?;
+    poke(root)
+}
+
+/// Tasks the tray wrote to (`<root>/.taskq/reread`, one number per line), taken once: renamed first so a concurrent append is kept for the next pass.
+fn take_reread(dot: &Path) -> Vec<u64> {
+    let taken = dot.join("reread.taken");
+    if fs::rename(dot.join("reread"), &taken).is_err() { return vec![]; }
+    let tasks = fs::read_to_string(&taken).unwrap_or_default().lines().filter_map(|l| l.trim().parse().ok()).collect();
+    let _ = fs::remove_file(&taken);
+    tasks
+}
+
 /// § 4 step 8 (#1431): an idle pass waits 3×`poll`; board-only changes may show up to 2×`poll` later.
 fn poll_wait(poll: u64, complete: bool, children: bool, poked: bool, snapshot: Option<&snapshot::Snapshot>) -> u64 {
     let active = snapshot.is_none_or(|s| s.reason.is_some() || s.tasks.iter().any(|r| matches!(r.task.state, State::Ready | State::Doing | State::Review)));
@@ -1060,6 +1088,9 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             if let Ok(h) = host.lock() { if h.draining.contains(&cfg.root) { s.focus.clear(); } }
         }
         s.focus_error = focus_error.clone();
+        // #1819: a tray write rereads its task at once: no cached comments, no unchanged-board shortcut
+        let reread = take_reread(&d);
+        if !reread.is_empty() { s.board.forget(); reread.into_iter().for_each(|t| s.reread(t)); }
         let r = if reduced { s.reduced().and_then(|_| Err(panics.reason.clone().unwrap_or_default())) } else if observe { s.observe() } else { s.pass() };
         s.sync_host();
         for l in s.log.drain(..) {
@@ -1246,7 +1277,13 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             publish_status(&tool, &cfg.root, &status, host.as_ref());
         };
         tick();
-        poked = sleep_until_poke(&pokes, poke_start, pass_began+Duration::from_secs(wait), &mut tick);
+        let until = pass_began+Duration::from_secs(wait);
+        let short = pass_began+Duration::from_secs(MENU_POLL.min(wait));
+        poked = loop {
+            let end = if menu_open(&cfg.install) { short } else { until.min(Instant::now()+Duration::from_secs(MENU_POLL)) };
+            if sleep_until_poke(&pokes, poke_start, end, &mut tick) { break true; }
+            if Instant::now() >= until || menu_open(&cfg.install) { break false; }
+        };
         Ok(())
         }));
         match outcome {
@@ -4973,6 +5010,21 @@ mod tests {
         fs::write(&paths[0],"wake").unwrap();
         sleep_until_poke(&paths,before,began+Duration::from_secs(60),&mut ||ticks+=1);
         assert_eq!(ticks,0);assert!(began.elapsed()<Duration::from_secs(1));fs::remove_dir_all(dir).unwrap();
+    }
+
+    // Chain: tray write -> reread request -> next pass; open window -> short poll (#1819). Risk: a concurrent append
+    // is lost, the reread repeats every pass, or a closed menu keeps the board polled every 15 s.
+    #[test]
+    fn tray_writes_reread_once_and_an_open_menu_polls_short() {
+        let dir=std::env::temp_dir().join(format!("taskq-reread-{}",runtime::uuid()));fs::create_dir_all(dot(&dir)).unwrap();
+        ask_reread(&dir,7).unwrap();ask_reread(&dir,9).unwrap();
+        assert!(dot(&dir).join("poke").exists(),"the write wakes the service");
+        assert_eq!(take_reread(&dot(&dir)),[7,9]);
+        assert_eq!(take_reread(&dot(&dir)),Vec::<u64>::new(),"taken once");
+        assert!(!menu_open(&dir));
+        touch(&dir.join("menu-open"));
+        assert!(menu_open(&dir));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

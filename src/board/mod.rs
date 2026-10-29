@@ -81,6 +81,8 @@ pub trait Board {
     }
     /// Request accounting and rate-limit pause of this process (§ 4); none for boards without HTTP.
     fn requests(&self) -> crate::requests::Budget { Default::default() }
+    /// #1819: drop shortcuts over unchanged board reads; the next list reads the board in full.
+    fn forget(&self) {}
     /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
     fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}")) }
     /// § 2 visual evidence: stores the image file `path` for task `n` on the board and returns its absolute https URL.
@@ -184,6 +186,7 @@ impl Board for Profiled {
     fn foreign(&self, repo: &str, n: u64) -> Result<Issue> { self.op("read", |b| b.foreign(repo, n)) }
     fn foreign_url(&self, repo: &str, n: u64) -> String { self.0.foreign_url(repo, n) }
     fn requests(&self) -> crate::requests::Budget { self.0.requests() }
+    fn forget(&self) { self.0.forget() }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
     fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_image(n, path)) }
     fn image(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.image(url)) }
@@ -222,6 +225,7 @@ pub fn http_date(s: &str) -> Option<i64> {
 
 // ---------- HTTP through curl ----------
 
+#[derive(Clone)]
 struct Reply {
     status: u16,
     headers: Vec<(String, String)>,
@@ -267,11 +271,15 @@ fn quote(s: &str) -> String {
 }
 
 /// One request, any HTTP status. The token and body go through curl's config on stdin, never argv (R12: no secrets in `ps`).
-fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>) -> Result<Reply> {
+/// `etag` makes a GET conditional (`If-None-Match`).
+fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>, etag: Option<&str>) -> Result<Reply> {
     let mut cfg = format!(
         "silent\nshow-error\ndump-header = \"-\"\nrequest = {}\nurl = {}\nheader = {}\nheader = \"Accept: application/json\"\nheader = \"Expect:\"\nmax-time = 60\n",
         quote(method), quote(url), quote(auth)
     );
+    if let Some(e) = etag {
+        cfg += &format!("header = {}\n", quote(&format!("If-None-Match: {e}")));
+    }
     if let Some(b) = body {
         cfg += &format!("header = \"Content-Type: application/json\"\ndata-binary = {}\n", quote(&b.to_string()));
     }
@@ -421,14 +429,21 @@ pub struct Api {
     labels_ok: RefCell<std::collections::HashSet<String>>,
     /// The install's pause file of this API host and credential: every process there stops until its reset (§ 4).
     pause: Option<std::path::PathBuf>,
+    /// The last `ETag` and reply of each GET; a 304 reuses that reply, which GitHub does not count (§ 4 budget, #1819).
+    etags: RefCell<std::collections::HashMap<String, (String, Reply)>>,
+    /// The last GET was answered 304 Not Modified.
+    unchanged: std::cell::Cell<bool>,
     #[cfg(test)]
     transport: Option<Transport>,
 }
 
+/// Cached conditional replies per process; past this the cache restarts empty.
+const ETAGS: usize = 256;
+
 impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
-        Api { base, root, auth: format!("Authorization: Bearer {token}"), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), budget, labels_ok: RefCell::default(), pause: None, #[cfg(test)] transport: None }
+        Api { base, root, auth: format!("Authorization: Bearer {token}"), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), budget, labels_ok: RefCell::default(), pause: None, etags: RefCell::default(), unchanged: Default::default(), #[cfg(test)] transport: None }
     }
 
     fn call(&self, method: &str, url: &str, body: Option<Value>) -> Result<Reply> {
@@ -462,11 +477,14 @@ impl Api {
         }
         self.budget.borrow_mut().count(op.into());
         crate::requests::tally(op);
+        self.unchanged.set(false);
+        let conditional = method == "GET" && body.is_none();
+        let etag = conditional.then(|| self.etags.borrow().get(&url).map(|(e, _)| e.clone())).flatten();
         crate::profile::measure_classified("forge.call", || {
             #[cfg(test)]
-            let r = match &self.transport { Some(transport) => transport(method, &url, body), None => curl(method, &url, &self.auth, body.as_ref()) };
+            let r = match &self.transport { Some(transport) => transport(method, &url, body), None => curl(method, &url, &self.auth, body.as_ref(), etag.as_deref()) };
             #[cfg(not(test))]
-            let r = curl(method, &url, &self.auth, body.as_ref());
+            let r = curl(method, &url, &self.auth, body.as_ref(), etag.as_deref());
             let r=r.map_err(|message|(crate::profile::class(&message),message))?;
             if let Some(t) = r.header("date").and_then(http_date) {
                 *self.clock.borrow_mut() = t;
@@ -480,6 +498,22 @@ impl Api {
                 // ponytail: the install's processes compare against their own wall clock, not the board's
                 if let Some(f) = &self.pause { let _ = std::fs::write(f, (wall() + reset - *self.clock.borrow()).to_string()); }
                 return Err((class,format!("{method} {url}: HTTP {status} {}", crate::requests::paused_text(reset))));
+            }
+            if r.status == 304 && etag.is_some() {
+                if let Some((_, cached)) = self.etags.borrow().get(&url) {
+                    self.unchanged.set(true);
+                    return Ok(cached.clone());
+                }
+            }
+            if conditional && (200..300).contains(&r.status) {
+                let mut etags = self.etags.borrow_mut();
+                match r.header("etag") {
+                    Some(e) => {
+                        if etags.len() >= ETAGS && !etags.contains_key(&url) { etags.clear(); }
+                        etags.insert(url.clone(), (e.to_string(), r.clone()));
+                    }
+                    None => { etags.remove(&url); }
+                }
             }
             if !(200..300).contains(&r.status) {
                 // one log line: a multi-line error body folds into it (§ 4)
@@ -1749,13 +1783,23 @@ exit 0
     }
 
     // Chain: § 4 board budget, GitHub open list over GraphQL. Risk: the list loses a page, a field or trust, falls back
-    // to core REST, or keeps sending after a GraphQL RATE_LIMITED reply.
+    // to core REST, keeps sending after a GraphQL RATE_LIMITED reply, or relists an unchanged board (#1819).
     #[test]
     fn github_open_list_is_one_graphql_request_per_page() {
         let kind = BOARDS.iter().find(|k| k.name == "github").unwrap();
         let limited = std::rc::Rc::new(RefCell::new(false));
         let flag = limited.clone();
+        let probes = std::rc::Rc::new(RefCell::new(0));
+        let probed = probes.clone();
         let h = http(kind, Some(true), Box::new(move |method, url, body| {
+            if method == "GET" {
+                // the newest-updated probe: its first reply carries the ETag, every later one is 304 Not Modified
+                assert_eq!(url, "https://api.github.com/repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=1");
+                *probed.borrow_mut() += 1;
+                let first = *probed.borrow() == 1;
+                return Ok(Reply { status: if first { 200 } else { 304 }, headers: vec![("ETag".into(), "\"e1\"".into())],
+                    body: if first { "[]".into() } else { String::new() }, operation: "read" });
+            }
             assert_eq!((method, url), ("POST", "https://api.github.com/graphql"));
             let body = body.unwrap();
             // labels are the only nested connection: assignees would double the points (#1043)
@@ -1777,11 +1821,38 @@ exit 0
         assert_eq!(list.iter().map(|i| (i.number, i.open, i.trusted)).collect::<Vec<_>>(), [(5, true, true), (6, true, false)]);
         assert_eq!((list[0].labels.clone(), list[0].assignees.clone(), list[0].updated, list[0].created), (vec!["q-ready".to_string()], vec![], iso("2026-10-14T04:27:00Z").unwrap(), iso("2026-10-14T04:20:00Z").unwrap()));
         let b = h.requests();
-        assert_eq!((b.ops.clone(), b.resource.clone(), b.remaining), (std::collections::BTreeMap::from([("POST graphql".to_string(), 2)]), Some("graphql".into()), Some(4990)));
+        assert_eq!((b.ops.get("POST graphql"), b.resource.clone(), b.remaining), (Some(&2), Some("graphql".into()), Some(4990)));
+        assert_eq!(h.issues(None).unwrap(), list, "a 304 probe keeps the last list");
+        assert_eq!((h.requests().ops.get("POST graphql"), *probes.borrow()), (Some(&2), 2));
+        h.forget();
+        assert_eq!(h.issues(None).unwrap(), list);
+        assert_eq!(h.requests().ops.get("POST graphql"), Some(&4), "a forgotten list is read in full");
+        h.forget();
         *limited.borrow_mut() = true;
         assert!(h.issues(None).unwrap_err().contains("HTTP 403 rate limit: board requests paused until"));
         assert!(h.issues(None).unwrap_err().contains("paused"));
-        assert_eq!(h.requests().total(), 3, "nothing is sent while paused");
+        assert_eq!(h.requests().total(), 9, "nothing is sent while paused");
+    }
+
+    // Chain: § 4 budget (#1819). Risk: a repeated GET is counted by GitHub, or a 304 loses the body.
+    #[test]
+    fn repeated_get_reuses_its_body_on_304() {
+        let mut api = (BOARDS[0].api)("github.com", "o/r", "test");
+        let calls = std::rc::Rc::new(RefCell::new(0));
+        let seen = calls.clone();
+        api.transport = Some(Box::new(move |_, _, _| {
+            *seen.borrow_mut() += 1;
+            let n = *seen.borrow();
+            Ok(match n {
+                1 => Reply { status: 200, headers: vec![("ETag".into(), "W/\"a\"".into())], body: "[1]".into(), operation: "read" },
+                2 => Reply { status: 304, headers: vec![], body: String::new(), operation: "read" },
+                _ => Reply { status: 200, headers: vec![], body: "[2]".into(), operation: "read" },
+            })
+        }));
+        assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[1]".to_string(), false));
+        assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[1]".to_string(), true));
+        assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[2]".to_string(), false));
+        assert!(api.etags.borrow().is_empty(), "a reply without ETag drops the cached one");
     }
 
     // Chain: § 2 state labels on both boards. Risk: a state change removes user labels.

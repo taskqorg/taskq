@@ -10,7 +10,7 @@ pub const KIND: Kind = Kind {
     token: |tool, _host| token(&tool.install),
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
-    board: |api| Box::new(GitHub { api, rules: Default::default() }),
+    board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default() }),
 };
 
 pub const TOKEN_ERROR: &str = "GitHub board token missing, empty or unreadable; owner must install it in <install>/token; never run gh auth login";
@@ -29,7 +29,12 @@ pub struct GitHub {
     pub(super) api: Api,
     /// `main` branch rules, read once per process (#1359). ponytail: a rules change applies after a service restart.
     rules: std::cell::RefCell<Option<Value>>,
+    /// The last open-issue list and when it was read: reused while the newest-updated probe answers 304 (#1819).
+    open: std::cell::RefCell<Option<(std::time::Instant, Vec<Issue>)>>,
 }
+
+/// The longest an open-issue list is reused over unchanged probes; a deleted issue does not bump `updated_at`.
+const OPEN_REUSE: std::time::Duration = std::time::Duration::from_secs(300);
 
 fn trusted(v: &Value) -> bool {
     matches!(v["author_association"].as_str(), Some("OWNER" | "MEMBER" | "COLLABORATOR"))
@@ -58,6 +63,19 @@ const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String
     nodes { number title body updatedAt createdAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
 
 impl GitHub {
+    /// Every board change bumps some issue's `updated_at`: a 304 on the newest-updated issue keeps the last list (#1819).
+    fn open_unchanged(&self) -> Result<Vec<Issue>> {
+        let probe = self.api.call("GET", "/issues?state=all&sort=updated&direction=desc&per_page=1", None).map(|_| self.api.unchanged.get());
+        if probe.as_ref().is_ok_and(|same| *same) {
+            if let Some((_, list)) = self.open.borrow().as_ref().filter(|(at, _)| at.elapsed() < OPEN_REUSE) { return Ok(list.clone()); }
+        }
+        // a failed probe or list keeps nothing: the next pass reads in full
+        *self.open.borrow_mut() = None;
+        let list = self.open_issues()?;
+        if probe.is_ok() { *self.open.borrow_mut() = Some((std::time::Instant::now(), list.clone())); }
+        Ok(list)
+    }
+
     fn open_issues(&self) -> Result<Vec<Issue>> {
         let repo = self.api.base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default();
         let (owner, name) = repo.split_once('/').ok_or("no repository")?;
@@ -379,6 +397,7 @@ impl GitHub {
 }
 
 impl Board for GitHub {
+    fn forget(&self) { *self.open.borrow_mut() = None; }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
@@ -397,7 +416,7 @@ impl Board for GitHub {
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
         let url = match since {
             Some(t) => format!("/issues?state=all&per_page=100&since={}", stamp(t)),
-            None if self.api.root == "https://api.github.com" => return self.open_issues(),
+            None if self.api.root == "https://api.github.com" => return self.open_unchanged(),
             None => "/issues?state=open&per_page=100".into(),
         };
         Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect())
