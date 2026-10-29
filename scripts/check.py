@@ -43,6 +43,173 @@ def runtime_names(path, text):
     return [f'{path}:{n}: {line.strip()}' for n, line in enumerate(text.splitlines(), 1) if RUNTIME_NAME.search(line)]
 
 
+# docs/design/rule-ids.md#contract-detail: rule IDs, the rule-change gate and coverage.
+RULE_DOCS = ('taskq.md', 'docs/design/menu.md')
+RULE_TESTS = ('src', 'tests', 'scripts')
+TEST_PATH = re.compile(r'^(src/.*\.rs|tests/.*|scripts/.*\.test\.py)$')
+ASSERTION = re.compile(r'\bassert|\bexpect\(|Chain:')
+MEANING_WORDS = {'not', 'no', 'never', 'only', 'now', 'all', 'any', 'none', 'must', 'may'}
+
+
+def rule_blocks(path, text):
+    """Rule ID -> whitespace-normalized text; text without its own ID joins the enclosing ID."""
+    blocks, cur, sec, num, sub = {}, None, None, None, None
+    menu = path.endswith('menu.md')
+    for line in text.splitlines():
+        title = re.sub(r'\s*\([^)]*\)\s*$', '', line.lstrip('#')).strip()
+        if line.startswith('## '):
+            m = re.match(r'(M\d+)\b' if menu else r'(\d+)\.', title)
+            num = m and m.group(1)
+            sec = cur = (num if menu else f'§{num}') if num else (None if menu else title)
+            sub = None
+        elif line.startswith('### ') and not menu and sec:
+            m = re.match(r'(R\d+)\.', title)
+            cur, sub = (m.group(1) if m else f'§{num} {title}' if num else title), None
+        elif not line.strip() or line.startswith(('#', '- ')):
+            sub = None
+        if cur is None or re.match(r'\[[^\]]+\]:\s', line):
+            continue
+        row = re.match(r'\|.*\|\s*(\d+)\s*\|\s*$', line) if not menu and cur == sec and num else None
+        own = re.match(r'(?:- )?(M\d+\.\d+) ', line) if menu else None
+        if row:
+            key = f'{cur}.{row.group(1)}'
+        elif own:
+            key = sub = own.group(1)
+        else:
+            key = sub or cur
+        blocks[key] = f'{blocks.get(key, "")} {line}'
+    return {k: ' '.join(v.split()) for k, v in blocks.items()}
+
+
+def rule_order(rule):
+    return [int(p) if p.isdigit() else p for p in re.split(r'(\d+)', rule)]
+
+
+def doc_rules(docs):
+    return {k: v for path, text in docs.items() for k, v in rule_blocks(path, text).items()}
+
+
+def edit_distance(a, b):
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (x != y))
+    return row[-1]
+
+
+def typo_only(old, new):
+    """At most two words each replaced at edit distance <= 2 and under half its length; no digits, code, links or meaning words."""
+    a, b = old.split(), new.split()
+    if len(a) != len(b):
+        return False
+    pairs = [(x, y) for x, y in zip(a, b) if x != y]
+    plain = lambda w: not re.search(r'[\d`\[\]()<>|]', w) and w.strip('.,;:!?*').lower() not in MEANING_WORDS
+    return len(pairs) <= 2 and all(plain(x) and plain(y) and edit_distance(x, y) <= min(2, (max(len(x), len(y)) - 1) // 2) for x, y in pairs)
+
+
+def id_pattern(rule):
+    body = r'\s+'.join(re.escape(w) for w in rule.split()).replace('§', '§ ?')
+    return re.compile(r'(?<![\w.])' + body + r'(?!\w|\.\d)')
+
+
+def cited(text, rules):
+    """IDs cited in text; a longer ID's match never also cites a shorter one (`§2 Ask card` is not `§2`)."""
+    found = set()
+    for rule in sorted(rules, key=len, reverse=True):
+        pattern = id_pattern(rule)
+        if pattern.search(text):
+            found.add(rule)
+            text = pattern.sub(' ', text)
+    return found
+
+
+def rule_findings(base_docs, head_docs, test_diff):
+    """Changed and removed rule IDs, and IDs cited by removed or changed test assertions and Chain: lines."""
+    old, new = doc_rules(base_docs), doc_rules(head_docs)
+    changed = sorted((k for k in old if k in new and old[k] != new[k] and not typo_only(old[k], new[k])), key=rule_order)
+    removed = sorted((k for k in old if k not in new), key=rule_order)
+    added = {' '.join(l[1:].split()) for l in test_diff.splitlines() if l.startswith('+') and not l.startswith('+++')}
+    lost = [l[1:] for l in test_diff.splitlines() if l.startswith('-') and not l.startswith('---')
+            and ASSERTION.search(l) and ' '.join(l[1:].split()) not in added]
+    tests = sorted(cited('\n'.join(lost), old.keys() | new.keys()), key=rule_order)
+    return {'changed': changed, 'removed': removed, 'tests': tests}
+
+
+def unnamed(findings, task_text):
+    """Findings the task text does not name; a removal also needs `<ID> -> <destination>`."""
+    named = cited(task_text, set(sum(findings.values(), [])))
+    missing = [f'{k} ({kind})' for kind in ('changed', 'tests') for k in findings[kind] if k not in named]
+    for k in findings['removed']:
+        if not re.search(id_pattern(k).pattern + r'\s*(?:->|→)\s*\S', task_text):
+            missing.append(f'{k} (removed; name `{k} -> <ID, file or none>`)')
+    return missing
+
+
+def uncovered(rules, chain_text):
+    return sorted(set(rules) - cited(chain_text, rules), key=rule_order)
+
+
+def git_docs(rev):
+    def show(path):
+        done = subprocess.run(['git', 'show', f'{rev}:{path}'], cwd=ROOT, capture_output=True)
+        return done.stdout.decode() if done.returncode == 0 else ''
+    return {p: show(p) for p in RULE_DOCS}
+
+
+def test_diff(base, head=None):
+    args = ['git', 'diff', '-U0', base, *([head] if head else []), '--', *RULE_TESTS]
+    out = subprocess.check_output(args, cwd=ROOT).decode(errors='replace')
+    keep, files = [], ''
+    for line in out.splitlines():
+        if line.startswith('diff --git '):
+            files = line.split(' b/', 1)[-1]
+        elif TEST_PATH.match(files):
+            keep.append(line)
+    return '\n'.join(keep)
+
+
+def task_text(base):
+    """Issue bodies of every `Task:` URL after base plus their trusted `taskq: answer` comments; None when unknown."""
+    log = subprocess.check_output(['git', 'log', '--format=%B', f'{base}..HEAD'], cwd=ROOT).decode()
+    tasks = sorted(set(re.findall(r'^Task:\s*https://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)\s*$', log, re.M)))
+    if not tasks:
+        return None, f'no `Task: https://github.com/<repo>/issues/<N>` line in commits {base}..HEAD'
+    trusted = ('.[] | select((.author_association | test("^(OWNER|MEMBER|COLLABORATOR)$")) and .created_at == .updated_at'
+               ' and (.body | startswith("taskq: answer"))) | .body')
+    parts = []
+    for repo, n in tasks:
+        for args in (['--jq', '.body // ""', f'repos/{repo}/issues/{n}'],
+                     ['--paginate', '--jq', trusted, f'repos/{repo}/issues/{n}/comments']):
+            done = subprocess.run(['gh', 'api', *args], cwd=ROOT, capture_output=True, timeout=60)
+            if done.returncode:
+                return None, f'{repo}#{n} unreadable: {done.stderr.decode(errors="replace").strip()[:200]}'
+            parts.append(done.stdout.decode())
+    return '\n'.join(parts), None
+
+
+def rule_gate(base):
+    """Print the rule-change gate and the coverage report; return the gate failure, or None."""
+    head_docs = {p: (ROOT / p).read_text(encoding='utf-8') if (ROOT / p).exists() else '' for p in RULE_DOCS}
+    chains = '\n'.join(l for p in RULE_TESTS for f in sorted((ROOT / p).rglob('*')) if f.is_file()
+                       and TEST_PATH.match(f.relative_to(ROOT).as_posix())
+                       for l in f.read_text(encoding='utf-8', errors='replace').splitlines() if 'Chain:' in l)
+    rules = doc_rules(head_docs)
+    missing = uncovered(rules, chains)
+    print(f'Rule coverage: {len(missing)} of {len(rules)} rule IDs have no test Chain: citation (report only): {", ".join(missing)}')
+    findings = rule_findings(git_docs(base), head_docs, test_diff(base))
+    listed = sum(findings.values(), [])
+    if not listed:
+        print('Rule gate: no rule or rule-citing test changed')
+        return None
+    print('Rule gate: ' + '; '.join(f'{kind} {", ".join(v)}' for kind, v in findings.items() if v))
+    text, unknown = task_text(base)
+    if text is None:
+        return f'rule gate unknown (R12): {unknown}'
+    left = unnamed(findings, text)
+    return f'rule gate: the task does not name {", ".join(left)} (docs/design/rule-ids.md#contract-detail)' if left else None
+
+
 def changes(base):
     args = ['git', 'diff', '--name-only', '-z', base, '--']
     changed = subprocess.check_output(args, cwd=ROOT).decode().split('\0')
@@ -55,7 +222,13 @@ def main():
     parser.add_argument('--base', default=os.environ.get('CHECK_BASE', 'HEAD^'))
     parser.add_argument('--full', action='store_true')
     parser.add_argument('--plan', action='store_true', help='print selection without running checks')
+    parser.add_argument('--rules', action='store_true', help='run only the rule-change gate and coverage report')
     args = parser.parse_args()
+    if args.rules:
+        failed = rule_gate(args.base)
+        if failed:
+            raise SystemExit(failed)
+        return
     try:
         paths = changes(args.base)
         scope = 'full' if args.full or os.environ.get('CHECK_FULL') == 'true' else selection(paths)
@@ -79,6 +252,10 @@ def main():
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
+        # CI runs the rule gate once, in the plan job; local runs include it.
+        failed = None if os.environ.get('GITHUB_ACTIONS') else rule_gate(args.base)
+        if failed:
+            raise SystemExit(failed)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
             raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))
