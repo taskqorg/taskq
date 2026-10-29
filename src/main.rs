@@ -21,6 +21,7 @@ mod incident;
 mod labels;
 mod recipe;
 mod requests;
+mod reply_files;
 mod platform;
 mod service_versions;
 mod policy;
@@ -75,7 +76,7 @@ const USAGE: &str = "taskq agents
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
- Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text
+ Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text; attach with --file PATH (repeat) or --files-from PATH (JSON array)
  JSON files: status, answer, steer, requeue, later, close, start, failed accept --json --json-file PATH
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
  taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC]
@@ -143,9 +144,18 @@ impl Args {
             || !matches!(a.pos.first().map(String::as_str), Some("status" | "answer" | "steer" | "requeue" | "later" | "close" | "start" | "failed"))) {
             return Err("--json-file requires --json with status or a task control/reply command (not --closed)".into());
         }
+        if (a.flags.contains_key("file")||a.flags.contains_key("files-from")) && (!matches!(a.pos.first().map(String::as_str),Some("answer"|"steer"|"requeue"))||a.pos.get(1).is_some_and(|n|n.contains('.'))) {
+            return Err("--file requires answer N, steer N or owner requeue N; choose a text reply instead of a numbered option".into());
+        }
+        if a.all("files-from").len()>1{return Err("pass --files-from once with a JSON array of file paths".into());}
         Ok(a)
     }
     fn read_text(&mut self, input: &mut dyn std::io::Read) -> Res<()> {
+        if let Some(paths)=self.flags.remove("files-from") {
+            let data=fs::read(&paths[0]).map_err(|e|format!("Cannot read attachment list: {e}; supply a readable JSON file"))?;
+            let files:Vec<String>=serde_json::from_slice(&data).map_err(|e|format!("Attachment list: {e}; use a JSON array of file paths"))?;
+            self.flags.entry("file".into()).or_default().extend(files);
+        }
         if self.flags.remove("text-stdin").is_some() {
             let mut text = String::new();
             input.read_to_string(&mut text).map_err(|e| format!("cannot read UTF-8 reply from stdin: {e}"))?;
@@ -612,9 +622,9 @@ fn image_files(paths: &[String]) -> Res<()> {
 fn upload_images(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<String>> {
     image_files(paths)?;
     paths.iter().map(|p| {
-        let url = b.upload_image(n, Path::new(p))?;
+        let url = b.upload_file(n, Path::new(p))?;
         let sent = std::fs::read(p).map_err(|e| format!("--image {p}: {e}"))?;
-        let back = b.image(&url).map_err(|e| format!("image load check failed for {url}: {e}"))?;
+        let back = b.file(&url).map_err(|e| format!("image load check failed for {url}: {e}"))?;
         if back != sent { return Err(format!("image load check failed: {url} serves {} bytes, {} uploaded", back.len(), sent.len())); }
         let video = board::video_kind(&sent).is_some();
         let name: String = Path::new(p).file_stem().map(|s| s.to_string_lossy().replace([']', '[', ',', ')'], " ")).unwrap_or_default().chars().take(30).collect();
@@ -770,7 +780,7 @@ fn report(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Res<Stri
     snapshot::read(b, cfg, raw, only).text(cfg, raw)
 }
 
-fn inbox(b: &dyn Board, n: u64) -> Res<String> {
+fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
     let issue = b.issue(n)?;
     let log = entries(b, n)?;
     let projection = core::project(n, &log, deps_open(b, n, &issue.body, &log));
@@ -783,6 +793,8 @@ fn inbox(b: &dyn Board, n: u64) -> Res<String> {
         out.push(format!("Recommendation: worker ★ {star} · PM {n}.{k}: {why}"));
     }
     out.push("Log:".into());
+    let files=reply_files::prepare(b,root,n,&log)?;
+    if !files.is_empty(){out.push(files);}
     for e in log {
         out.push(format!("[{}{}] {}", e.id, if e.edited { " edited, ignored" } else { "" }, e.body.trim()));
     }
@@ -2910,7 +2922,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     let (b, cfg, root) = (c.board.as_ref(), &c.cfg, c.cfg.root.as_path());
     let text = a.one("text").unwrap_or("");
     if matches!(cmd, "later" | "failed" | "steer") || cmd == "requeue" && dispatch::agent() || (cmd == "answer" && !a.pos.get(1).is_some_and(|p| p.contains('.'))) {
-        task_text(cmd, text)?;
+        if a.all("file").is_empty() || !text.trim().is_empty() { task_text(cmd, text)?; }
     }
     if cmd == "add" && a.flags.contains_key("later") { task_text("later", text)?; }
     if matches!(cmd, "ask" | "result" | "requeue" | "later" | "failed" | "steer" | "answer" | "pick") {
@@ -3030,7 +3042,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "pick" => emit(&[dispatch::pm_pick(b, root, a.pos.get(1).ok_or("N.K missing")?, text, &op)?], json),
         "answer" => {
-            emit(&dispatch::answer_text(b, cfg, a.num(1)?, a.need("text")?, &op)?, json)
+            if a.all("file").is_empty(){emit(&dispatch::answer_text(b, cfg, a.num(1)?, a.need("text")?, &op)?, json)}
+            else{emit(&[dispatch::act_files(b,root,a.num(1)?,cmd,text,&op,&a.all("file"))],json)}
         }
         "result" => {
             let n = a.num(1)?;
@@ -3044,7 +3057,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "requeue" => {
             let n = a.num(1)?;
-            emit(&[act(b, root, n, cmd, &[], text, &op)], json)
+            emit(&[dispatch::act_files(b,root,n,cmd,text,&op,&a.all("file"))],json)
         }
         "later" => {
             let n = a.num(1)?;
@@ -3052,7 +3065,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "steer" | "failed" => {
             let n = a.num(1)?;
-            emit(&[act(b, root, n, cmd, &[], a.need("text")?, &op)], json)
+            emit(&[dispatch::act_files(b,root,n,cmd,if a.all("file").is_empty(){a.need("text")?}else{text},&op,&a.all("file"))],json)
         }
         "close" => {
             let mut out = vec![];
@@ -3156,7 +3169,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             Ok(())
         }
         "inbox" => {
-            println!("{}", inbox(b, a.num(1)?)?);
+            println!("{}", inbox(b, root, a.num(1)?)?);
             Ok(())
         }
         "wait" => {
@@ -4459,7 +4472,7 @@ mod tests {
             s.kids.push(Kid { unknown:None, stopping:false, session_url:None,execution,task:n,attempt:a,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
                 proc:Box::new(child),log,pos:old.len() as u64,start:old.len() as u64,stopping:false,accepted:false,read_error:None,native,recovery:None
             })});
-            let launch=runtime::Launch {execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"session".into(),url:String::new(),resume:Some("continue".into())};
+            let launch=runtime::Launch {files: String::new(), execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"session".into(),url:String::new(),resume:Some("continue".into())};
             s.kids[0].proc.checkpoint(&c,&launch,execution).unwrap();
             assert_eq!(kids_file(&c.install,&root).unwrap().first().map(|k|k.execution),Some(execution),"successful launch must retain its exact execution before any image handover");
             if !cold.is_empty() {
@@ -4879,7 +4892,7 @@ mod tests {
         assert!(r.contains(&format!("| [#{n} Ship \\| it](https://board/{n}) | ready |")), "{r}");
         assert!(r.contains(&format!("{q}.1 left · {q}.2 right ★ |")), "only the star without a pick: {r}");
         assert!(r.contains("Hosts: mac v4.0.0"), "{r}");
-        assert!(!inbox(&b, q).unwrap().contains("Recommendation:"));
+        assert!(!inbox(&b, &c.root, q).unwrap().contains("Recommendation:"));
         // § 2: the PM pick and its reason sit beside the worker's star in status, status --json and inbox
         b.comment(q, &entry("pick", &["1"], None, "left | is cheaper")).unwrap();
         let r = report(&b, &c, &Value::Null, &[]).unwrap();
@@ -4887,7 +4900,7 @@ mod tests {
         let rows = snapshot::read(&b, &c, &Value::Null, &[]).json()["tasks"].clone();
         let row = rows.as_array().unwrap().iter().find(|t| t["n"] == q).unwrap().clone();
         assert_eq!(row["pick"], json!({"id": 1, "reason": "left | is cheaper"}));
-        assert!(inbox(&b, q).unwrap().contains(&format!("Recommendation: worker ★ {q}.2 · PM {q}.1: left | is cheaper")));
+        assert!(inbox(&b, &c.root, q).unwrap().contains(&format!("Recommendation: worker ★ {q}.2 · PM {q}.1: left | is cheaper")));
     }
 
     /// A board with one task per report part: ready, ask with a card, blocked, failed, plus a host heartbeat.
@@ -5030,6 +5043,27 @@ mod tests {
         assert_eq!((&incomplete["complete"], &incomplete["reason"], &incomplete["totals"]), (&json!(false), &json!("source incomplete"), &Value::Null));
         let other = BoardScope::new("gitlab", "gitlab.com", "o/r").unwrap();
         assert!(project(&snap, &"a".repeat(64), &[other], &local).is_err());
+    }
+
+    // Chain: §5 PilotQ-shaped CLI arguments -> shared dispatcher -> board manifest. Risk: file-only input still requires --text.
+    #[test]
+    fn reply_files_cli_accepts_downloaded_media_and_refuses_numbered_choices() {
+        let mut config=cfg();fs::create_dir(&config.root).unwrap();config.install=config.root.clone();
+        let file=config.root.join("downloaded-photo.png");fs::write(&file,b"invented photo").unwrap();
+        let b=Fake::default();let n=b.create("PilotQ CLI fixture","",&["taskq".into()]).unwrap();let a=b.comment(n,"taskq: spawn worker claude:fixture mac").unwrap();b.comment(n,&entry("ask",&[],Some(a),"Problem: attach a file")).unwrap();
+        let c=Ctx{cfg:config,raw:Value::Null,board:Box::new(b)};
+        let list=c.cfg.root.join("files.json");fs::write(&list,serde_json::to_vec(&vec![file.display().to_string()]).unwrap()).unwrap();
+        for (kind,text) in [("answer",""),("steer","mixed reply"),("requeue","Reason: inspect the file")] {
+            let revision=core::revision(n,&entries(c.board.as_ref(),n).unwrap());
+            let (flag,input)=if kind=="answer"{("--files-from",&list)}else{("--file",&file)};
+            let mut args=Args::parse(&[kind.into(),n.to_string(),flag.into(),input.display().to_string(),"--text-stdin".into(),"--op-id".into(),format!("pilotq-{kind}"),"--revision".into(),revision.to_string()]).unwrap();
+            args.read_text(&mut std::io::Cursor::new(text.as_bytes())).unwrap();command(&c,kind,&args).unwrap();
+            let log=entries(c.board.as_ref(),n).unwrap();let files=reply_files::manifest(&log.last().unwrap().body).unwrap();assert_eq!(files.len(),1);assert_eq!(files[0].name,"downloaded-photo.png");
+        }
+        for command in [vec!["answer","7.1"],vec!["close","7"],vec!["result","7"]] {
+            let mut command:Vec<String>=command.iter().map(|s|s.to_string()).collect();command.extend(["--file".into(),file.display().to_string()]);assert!(Args::parse(&command).is_err());
+        }
+        fs::remove_dir_all(c.cfg.root).unwrap();
     }
 
     // Chain: § 5 CLI text limits. Risk: invalid text is written.

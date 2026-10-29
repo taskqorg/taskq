@@ -1,15 +1,21 @@
 'use strict';
 const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
+const replyFiles=require('./reply-files.js');
 const {create}=execution.module('workspace.answers',{
 create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
  const api=execution.module('workspace.answers.instance',{
 project:function(board,root=view.answer?.board===board?view.answer.root:null){return view.S?.projects.find(p=>p.issues===board&&(!root||p.root===root));},
-answerCapability:function(board){const p=api.project(board);return {manage:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer};},
+answerCapability:function(board){const p=api.project(board);return {manage:true,files:true,answer:!!p&&p.alive&&p.complete===true,reason:'Project status is unavailable or stale; check the board',composer};},
 // #1662 A3: the workspace's shared composer reads and drives the mounted card; the card keeps draft, op and receipt
 answerCompose:function(board,row){return component().compose(row,saved[board+'#'+row.n]||component().fresh(row),answerCapability(board));},
 answerInput:function(board,n,text,caret){answerCards.get(board+'/'+n)?.ui.input(board,n,text,caret);},
 answerAct:function(board,n,type){answerCards.get(board+'/'+n)?.ui.act(board,n,type);},
+answerSetFiles:function(board,n,files){const row={n},prior=saved[board+'#'+n];if(!prior)return;if(!answerCards.get(board+'/'+n)?.ui.files(board,n,files))save(board,row,{...prior,files});draw();},
+answerFiles:function(board,n,files){if(!saved[board+'#'+n]){const row=api.project(board)?.tasks.find(t=>t.n===n);if(!row)return;save(board,row,component().fresh(row));}replyFiles.read(files,file=>{const current=saved[board+'#'+n]?.files||[];if(file.pending||current.some(f=>f.id===file.id))api.answerSetFiles(board,n,[...current.filter(f=>f.id!==file.id),file]);});},
+answerFileReceipt:function(r){replyFiles.settle(r.id);if(r.state!=='accepted')replyFiles.refuse(r.kind);for(const [key,local]of Object.entries(saved))if(local.files?.some(f=>f.id===r.id)){const at=key.lastIndexOf('#');api.answerSetFiles(key.slice(0,at),Number(key.slice(at+1)),local.files.map(f=>f.id===r.id?r.state==='accepted'?r.file:{...f,pending:false,error:r.reason}:f));}},
+fileControls:function(board,n,disabled){return replyFiles.controls(saved[board+'#'+n]?.files||[],disabled,files=>api.answerFiles(board,n,files),id=>api.answerSetFiles(board,n,(saved[board+'#'+n]?.files||[]).filter(f=>f.id!==id)));},
+fileEvents:function(board,n,disabled){return replyFiles.events(files=>api.answerFiles(board,n,files),disabled);},
 
 answerReceipt:function(r){
   const key=r.root+'#'+r.id,request=answerRequests.get(key);
@@ -19,7 +25,7 @@ answerReceipt:function(r){
   api.answerRefusal(r.state);
   answerFeedback.set(key,{board:item.board,op:item.op,about:item.about,state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})});
   const local=saved[item.board+'#'+item.op.task];
-  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})},...(r.state==='accepted'&&item.op.text?{draft:''}:{})});
+  if(local?.op?.id===r.id)save(item.board,{n:item.op.task},{...local,receipt:{state:r.state,reason:r.reason,next:r.next,answered:r.answered,...(r.note?{note:true}:{})},...(r.state==='accepted'&&(item.op.text||item.op.files?.length)?{draft:'',files:[]}:{})});
   if(item.op.action==='steer'&&r.state==='accepted')steers[item.board+'#'+item.op.task]='';
   // M3: an accepted answer gets a 6 s overlay toast and joins Answered, which keeps the newest 20
   if(r.state==='accepted'){
@@ -71,19 +77,23 @@ answerWon:function(board,t){
 // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
 answerSteerComposer:function(board,t){
   const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));
-  if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim())return null;
+  if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim()&&!saved[key]?.files?.length)return null;
   const text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
   if(!text.trim()&&!r&&[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&r.answered&&r.state==='accepted'))return null;
   const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'');
-  return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason,
-   tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!text.trim()},'Steer')),
+  const files=saved[key]?.files||[],problem=replyFiles.problem(files);
+  return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason:problem||reason,...api.fileEvents(board,t.n,sending),files:api.fileControls(board,t.n,sending),
+   tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!!problem||!text.trim()&&!files.length},'Steer')),
    onInput:e=>{steers[key]=e.currentTarget.value;draw();}}));
 },
 answerSteer:function(board,t){
   const key=board+'#'+t.n,text=(steers[key]??saved[key]?.draft??'').trim();
-  if(!text)return Promise.resolve(null);
+  const files=saved[key]?.files||[];
+  if(!text&&!files.length||replyFiles.problem(files))return Promise.resolve(null);
   steers[key]=text;
-  return answerSend(board,{id:'steer-'+t.n+'-'+Date.now().toString(36),task:t.n,revision:t.revision,action:'steer',text});
+  const op={id:'steer-'+t.n+'-'+Date.now().toString(36),task:t.n,revision:t.revision,action:'steer',text,...(files.length?{files:JSON.parse(JSON.stringify(files))}:{})};
+  save(board,t,{...saved[key],draft:text,op,receipt:{state:'sending'}});
+  return answerSend(board,op);
 },
 answerToast:function(){
   const r=view.toast&&answerFeedback.get(view.toast);

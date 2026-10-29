@@ -4,6 +4,7 @@
   "designRevision": "cf46e637d45f971dc83f1c1ea5f1e9a119a74256",
   "files": [
     "src/answer-card.js",
+    "src/reply-files.js",
     "src/answer-card.css",
     "tests/fixtures/answer-card.json"
   ],

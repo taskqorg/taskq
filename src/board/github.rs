@@ -643,7 +643,7 @@ impl Board for GitHub {
 
     /// One commit on the orphan `taskq-evidence` branch per image; the URL pins that commit, so it never moves.
     /// ponytail: a concurrent upload moving the branch fails the PATCH (not a fast-forward); the caller retries the command.
-    fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> {
+    fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
         use base64::Engine;
         let bytes = std::fs::read(path).map_err(|e| format!("image {}: {e}", path.display()))?;
         let digest: String = ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
@@ -670,7 +670,7 @@ impl Board for GitHub {
         Ok(if public { cdn_url(&self.api.base, &sha, &file) } else { raw_url(&self.api.root, &self.api.base, &sha, &file) })
     }
 
-    fn image(&self, url: &str) -> Result<Vec<u8>> {
+    fn file(&self, url: &str) -> Result<Vec<u8>> {
         use base64::Engine;
         let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| format!("image unknown: {url} is not a taskq evidence image of this repository"))?;
         // the contents API carries files up to 1 MB inline; the blob API reads larger ones by sha

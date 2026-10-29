@@ -53,6 +53,7 @@ fn metadata_bytes(v:&Value)->usize {
         for value in [&answer["draft"],&answer["op"]["text"],&answer["receipt"]["answered"]["text"]] {
             if value.is_string() {text=text.saturating_add(value.to_string().len());}
         }
+        for files in [&answer["files"],&answer["op"]["files"]] {if files.is_array(){text=text.saturating_add(files.to_string().len());}}
         if answer["receipt"]["answered"]["text"].is_string() && answer["receipt"]["reason"].is_string() {
             text=text.saturating_add(answer["receipt"]["reason"].to_string().len());
         }

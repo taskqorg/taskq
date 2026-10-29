@@ -303,7 +303,7 @@ fn answer_local(install: &Path, key: &str, local: &Value) -> Result<(), String> 
     }
     let mut f=requests_file_checked(install)?;
     if !f["answers"].is_object(){f["answers"]=json!({});}
-    f["answers"][key]=local.clone();
+    f["answers"][key]=crate::reply_files::store_local(install,local)?;
     crate::conversations::persist(install,&f).map_err(|e|format!("Workspace draft was not saved: {e}"))
 }
 
@@ -333,6 +333,8 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
     let revision = op["revision"].as_u64().ok_or("question revision missing")?;
     let action = op.get("action").map(|v| v.as_str().ok_or("invalid action")).transpose()?;
     let control = crate::snapshot::CONTROLS.iter().find(|c| Some(c.0) == action);
+    let files=crate::reply_files::draft_paths(install,&op["files"])?;
+    if !files.is_empty() && (op.get("choice").is_some()||control.is_some()||action==Some("close")) {return Err("Attachments require a text answer, steer or requeue; remove files before this action".into());}
     let mut args: Vec<String> = if let Some((name, command, text, _)) = control {
         if op.get("choice").is_some() || op.get("text").is_some() { return Err(format!("{name} takes no choice or text")); }
         let mut args = vec![command.to_string(), n.to_string()];
@@ -342,7 +344,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
         if op.get("choice").is_some() { return Err("fallback actions cannot include a choice".into()); }
         let (command, text) = match action {
             "requeue" => {
-                let reason = op["text"].as_str().filter(|s| !s.trim().is_empty()).ok_or("type a requeue reason, then send again")?;
+                let reason = op["text"].as_str().filter(|s| !s.trim().is_empty()||!files.is_empty()).ok_or("type a requeue reason, then send again")?;
                 ("requeue", format!("Reason: {reason}"))
             }
             // #1785: after another actor's answer won the race, the owner's kept draft steers the running worker
@@ -350,7 +352,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
             "close" if op.get("text").is_none() => ("later", "Reason: Owner requested cancellation without publication from the tray.".into()),
             _ => return Err("unsupported tray action".into()),
         };
-        if command != "requeue" { crate::task_text(command, &text)?; }
+        if command != "requeue" && (files.is_empty()||!text.trim().is_empty()) { crate::task_text(command, &text)?; }
         vec![command.into(), n.to_string(), "--text".into(), text]
     } else {
         let mut args = vec!["answer".into()];
@@ -361,13 +363,14 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
             }
             (None, Some(text)) => {
                 let text = text.as_str().ok_or("invalid answer text")?;
-                crate::task_text("answer", text)?;
+                if files.is_empty()||!text.trim().is_empty(){crate::task_text("answer", text)?;}
                 args.extend([n.to_string(), "--text".into(), text.into()]);
             }
             _ => return Err("supply one choice or literal text".into()),
         }
         args
     };
+    for file in files {args.extend(["--file".into(),file]);}
     let id = if action == Some("close") { format!("{id}.later") } else { id.into() };
     args.extend(["--json".into(), "--op-id".into(), id, "--revision".into(), revision.to_string()]);
     Ok(args)
@@ -494,11 +497,14 @@ fn answer_cli(root: &Path, args: &[String], budget: Duration) -> Result<Vec<u8>,
     let result = (|| {
         let (mut argv, input) = answer_input(args, &input_path);
         if let Some(input) = input { fs::write(&input_path, input).map_err(|e| format!("Cannot write reply file: {e}"))?; }
+        let mut files=vec![];
+        while let Some(i)=argv.iter().position(|s|s=="--file") {argv.remove(i);files.push(argv.remove(i));}
+        if !files.is_empty(){let path=dir.join("files.json");fs::write(&path,serde_json::to_vec(&files).map_err(|e|e.to_string())?).map_err(|e|format!("Cannot write attachment list: {e}"))?;argv.extend(["--files-from".into(),path.to_string_lossy().into_owned()]);}
         argv.extend(["--json-file".into(), output_path.to_string_lossy().into_owned()]);
         let out = crate::platform::output("tray.answer-command", owner_command(root)?.args(&argv), budget)?;
         fs::read(&output_path).map_err(|e| if out.stderr.is_empty() { format!("JSON receipt unavailable: {e}") } else { String::from_utf8_lossy(&out.stderr).into_owned() })
     })();
-    for path in [&input_path, &output_path, &output_path.with_extension("tmp")] { let _ = fs::remove_file(path); }
+    for path in [&input_path, &output_path, &output_path.with_extension("tmp"),&dir.join("files.json")] { let _ = fs::remove_file(path); }
     let _ = fs::remove_dir(&dir);
     result
 }
@@ -1606,6 +1612,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     Some("answer-local") => {
                         let result=answer_local(&install,m["key"].as_str().unwrap_or(""),&m["local"]);
                         web_eval(wv,&format!("taskq.receive({})",json!({"workspaceLocalError":result.err()})),"tray.web.receive",&proxy,calls);
+                    }
+                    Some("reply-file") => {
+                        let result=crate::reply_files::store_file(&install,&m);
+                        let receipt=match result{Ok(file)=>json!({"id":m["id"],"state":"accepted","file":file}),Err(e)=>{tracing::info!(coreq_refusal=crate::reply_files::refusal_kind(&e));json!({"id":m["id"],"state":"rejected","kind":"storage","reason":e})}};
+                        web_eval(wv,&format!("taskq.receive({})",json!({"replyFileReceipt":receipt})),"tray.web.receive",&proxy,calls);
                     }
                     Some("answer") => {
                         let key=format!("{}#{}",m["board"].as_str().unwrap_or(""),m["op"]["task"]);

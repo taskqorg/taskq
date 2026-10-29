@@ -55,7 +55,7 @@ console.log('PASS labelled options');
 // A2 / section 7: derive provenance at build time, preserving exact source and released-file protection.
 const manifest=JSON.parse(fs.readFileSync('docs/design/answer-card.sources.json','utf8'));
 const built=JSON.parse(fs.readFileSync('build/web/answer-card.sources.json','utf8'));
-assert.deepEqual(manifest.files,['src/answer-card.js','src/answer-card.css','tests/fixtures/answer-card.json']);
+assert.deepEqual(manifest.files,['src/answer-card.js','src/reply-files.js','src/answer-card.css','tests/fixtures/answer-card.json']);
 assert.deepEqual(Object.keys(built.files),manifest.files);
 for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
 const release=fs.readFileSync('.github/workflows/release.yml','utf8');

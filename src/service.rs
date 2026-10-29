@@ -1691,7 +1691,7 @@ impl<'a> Service<'a> {
             };
             let (rt, session) = rt_of(t).unwrap_or(("", ""));
             let mut session = session.to_string();
-            let mut l = Launch { execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
+            let mut l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
             if session == "-" || crate::runtime::of(rt).remote {
                 session = crate::runtime::codex_thread(&crate::runtime::log_path(&self.cfg.root, &l)).unwrap_or_else(|| if session == "-" { String::new() } else { session });
             }
@@ -1920,7 +1920,7 @@ impl<'a> Service<'a> {
         let keep: Vec<PathBuf> = urls.iter().map(|u| crate::snapshot::image_copy(&self.cfg.root, u)).collect();
         for (url, path) in urls.iter().zip(&keep) {
             if path.exists() { continue; }
-            let bytes = match self.board.image(url) {
+            let bytes = match self.board.file(url) {
                 Ok(b) if crate::board::image_kind(&b).is_some() => b,
                 Ok(_) => { eprintln!("ask image {url}: not an image"); vec![] }
                 Err(e) => { eprintln!("ask image {e}"); vec![] }
@@ -2070,7 +2070,7 @@ impl<'a> Service<'a> {
         }
         for r in self.reserved.iter_mut().filter(|r| r.0 == n && r.1 == 0) { r.1 = id; }
         if let Some(host) = &self.host { if let Ok(mut h) = host.lock() { h.claimed(&self.cfg.root, n, id); } }
-        let l = Launch { execution: None, task: n, title: v.issue.title.clone(), attempt: id, role: role.into(), rt: rt.into(), session, url: self.board.url(n), resume: None };
+        let l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: id, role: role.into(), rt: rt.into(), session, url: self.board.url(n), resume: None };
         if !self.may_launch(n) || self.gui_refused(&v.issue, rt) {
             self.pending.insert((n, id));
             self.held.push(l);
@@ -2126,6 +2126,14 @@ impl<'a> Service<'a> {
         if t.attempt != Some(l.attempt) || !matches!(t.state, State::Doing | State::Review) {
             if l.resume.is_none() { release_execution(self.board, l.task, l.attempt, l.attempt, "no-start")?; }
             return Ok(());
+        }
+        match crate::reply_files::prepare(self.board,&self.cfg.root,l.task,&log) {
+            Ok(files)=>l.files=files,
+            Err(e)=>{
+                self.log.push(format!("#{} attachments unknown: {e}",l.task));
+                self.pending.insert((l.task,l.attempt));self.held.push(l);
+                return self.beat(); // no native submission, execution intent or inbox acknowledgement
+            }
         }
         // Only an in-memory admission deferral proves the external start was never called.
         let deferred=l.execution.map(|id|executions.iter().find(|x|x.id==id&&x.attempt==l.attempt&&x.release.is_none())
@@ -3110,6 +3118,30 @@ Open: none")).unwrap();
         assert_eq!(task(&b, n).state, State::Review);
     }
 
+    // Chain: §5/R12 board reply files -> verified copies -> native start. Risk: missing files acknowledge the inbox or launch a partial reply.
+    #[test]
+    fn reply_files_hold_submission_until_every_attachment_is_readable() {
+        let root=std::env::temp_dir().join(format!("taskq-reply-launch-{}",crate::runtime::uuid()));std::fs::create_dir(&root).unwrap();
+        let mut c=cfg("mac");c.root=root.clone();c.install=root.clone();
+        let b=Fake::default();let n=b.create("Attached reply","",&[TASK_LABEL.into()]).unwrap();
+        let a=b.comment(n,"taskq: spawn worker claude:session mac").unwrap();
+        accept_execution(&b,n,a,a,None).unwrap();release_execution(&b,n,a,a,"exit").unwrap();
+        let original=root.join("document.bin");std::fs::write(&original,b"invented file bytes").unwrap();
+        let r=crate::dispatch::act_files(&b,&root,n,"steer","Read the file",&crate::dispatch::Op::default(),&[original.display().to_string()]);assert!(r.ok(),"{}",r.text());
+        let log=entries(&b,n).unwrap();let through=log.last().unwrap().id;
+        let calls=Rc::new(RefCell::new(Vec::new()));let seen=calls.clone();
+        let mut s=Service::new(&b,&c,"test",Box::new(move |l|{seen.borrow_mut().push(l.files.clone());Ok(Box::new(FakeProc(Rc::new(RefCell::new(None)))) as Box<dyn Proc>)}));
+        let l=Launch{files:String::new(),execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"claude".into(),session:"session".into(),url:b.url(n),resume:Some("Read the file".into())};
+        b.state.borrow_mut().bad_image=true;
+        let before=core::executions(n,&log);
+        s.launch(l,through,log).unwrap();
+        assert!(calls.borrow().is_empty());assert_eq!(s.delivered(a),0);assert_eq!(s.held.len(),1);assert_eq!(core::executions(n,&entries(&b,n).unwrap()),before,"failed file delivery cannot create execution intent");
+        b.state.borrow_mut().bad_image=false;
+        let l=s.held.remove(0);s.launch(l,through,entries(&b,n).unwrap()).unwrap();
+        assert_eq!(calls.borrow().len(),1);assert!(calls.borrow()[0].contains("untrusted data"));assert!(calls.borrow()[0].contains("document.bin"));assert_eq!(s.delivered(a),through);
+        drop(s);std::fs::remove_dir_all(root).unwrap();
+    }
+
     // R12 / §3: a last-moment admission hold is not a failed native submission.
     #[test]
     fn admission_wait_preserves_worker_reviewer_and_resume_execution() {
@@ -3132,7 +3164,7 @@ Open: none")).unwrap();
                 if *called.borrow()==1 {Err(crate::runtime::StartError::admission("native inventory pending"))}
                 else {Ok(Box::new(FakeProc(Rc::new(RefCell::new(None)))) as Box<dyn Proc>)}
             }));
-            let l=Launch {execution:None,task:n,title:"T".into(),attempt:a,role:if role=="reviewer" {"reviewer"} else {"worker"}.into(),rt:"codex".into(),session:"session".into(),url:b.url(n),resume:(role=="resume").then(||"continue".into())};
+            let l=Launch {files: String::new(), execution:None,task:n,title:"T".into(),attempt:a,role:if role=="reviewer" {"reviewer"} else {"worker"}.into(),rt:"codex".into(),session:"session".into(),url:b.url(n),resume:(role=="resume").then(||"continue".into())};
             s.launch(l,through,entries(&b,n).unwrap()).unwrap();
             assert_eq!(task(&b,n).attempt,Some(a),"{role}: admission consumed the attempt");
             assert_eq!(task(&b,n).retries,0);
@@ -3723,7 +3755,7 @@ Open: none")).unwrap();
         assert!(discarded.unwrap_err().contains("unresolved"));
         assert_eq!(crate::kids_file(&install,&root).unwrap(),rows,"a missing handle cannot erase recovery evidence");
         // A second failed checkpoint must not prevent emergency cancellation.
-        let l=Launch {execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"-".into(),url:String::new(),resume:None};
+        let l=Launch {files: String::new(), execution:None,task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"codex".into(),session:"-".into(),url:String::new(),resume:None};
         let path=crate::kids_path(&install,&root).unwrap();
         std::fs::write(&path,"corrupt").unwrap();
         assert!(s.kids[0].proc.checkpoint(&c,&l,a).is_err());

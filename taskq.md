@@ -189,16 +189,16 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. \| --revoke ID] [--json]` | [PM authority/receipts](docs/design/pm-requests.md); owner-only, off by default |
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail][prof] |
 | `taskq agents` | per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only, never logs in, no token value; unreadable: `unknown` (R12); no board; `not logged in` admits nothing ([runtime login](docs/design/capacity.md#runtime-login)) |
-| `taskq selftest` | load config, fold `tests/golden` fixtures built into the binary, read the board; no writes |
-- Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
+| `taskq selftest` | load config, fold built-in `tests/golden`, read the board; no writes |
+- Task writes: `#N <state>`; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its full diagnostic in `.taskq/cli-errors.log`, else keeps it as raw output (R12).
-- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
+- Other acknowledgements: action and project/version, one line, ≤ 160 characters. Capacity writes add `Receipt: <id>`. Batch: one outcome per item.
 - Worker `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
-- [Human replies](docs/design/answer-card.md#human-replies): uncapped `answer`, `steer`, owner `requeue`.
+- [Human replies](docs/design/answer-card.md#human-replies): `answer`, `steer`, owner `requeue`: text/images/files, no size/count cap. Provider refusals keep drafts. Files: pinned GitHub `taskq-evidence` links or GitLab uploads.
 - `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, ≤ 160 characters.
 - `update`, `cleanup`, setup and `selftest`: one outcome per version/path/check ([Core Write][sq-write]).
-- Help keeps full command syntax; `inbox`, raw service logs/status JSON and original issue/log text are exempt from display caps ([verbatim diagnostics][sq-sink]).
-- Unused positional arguments are refused before any action: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
+- Help keeps full syntax; `inbox`, raw service logs/status JSON and original issue/log text have no display caps ([verbatim diagnostics][sq-sink]).
+- Refuse unused positionals before actions: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
 - Commands add `attempt $TASKQ_ATTEMPT` when set. A command refused by `fold` prints the current state. `TASKQ_ROOT` must contain the current directory when it lies in a taskq project (`taskq.json` here or above), else every command is refused `TASKQ_ROOT <root> is not the project of the current directory <dir>`.
 - `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, §1): a seen id returns its first receipt; stale revisions refuse, except owner answers/steers save a §2 note with that id, nothing for a repeat of the winning answer. A raced entry edits itself first. Unknown delivery reconciles the same immutable payload/id.
 - Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the op id); else the lines above. Late answers add `answered {by, text}`, like R6 rows outside `ask`; every surface reads `already answered by <by>: <text>` once. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.

@@ -19,8 +19,8 @@ const api=execution.module('pm-composer',{
   const url=native.url,safe=typeof url==='string'&&(/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url)||(local&&/^codex:\/\/threads\/[A-Za-z0-9-]+$/.test(url)));
   return h('div',{class:'pm-handoff'},h('p',{role:'status'},(native.kind||native.state||'unknown')+': '+(native.reason||native.next||(native.state==='launched'&&native.session?'Continue in the native session':'Native outcome unknown'))),h('p',{class:'meta'},(native.runtime||'Runtime unknown')+' · '+(native.host||'Host unknown')+(native.session?' · '+native.session:'')),safe&&h('a',{href:url,'data-url':url,class:'native-session'},'Open session'));
  },
- composer:function({text,disabled=false,id='pm-draft',field='text',label='Request draft',reason='',placeholder='Ask AI…',before,files,tools,after,onInput}){
-  return h('div',{class:'conversation-composer'},before,h('label',{for:id,class:'sr-only'},label),h('textarea',{id,'data-c-field':field,rows:3,value:text,disabled,'aria-describedby':id==='conversation-draft'?'conversation-reason':id+'-reason',placeholder,onInput}),files,tools,h('p',{id:id==='conversation-draft'?'conversation-reason':id+'-reason',class:'meta'},reason),after);
+ composer:function({text,disabled=false,id='pm-draft',field='text',label='Request draft',reason='',placeholder='Ask AI…',before,files,tools,after,onInput,onPaste,onDrop,onDragOver}){
+  return h('div',{class:'conversation-composer',onPaste,onDrop,onDragOver},before,h('label',{for:id,class:'sr-only'},label),h('textarea',{id,'data-c-field':field,rows:3,value:text,disabled,'aria-describedby':id==='conversation-draft'?'conversation-reason':id+'-reason',placeholder,onInput}),files,tools,h('p',{id:id==='conversation-draft'?'conversation-reason':id+'-reason',class:'meta'},reason),after);
  },
  mount:function(el,adapter){
   let draft=adapter.load()||{text:''},pending=false,timer,serial=0,invalid=false;
