@@ -671,6 +671,10 @@ const CI_WAIT: &str = "Board budget: poll CI at most once a minute (`gh pr check
 const DEV_LOOP: &str = "While editing, run only the filtered checks of the project's development loop (its AGENTS.md or testing doc names the fast command);\n\
      run the full project checks once on the result candidate, after the rebase.\n";
 
+/// taskq.md § 7 rule 4 (#1842): workers chasing main rebased up to 5 times per attempt, each a rebuild, new shots and a full check.
+const PUBLISH_ONCE: &str = "Rebase on origin/main once, before the first push. After that, never rebase or rerun the full checks because main moved:\n\
+     the merge queue checks the merge result. Rebase again only when a requeue asks, as `main-moved` with its conflict files.\n";
+
 /// taskq.md § 7: a sandbox limit is unknown locally; publication still needs the section 7 CI gate.
 const SANDBOX_CHECKS: &str = "Host tests blocked by the worker sandbox: record sandbox-blocked in Checks, never as PASS; do not requeue for them.\n\
      Their Acceptance gate is green CI on the GitHub PR merge result (merge_group); private fallback uses exact-SHA CI; other routes follow taskq.md section 7 (R12).\n";
@@ -774,7 +778,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         format!(
             "Work only in `.worktrees/taskq-{n}` on branch `taskq-{n}` from origin/main (continue an existing branch).\n\
              For implementation changes, commit with the line `Task: {url}` in the message, rebase on origin/main, run the project checks, then {push}.\n\
-             {DEV_LOOP}Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer.\n\
+             {PUBLISH_ONCE}{DEV_LOOP}Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer.\n\
              After the answer, deliver the approved outcome or file approved dependent tasks (§ 7); no commit is needed for research-only output.\n\
              Do not wait for CI: `close` checks it. {CI_WAIT}{SANDBOX_CHECKS}Then exactly one of:\n\
              - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
@@ -4232,6 +4236,8 @@ mod tests {
                     assert_eq!(brief(&env, &l).contains(prefix), rt != "codex", "{rt} {role}: attempt identity");
                     assert!(task.contains(FILES) && task.contains(CI_WAIT));
                     if role == "worker" { assert!(brief(&env, &l).contains(SANDBOX_CHECKS) && brief(&env, &l).contains(DEV_LOOP)); }
+                    // #1842: a worker publishes once; a moved main alone never sends it back to rebase or recheck.
+                    assert_eq!(brief(&env, &l).contains(PUBLISH_ONCE), role == "worker", "{rt} {role}: publish once");
                     assert!(brief(&env, &l).contains("later 7 --blocker #M --text") && brief(&env, &l).contains("resumes when #M closes"), "{rt} {role}: a park names its blocker task");
                     assert!(brief(&env, &l).contains("later 7 --until <UTC> --text"), "{rt} {role}: a wait for elapsed time parks until it, not requeue (#1823)");
                     // the attempt log's evidence line
