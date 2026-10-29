@@ -27,7 +27,7 @@ Visually inspected all three panels, both themes, and the 256 px export with thr
 | A1 specification and renderer | Pass | I2 changed first; exact 10–99, 99+ cap, measured cells and separate Mac/square raster paths |
 | A2 counter matrix | Pass | `icon::tests::exact_two_digit_counters_reclaim_space_before_widening`: 0/9/10/12/99/100, each position alone and together, both themes, 22/44/256 px |
 | A2 retained protection | Pass | Existing icon tests retain palette, six bins, unknown/zero, blocked aggregation, pause, compact resources and first-capture behavior |
-| A3 installed Mac 8/12/12/3/15 | Not tested | The running TaskQ owns the one-app host lock. A second normal launch raises that app; this task did not replace it or restart active work |
+| A3 installed Mac 8/12/12/3/15 | Pass (menu bar, dark) | Native status-item captures from an isolated candidate tray: [native/README.md](native/README.md). Dock and light appearance not tested |
 | A3 Windows availability | Not tested natively | Square notification-area canvas is retained; target-specific execution and merge-result CI remain pending |
 
 The counter matrix replaces the old oversized-count width ceiling, whose accepted behavior changed. Single-digit/unknown ink alignment remains checked. The new cap case compares 100 with the largest usize. The adapter check `tray::tests::two_digit_summary_uses_the_native_canvas` protects the Mac rectangle and Windows square selection and shared published/native SVG path; it does not create an OS status item.
