@@ -81,17 +81,21 @@
 .task-images{display:flex;gap:4px;flex-wrap:wrap;margin:0 0 4px}.task-thumb{display:block;max-width:120px;max-height:90px;border:1px solid var(--edge);border-radius:4px}
 
 /* M1.2: alpha belongs to painted layers; the native window and foreground stay opaque. */
-.menu.background-only{background:color-mix(in srgb,var(--surface) var(--background-alpha),transparent);--smart-backing:color-mix(in srgb,var(--surface) var(--backing-alpha),transparent);--divider:color-mix(in srgb,color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,transparent) var(--background-alpha),transparent)}
-.background-only :is(.content-body,.head,.status-footer,.anchored-popover,.toast,.overflow-actions){background:var(--smart-backing)}
+.menu.background-only{background:color-mix(in srgb,var(--surface) var(--background-alpha),transparent);--background-fill:color-mix(in srgb,var(--surface) var(--background-alpha),transparent);--divider:color-mix(in srgb,color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,transparent) var(--background-alpha),transparent)}
+.background-only .content-body{background:transparent}
+.background-only :is(.head,.status-footer,.anchored-popover,.toast,.overflow-actions,.question-task-details,.project-group.project-shortcuts){background:var(--background-fill)}
+.background-only :is(.anchored-popover,.toast){box-shadow:0 8px 24px color-mix(in srgb,#0000004d var(--background-alpha),transparent),0 1px 3px color-mix(in srgb,#00000026 var(--background-alpha),transparent);border-color:var(--divider)}
+.background-only .question-task-details{border-color:var(--divider)}
 .background-only :is(.head,.status-footer,.window-controls){border-color:color-mix(in srgb,var(--edge) var(--background-alpha),transparent)}
-.background-only :is(.group,.footer,.qac,.rsc-review,.settings-section,.task-pins,.dashboard-status,.task-search,.task-row){border-color:var(--divider)}
-.menu.background-only :is(button,input:not([type=checkbox]),select,textarea,.counter){background-color:var(--surface)}
+.background-only :is(.group,.footer,.qac,.rsc-review,.settings-section,.task-pins,.dashboard-status,.task-search,.task-row,fieldset){border-color:var(--divider)}
+.menu.background-only :is(button,.counter){background-color:var(--surface)}
+.menu.background-only :is(input:not([type=checkbox]),select,textarea){background-color:var(--background-fill)}
 .menu.background-only :is(button:hover,button[aria-pressed=true]){background-color:var(--surface)}
 .menu.background-only .held-shortcut button{background-color:var(--work)}
 .menu.background-only :is(:disabled,[aria-disabled=true]){opacity:1;cursor:default}
-.menu.background-only .tqp{--hover:var(--surface)}
+.menu.background-only .tqp{--hover:var(--background-fill)}
 /* WKWebView ignores accent-color on some range thumbs; paint the foreground cue explicitly. */
-.menu.background-only input[type=range]{-webkit-appearance:none;appearance:none}
+.menu.background-only input[type=range]{-webkit-appearance:none;appearance:none;background:transparent}
 .background-only input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--muted)}
 .background-only input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-6px;border:1px solid var(--work);border-radius:50%;background:var(--work)}
 .background-only input[type=range]:disabled::-webkit-slider-thumb{border-color:var(--muted);background:var(--muted)}

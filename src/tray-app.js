@@ -320,10 +320,10 @@ appearance:function(){
   // each choice previews itself: the text size at its own size, the icon and the growth direction
   return f(h('div',{class:'body meta'},'Theme follows system appearance.'),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font),style:'font-size:'+n+'px'},n))),
     h('div',{class:'body'},'Tray icon'),views(),h('div',{class:'body'},'Window transparency'),h('div',{class:'options'},[['whole','Whole window'],['background','Background only']].map(([v,label])=>h('button',{'data-set':'opacity_mode','data-v':v,'aria-pressed':String((view.S.opacity_mode||'whole')===v)},label))),
-    h('div',{class:'body opacity-setting'},h('label',{for:'menu-opacity'},'Menu opacity · '+(view.S.opacity??100)+'%'),h('button',{'data-set':'opacity','data-v':100,disabled:view.S.opacity_mode==='background','aria-pressed':String((view.S.opacity??100)===100)},'Off'),h('input',{id:'menu-opacity',type:'range',min:90,max:100,step:1,value:view.S.opacity??100,disabled:view.S.opacity_mode==='background','data-opacity':'opacity','aria-valuetext':(view.S.opacity??100)===100?'Off · 100% opaque':view.S.opacity+'% opaque'})),
-    h('div',{class:'body meta'},'Whole window: 90–100% opaque. Text colors strengthen while translucent.'),
-    ...[['background_opacity','background-opacity','Background opacity',0,100],['backing_strength','backing-strength','Readability backing',98,98]].map(([key,id,label,min,defaultValue])=>h('div',{class:'body opacity-setting'},h('label',{for:id},label+' · '+(view.S[key]??defaultValue)+'%'),h('input',{id,type:'range',min,max:100,step:1,value:view.S[key]??defaultValue,disabled:view.S.opacity_mode!=='background','data-opacity':key,'aria-valuetext':(view.S[key]??defaultValue)+'% opaque'}))),
-    h('div',{class:'body meta'},'Menu only. Background mode keeps content opaque with at least 98% backing for readability.'),api.windowSettings(),reduced&&h('div',{class:'body meta',role:'status'},'Reduced motion: growth previews show a still outline and arrow.'));
+    h('div',{class:'body opacity-setting'},h('label',{for:'menu-opacity'},'Menu opacity · '+(view.S.opacity??100)+'%'),h('button',{'data-set':'opacity','data-v':100,disabled:view.S.opacity_mode==='background','aria-pressed':String((view.S.opacity??100)===100)},'Off'),h('input',{id:'menu-opacity',type:'range',min:60,max:100,step:1,value:view.S.opacity??100,disabled:view.S.opacity_mode==='background','data-opacity':'opacity','aria-valuetext':(view.S.opacity??100)===100?'Off · 100% opaque':view.S.opacity+'% opaque'})),
+    h('div',{class:'body meta'},view.S.opacity_mode==='background'?'Select Whole window to adjust menu opacity.':'Whole window: 60–100% opaque, including text and controls.'),
+    h('div',{class:'body opacity-setting'},h('label',{for:'background-opacity'},'Background opacity · '+(view.S.background_opacity??100)+'%'),h('input',{id:'background-opacity',type:'range',min:0,max:100,step:1,value:view.S.background_opacity??100,disabled:view.S.opacity_mode!=='background','data-opacity':'background_opacity','aria-valuetext':(view.S.background_opacity??100)+'% opaque'})),
+    h('div',{class:'body meta'},view.S.opacity_mode==='background'?'All fills fade; text and controls stay opaque. At 0%, the desktop shows behind them.':'Select Background only to adjust fills while keeping text and controls opaque.'),api.windowSettings(),reduced&&h('div',{class:'body meta',role:'status'},'Reduced motion: growth previews show a still outline and arrow.'));
 
 },
 agentq:function(settings=false){
@@ -651,7 +651,6 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   menu.classList.toggle('translucent',translucent);
   menu.classList.toggle('background-only',smart);
   menu.style.setProperty('--background-alpha',(view.S.background_opacity??100)+'%');
-  menu.style.setProperty('--backing-alpha',Math.max(view.S.background_opacity??100,view.S.backing_strength??98)+'%');
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
   const settingsError=view.persistenceError||view.S.opacity_error||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
@@ -775,7 +774,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='work'){navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
   if(d.a==='back'){back();return;}
   if(d.set==='period'&&d.v==='custom'){const H=view.S.history;view.draft={start:local(H.start,H.tz),end:local(H.end,H.tz),tz:H.tz,error:''};present();return;}
-  if(d.set){view.S[d.set]=['font','opacity','background_opacity','backing_strength'].includes(d.set)?Number(d.v):d.v;if(d.set==='period')view.draft=null;send({a:'set',[d.set]:view.S[d.set]});present();return;}
+  if(d.set){view.S[d.set]=['font','opacity','background_opacity'].includes(d.set)?Number(d.v):d.v;if(d.set==='period')view.draft=null;send({a:'set',[d.set]:view.S[d.set]});present();return;}
   if(d.a==='range'){
     const t=v=>v?Date.parse(view.draft.tz==='UTC'?v+'Z':v)/1000:NaN;
 const a=t(view.draft.start);
