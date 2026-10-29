@@ -19,4 +19,8 @@ const rows=[{n:2,rank:3},{n:5},{n:2,rank:2},{n:9,rank:1},{n:12,rank:0}];
 assert.deepEqual(rows.sort(views.compare).map(r=>r.rank),[0,1,2,3,undefined]);
 assert(views.matches({title:'A NEEDLE',project:'Alpha'},'needle'));assert(!views.matches({title:'other'},'needle'));
 assert(!views.add(m,'','bad'));assert.equal(views.normalize({views:[{id:'toString',name:'Bad'}]}).selected,'all');
+// M2: old navigation defaults expanded; malformed collapse state cannot enter the native document.
+assert.deepEqual(views.normalize(null).collapsed,[]);
+assert.deepEqual(views.normalize({collapsed:[views.identity(a),false,views.identity(a),'x'.repeat(2049)]}).collapsed,[views.identity(a)]);
+const collapsed=views.normalize({...m,collapsed:[views.identity(a)]});assert.deepEqual(views.normalize(JSON.parse(JSON.stringify(collapsed))).collapsed,collapsed.collapsed);
 console.log('PASS O2/O3 canonical comparator, OR/project/search scope, migration, independent working views, Save/Reset/restart');
