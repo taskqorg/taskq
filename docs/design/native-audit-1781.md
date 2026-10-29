@@ -27,7 +27,7 @@ Evidence: [native-1781-2026-10-29](review-evidence/native-1781-2026-10-29/) (nat
 | Item | Target | Native | Fix |
 |---|---|---|---|
 | G1 Ask row state icon is an amber question glyph that opens the question in one click | 04 | Pass (`01`, `02`) | `3c86d8d2` |
-| G2 Question context (task title, why asked, Done and evidence) stays visible with the question | 04 | Pass (`05`, `06`): the thread title names the task, the card shows state, question, options and Done with evidence above the composer, no scrolling | `3c86d8d2`, this change |
+| G2 Question context (task title, why asked, Done and evidence) stays visible with the question | 04 | Pass (`05`, `06`): the thread title names the task; state, Done, the question and its options sit above the composer with no scrolling; the #1787 Evidence disclosure follows them | `3c86d8d2`, this change |
 | G3 Task metadata disclosure reads `Task info` with the info icon | 04, 05 | Pass (`03`, `05`) | `3c86d8d2` |
 | G4 Detail controls are icon buttons; the board link is the provider icon (`Close #n on the board`) | 05 | Pass (`03`, `04`) | `3df8081d` |
 | G5 Question details are one neutral card with an amber edge and title; the Open question icon is amber | 05 | Pass (`03`, `04`) | this change |
@@ -43,6 +43,6 @@ Evidence: [native-1781-2026-10-29](review-evidence/native-1781-2026-10-29/) (nat
 | Host chips read three letters (longer on a shared prefix), the full name in the tooltip | 07 | Pass (`01`, `02`) | this change (restores #1729 after #1775) |
 | Filter chips, task row state icons, Settings | 07–09 | Pass in #1775 installed pass; unchanged here | none |
 
-Kept: the `Agent asks you` journey card (approved in #1773); its state now leads the question line and the number and title move to its accessible name, as the thread title above shows them.
+Kept: the `Agent asks you` journey card (approved in #1773); its state now leads the Done line (#1787 card order) and the number and title move to its accessible name, as the thread title above shows them.
 
 The #1775 `10-question-dark` mismatch was G1, G2, G7 and G8.
