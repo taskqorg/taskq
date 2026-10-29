@@ -8,10 +8,10 @@
     "referenceFontPt": 9,
     "exportDpr": 2
   },
-  "capture": "Canonical Rust SVG/raster exports, not installed OS screenshots; synthetic bins and counts. Final edits after export change tests and the shared native raster call site, not the SVG renderer.",
+  "capture": "Canonical Rust SVG/raster exports, not installed OS screenshots; synthetic bins and counts, paused=false. Later edits affect tests, the native raster call site and the pause mask; these nonpaused SVG outputs are unchanged.",
   "sha256": {
-    "src/icon.rs": "a943f5f9543e4187fc2e16cba7a73ba828c6f057e5142d2cb3bc0f5ed7885f83",
-    "src/tray.rs": "3628c9760af001d79fffb176cd9fe2dc95a2a1b97b66efbe7efccb94b85d2338",
+    "src/icon.rs": "e7ad9c3eb30fe536be4abe6691bd8f0006d07ecc166473eb32bf68a783a5d2cf",
+    "src/tray.rs": "dcff456d22cc08c1dce12310f69f3fc85461cfb09731d49b0f1a6c920c1ee7e2",
     "docs/design/evidence/1789/12.png": "e2bb7421a1d1929450de4ee2d1dfa1c285848a7d701218ce05b50adcf9a1d9ae",
     "docs/design/evidence/1789/8.png": "e8b6ee3cbe6c7ff61900635eacc5fee720ec039a988380052f26984876bc814a",
     "docs/design/evidence/1789/mixed.png": "eaf60940d2dc4d186a75014d50cc9018d0554e0d74959dfef5bb00e3ebcfb1e1"

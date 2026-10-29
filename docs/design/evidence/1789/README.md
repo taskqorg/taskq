@@ -39,3 +39,7 @@ Environment: macOS 27.0.1, arm64, SF system font Medium 9 pt; rustc/cargo 1.98.1
 - The temporary baseline/candidate export instrument confirmed the old single-plus signature and the corrected two-glyph ink for 10 in both themes; 8 stayed identical.
 
 The expanded pause mask retains the original cleared Q region and also covers the extended canvas. A pixel check requires counter ink beyond the former 22 pt edge while paused, preventing a new clipping regression.
+
+- `RUSTUP_TOOLCHAIN=stable sh docs/shots/update.sh`: passed from `de0f48ea`; the source-pinned README snapshot and icon export were opened and inspected. The project PNG is unchanged; the clock-dependent icon export was refreshed.
+- `sh docs/shots/check.sh`: passed. This verifies source pins and capture files, not installed OS icon presentation.
+- The first release build refused the inline dynamic-mask `write!` with `instrumentation changed source lines`. The equivalent multiline `push_str(format!(...))` form passed instrumentation and the release build; the mask geometry is unchanged.
