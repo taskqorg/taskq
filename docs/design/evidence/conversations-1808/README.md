@@ -2,7 +2,7 @@
 
 The owner [selected Inline actions](https://github.com/taskqorg/taskq/issues/1808#issuecomment-6490535339). [CS1–CS6](../../tray-workspace.md#conversations-sidebar-1808) specify grouping, ordering and local actions; the [usability review](../../conversations-usability-review.md#sidebar-grouping-1808) records the scenarios. Source implementation exists in the draft PR. It is not merged, deployed or native-qualified.
 
-**Publication blocker (R13):** the rule gate identifies the root-contract amendment as `Product`, but #1808 and its answer do not name that exact ID. `python3 scripts/check.py --rules --base c761cc2ed608b26638bc295dc5f3e5a6690ffb68` refuses with `the task does not name Product (changed)`. The selected layout is settled; the remaining owner ask explicitly names the proposed Product sidebar clause. No gate was weakened or bypassed.
+The owner [approved Product and the refreshed captures](https://github.com/taskqorg/taskq/issues/1808#issuecomment-6491340657), authorizing the root-contract sidebar clause and mandatory fixture refresh (R13). Before that answer the rule gate refused `the task does not name Product (changed)`; the gate was kept unchanged.
 
 ## Changed behavior and boundaries
 
@@ -24,7 +24,7 @@ Stage 2, actual production bundle with invented native receipts:
 2. [Search across a collapsed group](implemented/02-search.png).
 3. [Archive with ordinary task threads](implemented/03-archive.png).
 4. [Narrow list and keyboard actions](implemented/04-narrow-list.png).
-5. Required README icon refresh: [before](implemented/05-readme-icon-before.png) and [after](implemented/06-readme-icon-after.png), each 68×68. `docs/shots/update.sh` captured the isolated WKWebView/renderer output from `c8af96a3742fde9aca6e3fe200bce8cc1b9eba42`; `docs/shots/check.sh` confirms every UI source blob. The generated icon fixture differs while the icon renderer is unchanged; the cause was not investigated in this sidebar task. Owner acceptance of this generated refresh is included in the Product ask.
+5. Required README icon refresh: [before](implemented/05-readme-icon-before.png) and [after](implemented/06-readme-icon-after.png), each 68×68. `docs/shots/update.sh` captured the isolated WKWebView/renderer output from `c8af96a3742fde9aca6e3fe200bce8cc1b9eba42`; `docs/shots/check.sh` confirms every UI source blob. The generated icon fixture differs while the icon renderer is unchanged; the cause was not investigated in this sidebar task. The owner accepted this generated refresh in the Product answer linked above.
 
 Unchanged: workspace chrome, toolbar destinations, Details, reading area and composer; bundled Lucide assets and the accepted palette/type scale. Intentional differences are the CS1–CS6 headings, ordering, counts, row actions, search and wrapping. The frozen reference is untouched. Final browser images were inspected at actual size; source rendering is distinct from native acceptance (R12).
 
@@ -48,8 +48,8 @@ The full gate is not PASS. `python3 scripts/check.py --base c761cc2ed608b26638bc
 | A1 design package, owner visual choice | Pass; Inline selected |
 | A2–A6 source implementation and listed fixture flows | Pass in browser/Rust fixtures |
 | Whole affected workspace visual comparison | Pass in browser fixtures; four build images inspected |
-| Product rule-ID and refreshed capture authorization | Pending; exact ID absent from task/answer; capture pair shown above |
+| Product rule-ID and refreshed capture authorization | Pass; owner answer names Product and accepts the captures |
 | Canonical gate and merge-result CI | Blocked / not qualified |
 | A7 installed Mac/Windows | Not tested; owner-approved §7.8 release batch |
 
-The required source screenshot manifest is refreshed and its source check passes. After the owner answer names Product and accepts the captures, rerun the selected canonical gate on the rebased candidate, publish the result and let review/merge-group CI gate completion. No live installation is part of this task.
+The required source screenshot manifest is refreshed and its source check passes. Review and green merge-group CI gate completion (§7/R12). No live installation is part of this task.

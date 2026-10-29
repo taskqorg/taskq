@@ -35,7 +35,7 @@ Baseline at `51c19f9e95f0b5aaf494c732abc24ad75b2f110c`: `conversations.js` rende
 | Unknown project or timestamp, equal times, long title | Other keeps unavailable context; unknown time last; stable ties; title wraps | Invented project/recency or unreadable row |
 | Narrow list, keyboard actions, empty groups/search | List/Back works; actions remain focusable; distinct empty text | Hover-only or clipped controls |
 
-**Inline actions are selected**: Pin/Unpin and Archive are available in one click, with two hit targets per row. Menu actions remain the historical comparison only. The implementation reuses bundled Lucide assets, palette, typography, Archive tab and selected-thread layout. [Review and source-check evidence](evidence/conversations-1808/README.md) distinguish the working draft from installed behavior. The Product rule-ID gate still requires an owner answer naming `Product` before publication (R13); native checks remain in the release batch (§7.8).
+**Inline actions are selected**: Pin/Unpin and Archive are available in one click, with two hit targets per row. Menu actions remain the historical comparison only. The implementation reuses bundled Lucide assets, palette, typography, Archive tab and selected-thread layout. [Review and source-check evidence](evidence/conversations-1808/README.md) distinguish the working draft from installed behavior. The owner [approved Product and refreshed captures](https://github.com/taskqorg/taskq/issues/1808#issuecomment-6491340657) (R13); native checks remain in the release batch (§7.8).
 
 Priorities describe the proposed work order. Source-confirmed mechanisms are distinguished from runtime hypotheses.
 
