@@ -107,7 +107,7 @@ function taskLook(sel){const el=document.querySelector(sel),s=getComputedStyle(e
         if(process.argv.includes('--evidence'))await page.locator('#providers').screenshot({path:path.join(dir,'providers-'+mode+'-'+theme+'.png')});
       }finally{await page.close();}
     }
-    if(process.argv.includes('--evidence'))fs.writeFileSync(path.join(dir,'comparison.json'),JSON.stringify({claim:'Browser parent/standalone/tray comparison only; native and released-asset qualification deferred',manifestSha256:crypto.createHash('sha256').update(fs.readFileSync('docs/design/project-blocks.sources.json','utf8').replace(/\r\n/g,'\n')).digest('hex'),cases:evidence},null,2)+'\n');
+    if(process.argv.includes('--evidence'))fs.writeFileSync(path.join(dir,'comparison.json'),JSON.stringify({claim:'Browser parent/standalone/tray comparison only; native and released-asset qualification deferred',manifestSha256:crypto.createHash('sha256').update(fs.readFileSync('build/web/project-blocks.sources.json','utf8').replace(/\r\n/g,'\n')).digest('hex'),cases:evidence},null,2)+'\n');
     console.log('PASS 64 parent/browser/tray comparisons, exact counter look/order, all wrapped right edges, 16/20 px, 320/360 px, light/dark, 0/1/12/100, navigation, long content, partial and providers; provider marks readable in both themes');
   }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

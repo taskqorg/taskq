@@ -65,9 +65,12 @@ function click(dataset){let prevented=false;assert(q.handle({target:{closest:()=
 click({tqp:'tasks',project:p.id,state:'review'});click({tqp:'project',project:p.id});click({url:row.url});
 assert.deepEqual(actions,[['tasks',p.id,'review'],['project',p.id],['open',row.url]]);
 const manifest=require('../docs/design/project-blocks.sources.json');
-assert.equal(Object.keys(manifest.icons).length,16);
-for(const [file,hash] of Object.entries(manifest.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
-for(const [name,hash] of Object.entries(manifest.icons))assert.equal(crypto.createHash('sha256').update(q.assets[name]).digest('hex'),hash,name);
+// #1841: the build derives the released hashes from the committed file and icon lists.
+const built=JSON.parse(fs.readFileSync('build/web/project-blocks.sources.json','utf8'));
+assert.equal(manifest.icons.length,16);
+assert.deepEqual(Object.keys(built.files),manifest.files);assert.deepEqual(Object.keys(built.icons),manifest.icons);
+for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
+for(const [name,hash] of Object.entries(built.icons))assert.equal(crypto.createHash('sha256').update(q.assets[name]).digest('hex'),hash,name);
 for(const name of ['github','gitlab','claude','openai'])assert.equal(q.assets[name],fs.readFileSync('docs/design/assets/'+name+'.svg','utf8').replace(/\r\n/g,'\n'));
 const tray=fs.readFileSync('build/web/tray.html','utf8');
 const sandbox={setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto};require('node:vm').createContext(sandbox);

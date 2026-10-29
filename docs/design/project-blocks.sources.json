@@ -1,34 +1,34 @@
 {
   "component": "project-blocks",
-  "icons": {
-    "circle-x": "3336619cb53a8fb013b505e30858506b30e7799f9206f849e4a491df41a7a599",
-    "clock": "b48d439afc267b7c3b0642bea04dcd1ab330cc24429f263a5cd3106d9fb3bb48",
-    "folder": "9761f73542a636c2f4a1a6b3fcf8b2fa6ce9ff51b4f2344e744d73d0b5eb0ce9",
-    "circle-pause": "f8f9eaa4033692ef333b9e2c54b4aa1b847572754bd718394931451a8cb09d4c",
-    "gitlab": "c7c39058bd1b6f9f40334383bd5136bb8c5ba5e6a24200f2d1f18365e2526e28",
-    "git-pull-request": "4ecdd57d17ee5218cc651e554d17becb7626ab3bec823d951fb627a3e36c091b",
-    "openai": "2b4a04ddc2395b20d168694d3850ce2050a702c4a0cdeb4d8b31b9a970481a8c",
-    "play": "ba893bd6736e802250e1defd89c74b024453627396d98e03b04525151c85111a",
-    "terminal": "eb5483fed335ee6ae61f0958c7eb156157b473f7ff30250cc8c18652b21e66cd",
-    "message-circle-question": "6424eba2063646f684abf25a79627bb2e82e1e8a656434f8b6b9aad2d1e5e591",
-    "github": "3bf8cceead820aec50d4ee825a3fd02c5a1cd6665cc9cf4cbf3d9c8861a204bb",
-    "circle": "bf1479c5c55992b40eeb08c661b56de55bbb1a0712fa40f9b00e9319cf9eab9e",
-    "pin": "00e572cd926a43fb85c22d5d37b6f612a04ad44a638be4bded7cb29a99f7b920",
-    "link": "06a12849eed172bf92c5c97f4a37c9a83d73949ab374eb3bfc5a2dea2e3a4732",
-    "network": "5de295b47805f773d478a6bc49aaef7af90d274e635fb9987714283eab8d8319",
-    "claude": "2d6fda79eb18ddccca35b799eeb3cece0dfabc22520ce3b10abd25668df9fa93"
-  },
+  "icons": [
+    "circle-x",
+    "clock",
+    "folder",
+    "circle-pause",
+    "gitlab",
+    "git-pull-request",
+    "openai",
+    "play",
+    "terminal",
+    "message-circle-question",
+    "github",
+    "circle",
+    "pin",
+    "link",
+    "network",
+    "claude"
+  ],
   "lucide": "1.17.0",
   "mergedDesignRevision": "cf46e637d45f971dc83f1c1ea5f1e9a119a74256",
   "schema": 1,
   "designRevision": "75757d5d843159726a2ea44ca1615f9cf7fd18fd",
-  "files": {
-    "tests/fixtures/project-blocks.json": "0b049c5f09b368de869672b2b4bbe1b387c1b210e14afabb371ad7c0342794b8",
-    "docs/design/visual-style.md": "aa0983062841421d73a918af3db8a6167c5f0269df85e68ca93f338552fdbe39",
-    "src/project-blocks.js": "a2643e23cebc17a1deaf13db8247e478a024d1301fbcfbf454da57d31c26e69e",
-    "docs/design/menu-next-variants.html": "0cb616825c0f84703dbd19da67149aa9dceaaf4431f5fd193c2df7bae4e0f86c",
-    "src/project-blocks.LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",
-    "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0"
-  },
-  "hashEncoding": "UTF-8, LF (canonical release source; checkout CRLF normalized)"
+  "files": [
+    "tests/fixtures/project-blocks.json",
+    "docs/design/visual-style.md",
+    "src/project-blocks.js",
+    "docs/design/menu-next-variants.html",
+    "src/project-blocks.LICENSE",
+    "src/project-blocks.css"
+  ],
+  "hashEncoding": "UTF-8, LF; the build derives the hashes (scripts/design-sources.cjs); the tag workflow assigns the release version"
 }

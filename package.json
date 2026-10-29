@@ -2,7 +2,7 @@
   "name": "taskq-ui",
   "private": true,
   "scripts": {
-    "build": "node scripts/build-web.cjs"
+    "build": "node scripts/build-web.cjs && node scripts/design-sources.cjs"
   },
   "devDependencies": {
     "acorn": "8.19.0",

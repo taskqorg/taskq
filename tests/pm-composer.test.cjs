@@ -11,7 +11,10 @@ assert.equal(q.receipt({...receipt,native:null},r).outcome,'unknown');
 for(const url of ['javascript:alert(1)','https://example.org/session','codex://threads/invented'])assert(!JSON.stringify(q.handoff({...native,url})).includes('href'));
 assert(JSON.stringify(q.handoff(native)).includes('Open session'));
 const manifest=require('../docs/design/pm-composer.sources.json');
-for(const [path,hash] of Object.entries(manifest.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,path);
+// #1841: the build derives the released hashes from the committed file list.
+const built=JSON.parse(fs.readFileSync('build/web/pm-composer.sources.json','utf8'));
+assert.deepEqual(Object.keys(built.files),manifest.files);
+for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
 const c={TextEncoder,crypto:crypto.webcrypto,setTimeout,clearTimeout};vm.createContext(c);vm.runInContext(fs.readFileSync('build/web/pm-composer.js','utf8'),c);
 assert.deepEqual(JSON.parse(JSON.stringify(c.TaskqPmComposer.request(r,r.text,r.op_id,r.issued_at))),r);
 const release=fs.readFileSync('.github/workflows/release.yml','utf8');

@@ -13,7 +13,7 @@ Version `taskq.task-workspace/1`; the release tag gives the build version.
 
 ## Release assets
 
-Each release ships, under `SHA256SUMS`: `taskq-<v>-task-workspace.js`, `-task-workspace.css`, `-task-workspace-fixtures.json` and `-task-workspace-sources.json`. The sources manifest ([task-workspace.sources.json](task-workspace.sources.json)) lists the SHA-256 of every bundled source, stylesheet and the fixture (UTF-8, LF). The tray embeds `build/web/task-workspace.js` and `.css` byte for byte (`tests/task-workspace.test.cjs`). Consumers pin the version and the `SHA256SUMS` hashes, as for the PM composer and task controls.
+Each release ships, under `SHA256SUMS`: `taskq-<v>-task-workspace.js`, `-task-workspace.css`, `-task-workspace-fixtures.json` and `-task-workspace-sources.json`. The sources manifest ([task-workspace.sources.json](task-workspace.sources.json)) lists every bundled source, stylesheet and the fixture; the build derives their SHA-256 (UTF-8, LF) into the released `-sources.json` ([visual evidence](../testing.md#visual-evidence)). The tray embeds `build/web/task-workspace.js` and `.css` byte for byte (`tests/task-workspace.test.cjs`). Consumers pin the version and the `SHA256SUMS` hashes, as for the PM composer and task controls.
 
 ## Fixtures
 

@@ -16,7 +16,7 @@ Release staging publishes `taskq-<release>-project-blocks.js`, `.css`, `.LICENSE
 
 ## Parent-to-child map
 
-[sources manifest](project-blocks.sources.json) pins design PR #943 head `75757d5d843159726a2ea44ca1615f9cf7fd18fd`, merged as `cf46e637d45f971dc83f1c1ea5f1e9a119a74256`, parent source hashes, component hashes and supplier icon hashes. Asset schema revision is 1; release version is assigned by the existing tag workflow.
+[sources manifest](project-blocks.sources.json) pins design PR #943 head `75757d5d843159726a2ea44ca1615f9cf7fd18fd`, merged as `cf46e637d45f971dc83f1c1ea5f1e9a119a74256`, the parent sources, component files and supplier icons, whose hashes the build derives into the released `-sources.json`. Asset schema revision is 1; release version is assigned by the existing tag workflow.
 
 | Parent | Shared child | Permitted placement / evidence |
 |---|---|---|
