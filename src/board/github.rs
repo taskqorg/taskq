@@ -422,6 +422,7 @@ impl Board for GitHub {
             body: s(v, "body"),
             trusted: trusted(v),
             edited: s(v, "updated_at") != s(v, "created_at"),
+            author: s(&v["user"], "login"),
         }).collect())
     }
 

@@ -234,6 +234,7 @@ impl Board for GitLab {
                 body: s(v, "body"),
                 trusted: self.member(v["author"]["id"].as_u64().unwrap_or(0)),
                 edited: s(v, "updated_at") != s(v, "created_at"),
+                author: s(&v["author"], "username"),
             }).collect())
     }
 

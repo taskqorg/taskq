@@ -6,7 +6,7 @@ const sent=[],timers=new Map();let id=0;
 const board='https://github.com/o/r/issues',project={root:'project',issues:board,alive:true,complete:true};
 const context={S:{projects:[project],font:16},send:m=>sent.push({...m,local:undefined}),fit:()=>{},render:()=>{},menu:{scrollHeight:400},esc:String,
   setTimeout:(f,ms)=>{timers.set(++id,{f,ms});return id;},clearTimeout:i=>timers.delete(i)};
-Object.assign(context,require('../src/workspace-answers.js').create(context,{menu:context.menu,document:context.document||{},send:m=>context.send(m),draw:()=>{},defer:(f,ms)=>context.setTimeout(f,ms),cancel:id=>context.clearTimeout(id)}));
+Object.assign(context,require('../src/workspace-answers.js').create(context,{menu:context.menu,document:context.document||{},send:m=>context.send(m),draw:()=>{},defer:(f,ms)=>context.setTimeout(f,ms),cancel:id=>context.clearTimeout(id),steer:require('../src/pm-composer.js').composer}));
 const {html}=require('./tray-harness.cjs'),call=(name,...args)=>{const r=context[name](...args);return r===null||Array.isArray(r)||r?.props?html(r):r;};
 const plain=x=>JSON.parse(JSON.stringify(x));
 (async()=>{
@@ -64,6 +64,27 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   for(let i=0;i<25;i++){const o={...op,id:'bound-'+i};call('answerSend',board,o);call('answerReceipt',{root:'project',id:o.id,state:'accepted'});}
   assert.equal(call('answerNotices').split('· accepted').length-1,20,'Answered keeps the newest 20');
   assert(call('answerNotices').includes('data-a="answer-dismiss"'));
+  // #1785 A1/A2: losing the answer race showed a red stale-revision error with CLI advice; it now names who answered
+  // and what, and once the refresh reads the worker running, offers the unsent answer as steer.
+  project.tasks=[{n:900,state:'ask',revision:7}];
+  const lost={id:'race-1',task:900,revision:7,text:'use y'};
+  call('save',board,{n:900},{draft:'use y',op:lost});
+  const lostPromise=call('answerSend',board,lost);
+  call('answerReceipt',{root:'project',id:lost.id,state:'stale',reason:'',next:'',answered:{by:'alex',text:'use x'}});
+  assert.equal((await lostPromise).state,'stale');
+  const running={n:900,state:'doing',revision:8};project.tasks=[running];
+  const thread=call('answerWon',board,running)+call('answerSteerComposer',board,running)+call('answerNotices',board,900);
+  assert(thread.includes('Answered by alex: use x')&&thread.includes('data-a="answer-steer"')&&thread.includes('use y'),thread);
+  assert(!/revision|taskq|alert/.test(thread),thread);
+  assert(call('answerNotices').includes('#900 · Answered by alex: use x'),'Attention names the winner too');
+  assert.equal(call('answerSteerComposer',board,{...running,state:'review'}),'','steer needs a running worker');
+  assert.equal(call('answerWon',board,{...running,state:'ask'}),'','a new question replaces the answered line');
+  const steerAt=sent.length;call('answerSteer',board,running);
+  assert.deepEqual(plain(sent[steerAt].op),{id:sent[steerAt].op.id,task:900,revision:8,action:'steer',text:'use y'});
+  call('answerReceipt',{root:'project',id:sent[steerAt].op.id,state:'accepted'});
+  assert(call('answerToast').includes('#900 · steer sent'));
+  assert(call('answerSteerComposer',board,running).includes('Steer sent to the agent.')&&!call('answerSteerComposer',board,running).includes('use y'),'a sent steer clears the composer');
+  delete project.tasks;
   context.S.projects=[];
   // Run the consumer's capability across shared stale/lost-response fixtures; component owns draft and op state.
   const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));

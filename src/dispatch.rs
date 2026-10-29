@@ -64,11 +64,28 @@ pub struct Receipt {
     /// Extra success lines, e.g. the publication of `close`.
     #[serde(skip)]
     pub extra: String,
+    /// A `stale` answer that an earlier accepted answer beat: who wrote that one and what it delivered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answered: Option<Answered>,
+}
+
+/// § 5 `answered`: the board login and delivered text of the answer that closed the question.
+#[derive(Debug, Serialize)]
+pub struct Answered {
+    pub by: String,
+    pub text: String,
+}
+
+/// The answer that beat a `stale` `answer` write on `log` (#1785); one more comment read names its writer.
+fn answered(b: &dyn Board, n: u64, kind: &str, log: &[Entry], deps: bool) -> Option<Answered> {
+    let id = (kind == "answer").then(|| core::closing_answer(n, log, deps)).flatten()?;
+    let by = b.comments(n).ok()?.into_iter().find(|c| c.id == id).map(|c| c.author).unwrap_or_default();
+    Some(Answered { by, text: core::delivery(n, log, id) })
 }
 
 impl Receipt {
     fn new(n: u64, op: &Op, outcome: &'static str, reason: impl Into<String>, next: impl Into<String>) -> Receipt {
-        Receipt { task: n, op_id: op.id.clone(), outcome, state: None, revision: None, reason: reason.into(), next: next.into(), extra: String::new() }
+        Receipt { task: n, op_id: op.id.clone(), outcome, state: None, revision: None, reason: reason.into(), next: next.into(), extra: String::new(), answered: None }
     }
     pub fn accepted(n: u64, op: &Op, state: State, revision: u64) -> Receipt {
         Receipt { state: Some(state.name()), revision: Some(revision), ..Receipt::new(n, op, "accepted", "", "") }
@@ -156,7 +173,8 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
     }
     if op.revision.is_some_and(|r| r != rev) {
         let next = format!("Read `taskq inbox {n}`; retry with --revision {rev} if still wanted.");
-        return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::new(n, op, "stale", format!("revision {} is stale; current is {rev}", op.revision.unwrap_or(0)), next) };
+        let answered = answered(b, n, kind, &log, deps);
+        return Receipt { state: Some(before.state.name()), revision: Some(rev), answered, ..Receipt::new(n, op, "stale", format!("revision {} is stale; current is {rev}", op.revision.unwrap_or(0)), next) }.wake(root);
     }
     if core::has_fields(text) {
         return Receipt::rejected(n, op, "text ends with an `op-id:` or `revision:` line; reword it");
@@ -195,7 +213,8 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         log[i].edited = true;
         let projection = core::project(n, &log, deps);
         let (t, rev) = (projection.task, projection.revision);
-        return Receipt { state: Some(t.state.name()), revision: Some(rev), ..Receipt::new(n, op, "stale", "another write won; this entry is ignored", format!("Read `taskq inbox {n}`; current revision is {rev}.")) };
+        let answered = answered(b, n, kind, &log, deps);
+        return Receipt { state: Some(t.state.name()), revision: Some(rev), answered, ..Receipt::new(n, op, "stale", "another write won; this entry is ignored", format!("Read `taskq inbox {n}`; current revision is {rev}.")) }.wake(root);
     }
     let projection = core::project(n, &log, deps);
     let (t, rev) = (projection.task, projection.revision);
@@ -715,6 +734,38 @@ g", &["taskq".into()]).unwrap();
         b.state.borrow_mut().race = Some(core::with_fields(entry("answer", &["1"], None, "a"), Some("pm2"), Some(rev)));
         assert_eq!(act(&b, &root, n, "answer", &["1"], "a", &Op { id: Some("pm2".into()), revision: None }).outcome, "stale");
         assert!(entries(&b, n).unwrap().last().unwrap().edited);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stale_answer_names_the_answer_that_won() {
+        // #1785: losing the answer race used to return only revisions and CLI advice; the receipt now carries who
+        // answered first and what, on both the early revision check and the readback race, and nothing else does.
+        let (b, root) = (Fake::default(), std::env::temp_dir().join(format!("taskq-answered-{}", std::process::id())));
+        let op = |id: &str, r: u64| Op { id: Some(id.into()), revision: Some(r) };
+        let task = |title: &str| {
+            let n = b.create(title, "## Goal
+g", &["taskq".into()]).unwrap();
+            b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
+            let a = fold(n, &entries(&b, n).unwrap(), false).attempt.unwrap();
+            (n, b.comment(n, &entry("ask", &[], Some(a), "Which?
+1. x
+2. y ★")).unwrap())
+        };
+        let (n, card) = task("T");
+        assert_eq!(act(&b, &root, n, "answer", &["1"], "x", &op("phone", card)).outcome, "accepted");
+        for (_, c) in b.state.borrow_mut().comments.iter_mut().filter(|(i, _)| *i == n) { c.author = "alex".into(); }
+        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card));
+        let v: serde_json::Value = serde_json::from_str(&r.json()).unwrap();
+        assert_eq!((v["outcome"].as_str(), v["answered"]["by"].as_str(), v["answered"]["text"].as_str()), (Some("stale"), Some("alex"), Some("x")));
+        // a stale revision while the question is still open names no answer
+        let (n, card) = task("T2");
+        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card - 1));
+        assert_eq!((r.outcome, r.answered.is_none()), ("stale", true));
+        // the readback race: another client's answer lands between the check and the write
+        b.state.borrow_mut().race = Some(core::with_fields(entry("answer", &["1"], None, "x"), Some("pm"), Some(card)));
+        let r = act(&b, &root, n, "answer", &["2"], "y", &op("tray", card));
+        assert_eq!((r.outcome, r.answered.as_ref().map(|a| a.text.as_str())), ("stale", Some("x")), "{}", r.text());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

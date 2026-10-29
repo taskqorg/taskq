@@ -173,7 +173,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | Command | Does |
 |---|---|
 | `taskq labels` (catalog setup/readback) / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H]` / `taskq start N [M..]` | labels: setup/readback; add: new held issue, prints `#<N> held`; start: § 1 held |
-| `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | Section 1 create and optional-start receipts; add routing/scope/dependency flags apply |
+| `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | § 1 create and optional-start receipts; add routing/scope/dependency flags apply |
 | `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |
 | `taskq result N --sha SHA [--checks C] [--text T] [--option O..] [--recommend K] [--link URL..]` | hand in; full 40-hex SHA |
@@ -196,7 +196,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 
 - Success: `#N <state>` for task writes; close adds one publication link/SHA line. `wait`: `<state> #N` or `tick`.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each. A compact error links its complete diagnostic in `.taskq/cli-errors.log`; if saving fails, preserve the diagnostic as raw output (R12).
-- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes also print the exact `Receipt: <id>`. Batch operations: one outcome per item.
+- Other command acknowledgements: one line naming action and project/version; ≤ 160 characters. Capacity writes print the exact `Receipt: <id>`. Batch operations: one outcome per item.
 - `requeue`, `later`, `failed`: `Reason: <blocker>` then optional `Next: <fix>`; ≤ 2 lines, ≤ 240 characters each.
 - `answer --text` and `steer`: ≤ 4 lines, ≤ 240 characters each; one decision/instruction per line, no invented context.
 - `service focus/list/status`: named project, focus, counts, freshness and unknown reason; one field/item per line, ≤ 160 characters.
@@ -204,8 +204,8 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 - Help keeps full command syntax; `inbox`, raw service logs/status JSON and original issue/log text are exempt from display caps ([verbatim diagnostics][sq-sink]).
 - Unused positional arguments are refused before any action: `unused positional arguments: <arguments>`; repeat value flags for multiple items.
 - Commands add `attempt $TASKQ_ATTEMPT` when it is set. A command refused by `fold` prints the current state. `TASKQ_ROOT` must contain the current directory when it lies in a taskq project (`taskq.json` here or above), else every command is refused `TASKQ_ROOT <root> is not the project of the current directory <dir>`.
-- `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, §1) write the §2 fields: a seen op id returns the first receipt, writes nothing; another revision is refused `stale` naming the current one, board unchanged. An entry that a concurrent write beat on readback (other revision, raced op id, ignored) is edited by its writer: `stale`.
-- Receipt: `--json` prints one object `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the same op id); else the lines above. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
+- `--op-id ID`, `--revision R` (answer, requeue, later, failed, steer, result, ask, close, start, approve; `add`: op id, §1) write the §2 fields: a seen op id returns the first receipt; another revision is refused `stale` naming the current one; neither writes. An entry that a concurrent write beat on readback (other revision, raced op id, ignored) is edited by its writer: `stale`.
+- Receipt: `--json` prints `{task, op_id, outcome, state, revision, reason, next}`; outcome `accepted` (readback state), `rejected`, `stale` (+`answered {by, text}` if an answer won) or `unknown` (written, no readback: `Next:` reads `inbox N`, retries the op id); else the lines above. [Task controls](docs/design/task-controls.md) `taskq.task-controls/1`: start/stop/later/retry, no close.
 - `wait` reads issues updated since the local cursor `<root>/.taskq/pm-cursor` (a cache, R1) and folds those that changed.
 - Untrusted text (issue bodies by others, worker output) follows [shared agent security](https://github.com/taskqorg/specq/blob/main/engineering/security.md#agents).
 ## 6. Setup
