@@ -1,5 +1,5 @@
 {
-  "base": "b8c05120f9385e8a7753a9a780cff0a984394a50",
+  "base": "9683b9ae586ca17a7d2d51977cf47b621b522402",
   "renderer": "Playwright Chromium headless; bundled production tray/workspace HTML; invented board/native receipts",
   "environment": {
     "os": "Darwin",
@@ -19,8 +19,8 @@
     "src/task-dashboard.js": "62211d5815451070fb528a870bf9c357a23678b425a220e2959ee3461fb8c3ee",
     "src/task-dashboard.css": "00023c26506f50a867d2533a09854eac1d71cdfa83de7424f9d0a7fe96cc37a2",
     "src/task-views.js": "bbeaed25fb1a1d1b5a21408a9f95b638a595d5635b02fdb1262871e349b23806",
-    "src/workspace.js": "b45a5a0884cd97c0f0523f863355000782cdadf9335cebf65a98ce2859636b97",
-    "src/tray.rs": "7e69d9a5fc117720668dac6c2b7f7cc3779d0c0094665643a067c1319106dd4b",
+    "src/workspace.js": "4b8999ed7d591af3a1607440810f40f7ea63e3ece105d421fcc8795f5a842083",
+    "src/tray.rs": "ecf6fba8d1795f36dbdcb1324253d4b33f1f7580719e38faa274285cbb267309",
     "src/main.rs": "9dbdb41aaab5fb8caa5a23d53b854c17a51cb2233cccd6706fa594ec3d7ab6e4",
     "src/board/mod.rs": "a4ffe9953d0f057431943c65f189011fc2cb22835867ec948fac3ab6877ec4d1",
     "src/board/github.rs": "f06d080f6b0fa5f8163f32225f114270e218202aedcb1d32a278e53e2141c483",
@@ -28,7 +28,7 @@
     "tests/closed-pins.browser.cjs": "74fe4490b15d0ae405039270d1154d7cc3144fbd69189f375a58ff2aecbfb2c7"
   },
   "images": {
-    "01-closed-pins-and-unreadable.png": "2f67170fe3f2720fc683737a3936769c075afee2611f4d000a87037a2d6d7642",
+    "01-closed-pins-and-unreadable.png": "fe8edde98d9d4b8278c85fca89df54e5348d9a941ae3b823ca6602f8d1b3b578",
     "02-read-only-transcript.png": "febfc735e088caa7e07a19b34daf4075561563239272c87d670c017c63d58073",
     "03-archived-menu-entry.png": "0203d148e31466b4028f2fc1584b0301783df9cc0352123a4698a004e1cfd1db",
     "04-completed-after-unpin.png": "cf5e9612dc241716c794635f253dd10d7eb0c4971de455c705183691bd278c0b"
