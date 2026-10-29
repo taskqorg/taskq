@@ -85,7 +85,7 @@ const USAGE: &str = "taskq agents
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N
+ taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
@@ -813,6 +813,32 @@ fn inbox(b: &dyn Board, root: &Path, n: u64) -> Res<String> {
         out.push(format!("[{}{}] {}", e.id, if e.edited { " edited, ignored" } else { "" }, e.body.trim()));
     }
     Ok(out.join("\n\n"))
+}
+
+/// § 5 `inbox N --json`: the folded task, its current attempt's progress and each accepted answer with its writer, board
+/// time and question revision, from the same issue, comment and dependency reads as the human `inbox` (#1885).
+fn inbox_json(b: &dyn Board, root: &Path, me: &str, n: u64) -> Res<Value> {
+    let issue = b.issue(n)?;
+    let comments = b.comments(n)?;
+    let log = board::reply::log(n, &comments)?;
+    let p = core::project(n, &log, deps_open(b, n, &issue.body, &log));
+    let t = &p.task;
+    let at = |id: u64| comments.iter().find(|c| c.id == id);
+    let answers: Vec<Value> = p.answers.iter().map(|a| json!({"id": a.id, "by": at(a.id).map(|c| c.author.as_str()), "at": at(a.id).map(|c| c.created),
+        "revision": a.revision, "option": a.option, "text": core::delivery(n, &log, a.id), "late": a.late})).collect();
+    let attempt = t.attempt.map(|a| {
+        let session = t.session.as_deref().unwrap_or_default();
+        let (native, host) = session.rsplit_once(' ').unwrap_or((session, ""));
+        let role = t.role.as_deref().unwrap_or_default();
+        // R6 3: the attempt log's update time is known only on the attempt's own host
+        let updated = (host == me).then(|| fs::metadata(runtime::attempt_log(root, role, n, a)).and_then(|m| m.modified()).ok()).flatten()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs());
+        json!({"id": a, "role": role, "runtime": native.split(':').next(), "host": host, "started": at(a).map(|c| c.created),
+            "stage": t.state.name(), "stages": t.stages, "pending_notes": t.inbox.len(), "delivered": p.delivered(a), "log_updated": updated})
+    });
+    let last = log.iter().max_by_key(|e| e.id).map(|e| json!({"id": e.id, "at": at(e.id).map(|c| c.created)}));
+    Ok(json!({"schema": 1, "task": n, "title": issue.title, "url": b.url(n), "open": issue.open, "state": t.state.name(), "revision": p.revision,
+        "card": t.card, "result": t.result, "attempt": attempt, "last": last, "answers": answers}))
 }
 
 /// MP14 Completed: one board page of closed tasks with their sourced outcome, result line, last PR link and merge receipt; no store.
@@ -3213,7 +3239,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             Ok(())
         }
         "inbox" => {
-            println!("{}", inbox(b, root, a.num(1)?)?);
+            if a.flags.contains_key("json") { println!("{}", inbox_json(b, root, &cfg.me, a.num(1)?)?); } else { println!("{}", inbox(b, root, a.num(1)?)?); }
             Ok(())
         }
         "wait" => {
