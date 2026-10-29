@@ -29,6 +29,7 @@ const state={platform:'macos',font:16,theme:'dark',host:'fixture',now:1000,versi
  const pins=[{ref:views.identity(alpha)+'#1',url:alpha.issues+'/1',title:alpha.tasks[0].title}];await p.close();p=await open({...state,navigation:{...navigation,dashboard:{...navigation.dashboard,pins}}});assert.equal(await group().locator('.project-counts').textContent(),'2 shown · 4 total');assert.equal(await group().locator('[data-card]').count(),1);assert.equal(await p.locator('.task-pins [data-card]').count(),1);
  await p.close();p=await open({...state,projects:[{...alpha,complete:false,partial:['Alpha'],error:'board unavailable'}]});assert.equal(await group().locator('.project-counts').textContent(),'? shown · ? total');assert.match(await group().locator('.project-counts').getAttribute('aria-label'),/unknown.*board unavailable/);
  await p.close();p=await open({...state,projects:[{...alpha,root:null}]});assert.equal(await group().locator('.project-folder').isDisabled(),true,'missing registered root disables Folder');
+ await p.close();p=await open({...state,projects:[{...alpha,name:'Q'}]});assert(await p.locator('.project-overview').evaluate(e=>e.getBoundingClientRect().width>=32),'one-letter project name retains a 32px hit target');
  await p.close();p=await open({...state,projects:[beta],navigation:saved});await p.waitForFunction(()=>messages.some(m=>m.navigation?.dashboard?.collapsed?.length===0));await p.close();
  // Both native client projections consume the same bundle. Browser geometry does not qualify installed rendering.
  const matrix=[];
