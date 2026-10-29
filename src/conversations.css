@@ -111,7 +111,7 @@
 .conversation-row[aria-current=page]{outline:0;background:var(--raised);border-left-color:var(--work)}
 .conversation-row>span{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
 .thread-marker{color:var(--ask)}
-.conversation-detail>.thread-head{display:flex;align-items:center;flex-wrap:nowrap;gap:4px;min-height:38px;padding:3px 4px 0 6px}
+.conversation-detail>.thread-head{display:flex;align-items:center;flex-wrap:nowrap;gap:4px;min-height:35px;padding:3px 4px 0 6px}
 .thread-head>.options{display:flex;flex:none;gap:0}
 .dialogue-activity{margin:0;padding:0 8px 4px;font-size:.85em;flex:none}
 .dialogue-state{margin:0;color:var(--muted);font-weight:400}
@@ -151,6 +151,10 @@
 .journey-state{display:inline-flex;align-items:center;gap:6px;font-size:.9em;font-weight:500}
 .journey-state[data-state=doing]{color:var(--work)}.journey-state[data-state=ask]{color:var(--ask)}.journey-state[data-state=review]{color:var(--review)}.journey-state[data-state=failed]{color:var(--failed)}.journey-state[data-state=held]{color:var(--muted)}
 .journey-card .thread-card .qac{background:transparent;border:0;padding:0}
+/* #1781: options and Done stay above the pinned composer at 800x600 with large text: Done and evidence share a line, an empty status line takes no height */
+.journey-card .qac-context{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:.6em}.journey-card .qac-context>p{margin:0}
+.journey-card:has(.thread-card){margin:2px 0;padding:8px 8px 6px}.journey-card:has(.thread-card)>.journey-heading{float:left;margin:0 .5em 0 0;padding-top:2px}.journey-card .qac-problem{margin:0 0 2px}.journey-card .qac-choices{clear:left;margin:4px 0}
+.conversations>.conversation-status:empty{min-height:0;padding:0}
 @media(max-width:620px){.conversations .conversation-list-toggle{display:inline-flex}.conversations:has(>.conversation-grid){grid-template-columns:minmax(0,1fr)}.conversations>.chat-entry-bar{border-right:0;border-bottom:1px solid var(--divider,var(--edge))}.conversation-grid>.conversation-list,.conversation-grid>.conversation-detail{grid-column:1;grid-row:2;border-right:0;padding-left:0}.chat-entry-bar [data-c=search-open]{margin-left:0}}
 @media(pointer:coarse){.conversations .compact-action,.conversations .new-chat-action{min-width:44px;min-height:44px;width:auto}.conversations .compact-action{width:44px;height:44px}.list-tabs>button{min-height:44px}}
 .composer-help{position:relative;flex:none}.composer-help>summary{display:flex;align-items:center;justify-content:center;list-style:none;color:var(--muted)}.composer-help>summary::-webkit-details-marker,.composer-help>summary::after{display:none}

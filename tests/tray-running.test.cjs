@@ -68,10 +68,10 @@ c.S.projects[0].tasks.push({n:9,key:'github:p/9',executions:[execution(19,'mac',
 c.S.agents={at:900,fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};
 assert(c.runningAgents().includes('<span class="alert"> · Codex expired</span>'),'an expired sign-in shows on the host line');
 c.S.projects=[];assert.deepEqual(line(c.runningAgents(true)),{label:'mac · runs unknown · Codex expired',meta:''},'this host without an observation is unknown, never idle; #1729 its sign-in warning stays');
-// #1775 A3 (was #1729 three-letter labels): chips carry the full host name; zero counts hide; an execution-only host (no heartbeat) is no strip chip.
+// #1729 A2/A4 (restored by #1781): labels are three letters, longer on collision; zero counts hide; an execution-only host (no heartbeat) is no strip chip.
 c.S.agents=null;c.S.projects=[{...project,hosts:['mac','macbook','hermes-fra1','hermes-win','win'].map(name=>({name,updated:990,live:true})),tasks:[{n:1,state:'doing',executions:[execution(11,'win','codex','worker'),execution(12,'pilot','codex','worker')]}]}];
 const chips=require('./tray-harness.cjs').html(c.runningAgents(true).strip),strong=[...chips.matchAll(/<strong>([^<]*)<\/strong>/g)].map(m=>m[1]);
-assert.deepEqual(strong,['hermes-fra1','hermes-win','mac','macbook','win'],'full names, the fixture-only host is absent');
+assert.deepEqual(strong,['hermes-f','hermes-w','mac','macb','win'],'collisions extend the label, the fixture-only host is absent');
 assert(chips.includes('aria-label="hermes-fra1 · idle"'),'the full name stays in the accessible name');
 assert.equal((chips.match(/class="host-count"/g)||[]).length,1,'only nonzero counts render');
 assert(c.runningAgents().includes('pilot</strong>'),'the execution-only host stays in host details');
