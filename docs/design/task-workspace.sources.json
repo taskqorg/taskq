@@ -4,7 +4,7 @@
   "schema": "taskq.task-workspace/1",
   "files": {
     "src/anchored-popover.js": "107ca8d6b289e661ee5bc609f37a05f88c02c2c7151618fea2bacbb10a3492af",
-    "src/answer-card.js": "e8bf87e48c4371538bad340bca9a359ed53d318fbd79217ee3cb881b73d01933",
+    "src/answer-card.js": "ab8c35b58fe7527c20e5ea41e9f19a7afcc456c8de468d9c3850b0fc2c0d87f9",
     "src/app-shell.js": "69aa242f93a816847a6eb33486fd941a52a4db3f604624511a97a9b6e3bedf21",
     "src/project-blocks.js": "0ec4472064825f8bee2f4b21ddb9a46e24e5b68ade8a2afeffb7cb91c31fecd5",
     "src/resource-controls.js": "87b3d7d931ffbef6b11d90ac30da8ec62879c7d6a21e6d909f660e735988aec0",
@@ -19,7 +19,7 @@
     "src/ui-runtime.js": "84ab02032fba8256b81926aca9198b02ece701b9cbee402f183113bf25fb9a8a",
     "src/workspace-answers.js": "13649b36f226e1a9ce0723c4a1a9791bcd08c7474c9fc5d8ab47d337a9f8b186",
     "src/task-workspace.css": "a17c6a9e1e20023f123189147e5f5df29b09a804567bc76e70743197f2b76461",
-    "src/answer-card.css": "32183e4b805f4d55f9224365784fefa9b3e0235e7a8b5088ee33ba9e538691bb",
+    "src/answer-card.css": "48f66124d87c0c4e69cf23ec1d4a760a1e560610d4d5639214ee650727c65314",
     "src/project-blocks.css": "c1c564cbc48d6e674c2209e1f798d2f54ed46447b7f4426c50152c8dc5bb4ce0",
     "src/resource-controls.css": "9f81ec867aaf0cf95c4abbd5c37889632e1a6034b0e33331b52c41f92b836907",
     "src/app-shell.css": "0f48ac56c0d038d5f074356cd2d28889905624fd18b5cae760a479ad726de349",

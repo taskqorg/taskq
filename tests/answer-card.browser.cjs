@@ -45,11 +45,11 @@ const fx = JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json', 'utf8')
       return {kept, stale, sending, sent: sent.length, done: c.querySelector('.qac').dataset.qacState};
     }, fx.cases.find(c => c.name.startsWith('stale')).rows);
     assert.deepEqual(r, {kept: {draft: 'keep it', focus: true, sel: [2, 4]}, stale: {state: 'stale', draft: 'keep it', send: true}, sending: 'sending', sent: 1, done: 'accepted'}, at);
-    // keyboard: Tab walks choices in source order, then the Other answer and the always-visible evidence link (#1781)
+    // keyboard: Tab walks choices in source order, then the Other answer and context disclosures (Q1)
     await page.evaluate(row => { TaskqAnswerCard.mount(document.getElementById('c'), {capability: () => ({answer: true}), send: () => new Promise(() => {})}).update([{board: 'k', row}]); document.querySelector('.qac-head a').focus(); }, fx.cases[0].rows[0]);
     const order = [];
     for (let i = 0; i < 4; i++) { await page.keyboard.press('Tab'); order.push(await page.evaluate(() => document.activeElement.textContent)); }
-    assert.deepEqual(order, ['1. Keep compatibility ★', '2. Remove the old API', 'Other answer', '#12'], at + ': source order');
+    assert.deepEqual(order, ['1. Keep compatibility ★', '2. Remove the old API', 'Other answer', 'Evidence'], at + ': source order');
     await page.screenshot({path: require('node:os').tmpdir() + '/answer-card-' + scheme + '-' + font + '-' + width + '.png', fullPage: true});
     await page.close();
     console.log('PASS', at);

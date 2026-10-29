@@ -61,9 +61,10 @@ const state={font:20,theme:'dark',host:'fixture-host',version:'fixture',projects
   await small.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await small.addScriptTag({path:'tests/fixtures/conversation-shots.js'});
   await small.evaluate(theme=>{window.ipc={postMessage:()=>{}};taskqConversationShot('badge',{font:18,theme,version:'fixture',ai:{}});},theme);
   await small.locator('.journey-card [data-qac=choose]').first().waitFor();
+  assert.equal(await small.locator('.journey-card .qac-done').count(),1,'#1781: the fixture has a Done line');
   const fold=await small.evaluate(()=>{const top=document.querySelector('.answer-composer').getBoundingClientRect().top,reader=document.querySelector('.conversation-reader');
-   return {scroll:reader.scrollTop,below:['.journey-card [data-qac=choose]','.journey-card .qac-done','.journey-card .qac-evidence'].flatMap(s=>[...document.querySelectorAll(s)]).filter(e=>e.getBoundingClientRect().bottom>top+1).map(e=>e.textContent.trim())};});
-  assert.deepEqual(fold,{scroll:0,below:[]},'#1781: options, Done and evidence sit above the composer at 572x429 / 18 px / '+theme);
+   return {scroll:reader.scrollTop,below:['.journey-card [data-qac=choose]','.journey-card .qac-done','.journey-card .qac-problem'].flatMap(s=>[...document.querySelectorAll(s)]).filter(e=>e.getBoundingClientRect().bottom>top+1).map(e=>e.textContent.trim())};});
+  assert.deepEqual(fold,{scroll:0,below:[]},'#1781: options, Done and the question sit above the composer at 572x429 / 18 px / '+theme);
   assert.equal(await small.locator('.journey-card').getAttribute('aria-label'),'#841 · Keep the old API?','#1773 A3: the card keeps number and title as its accessible name');
   await small.close();
  }

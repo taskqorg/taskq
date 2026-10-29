@@ -23,7 +23,7 @@ for (const c of fx.cases) {
   assert(card.STATES.includes(got[got.length - 1].status));
   console.log('PASS', c.name);
 }
-// #1782: ask images show as thumbnails above the question context and open full size; without the app's copy the link stays;
+// #1782: ask images show as thumbnails outside Details and open full size; without the app's copy the link stays;
 // only a data:image source renders. Risk: the owner decides a visual ask without seeing its images.
 {
   const q = {parsed: true, problem: 'p', choices: [{id: 1, text: 'a', recommended: true}, {id: 2, text: 'b'}], limits: {lines: 4, chars: 240}, evidence: [
@@ -32,11 +32,21 @@ for (const c of fx.cases) {
   const row = {n: 7, title: 'T', state: 'ask', revision: 1, url: 'https://g/7', question: q};
   const html = card.render('b', row, card.fresh(row), {answer: true});
   const img = html.indexOf('<img class="qac-thumb" src="data:image/png;base64,AAAA" alt="front">');
-  assert(img > 0 && img < html.indexOf('<section class="qac-context"'), html);
+  assert(img > 0 && img < html.indexOf('<details'), html);
   assert(html.includes('href="https://g/-/project/1/uploads/s/f.png#upload=2"') && html.includes('side ↗</a>') && html.includes('bad ↗</a>') && !html.includes('javascript:'), html);
-  assert(html.indexOf('>#1</a>') > html.indexOf('<section class="qac-context"'), '#1781: links stay in the visible question context, after the images');
+  assert(html.indexOf('>#1</a>') > html.indexOf('<details class="qac-context"'), 'links stay behind Details');
   console.log('PASS ask images');
 }
+// #1787: a labelled fixture option (the Russian card included) stays within § 2 limits, counted in characters, and
+// its button shows only N. and the label. Risk: a long or cut option on a narrow surface hides what the owner picks.
+for (const c of fx.cases) for (const r of c.rows) for (const ch of (r.question && r.question.choices) || []) {
+  if (ch.detail == null) continue;
+  assert([...ch.label].length <= 32 && [...(ch.id + '. ' + ch.text + ' ★')].length <= 160, c.name + ': option ' + ch.id + ' over § 2 limits');
+  const html = card.render(c.board, r, card.fresh(r), c.capability), b = html.indexOf('data-choice="' + ch.id + '"');
+  const button = html.slice(b, html.indexOf('</button>', b));
+  assert(button.includes(ch.label) && !button.includes(ch.detail) && html.includes('>' + ch.detail + '</span>'), c.name + ': option ' + ch.id + ' button or detail');
+}
+console.log('PASS labelled options');
 // A2: the published assets match the checksums the design doc records
 const doc = fs.readFileSync('docs/design/answer-card.md', 'utf8');
 for (const f of ['src/answer-card.js', 'src/answer-card.css', 'tests/fixtures/answer-card.json']) {

@@ -1,7 +1,7 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "7ddec6cd442c46f82c5f666c7e770d94f60be9c2",
-  "binarySha256": "1526d89457600211e7d0123919453e5788899a8c18d71a91f6c379cce1ecf3a2",
+  "sourceCommit": "dc674232db23548cd6108dbd48f10d850456574c",
+  "binarySha256": "3e1bb97840db713a89792c9e3b692380eb9aba92e225d770357710af9da24c0e",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
@@ -34,7 +34,7 @@
     "src/workspace.js": "3a6ee947a884822781c0779bb801f33840d555e9",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
     "src/workspace-answers.js": "cfdd6efde5f68e25af2d74283a7c09312505fe1f",
-    "src/answer-card.js": "b0cefdcf750c1990de246d099bcfd22290a50932",
+    "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
     "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e"
   },
