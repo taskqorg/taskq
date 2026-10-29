@@ -2060,7 +2060,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 }
                 let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null);
                 // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
-                let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script);
+                let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script)||REPORT_SHOTS.iter().any(|(_,s)|*s==script);
                 if merged {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
                 else {push(&mut web,&ui,&st);}
                 if let (Some((_, wv)), false) = (&ui, script.is_empty() || merged) {

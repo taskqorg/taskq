@@ -125,6 +125,9 @@ fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res
         return Ok(json!({"report":row}));
     }
     if tasks.is_empty() {return Err("report proposes no follow-up tasks".into());}
+    if let Err(receipt)=crate::create_claim_issue(b,raw,&crate::Op::default()) {
+        return Ok(json!({"report":prior,"reason":receipt.reason,"receipt":receipt}));
+    }
     // The first make-intent or Drop on this issue wins across hosts. Intent is not queue state; an unknown or
     // partial Make stays visible and retries reconcile each immutable item claim before completing the decision.
     let reserved=match mark(b,n,sha,"making",&[]) {Ok(r)=>r,Err(e)=>return Ok(unknown(b,n,sha,&prior,&[],e))};
@@ -228,6 +231,17 @@ mod tests {
         let issues=b.state.borrow().issues.len();run("make");assert_eq!(b.state.borrow().issues.len(),issues);assert!(list(&b,1).unwrap()["reports"].as_array().unwrap().is_empty());
         assert!(!b.issue(n).unwrap().open);assert_eq!(crate::core::fold(n,&crate::board::entries(&b,n).unwrap(),false).state,crate::core::State::Closed);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // §1/R1: known creation refusal must leave the report undecided and Drop available.
+    #[test] fn rejected_creation_configuration_never_reserves_the_report() {
+        for invalid in [json!({}),json!({"create_claim_issue":2})] {
+            let (b,_,n,sha)=board();let count=b.comments(n).unwrap().len();
+            let result=owner_act(&b,Path::new("."),&invalid,n,&sha,"make").unwrap();
+            assert_eq!(result["receipt"]["outcome"],"rejected");
+            assert_eq!(b.comments(n).unwrap().len(),count,"known refusal writes no make-intent");
+            assert_eq!(owner_act(&b,Path::new("."),&invalid,n,&sha,"drop").unwrap()["report"]["decision"],"drop");
+        }
     }
 
     #[test] fn unread_source_and_lost_writes_never_claim_success_or_repeat_create() {

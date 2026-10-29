@@ -2791,6 +2791,20 @@ fn run(argv: &[String]) -> Res<()> {
     }
 }
 
+fn create_claim_issue(b: &dyn Board, raw: &Value, op: &Op) -> Result<u64, Receipt> {
+    let read = |reason: String| Receipt {
+        outcome: "unknown", next: "Retry the identical add with the same --op-id for read-only discovery.".into(),
+        ..Receipt::rejected(0, op, reason)
+    };
+    let claim_issue = raw["create_claim_issue"].as_u64().filter(|n| *n > 0)
+        .ok_or_else(|| Receipt::rejected(0, op, "configure create_claim_issue before idempotent create"))?;
+    let issue = b.issue(claim_issue).map_err(read)?;
+    if !issue.trusted || service::is_task(&issue) || service::is_held(&issue) || issue.labels.iter().any(|l| l == "taskq-host") {
+        return Err(Receipt::rejected(0, op, "create_claim_issue must be trusted and outside the queue/hosts"));
+    }
+    Ok(claim_issue)
+}
+
 /// §1 create claim: only the invocation that reads back its winning claim may POST an issue.
 fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &[String], later_text: &str, op: &Op) -> Result<u64, Receipt> {
     let id = op.id.as_deref().expect("claimed create needs an op id");
@@ -2799,12 +2813,7 @@ fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &
         ..Receipt::rejected(n, op, reason)
     };
     let read = |e| unknown(0, e);
-    let claim_issue = raw["create_claim_issue"].as_u64().filter(|n| *n > 0)
-        .ok_or_else(|| Receipt::rejected(0, op, "configure create_claim_issue before idempotent create"))?;
-    let issue = b.issue(claim_issue).map_err(read)?;
-    if !issue.trusted || service::is_task(&issue) || service::is_held(&issue) || issue.labels.iter().any(|l| l == "taskq-host") {
-        return Err(Receipt::rejected(0, op, "create_claim_issue must be trusted and outside the queue/hosts"));
-    }
+    let claim_issue = create_claim_issue(b, raw, op)?;
     let request = json!({"actor": b.me().map_err(read)?, "title": title, "body": body, "labels": labels, "later_text": later_text}).to_string();
     let hash: String = ring::digest::digest(&ring::digest::SHA256, request.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
     let header = format!("taskq: create-claim {id}");
