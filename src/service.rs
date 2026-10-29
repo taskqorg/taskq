@@ -1123,6 +1123,15 @@ impl<'a> Service<'a> {
         Ok(id)
     }
 
+    /// #1879: `x` is task `n`'s initial spawn on this host and no start reached its native call: every start writes the
+    /// attempt log's rules line first, and every start error before it is a no-start, so a missing log with no child, held
+    /// launch or acceptance is a confirmed no-start.
+    fn lost_spawn(&self, n: u64, x: &core::Execution) -> bool {
+        x.id == x.attempt && x.host == self.cfg.me && !x.accepted && x.release.is_none()
+            && !self.kids.iter().any(|k| k.task == n) && !self.held.iter().any(|l| l.task == n)
+            && ["worker", "reviewer"].iter().all(|r| crate::runtime::attempt_log(&self.cfg.root, r, n, x.attempt).try_exists().is_ok_and(|e| !e))
+    }
+
     fn exit_outcome(&mut self, n: u64, t: &Task, a: u64, hold: Option<(i64, bool)>, now: i64, text: &str) -> Result<u64, String> {
         let local = host_of(t) == Some(self.cfg.me.as_str());
         let hold = hold.or_else(|| local.then(|| {
@@ -1362,6 +1371,8 @@ impl<'a> Service<'a> {
                 }
                 continue;
             }
+            // #1879: nothing native to recover; the resume step releases a lost spawn
+            if self.lost_spawn(task, x) { continue; }
             let Some(recover) = &mut self.recover else { continue };
             if std::time::Instant::now()>=recovery_until {
                 self.execution_waits.insert(task,format!("execution {}: native observation deferred; recovery budget exhausted",x.id));
@@ -1683,6 +1694,23 @@ impl<'a> Service<'a> {
                     self.launch(l, a, log)?;
                 } else {
                     pending.insert((n, a));
+                }
+                continue;
+            }
+            // #1879 (pilotq#133): a spawn whose start was never reached waits one ttl under its own reason, then ends gone
+            if let Some(x) = v.projection.executions.iter().rev().find(|x| x.attempt == a)
+                .filter(|x| self.lost_spawn(n, x) && v.projection.executions.iter().filter(|x| x.release.is_none()).count() == 1) {
+                let age = now - v.comments.iter().find(|c| c.id == x.id).map_or(now, |c| c.created);
+                if age < ttl {
+                    self.execution_waits.insert(n, format!("spawn {a} not started on {me}: input not accepted; lost spawn released no-start {ttl} s after the spawn"));
+                    pending.insert((n, a));
+                } else {
+                    self.log.push(format!("#{n} lost spawn {a}: no attempt log on {me} {age} s after the spawn; released no-start"));
+                    release_execution(self.board, n, a, a, "no-start")?;
+                    self.retired(n, a, a, false);
+                    self.execution_waits.remove(&n);
+                    self.gone(n, t, a, &[], &format!("start failed: lost spawn {a}: no native start on {me} {age} s after the spawn"))?;
+                    touched.insert(n);
                 }
                 continue;
             }
@@ -2068,7 +2096,8 @@ impl<'a> Service<'a> {
         let session = crate::runtime::new_session(rt);
         let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, ""))?;
         let comments = self.board.comments(n)?;
-        if !comments.iter().any(|c| c.id == id) {
+        let seen = comments.iter().any(|c| c.id == id);
+        if !seen {
             crate::incident::detect("adapter.read_after_write", concat!("src/service.rs:", line!()), rt, &[], &["spawn:missing"]);
         }
         let log = crate::board::reply::log(n, &comments)?;
@@ -2076,7 +2105,8 @@ impl<'a> Service<'a> {
         if t.attempt != Some(id) {
             self.reserved.retain(|r| r.0 != n); // released
             self.sync_host();
-            self.log.push(format!("#{n} spawn {id} lost the claim"));
+            // a readback without the spawn leaves its claim unknown; a won claim ends as a lost spawn (#1879)
+            self.log.push(if seen { format!("#{n} spawn {id} lost the claim") } else { format!("#{n} spawn {id} claim unknown: readback lacks the spawn") });
             return Ok(None);
         }
         for r in self.reserved.iter_mut().filter(|r| r.0 == n && r.1 == 0) { r.1 = id; }
@@ -2313,9 +2343,10 @@ mod tests {
         let before: fn() -> Result<i64, String> = || Ok(500_000);
         let failed: fn() -> Result<i64, String> = || Err("sysctl kern.boottime failed".into());
         for (case, boot, host) in [("after", after, "mac"), ("before", before, "mac"), ("failed", failed, "mac"), ("foreign", after, "win")] {
-            let b = Fake::default(); b.advance(1_000_000); let c = cfg("mac");
+            let b = Fake::default(); b.advance(1_000_000); let mut c = cfg("mac");
             let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
             let a = b.comment(n, &format!("taskq: spawn worker codex:session {host}")).unwrap();
+            c.root = started_root("boot", n, a);
             let mut s = Service::new(&b, &c, "fixture", Box::new(|_| panic!("no launch")));
             s.boot = boot;
             s.pass().unwrap(); s.pass().unwrap();
@@ -2367,10 +2398,11 @@ mod tests {
     fn cold_native_observers_never_use_the_launch_path() {
         for rt in ["claude","codex-app"] {
             for case in ["live","unknown","missing","foreign","released","ambiguous"] {
-                let b=Fake::default();let c=cfg("mac");
+                let b=Fake::default();let mut c=cfg("mac");
                 let n=b.create("T","",&[TASK_LABEL.into()]).unwrap();
                 let host=if case=="foreign" {"other"} else {"mac"};
                 let a=b.comment(n,&format!("taskq: spawn worker {rt}:session {host}")).unwrap();
+                c.root=started_root("cold",n,a);
                 if case=="released" {release_execution(&b,n,a,a,"exit").unwrap();}
                 if case=="ambiguous" {
                     b.comment(n,&core::entry("gone",&[],Some(a),"legacy gone without native exit")).unwrap();
@@ -3028,6 +3060,14 @@ Open: none")).unwrap();
 
     fn task(b: &Fake, n: u64) -> Task {
         core::fold(n, &entries(b, n).unwrap(), false)
+    }
+
+    /// A project root holding the attempt log a start writes before its native call: a started execution's evidence (#1879).
+    fn started_root(tag: &str, n: u64, a: u64) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("taskq-{tag}-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(root.join(".taskq")).unwrap();
+        std::fs::write(crate::runtime::attempt_log(&root, "worker", n, a), "").unwrap();
+        root
     }
 
     // Chain: § 1 held, a person adds `taskq` on the board. Risk: the label path leaves a held log under a `taskq` label,
@@ -4668,6 +4708,62 @@ Open: none")).unwrap();
         assert_eq!((t.state, t.retries), (State::Ask, 2));
         assert!(card.contains("confirmed NoStart") && card.contains("Problem: retry limit 2 reached by this gone"), "{card}");
         assert_eq!(core::options(&card).len(), 2);
+    }
+
+    // Chain: #1879 (pilotq#133) claim readback lacks the won spawn -> no start, child or attempt log -> named wait for one
+    // ttl -> released no-start -> gone -> ready; the repeat reaches the retry-limit card. Risk: the spawn stays doing /
+    // starting with `Run state unknown` until the PM requeues it, or a spawn whose start was reached is released.
+    #[test]
+    fn lost_spawn_waits_one_ttl_then_ends_gone_and_a_reached_start_stays_unknown() {
+        let dir = std::env::temp_dir().join(format!("taskq-lost-spawn-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(dir.join(".taskq")).unwrap();
+        let mut c = cfg("mac");
+        c.root = dir.clone();
+        let b = Fake::default();
+        let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+        let other = b.create("note", "", &[]).unwrap();
+        let exits = Rc::new(RefCell::new(vec![]));
+        let mut s = service(&b, &c, exits.clone());
+        let wait = |s: &Service| s.snapshot.as_ref().unwrap().json()["tasks"].as_array().unwrap().iter()
+            .find(|r| r["n"] == n).map(|r| r["wait"].as_str().unwrap_or_default().to_string()).unwrap();
+        for round in 1..=2 {
+            // the lag hides only the newest comment: the spawn, never the previous round's gone
+            b.comment(other, "unrelated").unwrap();
+            b.state.borrow_mut().hide_latest_comment = true;
+            s.pass().unwrap();
+            b.state.borrow_mut().hide_latest_comment = false;
+            let a = task(&b, n).attempt.unwrap_or_else(|| panic!("round {round}: no spawn won"));
+            assert_eq!((task(&b, n).state, exits.borrow().len(), s.kids.len()), (State::Doing, 0, 0), "round {round}: start never called");
+            s.pass().unwrap();
+            assert!(s.execution_waits[&n].contains(&format!("spawn {a} not started on mac")), "round {round}: {:?}", s.execution_waits);
+            assert_eq!(wait(&s), crate::snapshot::WAIT_TEXTS[2], "round {round}: named wait, not Run state unknown");
+            b.advance(c.ttl);
+            s.pass().unwrap();
+            let log = entries(&b, n).unwrap();
+            assert_eq!(core::executions(n, &log).iter().find(|x| x.id == a).unwrap().release, Some(core::Release::NoStart), "round {round}");
+            let gone = b.comments(n).unwrap().into_iter().find(|c| c.body.starts_with(&format!("taskq: gone attempt {a}"))).expect("gone");
+            assert!(gone.body.contains(&format!("lost spawn {a}")), "round {round}: {}", gone.body);
+            assert!(s.log.iter().any(|l| l.starts_with(&format!("#{n} lost spawn {a}: no attempt log on mac"))), "round {round}: {:?}", s.log);
+            let t = task(&b, n);
+            if round == 1 {
+                assert_eq!((t.state, t.retries, t.attempt), (State::Ready, 1, None));
+            } else {
+                assert_eq!((t.state, t.retries), (State::Ask, 2));
+                assert!(t.card.unwrap().contains("Problem: retry limit 2 reached by this gone"));
+            }
+        }
+        // A start that reached its native call (attempt log written) stays unknown after ttl: never released as no-start.
+        let b = Fake::default();
+        let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+        let a = b.comment(n, &core::entry("spawn", &["worker", "codex:-", "mac"], None, "")).unwrap();
+        std::fs::write(crate::runtime::attempt_log(&dir, "worker", n, a), "").unwrap();
+        let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
+        b.advance(c.ttl);
+        s.pass().unwrap();
+        assert_eq!((task(&b, n).state, task(&b, n).attempt), (State::Doing, Some(a)));
+        assert_eq!(core::executions(n, &entries(&b, n).unwrap())[0].release, None);
+        assert!(s.execution_waits[&n].contains("termination unconfirmed"), "{:?}", s.execution_waits);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Chain: § 4 Filter, worker runtime admission over tests/golden/admit.json. Risk: unlabeled work moves to codex while claude is full; a legacy preference beats run-*.
