@@ -20,6 +20,8 @@ pub struct Issue {
     pub updated: i64,
     /// Board creation time: the entry time of the first state, ready (§ 1)
     pub created: i64,
+    /// Board closure time; absent is unknown, never the last edit time.
+    pub closed: Option<i64>,
     pub open: bool,
     pub trusted: bool,
     /// Why a closed issue closed, when the board records it (GitHub `state_reason`): `completed`, `not_planned`, ...
@@ -836,7 +838,7 @@ impl Board for Fake {
         let t = st.tick();
         st.next_id += 1;
         let number = st.issues.len() as u64 + 1;
-        st.issues.push(Issue { number, title: title.into(), body: body.into(), labels: labels.to_vec(), assignees: vec![], updated: t, created: t, open: true, trusted: true, reason: None });
+        st.issues.push(Issue { number, title: title.into(), body: body.into(), labels: labels.to_vec(), assignees: vec![], updated: t, created: t, closed: None, open: true, trusted: true, reason: None });
         Ok(number)
     }
     fn edit(&self, n: u64, body: &str) -> Result<()> {
@@ -855,6 +857,7 @@ impl Board for Fake {
         let t = st.tick();
         let i = st.get(n)?;
         i.open = false;
+        i.closed = Some(t);
         i.reason = Some("completed".into());
         i.updated = t;
         Ok(())
@@ -988,6 +991,25 @@ mod tests {
         api.transport = Some(transport);
         *api.label_schema.borrow_mut() = schema;
         (kind.board)(api)
+    }
+
+    // #1829 A1/A3: exact GitHub/GitLab issue reads retain closure time independently of later edits.
+    #[test]
+    fn closed_pin_adapters_retain_board_closure() {
+        for kind in BOARDS {
+            let b=http(kind,Some(true),Box::new(|method,url,_| {
+                assert_eq!(method,"GET");
+                let v=if url.contains("/members/") { json!({"access_level":20}) } else {
+                    assert!(url.ends_with("/issues/7"),"exact pin read: {url}");
+                    json!({"number":7,"iid":7,"state":"closed","state_reason":"completed","author_association":"OWNER","author":{"id":1},
+                        "labels":["taskq"],"closed_at":"2026-10-28T00:00:00Z","updated_at":"2026-10-29T00:00:00Z"})
+                };
+                Ok(Reply {status:200,headers:vec![],body:v.to_string(),operation:"read"})
+            }));
+            let i=b.issue(7).unwrap();
+            assert_eq!((i.number,i.open,i.closed),(7,false,iso("2026-10-28T00:00:00Z")));
+            assert!(i.trusted && i.closed.unwrap()<i.updated);
+        }
     }
     /// A recorded GitHub response; tests/fixtures/github-merge-queue/README.md says how to re-record.
     fn recorded(name: &str) -> Value {

@@ -79,7 +79,7 @@ const USAGE: &str = "taskq agents
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
- taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] | taskq inbox N
+ taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -112,7 +112,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -737,23 +737,48 @@ fn inbox(b: &dyn Board, n: u64) -> Res<String> {
 /// MP14 Completed: one board page of closed tasks with their sourced outcome, result line, last PR link and merge receipt; no store.
 fn closed_history(b: &dyn Board, page: u32, since: Option<i64>, gitlab: bool) -> Res<Value> {
     let (issues, more) = b.closed_tasks(page, since)?;
-    let tasks: Vec<Value> = issues.iter().filter(|(_, closed)| since.is_none_or(|t| *closed >= t)).map(|(i, closed)| {
-        let log = entries(b, i.number);
-        // § 1: GitHub records why an issue closed; GitLab records no reason, so a closed GitLab issue is done
-        let outcome = match (i.reason.as_deref(), gitlab) { (Some("completed"), _) | (None, true) => "success", (Some("not_planned"), _) => "not_planned", _ => "unknown" };
-        let (result, pr) = log.as_ref().map_or((Value::Null, Value::Null), |log| {
-            let t = fold(i.number, log, false);
-            let pr = log.iter().flat_map(|e| e.body.split_whitespace()).filter(|w| w.starts_with("https://") && (w.contains("/pull/") || w.contains("/merge_requests/"))).last();
-            (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
-        });
-        let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
-        // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
-        let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| e.body.split_once('\n').map_or("", |x| x.1)));
-        let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
-        let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-        json!({"n": i.number, "title": i.title, "url": b.url(i.number), "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "error": log.err()})
-    }).collect();
+    let tasks: Vec<Value> = issues.iter().filter(|(_, closed)| since.is_none_or(|t| *closed >= t))
+        .map(|(i, closed)| closed_row(b, i, Some(*closed), gitlab)).collect();
     Ok(json!({"schema": 1, "source": "board", "page": page.max(1), "more": more, "tasks": tasks}))
+}
+
+/// P-W1: exact pin reads share Completed's outcome projection, never depend on its loaded page.
+fn closed_row(b: &dyn Board, i: &board::Issue, closed: Option<i64>, gitlab: bool) -> Value {
+    let log = entries(b, i.number);
+    // § 1: GitHub records why an issue closed; GitLab records no reason, so a closed GitLab issue is done
+    let outcome = match (i.reason.as_deref(), gitlab) { (Some("completed"), _) | (None, true) => "success", (Some("not_planned"), _) => "not_planned", _ => "unknown" };
+    let (result, pr) = log.as_ref().map_or((Value::Null, Value::Null), |log| {
+        let t = fold(i.number, log, false);
+        let pr = log.iter().flat_map(|e| e.body.split_whitespace()).filter(|w| w.starts_with("https://") && (w.contains("/pull/") || w.contains("/merge_requests/"))).last();
+        (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
+    });
+    let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
+    // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
+    let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| e.body.split_once('\n').map_or("", |x| x.1)));
+    let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
+    let close = log.is_ok().then(|| display::close_outcome(verdict, next));
+    json!({"n": i.number, "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "error": log.err()})
+}
+
+fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
+    let i = b.issue(n)?;
+    if i.number != n || !service::is_task(&i) { return Err("Pinned issue is not the requested trusted task".into()); }
+    Ok(json!({"schema":1,"source":"board","more":false,"tasks":[closed_row(b,&i,i.closed,gitlab)]}))
+}
+
+/// Read only: use the last accepted worker's native identity, only on its recorded host.
+fn closed_transcript(b: &dyn Board, n: u64, host: &str, before: Option<u64>) -> Res<Value> {
+    let i = b.issue(n)?;
+    if i.number != n || i.open || !service::is_task(&i) { return Err("Transcript requires a closed trusted task; refresh the project".into()); }
+    let log = entries(b,n)?;
+    let projection = core::project(n,&log,false);
+    let t = projection.changes.iter().rev().map(|(_,_,t)|t).find(|t| t.role.as_deref()==Some("worker") && t.session.is_some()).ok_or("No recorded worker transcript")?;
+    let (native,owner) = t.session.as_deref().unwrap_or_default().rsplit_once(' ').ok_or("Worker identity unavailable")?;
+    if owner != host { return Err(format!("Transcript is on host {owner}; open it there")); }
+    let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
+    let path = runtime::owner::transcript(runtime,session)?;
+    let page = transcript::before(runtime::of(runtime).codex,&path,before)?;
+    Ok(json!({"items":page.items,"start":page.start,"end":page.end,"size":page.size}))
 }
 
 /// #1679: the PR/MR merge `close` read back (§ 7 `delivery <preset> r<R>: merged #P ..`, GitLab `merged !P`); none stays unknown.
@@ -3008,7 +3033,14 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if a.flags.contains_key("closed") {
                 let page = a.one("page").map_or(Ok(1), |p| p.parse::<u32>().map_err(|_| "bad --page"))?;
                 let since = a.one("since").map(|t| t.parse::<i64>().map_err(|_| "bad --since: board seconds")).transpose()?;
-                println!("{}", closed_history(b, page, since, cfg.board.name == "gitlab")?);
+                let value = if let Some(n) = a.one("task") {
+                    let n = n.parse::<u64>().ok().filter(|n|*n>0).ok_or("bad --task")?;
+                    if a.flags.contains_key("transcript") {
+                        let before = a.one("before").map(|v|v.parse::<u64>().map_err(|_|"bad --before")).transpose()?;
+                        json!({"transcript":closed_transcript(b,n,&cfg.me,before).map_or_else(|reason|json!({"reason":reason}),|v|v)})
+                    } else { closed_pin(b,n,cfg.board.name=="gitlab")? }
+                } else { closed_history(b,page,since,cfg.board.name=="gitlab")? };
+                println!("{value}");
                 return Ok(());
             }
             let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
@@ -5077,6 +5109,31 @@ mod tests {
         assert_eq!((last["tasks"].as_array().unwrap().len(), last["more"].clone()), (2, json!(false)));
         assert_eq!(closed_history(&b, 1, None, true).unwrap()["tasks"][1]["outcome"], "success", "§ 1: a closed GitLab issue is done");
         assert_eq!(closed_history(&b, 1, Some(110), false).unwrap()["tasks"].as_array().unwrap().len(), 3, "period keeps closes at or after since");
+    }
+
+    // #1829 A1/A2: a pin outside page one reads its exact board outcome; native reads cannot resume work or cross hosts.
+    #[test]
+    fn closed_pin_reads_exact_issue_and_fences_transcript() {
+        let b = Fake::default();
+        for n in 1..=12 { b.create(&format!("pin {n}"), "", &["taskq".into()]).unwrap(); b.close(n).unwrap(); }
+        assert!(closed_history(&b,1,None,false).unwrap()["tasks"].as_array().unwrap().iter().all(|t|t["n"]!=1));
+        let closed = b.issue(1).unwrap().closed;
+        b.comment(1,"A later comment must not reset the closure time").unwrap();
+        let pin = closed_pin(&b,1,false).unwrap()["tasks"][0].clone();
+        assert_eq!((pin["n"].clone(),pin["state"].clone(),pin["outcome"].clone(),pin["closed"].clone()),(json!(1),json!("closed"),json!("success"),json!(closed)));
+        b.state.borrow_mut().issues[0].reason=None;
+        assert_eq!(closed_pin(&b,1,false).unwrap()["tasks"][0]["outcome"],"unknown");
+        assert_eq!(closed_pin(&b,1,true).unwrap()["tasks"][0]["outcome"],"success","§ 1 GitLab has no closure reason");
+        b.state.borrow_mut().issues[0].open=true;
+        assert_eq!(closed_pin(&b,1,true).unwrap()["tasks"][0]["state"],"open");
+        assert!(closed_transcript(&b,1,"mac",None).unwrap_err().contains("closed trusted task"));
+        let spawn=b.comment(1,"taskq: spawn worker codex:invented1829 remote").unwrap();
+        b.comment(1,&format!("taskq: result {} attempt {spawn}","a".repeat(40))).unwrap();
+        b.close(1).unwrap();
+        assert!(closed_transcript(&b,1,"mac",None).unwrap_err().contains("on host remote"));
+        b.state.borrow_mut().issues[0].trusted=false;
+        assert!(closed_pin(&b,1,true).unwrap_err().contains("trusted task"));
+        assert!(closed_pin(&b,999,false).is_err());
     }
 
     // Chain: #1679 A1 § 5 `status --closed [--page N]`. Risk: `--closed` eats `--page` as its value (before: `unused

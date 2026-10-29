@@ -32,14 +32,15 @@ const {create}=execution.module('workspace',{
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
    task:function(row){
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
-    const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
+    const composer=!row.archived&&p&&t?.state==='ask'?api.answerComposer(p,t):{};
     // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
     const ev=row.event,url=row.board+'/'+row.task,busy=!!view.messageBusy;
-    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('div',{class:'conversation-tools'},api.eventButtons(ev)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
+    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('button',{'data-a':'message-delete','data-key':ev.key,disabled:busy},'Delete permanently'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
      h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),
       h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':'github')),
-      ev&&!ev.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
-      ev&&!ev.archived&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
+      ev&&!row.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
+      row.archived?h('button',{'data-a':'thread-restore','data-thread':row.id,disabled:busy},'Restore'):ev&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
+     row.archived&&h('p',{role:'status'},'Archived in TaskQ · read-only. Restore before replying.'),
      api.threadNotice(row.id),
      // #1819: the task's pending operation (Sending, Waiting GitHub, Done, Failed with Retry), as on the menu row
      syncView.row(t?.sync),
@@ -47,7 +48,7 @@ const {create}=execution.module('workspace',{
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
       // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
-      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,conversations.worker(row.id,t),answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?h('p',{class:'conversation-text'},t.question?.text||t.card||'No recorded question.'):t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,conversations.worker(row.id,t),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -87,7 +88,7 @@ const {create}=execution.module('workspace',{
      const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=p?.tasks?.find(t=>t.n===row.task);
      if(t){row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=typeof t.updated==='number'?t.updated*1000:null;}
      if(p){row.root=p.root;row.project=p.name;}
-     if(!row.event)row.archived=Object.hasOwn(local.archived||{},row.id);
+     row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
      // #1819: an answer's expected state shows here in the same frame, marked unconfirmed until the board shows it
      const state=t?.state||row.event?.state,unconfirmed=['sending','waiting'].includes(t?.sync?.phase)?' ⟳':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
@@ -95,6 +96,7 @@ const {create}=execution.module('workspace',{
     }
     return [...rows.values()];
    },
+   openTask:function(board,task,root){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root);conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);},
    // #1699 A2: the menu badge selects the first unread thread, an open question first; nothing is acknowledged
    unread:function(){
     const e=(snapshot.value?.messages?.entries||[]).filter(r=>!r.archived&&!r.read),r=e.find(r=>r.kind==='question'&&r.state==='ask')||e.find(r=>r.kind==='question')||e.find(r=>r.kind==='request');
@@ -156,8 +158,8 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'){
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
      if(context?.thread==='unread')api.unread();
-     else if(context?.board&&context?.task){conversations.flush();conversations.remember('task:'+context.board+'/'+Number(context.task),context.root);conversations.show('recent');conversations.select('task:'+context.board+'/'+Number(context.task),false);}
-     else if(r?.kind==='question'){conversations.show('recent');conversations.select('task:'+r.board+'/'+r.task,false);}
+     else if(context?.board&&context?.task)api.openTask(context.board,context.task,context.root);
+     else if(r?.kind==='question')api.openTask(r.board,r.task,r.root);
      else if(r&&!conversations.reveal(r.id,false)){conversations.show(r.archived?'archive':'recent');conversations.select('event:'+r.key,false);}
     }
     view.disclosures={};view.restoreScroll=0;
@@ -203,6 +205,7 @@ const {create}=execution.module('workspace',{
     ui.listen(menu,'click',e=>{
      const link=e.target.closest('a');if(link){e.preventDefault();ui.send({a:'open',url:link.dataset.url||link.href});return;}
      const b=e.target.closest('button');if(!b||b.disabled)return;
+     if(b.dataset.a==='thread-restore'){const row=api.threads().find(r=>r.id===b.dataset.thread);if(row?.event?.archived)api.messageAction('restore',[row.event.key],row.id);if(row&&Object.hasOwn(conversations.sidebarState().archived||{},row.id))conversations.sidebar('restore',row.id,undefined,row.root||'');return;}
      if(view.page==='operations'){
       if(b.dataset.route==='recovery'){api.navigate('operations',{operation:'recovery'});return;}
       if(operations.operationAction(b.dataset))return;

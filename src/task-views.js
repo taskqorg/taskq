@@ -7,7 +7,7 @@ const api=execution.module('taskViews',{
  identity:function(p){try{const u=new URL(p.issues);return (p.board_kind||'unknown')+'://'+u.host.toLowerCase()+u.pathname.replace(/\/(?:-\/)?issues\/?$/,'').replace(/\/$/,'');}catch{return null;}},
  criteria:function(v={}){v=v&&typeof v==='object'&&!Array.isArray(v)?v:{};return {states:states.filter(s=>Array.isArray(v.states)&&v.states.includes(s)),projects:[...new Set(Array.isArray(v.projects)?v.projects.filter(p=>typeof p==='string'&&p.length<=2048):[])],query:api.text(v.query,1024),group:v.group==='combined'?'combined':'project',period:periods.includes(v.period)?v.period:'30d',outcomes:outcomes.filter(o=>Array.isArray(v.outcomes)&&v.outcomes.includes(o))};},
  view:function(v){return {id:v.id,name:v.name,pinned:v.pinned!==false,saved:api.criteria(v.saved),working:api.criteria(v.working||v.saved),scroll:Number.isFinite(v.scroll)&&v.scroll>=0?v.scroll:0,open:api.text(v.open,4096)||null,draft:api.text(v.draft,80)};},
- pin:function(p){return p&&typeof p.ref==='string'&&p.ref.length<=4096?{ref:p.ref,title:api.text(p.title,1024),url:api.text(p.url,4096)}:null;},
+ pin:function(p){return p&&typeof p.ref==='string'&&p.ref.length<=4096?{ref:p.ref,title:api.text(p.title,1024),url:api.text(p.url,4096),...(Number.isFinite(p.closedSeen)&&p.closedSeen>0?{closedSeen:p.closedSeen}:{})}:null;},
  builtin:function(id){return builtins.some(([b])=>b===id);},
  normalize:function(value,legacy={}){
   const valid=v=>v&&typeof v.id==='string'&&/^[a-z0-9-]{1,64}$/.test(v.id)&&typeof v.name==='string'&&v.name.trim()&&v.name.length<=80;
