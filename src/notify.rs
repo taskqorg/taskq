@@ -191,6 +191,7 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
         }
     }
     out.extend(stale_grant(n, ps));
+    out.extend(grant_notices(n, ps));
     out
 }
 
@@ -212,6 +213,39 @@ pub fn stale_grant(n: &mut Value, ps: &[Value]) -> Option<Post> {
     }
     n["stale_grant"] = json!(true);
     Some(Post { root: String::new(), n: None, title: "taskq · Screen Recording grant is stale".into(), body: STALE_GRANT.into(), sound: false, id: json!({"stale_grant": true}).to_string() })
+}
+
+/// The owner step for an Accessibility or App Data grant that reads `missing` or `stale` (#1845); `bin` is `<install>/taskq`.
+pub fn grant_step(key: &str, state: &str, bin: &str) -> String {
+    let pane = if key == "app_data" { "App Data" } else { "Accessibility" };
+    let remove = if state == "stale" { "select taskq, remove it (-), then " } else { "" };
+    format!("System Settings > Privacy & Security > {pane}: {remove}add {bin} with + and switch it on.")
+}
+
+/// One notice per Accessibility or App Data episode (#1845 A2), like `stale_grant`: the first status that reads the
+/// grant `missing` or `stale` posts it and records `grants.<key>` in `n`; a pass where no status reads it so ends it.
+pub fn grant_notices(n: &mut Value, ps: &[Value]) -> Vec<Post> {
+    if !n.is_object() {
+        *n = json!({});
+    }
+    let mut out = vec![];
+    for (key, _) in crate::platform::GRANTS {
+        let bad = ps.iter().find(|p| matches!(p["gui"]["grants"][key].as_str(), Some("missing" | "stale")));
+        let Some(p) = bad else {
+            if let Some(g) = n["grants"].as_object_mut() { g.remove(key); }
+            continue;
+        };
+        if n["grants"][key] == true {
+            continue;
+        }
+        if !n["grants"].is_object() { n["grants"] = json!({}); }
+        n["grants"][key] = json!(true);
+        let state = p["gui"]["grants"][key].as_str().unwrap_or_default();
+        let pane = if key == "app_data" { "App Data" } else { "Accessibility" };
+        let body = grant_step(key, state, p["gui"]["binary"].as_str().unwrap_or("taskq"));
+        out.push(Post { root: String::new(), n: None, title: format!("taskq · {pane} grant is {state}"), body, sound: false, id: json!({"grant": key}).to_string() });
+    }
+    out
 }
 
 /// `Send test`: one sample of `kind` (its host mode decides the sound).
@@ -390,6 +424,26 @@ mod tests {
 
     fn proj(events: Value) -> Value {
         json!({"root": "/p", "name": "p", "tasks": [{"n": 7, "title": "Fix it"}], "events": events})
+    }
+
+    // Defect #1845 A2: only Screen Recording had an owner notice; a stale Accessibility grant became a worker ask.
+    // Risk: the notice repeats each tick or restart, or never returns for a new episode.
+    #[test]
+    fn grant_notices_once_per_episode() {
+        let bad = |k: &str, s: &str| [json!({"gui": {"grants": {k: s}, "binary": "/i/taskq"}})];
+        let mut n = json!({});
+        assert!(grant_notices(&mut n, &bad("accessibility", "allowed")).is_empty());
+        let post = grant_notices(&mut n, &bad("accessibility", "stale"));
+        assert_eq!(post.len(), 1, "first stale read posts");
+        assert_eq!(post[0].body, "System Settings > Privacy & Security > Accessibility: select taskq, remove it (-), then add /i/taskq with + and switch it on.");
+        assert!(grant_notices(&mut n, &bad("accessibility", "missing")).is_empty(), "repeated within the episode");
+        let saved = n.to_string();
+        assert!(grant_notices(&mut serde_json::from_str(&saved).unwrap(), &bad("accessibility", "stale")).is_empty(), "repeated after a restart");
+        assert!(grant_notices(&mut n, &bad("accessibility", "allowed")).is_empty());
+        assert_eq!(grant_notices(&mut n, &bad("accessibility", "missing"))[0].body, "System Settings > Privacy & Security > Accessibility: add /i/taskq with + and switch it on.", "a new episode notifies again");
+        let app = grant_notices(&mut n, &bad("app_data", "stale"));
+        assert_eq!((app.len(), app[0].title.as_str()), (1, "taskq · App Data grant is stale"));
+        assert!(grant_notices(&mut n, &bad("app_data", "unknown")).is_empty() && n["grants"].get("app_data").is_none(), "unknown ends the App Data episode");
     }
 
     // Defect #1803 A2: a cdhash-pinned grant re-prompted forever with no owner step. Risk: the notice repeats each

@@ -423,6 +423,8 @@ pub struct Service<'a> {
     pub gui_probe: Result<(), String>,
     /// #1803: the last gui probe read a stale grant (`platform::stale_grant`); the tray notifies once.
     pub gui_stale: bool,
+    /// #1845: `platform::grants` of the last gui probe; a `missing` or `stale` one holds gui work.
+    pub grants: BTreeMap<String, String>,
     pub full: BTreeSet<String>,
     pub waits: BTreeMap<u64, String>,
     pub execution_waits: BTreeMap<u64, String>,
@@ -668,7 +670,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -2062,6 +2064,9 @@ impl<'a> Service<'a> {
     /// This host lists `gui` (§ 4 Filter): the probe holds and a runtime runs with Full access.
     pub fn gui(&self) -> Result<(), String> {
         self.gui_probe.clone()?;
+        if let Some((k, v)) = self.grants.iter().find(|(_, v)| *v == "missing" || *v == "stale") {
+            return Err(format!("{} grant {v} (TCC)", if k == "app_data" { "App Data" } else { "Accessibility" }));
+        }
         if self.gui_checked.is_none_or(|at| at.elapsed().as_secs() >= 300) {
             return Err("GUI capture evidence missing or stale (300 s)".into());
         }
@@ -5347,7 +5352,8 @@ Open: none";
     // § 4 GUI eligibility: won claims retain their lease/slot while evidence expires or access is revoked.
     #[test]
     fn needs_gui_held_launch_rechecks_evidence_and_grant() {
-        for case in ["missing", "unsupported", "stale", "revoked"] {
+        // #1845 A3: a stale Accessibility grant holds the launch with a visible reason instead of a worker ask
+        for case in ["missing", "unsupported", "stale", "revoked", "grant"] {
             let b = Fake::default();
             let n = b.create("GUI", "", &[TASK_LABEL.into(), "needs-gui".into()]).unwrap();
             let c = cfg("mac");
@@ -5366,10 +5372,13 @@ Open: none";
                 "missing" => s.gui_checked = None,
                 "unsupported" => s.gui_probe = Err("no gui probe on this OS".into()),
                 "stale" => s.gui_checked = Some(std::time::Instant::now() - std::time::Duration::from_secs(300)),
+                "grant" => { s.grants.insert("accessibility".into(), "stale".into()); }
                 _ => s.full.clear(),
             }
             s.pass().unwrap();
             assert!(exits.borrow().is_empty(), "{case}: no held launch");
+            if case == "grant" { assert!(s.waits[&n].contains("Accessibility grant stale (TCC)"), "{}", s.waits[&n]); }
+            s.grants.clear();
             assert_eq!(s.held.len(), 1);
             assert_eq!(task(&b, n).attempt, Some(a));
             assert!(s.waits.contains_key(&n), "{case}: visible reason");

@@ -648,7 +648,8 @@ const FORMATS: &str = "Put each `--text` field on its own line. The commands ren
 
 /// taskq.md § 8 Folders: never search `/` or home; macOS asks the owner for Desktop, Documents, Downloads etc.
 const FILES: &str = "Never run gh auth login. A missing board token is an owner item; report it through taskq ask.\n\
-     Touch only this project, ~/.claude, ~/.codex and the OS temp dir: never search `/`, `~` or other folders.\n";
+     Touch only this project, ~/.claude, ~/.codex and the OS temp dir: never search `/`, `~` or other folders.\n\
+     A macOS privacy (TCC) denial is reported in the result Open, never as an owner ask: the service notifies the owner.\n";
 
 /// taskq.md § 7 rule 7 CI wait: every host's agents share one board user's hourly requests (§ 4 board budget).
 const CI_WAIT: &str = "Board budget: poll CI at most once a minute (`gh pr checks <PR> --watch --interval 60`); never `gh run watch`\n\
