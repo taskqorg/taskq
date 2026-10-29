@@ -1044,6 +1044,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         if s.gui_checked.is_none_or(|t: Instant| t.elapsed().as_secs() >= 300) {
             s.gui_checked = Some(Instant::now());
             s.gui_probe = platform::gui_probe();
+            s.gui_stale = platform::stale_grant(&cfg.install, &s.gui_probe);
         }
         if !quiet { if let Some(m) = policy::pin_rollback(&cfg.install, platform::VERSION) { log!("{m}"); } }
         s.mono = host.as_ref().and_then(|h| h.lock().ok().map(|h| h.elapsed())).unwrap_or_else(|| began.elapsed().as_secs());
@@ -1142,7 +1143,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         }
         for (k, v) in [("focus", if focus_error.is_some() { Value::Null } else { json!(s.focus) }), ("focus_error", json!(focus_error)), ("focus_command",command), ("kids", json!(kids)), ("issues", json!(issues)), ("log", json!(log)),
             ("tasks_age_seconds", json!(s.tasks_read.map(|t| t.elapsed().as_secs()))), ("request", json!(request)), ("events_since", json!(s.events_since)),
-            ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err()})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
+            ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err(), "stale_grant": s.gui_stale})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("stop_progress",json!(s.stop_progress)), ("poll", json!(cfg.poll)),
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
@@ -1815,6 +1816,13 @@ fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
     *tray = platform::quiet(&mut c).spawn().ok();
 }
 
+/// #1801: only the OS default install's bundle is `org.taskq.tray`; temp, test and evidence installs take their own id,
+/// so their iconless copies never win the notification icon in LaunchServices.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn tray_id(home: bool) -> &'static str {
+    if home { "org.taskq.tray" } else { "org.taskq.tray.test" }
+}
+
 /// macOS notifications need a bundle identity (§ 4): `<install>/TaskQ.app`, signed as § 8 step 5 (else ad-hoc),
 /// holding the current release; the default install's bundle is `~/Applications/TaskQ.app`, which Finder, Spotlight
 /// and the Dock open (M15). None: the tray runs unbundled and notifications read unsupported.
@@ -1823,7 +1831,7 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     const PLIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>org.taskq.tray</string>
+<key>CFBundleIdentifier</key><string>{id}</string>
 <key>CFBundleName</key><string>TaskQ</string>
 <key>CFBundleExecutable</key><string>taskq</string>
 <key>CFBundlePackageType</key><string>APPL</string>
@@ -1837,19 +1845,28 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     if home.is_some() { let _ = fs::remove_dir_all(install.join("TaskQ.app")); }
     let bin = app.join("Contents/MacOS/taskq");
     fs::create_dir_all(bin.parent()?).ok()?;
-    fs::write(app.join("Contents/Info.plist"), PLIST).ok()?;
+    let id = tray_id(home.is_some());
+    fs::write(app.join("Contents/Info.plist"), PLIST.replace("{id}", id)).ok()?;
     let resources=app.join("Contents/Resources");
     fs::create_dir_all(&resources).ok()?;
     fs::write(resources.join("TaskQ.icns"),include_bytes!("../assets/TaskQ.icns")).ok()?;
     let tmp = bin.with_extension("tmp");
     fs::copy(exe, &tmp).and_then(|_| fs::rename(&tmp, &bin)).ok()?;
-    let signed = match platform::codesign(platform::SIGNING_IDENTITY, &app, "org.taskq.tray") {
+    let signed = match platform::codesign(platform::SIGNING_IDENTITY, &app, id) {
         Ok(true) => true,
         r => {
             if let Err(e) = r { platform::log(&format!("signing failed, TaskQ.app stays ad-hoc: {e}")) }
             coreq::process::output("signing.adhoc", std::process::Command::new("codesign").args(["-f", "-s", "-"]).arg(&app), std::time::Duration::from_secs(30)).is_ok()
         }
     };
+    // #1801: every tray launch (install, and update: the tray quits for a newer release) rewrites the bundle; force
+    // LaunchServices to re-read it so the release icon wins over a cached or stale registration
+    if signed && home.is_some() {
+        const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+        if let Err(e) = coreq::process::output("lsregister", std::process::Command::new(LSREGISTER).arg("-f").arg(&app), std::time::Duration::from_secs(30)) {
+            platform::log(&format!("lsregister -f failed, the notification icon may stay stale: {e}"));
+        }
+    }
     signed.then_some(app)
 }
 
@@ -3133,6 +3150,17 @@ mod tests {
         assert!(error.contains("Custom icons were removed"),"{error}");
     }
 
+    // #1801: the release bundle id belongs to the OS default install only; every other install kind takes the test id.
+    #[test]
+    fn tray_bundle_id_per_install_kind() {
+        assert_eq!(tray_id(true),"org.taskq.tray");
+        assert_eq!(tray_id(false),"org.taskq.tray.test");
+        let home=PathBuf::from("/invented/home/.local/share/taskq");
+        for (install,want) in [(home.clone(),"org.taskq.tray"),(std::env::temp_dir().join("taskq-evidence"),"org.taskq.tray.test"),(PathBuf::from("/invented/dev-install"),"org.taskq.tray.test")] {
+            assert_eq!(tray_id(platform::is_home(&install,Some(&home))),want,"{}",install.display());
+        }
+    }
+
     // #1347: packaging must retain all native sizes and a valid signature under the existing identity.
     #[cfg(target_os = "macos")]
     #[test]
@@ -3140,7 +3168,8 @@ mod tests {
         let dir=std::env::temp_dir().join(format!("taskq-app-icon-{}",runtime::uuid()));
         let app=tray_app(&dir,&std::env::current_exe().unwrap()).expect("signed tray bundle");
         let plist=fs::read_to_string(app.join("Contents/Info.plist")).unwrap();
-        assert!(plist.contains("org.taskq.tray"));
+        // #1801: a temp install never takes the release bundle id
+        assert!(plist.contains("<string>org.taskq.tray.test</string>"),"{plist}");
         let bytes=fs::read(app.join("Contents/Resources/TaskQ.icns")).unwrap();
         let mut sizes=Vec::new(); let mut offset=8;
         while offset<bytes.len() {

@@ -92,6 +92,7 @@ pub fn label(kind: &str) -> &'static str {
 /// the first time starts at `now`: older events never notify. The 4th banner within 10 s (sliding) opens one summary
 /// under one identifier, which the OS replaces as it grows. Task titles come from `tasks`, else from `titles`: the
 /// open tasks' titles of the previous tick, kept in `tray.json` so a closed task keeps its title across a restart.
+/// Last comes the host's stale-grant notice, whatever the kind modes (#1803).
 pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Post> {
     if !n.is_object() {
         *n = json!({});
@@ -189,7 +190,28 @@ pub fn due(n: &mut Value, ps: &[Value], now: i64, bursts: &mut Bursts) -> Vec<Po
             out.push(Post { root: root.into(), n: None, title: format!("{name} · {} events", kinds.len()), body: counts.join(", "), sound, id: json!({"root": root, "sum": first}).to_string() });
         }
     }
+    out.extend(stale_grant(n, ps));
     out
+}
+
+/// The owner step for a stale Screen Recording grant (#1803, worker-permissions.md § macOS signing identity).
+pub const STALE_GRANT: &str = "System Settings > Privacy & Security > Screen Recording: select taskq, remove it (-), then allow taskq at the next prompt.";
+
+/// One stale-grant notice (#1803 A2): the first status that reads `gui.stale_grant` posts it and records `stale_grant`
+/// in `n`, so later ticks and restarts never repeat it; a status whose gui probe passes ends the episode.
+pub fn stale_grant(n: &mut Value, ps: &[Value]) -> Option<Post> {
+    if !n.is_object() {
+        *n = json!({});
+    }
+    if ps.iter().any(|p| p["gui"]["listed"] == true) {
+        n.as_object_mut().unwrap().remove("stale_grant");
+        return None;
+    }
+    if n["stale_grant"] == true || !ps.iter().any(|p| p["gui"]["stale_grant"] == true) {
+        return None;
+    }
+    n["stale_grant"] = json!(true);
+    Some(Post { root: String::new(), n: None, title: "taskq · Screen Recording grant is stale".into(), body: STALE_GRANT.into(), sound: false, id: json!({"stale_grant": true}).to_string() })
 }
 
 /// `Send test`: one sample of `kind` (its host mode decides the sound).
@@ -368,6 +390,26 @@ mod tests {
 
     fn proj(events: Value) -> Value {
         json!({"root": "/p", "name": "p", "tasks": [{"n": 7, "title": "Fix it"}], "events": events})
+    }
+
+    // Defect #1803 A2: a cdhash-pinned grant re-prompted forever with no owner step. Risk: the notice repeats each
+    // tick or restart, or a fixed and later re-broken grant never notifies again.
+    #[test]
+    fn stale_grant_notifies_once_per_episode() {
+        let stale = [json!({"gui": {"listed": false, "stale_grant": true}}), json!({"gui": {"listed": false, "stale_grant": false}})];
+        let mut n = json!({});
+        assert_eq!(stale_grant(&mut n, &[json!({"gui": {"listed": false, "stale_grant": false}})]), None);
+        let post = stale_grant(&mut n, &stale).expect("first stale read posts");
+        assert_eq!(post.body, STALE_GRANT);
+        assert_eq!(stale_grant(&mut n, &stale), None, "repeated on the next tick");
+        let saved = serde_json::to_string(&n).unwrap();
+        assert_eq!(stale_grant(&mut serde_json::from_str(&saved).unwrap(), &stale), None, "repeated after a restart");
+        assert_eq!(stale_grant(&mut n, &[json!({"gui": {"listed": true, "stale_grant": false}})]), None);
+        assert!(stale_grant(&mut n, &stale).is_some(), "a new episode after a passing probe notifies again");
+        let mut t = json!({});
+        let p = json!({"root": "/p", "name": "p", "tasks": [], "events": [], "gui": {"listed": false, "stale_grant": true}});
+        assert_eq!(due(&mut t, &[p.clone()], 100, &mut Bursts::new()).len(), 1, "the tray tick posts it");
+        assert!(due(&mut t, &[p], 200, &mut Bursts::new()).is_empty());
     }
 
     // Chain: M14 modes. Risk: a bad value or a missing override silences or floods a kind.
