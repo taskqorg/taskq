@@ -49,7 +49,7 @@ const fx = JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json', 'utf8')
     await page.evaluate(row => { TaskqAnswerCard.mount(document.getElementById('c'), {capability: () => ({answer: true}), send: () => new Promise(() => {})}).update([{board: 'k', row}]); document.querySelector('.qac-head a').focus(); }, fx.cases[0].rows[0]);
     const order = [];
     for (let i = 0; i < 4; i++) { await page.keyboard.press('Tab'); order.push(await page.evaluate(() => document.activeElement.textContent)); }
-    assert.deepEqual(order, ['1. Keep compatibility ★', '2. Remove the old API', 'Other answer', 'Checked & context'], at + ': source order');
+    assert.deepEqual(order, ['1. Keep compatibility ★', '2. Remove the old API', 'Other answer', 'Evidence'], at + ': source order');
     await page.screenshot({path: require('node:os').tmpdir() + '/answer-card-' + scheme + '-' + font + '-' + width + '.png', fullPage: true});
     await page.close();
     console.log('PASS', at);

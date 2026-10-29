@@ -494,7 +494,11 @@ pub fn question(card: &str) -> Value {
     }).collect();
     let o = options(card);
     // an option that starts with `close` closes the task after the answer (dispatch::answer_picks): consequential
-    let choices: Vec<Value> = o.iter().map(|(k, t, star)| json!({"id": k, "text": t, "recommended": star, "consequential": t.to_lowercase().starts_with("close")})).collect();
+    // § 2: `<label> - <detail>`; a card without ` - ` (written before #1787, or a service card) shows its whole text as the label
+    let choices: Vec<Value> = o.iter().map(|(k, t, star)| {
+        let (label, detail) = t.split_once(" - ").map_or((t.as_str(), None), |(l, d)| (l.trim(), Some(d.trim())));
+        json!({"id": k, "text": t, "label": label, "detail": detail, "recommended": star, "consequential": t.to_lowercase().starts_with("close")})
+    }).collect();
     // § 2: options numbered 1..n in order, no gap or repeat; none is an owner action answered with text
     let numbered = o.iter().enumerate().all(|(i, x)| x.0 == i + 1);
     let parsed = field("Problem: ").is_some() && numbered && (o.is_empty() || (2..=4).contains(&o.len()) && o.iter().filter(|x| x.2).count() == 1);

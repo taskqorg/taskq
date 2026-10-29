@@ -515,6 +515,28 @@ fn card_links(what: &str, lines: &[String]) -> Res<()> {
     }))
 }
 
+/// § 2 ask card: an option is `<label> - + <gain>; - <cost>`; the label names the meaning in at most 32 characters, unique.
+fn option_lines(opts: &[String]) -> Res<()> {
+    let label = |o: &str| o.trim().strip_prefix("- ").map_or_else(|| o.split_once(" - ").map_or(o.trim(), |p| p.0.trim()).to_string(), |_| String::new());
+    all(opts.iter().enumerate().map(|(i, o)| {
+        let (k, l) = (i + 1, label(o));
+        let detail = o.trim().get(l.len()..).unwrap_or_default().trim_start().strip_prefix("- ").unwrap_or_default();
+        let pair = detail.strip_prefix("+ ").and_then(|d| d.split_once("; - ")).is_some_and(|(g, c)| !g.trim().is_empty() && !c.trim().is_empty());
+        let twin = opts[..i].iter().position(|p| label(p).to_lowercase() == l.to_lowercase());
+        if l.is_empty() {
+            Err(format!("option line {k}: missing label; write `<label> - + <gain>; - <cost>`"))
+        } else if width(&l) > 32 {
+            Err(format!("option line {k}: label {} characters, limit 32", width(&l)))
+        } else if let Some(j) = twin {
+            Err(format!("option line {k}: label repeats option line {}", j + 1))
+        } else if !pair {
+            Err(format!("option line {k}: detail must be `+ <gain>; - <cost>` after `{l} - `"))
+        } else {
+            Ok(())
+        }
+    }))
+}
+
 /// § 2 visual evidence: `--image` files, at most four images of at most 10 MB each.
 fn image_files(paths: &[String]) -> Res<()> {
     if paths.len() > 4 { return Err("Evidence: at most four --image".into()); }
@@ -544,7 +566,7 @@ fn upload_images(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<Stri
 /// § 2 ask card: Done, Problem, optional Evidence, 2-4 options with one ★ or none (an owner action), the answer line.
 fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
     let f = fields(text, &[("Done", 1, 1, 160), ("Problem", 1, 2, 240)])?;
-    all([card_links("Problem", &f[1]), card_links("option", opts)])?;
+    all([card_links("Problem", &f[1]), card_links("option", opts), option_lines(opts)])?;
     let mut lines = f.concat();
     one_line("--option", opts)?;
     let action = opts.is_empty() && recommend.is_none();
@@ -566,7 +588,10 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
     if let Some(e) = ev.iter().find(|e| !e.split_once("](").is_some_and(|(_, u)| u.starts_with("https://") || u.starts_with("http://"))) {
         return Err(format!("Evidence: {e} needs an absolute http(s) URL"));
     }
-    let ev = [ev, links.iter().filter(|l| l.starts_with("![")).cloned().collect()].concat();
+    // visual choice (answer card § Question types): one image per option names image K `K. <name>`
+    let images: Vec<&String> = links.iter().filter(|l| l.starts_with("![")).collect();
+    let each = images.len() >= 2 && images.len() == opts.len();
+    let ev = [ev, images.iter().enumerate().map(|(i, l)| if each { format!("![{}. {}", i + 1, &l[2..]) } else { l.to_string() }).collect()].concat();
     if !ev.is_empty() {
         lines.push(format!("Evidence: {}", ev.join(", ")));
     }
@@ -653,11 +678,11 @@ fn formats_selftest() -> Res<String> {
     let checks = ["cargo test --locked -- pass".to_string()];
     result_text(1, "Changed: x\nOpen: none", &checks, &[], None, &[])?;
     close_verdict("Changed: x\nChecks: A1 ok; CI green on the SHA\nOpen: none", "A1. y")?;
-    let card = ask_card(1, "Done: not started\nProblem: pick one", &["left".into(), "right".into()], Some("2"), &[])?;
+    let card = ask_card(1, "Done: not started\nProblem: pick one", &["Left - + fast; - ugly".into(), "Right - + clean; - slow".into()], Some("2"), &[])?;
     let log: Vec<Entry> = [entry("spawn", &["worker", &format!("{}:s", runtime::OWNER), "mac"], None, ""), entry("ask", &[], Some(1), &card), "taskq answer 2".into()]
         .into_iter().enumerate().map(|(i, body)| Entry { id: i as u64 + 1, body, edited: false }).collect();
     match (fold(1, &log, false).state, core::delivery(1, &log, 3)) {
-        (State::Doing, d) if d == "right" => Ok("formats: ask card, result, close verdict PASS".into()),
+        (State::Doing, d) if d == "Right - + clean; - slow" => Ok("formats: ask card, result, close verdict PASS".into()),
         (s, d) => Err(format!("formats: FAIL hand-typed answer gave {} and {d:?}", s.name())),
     }
 }
@@ -3832,9 +3857,9 @@ mod tests {
     // Chain: § 2 Ask card. Risk: a card breaks the template or limits.
     #[test]
     fn ask_card_follows_section_2() {
-        let card = ask_card(7, "Done: checked spec\nProblem: two ways\nboth slow", &["left".into(), "right, slower".into()], Some("2"), &["https://g/o/r/pull/12".into(), "[shot](https://x/y.png)".into()]).unwrap();
-        assert_eq!(card, "Done: checked spec\nProblem: two ways\nboth slow\nEvidence: [#12](https://g/o/r/pull/12), [shot](https://x/y.png)\n1. left\n2. right, slower ★\nTo answer: `taskq answer 7.K` or comment `K` or the option text.");
-        let o = |n: usize| vec!["o".to_string(); n];
+        let card = ask_card(7, "Done: checked spec\nProblem: two ways\nboth slow", &["Left - + fast; - ugly".into(), "Right - + clean; - slower".into()], Some("2"), &["https://g/o/r/pull/12".into(), "[shot](https://x/y.png)".into()]).unwrap();
+        assert_eq!(card, "Done: checked spec\nProblem: two ways\nboth slow\nEvidence: [#12](https://g/o/r/pull/12), [shot](https://x/y.png)\n1. Left - + fast; - ugly\n2. Right - + clean; - slower ★\nTo answer: `taskq answer 7.K` or comment `K` or the option text.");
+        let o = |n: usize| (1..=n).map(|i| format!("o{i} - + g; - c")).collect::<Vec<_>>();
         assert!(ask_card(7, "Problem: p", &o(2), Some("1"), &[]).unwrap_err().contains("Done: 0 lines"));
         assert!(ask_card(7, "question?", &o(2), Some("1"), &[]).unwrap_err().contains("starts with"));
         assert!(ask_card(7, "Done: d", &o(2), Some("1"), &[]).unwrap_err().contains("Problem: 0 lines"));
@@ -3849,15 +3874,31 @@ mod tests {
         assert!(ask_card(7, "Done: d\nProblem: p", &[], Some("1"), &[]).is_err(), "--recommend needs options");
         // #1457: one short labelled link per Problem/option line; the URL is not visible text; the error names the line
         let url = format!("https://github.com/o/r/issues/1443#{}", "x".repeat(200));
-        assert!(ask_card(7, "Done: d\nProblem: p", &[format!("merge after [#1443]({url}) {}", "w".repeat(130)), "b".into()], Some("1"), &[]).is_ok());
-        assert_eq!(ask_card(7, "Done: d\nProblem: p", &["a".into(), format!("see {url}")], Some("1"), &[]).unwrap_err(), "option line 2: bare URL; write [label](url)");
-        assert_eq!(ask_card(7, "Done: d\nProblem: p", &["[a](https://x) [b](https://y)".into(), "b".into()], Some("1"), &[]).unwrap_err(), "option line 1: 2 links, at most one [label](url)");
+        assert!(ask_card(7, "Done: d\nProblem: p", &[format!("Merge later - + after [#1443]({url}) {}; - waits", "w".repeat(100)), "b - + g; - c".into()], Some("1"), &[]).is_ok());
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &["a - + g; - c".into(), format!("b - + see {url}; - c")], Some("1"), &[]).unwrap_err(), "option line 2: bare URL; write [label](url)");
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &["a - + [a](https://x); - [b](https://y)".into(), "b - + g; - c".into()], Some("1"), &[]).unwrap_err(), "option line 1: 2 links, at most one [label](url)");
         assert_eq!(ask_card(7, &format!("Done: d\nProblem: p\n[{}](https://x)", "l".repeat(41)), &o(2), Some("1"), &[]).unwrap_err(), "Problem line 2: link label at most 40 characters");
-        assert!(ask_card(7, "Done: d\nProblem: p", &["a".into(), "c".repeat(158)], Some("1"), &[]).unwrap_err().contains("option line 2: 161 characters, limit 160"));
+        assert!(ask_card(7, "Done: d\nProblem: p", &["a - + g; - c".into(), format!("b - + {}; - c", "c".repeat(147))], Some("1"), &[]).unwrap_err().contains("option line 2: 161 characters, limit 160"));
         assert_eq!(width("see [#12](https://very/long/url) and `cargo test --locked` https://x/y"), 15, "link targets and code are exempt; outside whitespace counts");
+        // #1787: an option names its meaning in a short unique label, then one plus and one minus; the error names the line
+        let ok = |a: &str, b: &str| ask_card(7, "Done: d\nProblem: p", &[a.into(), b.into()], Some("1"), &[]);
+        assert_eq!(ok("a - + g; - c", "- + g; - c").unwrap_err(), "option line 2: missing label; write `<label> - + <gain>; - <cost>`");
+        assert_eq!(ok("a - + g; - c", "b").unwrap_err(), "option line 2: detail must be `+ <gain>; - <cost>` after `b - `");
+        assert_eq!(ok("a - + g; - c", "b - only a gain").unwrap_err(), "option line 2: detail must be `+ <gain>; - <cost>` after `b - `");
+        assert_eq!(ok(&format!("{} - + g; - c", "l".repeat(33)), "b - + g; - c").unwrap_err(), "option line 1: label 33 characters, limit 32");
+        assert_eq!(ok("Keep - + g; - c", "keep - + h; - d").unwrap_err(), "option line 2: label repeats option line 1");
+        // A Russian card counts characters, not bytes: a 32-letter Cyrillic label fits, 33 do not
+        let ru = ask_card(7, "Done: проверил оба пути\nProblem: выбрать способ сборки", &["Оставить совместимость - + старые клиенты работают; - больше кода".into(), "Убрать старый API - + проще код; - клиенты сломаются".into()], Some("1"), &[]).unwrap();
+        assert!(ru.contains("1. Оставить совместимость - + старые клиенты работают; - больше кода ★\n2. Убрать старый API"), "{ru}");
+        assert!(ok(&format!("{} - + да; - нет", "ж".repeat(32)), "b - + g; - c").is_ok());
+        assert_eq!(ok(&format!("{} - + да; - нет", "ж".repeat(33)), "b - + g; - c").unwrap_err(), "option line 1: label 33 characters, limit 32");
         // #1782: uploaded images embed inline after the links; a relative link would render broken on the board
         let img = "![front](https://gitlab.example/-/project/39/uploads/ab/front.png#upload=214)".to_string();
         assert_eq!(ask_card(7, "Done: d\nProblem: p", &o(2), Some("1"), &["[#1](https://x/1)".into(), img.clone()]).unwrap().lines().nth(2), Some(format!("Evidence: [#1](https://x/1), {img}").as_str()));
+        // #1787 visual choice: one image per option, image K named `K.` so every surface captions it by number
+        let pair = ["![left](https://x/l.png)".to_string(), "![right](https://x/r.png)".to_string()];
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &o(2), Some("1"), &pair).unwrap().lines().nth(2), Some("Evidence: ![1. left](https://x/l.png), ![2. right](https://x/r.png)"));
+        assert_eq!(ask_card(7, "Done: d\nProblem: p", &o(3), Some("1"), &pair).unwrap().lines().nth(2), Some("Evidence: ![left](https://x/l.png), ![right](https://x/r.png)"), "fewer images than options: plain evidence");
         assert_eq!(ask_card(7, "Done: d\nProblem: p", &o(2), Some("1"), &["[shot](/uploads/ab/front.png)".into()]).unwrap_err(), "Evidence: [shot](/uploads/ab/front.png) needs an absolute http(s) URL");
         assert_eq!(result_text(7, "Changed: c\nOpen: none", &["t -- ok".into()], &[], None, std::slice::from_ref(&img)).unwrap(), format!("Changed: c\nChecks: t -- ok\nOpen: none\n\nEvidence: {img}"));
         assert!(result_text(7, "Changed: c\nOpen: none", &["t -- ok".into()], &[], None, &["https://x/1".into()]).is_err(), "--link still needs --option");
@@ -4000,8 +4041,8 @@ mod tests {
     fn result_and_close_follow_section_7() {
         let checks = ["cargo test --locked -- pass\ncargo run -- selftest -- pass".to_string()];
         assert_eq!(result_text(7, "Changed: faster\nOpen: none", &checks, &[], None, &[]).unwrap(), "Changed: faster\nChecks: cargo test --locked -- pass\nChecks: cargo run -- selftest -- pass\nOpen: none");
-        let r = result_text(7, "Changed: c\nOpen: none\nDone: shipped\nProblem: keep it?", &["cargo test --locked -- pass".into()], &["close: ship".into(), "redo".into()], Some("1"), &[]).unwrap();
-        assert_eq!(r, "Changed: c\nChecks: cargo test --locked -- pass\nOpen: none\n\nDone: shipped\nProblem: keep it?\n1. close: ship ★\n2. redo\nTo answer: `taskq answer 7.K` or comment `K` or the option text.");
+        let r = result_text(7, "Changed: c\nOpen: none\nDone: shipped\nProblem: keep it?", &["cargo test --locked -- pass".into()], &["close: ship - + done now; - no retry".into(), "Redo - + cleaner; - slower".into()], Some("1"), &[]).unwrap();
+        assert_eq!(r, "Changed: c\nChecks: cargo test --locked -- pass\nOpen: none\n\nDone: shipped\nProblem: keep it?\n1. close: ship - + done now; - no retry ★\n2. Redo - + cleaner; - slower\nTo answer: `taskq answer 7.K` or comment `K` or the option text.");
         assert!(result_text(7, "Changed: c\nOpen: none\nDone: d", &checks, &[], None, &[]).unwrap_err().contains("only with --option"));
         assert!(result_text(7, "Changed: c\nOpen: none", &[], &[], None, &[]).unwrap_err().contains("Checks: 0 lines"));
         assert!(result_text(7, "summary", &checks, &[], None, &[]).is_err());
@@ -4020,13 +4061,13 @@ mod tests {
         let n = b.create("T", "## Goal\ng", &["taskq".into()]).unwrap();
         b.comment(n, &entry("spawn", &["worker", "claude:u", "mac"], None, "")).unwrap();
         let a = fold(n, &entries(&b, n).unwrap(), false).attempt;
-        b.comment(n, &entry("ask", &[], a, &ask_card(n, "Done: read spec\nProblem: which way", &["left".into(), "right".into()], Some("1"), &[]).unwrap())).unwrap();
+        b.comment(n, &entry("ask", &[], a, &ask_card(n, "Done: read spec\nProblem: which way", &["Left - + fast; - ugly".into(), "Right - + clean; - slow".into()], Some("1"), &[]).unwrap())).unwrap();
         let card = fold(n, &entries(&b, n).unwrap(), false).card.unwrap();
         assert!(card.ends_with(&format!("To answer: `taskq answer {n}.K` or comment `K` or the option text.")), "{card}");
         b.comment(n, "taskq answer 2").unwrap();
         let log = entries(&b, n).unwrap();
         assert_eq!(fold(n, &log, false).state, State::Doing);
-        assert_eq!(core::delivery(n, &log, log.last().unwrap().id), "right");
+        assert_eq!(core::delivery(n, &log, log.last().unwrap().id), "Right - + clean; - slow");
     }
 
     // Chain: § 5 commands to board entries. Risk: a rejected command writes; close does not publish.
@@ -4719,8 +4760,16 @@ mod tests {
             fx = want.clone();
         }
         assert_eq!(fx, want, "TASKQ_BLESS=1 rewrites {}", path.display());
+        // #1787 A3: the Russian fixture card is what `ask` writes, so it passes the § 2 limits counted in characters
+        let ru = fx["cases"].as_array().unwrap().iter().find(|c| c["name"] == "labelled options in Russian").unwrap()["rows"][0]["card"].as_str().unwrap();
+        let opts: Vec<String> = core::options(ru).into_iter().map(|o| o.1).collect();
+        let text = ru.lines().take(2).collect::<Vec<_>>().join("\n");
+        assert_eq!(ask_card(880, &text, &opts, Some("1"), &["[#12](https://github.com/o/r/pull/12)".into()]).unwrap(), ru);
         let q = snapshot::question("Done: d\nProblem: p\nmore\nEvidence: [#1](https://x/1), [shot](https://x/s.png)\n1. close: ship ★\n2. redo\nTo answer: `taskq answer 7.K`");
         assert_eq!((q["parsed"].clone(), q["problem"].clone(), q["evidence"][1]["url"].clone(), q["choices"][0]["consequential"].clone()), (json!(true), json!("p more"), json!("https://x/s.png"), json!(true)));
+        // #1787: the label shows on the button, the detail beside it; a card without ` - ` keeps its whole text as the label
+        let c = snapshot::question("Problem: p\n1. Keep - + safe; - slow ★\n2. redo")["choices"].clone();
+        assert_eq!([&c[0]["label"], &c[0]["detail"], &c[1]["label"], &c[1]["detail"]], [&json!("Keep"), &json!("+ safe; - slow"), &json!("redo"), &Value::Null]);
         let img = snapshot::question("Problem: p\nEvidence: [#1](https://x/1), ![front](https://x/f.png#upload=2)\n1. a ★\n2. b")["evidence"].clone();
         assert_eq!(img, json!([{"label": "#1", "url": "https://x/1", "image": false}, {"label": "front", "url": "https://x/f.png#upload=2", "image": true}]), "#1782 images");
         assert_eq!(snapshot::question("1. a ★\n2. b")["parsed"], json!(false), "no Problem: read only");
