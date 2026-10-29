@@ -18,6 +18,12 @@ Finished research delivers a reviewed report. The owner can read it later and cr
 - `python scripts/check.test.py` passed after the rebase, including ordinary section citations and current main's selected-answer, trust, revision and attempt fences. Final build/browser/Rust/gate observations are in the result comment.
 - The first resumed canonical gate took 209.672 s: 650 Rust tests passed, 38 were ignored and only the unchanged R8 size guard failed. The contract was 61,463 bytes, 23 over the limit; removing the redundant report path from the new §7 line leaves its linked specification and worker instructions intact. The final result records the rerun, with the 60 KiB assertion unchanged.
 
+## Merge-conflict recovery
+
+- Publication returned #1826 with `main-moved`: PR #1852 conflicted with the file-attachment change on main. Rebased onto `4f1fd28663570ada03835cd7a325c3e4848199d0`.
+- Resolved three conflicts by keeping both `reply-files.js` and `reports.js` in the source list, adding Reports methods alongside the renamed `upload_file` fake-board method, and retaining `Launch.files` in the research handoff test. No guarding assertion was removed.
+- `git range-diff` against the previous result shows these three integrations in the first commit; the remaining eleven commits are unchanged. `git diff --check` passes. The result comment records the canonical gate for the rebased candidate; no new native frames were captured.
+
 ## Initial attempt verification
 
 | Check | Observation | Scope |
