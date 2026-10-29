@@ -159,6 +159,7 @@ fn codex_script(js: &str) -> Option<String> {
     while i < s.len() {
         match s[i] {
             '/' if s.get(i + 1) == Some(&'/') => while i < s.len() && s[i] != '\n' { i += 1 },
+            '/' if s.get(i + 1) == Some(&'*') => i = (i + 3..s.len()).find(|&k| s[k - 1] == '*' && s[k] == '/').map_or(s.len(), |k| k + 1),
             q @ ('"' | '\'' | '`') => {
                 let (lit, end) = literal(&s, i + 1, q);
                 i = end;
@@ -189,7 +190,7 @@ fn codex_script(js: &str) -> Option<String> {
     (!line.is_empty()).then(|| line.join(" · "))
 }
 
-/// The JavaScript string literal that starts at `i`, closed by `q`, and the index after it.
+/// The JavaScript string literal that starts at `i`, closed by `q`, and the index after it; an open one ends the script.
 fn literal(s: &[char], mut i: usize, q: char) -> (String, usize) {
     let mut out = String::new();
     while i < s.len() && s[i] != q {
@@ -207,7 +208,7 @@ fn literal(s: &[char], mut i: usize, q: char) -> (String, usize) {
         } else { out.push(s[i]); }
         i += 1;
     }
-    (out, i + 1)
+    (out, (i + 1).min(s.len()))
 }
 
 /// The files an `apply_patch` envelope adds, updates or deletes.
@@ -406,6 +407,20 @@ mod tests {
             json!("exec_command ls"),
         ]);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// #1833 review: a quote that never closes (a regex literal, a cut script) read past the script and panicked.
+    #[test]
+    fn codex_scripts_with_open_quotes_and_comments_read_without_panic() {
+        assert_eq!(codex_script("text(r.replace(/'/g, ''))"), None);
+        assert_eq!(codex_script("text('abc"), None);
+        assert_eq!(codex_script("text(await tools.exec_command({cmd:\"echo a"), Some("echo a".into()));
+        assert_eq!(codex_script("/* tools.exec_command({cmd:\"x\"}) 'it's */ text(await tools.exec_command({cmd:\"y\"}))"), Some("y".into()));
+        assert_eq!(codex_script("/* open"), None);
+        assert_eq!(codex_script("/*/ tools.exec_command({cmd:\"x\"})"), None);
+        // every cut of a real script reads: Codex records may end mid-literal
+        let js = "/* c */ const r=await tools.exec_command({cmd:'a \\'b\\' \\u00e9',\"workdir\": `w`}); // x\ntools.view_image({path:\"p\"})";
+        for (k, _) in js.char_indices() { codex_script(&js[..k]); }
     }
 
     /// Writes invented records in the native format and returns the view text they must produce, in file order.
