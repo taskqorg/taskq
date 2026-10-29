@@ -584,12 +584,17 @@ fn option_lines(opts: &[String]) -> Res<()> {
     }))
 }
 
-/// § 2 visual evidence: `--image` files, at most four images of at most 10 MB each.
+/// § 2 visual evidence: `--image` files, at most four images or videos (#1844) of at most 10 MB each.
 fn image_files(paths: &[String]) -> Res<()> {
     if paths.len() > 4 { return Err("Evidence: at most four --image".into()); }
     all(paths.iter().map(|p| {
         let head = std::fs::File::open(p).and_then(|f| { let mut b = vec![]; std::io::Read::read_to_end(&mut std::io::Read::take(f, 16), &mut b).map(|_| b) }).map_err(|e| format!("--image {p}: {e}"))?;
-        board::image_kind(&head).ok_or(format!("--image {p}: not a PNG, JPEG, GIF or WebP file"))?;
+        let video = board::video_kind(&head);
+        if board::image_kind(&head).is_none() && video.is_none() { return Err(format!("--image {p}: not a PNG, JPEG, GIF, WebP, MP4 or WebM file")); }
+        // boards pick the player by the extension
+        if let Some(k) = video.filter(|k| !p.to_ascii_lowercase().ends_with(&format!(".{k}"))) {
+            return Err(format!("--image {p}: a {} video's file name ends in .{k}", k.to_uppercase()));
+        }
         let size = std::fs::metadata(p).map_err(|e| format!("--image {p}: {e}"))?.len();
         if size > 10 << 20 { return Err(format!("--image {p}: {size} bytes, at most 10 MB")); }
         Ok(())
@@ -597,7 +602,8 @@ fn image_files(paths: &[String]) -> Res<()> {
 }
 
 /// § 2 visual evidence: uploads each `--image` to the board and embeds it as `![name](absolute URL)` only after the board
-/// serves the same bytes back (the load check); a failed check publishes nothing.
+/// serves the same bytes back (the load check); a failed check publishes nothing. A video the board does not play
+/// inline (GitHub) is the link `[▶ name](URL)` that opens it playable (#1844).
 fn upload_images(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<String>> {
     image_files(paths)?;
     paths.iter().map(|p| {
@@ -605,9 +611,40 @@ fn upload_images(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<Stri
         let sent = std::fs::read(p).map_err(|e| format!("--image {p}: {e}"))?;
         let back = b.image(&url).map_err(|e| format!("image load check failed for {url}: {e}"))?;
         if back != sent { return Err(format!("image load check failed: {url} serves {} bytes, {} uploaded", back.len(), sent.len())); }
+        let video = board::video_kind(&sent).is_some();
         let name: String = Path::new(p).file_stem().map(|s| s.to_string_lossy().replace([']', '[', ',', ')'], " ")).unwrap_or_default().chars().take(30).collect();
-        Ok(format!("![{}]({url})", if name.trim().is_empty() { "image".into() } else { name }))
+        let name = if !name.trim().is_empty() { name } else if video { "video".into() } else { "image".into() };
+        Ok(if video && !b.video_inline() { format!("[▶ {name}]({url})") } else { format!("![{name}]({url})") })
     }).collect()
+}
+
+/// § 2 visual evidence: where the name starts in an uploaded image or video, `![name](url)` or `[▶ name](url)`; none
+/// for a link.
+fn media(l: &str) -> Option<usize> {
+    ["![", "[▶ "].into_iter().find(|p| l.starts_with(p)).map(str::len)
+}
+
+/// § 2 visual evidence (#1844): media reaches a task only through `--image`. A hand-written image or video link that is
+/// relative, host-less (csgo#415: `/-/project/39/uploads/..`) or a repository path renders as a missing file.
+fn media_links(values: &[&str]) -> Res<()> {
+    const MEDIA: [&str; 9] = ["png", "jpg", "jpeg", "gif", "webp", "mp4", "webm", "mov", "m4v"];
+    let bare = values.iter().flat_map(|v| v.split_whitespace()).map(|w| {
+        let w = w.rsplit_once("src=").or_else(|| w.rsplit_once("href=")).map_or(w, |x| x.1);
+        w.trim_matches(|c: char| "\"'<>()[],;.".contains(c))
+    }).filter(|w| w.starts_with('/') || w.starts_with("http://") || w.starts_with("https://"));
+    let marked = values.iter().flat_map(|v| v.split("](").skip(1)).filter_map(|r| r.split([')', ' ']).next());
+    for link in marked.chain(bare) {
+        let path = link.split(['?', '#']).next().unwrap_or_default().to_ascii_lowercase();
+        if !path.rsplit_once('.').is_some_and(|(_, e)| MEDIA.contains(&e)) { continue; }
+        let web = path.strip_prefix("https://").or_else(|| path.strip_prefix("http://"));
+        // `/raw/<sha>/` is a commit-pinned taskq evidence file; `/raw/<branch>/` moves with the branch
+        let pinned = |r: &str| r.split('/').next().is_some_and(|s| s.len() == 40 && s.bytes().all(|c| c.is_ascii_hexdigit()));
+        let repo = web.is_some_and(|w| w.starts_with("raw.githubusercontent.com/") || ["/blob/", "/-/blob/", "/-/raw/", "/-/tree/", "/tree/"].iter().any(|m| w.contains(m))
+            || w.split_once("/raw/").is_some_and(|(_, r)| !pinned(r)));
+        let why = if web.is_none() { "relative or host-less" } else if repo { "a repository path" } else { continue };
+        return Err(format!("media link {link} is {why}; attach the file with --image (it uploads and embeds the absolute URL)"));
+    }
+    Ok(())
 }
 
 /// § 2 ask card: Done, Problem, optional Evidence, 2-4 options with one ★ or none (an owner action), the answer line.
@@ -624,10 +661,10 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
         recommend.and_then(|k| k.parse().ok()).filter(|k| (1..=opts.len()).contains(k)).ok_or(format!("--recommend needs one option number 1-{}", opts.len()))?
     };
     one_line("--link", links)?;
-    if links.iter().filter(|l| !l.starts_with("![")).count() > 2 {
+    if links.iter().filter(|l| media(l).is_none()).count() > 2 {
         return Err("Evidence: at most two --link".into());
     }
-    let ev: Vec<String> = links.iter().filter(|l| !l.starts_with("![")).map(|l| evidence(l)).collect();
+    let ev: Vec<String> = links.iter().filter(|l| media(l).is_none()).map(|l| evidence(l)).collect();
     if ev.iter().any(|e| e.split_once("](").is_some_and(|(l, _)| l.chars().count() > 41)) {
         return Err("Evidence: link labels at most 40 characters".into());
     }
@@ -636,9 +673,9 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
         return Err(format!("Evidence: {e} needs an absolute http(s) URL"));
     }
     // visual choice (answer card § Question types): one image per option names image K `K. <name>`
-    let images: Vec<&String> = links.iter().filter(|l| l.starts_with("![")).collect();
+    let images: Vec<(&String, usize)> = links.iter().filter_map(|l| Some((l, media(l)?))).collect();
     let each = images.len() >= 2 && images.len() == opts.len();
-    let ev = [ev, images.iter().enumerate().map(|(i, l)| if each { format!("![{}. {}", i + 1, &l[2..]) } else { l.to_string() }).collect()].concat();
+    let ev = [ev, images.iter().enumerate().map(|(i, (l, k))| if each { format!("{}{}. {}", &l[..*k], i + 1, &l[*k..]) } else { l.to_string() }).collect()].concat();
     if !ev.is_empty() {
         lines.push(format!("Evidence: {}", ev.join(", ")));
     }
@@ -656,7 +693,7 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
 /// § 7 result: Changed, one `Checks:` line per check, Open; a decision appends the § 2 card (Done/Problem in `--text`).
 fn result_text(n: u64, text: &str, checks: &[String], opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
     let d = !opts.is_empty() as usize;
-    if d == 0 && (recommend.is_some() || links.iter().any(|l| !l.starts_with("!["))) {
+    if d == 0 && (recommend.is_some() || links.iter().any(|l| media(l).is_none())) {
         return Err("--recommend and --link need --option".into());
     }
     let f = fields(text, &[("Changed", 1, 2, 240), ("Open", 1, 2, 240), ("Done", d, d, 160), ("Problem", d, 2 * d, 240)])?;
@@ -2853,6 +2890,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         task_text(cmd, text)?;
     }
     if cmd == "add" && a.flags.contains_key("later") { task_text("later", text)?; }
+    if matches!(cmd, "ask" | "result" | "requeue" | "later" | "failed" | "steer" | "answer" | "pick") {
+        let given = [a.all("option"), a.all("checks"), a.all("link")].concat();
+        media_links(&[vec![text], given.iter().map(String::as_str).collect()].concat())?;
+    }
     let revision = a.one("revision").map(|r| r.parse::<u64>().map_err(|_| format!("bad --revision {r}"))).transpose()?;
     let mut op = Op { id: a.one("op-id").map(String::from), revision };
     if op.id.as_deref().is_some_and(|i| i.is_empty() || i.contains(char::is_whitespace)) {
@@ -2954,7 +2995,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "ask" => {
             let n = a.num(1)?;
             let (links, images) = (a.all("link"), a.all("image"));
-            if links.iter().any(|l| l.starts_with('!')) { return Err("--link takes links; images go through --image".into()); }
+            if links.iter().any(|l| l.starts_with('!') || media(l).is_some()) { return Err("--link takes links; images and videos go through --image".into()); }
             // validate the card and the files before any upload
             ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &links)?;
             image_files(&images)?;
@@ -2972,7 +3013,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let n = a.num(1)?;
             let sha = a.need("sha")?;
             let (links, images) = (a.all("link"), a.all("image"));
-            if links.iter().any(|l| l.starts_with('!')) { return Err("--link takes links; images go through --image".into()); }
+            if links.iter().any(|l| l.starts_with('!') || media(l).is_some()) { return Err("--link takes links; images and videos go through --image".into()); }
             result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &links)?;
             image_files(&images)?;
             let body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
@@ -3999,6 +4040,62 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    // Chain: § 2 visual evidence videos (#1844). Defect: csgo#415's videos bypassed the load-checked upload (`--image`
+    // took images only). Risk: a video embeds as an image where the board cannot play it, a renamed or oversized file
+    // uploads, or visual-choice numbering breaks for a linked video.
+    #[test]
+    fn videos_upload_like_images_and_embed_by_board_player() {
+        let dir = std::env::temp_dir().join(format!("taskq-ask-videos-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mp4 = dir.join("run.mp4");
+        fs::write(&mp4, b"\0\0\0\x18ftypisom0123456789").unwrap();
+        let webm = dir.join("clip.webm");
+        fs::write(&webm, b"\x1a\x45\xdf\xa30123456789").unwrap();
+        let renamed = dir.join("run.png");
+        fs::write(&renamed, b"\0\0\0\x18ftypisom0123456789").unwrap();
+        let big = dir.join("big.mp4");
+        fs::write(&big, [b"\0\0\0\x18ftypisom".as_slice(), &vec![0; 10 << 20]].concat()).unwrap();
+        let (m, w) = (mp4.display().to_string(), webm.display().to_string());
+        let b = Fake::default();
+        assert_eq!(upload_images(&b, 7, &[m.clone(), w.clone()]).unwrap(), ["[▶ run](https://board.example/7/0-run.mp4)", "[▶ clip](https://board.example/7/1-clip.webm)"]);
+        b.state.borrow_mut().video_inline = true;
+        assert_eq!(upload_images(&b, 7, std::slice::from_ref(&m)).unwrap(), ["![run](https://board.example/7/2-run.mp4)"]);
+        assert!(upload_images(&b, 7, &[renamed.display().to_string()]).unwrap_err().contains("ends in .mp4"));
+        assert!(upload_images(&b, 7, &[big.display().to_string()]).unwrap_err().contains("at most 10 MB"));
+        let opts = ["Left - + fast; - ugly".to_string(), "Right - + clean; - slow".into()];
+        let links = ["[▶ a](https://x/a.mp4)".to_string(), "![b](https://x/b.png#upload=1)".into()];
+        let card = ask_card(7, "Done: built\nProblem: which run", &opts, Some("1"), &links).unwrap();
+        assert!(card.contains("Evidence: [▶ 1. a](https://x/a.mp4), ![2. b](https://x/b.png#upload=1)"), "{card}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // Chain: § 2 visual evidence links (#1844). Defect: csgo#415 hand-posted host-less `/-/project/39/uploads/..mp4`
+    // links that GitLab rewrote into missing repository files. Risk: a relative, host-less or repository-path media link
+    // reaches a task, or an uploaded media URL or a plain link is refused.
+    #[test]
+    fn media_links_refuse_relative_host_less_and_repo_paths() {
+        let bad = |v: &str| media_links(&[v]).unwrap_err();
+        let e = bad("Changed: demo [run](/-/project/39/uploads/0f3a/run.mp4)");
+        assert!(e.contains("/-/project/39/uploads/0f3a/run.mp4 is relative or host-less"), "{e}");
+        assert!(bad("see /-/project/39/uploads/0f3a/run.mp4.").contains("host-less"));
+        assert!(bad("<video src=\"/uploads/0f3a/run.webm\">").contains("host-less"));
+        assert!(bad("[shot](docs/shot.png)").contains("relative"));
+        assert!(bad("[run](https://gitlab.example/alex/csgo/-/blob/main/run.mp4)").contains("a repository path"));
+        assert!(bad("[run](https://github.com/o/r/blob/main/run.mp4)").contains("a repository path"));
+        assert!(bad("[run](https://github.com/o/r/raw/main/run.mp4)").contains("a repository path"));
+        assert!(bad("https://raw.githubusercontent.com/o/r/main/a.gif").contains("a repository path"));
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        for ok in [
+            "![run](https://gitlab.example/-/project/39/uploads/0f3a/run.mp4)".to_string(),
+            "![b](https://gitlab.example/-/project/39/uploads/0f3a/b.png#upload=2)".into(),
+            format!("[▶ run](https://cdn.jsdelivr.net/gh/o/r@{sha}/1844/run.mp4)"),
+            format!("![a](https://github.com/o/r/raw/{sha}/1844/a.png)"),
+            "Changed: fixed logo.png and src/main.rs; see [#12](https://github.com/o/r/issues/12)".into(),
+        ] {
+            assert_eq!(media_links(&[&ok]), Ok(()), "{ok}");
+        }
+    }
+
     // Chain: § 2 Ask card. Risk: a card breaks the template or limits.
     #[test]
     fn ask_card_follows_section_2() {
@@ -4865,6 +4962,8 @@ mod tests {
         assert_eq!([&c[0]["label"], &c[0]["detail"], &c[1]["label"], &c[1]["detail"]], [&json!("Keep"), &json!("+ safe; - slow"), &json!("redo"), &Value::Null]);
         let img = snapshot::question("Problem: p\nEvidence: [#1](https://x/1), ![front](https://x/f.png#upload=2)\n1. a ★\n2. b")["evidence"].clone();
         assert_eq!(img, json!([{"label": "#1", "url": "https://x/1", "image": false}, {"label": "front", "url": "https://x/f.png#upload=2", "image": true}]), "#1782 images");
+        let vid = snapshot::question("Problem: p\nEvidence: ![run](https://x/u/run.mp4), [▶ clip](https://x/clip.webm)\n1. a ★\n2. b")["evidence"].clone();
+        assert_eq!(vid, json!([{"label": "run", "url": "https://x/u/run.mp4", "image": false}, {"label": "▶ clip", "url": "https://x/clip.webm", "image": false}]), "#1844 videos stay links in the apps");
         assert_eq!(snapshot::question("1. a ★\n2. b")["parsed"], json!(false), "no Problem: read only");
         assert_eq!(snapshot::question("Problem: p\n1. a\n2. b")["parsed"], json!(false), "no star: read only");
         // #1662 A4: a repeated or skipped number names no single option, so the card stays read only

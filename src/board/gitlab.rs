@@ -319,9 +319,21 @@ impl Board for GitLab {
     }
 
     fn image(&self, url: &str) -> Result<Vec<u8>> {
-        let id = upload_id(&self.api.root, self.project()?, url).ok_or_else(|| format!("image unknown: {url} is not a taskq upload of this project"))?;
+        let unknown = || format!("image unknown: {url} is not a taskq upload of this project");
+        let project = self.project()?;
+        let id = match upload_id(&self.api.root, project, url) {
+            Some(id) => id,
+            // a video URL carries no `#upload=` id: the newest uploads find it by its unique file name
+            None => {
+                let name = video_name(&self.api.root, project, url).ok_or_else(unknown)?;
+                let list = self.api.call("GET", "/uploads?per_page=100", None)?.json()?;
+                list.as_array().into_iter().flatten().find(|u| u["filename"] == name).and_then(|u| u["id"].as_u64()).ok_or_else(unknown)?
+            }
+        };
         self.api.raw(&format!("/uploads/{id}"), None)
     }
+
+    fn video_inline(&self) -> bool { true }
 }
 
 impl GitLab {
@@ -333,12 +345,26 @@ impl GitLab {
 
 /// § 2 visual evidence (#1782): the absolute URL of a GitLab upload. The API's relative `url` and the `full_path` of
 /// GitLab 17.2 render as broken repository paths in issue notes, so taskq writes
-/// `https://<host>/-/project/<id>/uploads/<secret>/<file>` with `#upload=<upload id>`, the id the load check reads back.
+/// `https://<host>/-/project/<id>/uploads/<secret>/<file>` with `#upload=<upload id>`, the id the load check reads back;
+/// a video (#1844) goes without the fragment and the load check finds its id by the unique file name.
 pub(super) fn upload_url(root: &str, project: u64, reply: &Value) -> Result<String> {
     let rel = reply["url"].as_str().and_then(|u| u.strip_prefix("/uploads/")).filter(|r| r.split('/').count() == 2 && !r.contains(['(', ')', ' ']))
         .ok_or("upload reply has no /uploads/<secret>/<file> url")?;
     let id = reply["id"].as_u64().ok_or("upload id unknown: not in the reply nor the newest uploads; GitLab 17.2 or newer needed")?;
-    Ok(format!("{}/-/project/{project}/uploads/{rel}#upload={id}", root.trim_end_matches("/api/v4")))
+    let url = format!("{}/-/project/{project}/uploads/{rel}", root.trim_end_matches("/api/v4"));
+    // #1844: GitLab plays `![name](url)` inline only when the URL ends in the video extension, so a video has no fragment
+    Ok(if video(&url) { url } else { format!("{url}#upload={id}") })
+}
+
+fn video(url: &str) -> bool {
+    [".mp4", ".webm"].iter().any(|e| url.to_ascii_lowercase().ends_with(e))
+}
+
+/// The file name of a video URL that [`upload_url`] wrote for this project; none for any other URL.
+fn video_name<'a>(root: &str, project: u64, url: &'a str) -> Option<&'a str> {
+    let rel = url.strip_prefix(&format!("{}/-/project/{project}/uploads/", root.trim_end_matches("/api/v4")))?;
+    let (secret, name) = rel.split_once('/')?;
+    (video(url) && !secret.is_empty() && !name.is_empty() && !name.contains(['/', '#', '?'])).then_some(name)
 }
 
 /// The upload id of an image URL that [`upload_url`] wrote for this project; none for any other URL.
@@ -367,5 +393,20 @@ mod image_tests {
         assert_eq!(upload_id(root, 39, "https://gitlab.example/alex/csgo/uploads/cef859da/front.png"), None, "full_path link");
         assert!(upload_url(root, 39, &json!({"url": "/uploads/x/a.png"})).is_err(), "no id: no load check possible");
         assert!(upload_url(root, 39, &json!({"id": 1, "full_path": "/alex/csgo/uploads/x/a.png"})).is_err());
+    }
+
+    // Chain: § 2 visual evidence videos on GitLab (#1844). Defect: csgo#415 hand-posted host-less video links that GitLab
+    // rewrote into broken repository paths. Risk: a video URL keeps a fragment that stops inline play, or a foreign or
+    // relative URL is load-checked as this project's upload.
+    #[test]
+    fn gitlab_videos_embed_absolute_urls_ending_in_their_extension() {
+        let root = "https://gitlab.example/api/v4";
+        let url = upload_url(root, 39, &json!({"id": 215, "url": "/uploads/cef859da/abcd1234-run.mp4"})).unwrap();
+        assert_eq!(url, "https://gitlab.example/-/project/39/uploads/cef859da/abcd1234-run.mp4");
+        assert_eq!(video_name(root, 39, &url), Some("abcd1234-run.mp4"));
+        assert_eq!(upload_url(root, 39, &json!({"id": 216, "url": "/uploads/ab/clip.webm"})).unwrap(), "https://gitlab.example/-/project/39/uploads/ab/clip.webm");
+        assert_eq!(video_name(root, 40, &url), None, "another project's upload");
+        assert_eq!(video_name(root, 39, "/-/project/39/uploads/cef859da/abcd1234-run.mp4"), None, "host-less link");
+        assert_eq!(video_name(root, 39, "https://gitlab.example/-/project/39/uploads/ab/front.png"), None, "an image keeps its id");
     }
 }

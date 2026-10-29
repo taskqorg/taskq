@@ -119,10 +119,10 @@ Optional last lines `op-id: <id>`, then `revision: <R>`, of an entry are fields,
 `ask` writes, in order, ≤ 9 nonblank lines, without headings or blank lines:
 1. `Done: <what was checked or attempted>` -- one line, ≤ 160 characters; say `not started` when true.
 2. `Problem: <decision needed and user effect>` -- 1-2 lines, ≤ 240 characters each.
-3. Optional `Evidence: [<label>](<url>), ![<name>](<url>)` -- one line, ≤ 2 links (labels ≤ 40 characters), ≤ 4 images; absolute URLs; visual evidence as images.
-4. 2-4 options `1. <label> - + <gain>; - <cost>`, label ≤ 32 characters, unique, naming the meaning; one line each, ≤ 160 characters, exactly one ends in `★`. A Problem or option line holds ≤ 1 `[label](url)` link (label ≤ 40 characters), no bare URL; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
+3. Optional `Evidence: [<label>](<url>), ![<name>](<url>)` -- one line, ≤ 2 links, ≤ 4 images or videos; absolute URLs. GitHub video: jsDelivr if public, else download.
+4. 2-4 options `1. <label> - + <gain>; - <cost>`, label ≤ 32 characters, unique, naming the meaning; one line each, ≤ 160 characters, exactly one ends in `★`. A Problem or option line holds ≤ 1 `[label](url)` link, no bare URL; every link label ≤ 40 characters; `ask` names the failing line. None: an owner action, its Problem the action; no attempt starts while it waits, its `answer` resumes the same session.
 5. To answer: `taskq answer N.K` or comment `K` or the option text; an owner action: `taskq answer N --text <done>`. Last line; substitute this task's number for N.
-One render on every surface, no `To answer:` line; tray card, image rules, question types: [answer card](docs/design/answer-card.md#contract-detail).
+One render on every surface, no `To answer:` line; tray card, media rules, question types: [answer card](docs/design/answer-card.md#contract-detail).
 ### Executable behavioral model
 Apply the [shared behavioral-model method](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#state-driven-systems).
 TaskQ sources: the §2 transition table, `tests/golden/*.json` traces (`fold.json`: entries in, expected task out; `admit.json`: free slots in, admitted runtimes out), `fold`, then adapters.

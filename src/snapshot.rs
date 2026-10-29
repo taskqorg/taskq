@@ -522,7 +522,10 @@ pub fn question(card: &str) -> Value {
         // `![alt](url)`: an image the card UIs show inline (§ 2 visual evidence)
         let (image, l) = l.strip_prefix('!').map_or((false, l), |l| (true, l));
         let (label, url) = l.strip_prefix('[')?.split_once("](")?;
-        Some(json!({"label": label, "url": url.trim_end_matches(')'), "image": image}))
+        let url = url.trim_end_matches(')');
+        // a video the board plays inline (#1844) stays a link in the apps
+        let video = [".mp4", ".webm"].iter().any(|e| url.to_ascii_lowercase().ends_with(e));
+        Some(json!({"label": label, "url": url, "image": image && !video}))
     }).collect();
     let o = options(card);
     // an option that starts with `close` closes the task after the answer (dispatch::answer_picks): consequential
