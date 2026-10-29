@@ -166,8 +166,15 @@ fn run(install: &Path, wire: &mut dyn Wire, backoff: &mut Backoff, deadline: Ins
                     if save(install, &c).is_err() { return unknown("cursor-unwritable") }
                     sent += b.raw;
                 }
-                // a rejected block stays unsent: the cursor waits, nothing is dropped
-                Ok(x) => return (status("stopped", &c, Some(backlog(&c, sent)), Some(&format!("rejected: {}", x[0]["reason"].as_str().unwrap_or("unknown")))), STOP),
+                // DashQ refuses rows past its retention window for good: the block becomes a counted gap (S4)
+                Ok(x) if x[0]["state"] == "rejected" && x[0]["reason"] == "expired" => {
+                    c["gap_rows"] = json!(c["gap_rows"].as_u64().unwrap_or(0) + b.payload["rows"].as_u64().unwrap_or(0));
+                    (c["seq"], c["pending"], c["pending_status"]) = (json!(b.last), Value::Null, Value::Null);
+                    if save(install, &c).is_err() { return unknown("cursor-unwritable") }
+                    sent += b.raw;
+                }
+                // any other rejected block stays unsent: the cursor waits, nothing is dropped
+                Ok(x) =>return (status("stopped", &c, Some(backlog(&c, sent)), Some(&format!("rejected: {}", x[0]["reason"].as_str().unwrap_or("unknown")))), STOP),
                 Err(Delivery::Retry(s)) => return (status("retrying", &c, Some(backlog(&c, sent)), Some("unreachable")), s),
                 Err(Delivery::Stopped(e)) => return (status("stopped", &c, Some(backlog(&c, sent)), Some(&e)), STOP),
             }
@@ -353,6 +360,24 @@ mod tests {
         fs::remove_dir_all(install).unwrap();
     }
 
+    // Chain: DashQ rejects block 1 as `expired`, accepts block 2 in the same job. Risk: an expired backlog stopping
+    // sync forever (#1796), its rows lost uncounted or resent (S4).
+    #[test]
+    fn expired_block_counts_as_gap_and_sync_continues() {
+        let (install, store) = setup("expired", json!([enrollment::SCHEMA, SCHEMA]));
+        append(&store, 8000);
+        let mut c = Capture { replies: vec![("rejected", Some("expired"))], ..Default::default() };
+        let s = go_with(&install, &mut c);
+        assert!(c.records.len() >= 2, "two blocks or more: {}", c.records.len());
+        let ids: std::collections::BTreeSet<_> = c.records.iter().map(|r| r["event_id"].as_str().unwrap()).collect();
+        assert_eq!(ids.len(), c.records.len(), "no duplicate event id");
+        let gap = c.records[0]["payload"]["rows"].as_u64().unwrap();
+        assert_eq!((s["state"].as_str(), s["gap_rows"].as_u64(), s["backlog_rows"].as_i64()), (Some("idle"), Some(gap), Some(0)));
+        assert_eq!(load(&install, "https://d/machine").unwrap()["seq"], 8000, "cursor past both blocks");
+        drop(store);
+        fs::remove_dir_all(install).unwrap();
+    }
+
     /// The published wire fixture (A2): DashQ D11 conformance input, released as `taskq-<v>-telemetry-sync-fixtures.json`.
     const FIXTURE: &str = include_str!("../tests/fixtures/telemetry-sync.json");
 
@@ -435,11 +460,16 @@ mod tests {
         c.replies = vec![("rejected", Some("replay_mismatch")), ("rejected", Some("payload"))];
         let (mismatch_after, reject_after) = (go(&mut c), go(&mut c));
         assert_eq!(c.records[0], c.records[1]);
+        // expired: DashQ refuses the same block as past its window; it becomes a gap and the cursor moves on
+        c.replies = vec![("rejected", Some("expired"))];
+        let expired_after = go(&mut c);
+        assert_eq!(c.records[1], c.records[2]);
         let mut stored = c.records[0]["payload"].clone();
         stored.as_object_mut().unwrap().remove("status");
         let cases = json!([replay,
             {"case": "mismatch", "record": c.records[0], "stored": stored, "receipts": [{"state": "rejected", "reason": "replay_mismatch"}], "status_after": [mismatch_after]},
-            {"case": "reject", "record": c.records[1], "receipts": [{"state": "rejected", "reason": "payload"}], "status_after": [reject_after]}]);
+            {"case": "reject", "record": c.records[1], "receipts": [{"state": "rejected", "reason": "payload"}], "status_after": [reject_after]},
+            {"case": "expired", "record": c.records[2], "receipts": [{"state": "rejected", "reason": "expired"}], "status_after": [expired_after]}]);
         let got = json!({"schema": SCHEMA, "installation": "i", "source": "src/telemetry_sync.rs sender_posts_the_published_fixture",
             "rows": rows, "pruned_through": 7, "gap": [6, 7], "records": records, "status_after": [s1, s2, s3], "cases": cases});
         if std::env::var("TASKQ_TELEMETRY_FIXTURE").is_ok_and(|v| v == "1") {
