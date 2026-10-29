@@ -423,7 +423,8 @@ mod tests {
             ]};
             for row in rows {writeln!(file,"{row}").unwrap();}drop(file);
             let mut page=crate::transcript::before(codex,&path,None).unwrap();worker_roles(&mut page.items);
-            assert_eq!(page.items.len(),1);assert_eq!(page.items[0]["text"],if codex {"exec_command"} else {"Bash"});
+            assert_eq!(page.items.len(),1);assert_eq!(page.items[0]["role"],"tool");
+            assert!(page.items[0]["text"].as_str().unwrap().contains(if codex {"exec_command"} else {"Bash"}));
             assert!(!json!(page.items).to_string().contains("private-value"));
         }
         fs::remove_dir_all(dir).unwrap();
