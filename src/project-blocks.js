@@ -38,8 +38,7 @@ task:function(p,row,global=false,compact=false){
     const metadata=[since,global?esc(p.name):'',row.host?esc(row.host):'',badges].filter(Boolean).join(' · ');
     // #1524: only the owner text `wait`; the raw `execution_wait` stays in status --json and the service log.
     const wait=row.wait?'<small class="tqp-execution-wait" role="status">'+esc(row.wait)+'</small>':'';
-    // R6 #1823: a timed park names its UTC board time on this computer's clock, with the reason.
-    const parked=row.until?'<small class="tqp-parked">Parked until '+esc(new Date(row.until).toLocaleString())+(row.later?': '+esc(row.later.replace(/^Reason: /,'')):'')+'</small>':'';
+    const parked=row.until?'<small class="tqp-parked">'+esc(parkedText(row))+'</small>':'';
     if(compact){
       const elapsed=row.age!=null?'<span class="tqp-age">'+esc(row.age)+'</span>':'<span class="tqp-age" title="Current stage elapsed unknown">?</span>';
       // MP13: the runtime mark, and the remote mark only for a proven remote run, sit right before the elapsed time.
@@ -77,5 +76,7 @@ const root=globalThis;
 
   // Consumer adapter owns placement/routes; component emits navigation only, never task operations.
 
-  const api={marks,assets,counters,summary,aggregate,task,handle};
+  // R6 #1823: a timed park names its UTC board time on this computer's clock, with the reason; plain text, callers escape.
+  const {parkedText}=execution.module("project-blocks",{parkedText:row => row.until?'Parked until '+new Date(row.until).toLocaleString()+(row.later?': '+row.later.replace(/^Reason: /,''):''):''});
+  const api={marks,assets,counters,summary,aggregate,task,handle,parked:parkedText};
   module.exports=api;

@@ -119,9 +119,12 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   assert(space>=4,'V09/V20: workspace route controls need at least 4px separation');
   await workspace.locator('.content [data-route=sessions]').click();assert.match(await workspace.locator('.content').innerText(),/Recorded workers and reviewers/);
   assert.equal(await workspace.locator('.content [data-url]').count(),0,'C-A8: absent native identities cannot fabricate session targets');
-  await workspace.evaluate(s=>taskq.receive({...s,projects:[{...s.projects[0],tasks:[{n:7,title:'Invented local attempt',session:'codex:fixture-thread fixture',runtime:'codex',host:'fixture',role:'worker',state:'doing',session_url:'codex://threads/fixture-thread'},{n:8,title:'Invented remote attempt',session:'codex:remote-thread other-host',runtime:'codex',host:'other-host',role:'reviewer',state:'review',session_reason:'Codex session opens only on other-host'}]}]}),snapshot);
+  await workspace.evaluate(s=>taskq.receive({...s,projects:[{...s.projects[0],tasks:[{n:7,title:'Invented local attempt',session:'codex:fixture-thread fixture',runtime:'codex',host:'fixture',role:'worker',state:'doing',session_url:'codex://threads/fixture-thread'},{n:8,title:'Invented remote attempt',session:'codex:remote-thread other-host',runtime:'codex',host:'other-host',role:'reviewer',state:'review',session_reason:'Codex session opens only on other-host'},{n:9,title:'Invented timed park',state:'later',until:'2026-11-05T09:00:00Z',later:'Reason: 168 qualified hours\nNext: resume collection'}]}]}),snapshot);
   assert.equal(await workspace.getByText('Open recorded session',{exact:true}).count(),1,'C-A8: open only the supplied verified target');
   assert.match(await workspace.locator('.content').innerText(),/opens only on other-host/);
+  // R6 #1823: a timed park has no session (core end() clears it) and still lists its local time and reason.
+  const park=await workspace.locator('.content article',{hasText:'Invented timed park'}).innerText(),until=await workspace.evaluate(()=>new Date('2026-11-05T09:00:00Z').toLocaleString());
+  assert(park.includes('Parked until '+until+': 168 qualified hours'),park);assert(!/Attempt|Verified session/.test(park),'a park invents no attempt or session target');
   await workspace.getByText('Open recorded session',{exact:true}).click();assert.equal(await workspace.evaluate(()=>messages.filter(m=>m.a==='open').at(-1).url),'codex://threads/fixture-thread');
   await workspace.locator('[data-a=back]').click();assert.equal(await workspace.evaluate(()=>document.activeElement.dataset.route),'sessions');
   await workspace.locator('.shell-overflow > summary').click();await workspace.locator('.overflow-actions [data-route=conversations]').click();
