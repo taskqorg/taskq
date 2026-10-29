@@ -5,8 +5,8 @@ const fx=require('./fixtures/task-workspace.json'),out=process.env.TASKQ_REPORT_
 const root='fixture',sha='a'.repeat(40),row={n:12,sha,title:'Retry limits for interrupted requests',url:'https://github.com/invented/research/issues/12',closed:200,read:false,decision:'none',visible:true};
 const report={...row,read:true,body:'# Question\n\nHow should interrupted requests recover?\n\n# Findings\n\nThe [recorded protocol](https://example.com/invented-evidence) exposes a stable request identity.\n\n# Options\n\n1. Reuse the identity. Pro: no duplicate work. Con: requires an immutable request.\n2. Start again. Pro: simple. Con: may duplicate work.\n\n# Recommendation\n\nReuse the request identity.\n\n# Proposed tasks\n\n```taskq-tasks\n[]\n```',tasks:[{title:'Document request recovery',goal:'Make recovery steps available to operators.',acceptance:['Help names the original request identity.'],type:'docs'}]};
 (async()=>{const browser=await chromium.launch(require('./browser.cjs')());let cells=0;try{
- for(const surface of ['tray','workspace'])for(const theme of ['dark','light'])for(const width of [350,940])for(const font of [16,20]){
-  const page=await browser.newPage({viewport:{width,height:850}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ for(const surface of ['workspace','tray'])for(const theme of ['dark','light'])for(const width of [350,940])for(const font of [16,20]){
+  const page=await browser.newPage({viewport:{width,height:surface==='workspace'?480:850}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.setContent(fs.readFileSync('build/web/'+surface+'.html','utf8'));
   const state={...fx.state,font,theme,projects:[{...fx.state.projects[0],root,name:'Research',issues:'https://github.com/invented/research/issues',tasks:[]}],messages:{complete:true,entries:[]},conversations:{complete:true,items:[]},ai:{history:[],runtime:{id:'invented',name:'Fixture',available:false}}};
   await page.evaluate(({state,row,report})=>{window.sent=[];window.reportRow=row;window.reportData=report;window.failReportAction=false;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a!=='reports')return;let value;
@@ -20,6 +20,12 @@ const report={...row,read:true,body:'# Question\n\nHow should interrupted reques
   await page.locator('[data-report=open]').click();await page.locator('.report-body a').waitFor();
   assert.equal(await page.locator('[data-report=make]').isEnabled(),true);assert((await page.locator('.report-card').innerText()).includes('Read'));
   assert.equal(await page.locator('.report-body a').getAttribute('href'),'https://example.com/invented-evidence');
+  if(surface==='workspace'){
+   assert(await page.evaluate(()=>document.querySelector('.reports-section').getBoundingClientRect().bottom<=document.querySelector('.status-footer').getBoundingClientRect().top+1),'the report reader must fit above the fixed footer');
+   const box=await page.locator('.reports-section').boundingBox();await page.mouse.move(box.x+20,box.y+60);await page.mouse.wheel(0,4000);
+   await page.waitForFunction(()=>{const b=document.querySelector('[data-report=drop]').getBoundingClientRect(),footer=document.querySelector('.status-footer').getBoundingClientRect();return b.top>=0&&b.bottom<=footer.top;},null,{timeout:3000});
+  }
+  assert.equal(await page.getByRole('heading',{name:'Proposed tasks',exact:true}).count(),1,'structured proposals have one heading');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&[...document.querySelectorAll('.reports-section button')].every(e=>e.scrollWidth<=e.clientWidth+1)),'Reports must wrap at '+surface+'/'+width+'/'+font);
   if(out&&surface==='workspace'&&theme==='light'&&width===940&&font===16)await page.screenshot({path:path.join(out,'conversations-report.png')});
   await page.locator('[data-report=later]').click();await page.getByText('Kept in Reports for later.',{exact:true}).waitFor();
@@ -32,12 +38,13 @@ const report={...row,read:true,body:'# Question\n\nHow should interrupted reques
   assert.equal(await page.locator('.report-row').count(),0);
   await page.evaluate(row=>{reportRow={...row};},row);await page.locator('[data-report=refresh]').click();await page.locator('.report-row').waitFor();
   await page.locator('[data-report=open]').click();await page.locator('.report-body a').waitFor();await page.locator('[data-report=drop]').click();await page.getByText('Report dropped.',{exact:true}).waitFor();assert.equal(await page.locator('.report-row').count(),0);
+  if(surface==='workspace'){await page.locator('[data-report=toggle]').click();assert(await page.locator('.conversations').isVisible(),'closing Reports restores Conversations');}
   assert.deepEqual(errors,[]);cells++;await page.close();
  }
  console.log('PASS Reports buttons and theme/width/text matrix: '+cells+' cells; Chromium instrument, native platforms separate');
  // Reuse the native fixture with a WebView2-shaped sink. Risk: a capture silently leaves Reports collapsed.
  for(const surface of ['tray','workspace']){
-  const page=await browser.newPage();await page.setContent(fs.readFileSync('build/web/'+surface+'.html','utf8'));
+  const page=await browser.newPage({viewport:{width:640,height:480}});await page.setContent(fs.readFileSync('build/web/'+surface+'.html','utf8'));
   await page.evaluate(state=>{window.chrome={webview:{postMessage(t){if(JSON.parse(t).a==='reports')throw Error('fixture reached native IPC');}}};window.ipc=Object.freeze({postMessage:t=>window.chrome.webview.postMessage(t)});taskq.receive(state);},fx.state);
   await page.evaluate(fs.readFileSync('tests/fixtures/reports-shots.js','utf8')+'taskqReportShot('+JSON.stringify(surface)+','+JSON.stringify(fx.state)+')');
   await page.locator('.report-card').waitFor({timeout:5000});assert((await page.locator('.report-card').innerText()).includes('Retry limits'));

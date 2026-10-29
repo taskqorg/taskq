@@ -63,7 +63,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
 
 // Keep untrusted Markdown as text/vnodes; evidence URLs are the only active content. No raw HTML.
 body:function(text){
- const prose=text.replace(/```taskq-tasks\n[\s\S]*?```/g,'').replace(/(^|\n)(#{1,6} [^\n]+)\n/g,'$1$2\n\n');
+ const prose=text.replace(/```taskq-tasks\n[\s\S]*?```/g,'').replace(/(^|\n)#{1,6}[ \t]+Proposed tasks[ \t]*(?=\n|$)/gi,'$1').replace(/(^|\n)(#{1,6} [^\n]+)\n/g,'$1$2\n\n');
  return prose.split(/\n\s*\n/).map((p,i)=>{
   const heading=/^#{1,6}\s+(.+)$/.exec(p.trim());
   if(heading)return h('h3',{key:i},heading[1]);

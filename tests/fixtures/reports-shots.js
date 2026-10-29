@@ -6,7 +6,7 @@ function taskqReportShot(surface,state){
  const sink=window.webkit?.messageHandlers?.ipc||window.chrome?.webview||window.ipc,post=sink&&sink.postMessage.bind(sink);
  const stub=t=>{const m=JSON.parse(t);if(m.a!=='reports')return post&&post(t);
   const value=m.action==='list'?{reports:[row],more:false}:{report:{...row,read:true,body,tasks:[{title:'Document request recovery',goal:'Make recovery steps visible.',acceptance:['Help names the original request identity.'],type:'docs'}]}};
-  setTimeout(()=>{taskq.receive({reportReceipt:{id:m.id,root:m.root,...value}});if(m.action==='list')document.querySelector('[data-report=open]')?.click();},0);
+  setTimeout(()=>{taskq.receive({reportReceipt:{id:m.id,root:m.root,...value}});if(m.action==='list')document.querySelector('[data-report=open]')?.click();if(m.action==='open'&&surface==='conversations')setTimeout(()=>{const reader=document.querySelector('.reports-section');reader.scrollTop=reader.scrollHeight;},0);},0);
  };
  if(sink)sink.postMessage=stub;else window.ipc={postMessage:stub};
  delete s.page;taskq.receive(s);const toggle=document.querySelector('[data-report=toggle]');if(toggle?.getAttribute('aria-expanded')==='true')document.querySelector('[data-report=refresh]')?.click();else toggle?.click();
