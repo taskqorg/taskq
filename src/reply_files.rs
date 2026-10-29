@@ -187,6 +187,27 @@ mod tests {
         }
     }
 
+    // Chain: §5 same answer text plus new files -> durable note. Risk: text-only deduplication drops attachments.
+    #[test]
+    fn new_files_keep_a_repeated_answer_distinct() {
+        let fixture=Fixture::new();let photo=fixture.0.join("photo.png");
+        fs::write(&photo,include_bytes!("../tests/fixtures/reply-photo.png")).unwrap();
+        let b=Fake::default();let n=b.create("Invented repeated reply","",&["taskq".into()]).unwrap();
+        let attempt=b.comment(n,"taskq: spawn worker claude:fixture invented-host").unwrap();
+        b.comment(n,&core::entry("ask",&[],Some(attempt),"Problem: send the file")).unwrap();
+        let revision=core::revision(n,&entries(&b,n).unwrap());
+        assert!(dispatch::act(&b,&fixture.0,n,"answer",&[],"Same text",&Op::default()).ok());
+        let op=Op{id:Some("reply-with-new-photo".into()),revision:Some(revision)};
+        let receipt=dispatch::act_files(&b,&fixture.0,n,"answer","Same text",&op,&[photo.display().to_string()]);
+        assert!(receipt.ok(),"{}",receipt.text());
+        assert_eq!(receipt.note,Some(true),"new attachments must survive a repeated answer's text");
+        let log=entries(&b,n).unwrap();assert_eq!(manifest(&log.last().unwrap().body).unwrap().len(),1);
+        assert!(prepare(&b,&fixture.0,n,&log).unwrap().contains("photo.png"));
+        let count=b.comments(n).unwrap().len();
+        assert!(dispatch::act_files(&b,&fixture.0,n,"answer","Same text",&op,&["missing".into()]).ok());
+        assert_eq!(b.comments(n).unwrap().len(),count,"same-operation retry writes nothing");
+    }
+
     // Chain: §5 paste/drop native copy -> saved reply -> upload refusal. Risk: lost draft or partial media moves task.
     #[test]
     fn private_copy_and_refused_upload_preserve_the_draft_and_task() {

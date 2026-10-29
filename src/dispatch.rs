@@ -161,7 +161,7 @@ fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op
                 .ok_or("choice not found in the original question")
         })
     } else { Ok(text.to_string()) };
-    if let Some(id) = said.as_ref().ok().zip(source).and_then(|(said, r)| same_answer(n, log, r, said)) {
+    if let Some(id) = said.as_ref().ok().zip(source).filter(|_| files.is_empty()).and_then(|(said, r)| same_answer(n, log, r, said)) {
         let by = b.comments(n).unwrap_or_default().into_iter().find(|c| c.id == id).map(|c| c.author).unwrap_or_default();
         let answered = Answered { by, text: core::delivery(n, log, id) };
         return Receipt { reason: "Same answer; nothing saved".into(), answered: Some(answered), ..Receipt::accepted(n, op, now.0, now.1) };
