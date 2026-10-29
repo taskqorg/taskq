@@ -5,12 +5,12 @@
 ## Method
 
 - First pass: the installed Mac dev build (`taskq tray --snapshot`, real WKWebView, real install data: 9 projects, hosts mac, win, hermes-fra1).
-- Second pass: the PR head built as a debug binary, same command, same install data. The dev install of the PR head (`scripts/dev-install.sh`) is sandbox-blocked in the worker: it cannot write the install's lock directory. The service's own dev install takes the merged commit.
+- Second pass: the PR head `a6ce0a77` dev-installed on the Mac as `4.6.40-dev.1793232377` (install receipt `fd96c96b`), same command, same install data. The footer of every second-pass screen reads that version.
 - Pass means the native screen shows it. A source or browser-fixture pass is not a native Pass.
 - Not testable names why: an owner gesture (drag, hover, click sequence, close/reopen, restart), a live effect that would disturb running workers, Windows, DPI or a remote host. Screen recording is not granted to the worker, so only single-route snapshots exist.
 - `conversations` snapshots use fixture threads (the route renders dark only); every other route reads the real install.
 
-Evidence: [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/). Each image puts the native screen (left) beside the approved target render of the same screen (right): Home and Settings from [#1660](evidence/1660/README.md), Hosts, Settings and Services from [#1661](evidence/1661/README.md), Conversations from [#1580](evidence/conversations-1580/rendered/manifest.json). `views-light.png` holds the two native View states. The Agents route shows the account and is not committed.
+Evidence: first pass [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/); second pass on the installed PR head [native-1775-installed-2026-10-29](review-evidence/native-1775-installed-2026-10-29/) (10 pairs, light and dark, native left, target right: Home, Settings, Hosts, Services, project overview, Appearance, Conversation info, question card). Each image puts the native screen (left) beside the approved target render of the same screen (right): Home and Settings from [#1660](evidence/1660/README.md), Hosts, Settings and Services from [#1661](evidence/1661/README.md), Conversations from [#1580](evidence/conversations-1580/rendered/manifest.json). `views-light.png` holds the two native View states. The Agents route shows the account and is not committed.
 
 ## First-pass failures and fixes
 
@@ -27,7 +27,7 @@ Evidence: [native-1775-2026-10-29](review-evidence/native-1775-2026-10-29/). Eac
 
 ## PM steer gaps
 
-The PM steer named gaps on 4.6.40-dev. Each row compares the native screen with the target render in [native-1775-steer-2026-10-29](review-evidence/native-1775-steer-2026-10-29/) (native left, target right). Native screens come from the PR head binary (`taskq tray --snapshot`), not a PR-head dev install.
+The PM steer named gaps on 4.6.40-dev. Each row compares the native screen with the target render in [native-1775-steer-2026-10-29](review-evidence/native-1775-steer-2026-10-29/) (native left, target right) from the PR head binary; the installed-build pass repeats M1–M4, C1, C2 and C5 in [native-1775-installed-2026-10-29](review-evidence/native-1775-installed-2026-10-29/) with the same result (`01`, `02`, `07`, `09`, `10`).
 
 | Gap | Target | Native result | Fix |
 |---|---|---|---|
@@ -63,7 +63,7 @@ Browser tests `tray-state-filter` and `project-blocks` fail identically on the p
 | R13 | R13 | Not testable: deleting a saved view writes owner state | |
 | R14 | R14 | Not testable: the install has no pinned task; pinning writes owner state | |
 | R15 | R15 | Pass: strip, filters and tasks share the one content scroll | |
-| R16 | R16, menu.md | Pass: `hermes-fra1 mac ✳1 win` with no `?` (steer pass). Waiting and ended executions on a fresh read no longer count as unknown. Failed in pass 1 and in the steer review | `bc2c88ce`, `28c83ad7`, steer commit |
+| R16 | R16, menu.md | Pass: `hermes-fra1 mac ✳1 win` with no `?` on the installed build (`01`, `02`); Hosts lists `mac · Claude 1 · Codex 0` (`05`). Waiting and ended executions on a fresh read no longer count as unknown. Failed in pass 1 and in the steer review | `bc2c88ce`, `28c83ad7`, steer commit |
 | R17 | R17 | Not testable: host lines render collapsed (`hosts-*`); the CPU/memory expansion opens on a click. Board tasks read apart (`Tasks: Doing 2 · Review 1`) | |
 | R18 | R18, agent-settings | Pass: tray and service versions apart from runtime client version, account, method, expiry or `Expiry unknown`, check age (Agents route, not committed: shows the account) | |
 | R19 | R19 | Not testable: every runtime on this host reads Signed in; Expired, Rejected and Check failed need a failing probe; remote values need the remote host | |
@@ -73,14 +73,14 @@ Browser tests `tray-state-filter` and `project-blocks` fail identically on the p
 | R23 | R23 | Pass: Close always visible. First drag enabling Keep open: Not testable (gesture) | |
 | R24 | R24 | Pass: Always on top (overlapping squares, filled front) in the stable row | |
 | R25 | R25 | Pass: the menu has no Enlarge; the corner grip has no button chrome. Settings window Enlarge: Not testable (separate window) | |
-| R26 | R26 | Pass: footer is `TaskQ v4.6.39` plus grip | |
+| R26 | R26 | Pass: footer is `TaskQ v4.6.40-dev.1793232377` plus grip | |
 | R27 | R27 | Not testable: Completed opens with a click and a board history read; no snapshot route | |
 | R28 | R28, visual-style control icons | Pass: twelve compact widgets with type, bell, chart-no-axes-column, network, focus, bot, folder, git-pull-request, activity, octagon-x, rotate-ccw, info. Failed in pass 1 (icons) | `5d9d9cc2` |
 | R29 | R29 | Pass: Agents route has no circular Access placeholder | |
-| R30 | R30 | Pass: Services shows the host and its PID once, then agentq, coreq, dashq by full name (`services-*`) | `bc2c88ce` |
+| R30 | R30 | Pass: Services shows the host and its PID once, then agentq, coreq, dashq by full name (`06`) | `bc2c88ce` |
 | R31 | R31 | Pass: compact Projects, Delivery (`auto-merge (7) · direct (2)`) and About rows | |
 | R32 | R32 | Pass: Work mode widget leads with admission (`Blocked work: all 9 projects (access)`) then intake | |
-| R33 | R33 | Pass: Notifications shows event choices apart from OS authorization; the debug binary is not a bundled app and reads `OS unsupported` | |
+| R33 | R33 | Pass: Notifications shows event choices apart from OS authorization; the snapshot runs the installed CLI binary, not the bundled app, and reads `OS unsupported` | |
 | R34 | R34 | Pass: Activity shows period, interval, legend with counts and event bins (`cadence` route) | |
 | R35 | R35 | Not testable: no reviewed Stop on this install, so no recovery targets; a Stop would halt live workers. The route now renders (`Review recovery…`) | this commit |
 | R36 | R36 | Pass: request rows and delivery state in Conversations (fixture threads) | |
