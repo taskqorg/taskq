@@ -41,7 +41,11 @@ Filtered Rust protection:
 
 Existing browser checks pass: `conversations.browser.cjs`, `conversations-selection.browser.cjs`, `conversations-stable.browser.cjs`, `dialogue.browser.cjs`, `workspace-communication.browser.cjs`. They retain draft/caret/files, Archive/Undo/Restore, immutable sends, source choices, scoped receipts, growing input, history, transcript paging, watch, late/failed read and reload protection. The stage 1 prototype check remains separate from production proof.
 
-The full gate is not PASS. `python3 scripts/check.py --base c761cc2ed608b26638bc295dc5f3e5a6690ffb68` stopped after 1.765 s on the current candidate at the Product rule-ID gate; later steps did not run. The earlier stage 1 full run was sandbox-blocked after 109.157 s (574 Rust pass, 18 host/capacity/lifecycle failures, 33 ignored, including explicit worker refusals); it does not qualify this implementation. Worker identity and permission markers were kept. CI must still pass on the merge result (§7/R12).
+`python3 scripts/check.py --base baca245eb3769da59e14f7923cef2579179f8691` on `25d3ba7d` passed the unchanged Product rule gate, build/inventory and 577 Rust cases; 18 host/capacity/lifecycle cases were sandbox-blocked and 33 ignored. Elapsed: 73.297 s. The 18 failing names exactly match the pre-implementation stage 1 run, including explicit worker refusals to change host policy, install/restart services or dispatch Stop. Worker markers were kept. The canonical gate is not PASS; integration/process suites after the binary tests did not run. Merge-result CI remains required (§7/R12).
+
+The preceding run exposed three task defects: the Product addition exceeded 60 KiB, and two JSON fixtures omitted the new recency field. After correction the same three guards pass in the canonical run: `core::tests::every_table_row_has_a_golden_trace`, `snapshot::tests::cli_and_page_model_agree_on_one_board` and `tests::status_json_matches_the_golden_fixture`. The contract is 300 lines / 61,437 bytes; only additive `updated` fields changed in the fixtures. CLI/page equality, schema, size and line-limit assertions remain unchanged.
+
+The stopped gate's remaining checks ran separately: isolated offline selftest (99 golden traces), all 25 Node component scripts, screenshot-contract negative cases, release tag/source checks and both sidebar browser instruments pass. The design instrument's obsolete assertion that the current source has no groups failed after implementation; it was removed while all grouping, action, keyboard and 16 geometry assertions remain. Historical before images stay frozen; new captures require `TASKQ_DESIGN_EVIDENCE_1808`. The actual-bundle regression still protects mixed-source identity, native receipts and execution isolation.
 
 | Acceptance / boundary | Status |
 |---|---|
@@ -49,7 +53,8 @@ The full gate is not PASS. `python3 scripts/check.py --base c761cc2ed608b26638bc
 | A2–A6 source implementation and listed fixture flows | Pass in browser/Rust fixtures |
 | Whole affected workspace visual comparison | Pass in browser fixtures; four build images inspected |
 | Product rule-ID and refreshed capture authorization | Pass; owner answer names Product and accepts the captures |
-| Canonical gate and merge-result CI | Blocked / not qualified |
+| Canonical gate | sandbox-blocked; 577 Rust pass, 18 blocked, 33 ignored; remaining checks above |
+| Merge-result CI | Not tested here; reviewer/publication gate |
 | A7 installed Mac/Windows | Not tested; owner-approved §7.8 release batch |
 
 The required source screenshot manifest is refreshed and its source check passes. Review and green merge-group CI gate completion (§7/R12). No live installation is part of this task.
