@@ -36,7 +36,10 @@ pub fn install_state(tool:&coreq::Tool,owner:Option<&Identity>)->Res<InstallStat
         if owner.is_some() {return Err("live host has no native unit; installation refused".into());}
         return Ok(if saved {InstallState::Saved}else{InstallState::Absent});
     }
-    if !saved {return Err("native host has no saved definition; installation refused".into());}
+    if !saved {
+        #[cfg(not(windows))] return Err("native host has no saved definition; installation refused".into());
+        #[cfg(windows)] {export_definition(tool)?;return install_state(tool,owner);}
+    }
     #[cfg(target_os="macos")] {
         let unit=coreq::service::unit(tool,&tool.install,"");
         let target=unit.stop.first().and_then(|command|command.last()).ok_or("native host target missing")?;
@@ -136,17 +139,35 @@ fn verify_saved_install_scope(tool:&coreq::Tool)->Res<()> {
     #[cfg(windows)] {
         let code=format!(r#"$ErrorActionPreference='Stop';[xml]$saved=Get-Content -Raw -LiteralPath {definition};$e=$saved.Task.Actions.Exec
 $p=$saved.Task.Principals.Principal;$sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+function Get-Field($node,$name,$default){{$f=@($node.ChildNodes|Where-Object {{$_.LocalName -eq $name}});if($f.Count -eq 0){{$default}}elseif($f.Count -eq 1){{[string]$f[0].InnerText}}else{{$null}}}}
 $principal=[string]$p.UserId
 $owner=if($principal.StartsWith('S-1-',[StringComparison]::OrdinalIgnoreCase)){{[Security.Principal.SecurityIdentifier]::new($principal).Value}}else{{[Security.Principal.NTAccount]::new($principal).Translate([Security.Principal.SecurityIdentifier]).Value}}
-if(@($saved.Task.Principals.Principal).Count -ne 1 -or $owner -ne $sid -or [string]$p.LogonType -ne 'InteractiveToken' -or [string]$p.RunLevel -ne 'LeastPrivilege' -or @($saved.Task.Actions.Exec).Count -ne 1 -or @($saved.Task.Actions.ChildNodes).Count -ne 1 -or !(Test-CoreQPath ([string]$e.Command) {exe}) -or [string]$e.Arguments -ne 'service run' -or !(Test-CoreQPath ([string]$e.WorkingDirectory) {cwd})){{throw 'saved host task scope differs'}}
+if(@($saved.Task.Principals.Principal).Count -ne 1 -or $owner -ne $sid -or [string]$p.LogonType -ne 'InteractiveToken' -or (Get-Field $p 'RunLevel' 'LeastPrivilege') -ne 'LeastPrivilege' -or @($saved.Task.Actions.Exec).Count -ne 1 -or @($saved.Task.Actions.ChildNodes).Count -ne 1 -or !(Test-CoreQPath ([string]$e.Command) {exe}) -or [string]$e.Arguments -ne 'service run' -or !(Test-CoreQPath ([string]$e.WorkingDirectory) {cwd})){{throw 'saved host task scope differs'}}
 $time=@($saved.Task.Triggers.ChildNodes|Where-Object {{$_.LocalName -eq 'TimeTrigger'}})
-if($time.Count -gt 1 -or @($saved.Task.Triggers.ChildNodes).Count -ne 1+$time.Count -or @($saved.Task.Triggers.ChildNodes|Where-Object {{$_.LocalName -eq 'LogonTrigger'}}).Count -ne 1 -or [string]$saved.Task.Triggers.LogonTrigger.Enabled -ne 'true' -or ($time.Count -eq 1 -and [string]$time[0].Repetition.Interval -ne 'PT5M')){{throw 'saved host task trigger differs'}}
+if($time.Count -gt 1 -or @($saved.Task.Triggers.ChildNodes).Count -ne 1+$time.Count -or @($saved.Task.Triggers.ChildNodes|Where-Object {{$_.LocalName -eq 'LogonTrigger'}}).Count -ne 1 -or (Get-Field $saved.Task.Triggers.LogonTrigger 'Enabled' 'true') -ne 'true' -or ($time.Count -eq 1 -and [string]$time[0].Repetition.Interval -ne 'PT5M')){{throw 'saved host task trigger differs'}}
 $principal=[string]$saved.Task.Triggers.LogonTrigger.UserId
 $trigger=if($principal.StartsWith('S-1-',[StringComparison]::OrdinalIgnoreCase)){{[Security.Principal.SecurityIdentifier]::new($principal).Value}}else{{[Security.Principal.NTAccount]::new($principal).Translate([Security.Principal.SecurityIdentifier]).Value}}
 if($trigger -ne $sid){{throw 'saved host task trigger owner differs'}}
 "#,definition=quote(&definition(tool)?.to_string_lossy()),exe=quote(&tool.install.join(tool.exe_name()).to_string_lossy()),cwd=quote(&tool.install.to_string_lossy()));
         let code=format!("{}\n{code}",coreq::service::windows_path_identity());
         output("host.install.definition",&mut powershell(&code))?;
+    }
+    Ok(())
+}
+
+/// #1858: a live task with no saved definition (registered by an older installer) gets one exported from the task
+/// itself; the export never replaces a file and is removed again unless it passes the saved scope check.
+#[cfg(windows)]
+fn export_definition(tool:&coreq::Tool)->Res<()> {
+    let path=definition(tool)?;
+    let temp=path.with_extension(format!("xml.export-{}",crate::runtime::uuid()));
+    let code=format!(r#"$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$t=$s.GetFolder('\').GetTask({name})
+try{{[IO.File]::WriteAllText({temp},$t.Xml,[Text.Encoding]::Unicode);[IO.File]::Move({temp},{path})}}finally{{Remove-Item -LiteralPath {temp} -Force -ErrorAction SilentlyContinue}}
+"#,name=quote(tool.title),temp=quote(&temp.to_string_lossy()),path=quote(&path.to_string_lossy()));
+    output("host.install.export",&mut powershell(&code)).map_err(|e|format!("native host has no saved definition; export from the live task failed: {e}"))?;
+    if let Err(e)=revision_for(tool).and_then(|_|verify_saved_install_scope(tool)) {
+        let _=fs::remove_file(&path);
+        return Err(format!("native host has no saved definition; the live task export differs ({e}); export removed. Next: `schtasks /End /TN {name}`, `schtasks /Delete /TN {name} /F`, then repeat `service install`",name=tool.title));
     }
     Ok(())
 }
@@ -550,6 +571,11 @@ mod tests {
                 output("host.install.fixture.native-restore",&mut powershell(&restore)).unwrap();
                 assert!(checked.is_err(),"extra native trigger accepted");assert_eq!(fs::read(&definition).unwrap(),original);
                 assert_eq!(install_state(&tool,Some(&native)).unwrap(),InstallState::Loaded);
+                // #1858: an older installer's live task without TaskQ.xml exports one instead of refusing with no step
+                fs::remove_file(&definition).unwrap();
+                let exported=install_state(&tool,Some(&native));let written=definition.is_file();fs::write(&definition,&original).unwrap();
+                assert_eq!(exported.unwrap(),InstallState::Loaded,"live task export accepted");assert!(written,"export kept as the saved definition");
+                assert!(fs::read_dir(&install).unwrap().all(|e|!e.unwrap().file_name().to_string_lossy().contains(".export-")),"export temp removed");
             }
         }
         #[cfg(windows)] let collateral=if std::env::var_os("TASKQ_NATIVE_INSTALL_START_VERIFY").is_some() {
@@ -615,6 +641,27 @@ if($allowed.Count -eq 0){{throw 'limited controller cannot retire its own task'}
             let checked=verify_saved_install_scope(&tool);
             assert_eq!(checked.is_ok(),accepted,"{checked:?}");
             if let Err(e)=checked {assert!(e.contains("trigger differs"),"{e}");}
+        }
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    // Risk (#1858): Task Scheduler exports omit default fields, so a definition saved from the live task was refused.
+    #[cfg(windows)]
+    #[test]
+    fn saved_unit_reads_omitted_run_level_and_logon_enabled_as_defaults() {
+        let install=std::env::temp_dir().join(format!("taskq-export-saved-{}",crate::runtime::uuid()));
+        let tool=coreq::Tool {install:install.clone(),..coreq::Tool::new("taskq-export-saved","TaskQ-Export-Saved","fixture/unused","1.2.3")};
+        fs::create_dir_all(&install).unwrap();fs::write(install.join(tool.exe_name()),b"").unwrap();
+        let unit=coreq::service::unit(&tool,&install,"");
+        let (level,enabled)=("<RunLevel>LeastPrivilege</RunLevel>","<LogonTrigger><Enabled>true</Enabled>");
+        assert!(unit.text.contains(level)&&unit.text.contains(enabled),"pinned CoreQ unit changed its default fields");
+        for (text,accepted) in [(unit.text.replace(level,""),true),(unit.text.replace(enabled,"<LogonTrigger>"),true),(unit.text.replace(level,"").replace(enabled,"<LogonTrigger>"),true),
+            (unit.text.replace(level,"<RunLevel>HighestAvailable</RunLevel>"),false),(unit.text.replace(level,&level.repeat(2)),false),
+            (unit.text.replace(enabled,"<LogonTrigger><Enabled>false</Enabled>"),false),(unit.text.replace(enabled,"<LogonTrigger><Enabled>true</Enabled><Enabled>true</Enabled>"),false)] {
+            let bytes:Vec<u8>=std::iter::once(0xFEFFu16).chain(text.encode_utf16()).flat_map(u16::to_le_bytes).collect();
+            fs::write(definition(&tool).unwrap(),bytes).unwrap();
+            let checked=verify_saved_install_scope(&tool);
+            assert_eq!(checked.is_ok(),accepted,"{checked:?}\n{text}");
         }
         fs::remove_dir_all(install).unwrap();
     }

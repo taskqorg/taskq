@@ -489,6 +489,19 @@ mod tests {
         fs::write(home.join(".claude.json"), "{").unwrap();
         assert!(trust_gap(&home, root)[0].contains("unknown"), "unreadable config is unknown, never trusted");
     }
+
+    // Risk (#1858): `service install` passes the canonical `\\?\C:\` root; its `//?/C:/` key missed Claude's `C:/` trust.
+    #[cfg(windows)]
+    #[test]
+    fn install_trust_reads_the_plain_key_of_a_verbatim_root() {
+        let home = tmp();
+        fs::write(home.join(".claude.json"), r#"{"projects": {"C:/Users/a/p": {"hasTrustDialogAccepted": true}, "D:/w": {"hasTrustDialogAccepted": true}}}"#).unwrap();
+        assert_eq!(claude_key(Path::new(r"\\?\C:\Users\a\p")), "C:/Users/a/p");
+        assert_eq!(claude_key(Path::new(r"\\?\UNC\srv\share\p")), "//srv/share/p");
+        assert!(trust_gap(&home, Path::new(r"\\?\C:\Users\a\p")).is_empty(), "a trusted verbatim root reads trusted");
+        assert!(trust_gap(&home, Path::new(r"\\?\D:\w\child")).is_empty(), "a trusted parent of a verbatim root covers it");
+        assert_eq!(trust_gap(&home, Path::new(r"\\?\C:\Users\a\q"))[0], "Trust: C:/Users/a/q not trusted; Claude workers cannot start here");
+    }
     fn states(i: &Path) -> Vec<String> { all(i).unwrap().0.into_iter().map(|r| r.state).collect() }
 
     // Chain: service setup to host launch (A2). Risk: a repeat returns an old session or a request launches twice.

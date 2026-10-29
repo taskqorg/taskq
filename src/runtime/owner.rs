@@ -228,8 +228,9 @@ pub(crate) fn codex_transcript_in(home: &Path, session: &str) -> Res<PathBuf> {
     }
 }
 
-/// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546).
-pub fn claude_key(p: &Path) -> String { p.display().to_string().replace('\\', "/") }
+/// Claude's project key: forward slashes on every platform; a Windows backslash key never matches (#1546),
+/// nor a verbatim `//?/C:/` one (#1858).
+pub fn claude_key(p: &Path) -> String { crate::platform::plain_path(p).display().to_string().replace('\\', "/") }
 
 /// The owner step for an untrusted folder that works while other Claude sessions run (#1555): Claude saves its own trust.
 pub fn trust_step(folder: &str) -> String { format!("Next: run `claude` in {folder} and accept its trust prompt; other Claude sessions keep running") }
