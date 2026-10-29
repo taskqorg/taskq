@@ -323,7 +323,7 @@ fn worker_read(install:&Path,m:&Value)->Res<Value> {
     let status=crate::data::json(&path)?.ok_or("Worker service status unavailable")?;
     let age=crate::file_age(&path).ok_or("Worker service status age unknown")?;
     if !crate::snapshot::live(age as i64,cfg.ttl) || !crate::snapshot::complete(&status)
-        || !status["tasks_age_seconds"].as_i64().and_then(|a|a.checked_add(age as i64)).is_some_and(|a|crate::snapshot::live(a,cfg.ttl))
+        || !status["tasks_age_seconds"].as_u64().and_then(|a|a.checked_add(age)).and_then(|a|i64::try_from(a).ok()).is_some_and(|a|crate::snapshot::live(a,cfg.ttl))
         || !status["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).is_some_and(crate::runtime::alive) {
         return Err("Worker service status stale, incomplete or unavailable".into());
     }
@@ -472,6 +472,9 @@ mod tests {
         assert_eq!(read(&status)["value"]["ended"],true,"an ended attempt returns before any native read");
         status["complete"]=json!(false);assert_eq!(read(&status)["state"],"unknown");status["complete"]=json!(true);
         status["tasks_age_seconds"]=json!(i64::MAX);assert_eq!(read(&status)["state"],"unknown");status["tasks_age_seconds"]=json!(0);
+        status["tasks_age_seconds"]=json!(-1);fs::write(&path,status.to_string()).unwrap();
+        fs::File::options().write(true).open(&path).unwrap().set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(2))).unwrap();
+        assert_eq!(dialogue(&f.0,&m)["state"],"unknown","a corrupt negative board age cannot become fresh as the file ages");status["tasks_age_seconds"]=json!(0);
         status["pid"]=json!(0);assert_eq!(read(&status)["state"],"unknown");status["pid"]=json!(std::process::id());
         read(&status);let mut cross=m.clone();cross["conversation"]=json!("task:https://github.com/invented/other/issues/7");
         assert_eq!(dialogue(&f.0,&cross)["state"],"unknown");
