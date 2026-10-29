@@ -91,6 +91,8 @@ pub trait Board {
     fn upload_image(&self, _n: u64, _path: &std::path::Path) -> Result<String> { Err("image upload unsupported on this board".into()) }
     /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
     fn image(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
+    /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
+    fn video_inline(&self) -> bool { false }
 }
 
 #[derive(Debug, PartialEq)]
@@ -192,6 +194,7 @@ impl Board for Profiled {
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
     fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_image(n, path)) }
     fn image(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.image(url)) }
+    fn video_inline(&self) -> bool { self.0.video_inline() }
 }
 
 // ---------- time ----------
@@ -322,6 +325,16 @@ pub fn image_kind(bytes: &[u8]) -> Option<&'static str> {
         [0xff, 0xd8, 0xff, ..] => Some("jpeg"),
         [b'G', b'I', b'F', b'8', ..] => Some("gif"),
         [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some("webp"),
+        _ => None,
+    }
+}
+
+/// § 2 visual evidence videos (#1844): `mp4` (ISO `ftyp` box) or `webm` (EBML header), else none. Boards pick the
+/// player by the file extension, so an uploaded video's name ends in its kind.
+pub fn video_kind(bytes: &[u8]) -> Option<&'static str> {
+    match bytes {
+        [_, _, _, _, b'f', b't', b'y', b'p', ..] => Some("mp4"),
+        [0x1a, 0x45, 0xdf, 0xa3, ..] => Some("webm"),
         _ => None,
     }
 }
@@ -708,6 +721,8 @@ pub struct FakeState {
     /// Uploaded images by URL; `bad_image` makes the board serve other bytes back.
     pub images: Vec<(String, Vec<u8>)>,
     pub bad_image: bool,
+    /// The board plays an uploaded video inline (GitLab), else it links one (GitHub).
+    pub video_inline: bool,
 }
 
 #[cfg(test)]
@@ -754,6 +769,7 @@ impl Board for Fake {
         let b = st.images.iter().find(|i| i.0 == url).map(|i| i.1.clone()).ok_or(format!("image unknown: {url}"))?;
         Ok(if st.bad_image { b[..b.len() / 2].to_vec() } else { b })
     }
+    fn video_inline(&self) -> bool { self.state.borrow().video_inline }
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
         let mut all: Vec<Issue> = self.state.borrow().issues.iter().filter(|i| !i.open && since.is_none_or(|t| i.updated >= t)).cloned().collect();
         all.sort_by_key(|i| std::cmp::Reverse(i.updated));

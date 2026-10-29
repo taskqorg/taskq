@@ -659,7 +659,9 @@ impl Board for GitHub {
             Some(_) => self.api.call("PATCH", &format!("/git/refs/heads/{EVIDENCE}"), Some(json!({"sha": sha})))?,
             None => self.api.call("POST", "/git/refs", Some(json!({"ref": format!("refs/heads/{EVIDENCE}"), "sha": sha})))?,
         };
-        Ok(raw_url(&self.api.root, &self.api.base, &sha, &file))
+        let public = super::video_kind(&bytes).is_some() && self.api.root == "https://api.github.com"
+            && self.api.call("GET", "", None)?.json()?["private"] == false;
+        Ok(if public { cdn_url(&self.api.base, &sha, &file) } else { raw_url(&self.api.root, &self.api.base, &sha, &file) })
     }
 
     fn image(&self, url: &str) -> Result<Vec<u8>> {
@@ -685,9 +687,16 @@ fn raw_url(root: &str, base: &str, sha: &str, file: &str) -> String {
     format!("{}/raw/{sha}/{file}", web(root, base))
 }
 
-/// The commit and file of an evidence image URL of this repository; none for any other URL.
+/// § 2 visual evidence videos (#1844): GitHub serves a raw MP4 or WebM as a download, so a public github.com repository
+/// links the same commit-pinned file through jsDelivr, which serves it with its video type and the browser plays it.
+fn cdn_url(base: &str, sha: &str, file: &str) -> String {
+    format!("https://cdn.jsdelivr.net/gh/{}@{sha}/{file}", base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default())
+}
+
+/// The commit and file of an evidence URL of this repository, raw or jsDelivr; none for any other URL.
 fn raw_path<'a>(root: &str, base: &str, url: &'a str) -> Option<(&'a str, &'a str)> {
-    let (sha, file) = url.strip_prefix(&format!("{}/raw/", web(root, base)))?.split_once('/')?;
+    let cdn = (root == "https://api.github.com").then(|| cdn_url(base, "", "")).and_then(|p| url.strip_prefix(p.trim_end_matches('/')));
+    let (sha, file) = cdn.or_else(|| url.strip_prefix(&format!("{}/raw/", web(root, base))))?.split_once('/')?;
     (hex40(sha) && !file.is_empty() && !file.split('/').any(|p| p.is_empty() || p == "..")).then_some((sha, file))
 }
 
@@ -755,5 +764,20 @@ mod image_tests {
         assert_eq!(raw_path(root, base, "/uploads/x/a.png"), None, "relative link");
         let ghe = ("https://ghe.example/api/v3", "https://ghe.example/api/v3/repos/o/r");
         assert_eq!(raw_url(ghe.0, ghe.1, sha, "1/a.png"), format!("https://ghe.example/o/r/raw/{sha}/1/a.png"));
+    }
+
+    // Chain: § 2 visual evidence videos on GitHub (#1844). Defect: GitHub raw serves an MP4 as a download, so csgo#415's
+    // videos never played from the task. Risk: a jsDelivr URL of another repository, a branch or Enterprise is load-checked.
+    #[test]
+    fn github_public_videos_link_the_commit_pinned_file_through_jsdelivr() {
+        let (root, base) = ("https://api.github.com", "https://api.github.com/repos/o/r");
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let url = cdn_url(base, sha, "1844/abc-run.mp4");
+        assert_eq!(url, format!("https://cdn.jsdelivr.net/gh/o/r@{sha}/1844/abc-run.mp4"));
+        assert_eq!(raw_path(root, base, &url), Some((sha, "1844/abc-run.mp4")));
+        assert_eq!(raw_path(root, base, "https://cdn.jsdelivr.net/gh/o/r@taskq-evidence/1844/a.mp4"), None, "branch, not commit");
+        assert_eq!(raw_path(root, base, &format!("https://cdn.jsdelivr.net/gh/o/rx@{sha}/a.mp4")), None, "other repository");
+        let ghe = ("https://ghe.example/api/v3", "https://ghe.example/api/v3/repos/o/r");
+        assert_eq!(raw_path(ghe.0, ghe.1, &cdn_url(ghe.1, sha, "1/a.mp4")), None, "jsDelivr cannot reach Enterprise");
     }
 }
