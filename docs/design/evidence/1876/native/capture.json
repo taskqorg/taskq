@@ -1,0 +1,18 @@
+{
+  "source": "ab884a42aa53b101c3807d237ad2d11bce5518a4",
+  "base": "fa212bc16e32da742f027c11ca42ac26c59ea3a7",
+  "platform": "macOS Darwin 27.0.0 arm64, 2x display",
+  "renderer": "WKWebView; signed cargo runner",
+  "fixture": "docs/shots/fixture.sh; invented projects; isolated install",
+  "capture": "screencapture -x -o -l <owned NSWindow id>",
+  "backdrop": "Temporary owned floating NSWindow with 24-point repeating black, white, system-blue and system-orange squares; system wallpaper unchanged",
+  "files": {
+    "screen-popover-dark-background-0-16.png": "1453afb826201ecd81a7536e0adbdf1066e8aa8b874ba7c72e0b87e6e2bef2fe",
+    "screen-popover-light-background-0-16.png": "fcfe98137e6ad5dff07545a5df5395591a6ef254d38e4d5f02f030a8c13f8ac2",
+    "screen-popover-dark-background-50-16.png": "8593b8b9b1c7ae1af673732b6db8c410e9b9c71cb5bb5ddca779414b59888002",
+    "screen-popover-light-background-50-16.png": "bef3f5f4ad5fa4758f911a1aae57d0b652469ec10847e4aa9a0a7da163d4a01e",
+    "screen-popover-light-whole-60-16.png": "0c2a98b97dc1c9a16cff549b6e632d790973929dadafac72feb42a88fc2f22b5",
+    "screen-popover-dark-whole-60-16.png": "e8c02a58052658eb119df40ba28887d92528e23d11075b43106a0bd8c2402bd2"
+  },
+  "reuse": "Only the root preamble link was shortened after native capture; the captured UI source files are unchanged."
+}
