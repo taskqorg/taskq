@@ -312,8 +312,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
 pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
     let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
     let result=(||->Res<Value>{
-        // #1825 prototype: a task thread reads its worker's live transcript on this host
-        if id.starts_with("task:")&&thread_id(id)&&action=="transcript" {return crate::dialogue::worker_transcript(m["session"].as_str().unwrap_or(""),m["before"].as_u64(),m["after"].as_u64());}
+        if id.starts_with("task:")&&thread_id(id)&&action=="transcript" {return worker_read(install,m);}
         if !crate::setup::owner_id(id){return Err("Invalid or reserved draft identity".into());}
         match action {
             "status"=>{
@@ -326,6 +325,49 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
         }
     })();
     match result {Ok(value)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"accepted","value":value}),Err(reason)=>json!({"id":m["id"],"conversation":id,"action":action,"state":"unknown","reason":reason})}
+}
+
+/// #1831 A2/A3: resolve every read from the service projection of the current attempt, never a client session ID.
+fn worker_read(install:&Path,m:&Value)->Res<Value> {
+    let root=Path::new(m["root"].as_str().ok_or("Worker project missing")?);
+    if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Worker project is not registered".into());}
+    let (cfg,_)=crate::load(root)?;
+    let path=crate::dot(root).join("status.json");
+    let status=crate::data::json(&path)?.ok_or("Worker service status unavailable")?;
+    let age=crate::file_age(&path).ok_or("Worker service status age unknown")?;
+    if !crate::snapshot::live(age as i64,cfg.ttl) || !crate::snapshot::complete(&status)
+        || !status["tasks_age_seconds"].as_u64().and_then(|a|a.checked_add(age)).and_then(|a|i64::try_from(a).ok()).is_some_and(|a|crate::snapshot::live(a,cfg.ttl))
+        || !status["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).is_some_and(crate::runtime::alive) {
+        return Err("Worker service status stale, incomplete or unavailable".into());
+    }
+    let board=status["issues"].as_str().filter(|s|!s.is_empty()).ok_or("Worker board unknown")?;
+    let id=m["conversation"].as_str().unwrap_or("");
+    let n=id.strip_prefix("task:").and_then(|s|s.strip_prefix(board)).and_then(|s|s.strip_prefix('/')).and_then(|s|s.parse::<u64>().ok()).filter(|n|*n>0).ok_or("Worker thread does not match its project")?;
+    let local=crate::host::Policy::read(install)?.me;
+    worker_page(root,&local,&status,n,m,|session,before,after|crate::dialogue::worker_transcript(session,before,after))
+}
+
+fn worker_page(root:&Path,local:&str,status:&Value,n:u64,m:&Value,read:impl FnOnce(&str,Option<u64>,Option<u64>)->Res<Value>)->Res<Value> {
+    let attempt=m["attempt"].as_u64().filter(|a|*a>0).ok_or("Worker attempt missing")?;
+    let ended=||Ok(json!({"ended":true,"items":[]}));
+    let Some(row)=status["tasks"].as_array().and_then(|rows|rows.iter().find(|r|r["n"]==n)) else {return ended()};
+    if row["attempt"]!=attempt || row["role"]!="worker" {return ended()}
+    // § 2: Ask retains the attempt; a fast answer can resume it before the browser receives an Ask snapshot.
+    if row["state"]=="ask" {return Err("Worker is waiting for an owner answer".into())}
+    if row["state"]!="doing" {return ended()}
+    let session=row["session"].as_str().ok_or("Worker session unknown")?;
+    let words:Vec<_>=session.split_whitespace().collect();
+    let Some((rt,id))=words.first().and_then(|s|s.split_once(':')) else {return Err("Worker session unknown".into())};
+    if local.is_empty() || words.get(1).copied()!=Some(local) {return Err("Worker transcript is available only on its host".into())}
+    let execution=row["executions"].as_array().and_then(|rows|rows.iter().find(|e|e["attempt"]==attempt));
+    match execution.and_then(|e|e["state"].as_str()) {
+        Some("ended")=>return ended(),
+        Some("running")=>{},
+        _=>return Err("Worker execution is not confirmed running".into()),
+    }
+    let id=crate::runtime::session_id(root,rt,id,n,attempt,"worker");
+    if id=="-" || !crate::runtime::plain_thread(&id) {return Err("Worker native session unknown".into())}
+    read(&format!("{rt}:{id}"),m["before"].as_u64(),m["after"].as_u64())
 }
 
 fn request_marks(install:&Path,id:&str,action:&str)->Res<()> {
@@ -402,6 +444,55 @@ mod tests {
         fn attach(&self,id:&str,name:&str,mime:&str,data:&[u8])->Value {self.act(id,"attach",json!({"file":{"id":"invented-file","name":name,"mime":mime,"hash":"0".repeat(64),"bytes":data.len()},"data":STANDARD.encode(data)}))}
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+
+    // #1831 A2/A3: forged client session/host, replaced attempts and remote or unknown executions never select a file.
+    #[test]
+    fn worker_reads_use_only_the_live_local_attempt() {
+        let f=Fixture::new();fs::create_dir(f.0.join(".taskq")).unwrap();
+        fs::write(f.0.join(".taskq/T7-71.log"),"{\"type\":\"thread.started\",\"thread_id\":\"native-from-attempt\"}\n").unwrap();
+        let mut status=json!({"tasks":[{"n":7,"state":"doing","role":"worker","attempt":71,"session":"codex:- local","executions":[{"attempt":71,"state":"running"}]}]});
+        let m=json!({"attempt":71,"session":"claude:forged","after":123});
+        let read=|s:&Value|worker_page(&f.0,"local",s,7,&m,|session,before,after|{
+            assert_eq!(session,"codex:native-from-attempt");assert_eq!(before,None);assert_eq!(after,Some(123));Ok(json!({"read":true}))
+        });
+        assert_eq!(read(&status).unwrap()["read"],true);
+        status["tasks"][0]["state"]=json!("ask");assert!(read(&status).unwrap_err().contains("waiting for an owner answer"));
+        status["tasks"][0]["state"]=json!("doing");assert_eq!(read(&status).unwrap()["read"],true,"an answer resumes the same attempt");
+        for (field,value) in [("attempt",json!(72)),("state",json!("review")),("role",json!("reviewer"))] {
+            let mut changed=status.clone();changed["tasks"][0][field]=value;
+            assert_eq!(read(&changed).unwrap()["ended"],true,"{field}");
+        }
+        status["tasks"][0]["session"]=json!("codex:- remote");assert!(read(&status).unwrap_err().contains("only on its host"));
+        status["tasks"][0]["session"]=json!("codex:- local");
+        status["tasks"][0]["executions"][0]["state"]=json!("unknown");assert!(read(&status).unwrap_err().contains("not confirmed running"));
+        status["tasks"][0]["executions"][0]["state"]=json!("ended");assert_eq!(read(&status).unwrap()["ended"],true);
+        status["tasks"]=json!([]);assert_eq!(read(&status).unwrap()["ended"],true);
+        let refused=dialogue(&f.0,&json!({"conversation":"task:https://example.org/r/issues/7","action":"transcript","root":f.0,"session":"codex:forged"}));
+        assert_eq!(refused["state"],"unknown","unregistered roots never reach native transcripts");
+    }
+
+    // A2/A3/R12: actual IPC read boundary validates registration, board, service freshness and current attempt.
+    #[test]
+    fn worker_dialogue_refuses_stale_or_cross_project_reads() {
+        let f=Fixture::new();let root=f.0.join("project");fs::create_dir_all(root.join(".taskq")).unwrap();
+        fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/worker-panel"}"#).unwrap();
+        fs::write(f.0.join("projects"),format!("{}\n",root.display())).unwrap();
+        fs::write(f.0.join("host.json"),"{}").unwrap();
+        let m=json!({"root":root,"conversation":"task:https://github.com/invented/worker-panel/issues/7","attempt":71,"session":"codex:forged","action":"transcript","id":"read"});
+        let mut status=json!({"pid":std::process::id(),"issues":"https://github.com/invented/worker-panel/issues","tasks_age_seconds":0,"complete":true,"tasks":[]});
+        let path=root.join(".taskq/status.json");
+        let read=|s:&Value|{fs::write(&path,s.to_string()).unwrap();dialogue(&f.0,&m)};
+        assert_eq!(read(&status)["value"]["ended"],true,"an ended attempt returns before any native read");
+        status["complete"]=json!(false);assert_eq!(read(&status)["state"],"unknown");status["complete"]=json!(true);
+        status["tasks_age_seconds"]=json!(i64::MAX);assert_eq!(read(&status)["state"],"unknown");status["tasks_age_seconds"]=json!(0);
+        status["tasks_age_seconds"]=json!(-1);fs::write(&path,status.to_string()).unwrap();
+        fs::File::options().write(true).open(&path).unwrap().set_times(fs::FileTimes::new().set_modified(std::time::SystemTime::now()-std::time::Duration::from_secs(2))).unwrap();
+        assert_eq!(dialogue(&f.0,&m)["state"],"unknown","a corrupt negative board age cannot become fresh as the file ages");status["tasks_age_seconds"]=json!(0);
+        status["pid"]=json!(0);assert_eq!(read(&status)["state"],"unknown");status["pid"]=json!(std::process::id());
+        read(&status);let mut cross=m.clone();cross["conversation"]=json!("task:https://github.com/invented/other/issues/7");
+        assert_eq!(dialogue(&f.0,&cross)["state"],"unknown");
+        fs::write(&path,"corrupt").unwrap();assert_eq!(dialogue(&f.0,&m)["state"],"unknown");
+    }
 
     // #1665 D4/D5: view reads of a launched conversation whose native transcript is missing stay unknown, never empty,
     // idle or done, and never take the draft lock or rebuild the snapshot.

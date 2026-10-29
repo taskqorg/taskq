@@ -108,7 +108,9 @@ fn tool(name: &str, input: &Value) -> Value {
     let arg = ["description", "command", "file_path", "pattern", "url", "cmd"].iter().find_map(|k| input[k].as_str().map(String::from))
         .unwrap_or_else(|| input.as_str().map_or_else(|| input.to_string(), String::from));
     let arg: String = mask(&arg).chars().take(160).collect();
-    line("tool", format!("{name} {arg}").trim())
+    let mut item=line("tool", format!("{name} {arg}").trim());
+    item["tool_name"]=json!(name);
+    item
 }
 
 /// #1825 A4, #1833 A2: a tool line never shows a token-shaped word, the value of a credential assignment or JSON

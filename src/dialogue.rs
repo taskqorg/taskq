@@ -254,7 +254,7 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
-/// #1825 prototype (A2/A3): the live view of a task worker's session `<rt>:<id>` on this host, read like an owner
+/// #1831: the live view of a resolved task worker's session `<rt>:<id>` on this host, read like an owner
 /// transcript (D1, D4). Every user input of a worker session is TaskQ's, carrying the owner's board entries it delivers
 /// (an answer or a steer, § 4 step 6), so each user item names which one it is.
 pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>) -> Res<Value> {
@@ -269,6 +269,11 @@ pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>)
 /// followed by one owner item per inbox entry it delivers. An older input without the marker keeps the #1825 wording
 /// guess: a pointer is the brief, anything else the owner.
 fn worker_roles(items: &mut Vec<Value>) {
+    // A4: tool input is arbitrary text and may contain credentials; only the native tool name leaves this adapter.
+    for i in items.iter_mut().filter(|i|i["role"]=="tool") {
+        let name=i["tool_name"].as_str().filter(|s|!s.is_empty()&&s.len()<=120&&s.chars().all(|c|c.is_ascii_alphanumeric()||c=='_'||c=='.'||c=='-')).unwrap_or("tool").to_string();
+        i["text"]=json!(name);i.as_object_mut().unwrap().remove("tool_name");
+    }
     let mut out = Vec::with_capacity(items.len());
     for mut item in items.drain(..) {
         if item["role"] != "user" { out.push(item); continue; }
@@ -399,6 +404,30 @@ mod tests {
         assert_eq!(shown, [("brief", "", 0, 0), ("brief", "", 10, 0), ("owner", "answer", 10, 1), ("owner", "steer", 10, 2), ("assistant", "", 20, 0), ("owner", "", 30, 0), ("brief", "", 40, 0)]);
         assert_eq!((items[2]["text"].as_str(), items[3]["text"].as_str()), (Some("Use option 2"), Some("Also say PINEAPPLE")));
         fs::remove_dir_all(&root).ok();
+    }
+
+    // #1831 A4: tool arguments can contain arbitrary secrets, even without recognizable token prefixes.
+    #[test]
+    fn worker_tool_lines_never_export_arguments_or_output() {
+        use std::io::Write;
+        let dir=std::env::temp_dir().join(format!("taskq-worker-tools-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();
+        let path=dir.join("native.jsonl");
+        for codex in [false,true] {
+            let mut file=fs::File::create(&path).unwrap();
+            let rows=if codex {vec![
+                json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"curl -H 'Authorization: Bearer invented-private-value'\"}"}}),
+                json!({"type":"response_item","payload":{"type":"function_call_output","output":"invented-output-private-value"}}),
+            ]} else {vec![
+                json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"curl -u user:invented-private-value"}}]}}),
+                json!({"type":"user","message":{"content":[{"type":"tool_result","content":"invented-output-private-value"}]}}),
+            ]};
+            for row in rows {writeln!(file,"{row}").unwrap();}drop(file);
+            let mut page=crate::transcript::before(codex,&path,None).unwrap();worker_roles(&mut page.items);
+            assert_eq!(page.items.len(),1);assert_eq!(page.items[0]["role"],"tool");
+            assert!(page.items[0]["text"].as_str().unwrap().contains(if codex {"exec_command"} else {"Bash"}));
+            assert!(!json!(page.items).to_string().contains("private-value"));
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     // #1825 A2 live probe, run by hand: TASKQ_PROBE_SESSION=<rt>:<id> follows a session on this host with the task

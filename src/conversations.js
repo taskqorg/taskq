@@ -15,8 +15,8 @@ module.exports=execution.module('conversations',{
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
   const measured=new WeakMap();
   let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,observed=null,resize=null;
-  // #1825 prototype: the live worker session of the open task thread on this host
-  let live=null;
+  // #1831: one attempt-fenced live tail, owned only by the visible task thread.
+  let live=null,workerPaused=false;
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    note:function(text,id=selected){notices[id||'list']=text;},
@@ -90,15 +90,15 @@ module.exports=execution.module('conversations',{
     return {key:nodes[lo].dataset.key,y:nodes[lo].getBoundingClientRect().top-top};
    },
    // Q-A3: the one owner of transcript scroll correction: follow the end, or keep the anchored record at its offset
-   hold:function(el){
-    if(view.stick){el.scrollTop=el.scrollHeight;return;}
-    const a=view.anchor,node=a&&el.querySelector('.dialogue-transcript>[data-key="'+a.key+'"]');
+   hold:function(el,state=view){
+    if(state.stick){el.scrollTop=el.scrollHeight;return;}
+    const a=state.anchor,node=a&&el.querySelector('.dialogue-transcript>[data-key="'+a.key+'"]');
     if(node)el.scrollTop+=node.getBoundingClientRect().top-el.getBoundingClientRect().top-a.y;
    },
    // Q-A3: font, width and content size changes keep the anchor too
    observe:function(log){
     if(observed===log)return;resize?.disconnect();observed=log;
-    resize=new window.ResizeObserver(()=>{const el=observed?.isConnected&&observed.closest('.conversation-reader');if(el&&view?.id===observed.dataset.id)api.hold(el);});resize.observe(log);
+    resize=new window.ResizeObserver(()=>{const el=observed?.isConnected&&observed.closest('.conversation-reader'),state=live?.thread===observed?.dataset.id?live:view;if(el&&state&&(state.thread||state.id)===observed.dataset.id)api.hold(el,state);});resize.observe(log);
    },
    // Q-A4: read earlier or later records while they are within one viewport of the visible area; short and
    // ignored-only pages leave the edge near, so the next draw reads again until the viewport fills or the cursor ends
@@ -181,29 +181,33 @@ module.exports=execution.module('conversations',{
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
-   // #1825 prototype (A2/A3): a task thread shows its worker's native transcript while it runs on this host, newest
-   // last, read every second; owner input (answers, steers) shows with its author, the tail keeps the last WINDOW items
-   worker:function(thread,t){
-    const session=t?.local_session&&t.session_id&&t.runtime?t.runtime+':'+t.session_id:null;
-    if(!session)return null;
-    if(live?.session!==session||live.thread!==thread)live={thread,session,items:[],end:null,reason:'',busy:null,timer:null};
-    if(!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null?0:1000);
+   workerStop:function(){if(live){ui.cancel(live.timer);ui.cancel(live.timeout);}live=null;},
+   workerClose:function(){workerPaused=true;api.workerStop();},
+   // The browser names only a registered project and attempt. The native adapter selects the session (A2).
+   worker:function(thread,t,p){
+    if(workerPaused||!p?.alive||p.complete===false||!t?.local_session||t.state!=='doing'||t.role!=='worker'||!t.attempt){api.workerStop();return null;}
+    if(live?.attempt!==t.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();live={thread,root:p.root,attempt:t.attempt,items:[],end:null,reason:'',busy:null,timer:null,timeout:null,ended:false,stick:true,anchor:null};}
+    if(!live.ended&&!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null&&!live.reason?0:1000);
     const label={assistant:'Worker',owner:'You · via the board'};
     return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime),
-     h('div',{class:'dialogue-transcript',role:'log','aria-label':'Live worker session'},
+     !live.stick&&h('button',{'data-c':'worker-latest',class:'dialogue-latest'},'Jump to latest'),
+     h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Live worker session','data-id':thread},
+      live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
       live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):live.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
    },
    workerRead:function(){
     const l=live;if(!l)return;l.timer=null;
-    if(!menu.querySelector('.worker-live'))return;
+    if(workerPaused||l.ended||!menu.querySelector('.worker-live')?.checkVisibility()){api.workerStop();return;}
     const id=api.id();l.busy=id;
-    ui.send({a:'conversation-dialogue',id,conversation:l.thread,action:'transcript',session:l.session,...(l.end===null?{}:{after:l.end})});
-    ui.defer(()=>{if(l.busy===id){l.busy=null;l.reason='Live read receipt missing';draw();}},30000);
+    ui.send({a:'conversation-dialogue',id,conversation:l.thread,root:l.root,attempt:l.attempt,action:'transcript',...(l.end===null?{}:{after:l.end})});
+    l.timeout=ui.defer(()=>{if(live===l&&l.busy===id){l.busy=null;l.reason='Live read receipt missing';draw();}},30000);
    },
    workerSettle:function(r){
-    const l=live;if(!l||l.busy!==r.id)return false;l.busy=null;
+    const l=live;if(!l||l.busy!==r.id)return false;l.busy=null;ui.cancel(l.timeout);
+    const reader=menu.querySelector('.conversation-reader');if(reader&&!l.stick)l.anchor=api.mark(reader)||l.anchor;
     const was=l.reason,first=l.end===null;let fresh=[];
+    if(r.value?.ended){l.ended=true;l.reason='';draw();return true;}
     if(r.state!=='accepted')l.reason=r.reason||'Transcript unknown';
     else {l.reason='';const have=new Set(l.items.map(api.key));fresh=r.value.items.filter(i=>!have.has(api.key(i)));l.items=[...l.items,...fresh].slice(-WINDOW);l.end=r.value.end;}
     // a quiet read schedules the next one without a repaint, so the steer composer below is not disturbed
@@ -265,6 +269,8 @@ module.exports=execution.module('conversations',{
     ui.defer(()=>{if(sidebarPending?.id===id){sidebarPending=null;api.note('Sidebar save unknown; refresh before retrying.');draw();}},30000);draw();
    },
    receive:function(s){
+    if(s.open)workerPaused=false;
+    if(s.workerPanelClosed){api.workerClose();return true;}
     if(s.conversationSidebarReceipt){
      const r=s.conversationSidebarReceipt;if(r.id!==sidebarPending?.id)return true;
      const op=sidebarPending;sidebarPending=null;
@@ -441,7 +447,8 @@ module.exports=execution.module('conversations',{
    sessions:function(){return [h('p',{class:'meta'},'Recorded workers and reviewers. Opening a target sends no input.'),(snapshot.projects||[]).map(p=>h('section',{key:p.root},h('h2',null,p.name),(!p.alive||p.complete===false)&&h('p',{role:'status'},'Session state unknown: project snapshot stale or incomplete.'),(p.tasks||[]).filter(t=>t.session||t.until).map(t=>h('article',{key:t.n},h('a',{href:p.issues+'/'+t.n},'#'+t.n+' '+t.title),t.session&&h('p',{class:'meta'},(t.role||'Attempt')+' · '+(t.runtime||t.session)+' · '+(t.host||'Host unknown')+' · '+t.state),t.until&&h('p',{class:'meta'},blocks.parked(t)),t.session&&(t.session_url?h('a',{href:t.session_url,'data-url':t.session_url},'Open recorded session'):h('p',{class:'meta'},t.session_reason||'Verified session target unavailable.')))))),h('p',{class:'meta'},'Remote/headless dialogue uses the native runtime or existing CLI. No local session or gateway is created.')];},
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();
-    if(action==='row-pin'){api.sidebar('pin',b.dataset.id,!sidebar.pins.includes(b.dataset.id));}
+    if(action==='worker-latest'&&live){live.stick=true;live.anchor=null;draw();}
+    else if(action==='row-pin'){api.sidebar('pin',b.dataset.id,!sidebar.pins.includes(b.dataset.id));}
     else if(action==='group-collapse')api.sidebar('collapse',b.dataset.group,!sidebar.collapsed.includes(b.dataset.group));
     else if(action==='row-archive'){return true;}
     else if(action==='new'&&!owner.conversation)api.fresh();
@@ -485,6 +492,7 @@ module.exports=execution.module('conversations',{
      if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}
      if(!e.target.classList?.contains('conversation-reader'))return;
      if(!e.target.querySelector('.dialogue-transcript')){api.place(selected,e.target.scrollTop);api.nav();return;}
+     if(live?.thread===selected){const was=live.stick;if(e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24)live.stick=false;live.anchor=api.mark(e.target);if(was!==live.stick)draw();return;}
      if(view?.id!==selected||view.end===null||!view.items.length)return;
      // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
      // #1747: while Jump to latest replaces the window, a scroll event of the old window keeps following
@@ -513,9 +521,11 @@ module.exports=execution.module('conversations',{
     if(reader)reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight*.45);
    },
    afterDraw:function(){
+    if(!menu.querySelector('.worker-live')?.checkVisibility())api.workerStop();
     api.pollActivity();
     api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
+    if(live&&detail&&log){api.observe(log);api.hold(detail,live);}
     if(detail&&!log){const p=positions[selected];detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;}
     if(log&&open){api.open(open);api.observe(log);api.hold(detail);}
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(focusSearch){focusSearch=false;menu.querySelector('[data-c-field=search]')?.focus();}if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
