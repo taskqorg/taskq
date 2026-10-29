@@ -20,7 +20,7 @@
     "src/task-dashboard.css": "1a53a62ed87050e42c9aee0a2824ccd1f4c9f4213cef1ca843d67267c5f139e5",
     "src/task-views.js": "bbeaed25fb1a1d1b5a21408a9f95b638a595d5635b02fdb1262871e349b23806",
     "src/workspace.js": "b45a5a0884cd97c0f0523f863355000782cdadf9335cebf65a98ce2859636b97",
-    "src/tray.rs": "e05ae8b2abf169a65b201104e07a4842d0f7ee06d93bfd9480c972821e202eeb",
+    "src/tray.rs": "92fb994bd90e8992d1625db561601c9ab60824233f577c9523d590bc3808cf3e",
     "src/main.rs": "9dbdb41aaab5fb8caa5a23d53b854c17a51cb2233cccd6706fa594ec3d7ab6e4",
     "src/board/mod.rs": "a4ffe9953d0f057431943c65f189011fc2cb22835867ec948fac3ab6877ec4d1",
     "src/board/github.rs": "f06d080f6b0fa5f8163f32225f114270e218202aedcb1d32a278e53e2141c483",
@@ -32,5 +32,6 @@
     "02-read-only-transcript.png": "febfc735e088caa7e07a19b34daf4075561563239272c87d670c017c63d58073",
     "03-archived-menu-entry.png": "0203d148e31466b4028f2fc1584b0301783df9cc0352123a4698a004e1cfd1db",
     "04-completed-after-unpin.png": "cf5e9612dc241716c794635f253dd10d7eb0c4971de455c705183691bd278c0b"
-  }
+  },
+  "candidateBase": "93877cc0ced95a0858dc72d829ba51337f33df59"
 }
