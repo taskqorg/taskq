@@ -223,15 +223,20 @@ fn window_opacity(window:&Window,percent:u64)->Result<(),String> {
         let style=GetWindowLongPtrW(hwnd,GWL_EXSTYLE);
         if style==0 && GetLastError().0!=0 {return Err(format!("window style: {}",GetLastError().0));}
         if percent==100 && style & WS_EX_LAYERED.0 as isize==0 {return Ok(());}
+        let (mut key,mut flags)=(COLORREF(0),LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
+        if style & WS_EX_LAYERED.0 as isize!=0 {
+            GetLayeredWindowAttributes(hwnd,Some(&mut key),None,Some(&mut flags)).map_err(|e|e.to_string())?;
+        }
         if style & WS_EX_LAYERED.0 as isize==0 {
             SetLastError(WIN32_ERROR(0));
             if SetWindowLongPtrW(hwnd,GWL_EXSTYLE,style|WS_EX_LAYERED.0 as isize)==0 && GetLastError().0!=0 {return Err(format!("layered window: {}",GetLastError().0));}
         }
         let alpha=((percent*255+50)/100) as u8;
-        SetLayeredWindowAttributes(hwnd,COLORREF(0),alpha,LWA_ALPHA).map_err(|e|e.to_string())?;
-        let (mut actual,mut flags)=(0,LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
-        GetLayeredWindowAttributes(hwnd,None,Some(&mut actual),Some(&mut flags)).map_err(|e|e.to_string())?;
-        if actual!=alpha || !flags.contains(LWA_ALPHA) {return Err("window alpha readback differs".into());}
+        flags|=LWA_ALPHA;
+        SetLayeredWindowAttributes(hwnd,key,alpha,flags).map_err(|e|e.to_string())?;
+        let (mut actual,mut actual_key,mut actual_flags)=(0,COLORREF(0),LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
+        GetLayeredWindowAttributes(hwnd,Some(&mut actual_key),Some(&mut actual),Some(&mut actual_flags)).map_err(|e|e.to_string())?;
+        if actual!=alpha || actual_key!=key || actual_flags!=flags {return Err("window alpha readback differs".into());}
     } Ok(())
 }
 
@@ -1234,7 +1239,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 });
                 match built {
                     Ok(x) => {
-                        if let Err(error)=window_opacity(&x.0,if views_shots||conversation_shots {100}else{settings.opacity}) {
+                        if !views_shots && !conversation_shots && settings.opacity<100 && let Err(error)=window_opacity(&x.0,settings.opacity) {
                             settings.opacity_error=Some(format!("Menu opacity unavailable: {error}; Off shown"));
                             settings.opacity=100;
                             if let Err(error)=window_opacity(&x.0,100) {settings.opacity_error=Some(format!("Menu opacity unknown: {error}"));}
