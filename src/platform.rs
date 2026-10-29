@@ -1,6 +1,7 @@
 //! taskq on coreq: install layout, self-update, launcher and OS units come from the shared crate (coreq.md); this file
 //! keeps taskq's own parts: the error format, the install sweep and the load readings (taskq.md § 3, § 8).
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -755,6 +756,45 @@ pub fn stale_grant(_: &Path, _: &Result<(), String>) -> bool {
     false
 }
 
+/// TCC grants a gui worker needs besides Screen Recording (#1845): each `allowed`, `missing`, `stale` or `unknown`.
+pub const GRANTS: [(&str, &str); 2] = [("accessibility", "kTCCServiceAccessibility"), ("app_data", "kTCCServiceSystemPolicyAppData")];
+
+/// Accessibility reads `AXIsProcessTrusted` (no prompt); a denial is `stale` when tccd logged a failed requirement match
+/// for `<install>/taskq`, else `missing`. App Data has no preflight API: `stale` on such a tccd line, else `unknown`.
+#[cfg(target_os = "macos")]
+pub fn grants(install: &Path) -> BTreeMap<String, String> {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+    }
+    // ponytail: one `log show` over the last hour per probe (300 s); an App Data grant no worker touched within it reads unknown
+    let log = coreq::process::output("gui.tcc_log", std::process::Command::new("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
+        "subsystem == \"com.apple.TCC\" AND eventMessage CONTAINS \"Failed to match existing code requirement\""]), std::time::Duration::from_secs(30))
+        .ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    // SAFETY: no arguments; reads this process's TCC state without a prompt
+    grant_states(unsafe { AXIsProcessTrusted() }, log.as_deref(), &install.join("taskq"))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn grants(_: &Path) -> BTreeMap<String, String> {
+    BTreeMap::new()
+}
+
+/// `log`: tccd lines, `None` when unreadable (Accessibility denials then read `missing`, App Data `unknown`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn grant_states(trusted: bool, log: Option<&str>, binary: &Path) -> BTreeMap<String, String> {
+    let subject = format!("for subject {} ", binary.display());
+    let stale = |service: &str| log.is_some_and(|l| l.lines().any(|x| x.contains(&subject) && x.contains(service)));
+    GRANTS.iter().map(|(k, service)| {
+        let state = match (*k, stale(service)) {
+            (_, true) if !(*k == "accessibility" && trusted) => "stale",
+            ("accessibility", _) => if trusted { "allowed" } else { "missing" },
+            _ => "unknown",
+        };
+        (k.to_string(), state.to_string())
+    }).collect()
+}
+
 #[cfg_attr(not(any(target_os = "linux", target_os = "macos", windows)), allow(dead_code))]
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
@@ -949,6 +989,22 @@ mod tests {
         assert_eq!(gated(false, || { ran = true; Ok(()) }), Err(NOT_ALLOWED.to_string()));
         assert!(!ran, "capture ran after a refused preflight");
         assert_eq!(gated(true, || Err("screencapture wrote no PNG".into())), Err("screencapture wrote no PNG".to_string()));
+    }
+
+    // Defect #1845 A1: only Screen Recording was probed; a stale Accessibility or App Data grant surfaced as a worker
+    // ask. Risk: a state misread lets a gui task run into the denial or blocks it on a healthy grant.
+    #[test]
+    fn grants_read_allowed_missing_stale_and_unknown() {
+        let bin = Path::new("/i/taskq");
+        let line = |s: &str| format!("tccd: Failed to match existing code requirement for subject /i/taskq and service {s}\n");
+        let st = |t, l: Option<&str>| { let g = grant_states(t, l, bin); (g["accessibility"].clone(), g["app_data"].clone()) };
+        let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(st(true, Some("")), s("allowed", "unknown"));
+        assert_eq!(st(false, None), s("missing", "unknown"), "unreadable log: denial is missing, App Data unknown");
+        assert_eq!(st(false, Some(&line("kTCCServiceAccessibility"))), s("stale", "unknown"));
+        assert_eq!(st(true, Some(&line("kTCCServiceAccessibility"))), s("allowed", "unknown"), "a trusted process is never stale");
+        assert_eq!(st(true, Some(&line("kTCCServiceSystemPolicyAppData"))), s("allowed", "stale"));
+        assert_eq!(st(true, Some(&line("kTCCServiceSystemPolicyAppData").replace("/i/taskq", "/other/taskq"))), s("allowed", "unknown"), "another binary's line");
     }
 
     // Defect #1445: service and status.json were written in place without a flush; a power cut left zeros.
