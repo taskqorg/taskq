@@ -580,8 +580,11 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
         let _=fs::remove_file(dir.join("result"));
     }
     let building=read("lock/pid").and_then(|p|p.parse().ok()).is_some_and(crate::runtime::alive);
-    let main=coreq::process::output("dev.main",std::process::Command::new("git").arg("-C").arg(root).args(["ls-remote","origin","refs/heads/main"]),std::time::Duration::from_secs(30)).ok()
-        .filter(|o|o.status.success()).and_then(|o|String::from_utf8_lossy(&o.stdout).split_whitespace().next().map(String::from)).filter(|s|s.len()==40&&s.bytes().all(|c|c.is_ascii_hexdigit()));
+    // #1856: a failed or empty read is logged with its command; `main` then reads unknown and nothing starts
+    let main=crate::tools::run("dev.main",std::process::Command::new("git").arg("-C").arg(root).args(["ls-remote","origin","refs/heads/main"]),std::time::Duration::from_secs(30))
+        .and_then(|o|String::from_utf8_lossy(&o).split_whitespace().next().map(String::from).filter(|s|s.len()==40&&s.bytes().all(|c|c.is_ascii_hexdigit()))
+            .ok_or_else(||format!("`git ls-remote origin refs/heads/main` printed no main SHA: {:?}",String::from_utf8_lossy(&o).trim())))
+        .map_err(|e|log!("dev install: {e}")).ok();
     let (installed,started,failed)=(read("installed"),read("started"),read("failed"));
     if let Some(sha)=dev_next("dev",main.as_deref(),installed.as_deref(),started.as_deref(),building,ci) {
         match coreq::write_durable(&dir.join("started"),&sha).and_then(|_|dev_spawn(root,&sha,&dir)) {
@@ -745,10 +748,19 @@ pub fn gui_probe() -> Result<(), String> {
 pub fn stale_grant(install: &Path, probe: &Result<(), String>) -> bool {
     use std::process::Command;
     if probe.as_ref().err().is_none_or(|e| e != NOT_ALLOWED) { return false; }
-    let Ok(ids) = coreq::process::output("signing.identity", Command::new("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30)) else { return false };
-    let Ok(Some(sha1)) = identity_hash(SIGNING_IDENTITY, &ids) else { return false };
-    coreq::process::output("signing.command", Command::new("codesign").arg(format!("-R=identifier \"org.taskq.taskq\" and certificate leaf = H\"{sha1}\""))
-        .args(["-v", "--strict"]).arg(install.join("taskq")), std::time::Duration::from_secs(30)).is_ok()
+    // #1856: an unreadable keychain or a codesign that did not run is logged; a requirement mismatch is the answer
+    let sha1 = match output("signing.identity", Command::new("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30))
+        .and_then(|ids| identity_hash(SIGNING_IDENTITY, &ids)) {
+        Ok(Some(sha1)) => sha1,
+        Ok(None) => return false,
+        Err(e) => { log(&format!("stale grant unknown: {e}")); return false }
+    };
+    match coreq::process::output("signing.command", Command::new("codesign").arg(format!("-R=identifier \"org.taskq.taskq\" and certificate leaf = H\"{sha1}\""))
+        .args(["-v", "--strict"]).arg(install.join("taskq")), std::time::Duration::from_secs(30)) {
+        Ok(_) => true,
+        Err(coreq::process::Failure::Exit(_)) => false,
+        Err(e) => { log(&format!("stale grant unknown: `codesign -v --strict` failed: {e}")); false }
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -768,9 +780,10 @@ pub fn grants(install: &Path) -> BTreeMap<String, String> {
         fn AXIsProcessTrusted() -> bool;
     }
     // ponytail: one `log show` over the last hour per probe (300 s); an App Data grant no worker touched within it reads unknown
-    let log = coreq::process::output("gui.tcc_log", std::process::Command::new("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
+    // #1856: an unreadable log is logged with its command; the grants then read as without it
+    let log = crate::tools::run("gui.tcc_log", std::process::Command::new("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
         "subsystem == \"com.apple.TCC\" AND eventMessage CONTAINS \"Failed to match existing code requirement\""]), std::time::Duration::from_secs(30))
-        .ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        .map_err(|e| crate::platform::log(&format!("gui grants: {e}"))).ok().map(|o| String::from_utf8_lossy(&o).into_owned());
     // SAFETY: no arguments; reads this process's TCC state without a prompt
     grant_states(unsafe { AXIsProcessTrusted() }, log.as_deref(), &install.join("taskq"))
 }

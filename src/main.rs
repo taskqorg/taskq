@@ -1987,7 +1987,8 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
         Ok(true) => true,
         r => {
             if let Err(e) = r { platform::log(&format!("signing failed, TaskQ.app stays ad-hoc: {e}")) }
-            coreq::process::output("signing.adhoc", std::process::Command::new("codesign").args(["-f", "-s", "-"]).arg(&app), std::time::Duration::from_secs(30)).is_ok()
+            tools::run("signing.adhoc", std::process::Command::new("codesign").args(["-f", "-s", "-"]).arg(&app), std::time::Duration::from_secs(30))
+                .map_err(|e| platform::log(&format!("ad-hoc signing failed: {e}"))).is_ok()
         }
     };
     // #1801: every tray launch (install, and update: the tray quits for a newer release) rewrites the bundle; force
@@ -2732,7 +2733,10 @@ fn run(argv: &[String]) -> Res<()> {
             if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some() {println!("telemetry: staged capture committed {} observations (private store; running writer not used)",capture["committed"]);}
             else {println!("telemetry: local capture committed {} observations",capture["committed"]);}
             // #1856: the release staging selftest is offline; a host gap must not hold the update that may fix it
-            if std::env::var_os("TASKQ_SELFTEST_OFFLINE").is_some() {println!("tools: unknown (TASKQ_SELFTEST_OFFLINE set; no tool probe)");return Ok(());}
+            // the dev install and tray Add project check the build and the project, not this host's tools (TASKQ_SELFTEST_TOOLS=off)
+            for var in ["TASKQ_SELFTEST_OFFLINE","TASKQ_SELFTEST_TOOLS"] {
+                if std::env::var_os(var).is_some() {println!("tools: unknown ({var} set; no tool probe)");return Ok(());}
+            }
             let rows=tools::rows(&platform::default_install(),find_root().ok().as_deref());
             for (line,failed) in &rows {println!("tool {}{line}",if *failed {"FAIL "} else {""});}
             let failed:Vec<_>=rows.iter().filter(|r|r.1).map(|r|r.0.split(':').next().unwrap_or("?")).collect();

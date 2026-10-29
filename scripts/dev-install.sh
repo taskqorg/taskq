@@ -38,8 +38,9 @@ v=$(python3 -c 'import re,time; m=re.search(r"^version = \"(\d+)\.(\d+)\.(\d+)\"
 prev=$(cat "$d/current")
 sed -i '' "s/^version = .*/version = \"$v\"/" Cargo.toml
 npm ci --silent
-# § 8 step 5: cargo run goes through the macOS signing runner, so the build is signed before its first start
-cargo run -q --release -- selftest
+# § 8 step 5: cargo run goes through the macOS signing runner, so the build is signed before its first start.
+# A host tool gap must not hold the build that may fix it (docs/design/host-service.md#host-tools).
+TASKQ_SELFTEST_TOOLS=off cargo run -q --release -- selftest
 p=$(head -1 "$d/projects")
 (cd "$p" && "$w/target/release/taskq" service channel dev && "$w/target/release/taskq" service install)
 now=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$d/service" 2>/dev/null || echo unknown)

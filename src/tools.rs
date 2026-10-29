@@ -35,6 +35,26 @@ fn needs(github: Option<bool>, default_runtime: Option<&str>) -> Vec<(Need, bool
     v
 }
 
+/// The command line of `cmd` for a diagnostic: program file name, then its arguments.
+fn shown(cmd: &Command) -> String {
+    let program = Path::new(cmd.get_program()).file_name().unwrap_or(cmd.get_program()).to_string_lossy().into_owned();
+    std::iter::once(program).chain(cmd.get_args().map(|a| a.to_string_lossy().into_owned())).collect::<Vec<_>>().join(" ")
+}
+
+/// Runs an external tool call: its stdout, else the command and its error, with the exit status and stderr of a
+/// nonzero exit. A failed call never reads as an empty result ([host tools](../docs/design/host-service.md#host-tools)).
+pub fn run(name: &'static str, cmd: &mut Command, budget: Duration) -> Result<Vec<u8>, String> {
+    let line = shown(cmd);
+    match coreq::process::output(name, cmd, budget) {
+        Ok(o) => Ok(o.stdout),
+        Err(coreq::process::Failure::Exit(o)) => {
+            let err = String::from_utf8_lossy(&o.stderr).lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("; ");
+            Err(format!("`{line}` failed: {}: {}", o.status, if err.is_empty() { "no error output" } else { &err }))
+        }
+        Err(e) => Err(format!("`{line}` failed: {e}")),
+    }
+}
+
 /// Leading numeric dot parts: `2.46.0.windows.1` is [2, 46, 0].
 fn parts(v: &str) -> Vec<u64> {
     v.split('.').map_while(|p| p.parse().ok()).collect()
@@ -139,6 +159,23 @@ mod tests {
         assert_eq!(check(&TOOLS[2], missing, false), Ok("gh: not installed (optional)".into()));
         // an installed optional tool below its minimum still fails: a worker may run it
         assert!(check(&TOOLS[2], &script(&dir, "oldgh", "echo gh version 2.4.0 (2022-01-01)"), false).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Chain: #1856 A4. Risk: a failed tool call (nonzero exit, missing binary) reads as empty output; the error keeps
+    // the command, exit status and stderr.
+    #[test]
+    fn failed_tool_calls_keep_command_and_error() {
+        let dir = std::env::temp_dir().join(format!("taskq-tools-run-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fail = script(&dir, "fail", "echo fatal: no remote 1>&2\nexit 2");
+        let e = run("test.tool", Command::new(&fail).arg("ls-remote"), Duration::from_secs(10)).unwrap_err();
+        assert!(e.contains("fail") && e.contains(" ls-remote` failed: ") && e.contains("2") && e.contains("fatal: no remote"), "{e}");
+        let quiet = script(&dir, "quiet", "exit 1");
+        assert!(run("test.tool", &mut Command::new(&quiet), Duration::from_secs(10)).unwrap_err().ends_with("no error output"));
+        let e = run("test.tool", Command::new(dir.join("not-installed")).arg("--version"), Duration::from_secs(10)).unwrap_err();
+        assert!(e.starts_with("`not-installed --version` failed: process spawn"), "{e}");
+        assert_eq!(run("test.tool", &mut Command::new(script(&dir, "ok", "echo out")), Duration::from_secs(10)).unwrap().trim_ascii(), b"out");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
