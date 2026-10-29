@@ -3,6 +3,18 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.41
+
+Host link: Conversations shows live worker panels for workers on other hosts over an E2E-encrypted, pull-only DashQ relay; heartbeats carry a `link` key line and a peer reads only the listening project's board; `taskq.json` `link_hosts` narrows peers (#1868). Conversations follows the local worker's native transcript live (#1860, #1830), labels TaskQ, owner and worker turns by their real author (#1839) and shows readable Codex tool lines with wider credential masking (#1837). No board change.
+
+Workers: `later N --until <UTC>` parks a task until that time and it returns to ready when the time comes; 4.6.40 hosts read a timed park as an untimed `later` (#1827). Replies, answers and steers carry images and files and send without length caps, split into verified ordered comments (#1865, #1824). Reports collect finished research and owner follow-ups (#1852). Worker videos and GIFs play inside the task (#1851). A Codex worker continues after a transient model failure (#1849). Task branches stop committing shared generated evidence (#1847). No board change.
+
+Publication: workers publish once and stop chasing main; a clean PR behind a moved main enqueues unrebased (#1848); a conflicting or moved PR never waits silently and the wait shows in status (#1822); close notices name the real outcome and superseded closes keep the successor moving (#1804). A board rate-limit pause stops every process of the install (#1810). Concurrent and changed answers settle without a stale-revision error or second confirmation (#1866, #1838, #1790). No board change.
+
+Hosts: `taskq selftest`, `service install`, `onboard` and `update` check declared host tools and print `Tool:`/`Next:` lines (#1859). macOS detects stale Screen Recording, Accessibility and App Data grants and notifies once (#1807, #1846); the default install keeps `org.taskq.tray` (#1802). Windows service install accepts exported task XML and plain roots (#1862). Telemetry counts expired blocks as a gap and keeps syncing (#1798). A rule-change gate and rule-ID coverage report run in checks (#1794). No board change.
+
+Menu and tray: installed menu and questions match the approved mockups (#1781, #1806); one shared pending store gives instant UI with background sync (#1819); project groups get clear headers, counts and persistent collapse (#1811), and the Conversations sidebar groups threads with inline actions (#1808); loaded projects keep counts when another board fails (#1863); closed pins resolve and archived entries are kept (#1835); exact two-digit Summary counts (#1791); whole-window opacity persists over opaque content (#1815, #1836). No board change.
+
 ## v4.6.40
 
 taskq pins coreq v0.14.10: a telemetry client waits 5 s for the writer's commit receipt and retries the same writer, so Windows service and tray stop losing batches (#1764). No board change.
