@@ -441,6 +441,8 @@ pub struct Service<'a> {
 const MONTH: i64 = 30 * 86400;
 /// Seconds a usage-limited runtime stays held when it reported no reset.
 const USAGE_PROBE: i64 = 1800;
+/// #1843: continuing steers per attempt after a transient model failure (§ 4 step 1).
+const CONTINUE_MAX: usize = 2;
 
 /// Host readback stays separate from a project's effective narrowing limits.
 pub fn host_capacity(capacity:&Value)->Option<Value> {
@@ -1134,9 +1136,25 @@ impl<'a> Service<'a> {
             if let Err(e) = crate::runtime::mark_login_off(&self.cfg.install, bin, &reason) { eprintln!("login-off not saved: {e}"); }
             self.logged_out.extend(crate::runtime::agent_runtimes().iter().filter(|r| crate::runtime::of(r).codex).map(|r| r.to_string()));
             self.gone(n, t, a, &["usage-limit"], &format!("Login off: {bin} {reason}; {}", crate::runtime::relogin(bin)))
+        } else if let Some(steer) = local.then(|| self.continuation(n, t, a)).flatten() {
+            self.post(n, steer)
         } else {
             self.gone(n, t, a, &[], text)
         }
+    }
+
+    /// #1843: the `steer` that resumes worker attempt `a` after a [transient model failure](docs/design/capacity.md#transient-model-failure)
+    /// with its Codex session known; None past [`CONTINUE_MAX`] or when the board log is unread.
+    fn continuation(&self, n: u64, t: &Task, a: u64) -> Option<String> {
+        if t.state != State::Doing || t.role.as_deref() != Some("worker") || !rt_of(t).is_some_and(|(rt, _)| crate::runtime::of(rt).codex) { return None; }
+        let log = crate::runtime::attempt_log(&self.cfg.root, "worker", n, a);
+        let failure = crate::runtime::transient_failure(&log)?;
+        crate::runtime::codex_thread(&log)?;
+        let head = core::entry("steer", &[], Some(a), "");
+        let prior = crate::board::entries(self.board, n).ok()?.iter().filter(|e| !e.edited && e.body.lines().next() == Some(head.as_str())).count();
+        (prior < CONTINUE_MAX).then(|| core::entry("steer", &[], Some(a), &format!(
+            "Continue the task from where the last turn stopped; it failed on a transient model error: {}",
+            crate::runtime::public_line(&failure, &self.cfg.root, 160))))
     }
 
     fn post(&mut self, n: u64, body: String) -> Result<u64, String> {
@@ -4874,6 +4892,55 @@ Open: none";
         if let Some(r) = rows.as_array().unwrap().iter().find(|r| r["runtime"] == "codex" && r["path"].is_string() && r["reason"].is_string()) {
             assert_eq!(r["login"], "not logged in", "A2: taskq agents reads the mark");
         }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Chain: #1843 Codex worker exit 1 on "model is at capacity" mid-work -> continuing `steer` -> same session resumes (§ 4 step 1).
+    // Risk: a transient model failure loses the session as `gone`, or continuations loop past their bound without a retry.
+    #[test]
+    fn transient_model_failure_continues_the_same_session_twice() {
+        let root = std::env::temp_dir().join(format!("taskq-transient-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let b = Fake::default();
+        let mut c = Config { root: root.clone(), install: root.join("install"), ..cfg("mac") };
+        c.limits = BTreeMap::from([("codex".to_string(), 1)]);
+        let e: Exits = Default::default();
+        let resumes: Rc<RefCell<Vec<(String, Option<String>)>>> = Default::default();
+        let (seen, r, rs) = (e.clone(), root.clone(), resumes.clone());
+        let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |l: &Launch| {
+            let flag = Rc::new(RefCell::new(None));
+            seen.borrow_mut().push((l.task, flag.clone()));
+            rs.borrow_mut().push((l.session.clone(), l.resume.clone()));
+            let log = crate::runtime::log_path(&r, l);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(&log, "{\"type\":\"thread.started\",\"thread_id\":\"t1\"}
+{\"type\":\"item.completed\",\"item\":{\"type\":\"command_execution\"}}
+{\"type\":\"turn.failed\",\"error\":{\"message\":\"Selected model is at capacity. Please try a different model.\"}}
+").unwrap();
+            Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
+        }));
+        s.focus = vec!["all".into()];
+        let n = b.create("A", "", &["taskq".into(), "run-codex".into()]).unwrap();
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        for k in 0..2 {
+            *e.borrow()[k].1.borrow_mut() = Some(1);
+            s.pass().unwrap();
+            let steers: Vec<_> = b.comments(n).unwrap().into_iter().filter(|c| c.body.starts_with(&format!("taskq: steer attempt {a}
+"))).collect();
+            assert_eq!(steers.len(), k + 1, "one continuing steer per exit");
+            assert!(steers[k].body.contains("Continue the task") && steers[k].body.contains("model is at capacity"), "{}", steers[k].body);
+            assert_eq!((task(&b, n).state, task(&b, n).attempt, task(&b, n).retries), (State::Doing, Some(a), 0), "the attempt stays live, no retry spent");
+            s.pass().unwrap();
+            let (session, resume) = resumes.borrow()[k + 1].clone();
+            assert_eq!(session, "t1", "the same Codex session resumes");
+            assert!(resume.is_some_and(|r| r.contains("Continue the task")), "the steer reaches the session");
+        }
+        *e.borrow()[2].1.borrow_mut() = Some(1);
+        s.pass().unwrap();
+        assert!(b.comments(n).unwrap().iter().any(|c| c.body.starts_with(&format!("taskq: gone attempt {a}
+"))), "a third failure ends the attempt");
+        assert_eq!((task(&b, n).state, task(&b, n).retries), (State::Ready, 1));
         let _ = std::fs::remove_dir_all(&root);
     }
 

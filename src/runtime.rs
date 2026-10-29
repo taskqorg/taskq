@@ -299,6 +299,18 @@ pub fn auth_rejected(log: &Path) -> Option<String> {
     })
 }
 
+/// A Codex turn that ended on a transient model failure (#1843, [transient model failure](docs/design/capacity.md#transient-model-failure)):
+/// the last `turn.completed`/`turn.failed` of the attempt log is a `turn.failed` naming model capacity. Returns its
+/// message; None when unreadable, absent or after a later completed turn.
+pub fn transient_failure(log: &Path) -> Option<String> {
+    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
+    let end = text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| matches!(v["type"].as_str(), Some("turn.completed" | "turn.failed"))).last()?;
+    // ponytail: only the 2026-10-29 "Selected model is at capacity" text is verified (#1816, #1818); other overload texts stay `gone`
+    let m = end["error"]["message"].as_str().filter(|_| end["type"] == "turn.failed")?;
+    m.to_lowercase().contains("model is at capacity").then(|| m.to_string())
+}
+
 /// `<install>/login-off/<bin>` (#1446): line 1 the `last_refresh` of `auth.json` when the login was rejected, line 2
 /// the reason. It reads not logged in until a re-login changes `last_refresh`.
 pub fn mark_login_off(install: &Path, bin: &str, reason: &str) -> std::io::Result<()> {
@@ -2534,6 +2546,40 @@ mod tests {
         }
         let _ = std::fs::remove_file(&log);
         assert_eq!(usage_limit(&log), None, "an unreadable log is no limit");
+    }
+
+    // Chain: attempt log -> last turn failed on model capacity -> continuing steer (#1843).
+    // Risk: a mid-work capacity failure ends the attempt as `gone`, or a later completed turn or other error is retried.
+    #[test]
+    fn transient_failure_reads_the_last_turn() {
+        let log = std::env::temp_dir().join(format!("taskq-transient-{}.log", uuid()));
+        let failed = r#"{"type":"turn.failed","error":{"message":"Error running remote compact task: Selected model is at capacity. Please try a different model."}}"#;
+        let work = r#"{"type":"item.completed","item":{"type":"command_execution"}}"#;
+        let cases = [
+            (format!("{{\"type\":\"thread.started\",\"thread_id\":\"t\"}}
+{work}
+{{\"type\":\"error\",\"message\":\"Selected model is at capacity. Please try a different model.\"}}
+{failed}
+"),
+                Some("Error running remote compact task: Selected model is at capacity. Please try a different model.")),
+            (format!("{failed}
+{{\"type\":\"turn.started\"}}
+{work}
+{{\"type\":\"turn.completed\"}}
+"), None),
+            (format!("{work}
+{{\"type\":\"turn.failed\",\"error\":{{\"message\":\"stream disconnected\"}}}}
+"), None),
+            (format!("{work}
+{{\"type\":\"error\",\"message\":\"Selected model is at capacity.\"}}
+"), None),
+        ];
+        for (text, want) in cases {
+            std::fs::write(&log, &text).unwrap();
+            assert_eq!(transient_failure(&log).as_deref(), want, "{text}");
+        }
+        let _ = std::fs::remove_file(&log);
+        assert_eq!(transient_failure(&log), None, "an unreadable log is no failure");
     }
 
     // Chain: installed npm entrypoint -> exact native executable -> owned process identity.

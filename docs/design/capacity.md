@@ -188,6 +188,15 @@ A worker or reviewer whose runtime reports a usage or quota limit before any wor
 
 Release evidence records `usage-limit until <epoch>` or `usage-limit probe <epoch>` before outcome publication. Recovery reuses that deadline; the owning host also classifies its local log if an older release lacks it. Another host preserves the outcome without holding its own runtime.
 
+## Transient model failure
+
+A Codex worker whose turn fails on a transient model error mid-work continues in the same session instead of ending `gone` (#1843):
+
+- Detection reads the attempt log: the last `turn.completed` or `turn.failed` record is a `turn.failed` whose message says the model is at capacity (`Selected model is at capacity. Please try a different model.`, seen on #1816 and #1818 on 2026-10-29, also inside `Error running remote compact task: …`). Other errors keep the plain `gone` path; their texts are unverified (R12).
+- It applies on exit without a task outcome (taskq.md § 4 step 1) to a `doing` worker on the attempt host whose log names its Codex thread. Reviewers keep `gone`.
+- The service posts `taskq: steer attempt <id>` with a line that asks to continue and quotes the bounded error. The steer goes to the inbox (§ 2), and step 6 resumes the same session with it; no retry is spent.
+- At most 2 such steers per attempt, counted from the board log (R1). A third failure, or an unread board log, posts `gone` as before.
+
 ## Runtime login
 
 The service probes each startable runtime's login at most every 5 minutes (taskq.md § 5 `taskq agents`):
