@@ -477,7 +477,7 @@ fn listen(install: &Path, root: &Path, stop: &AtomicBool) {
                 };
                 let peers = peers(&status, ttl, allow.as_deref());
                 for m in msgs {
-                    if let Err(e) = handle(install, &key, &m, &peers, &mut relay, |r| crate::conversations::serve(install, r)) { say(format!("message dropped: {e}")); }
+                    if let Err(e) = handle(install, &key, &m, &peers, &mut relay, |r| crate::conversations::serve_peer(install, root, r)) { say(format!("message dropped: {e}")); }
                 }
             }
             Err(e) => {
