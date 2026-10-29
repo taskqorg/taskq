@@ -1669,15 +1669,20 @@ mod tests {
             crate::board::Board::create(&board,"Waits for the handover","",&["taskq".into()])?;
             crate::service_run(&crate::Ctx {cfg,raw:json!({}),board:Box::new(board)},Some(host))
         })};
-        let until=Instant::now()+std::time::Duration::from_secs(5);
-        while Instant::now()<until {
+        // #1871: the first pass may run slow before its list (macOS gui probe: `log show`, `security`), so the 5 s
+        // window starts at the first list. Retained protection: more than one list per poll, or a ready handover, fails.
+        let mut until=None;
+        let first=Instant::now()+std::time::Duration::from_secs(120);
+        while until.is_none_or(|u|Instant::now()<u) {
             if shared.lock().unwrap().restart_wake() {crate::poke(&root).unwrap();}
             assert!(!shared.lock().unwrap().handoff_ready(),"the unrepresented slot defers the handover");
+            if project.is_finished() {panic!("project loop ended: {:?}",project.join().unwrap());}
+            if until.is_none() && lists.load(Ordering::SeqCst)>0 {until=Some(Instant::now()+std::time::Duration::from_secs(5));}
+            assert!(until.is_some() || Instant::now()<first,"no board list within 120 s");
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        if project.is_finished() {panic!("project loop ended: {:?}",project.join().unwrap());}
         let listed=lists.load(Ordering::SeqCst);
-        assert!((1..=4).contains(&listed),"5 s at poll 2 allows the first pass, one wake and two polls; listed {listed}");
+        assert!((1..=4).contains(&listed),"5 s after the first list at poll 2 allows one wake and two polls; listed {listed}");
         shared.lock().unwrap().draining.insert(root.clone());crate::poke(&root).unwrap();
         assert_eq!(project.join().unwrap().unwrap_err(),"project drained");
         let _=fs::remove_dir_all(base);
