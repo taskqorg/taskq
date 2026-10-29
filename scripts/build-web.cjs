@@ -23,3 +23,5 @@ for(const name of ['tray','workspace']){
  if(/\{\{[A-Z_]+\}\}/.test(page))throw Error('Unresolved web asset');
  fs.writeFileSync(path.join(out,name+'.html'),page);
 }
+const sources=require('./design-sources.cjs');
+for(const name of sources.names)fs.writeFileSync(path.join(out,name+'.sources.json'),sources.render(sources.derive(name)));

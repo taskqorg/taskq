@@ -71,3 +71,11 @@ A new task worktree reuses compiled dependencies through `sccache` (#1604, taskq
 - CI keeps its own cache: cache.yml, tests.yml and release builds are unchanged and set no wrapper. The service's own builds (`scripts/dev-install.sh`) run without it.
 - Failure: a wrapper whose server cannot start or answer fails the child's compiles (`sccache: error: ...`); `sccache --stop-server` resets the server, and removing `sccache` from the service `PATH` with a restart turns the cache off.
 - Timing (Windows 11, 16 logical CPUs, cargo 1.99.0 GNU toolchain, sccache 0.18.0; first `cargo test --locked --no-run` in a fresh worktree of d5ec861 after `npm ci`; another worker's four builds shared the host, so wall times are noisy): no wrapper 703 s; sccache with an empty cache 418 s (144 misses, 139 MiB stored); sccache warm 769 s with 116 of 144 compiles hit (80.6%). Two warm fresh worktrees started together took 493 s and 501 s, both at 80.6% hits; neither waited on a build lock, only briefly on cargo's package-cache lock at start, as without a wrapper. The taskq crate's own test and binary builds, which sccache does not cache, dominate wall time; the saving is the dependency compiles. Test execution does not use the cache. mac was not measured.
+
+## Visual evidence
+
+#1841: task branches conflicted on shared generated files; in one week `docs/shots/manifest.json` changed in 72 of 129 main commits. A task branch never commits them (taskq.md § 7 step 4):
+
+- README shots: only the README shots workflow (`.github/workflows/shots.yml`, on dispatch or a release tag) commits `docs/shots/*.png` and `docs/shots/manifest.json`. CI marks stale shots as a warning, never a failure.
+- Design source hashes: `docs/design/<name>.sources.json` lists the pinned files and icons; `npm run build` derives their SHA-256 into `build/web/<name>.sources.json` (`scripts/design-sources.cjs`), the release publishes that file, and the component tests check it against the sources. A task edits a list only when it adds or removes a pinned file (`node tests/task-workspace.test.cjs --write` for the workspace bundle inputs).
+- Capture visual evidence once, after the last rebase, into the task's own directory `docs/design/evidence/<N>/`, where N is the task number. Never write into a shared or another task's directory, and never recapture after each rebase.

@@ -18,8 +18,10 @@ d.evidence='x'.repeat(239);assert.match(q.problem(input,d,p,cap),/238/);
 for(const value of [null,{}, {create:{outcome:'accepted'}},{create:{outcome:'accepted',task:0}}])assert.equal(q.receipt(value).create.outcome,'unknown');
 assert.deepEqual(q.receipt(fx.receipts.partial),fx.receipts.partial);
 assert.equal(q.receipt({...fx.receipts.held,start:{outcome:'accepted',task:2402}}).start.outcome,'unknown');
-const manifest=JSON.parse(fs.readFileSync('docs/design/finding-composer.sources.json','utf8'));
-for(const [file,hash] of Object.entries(manifest.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
+// #1841: the build derives the released hashes; a listed manifest pins its derived build/web copy.
+const manifest=JSON.parse(fs.readFileSync('docs/design/finding-composer.sources.json','utf8')),built=JSON.parse(fs.readFileSync('build/web/finding-composer.sources.json','utf8'));
+assert.deepEqual(Object.keys(built.files),manifest.files);
+for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file.replace(/^docs\/design\/(.+\.sources\.json)$/,'build/web/$1'),'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
 const release=fs.readFileSync('.github/workflows/release.yml','utf8');
-for(const file of ['build/web/finding-composer.js','src/finding-composer.css','tests/fixtures/finding-composer.json','docs/design/finding-composer.sources.json'])assert(release.includes('cp '+file));
+for(const file of ['build/web/finding-composer.js','src/finding-composer.css','tests/fixtures/finding-composer.json','build/web/finding-composer.sources.json'])assert(release.includes('cp '+file));
 console.log('PASS finding review, ownership, evidence allowlist, bounds, immutable payload, separate receipts and provenance');

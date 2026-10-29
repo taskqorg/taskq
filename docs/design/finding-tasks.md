@@ -64,7 +64,7 @@ Only `sanitizedEvidence` enters the editable evidence field; extra source proper
 
 ### Provenance and acceptance
 
-The [manifest](finding-composer.sources.json) records component version `1`, design parent `75757d5d843159726a2ea44ca1615f9cf7fd18fd`, the immutable DashQ form reference and hashes of actual composer/shared assets. Until a v* release carries these assets, use the delivery commit plus the manifest's SHA-256, following the existing answer-card pin rule; schema/component version alone is not a release pin. Release staging adds `taskq-<release>-finding-composer.{js,css}`, `-fixtures.json` and `-sources.json` to the existing checksum/attestation path. Consumers must pin all shared dependencies as well; no moving-main or CDN imports.
+The [manifest](finding-composer.sources.json) records component version `1`, design parent `75757d5d843159726a2ea44ca1615f9cf7fd18fd`, the immutable DashQ form reference and the actual composer/shared assets, whose hashes the build derives into the released `-sources.json`. Until a v* release carries these assets, use the delivery commit plus the derived manifest's SHA-256, following the existing answer-card pin rule; schema/component version alone is not a release pin. Release staging adds `taskq-<release>-finding-composer.{js,css}`, `-fixtures.json` and `-sources.json` to the existing checksum/attestation path. Consumers must pin all shared dependencies as well; no moving-main or CDN imports.
 
 | Parent | Child | Permitted adaptation |
 |---|---|---|
