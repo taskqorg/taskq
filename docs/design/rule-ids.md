@@ -1,0 +1,13 @@
+# Rule IDs and the rule-change gate
+
+## Contract detail
+
+Linked from `taskq.md` R13 to keep the contract under its R8 size bound; this text has the same authority (R8, R13). Decided rules change only when the task names them ([specq#94](https://github.com/taskqorg/specq/issues/94)); this gate makes that a check ([plan](https://github.com/taskqorg/specq/blob/main/engineering/audits/spec-enforcement.md)).
+
+- IDs in `taskq.md`: `R<n>` for each `### R<n>.` section; `§<n>` for each `## <n>.` section; `§<n> <Title>` for a `###` heading inside it (title without a trailing `(...)`, as `§2 Ask card`); the title for other headings (`Principles`, `Change rule`, `Product`); `§2.<k>` for the § 2 table row whose last cell is `<k>`. Text without its own ID belongs to the enclosing ID. The preamble before the first `##` and link definitions carry no ID.
+- IDs in [menu](menu.md): `M<n>` for each `## M<n>` section, `M<n>.<k>` for a bullet or paragraph that starts with `M<n>.<k>` (M3.1 the Home host strip labels). Other menu sections and other `Contract detail` pages carry no ID yet.
+- An ID never changes or moves to other text; a new rule takes the next free number; a removed ID is not reused. Cite IDs as written; `§ 2` equals `§2`; `§2` does not cite `§2.3`.
+- Gate (`python3 scripts/check.py --rules`, run by local `check.py` and the CI plan job): against the base, it lists each ID whose text changed or that was removed (whitespace ignored), and each removed or changed test assertion or `Chain:` line in a test file that cites an ID. It fails unless the task text names each listed ID: the issue body of every `Task:` URL in the commits after the base, plus its trusted `taskq: answer` comments. A removal also names its destination as `<ID> -> <ID or file>`, or `<ID> -> none` for a deliberate drop. No `Task:` line, or an unreadable issue, fails as unknown (R12).
+- Typo fix: a change that only replaces at most two words, each by a word at edit distance 2 or less and under half the word's length, without digits, code, links or the words not, no, never, only, now, all, any, none, must and may, passes unnamed.
+- Coverage (report only): `check.py --rules` prints each `taskq.md` and menu ID that no test `Chain:` line cites, and their count.
+- Stage 3: coverage becomes a gate for new rules (a new ID needs a citing `Chain:` line) after 20 consecutive merged PRs add no uncovered ID; the change is a task that edits this text.

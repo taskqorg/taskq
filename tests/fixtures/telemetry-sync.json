@@ -565,6 +565,48 @@
           "backlog_rows": 1
         }
       ]
+    },
+    {
+      "case": "expired",
+      "record": {
+        "schema": "taskq-telemetry/1",
+        "event_id": "t-38ebf0210a8e9571e6dbdb844996f6bc",
+        "observed_at": 1792000011,
+        "payload": {
+          "schema": 1,
+          "first": {
+            "seq": 11,
+            "id": "b931b403d0480f299314c75682a877e4"
+          },
+          "last": {
+            "seq": 11,
+            "id": "b931b403d0480f299314c75682a877e4"
+          },
+          "rows": 1,
+          "bytes": 530,
+          "gzip": "H4sIAAAAAAAA/3WQzW6DMBCE732MOZvIBgLBL4OMvW0RYBP/JIco714ZKppW6m01+/PtzAOBrpBCMIwGEkNXiaHmleH1hb+XXVeJWrfn5lKqS9tSDQZPmsYbmX4JkKLtSs45F4JzzuCGQP6m4ugs5APTaPPRENUHgcGt5L97GNI4GzBEFSZI0YiaQcVIyxr3d3yycVwIEnpWyeR9k/b1PgXILmMzU6t5DpAlQ3QT2VxWnGG0a4r9IW2D+pN6T8q8yId+92OkoyE4w+IMzQe/cGsKxbk4ZyMpvh5vGFbvTNIRcjN0BcONfNit1qfmVIns1StNkDbNM0NYlT3qqHz8J9EUtdticBMYyHvnIWGdzYkkO1l337L+4VkXC0/aeUNbwjv1r7zzf6vP5/PtC9BtZdsSAgAA",
+          "status": {
+            "backlog_rows": 0,
+            "gap_rows": 2,
+            "backlog_bytes": 0
+          }
+        }
+      },
+      "receipts": [
+        {
+          "state": "rejected",
+          "reason": "expired"
+        }
+      ],
+      "status_after": [
+        {
+          "state": "idle",
+          "backlog_bytes": 0,
+          "gap_rows": 3,
+          "last_error": null,
+          "backlog_rows": 0
+        }
+      ]
     }
   ]
 }

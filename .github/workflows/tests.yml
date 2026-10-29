@@ -7,6 +7,7 @@ on:
     types: [checks_requested]
 permissions:
   contents: read
+  issues: read
 env:
   CHECK_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || 'HEAD^' }}
   CHECK_FULL: ${{ github.event_name == 'workflow_dispatch' }}
@@ -23,6 +24,10 @@ jobs:
         run: python3 scripts/check.py --plan >> "$GITHUB_OUTPUT"
       - run: git diff --check
       - run: python3 scripts/check.test.py
+      # docs/design/rule-ids.md: changed rule IDs must be named by the task.
+      - run: python3 scripts/check.py --rules
+        env:
+          GH_TOKEN: ${{ github.token }}
   rust:
     needs: plan
     if: needs.plan.outputs.scope != 'docs'
