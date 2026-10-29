@@ -33,3 +33,7 @@ assert.deepEqual(a.rows().map(r=>r.n),[13],'Drop cannot leave the same report un
 const unread=[{root:'new-project',name:'New',issues:'https://github.com/o/new/issues'}];
 assert(!JSON.stringify(a.section(unread)).includes('No reports waiting for a decision.'),'an uncollected project is unknown, not empty');
 assert.equal(a.rows().length,0,'removed registrations cannot leave actionable cached reports');
+const failures=[],u=create({send:m=>failures.push(m),draw(){},defer(){},id:()=>String(failures.length+1)});
+u.toggle(projects);u.receive({id:failures.at(-1).id,root:projects[0].root,reports:[],more:false});
+u.refresh();u.receive({id:failures.at(-1).id,root:projects[0].root,reason:'Board unavailable'});
+assert(!JSON.stringify(u.section(projects)).includes('No reports waiting for a decision.'),'a failed refresh cannot report a healthy empty board');

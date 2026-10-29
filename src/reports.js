@@ -9,6 +9,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
  function targets(ps){const seen=new Set();return ps.filter(p=>{const board=p.issues||p.root;if(seen.has(board))return false;seen.add(board);return true;});}
  function request(root,action,extra={}){
   if([...pending.values()].some(p=>p.root===root))return;
+  if(action==='list'&&pages.has(root))pages.get(root).unknown=true;
   const op={id:id(),root,action,...extra};pending.set(op.id,op);send({a:'reports',...op});
   defer(()=>{if(pending.delete(op.id)){notice='Report outcome unknown; refresh before retrying.';draw();}},180000);draw();
  }
@@ -45,7 +46,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    return true;
   },
   section(ps){
-   projects=targets(ps);const loaded=projects.every(p=>pages.has(p.root)),rows=api.rows(),busy=selected&&(!projects.some(p=>p.root===selected.root)||[...pending.values()].some(p=>p.root===selected.root)),project=root=>projects.find(p=>p.root===root)?.name||'Project unavailable';
+   projects=targets(ps);const loaded=projects.every(p=>pages.has(p.root)&&!pages.get(p.root).unknown),rows=api.rows(),busy=selected&&(!projects.some(p=>p.root===selected.root)||[...pending.values()].some(p=>p.root===selected.root)),project=root=>projects.find(p=>p.root===root)?.name||'Project unavailable';
    return h('section',{class:'reports-section group','aria-label':'Reports',key:'reports'},
     h('button',{class:'project',type:'button','data-report':'toggle','aria-expanded':String(expanded)},'Reports',expanded&&loaded?' · '+rows.length+(projects.some(p=>pages.get(p.root)?.more)?'+':''):''),
     expanded&&h('div',{class:'reports-content body'},
