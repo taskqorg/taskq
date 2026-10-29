@@ -1797,10 +1797,11 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let mut s = settings.clone();
                 s.font = font;
                 let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null);
-                // the Conversations fixture merges its invented threads into the real pushed state (palette, font, theme)
-                if conversation_shots {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
+                // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
+                let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script);
+                if merged {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
                 else {push(&mut web,&ui,&st);}
-                if let (Some((_, wv)), false) = (&ui, script.is_empty() || conversation_shots) {
+                if let (Some((_, wv)), false) = (&ui, script.is_empty() || merged) {
                     web_eval(wv,script,"tray.web.fixture",&proxy,&mut web);
                 }
                 let p = proxy.clone();
@@ -1861,13 +1862,10 @@ const SCROLLS: [(&str, &str); 3] = [
 /// `tray --snapshot --route` names: `actions` is Home with the [`ACTIONS`] script, `scroll` Home with the [`SCROLLS`]
 /// (only when named), `project` the first project's page.
 const RECOVERY: &str = include_str!("../tests/fixtures/recovery-review.js");
-/// The `answers` snapshots (#1148, menu.md M3): Attention after four Later answers, with the accepted toast, Answered
-/// expanded, after dismissing, after the 6 s expiry; only when named.
-const ANSWERS: [(&str, &str); 4] = [
-    ("toast", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('toast')")),
-    ("expanded", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expanded')")),
-    ("dismissed", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('dismissed')")),
-    ("expired", concat!(include_str!("../tests/fixtures/answer-notices.js"), "taskqAnswerNotices('expired')")),
+/// The `answers` snapshots (#1781): Home with one open question, then that row's details; only when named.
+const ANSWERS: [(&str, &str); 2] = [
+    ("menu", concat!(include_str!("../tests/fixtures/question-menu.js"), "taskqQuestionMenu.bind(null,'menu')")),
+    ("details", concat!(include_str!("../tests/fixtures/question-menu.js"), "taskqQuestionMenu.bind(null,'details')")),
 ];
 /// The `views` snapshots (P-W4): the View window with a custom saved view whose working conditions add Review, so
 /// Save, Reset and Delete are live and the Review choice is checked; at its top, then scrolled to the States; only when named.
@@ -1892,7 +1890,7 @@ fn shots(install: &Path, routes: &[String]) -> Vec<(&'static str, String, u64, &
     ["dark", "light"].iter().flat_map(|t| {
         let mut v = vec![(*t, "home".to_string(), 16, ""), (*t, "home".to_string(), 20, ""), (*t, "home".to_string(), 16, ACTIONS)];
         for font in [16, 20] { v.extend(SCROLLS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
-        for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "attention".to_string(), font, *js))); }
+        for font in [16, 20] { v.extend(ANSWERS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); }
         v.extend(first.clone().map(|r| (*t, r, 16, "")));
         if routes.iter().any(|r|r=="views") { for font in [16, 20] { v.extend(VIEWS.iter().map(|(_, js)| (*t, "home".to_string(), font, *js))); } }
         // ponytail: dark only keeps six screens inside the ten-screen review set; add light when a review asks for it
@@ -2990,8 +2988,8 @@ mod tests {
         assert_eq!(names(&["actions", "project"]), ["dark-home-actions-16", "dark-project-16", "light-home-actions-16", "light-project-16"]);
         assert_eq!(names(&["scroll"])[..3], ["dark-home-scroll-start-16", "dark-home-scroll-middle-16", "dark-home-scroll-end-16"]);
         assert_eq!(names(&["scroll"]).len(), 12, "start, middle and end at 16 and 20 px in both themes");
-        assert_eq!(names(&["answers"])[..4], ["dark-attention-answers-toast-16", "dark-attention-answers-expanded-16", "dark-attention-answers-dismissed-16", "dark-attention-answers-expired-16"]);
-        assert_eq!(names(&["answers"]).len(), 16, "four answer phases at 16 and 20 px in both themes");
+        assert_eq!(names(&["answers"])[..2], ["dark-home-answers-menu-16", "dark-home-answers-details-16"]);
+        assert_eq!(names(&["answers"]).len(), 8, "menu question and its details at 16 and 20 px in both themes");
         assert!(names(&["icon"]).is_empty(), "icon alone captures no popover page");
         assert_eq!(names(&["views"]), ["dark-views-top-16", "dark-views-states-16", "dark-views-top-20", "dark-views-states-20", "light-views-top-16", "light-views-states-16", "light-views-top-20", "light-views-states-20"], "P-W4: the View window in both themes and sizes");
         assert_eq!(names(&["conversations"]), ["dark-conversations-badge-18", "dark-conversations-question-18", "dark-conversations-owner-18", "dark-conversations-chat-18", "dark-conversations-badge-20", "dark-conversations-question-20", "dark-conversations-owner-20", "dark-conversations-chat-20"], "#1699 A8: at most ten screens");

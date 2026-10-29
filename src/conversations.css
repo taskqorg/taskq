@@ -76,7 +76,7 @@
 .dialogue-launch>summary{padding:2px 4px;color:var(--muted)}
 
 /* D4: question content shares one reading position. */
-.thread-title{font:inherit;font-weight:600;margin:4px 0}
+.thread-title{font:inherit;font-weight:600;margin:4px 0}.thread-head>.thread-title{flex:1;min-width:0}
 .owner-title{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .thread-card .qac-head{display:none}
 .conversation-detail .qac{margin:0;padding:6px}
