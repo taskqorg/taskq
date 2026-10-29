@@ -706,6 +706,8 @@ pub struct FakeState {
     pub fail_comment_reads: usize,
     /// A concurrent writer: this body lands just before the next `comment`.
     pub race: Option<String>,
+    /// Concurrent comments land after this task's numbered comment-list read returned its snapshot.
+    pub after_comment_read: Option<(u64, usize, Vec<String>)>,
     /// Issues of other repositories, `(repo, issue)`.
     pub foreign: Vec<(String, Issue)>,
     /// Issue reads, `foreign` included, for budget checks.
@@ -807,7 +809,14 @@ impl Board for Fake {
         }
         self.state.borrow_mut().comment_reads += 1;
         let st = self.state.borrow();
-        Ok(st.comments.iter().filter(|(i, c)| *i == n && !(st.hide_latest_comment && c.id == st.next_id)).map(|(_, c)| c.clone()).collect())
+        let out = st.comments.iter().filter(|(i, c)| *i == n && !(st.hide_latest_comment && c.id == st.next_id)).map(|(_, c)| c.clone()).collect();
+        let race = st.after_comment_read.as_ref().is_some_and(|(task, read, _)| *task == n && *read == st.comment_reads);
+        drop(st);
+        if race {
+            let (_, _, bodies) = self.state.borrow_mut().after_comment_read.take().unwrap();
+            for body in bodies { self.raw(n, &body, true, false); }
+        }
+        Ok(out)
     }
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.state.borrow_mut().get(n)?;

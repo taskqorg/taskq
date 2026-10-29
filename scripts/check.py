@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Project-owned selected gate. Unknown impact runs the full Rust suite."""
 import argparse
+import json
 import re
 import shutil
 import os
@@ -169,22 +170,123 @@ def test_diff(base, head=None):
     return '\n'.join(keep)
 
 
+def approval_text(comments, task):
+    """An owner's picked answer approves its ask context and chosen option, never the other options."""
+    parts, pending, seen = [], None, set()
+    state, attempt_id, resume, last = 'ready', None, None, 0
+    for c in sorted(comments, key=lambda c: int(c['id'])):
+        if c.get('author_association') not in {'OWNER', 'MEMBER', 'COLLABORATOR'} or not c.get('created_at') or c['created_at'] != c.get('updated_at'):
+            continue
+        body = c['body'].strip()
+        lines = body.splitlines()
+        if not lines:
+            continue
+        revision = None
+        if re.fullmatch(r'revision: [0-9]+', lines[-1].strip()) and len(lines) > 1 and lines[-2].strip().startswith('op-id: '):
+            revision = int(lines.pop().split(': ', 1)[1])
+        if lines[-1].strip().startswith('op-id: '):
+            op = lines.pop().strip().split(': ', 1)[1].strip()
+            if op in seen:
+                continue
+            seen.add(op)
+        if not lines:
+            continue
+        head = lines[0].strip()
+        if head.startswith('taskq:'):
+            head = 'taskq: ' + ' '.join(head[len('taskq:'):].split())
+        attempt = re.search(r' attempt ([0-9]+)$', head)
+        own = int(attempt[1]) if attempt else None
+        kind = re.fullmatch(r'taskq: (\S+)(?: .*?)?(?: attempt [0-9]+)?', head)
+        kind = kind[1] if kind else None
+        if own is not None and own != attempt_id:
+            continue
+        if state in {'closed', 'unknown'}:
+            continue
+        canonical = re.fullmatch(r'taskq: answer(?: ([0-9]+))?(?: attempt [0-9]+)?', head)
+        alias = re.fullmatch(r'taskq answer\s+(?:#?([0-9]+)\.)?([0-9]+)', head)
+        if alias and alias[1] is not None and int(alias[1]) != int(task):
+            continue
+        if revision is not None and revision != (pending[0] if pending else attempt_id or last):
+            continue
+        # Prove only ordinary ask lifecycles. Unmodelled transitions discard context;
+        # they never turn an ignored ask or spawn into specification approval.
+        spawn = re.fullmatch(r'taskq: spawn (worker|reviewer) \S+ \S+', head)
+        if spawn:
+            if (spawn[1] == 'worker' and state == 'ready') or (spawn[1] == 'reviewer' and state == 'review' and attempt_id is None):
+                state, attempt_id, pending = ('doing' if spawn[1] == 'worker' else 'review'), int(c['id']), None
+                last = int(c['id'])
+            continue
+        if kind == 'ask' and own is not None and state in {'doing', 'review'}:
+            opts = {}
+            for line in lines[1:]:
+                if m := re.fullmatch(r'\+?([0-9]+)\. (.+)', line.strip()):
+                    opts.setdefault(int(m[1]), m[2].rstrip('★').strip())
+            pending = (int(c['id']), lines[1:], opts)
+            resume, state = state, 'ask'
+            continue
+        if canonical and own is None:
+            parts.append('\n'.join(lines))
+        if re.fullmatch(r'taskq: result [0-9a-fA-F]{40} attempt [0-9]+', head) and state == 'doing' and own is not None:
+            state, attempt_id, pending = 'review', None, None
+            last = int(c['id'])
+        elif head == 'taskq: hold' and state == 'ready' and last == 0:
+            state = 'held'
+            last = int(c['id'])
+        elif head == 'taskq: start' and state == 'held':
+            state = 'ready'
+            last = int(c['id'])
+        elif kind == 'requeue' and own is None and state in {'ready', 'doing', 'review', 'ask', 'later', 'failed'}:
+            pending = None
+            state, attempt_id, last = 'ready', None, int(c['id'])
+        elif kind in {'later', 'failed'} and state in {'ready', 'doing', 'review', 'ask'}:
+            pending = None
+            state, attempt_id, last = (kind if own is None else 'unknown'), None, int(c['id'])
+        elif kind == 'close' and state in {'review', 'later', 'failed'}:
+            state, attempt_id, pending = 'closed', None, None
+        elif (kind == 'requeue' and own is not None and state in {'doing', 'review'}) or (kind in {'gone', 'usage-limit', 'publish', 'publication-blocked', 'publication-failed', 'rebased'} and state in {'doing', 'review'}):
+            pending = None
+            state, attempt_id = 'unknown', None
+        if not pending:
+            continue
+        payload = '\n'.join(lines[1:] if canonical else lines).strip().rstrip('★').strip()
+        opts = pending[2]
+        picked = int(canonical[1]) if canonical and canonical[1] else int(alias[2]) if alias else int(payload) if payload.isascii() and payload.isdecimal() else None
+        if picked is None:
+            matches = [k for k, text in opts.items() if payload.casefold() in {text.casefold(), f'{k}. {text}'.casefold()}]
+            if len(matches) == 1:
+                picked = matches[0]
+            elif canonical:
+                picks = set(re.findall(r'(?:^|[.!]\s+)(?:I\s+)?(?:Pick|Choose)\s+([1-9][0-9]*)(?=\s*(?:[.(]|$))', payload, re.I | re.M))
+                if len(picks) == 1:
+                    picked = int(picks.pop())
+        if picked in opts and own is None:
+            context = [line for line in pending[1] if not re.match(r'\+?[0-9]+\. |To answer:', line.strip())]
+            parts.extend(['\n'.join(context), opts[picked]])
+        if kind == 'answer' or alias or picked in opts:
+            pending = None
+            state = resume
+            last = int(c['id'])
+    return '\n'.join(parts)
+
+
 def task_text(base):
-    """Issue bodies of every `Task:` URL after base plus their trusted `taskq: answer` comments; None when unknown."""
+    """Issue bodies plus owner decisions with their selected asks; None when the board evidence is unknown."""
     log = subprocess.check_output(['git', 'log', '--format=%B', f'{base}..HEAD'], cwd=ROOT).decode()
     tasks = sorted(set(re.findall(r'^Task:\s*https://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)\s*$', log, re.M)))
     if not tasks:
         return None, f'no `Task: https://github.com/<repo>/issues/<N>` line in commits {base}..HEAD'
-    trusted = ('.[] | select((.author_association | test("^(OWNER|MEMBER|COLLABORATOR)$")) and .created_at == .updated_at'
-               ' and (.body | startswith("taskq: answer"))) | .body')
     parts = []
     for repo, n in tasks:
         for args in (['--jq', '.body // ""', f'repos/{repo}/issues/{n}'],
-                     ['--paginate', '--jq', trusted, f'repos/{repo}/issues/{n}/comments']):
+                     ['--paginate', '--slurp', f'repos/{repo}/issues/{n}/comments']):
             done = subprocess.run(['gh', 'api', *args], cwd=ROOT, capture_output=True, timeout=60)
             if done.returncode:
                 return None, f'{repo}#{n} unreadable: {done.stderr.decode(errors="replace").strip()[:200]}'
-            parts.append(done.stdout.decode())
+            try:
+                out = done.stdout.decode()
+                parts.append(approval_text([c for page in json.loads(out) for c in page], n) if '--slurp' in args else out)
+            except (ValueError, TypeError, KeyError) as error:
+                return None, f'{repo}#{n} approval evidence unreadable: {error}'
     return '\n'.join(parts), None
 
 

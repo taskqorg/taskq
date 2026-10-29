@@ -52,10 +52,12 @@ for (const c of fx.cases) for (const r of c.rows) for (const ch of (r.question &
   assert(button.includes(ch.label) && !button.includes(ch.detail) && html.includes('>' + ch.detail + '</span>'), c.name + ': option ' + ch.id + ' button or detail');
 }
 console.log('PASS labelled options');
-// A2: the published assets match the checksums the design doc records
-const doc = fs.readFileSync('docs/design/answer-card.md', 'utf8');
-for (const f of ['src/answer-card.js', 'src/answer-card.css', 'tests/fixtures/answer-card.json']) {
-  const h = crypto.createHash('sha256').update(fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n')).digest('hex');
-  assert(doc.includes('`' + f + '` SHA-256: `' + h + '`'), f + ' checksum ' + h + ' is not recorded in docs/design/answer-card.md');
-}
-console.log('PASS asset checksums');
+// A2 / section 7: derive provenance at build time, preserving exact source and released-file protection.
+const manifest=JSON.parse(fs.readFileSync('docs/design/answer-card.sources.json','utf8'));
+const built=JSON.parse(fs.readFileSync('build/web/answer-card.sources.json','utf8'));
+assert.deepEqual(manifest.files,['src/answer-card.js','src/answer-card.css','tests/fixtures/answer-card.json']);
+assert.deepEqual(Object.keys(built.files),manifest.files);
+for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
+const release=fs.readFileSync('.github/workflows/release.yml','utf8');
+for(const file of ['build/web/answer-card.js','src/answer-card.css','tests/fixtures/answer-card.json','build/web/answer-card.sources.json'])assert(release.includes('cp '+file),'missing released file: '+file);
+console.log('PASS asset checksums and release inclusion');

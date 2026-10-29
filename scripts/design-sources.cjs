@@ -4,7 +4,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto');
 const root=path.resolve(__dirname,'..');
-const names=['project-blocks','finding-composer','pm-composer','task-workspace'];
+const names=['answer-card','project-blocks','finding-composer','pm-composer','task-workspace'];
 const sha=data=>crypto.createHash('sha256').update(data).digest('hex');
 const text=file=>fs.readFileSync(path.join(root,file),'utf8').replace(/\r\n/g,'\n');
 const render=manifest=>JSON.stringify(manifest,null,2)+'\n';

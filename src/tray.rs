@@ -347,8 +347,8 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
             }
             // #1785: after another actor's answer won the race, the owner's kept draft steers the running worker
             "steer" => ("steer", op["text"].as_str().ok_or("supply steer text")?.to_string()),
-            "close" if op["confirmed"] == true && op.get("text").is_none() => ("later", "Reason: Owner confirmed cancellation without publication from the tray.".into()),
-            _ => return Err("unsupported or unconfirmed tray action".into()),
+            "close" if op.get("text").is_none() => ("later", "Reason: Owner requested cancellation without publication from the tray.".into()),
+            _ => return Err("unsupported tray action".into()),
         };
         if command != "requeue" { crate::task_text(command, &text)?; }
         vec![command.into(), n.to_string(), "--text".into(), text]
@@ -395,9 +395,12 @@ fn answer_snapshot(s: &Value, m: &Value) -> Result<(), String> {
         return Err(format!("{action} is not offered in this state; check the board"));
     }
     if op.get("action").is_some() {
+        if op["action"] == "steer" {
+            return if matches!(row["state"].as_str(), Some("held" | "ready" | "waiting" | "doing" | "review" | "ask" | "later" | "failed")) { Ok(()) }
+                else { Err("task is not open; steer was not saved".into()) };
+        }
         if row["revision"] != op["revision"] { return Err("question changed; refresh before acting".into()); }
         if op["action"] == "close" && row["state"] == "later" { return Ok(()); } // only a matching later op can succeed again
-        if op["action"] == "steer" { return if row["state"] == "doing" { Ok(()) } else { Err("steer needs a running worker; check the board".into()) }; }
         if row["state"] != "ask" || row["question"]["choices"].as_array().is_some_and(|c| !c.is_empty()) {
             return Err("fallback actions require an ask without choices; check the board for partial cancellation".into());
         }
@@ -409,7 +412,7 @@ fn answer_snapshot(s: &Value, m: &Value) -> Result<(), String> {
         if row["question"]["parsed"] != true { return Err("question is read-only; open it on the board".into()); }
         if let Some(choice) = op.get("choice") {
             let c = row["question"]["choices"].as_array().into_iter().flatten().find(|c| c["id"] == *choice).ok_or("choice not found")?;
-            if c["consequential"] == true { return Err("close/publication requires review on the board".into()); }
+            if c["consequential"] == true { return Err("close/publication/approval requires review on the board".into()); }
         }
     }
     Ok(())
@@ -516,8 +519,8 @@ fn answer_receipt(m: &Value, r: &Value) -> Value {
     let outcome = r["outcome"].as_str().unwrap_or("unknown");
     // § 5 late answer: a stale or rejected receipt that names the answer that won shows only that answer, no revision or CLI advice.
     let won = r["answered"].is_object();
-    let (reason, next) = if won { ("", "") } else if outcome == "stale" {
-        ("The question changed before this arrived", "Review the question, then answer again.")
+    let (reason, next) = if won && outcome != "accepted" { ("", "") } else if outcome == "stale" {
+        ("The task changed before this action arrived; nothing sent", "")
     } else {
         (r["reason"].as_str().filter(|s| !s.is_empty()).or_else(|| r["state"].as_str()).unwrap_or(""), r["next"].as_str().unwrap_or(""))
     };
@@ -525,6 +528,7 @@ fn answer_receipt(m: &Value, r: &Value) -> Value {
     if won {
         out["answerReceipt"]["answered"] = json!({"by": r["answered"]["by"], "text": r["answered"]["text"]});
     }
+    if r["note"] == true { out["answerReceipt"]["note"] = json!(true); }
     out
 }
 
@@ -3367,7 +3371,12 @@ mod tests {
         let mut s = json!({"complete": true, "board": {"url": m["board"]}, "tasks": [{"n": 7, "state": "doing", "revision": 22}]});
         assert!(answer_snapshot(&s, &m).is_ok());
         s["tasks"][0]["state"] = json!("review");
-        assert!(answer_snapshot(&s, &m).unwrap_err().contains("running worker"));
+        assert!(answer_snapshot(&s, &m).is_ok(), "steer remains a durable note outside doing");
+        s["tasks"][0]["state"] = json!("ask");
+        s["tasks"][0]["revision"] = json!(23);
+        assert!(answer_snapshot(&s, &m).is_ok(), "a new question cannot drop a steer");
+        s["tasks"][0]["state"] = json!("closed");
+        assert!(answer_snapshot(&s, &m).is_err(), "notes never reopen closed tasks");
         m["op"]["text"] = json!("1
 2
 3
@@ -3409,9 +3418,8 @@ mod tests {
         snapshot["tasks"][0]["question"]["choices"] = json!([{"id":1}]);
         assert!(answer_snapshot(&snapshot, &m).is_err());
         snapshot["tasks"][0]["question"]["choices"] = json!([]);
-        m["op"]["confirmed"] = json!(false);
-        assert!(answer_args(&install, &m).is_err());
-        m["op"]["confirmed"] = json!(true);
+        m["op"].as_object_mut().unwrap().remove("confirmed");
+        assert!(answer_args(&install, &m).is_ok(), "one explicit cancellation action needs no confirmation flag");
         let args = answer_args(&install, &m).unwrap();
         assert_eq!(args[0], "later");
         assert_eq!(args[args.len()-3], "cancel.1.later");

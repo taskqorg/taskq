@@ -100,6 +100,7 @@ jobs:
             cp build/web/answer-card.js "dist/taskq-$VER-answer-card.js"
             cp src/answer-card.css "dist/taskq-$VER-answer-card.css"
             cp tests/fixtures/answer-card.json "dist/taskq-$VER-answer-card-fixtures.json"
+            cp build/web/answer-card.sources.json "dist/taskq-$VER-answer-card-sources.json"
             cp build/web/task-controls.js "dist/taskq-$VER-task-controls.js"
             cp tests/fixtures/task-controls.json "dist/taskq-$VER-task-controls-fixtures.json"
             cp build/web/project-blocks.js "dist/taskq-$VER-project-blocks.js"

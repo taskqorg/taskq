@@ -544,6 +544,8 @@ pub(crate) fn codex_native(bin: PathBuf) -> Result<PathBuf,String> {
 }
 
 pub struct Env<'a> {
+    /// Fresh board goal/acceptance and every ordered note; empty only for non-task instruments.
+    pub context: &'a str,
     pub root: &'a Path,
     pub exe: &'a Path,
     /// `<install>`: its `worker-policy.json` grants access (§ 8 Access).
@@ -791,7 +793,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
             push = if env.publish == "direct" { "push the branch" } else { "push the branch and open one PR/MR into main" }
         )
     };
-    format!("{head}Test changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n")
+    format!("{head}{}\nBefore any hand-in, read `{q} inbox {n}` fresh and check the result against goal + acceptance + all notes. Acceptance stays binding; a conflicting note gets one ask immediately, never at hand-in.\nTest changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n", env.context)
 }
 
 #[cfg(test)]
@@ -3655,7 +3657,7 @@ mod tests {
         std::fs::create_dir_all(&install).unwrap();
         let codex: Vec<String> = ["-s", "workspace-write", "-m", "gpt-5", "-c", "model_reasoning_effort=high"].map(String::from).into();
         let root = std::env::temp_dir();
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, publish: "pr", board_env: &[], jobs: None };
         let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
         let mut l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         crate::policy::grant(&install, "claude", "full", None, "op", 1).unwrap();
@@ -3965,7 +3967,7 @@ mod tests {
         let install = std::env::temp_dir().join(format!("taskq-app-{}", std::process::id()));
         std::fs::create_dir_all(&install).unwrap();
         crate::policy::grant(&install, "codex-app", "full", None, "op", 1).unwrap();
-        let env = Env { root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = Launch { execution: None, task: 0, title: "live".into(), attempt: 0, role: "worker".into(), rt: "codex-app".into(), session: "-".into(), url: String::new(), resume: None };
         let log = root.join("app-turn.log");
         let (text, input, _path) = app_input(&root, &format!("{}Reply with the single word QUEUED and do nothing else.", "A taskq test line; ignore it.\n".repeat(700)),None).unwrap();
@@ -3984,7 +3986,7 @@ mod tests {
     fn app_brief_powershell_values_round_trip() {
         let root = Path::new("C:\\project's $cash; folder");
         let exe = Path::new("C:\\tool's $cash; folder\\taskq.exe");
-        let env = Env { root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker's $cash; role".into(), rt: "codex-app".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let text = brief(&env, &l);
         let command = text.split("your inbox: `").nth(1).unwrap().split('`').next().unwrap();
@@ -4190,7 +4192,7 @@ mod tests {
     #[test]
     fn codex_reviewer_brief_matches_the_claude_reviewer() {
         let root = rules_root("codex-review");
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "reviewer".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         // Only the command prefix differs: the native Claude session runs in its host's environment (§ 8).
         let host_env = format!("env TASKQ_TASK=7 TASKQ_ATTEMPT=42 TASKQ_ROLE=reviewer TASKQ_ROOT={} ", root.display());
@@ -4206,13 +4208,15 @@ mod tests {
     #[test]
     fn rules_reach_every_runtime_role_and_resume() {
         let root = rules_root("roles");
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "## Goal\nPreserve intent\n## Acceptance\nA1. no loss\nTask notes (oldest first):\nNote 11: keep compatibility\nNote 16: clarify migration", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let dir = specq_dir(&root,SPECQ_REVISION).display().to_string();
         for rt in ["claude", "codex", "codex-app"] {
             for role in ["worker", "reviewer"] {
                 for resume in [None, Some("Owner answer: preserve current work.\nLiteral $HOME stays text.".into())] {
                     let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: role.into(), rt: rt.into(), session: "same-session".into(), url: "https://b/7".into(), resume };
                     let text = turn_text(&env, &l, rule).unwrap();
+                    assert!(text.contains(env.context), "every role and continuation receives the complete task context");
+                    assert!(text.contains("Before any hand-in") && text.contains("a conflicting note gets one ask immediately"));
                     let (rules, task) = text.split_once("\nTaskQ task\n").unwrap();
                     // header: revision, cache path, contract path (this release's URL: the root has no taskq.md), precedence
                     let header = rules.split("\n\n").next().unwrap();
@@ -4257,7 +4261,7 @@ mod tests {
     // Chain: section 7 step 4 test repair guidance (#1245). Risk: repairs rejected or weakened assertions accepted without a rule change.
     #[test]
     fn briefs_distinguish_test_repairs_from_weakened_checks() {
-        let env = Env { root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let rule = "Test changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).";
         for rt in ["claude", "codex", "codex-app"] {
             for role in ["worker", "reviewer"] {
@@ -4272,7 +4276,7 @@ mod tests {
     // Chain: § 7 research decision handoff (#1234). Risk: a worker bypasses owner choice or a reviewer accepts that bypass.
     #[test]
     fn research_decision_requires_ask_before_result() {
-        let env = Env { root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         for rt in ["claude", "codex", "codex-app"] {
             let mut l = Launch { execution: None, task: 7, title: "Proposal".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
             assert!(brief(&env, &l).contains("Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer."), "{rt}: worker");
@@ -4290,7 +4294,7 @@ mod tests {
         let install = root.join("install");
         std::fs::create_dir_all(&install).unwrap();
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let launch = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let args = |rt: &str| command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
         let l = launch("claude");
@@ -4344,7 +4348,7 @@ mod tests {
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
         let launch = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         for jobs in [compile_jobs(Some(16), h.occupied()), None] {
-            let env = Env { root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs };
+            let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs };
             let want = jobs.map(|j| j.to_string());
             for rt in ["claude", "codex"] {
                 let c = command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap();
@@ -4368,7 +4372,7 @@ mod tests {
         std::fs::write(&bin, "").unwrap();
         assert_eq!(build_cache_in(false, dir.as_os_str()), Some(bin.clone()));
         assert_eq!(build_cache_in(true, dir.as_os_str()), None, "an inherited wrapper stays the owner's");
-        let env = Env { root: &dir, exe: Path::new("taskq"), install: &dir, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &dir, exe: Path::new("taskq"), install: &dir, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let seatbelt = crate::policy::Effective { runtime: String::new(), requested: String::new(), grant: String::new(), mode: "legacy".into(), enforcement: String::new(),
             profile: Some("(version 1)".into()), linux: false, windows: false, claude: None, codex: None, refused: None };
         assert!(build_open("claude", &seatbelt, &env), "the seatbelt profile keeps user caches writable");
@@ -4387,7 +4391,7 @@ mod tests {
     #[test]
     fn pm_hook_gets_the_worker_start_rules() {
         let root = rules_root("pm");
-        let env = Env { root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
+        let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let start = turn_text(&env, &l, rule).unwrap();
         assert_eq!(pm_rules(&root, "start", rule).unwrap(), start.split("\nTaskQ task\n").next().unwrap());
