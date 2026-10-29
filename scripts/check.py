@@ -369,6 +369,8 @@ def main():
         print('+', ' '.join(command), flush=True)
         child_env = {**(env if environment is None else environment), **(extra_env or {})}
         command = [shutil.which(command[0], path=child_env.get('PATH')) or command[0], *command[1:]]
+        if os.name == 'nt' and Path(command[0]).stem == 'sh':
+            child_env['PATH'] = str(Path(command[0]).parent) + os.pathsep + child_env.get('PATH', '')
         subprocess.run(command, cwd=ROOT, env=child_env, check=True, timeout=left)
 
     try:
