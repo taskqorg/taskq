@@ -1,7 +1,7 @@
 # Live worker session stream
 
 Experiment for [#1825](https://github.com/taskqorg/taskq/issues/1825): how Conversations shows what a task worker session does and how the owner writes back into it.
-Status: experiment and prototype. Nothing here changes [taskq.md](../../taskq.md) or [ai-workspace.md](ai-workspace.md) D1–D8; adoption needs the owner decision this experiment ends with.
+Status: the owner chose option A, transcript tail with next-turn owner input (A6). Nothing here changes [taskq.md](../../taskq.md) or [ai-workspace.md](ai-workspace.md) D1–D8; the follow-up tasks below ship it.
 
 Probes ran on 2026-10-29 on one Windows 11 host with Claude Code 2.1.312 and codex-cli 0.162.1, against real sessions with small models and short prompts.
 Probe scripts stayed outside the repository; every number below is a measured value, not an estimate.
@@ -102,12 +102,14 @@ The service holds the session's input: Claude `stream-json` input with the contr
 
 ## A6. Recommendation
 
-Adopt A now and keep owner input on the existing next-turn steer path. A meets the 2 s target on both runtimes without changing launch, ownership or the record.
-Revisit C as a separate decision only for mid-turn input and live approvals, starting with Codex `app-server`, after A ships.
+Decision: A, accepted by the owner on #1825. Owner input stays on the existing next-turn steer path. A meets the 2 s target on both runtimes without changing launch, ownership or the record.
+Mid-turn input and live approvals (option C) are not adopted; they would need a new owner decision.
 
 Follow-up code tasks for A:
 
-1. Ship the live panel: resolve the session from the task's own attempt in the service instead of the client-sent id, add browser tests, and document it in ai-workspace.md.
-2. Carry live reads for workers on other hosts through the host link.
-3. Summarize Codex custom tool calls into readable tool lines and widen tool-line redaction (JSON headers, bearer tokens).
-4. Mark service-delivered next-turn texts (answers, notices) in the delivery so author labels do not rely on text prefixes.
+1. [#1831](https://github.com/taskqorg/taskq/issues/1831) Ship the live panel: resolve the session from the task's own attempt in the service instead of the client-sent id, add browser tests, and document it in ai-workspace.md.
+2. [#1832](https://github.com/taskqorg/taskq/issues/1832) Carry live reads for workers on other hosts through the host link.
+3. [#1833](https://github.com/taskqorg/taskq/issues/1833) Summarize Codex custom tool calls into readable tool lines and widen tool-line redaction (JSON headers, bearer tokens).
+4. [#1834](https://github.com/taskqorg/taskq/issues/1834) Mark service-delivered next-turn texts (answers, notices) in the delivery so author labels do not rely on text prefixes.
+
+All four are filed held and depend on #1825.
