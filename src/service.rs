@@ -355,6 +355,8 @@ pub struct Service<'a> {
     deps: DepCache,
     label_fixes: HashMap<u64, (String, Vec<String>, u32)>,
     cancelled_publications: HashMap<u64, u64>,
+    /// #1820 each publication's last recorded wait reason: one `checks` observation per reason, never one per pass.
+    publication_waits: HashMap<u64, String>,
     /// Closed-task terminal rows `repair_ended` proved are not this host's (#1359).
     unowned: HashSet<(u64, u64)>,
     /// The last worktree tidy (docs/design/worktrees.md); `None` runs one on the next pass.
@@ -666,7 +668,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1601,13 +1603,30 @@ impl<'a> Service<'a> {
         // § 7 publication intent is board state; every host can reconcile the queue after a restart, even with focus off.
         // The attempt host polls while its heartbeat is fresh; others take over only when it is stale or gone (#1359).
         let live = |h: &str| h != me && hosts.iter().any(|i| i.title == format!("taskq host {h}") && now - i.updated <= ttl);
+        let mut waiting = BTreeMap::new();
         for v in views.iter().filter(|v| v.projection.task.publication.is_some() && v.projection.task.state == State::Review && !touched.contains(&v.issue.number)) {
+            let n = v.issue.number;
             // the publish verdict ends the attempt, so its last execution names the attempt host
             if v.projection.executions.last().is_some_and(|x| live(&x.host)) { continue; }
             // written since `views` read it: the next pass resumes from a fresh read
-            if !self.cache.contains_key(&v.issue.number) { continue; }
+            if !self.cache.contains_key(&n) { continue; }
+            let began = std::time::Instant::now();
             let r = crate::dispatch::resume_publication(self.board, &self.cfg, &v.issue, &v.projection.task, &v.log);
-            if !r.ok() { log!("#{} publication: {}", v.issue.number, r.reason); }
+            if r.ok() { self.publication_waits.remove(&n); continue; }
+            log!("#{n} publication: {}", r.reason);
+            // #1820 A2 (pilotq #106): a wait the pass cannot end is shown with its reason and age, never only logged
+            if self.publication_waits.get(&n) != Some(&r.reason) {
+                let (a, rt) = v.projection.executions.last().map_or((0, "other"), |x| (x.attempt, x.runtime.as_str()));
+                crate::profile::stage("checks", n, a, rt, Some(began.elapsed()), "retried", crate::profile::class(&r.reason), crate::profile::Usage::NoModel);
+                self.publication_waits.insert(n, r.reason.clone());
+            }
+            let since = v.comments.iter().rev().find(|c| c.trusted && c.body.lines().next().and_then(|h| h.trim().strip_prefix("taskq:"))
+                .and_then(|h| h.split_whitespace().next()) == Some("publish")).map(|c| c.created);
+            waiting.insert(n, crate::snapshot::PublicationWait { reason: r.reason, since, age_s: since.map(|t| now - t) });
+        }
+        self.publication_waits.retain(|n, _| views.iter().any(|v| v.issue.number == *n && v.projection.task.publication.is_some()));
+        if let Some(snapshot) = &mut self.snapshot {
+            for r in &mut snapshot.tasks { r.publication = waiting.remove(&r.n); }
         }
         touched.extend(views.iter().filter(|v| v.projection.task.publication.is_some()).map(|v| v.issue.number));
 
@@ -2727,6 +2746,37 @@ mod tests {
         assert_eq!(comments.iter().filter(|e| e.body.starts_with("taskq: close")).count(), 1);
     }
 
+    // Chain: section 7 publication -> refused enqueue -> status row reason and age, one `checks` record -> conflict requeue (#1820).
+    // Defect (pilotq #106): a publication the pass could not move was only logged, so the task sat in review 50 minutes with no
+    // board, menu or telemetry signal. Retained: every pass names the wait in the status row; a conflict requeues in the same pass.
+    #[test]
+    fn publication_stall_shows_its_reason_and_age_then_requeues_on_conflict() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented stalled publication", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "queue-refused".into();
+        crate::profile::STAGED.with(|v| v.borrow_mut().clear());
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        for _ in 0..2 { s.pass().unwrap(); }
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        let reason = "merge queue did not admit PR #7: Required status check build is in progress; CI build pending";
+        assert_eq!((&row["state"], &row["publication"]["reason"]), (&json!("review"), &json!(reason)));
+        assert!(row["publication"]["since"].is_i64() && row["publication"]["age_s"].is_i64(), "{row}");
+        assert!(row["wait"].as_str().unwrap().starts_with(crate::snapshot::PUBLICATION_WAIT) && row["wait"].as_str().unwrap().ends_with(reason), "{row}");
+        let checks = crate::profile::STAGED.with(|v| v.borrow().iter().filter(|l| l.starts_with(&format!("checks {n} "))).cloned().collect::<Vec<_>>());
+        assert_eq!(checks.len(), 1, "one record per reason, not per pass: {checks:?}");
+        assert!(checks[0].ends_with(" retried other"), "{checks:?}");
+        b.state.borrow_mut().publish = "queue-conflict".into();
+        s.pass().unwrap();
+        let t = task(&b, n);
+        assert_eq!((t.state, t.retries), (State::Ready, 0), "main-moved keeps retries");
+        assert!(b.comments(n).unwrap().iter().any(|e| e.body.starts_with("taskq: requeue main-moved") && e.body.contains("queue merge conflict")));
+        assert!(s.publication_waits.is_empty());
+    }
+
     // Chain: section 7 publication -> blocked outcome -> ask in one pass -> answer -> retry -> close (#1413).
     // Risk: a publication only the owner can unblock polls for hours with no board signal.
     #[test]
@@ -2778,6 +2828,44 @@ mod tests {
         assert_eq!(b.state.borrow().publications, calls, "no merge");
         s.pass().unwrap();
         assert_eq!(b.state.borrow().publications, calls, "no publication after close");
+    }
+
+    // Chain: section 7 publication-blocked ask -> `answer N --text "close: .."` is option close (#1820, pilotq #106).
+    // Risk: the owner's `close:` text reads as free text, publication resumes and the same block asks again.
+    #[test]
+    fn blocked_publication_answer_text_with_an_option_key_applies_it_or_refuses() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let blocked = |kind: &str| {
+            let n = b.create("Invented blocked publication", "", &["taskq".into()]).unwrap();
+            let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+            b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+            let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+            b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x
+Checks: A1 ok
+Open: none")).unwrap();
+            b.state.borrow_mut().publish = kind.into();
+            Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a blocked publication"))).pass().unwrap();
+            assert_eq!(task(&b, n).state, State::Ask, "{kind}");
+            b.state.borrow_mut().publish = String::new();
+            n
+        };
+        let op = crate::dispatch::Op::default();
+        let n = blocked("superseded");
+        let calls = b.state.borrow().publications;
+        let got = crate::dispatch::answer_text(&b, &c, n, "close: superseded by #86, no merge", &op).unwrap().remove(0);
+        assert!(got.ok(), "{got:?}");
+        assert_eq!(task(&b, n).state, State::Closed);
+        assert_eq!(b.state.borrow().publications, calls, "no merge");
+        let n = blocked("queue-blocked");
+        let err = crate::dispatch::answer_text(&b, &c, n, "Close: drop it", &op).unwrap_err();
+        assert!(err.contains(&format!("#{n} has no `close` option")) && err.contains(&format!("`taskq answer {n}.1` (retry)")), "{err}");
+        assert_eq!(task(&b, n).state, State::Ask, "a refusal writes nothing");
+        let got = crate::dispatch::answer_text(&b, &c, n, "later: after the freeze", &op).unwrap().remove(0);
+        assert!(got.ok(), "{got:?}");
+        assert_eq!(task(&b, n).state, State::Later);
+        let n = blocked("queue-blocked");
+        let got = crate::dispatch::answer_text(&b, &c, n, "token renewed, publish again", &op).unwrap().remove(0);
+        assert_eq!(got.state, Some("review"), "free text still resumes publication: {got:?}");
     }
 
     // Chain: R1 hand-typed cancellation -> queue readback -> allow replacement; unknown never starts a new worker.

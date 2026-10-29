@@ -319,7 +319,7 @@ appearance:function(){
   const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
   // each choice previews itself: the text size at its own size, the icon and the growth direction
   return f(h('div',{class:'body meta'},'Theme follows system appearance.'),h('div',{class:'body'},'Text size · '+view.S.font+' px'),h('div',{class:'options'},[14,16,18,20].map(n=>h('button',{'data-set':'font','data-v':n,'aria-pressed':String(n===view.S.font),style:'font-size:'+n+'px'},n))),
-    h('div',{class:'body'},'Tray icon'),views(),h('div',{class:'body'},'Window'),api.windowSettings(),reduced&&h('div',{class:'body meta',role:'status'},'Reduced motion: growth previews show a still outline and arrow.'));
+    h('div',{class:'body'},'Tray icon'),views(),h('div',{class:'body'},'Window'),h('div',{class:'body opacity-setting'},h('label',{for:'menu-opacity'},'Menu opacity · '+(view.S.opacity??100)+'%'),h('button',{'data-set':'opacity','data-v':100,'aria-pressed':String((view.S.opacity??100)===100)},'Off'),h('input',{id:'menu-opacity',type:'range',min:90,max:100,step:1,value:view.S.opacity??100,'data-opacity':'','aria-valuetext':(view.S.opacity??100)===100?'Off · 100% opaque':view.S.opacity+'% opaque'})),h('div',{class:'body meta'},'90–100% opaque · Text colors strengthen while translucent. Applies to the menu only.'),api.windowSettings(),reduced&&h('div',{class:'body meta',role:'status'},'Reduced motion: growth previews show a still outline and arrow.'));
 },
 agentq:function(settings=false){
   const A=view.S.agentq;if(!A)return '';
@@ -640,12 +640,13 @@ const focusAt=focusKey?[...menu.querySelectorAll(active.tagName)].filter(same).i
   if(ports.settings&&view.page==='home')view.page='settings';
   document.documentElement.style.colorScheme=view.S.theme||'light dark';
   menu.style.setProperty('--size',view.S.font+'px');
-  for(const entry of (view.S.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
+  for(const entry of ((!ports.workspace&&!ports.settings&&!ports.views&&(view.S.opacity??100)<100?view.S.opacity_palette:view.S.palette)||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
+  menu.classList.toggle('translucent',!ports.workspace&&!ports.settings&&!ports.views&&(view.S.opacity??100)<100);
   menu.classList.toggle('pinned',!!view.S.pinned);const edge=view.S.attached_edge||'top';if(menu.dataset.edge!==edge)menu.dataset.edge=edge;
-  const settingsError=view.persistenceError||view.S.settings_error;
+  const settingsError=view.persistenceError||view.S.opacity_error||view.S.settings_error;
   const title=view.working?'Work mode':view.taskFilter?'Tasks':p?p.name:routes[view.page];
   // P-W4: the View window is one scroll of compact sections; Display, Save, Reset and Done stay in its footer.
-  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
+  const tree=ports.views?[head(),h('div',{class:'content'},h('div',{class:'content-body view-window'},dashboard.presets(),dashboard.conditions())),h('footer',{class:'view-window view-window-footer'},dashboard.actions())]:[head(),h('div',{class:'content'},h('div',{class:'content-body'},view.unavailable&&h('div',{class:'body',role:'status'},view.unavailable+' The surviving destination is '+title+'.'),actionNotices(),settingsError&&h('div',{class:'body alert',role:'alert'},'Settings unknown: '+settingsError+(view.persistenceError||view.S.opacity_error?'':'; defaults shown')),view.working?workPage():view.taskFilter?filteredTasks(p):p?project(p):routeBody())),h('footer',{class:'status-footer'},h('span',null,'TaskQ ',view.S.version?'v'+view.S.version:'version unknown'),h('div',{class:'grip','data-resize':'',role:'button','aria-label':'Resize window with arrow keys',title:'Drag to resize · arrow keys',tabindex:'0'})),dashboard.popup(),answerToast()];
   // #1430: Preact keeps unchanged nodes, so a refresh leaves the textarea being typed in attached.
   renderer.render(tree,p?'/projects/'+encodeURIComponent(p.issues)+(view.taskFilter?'/tasks':''):view.working?'/work':'/'+view.page);
   view.drawn=true;
@@ -761,7 +762,7 @@ ui.listen(menu,'click',e=>{
   if(d.a==='work'){navigate(view.page,null,d.root?{[d.root]:true}:{});return;}
   if(d.a==='back'){back();return;}
   if(d.set==='period'&&d.v==='custom'){const H=view.S.history;view.draft={start:local(H.start,H.tz),end:local(H.end,H.tz),tz:H.tz,error:''};present();return;}
-  if(d.set){view.S[d.set]=d.set==='font'?Number(d.v):d.v;if(d.set==='period')view.draft=null;send({a:'set',[d.set]:view.S[d.set]});present();return;}
+  if(d.set){view.S[d.set]=['font','opacity'].includes(d.set)?Number(d.v):d.v;if(d.set==='period')view.draft=null;send({a:'set',[d.set]:view.S[d.set]});present();return;}
   if(d.a==='range'){
     const t=v=>v?Date.parse(view.draft.tz==='UTC'?v+'Z':v)/1000:NaN;
 const a=t(view.draft.start);
@@ -771,7 +772,7 @@ const z=t(view.draft.end);
     present();return;}
   if(api.operationAction(d))return;
   if(d.a){actionErrors.delete(d.root);send({a:d.a,root:d.root,label:d.label,value:d.value});}present();});
-ui.listen(menu,'input',e=>{if(e.target.matches('[data-history-select]')){view.historyBin=e.target.value;present();return;}api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
+ui.listen(menu,'input',e=>{if(e.target.matches('[data-opacity]')){view.S.opacity=Number(e.target.value);send({a:'set',opacity:view.S.opacity});present();return;}if(e.target.matches('[data-history-select]')){view.historyBin=e.target.value;present();return;}api.operationInput(e);const k=e.target.dataset.draft;if(k&&view.draft)view.draft[k]=e.target.value;});
 ui.listen(menu,'focusout',e=>{const f=x=>x&&(x.id==='ai'||x.dataset&&(x.dataset.draft||x.dataset.rscField||x.dataset.recoveryEvidence));if(f(e.target))defer(()=>{if(!f(document.activeElement))present();});});
 ui.listen(menu,'pointerdown',e=>{if(view.S&&e.button===0&&e.target.closest('.head')&&!e.target.closest('button,a,summary'))view.headerDrag={x:e.screenX,y:e.screenY};});
 ui.listen(window,'pointermove',e=>{const start=view.headerDrag;if(start&&Math.hypot(e.screenX-start.x,e.screenY-start.y)>=4){view.headerDrag=null;send({a:'drag'});}});

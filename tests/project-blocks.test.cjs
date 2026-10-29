@@ -30,6 +30,8 @@ const until='2026-11-05T09:00:00Z',parked='Parked until '+new Date(until).toLoca
 for(const compact of [false,true])assert(q.task(p,{...row,state:'later',until,later:'Reason: 168 qualified hours'},false,compact).includes(parked),'timed park, compact '+compact);
 assert(!q.task(p,{...row,state:'later'}).includes('Parked until'),'an untimed park names no time');
 assert(!q.task(p,{...row,until,later:'<script>'}).includes('<script>'),'the reason is escaped');
+assert.equal(q.parked({until,later:'Reason: 168 qualified hours'}),'Parked until '+new Date(until).toLocaleString()+': 168 qualified hours','Conversations reads the same text');
+assert.equal(q.parked({later:'Reason: x'}),'','an untimed park has no text');
 // R6/R12: the native snapshot's unresolved execution must remain visible in every shared task block.
 // § 4 Tray age: the model's age text; unknown names its reason; no `since`, no age.
 assert(q.task(p,{...row,since:1000,age:'5m'}).includes('title="Since the last state change">5m<'));
