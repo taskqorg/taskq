@@ -16,31 +16,31 @@ Evidence: first pass [native-1775-2026-10-29](review-evidence/native-1775-2026-1
 
 | Gap | Rows | Fix |
 |---|---|---|
-| Menu host line read `mac ?` with no counts while a Claude worker ran: a reviewer execution's role read null, so the host fell to unknown | R16 | `bc2c88ce` |
-| Strip clipped `hermes-fra1` to `her` | R16, R30 | `bc2c88ce` |
-| A host seen only by a stale or unreadable read showed zero counts | R16 | `28c83ad7` |
-| Conversations Archive/Restore used non-catalog glyphs | R43 | `30cdd306` |
-| Settings widgets, Detach/Return and Work sessions used other icons than visual-style | R28, R43 | `5d9d9cc2` |
-| Attention used triangle-alert, Open log, lifecycle and Pause/Resume icons differed from visual-style | R43 | `28c83ad7` |
-| Project page Notifications used a `◉` text glyph; Capacity used the Stop square | R43 | `fix(menu)` after this audit commit |
-| `recovery` snapshot faulted (`page-error`): its fixture clicked a button that exists only under a reviewed Stop | R35 | this commit (`tests/fixtures/recovery-review.js`) |
+| Menu host line read `mac ?` with no counts while a Claude worker ran: a reviewer execution's role read null, so the host fell to unknown | R16 | `d9499ca1` |
+| Strip clipped `hermes-fra1` to `her` | R16, R30 | `d9499ca1` |
+| A host seen only by a stale or unreadable read showed zero counts | R16 | `3e0ac832` |
+| Conversations Archive/Restore used non-catalog glyphs | R43 | `b898a202` |
+| Settings widgets, Detach/Return and Work sessions used other icons than visual-style | R28, R43 | `7985df81` |
+| Attention used triangle-alert, Open log, lifecycle and Pause/Resume icons differed from visual-style | R43 | `3e0ac832` |
+| Project page Notifications used a `◉` text glyph; Capacity used the Stop square | R43 | `7309e87f` |
+| `recovery` snapshot faulted (`page-error`): its fixture clicked a button that exists only under a reviewed Stop | R35 | `4bc9d223` (`tests/fixtures/recovery-review.js`) |
 
 ## PM steer gaps
 
-The PM steer named gaps on 4.6.40-dev. Each row compares the native screen with the target render in [native-1775-steer-2026-10-29](review-evidence/native-1775-steer-2026-10-29/) (native left, target right) from the PR head binary; the installed-build pass repeats M1–M4, C1, C2 and C5 in [native-1775-installed-2026-10-29](review-evidence/native-1775-installed-2026-10-29/) with the same result (`01`, `02`, `07`, `09`, `10`).
+The PM steer named gaps on 4.6.40-dev. Each row compares the native screen with the target render in [native-1775-steer-2026-10-29](review-evidence/native-1775-steer-2026-10-29/) (native left, target right) from the PR head binary; the installed-build pass repeats M1, M3, M4, C1, C2 and C5 in [native-1775-installed-2026-10-29](review-evidence/native-1775-installed-2026-10-29/) with the same result (`01`, `02`, `07`, `09`, `10`).
 
 | Gap | Target | Native result | Fix |
 |---|---|---|---|
-| M1 Open search field instead of an icon | input-scroll 08 | Pass: Search is an icon beside Controls; the field opens on the icon or a query and stays open while it has text (`01`, `03`) | steer commit |
-| M2 No green run button | input-scroll 07, 09 | Pass for layout: the held Start sits inline after the state chips as a green play icon when more than one task is held. This install has Held 1, so the shortcut is absent and per-task Start stays in details | steer commit |
-| M3 No project folder row with board icon | input-scroll 09 | Pass: each group row is board icon, project name (overview) and folder icon (`01`, `02`, `04`) | steer commit |
-| M4 Host line `mac ?` | input-scroll 07 | Pass: `hermes-fra1 mac ✳1 win` (`01`) | steer commit (R16) |
+| M1 Open search field instead of an icon | input-scroll 08 | Pass: Search is an icon beside Controls; the field opens on the icon or a query and stays open while it has text (`01`, `03`) | `cec167b1` |
+| M2 No green run button | input-scroll 07, 09 | Not testable: the shortcut shows only with Held 2 or more; the installed build reads Held 1 (`home`, rechecked on the second pass) and adding held tasks to a live board is a trial task. Source: a green play icon after the state chips | `cec167b1` |
+| M3 No project folder row with board icon | input-scroll 09 | Pass: each group row is board icon, project name (overview) and folder icon (`01`, `02`, `04`) | `cec167b1` |
+| M4 Host line `mac ?` | input-scroll 07 | Pass: `hermes-fra1 mac ✳1 win` (`01`) | `cec167b1` (R16) |
 | M5 Extra `Running` tab | input-scroll 07 | Pass: `Running` is an owner-saved pinned view (R12–R14), not a builtin; builtins are All tasks and Completed. Kept per conversations-preservation-audit | none |
 | C1 No Conversation info row | input-scroll 06 | Pass: one collapsed `Conversation info` row heads the reader and shares the reading scroll (UX07); a long thread scrolls to the end, so the row sits above (`06`) | none |
-| C2 No info icon beside Send | input-scroll 06, usability 03 | Pass: info icon after Send opens file limits and message help (`05`, `06`) | steer commit |
-| C3 No delivery status line | usability 03 | Not testable natively: the line appears after a live send. Text now reads `Message delivered · PM replies here.` | steer commit |
-| C4 Raw tool lines with local absolute paths | usability 03 | Pass in source and browser test: tool lines shorten absolute paths to `…/file`; fixture threads carry no tool line | steer commit |
-| C5 Open sidebar search field | input-scroll 08 | Pass: sidebar search is an icon; the field opens on click or an active query (`05`–`10`) | steer commit |
+| C2 No info icon beside Send | input-scroll 06, usability 03 | Pass: info icon after Send opens file limits and message help (`05`, `06`) | `cec167b1` |
+| C3 No delivery status line | usability 03 | Not testable natively: the line appears after a live send. Text now reads `Message delivered · PM replies here.` | `cec167b1` |
+| C4 Raw tool lines with local absolute paths | usability 03 | Not testable: tool lines come from a live session transcript; the installed `conversations` route renders a fixture transcript without tool lines (as D1). Source: absolute paths shorten to `…/file` | `cec167b1` |
+| C5 Open sidebar search field | input-scroll 08 | Pass: sidebar search is an icon; the field opens on click or an active query (`05`–`10`) | `cec167b1` |
 
 Browser tests `tray-state-filter` and `project-blocks` fail identically on the pre-steer source; they are pre-existing and outside this change.
 
@@ -63,7 +63,7 @@ Browser tests `tray-state-filter` and `project-blocks` fail identically on the p
 | R13 | R13 | Not testable: deleting a saved view writes owner state | |
 | R14 | R14 | Not testable: the install has no pinned task; pinning writes owner state | |
 | R15 | R15 | Pass: strip, filters and tasks share the one content scroll | |
-| R16 | R16, menu.md | Pass: `hermes-fra1 mac ✳1 win` with no `?` on the installed build (`01`, `02`); Hosts lists `mac · Claude 1 · Codex 0` (`05`). Waiting and ended executions on a fresh read no longer count as unknown. Failed in pass 1 and in the steer review | `bc2c88ce`, `28c83ad7`, steer commit |
+| R16 | R16, menu.md | Pass: `hermes-fra1 mac ✳1 win` with no `?` on the installed build (`01`, `02`); Hosts lists `mac · Claude 1 · Codex 0` (`05`). Waiting and ended executions on a fresh read no longer count as unknown. Failed in pass 1 and in the steer review | `d9499ca1`, `3e0ac832`, `cec167b1` |
 | R17 | R17 | Not testable: host lines render collapsed (`hosts-*`); the CPU/memory expansion opens on a click. Board tasks read apart (`Tasks: Doing 2 · Review 1`) | |
 | R18 | R18, agent-settings | Pass: tray and service versions apart from runtime client version, account, method, expiry or `Expiry unknown`, check age (Agents route, not committed: shows the account) | |
 | R19 | R19 | Not testable: every runtime on this host reads Signed in; Expired, Rejected and Check failed need a failing probe; remote values need the remote host | |
@@ -75,22 +75,22 @@ Browser tests `tray-state-filter` and `project-blocks` fail identically on the p
 | R25 | R25 | Pass: the menu has no Enlarge; the corner grip has no button chrome. Settings window Enlarge: Not testable (separate window) | |
 | R26 | R26 | Pass: footer is `TaskQ v4.6.40-dev.1793232377` plus grip | |
 | R27 | R27 | Not testable: Completed opens with a click and a board history read; no snapshot route | |
-| R28 | R28, visual-style control icons | Pass: twelve compact widgets with type, bell, chart-no-axes-column, network, focus, bot, folder, git-pull-request, activity, octagon-x, rotate-ccw, info. Failed in pass 1 (icons) | `5d9d9cc2` |
+| R28 | R28, visual-style control icons | Pass: twelve compact widgets with type, bell, chart-no-axes-column, network, focus, bot, folder, git-pull-request, activity, octagon-x, rotate-ccw, info. Failed in pass 1 (icons) | `7985df81` |
 | R29 | R29 | Pass: Agents route has no circular Access placeholder | |
-| R30 | R30 | Pass: Services shows the host and its PID once, then agentq, coreq, dashq by full name (`06`) | `bc2c88ce` |
+| R30 | R30 | Pass: Services shows the host and its PID once, then agentq, coreq, dashq by full name (`06`) | `d9499ca1` |
 | R31 | R31 | Pass: compact Projects, Delivery (`auto-merge (7) · direct (2)`) and About rows | |
 | R32 | R32 | Pass: Work mode widget leads with admission (`Blocked work: all 9 projects (access)`) then intake | |
 | R33 | R33 | Pass: Notifications shows event choices apart from OS authorization; the snapshot runs the installed CLI binary, not the bundled app, and reads `OS unsupported` | |
 | R34 | R34 | Pass: Activity shows period, interval, legend with counts and event bins (`cadence` route) | |
-| R35 | R35 | Not testable: no reviewed Stop on this install, so no recovery targets; a Stop would halt live workers. The route now renders (`Review recovery…`) | this commit |
+| R35 | R35 | Not testable: no reviewed Stop on this install, so no recovery targets; a Stop would halt live workers. The route now renders (`Review recovery…`) | `4bc9d223` |
 | R36 | R36 | Pass: request rows and delivery state in Conversations (fixture threads) | |
-| R37 | R37, ai-workspace D1–D8 | Pass: Work sessions sits apart from owner requests (terminal icon); Open session present | `5d9d9cc2` |
-| R38 | R38 | Not testable: New, Archive with Undo and Restore are click sequences; the Archive tab and buttons show the catalog icons | `30cdd306` |
+| R37 | R37, ai-workspace D1–D8 | Pass: Work sessions sits apart from owner requests (terminal icon); Open session present | `7985df81` |
+| R38 | R38 | Not testable: New, Archive with Undo and Restore are click sequences; the Archive tab and buttons show the catalog icons | `b898a202` |
 | R39 | R39 | Pass: one composer with attach, file, history and send (`conversations-dark`) | |
 | R40 | R40, taskq.md § 2 | Not testable: needs a live question and an answer dispatch. The `answers` snapshot route is stale since answers moved to the workspace (#1505): its fixture looks for menu answer cards | |
 | R41 | R41, visual-style task states | Pass: see the icon table | |
 | R42 | R42 | Pass: Review purple in both themes; merged result not on screen (no merged task in the open list) | |
-| R43 | R43, visual-style assets | Pass: every icon on the audited routes is a Lucide 1.17.0 catalog vector; `check-web` rejects unknown names. Failed in pass 1 | `30cdd306`, `5d9d9cc2`, `28c83ad7` |
+| R43 | R43, visual-style assets | Pass: every icon on the audited routes is a Lucide 1.17.0 catalog vector; `check-web` rejects unknown names. Failed in pass 1 | `b898a202`, `7985df81`, `3e0ac832` |
 | R44 | R44 | Pass: this audit; Windows and DPI rows are Not testable on this host | |
 
 ## Workspace dialogue D1–D8
@@ -124,21 +124,21 @@ Browser tests `tray-state-filter` and `project-blocks` fail identically on the p
 
 | Meaning | Icon | Native result | Fix |
 |---|---|---|---|
-| Admission | play / pause | Pass (Stop and Work mode routes) | `28c83ad7` |
-| Controls / Work mode | sliders-horizontal / focus | Pass (filter button; Work mode widget) | `5d9d9cc2` |
-| Attention / question / failure | circle-alert / message-circle-question / circle-x | Pass (strip `3`, chips) | `28c83ad7` |
+| Admission | play / pause | Pass (Stop and Work mode routes) | `3e0ac832` |
+| Controls / Work mode | sliders-horizontal / focus | Pass (filter button; Work mode widget) | `7985df81` |
+| Attention / question / failure | circle-alert / message-circle-question / circle-x | Pass (strip `3`, chips) | `3e0ac832` |
 | Project / pin / add | folder / pin / plus | Pass (group rows, Projects) | |
 | Board / issue | github / gitlab | Pass (group and task rows) | |
-| Conversations / Work sessions | messages-square / terminal | Pass | `5d9d9cc2` |
+| Conversations / Work sessions | messages-square / terminal | Pass | `7985df81` |
 | Attach / send / history | paperclip / arrow-up / history | Pass (composer) | |
-| Detach / return / close | panels-top-left / panel-left-close / x | Pass for Detach and Close; Return shows only in a detached window: Not testable | `5d9d9cc2` |
-| Search / archive / restore | search / archive / archive-restore | Pass | `30cdd306` |
+| Detach / return / close | panels-top-left / panel-left-close / x | Pass for Detach and Close; Return shows only in a detached window: Not testable | `7985df81` |
+| Search / archive / restore | search / archive / archive-restore | Pass | `b898a202` |
 | Runtime | claude / openai | Pass (task rows and strip) | |
 | Remote host | network | Pass (csgo #378) | |
-| Log / folder / restart | file-text / folder-open / rotate-cw | Pass (Services) | `28c83ad7` |
-| Stop / uninstall | square / trash-2 | Pass (Services lifecycle summary) | `28c83ad7` |
-| Appearance / cadence / agents / services / about | type / chart-no-axes-column / bot / activity / info | Pass (Settings) | `5d9d9cc2` |
-| Notifications / capacity (project page) | bell / sliders-horizontal | Pass (README project shot) | `fix(menu)` after this audit commit |
+| Log / folder / restart | file-text / folder-open / rotate-cw | Pass (Services) | `3e0ac832` |
+| Stop / uninstall | square / trash-2 | Pass (Services lifecycle summary) | `3e0ac832` |
+| Appearance / cadence / agents / services / about | type / chart-no-axes-column / bot / activity / info | Pass (Settings) | `7985df81` |
+| Notifications / capacity (project page) | bell / sliders-horizontal | Pass (README project shot) | `7309e87f` |
 
 ## Not covered on this host
 
