@@ -1,14 +1,14 @@
 {
   "version": "4.6.39",
-  "sourceCommit": "a877b48b449415b02ab6c42ddd3df0446a26993f",
-  "binarySha256": "b57662c8164666d1a247cb754f9d3094aa478616161fc5d417c813f5ae2c88c4",
+  "sourceCommit": "dc674232db23548cd6108dbd48f10d850456574c",
+  "binarySha256": "3e1bb97840db713a89792c9e3b692380eb9aba92e225d770357710af9da24c0e",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
     "renderer": "WebView2 snapshot"
   },
   "uiSources": {
-    "src/tray.rs": "cf3e65e601420a5f046a880697287723424224f9",
+    "src/tray.rs": "71739dcdf90a7e0afb925091cd7bd688e406527e",
     "src/tray.html": "cb02f118610c14cdc5038427a3ff5380ef497396",
     "src/tray-app.js": "007d0664d00d915d602e0f7235184e219f1c9f51",
     "src/tray-entry.js": "89d4bdf68fb291085abfa3e02faadc58e57d4576",
@@ -31,10 +31,10 @@
     "src/conversations.css": "a106dc4f0a4b20773f039b78484b67e3fc487bf4",
     "src/pm-composer.js": "a5687311b3d3eff025892e8f24aeccf66b7b5b22",
     "src/ui-runtime.js": "341e77a8393c4907d6b12da2cac9105e956895d4",
-    "src/workspace.js": "15720bce0ed540e09b4695b931c8579ec70f6a4d",
+    "src/workspace.js": "767454f4c1b291ae9b263f3a6b28dad56c1b579c",
     "src/workspace-entry.js": "7fea56a57028549bc431f4c2bb223251410c597c",
-    "src/workspace-answers.js": "7e29171035cf01389755443bcccf0788a5aeda89",
-    "src/answer-card.js": "4bf705c13eec95ce3361f3fb07fb653827f816a0",
+    "src/workspace-answers.js": "cfdd6efde5f68e25af2d74283a7c09312505fe1f",
+    "src/answer-card.js": "56d30ec141e0fb70a7414fe55876c5a8cae82fce",
     "scripts/build-web.cjs": "256ed7ab7523af850490a4f2abf7a924593765a7",
     "src/icon.rs": "a4277e306aac2e92f7ca9beaed62aaced73f237e"
   },
@@ -46,7 +46,7 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "5e3e29ea9020653704d0b3e79de22605acddb3c0c99f03e6ad83dcd9960cbe08"
+      "sha256": "985205153fe80862129aebc2d4377dc46b757d7599ab4e0f7ac6cc96e6a63a13"
     },
     {
       "file": "popover-dark-project-16.png",

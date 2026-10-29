@@ -81,7 +81,7 @@ render:function(board, row, local, cap) {
     let h = '<section class="qac" data-qac-state="' + st + '" aria-labelledby="' + id + '-t">';
     h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">#' + esc(row.n) + '</a> ' + esc(row.title) + '</p>';
     if (manageable(row, cap)) {
-      h += q.parsed ? '<p class="qac-problem">' + linked(q.problem) + '</p>' + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
+      h += q.parsed ? lines(q) + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
       if (own) h += q.parsed ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(q, local.draft) ? '' : ' disabled') + '>Send</button>' + hint(id, live && textProblem(q, local.draft)) + '</form>'
         : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(REQUEUE, local.draft) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(REQUEUE, local.draft)) + '</form>';
       // an owner action answers with text above; its requeue reason is the same draft, sent as an action
@@ -94,14 +94,17 @@ render:function(board, row, local, cap) {
     }
     if (!q.parsed) return h + '<pre class="qac-text">' + esc(q.text) + '</pre>' + receipt(st, st === 'read-only' ? 'This card has no answer form here' : local.receipt && local.receipt.reason, row.url, id, null, false, what) +
       retry(st, local.receipt && local.receipt.reason) + '</section>';
-    h += '<p class="qac-problem">' + linked(q.problem) + '</p>' + images(q);
+    h += lines(q) + images(q);
     if (q.choices.length) h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
       const off = !live || c.consequential, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task' : '';
-      h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (why ? ' aria-describedby="' + id + '-c' + c.id + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(label(c.text)) +
+      // #1787: the button shows N. and the label; the detail follows in full, never cut; a card without one keeps its whole text
+      const name = c.label == null ? c.text : c.label, said = [c.detail ? id + '-o' + c.id : '', why ? id + '-c' + c.id : ''].filter(Boolean).join(' ');
+      h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (said ? ' aria-describedby="' + said + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(label(name)) +
         (c.recommended ? ' <span class="qac-star" role="img" aria-label="Recommended">★</span>' : '') + '</span></button>';
-      // § 2: a button cannot hold an anchor; the option's one link opens beside it
-      for (const m of c.text.matchAll(LINK)) h += '<a class="qac-link" href="' + href(m[2]) + '" target="_blank" rel="noopener">' + esc(m[1]) + ' ↗</a>';
+      // § 2: a button cannot hold an anchor; a link in the label opens beside it, one in the detail inside the detail
+      for (const m of String(name).matchAll(LINK)) h += '<a class="qac-link" href="' + href(m[2]) + '" target="_blank" rel="noopener">' + esc(m[1]) + ' ↗</a>';
+      if (c.detail) h += '<span class="qac-detail" id="' + id + '-o' + c.id + '">' + linked(c.detail) + '</span>';
       if (why) h += '<span class="qac-why" id="' + id + '-c' + c.id + '">' + esc(why) + ' <a href="' + href(row.url) + '" target="_blank" rel="noopener">board ↗</a></span>';
     }
     if (q.choices.length) h += '</div>';
@@ -117,11 +120,10 @@ render:function(board, row, local, cap) {
     h += receipt(st, reason, row.url, id, local.receipt && local.receipt.next, false, what);
     if (st === 'stale') h += '<button type="button" data-qac="review">I read the new question</button>';
     h += retry(st, local.receipt && local.receipt.reason);
-    // Q1: Done and evidence links stay behind Details; images show above
+    // #1787: evidence links stay behind Details; Done, Problem and images show above
     const links = q.evidence.filter(e => !e.image);
-    if (q.done || links.length) h += '<details class="qac-context"><summary>Checked &amp; context</summary>' +
-      (q.done ? '<p class="qac-done"><span class="qac-muted">Done:</span> ' + esc(q.done) + '</p>' : '') +
-      (links.length ? '<p class="qac-evidence">' + links.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener">' + esc(e.label) + '</a>').join(' · ') + '</p>' : '') + '</details>';
+    if (links.length) h += '<details class="qac-context"><summary>Evidence</summary><p class="qac-evidence">' +
+      links.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener">' + esc(e.label) + '</a>').join(' · ') + '</p></details>';
     return h + '</section>';
   },
 compose:function(row, local, cap) {
@@ -262,11 +264,16 @@ const root=globalThis;
 
 
   // § 2 visual evidence: ask images stay in view as thumbnails that open full size; without the app's copy, the link
+  // Visual choice (#1787): one image per option, image K captioned K.
   const {images}=execution.module("answer-card",{images:q => {
-    const im = (q.evidence || []).filter(e => e.image);
-    return im.length ? '<p class="qac-images">' + im.map(e => '<a href="' + href(e.url) + '" target="_blank" rel="noopener" title="Open ' + esc(e.label) + ' full size">' +
-      (/^data:image\/(png|jpeg|gif|webp);base64,/.test(e.src || '') ? '<img class="qac-thumb" src="' + esc(e.src) + '" alt="' + esc(e.label) + '">' : esc(e.label) + ' ↗') + '</a>').join('') + '</p>' : '';
+    const im = (q.evidence || []).filter(e => e.image), n = (q.choices || []).length, each = n >= 2 && im.length === n;
+    return im.length ? '<p class="qac-images">' + im.map((e, i) => (each ? '<span class="qac-shot">' : '') + '<a href="' + href(e.url) + '" target="_blank" rel="noopener" title="Open ' + esc(e.label) + ' full size">' +
+      (/^data:image\/(png|jpeg|gif|webp);base64,/.test(e.src || '') ? '<img class="qac-thumb" src="' + esc(e.src) + '" alt="' + esc(e.label) + '">' : esc(e.label) + ' ↗') + '</a>' +
+      (each ? '<span class="qac-caption">' + (i + 1) + '.</span></span>' : '')).join('') + '</p>' : '';
   }});
+  // One render (#1787): the Done and Problem lines, each after its icon, in full
+  const {lines}=execution.module("answer-card",{lines:q => (q.done ? '<p class="qac-done"><span class="qac-icon" role="img" aria-label="Done">✓</span> ' + linked(q.done) + '</p>' : '') +
+    '<p class="qac-problem"><span class="qac-icon" role="img" aria-label="Problem">⚑</span> ' + linked(q.problem) + '</p>'});
   const {manageable}=execution.module("answer-card",{manageable:(row, cap) => row.state === 'ask' && cap && cap.answer && cap.manage && !(row.question && row.question.choices && row.question.choices.length)});
   // The tray fallback proper: an unparsed card whose only free text is a requeue reason.
   const {fallback}=execution.module("answer-card",{fallback:(row, cap) => manageable(row, cap) && !(row.question && row.question.parsed)});
@@ -275,7 +282,7 @@ const root=globalThis;
     if (op.action) return {requeue: 'requeue', later: 'later', close: 'close without publication'}[op.action] || op.action;
     if (op.text != null) return 'text answer';
     const c = row.question && row.question.choices && row.question.choices.find(x => x.id === op.choice);
-    return 'answer ' + op.choice + (c ? '. ' + label(c.text) : '');
+    return 'answer ' + op.choice + (c ? '. ' + label(c.label == null ? c.text : c.label) : '');
   }});
   // #1699 A4: a retained correlation conflict reads in user terms and offers Check delivery, never a resend
   const CONFLICT = 'Correlation id is already pending for a different request';
