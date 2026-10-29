@@ -1,11 +1,12 @@
 'use strict';
 const ui=require('./ui-runtime.js');
 const execution=ui.execution;
+const replyFiles=require('./reply-files.js');
 
 const {fresh,textProblem,status,step,render,compose,receipt,mount,replay}=execution.module("answer-card",{
 fresh:function(row) { return {draft: '', bound: row.revision, op: null, receipt: null}; },
-textProblem:function(q, text) {
-    return text.trim() ? null : 'Type an answer';
+textProblem:function(q, text, files) {
+    return replyFiles.problem(files)|| (text.trim() || files?.length ? null : 'Type an answer');
   },
 status:function(row, local, cap) {
     const q = row.question;
@@ -13,13 +14,14 @@ status:function(row, local, cap) {
     // stays beside its task after the question is gone
     if (local.op && local.receipt && (HELD.includes(local.receipt.state) || local.op.revision === row.revision || !q)) return local.receipt.state;
     if (!manageable(row, cap) && (!q || !q.parsed || !cap || !cap.answer || !['ask', 'review'].includes(row.state))) return 'read-only';
-    if (local.bound !== row.revision && local.draft.trim()) return 'changed';
+    if (local.bound !== row.revision && (local.draft.trim()||local.files?.length)) return 'changed';
     return 'actionable';
   },
 step:function(row, local, cap, ev, newId) {
     const st = status(row, local, cap), l = {...local};
     const {start}=execution.module("answer-card.step",{start:(payload, revision = row.revision) => {
       l.op = {id: newId(), task: row.n, revision, ...payload};
+      if(payload.text!=null&&l.files?.length)l.op.files=JSON.parse(JSON.stringify(l.files));
       // #1662 A4: the receipt names the question and the answer it carries, kept apart from the immutable op
       l.about = about(row, payload);
       l.bound = row.revision;
@@ -27,23 +29,26 @@ step:function(row, local, cap, ev, newId) {
       return {local: l, send: l.op};
     }});
     switch (ev.type) {
+      case 'files':
+        l.files=ev.files;
+        return {local:l,send:null};
       case 'input':
         // A changed question keeps the draft's source revision; Send records its literal intent as a note.
         if (st !== 'changed') l.bound = row.revision;
         l.draft = ev.text;
         return {local: l, send: null};
       case 'choose': {
-        if (!LIVE.includes(st)) return {local, send: null};
+        if (!LIVE.includes(st)||l.files?.length) return {local, send: null};
         const c = row.question.choices.find(x => x.id === ev.id);
         if (!c || c.consequential) return {local, send: null};
         return start({choice: c.id});
       }
       case 'submit':
-        if (!cap || !cap.answer || !LIVE.includes(st) || textProblem(draftQuestion(row, cap), l.draft)) return {local, send: null};
+        if (!cap || !cap.answer || !LIVE.includes(st) || textProblem(draftQuestion(row, cap), l.draft,l.files)) return {local, send: null};
         // an unparsed fallback card takes a requeue reason; a parsed owner action without options takes a text answer
         return start(fallback(row, cap) ? {action: 'requeue', text: l.draft.trim()} : {text: l.draft.trim()}, st === 'changed' && !fallback(row, cap) ? l.bound : row.revision);
       case 'requeue':
-        if (!manageable(row, cap) || !LIVE.includes(st) || textProblem(REQUEUE, l.draft)) return {local, send: null};
+        if (!manageable(row, cap) || !LIVE.includes(st) || textProblem(REQUEUE, l.draft,l.files)) return {local, send: null};
         return start({action: 'requeue', text: l.draft.trim()});
       case 'later':
       case 'close':
@@ -52,7 +57,7 @@ step:function(row, local, cap, ev, newId) {
       case 'receipt':
         if (!l.op || ev.opId !== l.op.id) return {local, send: null};
         l.receipt = {state: ['accepted', 'rejected', 'stale', 'unknown', 'failed', 'partial'].includes(ev.state) ? ev.state : 'unknown', reason: ev.reason, next: ev.next, ...(ev.note?{note:true}:{})};
-        if (ev.state === 'accepted' && l.op.text) l.draft = '';
+        if (ev.state === 'accepted' && (l.op.text||l.op.files?.length)) {l.draft='';l.files=[];}
         return {local: l, send: null};
       case 'retry':
         // uncertain, unsent or partial delivery reconciles with the same id and payload, never a new one
@@ -67,12 +72,13 @@ render:function(board, row, local, cap) {
     const what = local.op ? '#' + row.n + ' ' + (local.about || about(row, local.op)) : '';
     let h = '<section class="qac" data-qac-state="' + st + '" aria-labelledby="' + id + '-t">';
     h += '<p class="qac-head" id="' + id + '-t"><span class="qac-mark" aria-hidden="true">?</span> <a href="' + href(row.url) + '" target="_blank" rel="noopener">#' + esc(row.n) + '</a> ' + esc(row.title) + '</p>';
+    if(own&&cap?.files&&st!=='read-only')h+=replyFiles.markup(local.files,!live);
     if (manageable(row, cap)) {
       h += q.parsed ? lines(q) + images(q) : '<pre class="qac-text">' + esc(q.text || row.card || 'No question text supplied') + '</pre>';
-      if (own) h += q.parsed ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(q, local.draft) ? '' : ' disabled') + '>Send</button>' + hint(id, live && textProblem(q, local.draft)) + '</form>'
-        : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(REQUEUE, local.draft) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(REQUEUE, local.draft)) + '</form>';
+      if (own) h += q.parsed ? '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="2" aria-label="Your answer" placeholder="What you did"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(q, local.draft,local.files) ? '' : ' disabled') + '>Send</button>' + hint(id, live && textProblem(q, local.draft,local.files)) + '</form>'
+        : '<form class="qac-text-form" data-qac="submit"><textarea data-qac="input" rows="1" aria-label="Requeue reason" placeholder="Reason to requeue"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea><button type="submit"' + (live && !textProblem(REQUEUE, local.draft,local.files) ? '' : ' disabled') + '>Requeue</button>' + hint(id, live && textProblem(REQUEUE, local.draft,local.files)) + '</form>';
       // an owner action answers with text above; its requeue reason is the same draft, sent as an action
-      h += '<div class="qac-choices">' + (q.parsed && own ? '<button type="button" data-qac="requeue"' + (live && !textProblem(REQUEUE, local.draft) ? '' : ' disabled') + '>Requeue</button>' : '') + '<button type="button" data-qac="later"' + (live ? '' : ' disabled') + '>Later</button><button type="button" data-qac="close"' + (live ? '' : ' disabled') + '>Close without publishing</button></div>';
+      h += '<div class="qac-choices">' + (q.parsed && own ? '<button type="button" data-qac="requeue"' + (live && !textProblem(REQUEUE, local.draft,local.files) ? '' : ' disabled') + '>Requeue</button>' : '') + '<button type="button" data-qac="later"' + (live ? '' : ' disabled') + '>Later</button><button type="button" data-qac="close"' + (live ? '' : ' disabled') + '>Close without publishing</button></div>';
       h += receipt(st, local.receipt && local.receipt.reason, row.url, id, local.receipt && local.receipt.next, !!(local.op && local.op.action), what, local.receipt?.note);
       h += retry(st, local.receipt && local.receipt.reason);
       return h + '</section>';
@@ -82,7 +88,7 @@ render:function(board, row, local, cap) {
     h += lines(q) + images(q);
     if (q.choices.length) h += '<div class="qac-choices" role="group" aria-label="Choices">';
     for (const c of q.choices) {
-      const off = !live || c.consequential, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task, or approves its result' : '';
+      const off = !live || c.consequential || !!local.files?.length, why = c.consequential ? 'Answer on the board: this choice closes or publishes the task, or approves its result' : local.files?.length?'Send files with a text reply, or remove them to choose an option':'';
       // #1787: the button shows N. and the label; the detail follows in full, never cut; a card without one keeps its whole text
       const name = c.label == null ? c.text : c.label, said = [c.detail ? id + '-o' + c.id : '', why ? id + '-c' + c.id : ''].filter(Boolean).join(' ');
       h += '<button type="button" data-qac="choose" data-choice="' + c.id + '"' + (off ? ' disabled' : '') + (said ? ' aria-describedby="' + said + '"' : '') + '><span class="qac-number">' + c.id + '.</span> <span>' + esc(label(name)) +
@@ -96,9 +102,9 @@ render:function(board, row, local, cap) {
     // § 2: the PM's pick sits beside the worker's star; it is a view, never an answer
     if (row.pick) h += '<p class="qac-pick"><span class="qac-muted">PM</span> ' + esc(row.n) + '.' + esc(row.pick.id) + ': ' + esc(row.pick.reason) + '</p>';
     if (own && (st !== 'read-only' || local.draft)) {
-      const bad = textProblem(q, local.draft);
+      const bad = textProblem(q, local.draft,local.files);
       // Q1: Other answer opens a compact field; a kept draft keeps it open; an owner action without options has only this field
-      h += '<details class="qac-other"' + (local.draft || !q.choices.length ? ' open' : '') + '><summary>' + (q.choices.length ? 'Other answer' : 'Answer') + '</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="' + (q.choices.length ? 'Or type an answer' : 'What you did') + '"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
+      h += '<details class="qac-other"' + (local.draft || local.files?.length || !q.choices.length ? ' open' : '') + '><summary>' + (q.choices.length ? 'Other answer' : 'Answer') + '</summary><form class="qac-text-form" data-qac="submit"><textarea id="' + id + '-d" data-qac="input" rows="2" aria-label="Your answer" placeholder="' + (q.choices.length ? 'Or type an answer' : 'What you did') + '"' + (live ? '' : ' readonly') + '>' + esc(local.draft) + '</textarea>' +
         '<button type="submit"' + (live && !bad ? '' : ' disabled') + '>Send</button>' + hint(id, live && bad) + '</form></details>';
     }
     const reason = st === 'read-only' ? (cap && cap.reason) || 'Answering is not available here' : local.receipt && local.receipt.reason;
@@ -116,8 +122,8 @@ compose:function(row, local, cap) {
     if (!text) return null;
     const live = LIVE.includes(st);
     const refusal = local.receipt && ['rejected','failed','stale','partial','unknown'].includes(st) ? [local.receipt.reason,local.receipt.next].filter(Boolean).join(' · ') : '';
-    return {draft: local.draft, caret: local.caret, state: st, live, reason:refusal, problem: live ? textProblem(draftQuestion(row, cap), local.draft) : LABELS[st],
-      send: fallback(row, cap) ? 'Requeue' : 'Send', choices: !!(q.choices && q.choices.length), requeue: manageable(row, cap) && !fallback(row, cap) ? live ? textProblem(REQUEUE, local.draft) || '' : LABELS[st] : null};
+    return {draft: local.draft, files:local.files||[], caret: local.caret, state: st, live, reason:refusal, problem: live ? textProblem(draftQuestion(row, cap), local.draft,local.files) : LABELS[st],
+      send: fallback(row, cap) ? 'Requeue' : 'Send', choices: !!(q.choices && q.choices.length), requeue: manageable(row, cap) && !fallback(row, cap) ? live ? textProblem(REQUEUE, local.draft,local.files) || '' : LABELS[st] : null};
   },
 receipt:function(st, reason, url, id, next, action, what, note) {
     if (st === 'actionable') return '<p class="qac-receipt" id="' + id + '-r" role="status" aria-live="polite">' + esc(reason || '') + '</p>';
@@ -137,10 +143,10 @@ apply:function(k, ev) {
       if (r.send) ui.effect('answer.send',()=>adapter.send(board,r.send),x=>{if(cards.has(k))apply(k,{type:'receipt',opId:r.send.id,...x});});
       else if (ev.type === 'input') {
         const s = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] button[type=submit]'), cap2 = adapter.capability(board, row);
-        const live = LIVE.includes(status(row, r.local, cap2)), bad = textProblem(draftQuestion(row, cap2), r.local.draft);
+        const live = LIVE.includes(status(row, r.local, cap2)), bad = textProblem(draftQuestion(row, cap2), r.local.draft,r.local.files);
         if (s) s.disabled = !!bad || !live;
         const rq = el.querySelector('[data-qac-key="' + CSS.escape(k) + '"] [data-qac=requeue]');
-        if (rq) rq.disabled = !live || !!textProblem(REQUEUE, r.local.draft);
+        if (rq) rq.disabled = !live || !!textProblem(REQUEUE, r.local.draft,r.local.files);
         // #1456: a disabled button states why; a state other than live already says so in the receipt
         const h = s && s.parentNode.querySelector('.qac-hint');
         if (h) h.textContent = live && bad || '';
@@ -170,8 +176,13 @@ paint:function() {
 
     ui.listen(el,'click', e => {
       const b = e.target.closest('button[data-qac]'), k = b && b.closest('[data-qac-key]')?.dataset.qacKey;
-      if (k && !b.disabled) apply(k, b.dataset.qac === 'choose' ? {type: 'choose', id: Number(b.dataset.choice)} : {type: b.dataset.qac});
+      if (k && !b.disabled) apply(k, b.dataset.qac === 'choose' ? {type: 'choose', id: Number(b.dataset.choice)} : b.dataset.qac==='remove-file'?{type:'files',files:(locals.get(k).files||[]).filter(f=>f.id!==b.dataset.file)}:{type: b.dataset.qac});
     });
+    const add=(k,files)=>{if(!k||!adapter.capability(cards.get(k).board,cards.get(k).row).files||!LIVE.includes(status(cards.get(k).row,locals.get(k),adapter.capability(cards.get(k).board,cards.get(k).row))))return;replyFiles.read(files,file=>{if(cards.has(k)&&(file.pending||locals.get(k).files?.some(f=>f.id===file.id)))apply(k,{type:'files',files:[...(locals.get(k).files||[]).filter(f=>f.id!==file.id),file]});});};
+    ui.listen(el,'change',e=>{if(e.target.dataset.qac==='files'){add(e.target.closest('[data-qac-key]')?.dataset.qacKey,[...e.target.files]);}});
+    ui.listen(el,'paste',e=>{if(e.clipboardData?.files.length){e.preventDefault();add(e.target.closest('[data-qac-key]')?.dataset.qacKey,[...e.clipboardData.files]);}});
+    ui.listen(el,'dragover',e=>e.preventDefault());
+    ui.listen(el,'drop',e=>{if(e.dataTransfer?.files.length){e.preventDefault();add(e.target.closest('[data-qac-key]')?.dataset.qacKey,[...e.dataTransfer.files]);}});
     ui.listen(el,'submit', e => { e.preventDefault(); const k = e.target.closest('[data-qac-key]')?.dataset.qacKey; if (k) apply(k, {type: 'submit'}); });
     ui.listen(el,'keydown', e => { if (e.target.dataset.qac === 'input' && e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); const k = e.target.closest('[data-qac-key]')?.dataset.qacKey; if(k) apply(k, {type: 'submit'}); } });
     for(const event of ['select','keyup','click'])ui.listen(el,event,e=>{
@@ -180,6 +191,7 @@ paint:function() {
     });
     ui.listen(el,'input', e => { const k = e.target.dataset.qac === 'input' && e.target.closest('[data-qac-key]')?.dataset.qacKey; if (k) apply(k, {type: 'input', text: e.target.value}); });
     return execution.module("answer-card.mount.controller",{
+      files(board,n,files){const k=key(board,{n});if(!cards.has(k))return false;apply(k,{type:'files',files});return true;},
       receiveReceipt(board, opId, reply) {
         for (const [k, card] of cards) if (card.board === board && locals.get(k)?.op?.id === opId) {
           apply(k, {...reply, type: 'receipt', opId});

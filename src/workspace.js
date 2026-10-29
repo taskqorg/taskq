@@ -113,12 +113,13 @@ const {create}=execution.module('workspace',{
     const off=!c.live,why=c.live?c.problem||'':c.problem;
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
      // #1816: explain an empty draft or a refused send beside the Send button.
-     reason:c.reason||why,
+     reason:c.files.some(f=>f.pending||f.error)?c.problem:c.reason||why,
+     files:answers.fileControls(p.issues,t.n,off),...answers.fileEvents(p.issues,t.n,off),
      // #1781: the bottom row matches the chat composer: command history left; Send, then the answer help icon, right (input-scroll 04)
      tools:h('div',{class:'conversation-tools composer-bottom'},
       h('details',{'data-view-key':'answer-history',class:'command-history-menu'},h('summary',{class:'compact-action',title:'History','aria-label':'History'},icons.icon('history')),h('div',{class:'conversation-history'},(view.S.ai?.history||[]).map((text,i)=>h('button',{'data-a':'answer-history','data-index':i,disabled:off},text)),h('p',{class:'meta'},'History fills the draft only; nothing is sent.'))),
       c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action compact-action',title:c.send,'aria-label':c.send,disabled:off||!!c.problem},icons.icon('arrow-up')),
-      h('details',{class:'composer-help','data-view-key':'answer-help'},h('summary',{class:'compact-action',title:'Answer help','aria-label':'Answer help'},icons.icon('info')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.'))),
+      h('details',{class:'composer-help','data-view-key':'answer-help'},h('summary',{class:'compact-action',title:'Answer help','aria-label':'Answer help'},icons.icon('info')),h('p',{class:'meta'},'Paste, drop or pick images and files. Send uploads them to this task’s board. TaskQ sets no size or count cap; board and storage limits may refuse a file. Numbers typed here are text; remove files to choose an option.'))),
      onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
@@ -185,6 +186,7 @@ const {create}=execution.module('workspace',{
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
     if(['capmsg','focus_receipt','action_error','resources_receipt','aiError'].some(k=>s[k])){operations.receive(s);return;}
     if(s.answerReceipt){answers.answerReceipt(s.answerReceipt);return;}
+    if(s.replyFileReceipt){answers.answerFileReceipt(s.replyFileReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here

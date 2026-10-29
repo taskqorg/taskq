@@ -701,6 +701,7 @@ receive:function(s){
   if(Array.isArray(s.sync)&&!s.projects){view.sync=s.sync;if(view.raw){view.S=syncView.overlay(view.raw,view.sync);present();}return;}
   if(ports.workspace&&s.projects){api.adopt(s);focusReadback();api.lifecycleReadback();present();return;}
   if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
+  if(s.replyFileReceipt){startOperations.answerFileReceipt(s.replyFileReceipt);return;}
   if(s.workspaceError!==undefined){view.workspaceError=s.workspaceError;present();return;}
   if(s.viewStateError!==undefined){view.persistenceError=s.viewStateError;present();return;}
   if(s.diagnose){const d=s.diagnose,remaining=d.until_ms-Date.now();

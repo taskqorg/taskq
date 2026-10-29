@@ -102,8 +102,10 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   assert.equal(call('answerWon',board,{...running,state:'ask'}),'','a new question replaces the answered line');
   call('save',board,{n:900},{draft:'one new instruction'});
   const steerAt=sent.length;call('answerSteer',board,running);
-  assert.deepEqual(plain(sent[steerAt].op),{id:sent[steerAt].op.id,task:900,revision:8,action:'steer',text:'one new instruction'});
-  call('answerReceipt',{root:'project',id:sent[steerAt].op.id,state:'accepted'});
+  // A steer now persists its immutable input before dispatch; still check the exact actual command, not the draft save.
+  const steering=sent.slice(steerAt).find(m=>m.a==='answer').op;
+  assert.deepEqual(plain(steering),{id:steering.id,task:900,revision:8,action:'steer',text:'one new instruction'});
+  call('answerReceipt',{root:'project',id:steering.id,state:'accepted'});
   assert(call('answerToast').includes('#900 · steer sent'));
   assert(call('answerSteerComposer',board,running).includes('Steer sent to the agent.')&&!call('answerSteerComposer',board,running).includes('use y'),'a sent steer clears the composer');
   // #1785 A2: an answer from another client reached this tray only as a receipt, so the thread kept offering a closed question.

@@ -36,6 +36,8 @@ fn app_cancel(thread:&str,turn:&str)->Result<(),String> {
 }
 
 pub struct Launch {
+    /// §5: verified attachment paths prepared from accepted board replies by the service.
+    pub files: String,
     /// Exact board intent, assigned by the service before native submission; absent for non-task probes.
     pub execution: Option<u64>,
     pub task: u64,
@@ -794,7 +796,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
             push = if env.publish == "direct" { "push the branch" } else { "push the branch and open one PR/MR into main" }
         )
     };
-    format!("{head}{}\nBefore any hand-in, read `{q} inbox {n}` fresh and check the result against goal + acceptance + all notes. Acceptance stays binding; a conflicting note gets one ask immediately, never at hand-in.\nTest changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n", env.context)
+    format!("{head}{}{}\nBefore any hand-in, read `{q} inbox {n}` fresh and check the result against goal + acceptance + all notes. Acceptance stays binding; a conflicting note gets one ask immediately, never at hand-in.\nTest changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).\n{body}Then stop. Everything written through taskq is public: no secrets or paths outside the repository.\n", env.context,l.files)
 }
 
 #[cfg(test)]
@@ -1884,7 +1886,7 @@ pub fn session_link(root: &Path, own: bool, rt: &str, id: &str, task: u64, attem
 /// Native identity from this attempt's log, without scanning the transcript for a Remote Control URL.
 pub fn session_id(root:&Path,rt:&str,id:&str,task:u64,attempt:u64,role:&str)->String {
     if id=="-" || of(rt).remote {
-        let l=Launch {execution:None,task,title:String::new(),attempt,role:role.into(),rt:rt.into(),session:id.into(),url:String::new(),resume:None};
+        let l=Launch {files:String::new(),execution:None,task,title:String::new(),attempt,role:role.into(),rt:rt.into(),session:id.into(),url:String::new(),resume:None};
         codex_thread(&log_path(root,&l)).unwrap_or_else(||id.into())
     } else {id.into()}
 }
@@ -2510,7 +2512,7 @@ mod tests {
     // show the shared rules header or an uncut title instead of role, task and title.
     #[test]
     fn session_name_is_role_task_and_cut_title() {
-        let l = |role: &str, title: &str| Launch { execution: None, task: 1561, title: title.into(), attempt: 1, role: role.into(), rt: "codex".into(), session: "s".into(), url: String::new(), resume: None };
+        let l = |role: &str, title: &str| Launch { files: String::new(), execution: None, task: 1561, title: title.into(), attempt: 1, role: role.into(), rt: "codex".into(), session: "s".into(), url: String::new(), resume: None };
         assert_eq!(session_name(&l("worker", "Claude handover identity")), "work #1561 Claude handover identity");
         assert_eq!(session_name(&l("reviewer", "a\n b")), "review #1561 a b");
         assert_eq!(session_name(&l("operator", "x")), "setup #1561 x");
@@ -2719,7 +2721,7 @@ mod tests {
             #[cfg(windows)] let child:Box<dyn Proc>=Box::new(windows_process::Execution::spawn(&mut command).unwrap());
             #[cfg(not(windows))] let child:Box<dyn Proc>=Box::new(command.spawn().unwrap());
             let native=child.native_identity().unwrap();
-            let launch=Launch {execution:Some(attempt),task,title:String::new(),attempt,role:"worker".into(),rt:"codex".into(),session:"fixture".into(),url:String::new(),resume:None};
+            let launch=Launch {files: String::new(), execution:Some(attempt),task,title:String::new(),attempt,role:"worker".into(),rt:"codex".into(),session:"fixture".into(),url:String::new(),resume:None};
             let mut proc=CliTurn {proc:child,log,pos:0,start:0,stopping:false,accepted:false,read_error:None,native:Some(native.clone()),recovery:None};
             proc.checkpoint(&cfg,&launch,attempt).unwrap();
             service.kids.push(crate::service::Kid { unknown:None, stopping:false, session_url:None,task,attempt,execution:attempt,rt:"codex".into(),proc:Box::new(proc)});
@@ -2854,7 +2856,7 @@ mod tests {
                 .env("TASKQ_TREE_OWNER_ROOT",&root).stdout(Stdio::null()).stderr(Stdio::null());
             let child=start_command(&mut command,&root,"").unwrap();let native=child.native_identity().unwrap();
             let mut turn=CliTurn {proc:child,log,pos:0,start:0,stopping:false,accepted:false,read_error:None,native:Some(native.clone()),recovery:None};
-            let launch=Launch {execution:Some(attempt),task,title:String::new(),attempt,role:"worker".into(),rt:"codex".into(),session:"fixture".into(),url:String::new(),resume:None};
+            let launch=Launch {files: String::new(), execution:Some(attempt),task,title:String::new(),attempt,role:"worker".into(),rt:"codex".into(),session:"fixture".into(),url:String::new(),resume:None};
             turn.checkpoint(&cfg,&launch,attempt).unwrap();
             let saved=crate::kids_file(&cfg.install,&root).unwrap();assert_eq!(saved.len(),1);assert!(saved[0].job.is_some());
             let mut legacy=saved[0].clone();legacy.job=None;
@@ -3401,7 +3403,7 @@ mod tests {
         let root=std::env::temp_dir().join(format!("taskq-cold-input-{}",uuid()));
         std::fs::create_dir_all(&root).unwrap();
         for rt in ["claude","codex-app"] {
-            let l=Launch {execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:rt.into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
+            let l=Launch {files: String::new(), execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:rt.into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
             let x=crate::core::Execution {id:44,attempt:42,through:43,host:"mac".into(),runtime:rt.into(),accepted:false,release:None,usage_hold:None};
             let log=log_path(&root,&l);
             let (path,lock)=turn_input(&root,"original task",Some(&l)).unwrap();
@@ -3496,7 +3498,7 @@ mod tests {
         let cases:&[&str]=if cfg!(unix) {&["timeout","response","exit-id","killed","log","copy","no-start","refused","untrusted"]} else {&["timeout","response","exit-id","log","copy","no-start","refused","untrusted"]};
         for &case in cases {
             let log=root.join(format!("{case}.log"));
-            let mut l=Launch {execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
+            let mut l=Launch {files: String::new(), execution:Some(44),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:uuid(),url:String::new(),resume:Some("continue".into())};
             let (input,lock,path)=claude_input(&root,"private task body",None).unwrap();
             for execution in [None,Some(41)] {
                 l.execution=execution;
@@ -3676,7 +3678,7 @@ mod tests {
         let root = std::env::temp_dir();
         let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &codex, publish: "pr", board_env: &[], jobs: None };
         let args = |c: &Command| c.get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>().join(" ");
-        let mut l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let mut l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         crate::policy::grant(&install, "claude", "full", None, "op", 1).unwrap();
         crate::policy::grant(&install, "codex", "full", None, "op", 1).unwrap();
         for resume in [None, Some("answer".to_string())] {
@@ -3704,7 +3706,7 @@ mod tests {
     fn claude_cold_identity_survives_checkpoint_failure_and_process_exit() {
         let root=std::env::temp_dir().join(format!("taskq-claude-cold-{}",uuid()));
         let install=root.join("install");std::fs::create_dir_all(&install).unwrap();
-        let l=Launch {execution:Some(42),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:uuid(),url:String::new(),resume:None};
+        let l=Launch {files: String::new(), execution:Some(42),task:7,title:String::new(),attempt:42,role:"worker".into(),rt:"claude".into(),session:uuid(),url:String::new(),resume:None};
         let log=log_path(&root,&l);
         let (input,lock,path)=claude_input(&root,"controlled process fixture",Some(&l)).unwrap();
         bind_input(&log,&l,&path,&input,serde_json::json!({"session":l.session})).unwrap();
@@ -3781,7 +3783,7 @@ mod tests {
         let transcript=home.join("projects/p").join(format!("{session}.jsonl"));
         let agents=|state:&str,pid:Option<u32>|std::fs::write(root.join("agents.json"),serde_json::json!([{"id":"c37eb75a","kind":"background","sessionId":session,"cwd":root,"state":state,"pid":pid}]).to_string()).unwrap();
         if std::env::var("TASKQ_IMAGE_PHASE").unwrap()=="before" {
-            let l=Launch {execution:Some(a),task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"claude".into(),session:"session".into(),url:String::new(),resume:None};
+            let l=Launch {files: String::new(), execution:Some(a),task:n,title:String::new(),attempt:a,role:"worker".into(),rt:"claude".into(),session:"session".into(),url:String::new(),resume:None};
             let log=log_path(&root,&l);std::fs::create_dir_all(log.parent().unwrap()).unwrap();
             let (input,lock,path)=claude_input(&root,"image handover fixture",Some(&l)).unwrap();
             bind_input(&log,&l,&path,&input,serde_json::json!({"session":l.session})).unwrap();
@@ -3985,7 +3987,7 @@ mod tests {
         std::fs::create_dir_all(&install).unwrap();
         crate::policy::grant(&install, "codex-app", "full", None, "op", 1).unwrap();
         let env = Env { context: "", root: &root, exe: Path::new("taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
-        let l = Launch { execution: None, task: 0, title: "live".into(), attempt: 0, role: "worker".into(), rt: "codex-app".into(), session: "-".into(), url: String::new(), resume: None };
+        let l = Launch { files: String::new(), execution: None, task: 0, title: "live".into(), attempt: 0, role: "worker".into(), rt: "codex-app".into(), session: "-".into(), url: String::new(), resume: None };
         let log = root.join("app-turn.log");
         let (text, input, _path) = app_input(&root, &format!("{}Reply with the single word QUEUED and do nothing else.", "A taskq test line; ignore it.\n".repeat(700)),None).unwrap();
         let mut t = AppTurn { root: root.canonicalize().unwrap(), history:AppHistory::default(), hand: None, log: log.clone(), text, _input: Some(input), binding:None, thread: String::new(), done: 0, rollout: None, running: app_running, control:app_cancel, cancelled: false, queue_error: None, accepted: false };
@@ -4004,7 +4006,7 @@ mod tests {
         let root = Path::new("C:\\project's $cash; folder");
         let exe = Path::new("C:\\tool's $cash; folder\\taskq.exe");
         let env = Env { context: "", root, exe, install: Path::new("C:\\install"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
-        let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker's $cash; role".into(), rt: "codex-app".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker's $cash; role".into(), rt: "codex-app".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let text = brief(&env, &l);
         let command = text.split("your inbox: `").nth(1).unwrap().split('`').next().unwrap();
         let prefix = command.split("; & ").next().unwrap();
@@ -4210,7 +4212,7 @@ mod tests {
     fn codex_reviewer_brief_matches_the_claude_reviewer() {
         let root = rules_root("codex-review");
         let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
-        let l = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "reviewer".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let l = |rt: &str| Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "reviewer".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         // Only the command prefix differs: the native Claude session runs in its host's environment (§ 8).
         let host_env = format!("env TASKQ_TASK=7 TASKQ_ATTEMPT=42 TASKQ_ROLE=reviewer TASKQ_ROOT={} ", root.display());
         let (claude, codex) = (brief(&env, &l("claude")), brief(&env, &l("codex")));
@@ -4230,7 +4232,7 @@ mod tests {
         for rt in ["claude", "codex", "codex-app"] {
             for role in ["worker", "reviewer"] {
                 for resume in [None, Some("Owner answer: preserve current work.\nLiteral $HOME stays text.".into())] {
-                    let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: role.into(), rt: rt.into(), session: "same-session".into(), url: "https://b/7".into(), resume };
+                    let l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: role.into(), rt: rt.into(), session: "same-session".into(), url: "https://b/7".into(), resume };
                     let text = turn_text(&env, &l, rule).unwrap();
                     assert!(text.contains(env.context), "every role and continuation receives the complete task context");
                     assert!(text.contains("Before any hand-in") && text.contains("a conflicting note gets one ask immediately"));
@@ -4282,7 +4284,7 @@ mod tests {
         let rule = "Test changes follow specq engineering/testing.md: name the defect and retained risk protection in --text; change a rule only when accepted behavior or protection changes (section 7 step 4).";
         for rt in ["claude", "codex", "codex-app"] {
             for role in ["worker", "reviewer"] {
-                let l = Launch { execution: None, task: 7, title: "Repair".into(), attempt: 42, role: role.into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+                let l = Launch { files: String::new(), execution: None, task: 7, title: "Repair".into(), attempt: 42, role: role.into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
                 let text = brief(&env, &l);
                 assert!(text.contains(rule), "{rt}: {role}");
                 assert!(!text.contains("a changed or deleted existing test is a gap unless"), "{rt}: {role}: obsolete ban");
@@ -4295,7 +4297,7 @@ mod tests {
     fn research_decision_requires_ask_before_result() {
         let env = Env { context: "", root: Path::new("/project"), exe: Path::new("taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
         for rt in ["claude", "codex", "codex-app"] {
-            let mut l = Launch { execution: None, task: 7, title: "Proposal".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+            let mut l = Launch { files: String::new(), execution: None, task: 7, title: "Proposal".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
             assert!(brief(&env, &l).contains("Research or proposal tasks (type research, docs proposals) end with ask: options plus a recommendation; result only after the owner's answer."), "{rt}: worker");
             l.role = "reviewer".into();
             assert!(brief(&env, &l).contains("A research or proposal task without an ask and owner's answer before result/close is a task-fit gap"), "{rt}: reviewer");
@@ -4312,7 +4314,7 @@ mod tests {
         std::fs::create_dir_all(&install).unwrap();
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
         let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
-        let launch = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let launch = |rt: &str| Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let args = |rt: &str| command(&env, &launch(rt), &access(&env, rt).unwrap()).unwrap().get_args().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
         let l = launch("claude");
         let claude = args("claude");
@@ -4363,7 +4365,7 @@ mod tests {
         let install = root.join("install");
         std::fs::create_dir_all(&install).unwrap();
         for rt in ["claude", "codex"] { crate::policy::grant(&install, rt, "full", None, "op", 1).unwrap(); }
-        let launch = |rt: &str| Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let launch = |rt: &str| Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: rt.into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         for jobs in [compile_jobs(Some(16), h.occupied()), None] {
             let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: &install, permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs };
             let want = jobs.map(|j| j.to_string());
@@ -4409,7 +4411,7 @@ mod tests {
     fn pm_hook_gets_the_worker_start_rules() {
         let root = rules_root("pm");
         let env = Env { context: "", root: &root, exe: Path::new("/i/taskq"), install: Path::new("/i"), permission_mode: "dontAsk", codex: &[], publish: "pr", board_env: &[], jobs: None };
-        let l = Launch { execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
+        let l = Launch { files: String::new(), execution: None, task: 7, title: "T".into(), attempt: 42, role: "worker".into(), rt: "claude".into(), session: "s".into(), url: "https://b/7".into(), resume: None };
         let start = turn_text(&env, &l, rule).unwrap();
         assert_eq!(pm_rules(&root, "start", rule).unwrap(), start.split("\nTaskQ task\n").next().unwrap());
         assert_eq!(pm_rules(&root, "compact", rule).unwrap(), rules(&root, true, rule).unwrap());

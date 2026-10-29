@@ -147,7 +147,7 @@ impl Receipt {
 /// Preserve a late answer's original meaning; a reused option number never answers a newer card (§ 2/§ 5).
 /// `now`: the task's state and revision. A repeat of the winning answer writes nothing (#1861); a closed task takes no note.
 #[allow(clippy::too_many_arguments)]
-fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op: &Op, log: &[Entry], now: (State, u64)) -> Receipt {
+fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op: &Op, log: &[Entry], now: (State, u64), files: &[String]) -> Receipt {
     let source = op.revision.or_else(|| {
         let p = core::project(n, log, false);
         let id = p.closing_answer(n, log)?;
@@ -161,7 +161,7 @@ fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op
                 .ok_or("choice not found in the original question")
         })
     } else { Ok(text.to_string()) };
-    if let Some(id) = said.as_ref().ok().zip(source).and_then(|(said, r)| same_answer(n, log, r, said)) {
+    if let Some(id) = said.as_ref().ok().zip(source).filter(|_| files.is_empty()).and_then(|(said, r)| same_answer(n, log, r, said)) {
         let by = b.comments(n).unwrap_or_default().into_iter().find(|c| c.id == id).map(|c| c.author).unwrap_or_default();
         let answered = Answered { by, text: core::delivery(n, log, id) };
         return Receipt { reason: "Same answer; nothing saved".into(), answered: Some(answered), ..Receipt::accepted(n, op, now.0, now.1) };
@@ -171,7 +171,7 @@ fn answer_note(b: &dyn Board, root: &Path, n: u64, args: &[&str], text: &str, op
         Err(why) => Receipt::rejected(n, op, why),
         Ok(said) => {
             let r = source.unwrap_or(0).to_string();
-            act_as(b, root, n, "steer", &["answer", &r], &said, &Op { id: op.id.clone(), revision: None }, None, None)
+            act_input(b, root, n, "steer", &["answer", &r], &said, &Op { id: op.id.clone(), revision: None }, None, None, files)
         }
     }
 }
@@ -220,6 +220,17 @@ fn act_child(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text
 /// [`act`] for an entry that names `attempt` (emergency recovery fences another process's attempt, § 4).
 #[allow(clippy::too_many_arguments)]
 fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &str, op: &Op, attempt: Option<u64>, child: Option<&ChildEnv>) -> Receipt {
+    act_input(b,root,n,kind,args,text,op,attempt,child,&[])
+}
+
+pub fn act_files(b:&dyn Board,root:&Path,n:u64,kind:&str,text:&str,op:&Op,files:&[String])->Receipt {
+    let env=child_env();
+    act_input(b,root,n,kind,&[],text,op,own_attempt(n,&env),Some(&env),files)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&Op,attempt:Option<u64>,child:Option<&ChildEnv>,files:&[String])->Receipt {
+    let (original_text,original_files)=(text,files);
     let read = || -> Res<(board::Issue, bool, Vec<Entry>)> {
         let issue = b.issue(n)?;
         let log = entries(b, n)?;
@@ -248,7 +259,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         bound = Op { id: op.id.clone(), revision: Some(rev) }; &bound
     } else { op };
     if !issue.open {
-        if kind == "answer" && attempt.is_none() { return answer_note(b, root, n, args, text, op, &log, (State::Closed, rev)); }
+        if kind == "answer" && attempt.is_none() { return answer_note(b, root, n, args, text, op, &log, (State::Closed, rev), files); }
         return Receipt::rejected(n, op, format!("#{n} is closed"));
     }
     // § 1: only `start` or a person admits an issue; a `ready` without `taskq` would never spawn or show in status
@@ -257,7 +268,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         return Receipt { state: Some(before.state.name()), revision: Some(rev), next: format!("Owner: add the {} label to #{n} on the board, then retry.", service::TASK_LABEL), ..r };
     }
     if kind == "answer" && attempt.is_none() && (op.revision.is_some_and(|r| r != rev) || before.state != State::Ask) {
-        return answer_note(b, root, n, args, text, op, &log, (before.state, rev));
+        return answer_note(b, root, n, args, text, op, &log, (before.state, rev), files);
     }
     let owner_note = kind == "steer" && attempt.is_none();
     if !owner_note && op.revision.is_some_and(|r| r != rev) {
@@ -269,27 +280,33 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         return Receipt::rejected(n, op, "text ends with an `op-id:` or `revision:` line; reword it");
     }
     let human = matches!(kind, "answer" | "steer") || kind == "requeue" && attempt.is_none();
+    if !files.is_empty() && !human {return Receipt::rejected(n,op,"attachments require a human answer, steer or owner requeue");}
     let wrapped;
     let text = if human {
-        if text.contains(board::reply::MARKER) { return Receipt::rejected(n, op, "text contains a reserved reply marker; reword it, then send again"); }
-        if args.is_empty() && kind != "requeue" && let Err(e) = crate::task_text(kind, text) { return Receipt::rejected(n, op, e); }
+        if text.contains(board::reply::MARKER)||text.contains(crate::reply_files::MARKER) { return Receipt::rejected(n, op, "text contains a reserved reply marker; reword it, then send again"); }
+        if args.is_empty() && kind != "requeue" && (files.is_empty()||!text.trim().is_empty()) && let Err(e) = crate::task_text(kind, text) { return Receipt::rejected(n, op, e); }
         wrapped = crate::wrap_reply(text);
         if core::has_fields(&wrapped) { return Receipt::rejected(n, op, "wrapped text ends with an `op-id:` or `revision:` line; reword it"); }
         &wrapped
     } else { text };
     let text = if !(kind == "requeue" && args == ["main-moved"]) && attempt.is_some() && attempt == before.attempt { core::limit_text(n, &before, kind, text) } else { text.into() };
-    let body = core::with_fields(entry(kind, args, attempt, &text), op.id.as_deref(), op.revision);
+    // Check the transition before uploading anything; file-only replies still carry a nonempty attachment manifest.
+    let preview=if text.trim().is_empty()&&!files.is_empty(){"Attached files"}else{&text};
+    let body = core::with_fields(entry(kind, args, attempt, preview), op.id.as_deref(), op.revision);
     log.push(Entry { id: u64::MAX, body: body.clone(), edited: false });
     if !core::project(n, &log, deps).accepts(u64::MAX) {
         let late = answered(b, n, kind, &log[..log.len() - 1], deps);
         return Receipt { state: Some(before.state.name()), revision: Some(rev), ..Receipt::rejected(n, op, format!("#{n} is {}: `{kind}` not accepted", before.state.name())) }.late(late);
     }
     let unknown = |e: String| Receipt::new(n, op, "unknown", e, format!("Run `taskq inbox {n}`, then retry with the same --op-id."));
+    let files=match crate::reply_files::upload(b,n,files){Ok(files)=>files,Err(e)=>{tracing::info!(coreq_refusal=crate::reply_files::refusal_kind(&e));return Receipt::rejected(n,op,e);}};
     if before.publication.is_some() && matches!(kind, "requeue" | "later" | "failed" | "publication-failed")
         && let Err(e) = b.cancel_publication(n, before.result.as_deref().unwrap_or_default())
     {
         return Receipt::rejected(n, op, e);
     }
+    let text=crate::reply_files::append(&text,&files);
+    let body=core::with_fields(entry(kind,args,attempt,&text),op.id.as_deref(),op.revision);
     let id = match if human { board::reply::post(b, n, &body) } else { b.comment(n, &body) } {
         Ok(id) => id,
         Err(e) => return unknown(e),
@@ -314,7 +331,7 @@ fn act_as(b: &dyn Board, root: &Path, n: u64, kind: &str, args: &[&str], text: &
         log[i].edited = true;
         if kind == "answer" && attempt.is_none() {
             let p = core::project(n, &log, deps);
-            return answer_note(b, root, n, args, &text, op, &log, (p.task.state, p.revision));
+            return answer_note(b, root, n, args, original_text, op, &log, (p.task.state, p.revision), original_files);
         }
         let projection = core::project(n, &log, deps);
         let (t, rev) = (projection.task, projection.revision);

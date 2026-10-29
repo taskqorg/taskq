@@ -88,9 +88,9 @@ pub trait Board {
     /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
     fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}")) }
     /// § 2 visual evidence: stores the image file `path` for task `n` on the board and returns its absolute https URL.
-    fn upload_image(&self, _n: u64, _path: &std::path::Path) -> Result<String> { Err("image upload unsupported on this board".into()) }
+    fn upload_file(&self, _n: u64, _path: &std::path::Path) -> Result<String> { Err("image upload unsupported on this board".into()) }
     /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
-    fn image(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
+    fn file(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
     /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
     fn video_inline(&self) -> bool { false }
 }
@@ -189,8 +189,8 @@ impl Board for Profiled {
     fn requests(&self) -> crate::requests::Budget { self.0.requests() }
     fn forget(&self) { self.0.forget() }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
-    fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_image(n, path)) }
-    fn image(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.image(url)) }
+    fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_file(n, path)) }
+    fn file(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.file(url)) }
     fn video_inline(&self) -> bool { self.0.video_inline() }
 }
 
@@ -272,18 +272,45 @@ fn quote(s: &str) -> String {
     q
 }
 
-/// One request, any HTTP status. The token and body go through curl's config on stdin, never argv (R12: no secrets in `ps`).
+/// §5: private file transport keeps reply uploads/downloads outside bounded process pipes.
+struct HttpFiles(std::path::PathBuf);
+impl HttpFiles {
+    fn new() -> Result<Self> {
+        let dir=std::env::temp_dir().join(format!("taskq-http-{}",crate::runtime::uuid()));
+        let mut options=std::fs::DirBuilder::new();
+        #[cfg(unix)] {use std::os::unix::fs::DirBuilderExt;options.mode(0o700);}
+        options.create(&dir).map_err(|e|format!("board HTTP storage: {e}"))?;
+        Ok(Self(dir))
+    }
+    fn path(&self,name:&str)->std::path::PathBuf{self.0.join(name)}
+    fn response(&self)->Result<Vec<u8>> {
+        match std::fs::read(self.path("response")){Ok(bytes)=>Ok(bytes),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(vec![]),Err(e)=>Err(format!("board HTTP response: {e}"))}
+    }
+    fn body(&self,body:&Value)->Result<()> {
+        use std::io::Write;
+        let mut options=std::fs::OpenOptions::new();options.create_new(true).write(true);
+        #[cfg(unix)] {use std::os::unix::fs::OpenOptionsExt;options.mode(0o600);}
+        let mut file=options.open(self.path("request")).map_err(|e|e.to_string())?;
+        file.write_all(body.to_string().as_bytes()).map_err(|e|e.to_string())
+    }
+}
+impl Drop for HttpFiles {fn drop(&mut self){for name in ["request","response"]{let _=std::fs::remove_file(self.path(name));}let _=std::fs::remove_dir(&self.0);}}
+
+/// One request, any HTTP status. Token on stdin, body/response in private files, never argv.
 /// `etag` makes a GET conditional (`If-None-Match`).
 fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>, etag: Option<&str>) -> Result<Reply> {
+    let files=HttpFiles::new()?;
     let mut cfg = format!(
         "silent\nshow-error\ndump-header = \"-\"\nrequest = {}\nurl = {}\nheader = {}\nheader = \"Accept: application/json\"\nheader = \"Expect:\"\nmax-time = 60\n",
         quote(method), quote(url), quote(auth)
     );
+    cfg+=&format!("output = {}\n",quote(&files.path("response").to_string_lossy()));
     if let Some(e) = etag {
         cfg += &format!("header = {}\n", quote(&format!("If-None-Match: {e}")));
     }
     if let Some(b) = body {
-        cfg += &format!("header = \"Content-Type: application/json\"\ndata-binary = {}\n", quote(&b.to_string()));
+        files.body(b)?;
+        cfg += &format!("header = \"Content-Type: application/json\"\ndata-binary = {}\n", quote(&format!("@{}",files.path("request").display())));
     }
     let out = match coreq::process::exchange("board.http", Command::new("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(65)) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
@@ -292,7 +319,8 @@ fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>, etag: Option<
     if !out.status.success() {
         return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim()));
     }
-    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    text.push_str(&String::from_utf8(files.response()?).map_err(|e|format!("board HTTP response: {e}"))?);
     let mut rest = text.as_str();
     loop {
         let (head, body) = rest.split_once("\r\n\r\n").ok_or("curl: no HTTP header")?;
@@ -590,13 +618,15 @@ impl Api {
         self.credentials.borrow().budget.borrow_mut().count(op.clone());
         crate::requests::tally(&op);
         let mut cfg = format!("silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n", quote(&url), quote(&self.credentials.borrow().auth));
+        let files=HttpFiles::new()?;
+        cfg+=&format!("output = {}\n",quote(&files.path("response").to_string_lossy()));
         if let Some(f) = form { cfg += &format!("form = {}\n", quote(&format!("file=@{}", f.display()))); }
         let out = match coreq::process::exchange("board.http", Command::new("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(125)) {
             Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
             Err(e) => return Err(format!("curl: {e}")),
         };
         if !out.status.success() { return Err(format!("curl {method} {url}: {}", String::from_utf8_lossy(&out.stderr).trim())); }
-        Ok(out.stdout)
+        files.response()
     }
 
     fn all(&self, url: &str) -> Result<Vec<Value>> {
@@ -791,14 +821,14 @@ impl Fake {
 
 #[cfg(test)]
 impl Board for Fake {
-    fn upload_image(&self, n: u64, path: &std::path::Path) -> Result<String> {
+    fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
         let mut st = self.state.borrow_mut();
         let url = format!("https://board.example/{n}/{}-{}", st.images.len(), image_name(path));
         st.images.push((url.clone(), bytes));
         Ok(url)
     }
-    fn image(&self, url: &str) -> Result<Vec<u8>> {
+    fn file(&self, url: &str) -> Result<Vec<u8>> {
         let st = self.state.borrow();
         let b = st.images.iter().find(|i| i.0 == url).map(|i| i.1.clone()).ok_or(format!("image unknown: {url}"))?;
         Ok(if st.bad_image { b[..b.len() / 2].to_vec() } else { b })
@@ -2152,5 +2182,36 @@ exit 0
         for url in ["https://evil.example/x", "https://api.github.com.evil.example/x"] {
             assert!(h.call("GET", url, None).err().is_some_and(|e| e.starts_with("refused")), "{url}");
         }
+    }
+
+    // Chain: §5 real curl request/response -> native file transport. Risk: a 20 MiB attachment hits a process-pipe cap.
+    #[test]
+    fn reply_files_cross_real_http_without_process_buffer_caps() {
+        use std::{io::{BufRead,Read,Write},net::TcpListener,time::{Duration,Instant}};
+        let listener=TcpListener::bind("127.0.0.1:0").unwrap();listener.set_nonblocking(true).unwrap();
+        let root=format!("http://{}",listener.local_addr().unwrap());
+        let payload=serde_json::json!({"data":"x".repeat(20*1024*1024)});
+        let expected=payload.to_string().into_bytes();let reply=expected.clone();
+        let server=std::thread::spawn(move||{
+            for request in 0..2 {
+                let until=Instant::now()+Duration::from_secs(20);
+                let mut peer=loop {match listener.accept(){Ok((s,_))=>break s,Err(e) if e.kind()==std::io::ErrorKind::WouldBlock&&Instant::now()<until=>std::thread::sleep(Duration::from_millis(10)),Err(e)=>panic!("HTTP fixture accept: {e}")}};
+                peer.set_nonblocking(false).unwrap();
+                peer.set_read_timeout(Some(Duration::from_secs(20))).unwrap();peer.set_write_timeout(Some(Duration::from_secs(20))).unwrap();
+                let mut reader=std::io::BufReader::new(peer.try_clone().unwrap());let mut length=0;
+                loop{let mut line=String::new();reader.read_line(&mut line).unwrap();if line=="\r\n"||line.is_empty(){break;}if let Some((key,value))=line.split_once(':'){if key.eq_ignore_ascii_case("content-length"){length=value.trim().parse::<usize>().unwrap();}}}
+                let mut data=vec![0;length];reader.read_exact(&mut data).unwrap();
+                if request==0{assert!(data==expected,"POST changed or truncated the large JSON body");}
+                write!(peer,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",reply.len()).unwrap();peer.write_all(&reply).unwrap();
+                // Finish the response before dropping both Windows socket handles; keep the peer's close observable.
+                peer.shutdown(std::net::Shutdown::Write).unwrap();
+                let mut trailing=Vec::new();reader.read_to_end(&mut trailing).unwrap();assert!(trailing.is_empty(),"unexpected bytes after the HTTP request");
+            }
+        });
+        let got=curl("POST",&format!("{root}/upload"),"Authorization: Bearer invented",Some(&payload),None).unwrap();
+        assert_eq!(got.status,200);assert!(got.body.as_bytes()==payload.to_string().as_bytes(),"HTTP reply was truncated");
+        let mut api=(github::KIND.api)("invented.example","o/r","invented");api.root=root.clone();api.base=root;
+        let got=api.raw("/download",None).unwrap();assert!(got==payload.to_string().as_bytes(),"binary download was truncated");
+        server.join().unwrap();
     }
 }

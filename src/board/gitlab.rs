@@ -300,7 +300,7 @@ impl Board for GitLab {
         format!("{}/{}/-/issues/{n}", self.api.root.trim_end_matches("/api/v4"), self.api.sibling("/projects/", repo))
     }
 
-    fn upload_image(&self, _n: u64, path: &std::path::Path) -> Result<String> {
+    fn upload_file(&self, _n: u64, path: &std::path::Path) -> Result<String> {
         // the multipart part is named after the file: copy it under a plain ASCII name first
         // and a unique one: GitLab 17.2 replies without the upload id, which the newest uploads list finds by name
         let id = crate::runtime::uuid();
@@ -319,7 +319,7 @@ impl Board for GitLab {
         upload_url(&self.api.root, self.project()?, &reply)
     }
 
-    fn image(&self, url: &str) -> Result<Vec<u8>> {
+    fn file(&self, url: &str) -> Result<Vec<u8>> {
         let unknown = || format!("image unknown: {url} is not a taskq upload of this project");
         let project = self.project()?;
         let id = match upload_id(&self.api.root, project, url) {
