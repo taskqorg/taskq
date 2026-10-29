@@ -356,7 +356,8 @@ pub struct Service<'a> {
     delivered: HashMap<u64, u64>,
     cache: CommentCache,
     deps: DepCache,
-    label_fixes: HashMap<u64, (String, Vec<String>, u32)>,
+    /// Label fix streaks: wanted label, stale labels, passes, board time after the last write, reported.
+    label_fixes: HashMap<u64, (String, Vec<String>, u32, i64, bool)>,
     cancelled_publications: HashMap<u64, u64>,
     /// #1820 each publication's last recorded wait reason: one `checks` observation per reason, never one per pass.
     publication_waits: HashMap<u64, String>,
@@ -1595,15 +1596,20 @@ impl<'a> Service<'a> {
                 // Adapter success includes assignment readback; one hand-moved label is expected. The same fix again on
                 // the next pass means another writer folds differently (#1550: N-1 host): back off, log and report once.
                 // ponytail: retry every 60 passes so a fixed peer is caught up; a peer-written-label signal if that lags
-                let count = previous_fixes.get(&n).filter(|(w, old, _)| w == &want && old == &stale)
-                    .map_or(1, |(_, _, count)| count.saturating_add(1));
+                let (count, mut fixed_at, mut reported) = previous_fixes.get(&n).filter(|(w, old, ..)| w == &want && old == &stale)
+                    .map_or((1, 0, false), |(_, _, count, at, reported)| (count.saturating_add(1), *at, *reported));
+                // #1873: a revert is a later write without the wanted label. A list read from before the fix (reused or
+                // lagging) or a peer still moving the same way (its comment lands seconds before its labels) is no loop.
+                let reverted = count > 1 && v.issue.updated > fixed_at && !v.issue.labels.contains(&want);
                 if count % 60 == 1 {
                     project(self.board, &v.issue, &v.projection.task)?;
-                } else if count == 2 {
+                    fixed_at = self.board.now()?;
+                } else if reverted && !reported {
                     log!("#{n} label {want} reverted by another writer after this host's fix; backing off (§ 2)");
                     crate::incident::detect("invariant.label_loop", concat!("src/service.rs:", line!()), "none", &[v.projection.task.state.name()], &["passes:2"]);
+                    reported = true;
                 }
-                self.label_fixes.insert(n, (want, stale, count));
+                self.label_fixes.insert(n, (want, stale, count, fixed_at, reported));
             }
             if v.projection.task.state == State::Closed {
                 touched.insert(n);
@@ -3950,6 +3956,31 @@ Open: none")).unwrap();
         b.labels(n, &["q-ask".into()], &["q-ready".into()]).unwrap();
         s.pass().unwrap(); // different fix also breaks the streak
         assert!(has("q-ready") && crate::incident::take_detected().is_empty());
+    }
+
+    // Chain: incident label loop (#1873). Risk: another host's normal spawn lands its comment seconds before its label
+    // move; this host fixes the label, then the next pass reads a list from before the fix (or the peer mid-move) and
+    // files a loop for a task that moves on normally (2026-10-29: #1813, #1840).
+    #[test]
+    fn label_fix_after_another_hosts_spawn_is_no_loop() {
+        crate::incident::take_detected();
+        let b = Fake::default();
+        let n = b.create("task", "", &[TASK_LABEL.into(), "q-ready".into()]).unwrap();
+        b.comment(n, "taskq: spawn worker claude:peer win").unwrap();
+        let c = cfg("local");
+        let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
+        s.focus.clear();
+        let before = b.issues(None).unwrap();
+        s.pass().unwrap(); // fold `doing`, label `q-ready`: this host fixes it
+        assert!(b.issue(n).unwrap().labels.contains(&"q-doing".to_string()));
+        b.state.borrow_mut().stale_list = Some(before);
+        s.pass().unwrap(); // the list predates the fix
+        b.labels(n, &["q-ready".into(), "q-doing".into()], &[]).unwrap();
+        s.pass().unwrap(); // a read while the peer moves the same way shows both labels
+        b.labels(n, &[], &["q-ready".into()]).unwrap();
+        s.pass().unwrap();
+        assert!(crate::incident::take_detected().is_empty());
+        assert!(s.label_fixes.is_empty());
     }
 
     // Chain: § 4 one service per host name (#933). Risk: a second install under the same host name posts `gone` for
