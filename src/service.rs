@@ -1348,6 +1348,20 @@ impl<'a> Service<'a> {
         let mut touched = HashSet::new();
         let mut released = HashSet::new();
         self.execution_waits.clear();
+        // #1886: a lost spawn no longer the live attempt (requeued, parked) waits on nothing; any run of its host, a
+        // retired one too, releases it no-start so another host can claim the task. A reached start (attempt log or a
+        // hand-in of that attempt) stays unknown (R12).
+        let stale_spawns: Vec<_> = views.iter().flat_map(|v| {
+            let (n, t) = (v.issue.number, &v.projection.task);
+            v.projection.executions.iter().filter(move |x| t.attempt != Some(x.attempt) || !matches!(t.state, State::Doing | State::Review))
+                .filter(move |x| !core::handed_in(n, &v.log, x.attempt, x.attempt)).map(move |x| (n, x))
+        }).filter(|(n, x)| self.lost_spawn(*n, x)).map(|(n, x)| (n, x.attempt)).collect();
+        for (n, a) in stale_spawns {
+            release_execution(self.board, n, a, a, "no-start")?;
+            self.retired(n, a, a, false);
+            released.insert(a);
+            self.log.push(format!("#{n} lost spawn {a}: no attempt log on {me} and no longer the live attempt; released no-start"));
+        }
         let native_until=std::time::Instant::now()+native_budget;
         // Cold scans leave time for already owned work and control.
         let recovery_until=std::time::Instant::now()+native_budget/4;
@@ -1531,7 +1545,9 @@ impl<'a> Service<'a> {
             let unresolved: Vec<_> = v.projection.executions.iter()
                 .filter(|x| x.release.is_none() && !released.contains(&x.id) && !remote_running(x)).collect();
             if let Some(x) = unresolved.first().filter(|x| !self.held.iter().any(|l| l.execution.unwrap_or(l.attempt) == x.id)) {
-                self.execution_waits.entry(v.issue.number).or_insert_with(|| format!("execution {} on {}: termination unconfirmed", x.id, x.host));
+                // #1886: name the host step that can resolve it
+                let step = if x.host == me { format!("reboot {me} to prove exit") } else { format!("start the taskq service on {} once, after a reboot if the run had started", x.host) };
+                self.execution_waits.entry(v.issue.number).or_insert_with(|| format!("execution {} on {}: termination unconfirmed; {step}", x.id, x.host));
             } else if let Some(x) = v.projection.executions.iter()
                 .find(|x| Some(x.attempt) == v.projection.task.attempt && !v.projection.task.inbox.is_empty() && x.release == Some(core::Release::Exit) && !x.accepted) {
                 self.execution_waits.insert(v.issue.number, format!("execution {} on {}: input acceptance unknown; reconcile native input", x.id, x.host));
@@ -4763,6 +4779,50 @@ Open: none")).unwrap();
         assert_eq!((task(&b, n).state, task(&b, n).attempt), (State::Doing, Some(a)));
         assert_eq!(core::executions(n, &entries(&b, n).unwrap())[0].release, None);
         assert!(s.execution_waits[&n].contains("termination unconfirmed"), "{:?}", s.execution_waits);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Chain: #1886 (pilotq#133) lost spawn on a retired host, then the PM requeues -> no host claims while it is unreleased;
+    // one run of that host releases it no-start once and another host claims. Risk: the task stays unclaimable until a
+    // retired host is restored by hand, a repeated run posts a second release, or a reached start is released.
+    #[test]
+    fn retired_host_run_releases_a_requeued_lost_spawn_and_a_reached_start_names_the_host_step() {
+        let dir = std::env::temp_dir().join(format!("taskq-retired-spawn-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(dir.join(".taskq")).unwrap();
+        let (mut mac, mut hermes) = (cfg("mac"), cfg("hermes"));
+        (mac.root, hermes.root) = (dir.clone(), dir.clone());
+        let b = Fake::default();
+        let labels = [TASK_LABEL.to_string(), "host-mac".into()];
+        let lost = b.create("lost", "", &labels).unwrap();
+        let reached = b.create("reached", "", &labels).unwrap();
+        let handed = b.create("handed", "", &labels).unwrap();
+        let mut spawns = vec![];
+        for n in [lost, reached, handed] {
+            let a = b.comment(n, &core::entry("spawn", &["worker", "codex:-", "hermes"], None, "")).unwrap();
+            // the child's own requeue proves its start like an attempt log does
+            b.comment(n, &core::entry("requeue", &[], (n == handed).then_some(a), "Reason: hermes retired")).unwrap();
+            spawns.push(a);
+        }
+        std::fs::write(crate::runtime::attempt_log(&dir, "worker", reached, spawns[1]), "").unwrap();
+        let releases = |n| entries(&b, n).unwrap().iter().filter(|e| e.body.starts_with("taskq: released")).count();
+        let mut m = service(&b, &mac, Rc::new(RefCell::new(vec![])));
+        m.pass().unwrap();
+        for n in [lost, reached] {
+            assert_eq!((task(&b, n).state, task(&b, n).attempt), (State::Ready, None), "#{n}: unreleased execution blocks the claim");
+            assert!(m.execution_waits[&n].ends_with("termination unconfirmed; start the taskq service on hermes once, after a reboot if the run had started"), "{:?}", m.execution_waits);
+        }
+        let mut h = service(&b, &hermes, Rc::new(RefCell::new(vec![])));
+        for _ in 0..2 {
+            h.pass().unwrap();
+            assert_eq!(core::executions(lost, &entries(&b, lost).unwrap())[0].release, Some(core::Release::NoStart));
+            assert_eq!([lost, reached, handed].map(releases), [1, 0, 0], "one fenced release; a reached start stays unknown (R12)");
+        }
+        assert!(h.log.iter().any(|l| l.starts_with(&format!("#{lost} lost spawn {}: no attempt log on hermes", spawns[0]))), "{:?}", h.log);
+        assert!(h.execution_waits[&reached].ends_with("termination unconfirmed; reboot hermes to prove exit"), "{:?}", h.execution_waits);
+        m.pass().unwrap();
+        let t = task(&b, lost);
+        assert_eq!((t.state, host_of(&t)), (State::Doing, Some("mac")), "claimable elsewhere");
+        assert_eq!((task(&b, reached).attempt, task(&b, handed).attempt), (None, None));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

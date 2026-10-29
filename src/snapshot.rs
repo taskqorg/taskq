@@ -951,6 +951,8 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
             ("native execution evidence missing; reconcile the owning runtime", 5), ("session identity unknown; recover the original native session", 5),
             ("Claude returned no valid background ID; launch outcome unknown; reconcile the original input", 2),
             ("spawn 3 not started on mac: input not accepted; lost spawn released no-start 300 s after the spawn", 2),
+            ("execution 3 on mac: termination unconfirmed; reboot mac to prove exit", 4),
+            ("execution 3 on hermes: termination unconfirmed; start the taskq service on hermes once, after a reboot if the run had started", 4),
         ];
         for (raw, k) in cases { assert_eq!(wait_text(raw), WAIT_TEXTS[k], "{raw}"); }
         // status text and row JSON: owner text only in the row, raw reason kept in --json

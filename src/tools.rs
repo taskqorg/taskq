@@ -128,8 +128,13 @@ mod tests {
     fn script(dir: &Path, name: &str, body: &str) -> std::path::PathBuf {
         let (p, text) = if cfg!(windows) { (dir.join(format!("{name}.cmd")), format!("@echo off\r\n{}\r\n", body.replace('\n', "\r\n"))) }
             else { (dir.join(name), format!("#!/bin/sh\n{body}\n")) };
-        std::fs::write(&p, text).unwrap();
-        #[cfg(unix)] std::fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        if cfg!(windows) { std::fs::write(&p, text).unwrap(); return p; }
+        // A write fd held here leaks into a child another test thread forks, so exec fails with ETXTBSY (os error 26);
+        // `cp` writes the executable from its own process instead.
+        let src = dir.join(format!("{name}.src"));
+        std::fs::write(&src, text).unwrap();
+        #[cfg(unix)] std::fs::set_permissions(&src, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        assert!(Command::new("cp").arg(&src).arg(&p).status().unwrap().success());
         p
     }
 
