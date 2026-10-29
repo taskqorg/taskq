@@ -19,6 +19,9 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    let m=await read();
    assert.equal(m.session,undefined,'A2: browser must not select a native session');
    assert.equal(m.attempt,71);assert.equal(m.root,'fixture-alpha');
+   const retryAt=Date.now();
+   await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'unknown',reason:'Invented transcript unavailable'});
+   m=await read();assert(Date.now()-retryAt>=900,'A1/R12: unavailable initial transcripts retry at the one-second cadence');
    await reply(m,{items:[{at:0,i:0,role:'assistant',text:'First worker message'},{at:10,i:0,role:'tool',text:'Bash'}],end:20});
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('First worker message'));
    assert.match(await panel.innerText(),/Tool · Bash/,'A1: first render includes tool lines');

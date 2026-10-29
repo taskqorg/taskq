@@ -187,7 +187,7 @@ module.exports=execution.module('conversations',{
    worker:function(thread,t,p){
     if(workerPaused||!p?.alive||p.complete===false||!t?.local_session||t.state!=='doing'||t.role!=='worker'||!t.attempt){api.workerStop();return null;}
     if(live?.attempt!==t.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();live={thread,root:p.root,attempt:t.attempt,items:[],end:null,reason:'',busy:null,timer:null,timeout:null,ended:false,stick:true,anchor:null};}
-    if(!live.ended&&!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null?0:1000);
+    if(!live.ended&&!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null&&!live.reason?0:1000);
     const label={assistant:'Worker',owner:'You · via the board'};
     return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime),
      !live.stick&&h('button',{'data-c':'worker-latest',class:'dialogue-latest'},'Jump to latest'),
