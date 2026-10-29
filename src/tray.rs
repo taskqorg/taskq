@@ -2207,7 +2207,11 @@ fn icon_data(s:&Summary)->icon::Data {
     icon::Data { blocked:s.known.then_some(s.blocked),counts:s.counts.map(|n|s.known.then_some(n)),bins:s.bins.clone(),paused:!s.run }
 }
 fn draw(s:&Summary,dark:bool,k:f32,dpr:f32)->Result<Rgba,String> {
-    icon::raster(&icon::svg(&icon_data(s),dark),(22.0*k*dpr).round() as u32)
+    draw_svg(&icon::svg(&icon_data(s),dark),k,dpr)
+}
+fn draw_svg(svg:&str,k:f32,dpr:f32)->Result<Rgba,String> {
+    let raster=if cfg!(target_os="macos") {icon::raster_slot}else{icon::raster};
+    raster(svg,(22.0*k*dpr).round() as u32)
 }
 
 fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, sig: &mut String, window: Option<&Window>) {
@@ -2223,7 +2227,7 @@ fn refresh_icon(tray: &Option<TrayIcon>, st: &Value, s: &Settings, dark: bool, s
         return;
     }
     let applied = crate::profile::measure("tray.render", || {
-        let rendered = svg.as_ref().map(|svg| icon::raster(svg,(22.0*k*dpr).round() as u32));
+        let rendered = svg.as_ref().map(|svg| draw_svg(svg,k,dpr));
         let failed = rendered.as_ref().is_some_and(Result::is_err);
         let img = agentq_mark(rendered.and_then(Result::ok).unwrap_or_else(|| compact(sum.run, dark, k * dpr)),st["agentq"]["warning"]==true);
         let applied = t.set_icon(Some(rgba_icon(&img)));
@@ -3493,6 +3497,16 @@ mod tests {
         for (key,value) in [("message",json!("private")),("operation",json!("js.private-data")),("trace",json!("/private/path")),("counts",json!({"private":1})),("error",json!("raw-error"))] {
             let mut invalid=row.clone();invalid[key]=value;assert!(web_observation(&invalid).is_err(),"{key}");
         }
+    }
+
+    // #1789 A1/A3: macOS can widen its slot; Windows retains a square notification-area image.
+    #[test]
+    fn two_digit_summary_uses_the_native_canvas() {
+        let sum=Summary {counts:[12,3,15,0],blocked:0,known:true,run:true,..summary(&[],(0,1))};
+        let image=draw(&sum,false,1.0,2.0).unwrap();
+        assert_eq!(image.h,44);
+        assert_eq!(image.w>44,cfg!(target_os="macos"));
+        assert_eq!(draw_svg(&icon::svg(&icon_data(&sum),false),1.0,2.0).unwrap().px,image.px,"published/native paths agree");
     }
 
     // A7: removed Custom resolves to Summary; unrelated settings survive a subsequent save.
