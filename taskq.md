@@ -178,7 +178,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 | `taskq close N [M..] [--text VERDICT]` | publish (§ 7) and close; one failure never stops the rest |
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | owner gate approval of the current result (§ 7; refused with `TASKQ_ATTEMPT`) / recipe run (§ 7) |
 | `taskq status [--only L,..] [--json]` / `taskq status --closed [--page N] [--since T]` | R6 report of tasks with one of the labels (none: all); no write. `--json` snapshot and `--closed` page: [menu] |
-| `taskq inbox N` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `retro`: an owner session (§ 4) over use-case proposals and board `ask`/`answer`/`requeue` history; files accepted ones with `add` |
+| `taskq inbox N` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `retro`: an owner session (§ 4) on use-case proposals and board `ask`/`answer`/`requeue` history; files accepted ones with `add` |
 | `taskq wait [--window MIN] [--only L,..]` | PM: block until a task moves to `ask`, `review` with options, closed or `failed`; print `ask #N` etc. or `tick` |
 | `taskq cleanup [--force]` | remove clean worktrees and branches of closed tasks; `--force` also dirty ones (R11) |
 | `taskq update [--check]` / `taskq enroll <https-url> [--headless] [--telemetry]` / `taskq connection status` / `taskq disconnect` | update: § 8 update (coreq) and sweep once; the rest: [DashQ connection][dq], approve this board's scope in the browser (`--headless`: print the code only), `connected` only after DashQ projects the first snapshot; status without network; disconnect, pairing, revoke, host observations, admission: [detail][dq] |
