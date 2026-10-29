@@ -21,6 +21,8 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    await page.locator('.tqp-counts [data-state="doing"]').first().click();await page.locator('[data-a="all-tasks"]').first().click();
    // A3: chip order, then p0/p1/none, then number.
    assert.deepEqual(await page.locator('[data-card]').evaluateAll(es=>es.map(e=>+e.querySelector('[data-n],[data-task]')?.dataset.n||+(e.textContent.match(/#(\d+)/)||[])[1])),want,'rows follow chip order, priority, number');
+   // Chain: M3.9 / #1881 A2-A3. Risk: compact rows put state back beside runtime/time instead of first.
+   assert(await page.locator('.tqp-task-head').evaluateAll(es=>es.length>0&&es.every(e=>e.firstElementChild.matches('.task-stage')&&e.firstElementChild.getBoundingClientRect().left<=e.querySelector('.task-identity').getBoundingClientRect().left)),'state icon is the first row-head element at the left edge');
    // A2: no repeated action buttons; the row menu holds them and returns focus on Escape.
    assert.equal(await page.locator('[data-card] [data-a="control"],[data-card] [data-a="start"]').count(),0,'rows carry no lifecycle buttons');
    const menu=page.locator('[data-a="task-detail"][aria-label="Details for Alpha #5"]').first();

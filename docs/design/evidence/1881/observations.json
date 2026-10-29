@@ -1,0 +1,246 @@
+[
+  {
+    "version": "before",
+    "theme": "light",
+    "heads": [
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "play",
+          "openai",
+          "5m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "git-pull-request",
+          "network",
+          "claude",
+          "2m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "message-circle-question",
+          "openai",
+          "1m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "circle-x",
+          "3m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "circle",
+          "<1m"
+        ],
+        "left": 10,
+        "identity": 10
+      }
+    ],
+    "question": "exact root/board/task/revision preserved"
+  },
+  {
+    "version": "before",
+    "theme": "dark",
+    "heads": [
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "play",
+          "openai",
+          "5m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "git-pull-request",
+          "network",
+          "claude",
+          "2m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "message-circle-question",
+          "openai",
+          "1m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "circle-x",
+          "3m"
+        ],
+        "left": 10,
+        "identity": 10
+      },
+      {
+        "first": "task-identity",
+        "order": [
+          "github",
+          "circle",
+          "<1m"
+        ],
+        "left": 10,
+        "identity": 10
+      }
+    ],
+    "question": "exact root/board/task/revision preserved"
+  },
+  {
+    "version": "after",
+    "theme": "light",
+    "heads": [
+      {
+        "first": "task-stage good",
+        "order": [
+          "play",
+          "github",
+          "openai",
+          "5m"
+        ],
+        "left": 10,
+        "identity": 31
+      },
+      {
+        "first": "task-stage review",
+        "order": [
+          "git-pull-request",
+          "github",
+          "network",
+          "claude",
+          "2m"
+        ],
+        "left": 10,
+        "identity": 31
+      },
+      {
+        "first": "task-stage ask",
+        "order": [
+          "message-circle-question",
+          "github",
+          "openai",
+          "1m"
+        ],
+        "left": 10,
+        "identity": 47
+      },
+      {
+        "first": "task-stage danger",
+        "order": [
+          "circle-x",
+          "github",
+          "3m"
+        ],
+        "left": 10,
+        "identity": 31
+      },
+      {
+        "first": "task-stage ",
+        "order": [
+          "circle",
+          "github",
+          "<1m"
+        ],
+        "left": 10,
+        "identity": 31
+      }
+    ],
+    "question": "exact root/board/task/revision preserved"
+  },
+  {
+    "version": "after",
+    "theme": "dark",
+    "heads": [
+      {
+        "first": "task-stage good",
+        "order": [
+          "play",
+          "github",
+          "openai",
+          "5m"
+        ],
+        "left": 10,
+        "identity": 31
+      },
+      {
+        "first": "task-stage review",
+        "order": [
+          "git-pull-request",
+          "github",
+          "network",
+          "claude",
+          "2m"
+        ],
+        "left": 10,
+        "identity": 31
+      },
+      {
+        "first": "task-stage ask",
+        "order": [
+          "message-circle-question",
+          "github",
+          "openai",
+          "1m"
+        ],
+        "left": 10,
+        "identity": 47
+      },
+      {
+        "first": "task-stage danger",
+        "order": [
+          "circle-x",
+          "github",
+          "3m"
+        ],
+        "left": 10,
+        "identity": 31
+      },
+      {
+        "first": "task-stage ",
+        "order": [
+          "circle",
+          "github",
+          "<1m"
+        ],
+        "left": 10,
+        "identity": 31
+      }
+    ],
+    "question": "exact root/board/task/revision preserved"
+  }
+]

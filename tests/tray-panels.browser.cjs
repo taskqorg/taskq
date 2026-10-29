@@ -10,13 +10,17 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
   await page.setContent(fs.readFileSync('build/web/tray.html','utf8'));
   await page.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
   const check=(ok,reason)=>{if(!ok)failures.push(reason);};
+  // Chain: M3.9 / #1881 A2: Home and project blocks share the state-first compact row.
+  const stateFirst=()=>page.locator('.tqp-task-head').evaluateAll(es=>es.length>0&&es.every(e=>e.firstElementChild.matches('.task-stage')));
   const shot=async name=>{if(process.env.PANEL_EVIDENCE){fs.mkdirSync(process.env.PANEL_EVIDENCE,{recursive:true});await page.screenshot({path:process.env.PANEL_EVIDENCE+'/'+name+'.png'});}};
   await page.evaluate(s=>taskq.receive(s),{...snapshot,page:'home'});
   await shot('G06-home');
   check(await page.locator('[data-card]').count()===1,'Home must show the complete task list after panels');
+  check(await stateFirst(),'Home state icon must be the first row-head element');
   check(!await page.locator('.content').innerText().then(t=>t.includes('Attention')),'G06: empty Attention takes no row');
   await page.evaluate(s=>taskq.receive(s),{...snapshot,page:project.root});
   await shot('G05-project');
+  check(await stateFirst(),'Project state icon must be the first row-head element');
   check(await page.getByRole('button',{name:'Alpha',exact:true}).count()===0,'G05: project identity must appear only in navigation');
   check(await page.getByRole('link',{name:/Board/}).count()===1,'G05/V08: one independent Board destination');
   assert.deepEqual(failures,[]);
