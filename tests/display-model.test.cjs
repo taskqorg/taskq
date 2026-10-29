@@ -23,3 +23,11 @@ assert(fx.cli.includes('(ask, '+ask.age+')'));
 assert(page.includes('<span class="tqp-age">'+ask.age+'</span>'));
 // mode: the paused project reads paused on the page as the CLI Paused line does
 assert.equal(fx.projects[0].mode,'paused');assert(page.includes('Paused: running tasks finish'));
+
+// #1840 A1/A2: failed projects retain a named cause without poisoning loaded, scoped counts.
+const loaded=structuredClone(fx.projects[0]),broken={...structuredClone(loaded),root:'/fixture/broken',name:'Broken',issues:'https://example.org/broken/issues',complete:false,partial:['Broken'],error:'no access to the repository',tasks:[{...structuredClone(loaded.tasks.find(t=>t.state==='ready')),n:99,title:'Retained stale row',dup:false,rank:99}]};
+c.S={...c.S,projects:[loaded,broken],display:{...fx.display,all:{...fx.display.all,partial:['Broken']}}};c.page='home';
+const mixed=c.filteredTasks(null);
+assert(mixed.includes('All tasks '+loaded.tasks.filter(t=>t.state!=='closed').length),'loaded task total stays visible');
+assert(mixed.includes('Broken: no access to the repository'),'failed source names its cause');
+assert(!mixed.includes('Partial: refresh the affected project or open its Board.'));

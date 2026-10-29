@@ -319,6 +319,25 @@ def changes(base):
     return sorted(set(filter(None, changed)))
 
 
+def check_environment(environment):
+    env = dict(environment)
+    if os.name == 'nt' and not shutil.which('sh', path=env.get('PATH')):
+        git = shutil.which('git', path=env.get('PATH'))
+        shell = Path(git).resolve().parent.parent / 'usr' / 'bin' if git else None
+        if shell and (shell / 'sh.exe').is_file():
+            env['PATH'] = env.get('PATH', '') + os.pathsep + str(shell)
+    return env
+
+
+def test_environment(environment, install):
+    """Owner-operation fixtures use their own installation, never the launching worker's identity or credentials."""
+    env = dict(environment)
+    for key in ('TASKQ_TASK', 'TASKQ_ATTEMPT', 'TASKQ_ROLE', 'TASKQ_ROOT', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID',
+                'CLAUDE_CODE_SESSION_ID', 'COREQ_TRACE_CONTEXT', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'TASKQ_INCIDENT_REPORTS'):
+        env.pop(key, None)
+    return {**env, 'TASKQ_INSTALL': str(install)}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', default=os.environ.get('CHECK_BASE', 'HEAD^'))
@@ -341,15 +360,18 @@ def main():
         return
     print('Selected checks:', scope, '| base:', args.base, flush=True)
     started = time.monotonic()
-    env = dict(os.environ)
+    env = check_environment(os.environ)
 
-    def run(command, extra_env=None):
+    def run(command, extra_env=None, environment=None):
         left = BUDGET - (time.monotonic() - started)
         if left <= 0:
             raise TimeoutError('selected gate exceeded 900s including setup/build')
         print('+', ' '.join(command), flush=True)
-        command = [shutil.which(command[0]) or command[0], *command[1:]]
-        subprocess.run(command, cwd=ROOT, env={**env, **(extra_env or {})}, check=True, timeout=left)
+        child_env = {**(env if environment is None else environment), **(extra_env or {})}
+        command = [shutil.which(command[0], path=child_env.get('PATH')) or command[0], *command[1:]]
+        if os.name == 'nt' and Path(command[0]).stem == 'sh':
+            child_env['PATH'] = str(Path(command[0]).parent) + os.pathsep + child_env.get('PATH', '')
+        subprocess.run(command, cwd=ROOT, env=child_env, check=True, timeout=left)
 
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
@@ -364,10 +386,11 @@ def main():
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
-            run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']))
+            with tempfile.TemporaryDirectory(prefix='taskq-tests-') as install:
+                run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']), environment=test_environment(env, install))
             if scope == 'full':
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
-                    run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_INSTALL':install, 'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'})
+                    run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'}, environment=test_environment(env, install))
             if os.environ.get('RUNNER_OS') in (None, 'Linux'):
                 for script in sorted((ROOT / 'tests').glob('*.test.cjs')):
                     run(['node', script.relative_to(ROOT).as_posix()])

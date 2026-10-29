@@ -8,6 +8,7 @@ pub const KIND: Kind = Kind {
     user_key: "login",
     default_host: "github.com",
     token: |tool, _host| token(&tool.install),
+    reload_token: true,
     token_env: &["GH_TOKEN", "GITHUB_TOKEN"],
     api,
     board: |api| Box::new(GitHub { api, rules: Default::default(), open: Default::default() }),
@@ -27,8 +28,8 @@ fn api(host: &str, repo: &str, token: &str) -> Api {
 
 pub struct GitHub {
     pub(super) api: Api,
-    /// `main` branch rules, read once per process (#1359). ponytail: a rules change applies after a service restart.
-    rules: std::cell::RefCell<Option<Value>>,
+    /// `main` branch rules, read once per credential (#1359). ponytail: same-token rules changes need a service restart.
+    rules: std::cell::RefCell<Option<(u64, Value)>>,
     /// The last open-issue list and when it was read: reused while the newest-updated probe answers 304 (#1819).
     open: std::cell::RefCell<Option<(std::time::Instant, Vec<Issue>)>>,
 }
@@ -86,6 +87,9 @@ impl GitHub {
                 "query": OPEN_ISSUES, "variables": { "owner": owner, "name": name, "after": after },
             })))?.json()?;
             let page = &v["data"]["repository"]["issues"];
+            if v["errors"].as_array().is_some_and(|errors| errors.iter().any(|e| e["type"] == "NOT_FOUND")) {
+                return Err("no access to the repository".into());
+            }
             if !page["nodes"].is_array() {
                 return Err(format!("GraphQL open issues: {}", v["errors"]));
             }
@@ -149,9 +153,10 @@ impl GitHub {
     }
 
     fn main_rules(&self) -> Result<Value> {
-        if let Some(v) = self.rules.borrow().clone() { return Ok(v); }
+        self.api.refresh()?;
+        if let Some((_, v)) = self.rules.borrow().as_ref().filter(|(g, _)| *g == self.api.generation.get()) { return Ok(v.clone()); }
         let v = self.api.call("GET", "/rules/branches/main", None)?.json()?;
-        *self.rules.borrow_mut() = Some(v.clone());
+        *self.rules.borrow_mut() = Some((self.api.generation.get(), v.clone()));
         Ok(v)
     }
 
@@ -286,6 +291,7 @@ impl GitHub {
 
     fn rebase(&self, root: &std::path::Path, n: u64, sha: &str) -> Result<Publish> {
         use std::process::Command;
+        self.api.refresh()?;
         let path = root.join(".worktrees").join(format!("taskq-{n}"));
         let path = path.canonicalize().map_err(|_| "private fallback needs its owned task worktree on this host")?;
         if !path.starts_with(root.canonicalize().map_err(|_| "private fallback root unknown")?) {
@@ -299,7 +305,7 @@ impl GitHub {
                 .env("GIT_CONFIG_COUNT", "2").env("GIT_CONFIG_KEY_0", "credential.helper").env("GIT_CONFIG_VALUE_0", "")
                 .env("GIT_CONFIG_KEY_1", format!("credential.https://{host}.helper"))
                 .env("GIT_CONFIG_VALUE_1", "!f() { printf 'username=x-access-token\\npassword=%s\\n' \"$TASKQ_GIT_TOKEN\"; }; f")
-                .env("TASKQ_GIT_TOKEN", self.api.auth.strip_prefix("Authorization: Bearer ").unwrap_or_default())
+                .env("TASKQ_GIT_TOKEN", self.api.credentials.borrow().auth.strip_prefix("Authorization: Bearer ").unwrap_or_default())
                 .output().map_err(|_| "private fallback cannot run Git".into())
         };
         let read = |args: &[&str]| -> Result<String> {
@@ -618,7 +624,7 @@ impl Board for GitHub {
     }
 
     fn requests(&self) -> crate::requests::Budget {
-        self.api.budget.borrow().clone()
+        self.api.credentials.borrow().budget.borrow().clone()
     }
 
     fn url(&self, n: u64) -> String {
@@ -703,6 +709,76 @@ fn raw_path<'a>(root: &str, base: &str, url: &'a str) -> Option<(&'a str, &'a st
 #[cfg(test)]
 mod token_tests {
     use super::*;
+
+    // #1840 A2: a known repository-access refusal has a plain cause; other failures retain their diagnostic.
+    #[test]
+    fn repository_access_failure_is_plain() {
+        for (kind, expected) in [("NOT_FOUND", "no access to the repository"), ("FORBIDDEN", "GraphQL open issues:")] {
+            let mut api = api("github.com", "o/r", "invented-token");
+            api.transport = Some(Box::new(move |_, _, _| Ok(super::super::Reply {status:200, headers:vec![], operation:"read",
+                body:json!({"errors":[{"type":kind,"message":"invented refusal"}]}).to_string()})));
+            let board = GitHub {api, rules:Default::default(), open:Default::default()};
+            assert!(board.open_issues().unwrap_err().starts_with(expected));
+        }
+    }
+
+    // #1840 A3 / section 9: one opened board uses the next credential on the wire, with no restart or login fallback.
+    #[test]
+    fn next_read_uses_replaced_host_token() {
+        use std::{io::{Read, Write}, net::TcpListener, time::{Duration, Instant}};
+        let dir = std::env::temp_dir().join(format!("taskq-rotate-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("token"), "invented-first-token").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let root = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for name in ["first", "second"] {
+                let until = Instant::now() + Duration::from_secs(60);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < until, "board read never reached the local fixture");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(e) => panic!("fixture accept: {e}"),
+                    }
+                };
+                socket.set_nonblocking(false).unwrap();
+                socket.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+                let mut bytes = vec![];
+                while !bytes.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let mut part = [0; 4096];
+                    let n = socket.read(&mut part).unwrap();
+                    assert!(n > 0 && bytes.len() + n <= 65536, "invalid fixture request");
+                    bytes.extend_from_slice(&part[..n]);
+                }
+                assert!(String::from_utf8_lossy(&bytes).to_ascii_lowercase().contains(&format!("authorization: bearer invented-{name}-token")));
+                let body = json!({"number":1,"title":name,"state":"open","author_association":"OWNER"}).to_string();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len()).unwrap();
+            }
+        });
+        // Keep the production credential lookup, Kind::open and GitHub adapter; substitute only the HTTP endpoint.
+        let kind = super::super::Kind { api: |root, repo, token| Api::new(root.into(),format!("{root}/repos/{repo}"),token), ..KIND };
+        let board = kind.open(&root, "o/r", None, &crate::platform::tool(&dir)).unwrap();
+        let first = board.issue(1).map(|issue| issue.title);
+        let old_pause = crate::requests::pause_file(&dir, &root, "invented-first-token");
+        std::fs::write(&old_pause, (super::super::wall() + 60).to_string()).unwrap();
+        std::fs::write(dir.join("replacement"), "invented-second-token").unwrap();
+        std::fs::remove_file(dir.join("token")).unwrap();
+        std::fs::rename(dir.join("replacement"), dir.join("token")).unwrap();
+        let second = board.issue(1).map(|issue| issue.title);
+        let joined = server.join();
+        std::fs::remove_file(dir.join("token")).unwrap();
+        let missing = board.issue(1).err();
+        assert!(old_pause.exists(), "rotation preserves the old credential's pause");
+        std::fs::remove_dir_all(dir).unwrap();
+        assert_eq!(first.as_deref(), Ok("first"));
+        assert_eq!(second.as_deref(), Ok("second"));
+        assert!(joined.is_ok(), "replacement credential was not observed on the wire");
+        assert_eq!(missing.as_deref(), Some(TOKEN_ERROR));
+    }
 
     // Chain: host credential -> service board and worker environment. Risk: login fallback or mismatched errors.
     #[test]
