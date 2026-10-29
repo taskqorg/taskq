@@ -75,7 +75,7 @@ const USAGE: &str = "taskq agents
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
  taskq answer N --text A | taskq answer N.K [M.K..] | taskq pick N.K --text R
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
- taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M]
+ taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC]
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
@@ -450,11 +450,18 @@ fn labelled_acceptance(items: &[String]) -> Res<()> {
     }
 }
 
-/// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue; only the owner or PM parks without one.
-fn park(n: u64, blocker: Option<&str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&str>> {
+/// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue or, when only time is left, a UTC time;
+/// only the owner or PM parks without either.
+fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
     let worker = attempt.is_some() && task.is_some_and(|t| t.parse() == Ok(n));
+    match (blocker, until) {
+        (Some(_), Some(_)) => return Err("--blocker and --until exclude each other: a park waits for one of them".into()),
+        (None, Some(u)) if !core::utc(u) => return Err(format!("bad --until {u}: one UTC time like 2026-11-05T09:00:00Z")),
+        (None, Some(u)) => return Ok(vec!["until", u]),
+        _ => {}
+    }
     match blocker {
-        None if worker => Err("a worker park needs --blocker #M: file the blocker as a held task first (§ 7)".into()),
+        None if worker => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
         None => Ok(vec![]),
         Some(_) if !worker => Err("--blocker is for a worker park; the owner or PM adds `Depends on #M` or parks with later".into()),
         Some(r) if !core::blocker_ref(r) || r == format!("#{n}") => Err(format!("bad --blocker {r}: one #M or <repo>#M, not this task")),
@@ -2922,7 +2929,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "later" => {
             let n = a.num(1)?;
-            emit(&[act(b, root, n, cmd, &park(n, a.one("blocker"), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?, text, &op)], json)
+            emit(&[act(b, root, n, cmd, &park(n, a.one("blocker"), a.one("until"), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?, text, &op)], json)
         }
         "steer" | "failed" => {
             let n = a.num(1)?;
@@ -3137,19 +3144,25 @@ fn telemetry_line(active: &Value, report: Option<&Value>) -> String {
 
 #[cfg(test)]
 mod tests {
-    // Chain: § 7 rule 3 worker park (#1486). Risk: a worker parks without a blocker (no automatic exit), or an owner park
-    // starts needing one.
+    // Chain: § 7 rule 3 worker park (#1486, #1823). Risk: a worker parks without a blocker or time (no automatic exit), an
+    // owner park starts needing one, or a malformed time reaches the board.
     #[test]
-    fn worker_park_needs_one_blocker() {
+    fn worker_park_needs_one_blocker_or_time() {
         let w = || (Some("7".to_string()), Some("42".to_string()));
         let (t, a) = w();
-        assert!(super::park(7, None, t, a).unwrap_err().contains("--blocker"));
-        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), t, a).is_err(), "{bad}"); }
+        assert!(super::park(7, None, None, t, a).unwrap_err().contains("--blocker"));
+        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, t, a).is_err(), "{bad}"); }
         let (t, a) = w();
-        assert_eq!(super::park(7, Some("dashq#36"), t, a).unwrap(), ["dashq#36"]);
-        assert!(super::park(7, None, None, None).unwrap().is_empty());
-        assert!(super::park(7, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
-        assert!(super::park(7, Some("#12"), None, None).is_err());
+        assert_eq!(super::park(7, Some("dashq#36"), None, t, a).unwrap(), ["dashq#36"]);
+        assert!(super::park(7, None, None, None, None).unwrap().is_empty());
+        assert!(super::park(7, None, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
+        assert!(super::park(7, Some("#12"), None, None, None).is_err());
+        let (t, a) = w();
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
+        assert!(super::park(7, None, Some("2026-11-05"), None, None).unwrap_err().contains("bad --until"));
+        let (t, a) = w();
+        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), t, a).unwrap_err().contains("exclude"));
     }
 
     use super::*;

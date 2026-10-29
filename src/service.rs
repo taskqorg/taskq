@@ -1542,6 +1542,15 @@ impl<'a> Service<'a> {
             if touched.contains(&n) {
                 continue;
             }
+            // § 2 timed park: at its board time the service requeues it; one op id per park, so hosts write it once
+            if v.projection.task.state == State::Later && let Some(until) = v.projection.task.until.as_deref().filter(|u| crate::board::iso(u).is_some_and(|at| at <= now)) {
+                let rev = v.projection.revision;
+                let op = crate::dispatch::Op { id: Some(format!("wake-{rev}")), revision: Some(rev) };
+                let r = crate::dispatch::act(self.board, &self.cfg.root, n, "requeue", &[], &format!("Reason: Timed park ended at {until}."), &op);
+                if !r.ok() { log!("#{n} timed park wake: {}", r.reason); }
+                touched.insert(n);
+                continue;
+            }
             // § 1: a person who adds `taskq` to a held issue starts it; the next pass folds `ready`
             if is_task(&v.issue) && v.projection.task.state == State::Held {
                 self.board.comment(n, "taskq: start")?;
@@ -5881,6 +5890,38 @@ Open: none";
         b.advance(crate::snapshot::STUCK_AFTER);
         s.pass().unwrap();
         assert_eq!(lines(&s), 2, "a move rearms the line");
+    }
+
+    // Chain: § 2 timed park -> service requeue at the board time (#1823). Risk: a time-only wait respawns at once and
+    // escalates through the retry limit, a restart loses the time, or a bad time wakes the task.
+    #[test]
+    fn timed_park_wakes_at_its_board_time_after_restart() {
+        let b = Fake::default();
+        b.state.borrow_mut().clock = crate::board::iso("2026-11-05T08:00:00Z").unwrap();
+        let c = cfg("mac");
+        let timed = b.create("Timed", "", &["taskq".into()]).unwrap();
+        b.comment(timed, &core::entry("later", &["until", "2026-11-05T09:00:00Z"], None, "Reason: 168 qualified hours")).unwrap();
+        let bad = b.create("Bad", "", &["taskq".into()]).unwrap();
+        b.comment(bad, &core::entry("later", &["until", "2026-02-30T09:00:00Z"], None, "Reason: bad time")).unwrap();
+        let owner = b.create("Owner", "", &["taskq".into()]).unwrap();
+        b.comment(owner, &core::entry("later", &["until", "2027-01-01T00:00:00Z"], None, "Reason: far")).unwrap();
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        s.pass().unwrap();
+        assert_eq!((task(&b, timed).state, task(&b, timed).attempt), (State::Later, None), "no spawn before the time");
+        assert_eq!(task(&b, timed).until.as_deref(), Some("2026-11-05T09:00:00Z"));
+        b.comment(owner, &core::entry("requeue", &[], None, "Reason: owner wants it now")).unwrap();
+        drop(s);
+        b.advance(3600);
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        s.pass().unwrap();
+        s.pass().unwrap();
+        let wakes = || b.state.borrow().comments.iter().filter(|(i, c)| *i == timed && c.body.starts_with("taskq: requeue")).count();
+        assert_eq!(wakes(), 1, "one wake after the restart");
+        assert!(matches!(task(&b, timed).state, State::Ready | State::Doing) && task(&b, timed).retries == 0, "{:?}", task(&b, timed));
+        assert!(task(&b, owner).attempt.is_some(), "an owner requeue overrides the time");
+        assert_eq!((task(&b, bad).state, task(&b, bad).until), (State::Later, None), "a bad time parks untimed");
     }
 
     // Chain: R6 stuck review -> service log (#1752). Risk: a review no host can start sits silent for hours.

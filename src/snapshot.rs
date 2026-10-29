@@ -154,6 +154,8 @@ pub struct Row {
     pub deps: Vec<service::Blocker>,
     /// Text of the last trusted `failed` entry.
     pub failed: Option<String>,
+    /// Text of the last trusted `later` entry while `later` (R6 timed park reason).
+    pub later: Option<String>,
     /// Claude Remote Control URL of the current attempt from its host's heartbeat `session` line (§ 4).
     pub session_url: Option<String>,
     /// Board time of the entry behind the last logged state change (§ 4 Tray age); `None`: no logged change.
@@ -327,6 +329,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         steps: stage_history(v),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
         failed: (v.projection.task.state == State::Failed).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: failed")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
+        later: (v.projection.task.state == State::Later).then(|| v.comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: later")).and_then(|c| c.body.split_once('\n')).map(|x| x.1.to_string()).unwrap_or_default()),
     }}).collect();
     let hosts = hosts.iter().map(|h| Host {
         diagnostics: crate::service_versions::read(&h.body,h.updated,observed,cfg.ttl as i64,false),
@@ -441,6 +444,8 @@ impl Row {
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
             "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed,
             "controls": controls(self.task.state.name())});
+        // R6 timed park: the UTC time and its reason; clients show it in local time
+        if let Some(u) = &self.task.until { row["until"] = json!(u); row["later"] = json!(self.later); }
         // § 2: the PM's pick sits beside the worker's star; it is never an answer
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
@@ -587,7 +592,10 @@ impl Snapshot {
         }
         let mut parked = vec![];
         for state in [State::Held, State::Later] {
-            let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(link).collect();
+            let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(|r| match r.task.until.as_deref().and_then(crate::board::iso) {
+                Some(at) => format!("{} until {}: {}", link(r), local_time(at), compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160)),
+                None => link(r),
+            }).collect();
             if !rows.is_empty() { parked.push(format!("{}: {}", crate::display::name(state.name()), rows.join(", "))); }
         }
         if !parked.is_empty() {
@@ -618,6 +626,12 @@ impl Snapshot {
         }
         Ok(out.join("\n"))
     }
+}
+
+/// R6 timed park: board time `t` on this host's clock, `2026-11-05 10:00`.
+pub fn local_time(t: i64) -> String {
+    let s = crate::board::stamp(t + crate::platform::utc_offset(t));
+    format!("{} {}", &s[..10], &s[11..16])
 }
 
 /// The `Problem:` text of a card, else its first line.
@@ -690,7 +704,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -714,7 +728,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -761,7 +775,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");
@@ -780,6 +794,25 @@ mod tests {
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         let line = text.lines().find(|l| l.starts_with("Hosts: ")).unwrap();
         assert!(line.contains("mac v1.0 ") && !line.split(", ").next().unwrap().contains("stale") && line.split(", ").nth(1).unwrap().ends_with(" stale"), "{line}");
+    }
+
+    // Chain: R6 timed park -> status `Later:` line and JSON row (#1823). Risk: a timed park reads as open-ended, or
+    // the owner sees the raw UTC time instead of this host's clock.
+    #[test]
+    fn timed_park_shows_its_local_time_and_reason() {
+        let at = crate::board::iso("2026-11-05T09:00:00Z").unwrap();
+        let row = |n, until: Option<&str>| Row { n, title: format!("T{n}"), url: format!("u{n}"), later: Some("Reason: 168 qualified hours".into()),
+            task: Task { state: State::Later, until: until.map(str::to_string), ..Default::default() }, ..Default::default() };
+        let snap = Snapshot { source: "board", observed: at, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
+            tasks: vec![row(1, Some("2026-11-05T09:00:00Z")), row(2, None)] };
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert!(text.contains(&format!("Later: [#1 T1](u1) until {}: 168 qualified hours, [#2 T2](u2)", local_time(at))), "{text}");
+        let off = crate::platform::utc_offset(at);
+        assert!(off.abs() <= 14 * 3600 && off % 900 == 0, "a real zone offset: {off}");
+        assert_eq!(local_time(at), format!("{} {}", &crate::board::stamp(at + off)[..10], &crate::board::stamp(at + off)[11..16]));
+        let rows = snap.json()["tasks"].clone();
+        assert_eq!((rows[0]["until"].as_str(), rows[0]["later"].as_str()), (Some("2026-11-05T09:00:00Z"), Some("Reason: 168 qualified hours")));
+        assert!(rows[1].get("until").is_none(), "an untimed park adds no keys");
     }
 
     // Chain: #1592 A4 one display model. Risk: the CLI and the tray page disagree on counts, order, state names or age

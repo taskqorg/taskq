@@ -178,11 +178,24 @@ pub struct Task {
     /// A worker park's blocker issue (§ 2 `later <ref> attempt`): read like a `Depends on` line until the next spawn or an owner requeue outside `later`/`failed`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
+    /// A timed park's UTC time (§ 2 `later until <UTC>`): the service writes `requeue` at that board time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
 }
 
 /// The issue text whose `Depends on` lines keep `t` waiting (§ 1): `body` plus a worker park's blocker (§ 2).
 pub fn dep_body(body: &str, t: &Task) -> String {
     t.blocker.as_ref().map_or_else(|| body.to_string(), |r| format!("{body}\nDepends on {r}\n"))
+}
+
+/// Whether `s` is a timed park's time (§ 2): `YYYY-MM-DDTHH:MM:SSZ`, a real UTC date and time.
+pub fn utc(s: &str) -> bool {
+    let b = s.as_bytes();
+    let n = |a: usize, z: usize| s.get(a..z).filter(|x| x.bytes().all(|c| c.is_ascii_digit())).and_then(|x| x.parse::<u32>().ok());
+    let (Some(y), Some(m), Some(d), Some(h), Some(mi), Some(sec)) = (n(0, 4), n(5, 7), n(8, 10), n(11, 13), n(14, 16), n(17, 19)) else { return false };
+    let feb = if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 29 } else { 28 };
+    b.len() == 20 && b[4] == b'-' && b[7] == b'-' && b[10] == b'T' && b[13] == b':' && b[16] == b':' && b[19] == b'Z'
+        && (1..=12).contains(&m) && d >= 1 && d <= [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m as usize - 1] && h < 24 && mi < 60 && sec < 60
 }
 
 /// Whether `r` is one `#N` or `<repo>#N` blocker reference (§ 2 worker park).
@@ -383,6 +396,7 @@ fn end(t: &mut Task) {
     t.inbox.clear();
     t.publication = None;
     t.enqueued = None;
+    t.until = None;
 }
 
 fn ready(t: &mut Task) {
@@ -631,6 +645,8 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         (Ready | Waiting | Doing | Review | Ask, "later" | "failed", _) => {
             end(t);
             t.state = if l.kind == "later" { Later } else { Failed };
+            // § 2 timed park: a malformed time parks untimed, as N-1 folds every timed park
+            t.until = (l.kind == "later" && l.args.len() == 2 && l.args[0] == "until" && utc(l.args[1])).then(|| l.args[1].to_string());
         }
         _ => {}
     }
@@ -922,5 +938,16 @@ mod tests {
         log[2] = e(12, "taskq: pick 1\nx is cheaper");
         log.push(e(13, "taskq answer 7.2"));
         assert_eq!(super::delivery(7, &log, 13), "y");
+    }
+
+    // Chain: § 2 timed park time. Risk: a malformed or unreal time keeps a task parked forever or wakes it at once.
+    #[test]
+    fn timed_park_time_is_one_real_utc_instant() {
+        for ok in ["2026-11-05T09:00:00Z", "2028-02-29T23:59:59Z", "2000-02-29T00:00:00Z"] { assert!(super::utc(ok), "{ok}"); }
+        for bad in ["2026-11-05T09:00:00", "2026-11-05T09:00:00+00:00", "2026-11-05T09:00:00.5Z", "2026-02-29T00:00:00Z",
+            "1900-02-29T00:00:00Z", "2026-13-01T00:00:00Z", "2026-04-31T00:00:00Z", "2026-11-05T24:00:00Z", "2026-11-05 09:00:00Z",
+            "2026-11-0aT09:00:00Z", "+026-11-05T09:00:00Z", "", "tomorrow"] {
+            assert!(!super::utc(bad), "{bad}");
+        }
     }
 }
