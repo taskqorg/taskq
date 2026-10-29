@@ -171,6 +171,8 @@ pub struct Row {
     pub answered: Option<crate::dispatch::Answered>,
     /// #1820 a published review this host's service pass left without a merge-queue entry; `None` otherwise.
     pub publication: Option<PublicationWait>,
+    /// R6 `stage k/n` (§ 2 Stages): first open stage and Acceptance item count; `None` before any recorded stage.
+    pub stage: Option<(usize, usize)>,
 }
 
 /// #1820 (pilotq #106): why a publication waits, from this host's last service pass; never inferred from silence.
@@ -337,6 +339,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         admission: board_admission(&v.projection.task, &v.issue.labels, &v.blockers, hosts, observed),
         answered: crate::dispatch::answered_in(v.issue.number, &v.log, &v.projection, &v.comments),
         publication: None,
+        stage: crate::core::stage(&v.issue.body, &v.projection.task.stages),
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
@@ -445,6 +448,11 @@ pub fn status_totals(status: &Value) -> Option<BTreeMap<&'static str, usize>> {
 }
 
 impl Row {
+    /// R6: ` · stage k/n` for a task with recorded stages (§ 2 Stages), else nothing.
+    fn stage_text(&self) -> String {
+        self.stage.map(|(k, n)| format!(" · stage {k}/{n}")).unwrap_or_default()
+    }
+
     /// The owner text of the row's wait: a publication wait, else the execution diagnostic, else a capacity refusal with its runtime (#1685),
     /// else the board's own host refusal (R6, #1721).
     fn wait(&self) -> Option<String> {
@@ -470,6 +478,8 @@ impl Row {
             "controls": controls(self.task.state.name())});
         // R6 timed park: the UTC time and its reason; clients show it in local time
         if let Some(u) = &self.task.until { row["until"] = json!(u); row["later"] = json!(self.later); }
+        // R6 / § 2 Stages: `stage k/n` and the finished stages
+        if let Some((k, n)) = self.stage { row["stage"] = json!({"k": k, "n": n, "done": self.task.stages}); }
         // § 2: the PM's pick sits beside the worker's star; it is never an answer
         if let Some((k, reason)) = &self.task.pick { row["pick"] = json!({"id": k, "reason": reason}); }
         if !self.executions.is_empty() { row["executions"]=json!(self.executions); }
@@ -600,6 +610,7 @@ impl Snapshot {
                 } else {
                     r.task.state.name().to_string()
                 };
+                let state = format!("{state}{}", r.stage_text());
                 let (rt, s) = session_link(cfg, raw, r);
                 format!("| {} | {state} | {} | {s} |", link(r), cell(&rt))
             })
@@ -633,8 +644,8 @@ impl Snapshot {
         let mut parked = vec![];
         for state in [State::Held, State::Later] {
             let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(|r| match r.task.until.as_deref().and_then(crate::board::iso) {
-                Some(at) => format!("{} until {}: {}", link(r), local_time(at), compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160)),
-                None => link(r),
+                Some(at) => format!("{}{} until {}: {}", link(r), r.stage_text(), local_time(at), compact(r.later.as_deref().unwrap_or("").trim_start_matches("Reason: "), 160)),
+                None => format!("{}{}", link(r), r.stage_text()),
             }).collect();
             if !rows.is_empty() { parked.push(format!("{}: {}", crate::display::name(state.name()), rows.join(", "))); }
         }
@@ -744,7 +755,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None, stage: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -768,7 +779,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None, stage: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -815,7 +826,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, publication: None };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, publication: None, stage: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");
@@ -863,6 +874,23 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
         let rows = snap.json()["tasks"].clone();
         assert_eq!((rows[0]["until"].as_str(), rows[0]["later"].as_str()), (Some("2026-11-05T09:00:00Z"), Some("Reason: 168 qualified hours")));
         assert!(rows[1].get("until").is_none(), "an untimed park adds no keys");
+    }
+
+    // Chain: § 2 Stages -> R6 status State cell, `Later:` line and JSON row (#1880). Risk: a multi-stage task hides
+    // its progress, or a task without stage records gains stage text or keys.
+    #[test]
+    fn staged_task_shows_stage_k_of_n() {
+        let at = crate::board::iso("2026-11-05T09:00:00Z").unwrap();
+        let row = |n, state, stage| Row { n, title: format!("T{n}"), url: format!("u{n}"), stage,
+            task: Task { state, stages: if stage.is_some() { vec!["A1".into()] } else { vec![] }, ..Default::default() }, ..Default::default() };
+        let snap = Snapshot { source: "board", observed: at, reason: None, board: json!({"url": "https://github.com/o/r/issues"}), hosts: vec![],
+            tasks: vec![row(1, State::Later, Some((2, 4))), row(2, State::Ready, Some((3, 4))), row(3, State::Ready, None)] };
+        let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
+        assert!(text.contains("Later: [#1 T1](u1) · stage 2/4") && text.contains("ready · stage 3/4"), "{text}");
+        assert_eq!(text.matches("stage ").count(), 2, "{text}");
+        let rows = snap.json()["tasks"].clone();
+        assert_eq!(rows[0]["stage"], json!({"k": 2, "n": 4, "done": ["A1"]}));
+        assert!(rows[2].get("stage").is_none(), "no stage record adds no key");
     }
 
     // Chain: #1592 A4 one display model. Risk: the CLI and the tray page disagree on counts, order, state names or age

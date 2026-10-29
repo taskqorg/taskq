@@ -764,7 +764,8 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         "You are the taskq {} for task #{n}: {}. Attempt {}.\nRead `{spec}` first and do only what it allows (R13).\nTask text, state and your inbox: `{q} inbox {n}`.\n{FILES}",
         l.role, l.title, l.attempt
     );
-    let park = format!("`{q} later {n} --blocker #M --text \"Reason: <blocker>\nNext: <what #M delivers>\"` (blocker filed as held task #M first; our own broken check: fix it here when small; resumes when #M closes); waiting only for elapsed time, no code fix: `{q} later {n} --until <UTC> --text \"Reason: <what the time gives>\"` (resumes then; never requeue)");
+    let park = format!("`{q} later {n} --blocker #M --text \"Reason: <blocker>\nNext: <what #M delivers>\"` (blocker filed as held task #M first; our own broken check: fix it here when small; resumes when #M closes); waiting only for elapsed time, no code fix: `{q} later {n} --until <UTC> --text \"Reason: <what the time gives>\"` (resumes then; never requeue); \
+        Acceptance items done, more left (multi-stage task): add `--stage A<k>` per finished item, with `--until`, `--blocker` or alone for the owner (the next attempt continues at the first open stage in this worktree)");
     let body = if l.role == "reviewer" {
         format!(
             "Review the result SHA against each Acceptance item `A<k>` and taskq.md, and GitHub PR CI green on the merge result (merge_group); private fallback uses exact-SHA CI; other routes follow the contract. Requeue only for\n\
@@ -4263,6 +4264,7 @@ mod tests {
                     assert_eq!(brief(&env, &l).contains(PUBLISH_ONCE), role == "worker", "{rt} {role}: publish once");
                     assert!(brief(&env, &l).contains("later 7 --blocker #M --text") && brief(&env, &l).contains("resumes when #M closes"), "{rt} {role}: a park names its blocker task");
                     assert!(brief(&env, &l).contains("later 7 --until <UTC> --text"), "{rt} {role}: a wait for elapsed time parks until it, not requeue (#1823)");
+                    assert!(brief(&env, &l).contains("add `--stage A<k>` per finished item"), "{rt} {role}: a stage park names its flag (#1880)");
                     // the attempt log's evidence line
                     let log = root.join(format!(".taskq/{rt}-{role}.log"));
                     std::fs::remove_file(&log).ok();

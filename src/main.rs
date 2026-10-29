@@ -81,7 +81,7 @@ const USAGE: &str = "taskq agents
  Human replies: answer, steer, requeue accept --text-stdin or --text-file PATH instead of --text; attach with --file PATH (repeat) or --files-from PATH (JSON array)
  JSON files: status, answer, steer, requeue, later, close, start, failed accept --json --json-file PATH
  taskq result N --sha SHA --checks C.. --text T [--option O.. --recommend K --link URL..]
- taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC]
+ taskq requeue N [--text T] | taskq later N [--text T] [--blocker #M|--until UTC] [--stage A<k>..]
  taskq steer N --text T | taskq failed N --text T
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
@@ -493,7 +493,7 @@ fn labelled_acceptance(items: &[String]) -> Res<()> {
 
 /// The `later` arguments (§ 7 rule 3): a worker park names one blocker issue or, when only time is left, a UTC time;
 /// only the owner or PM parks without either.
-fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
+fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, staged: bool, task: Option<String>, attempt: Option<String>) -> Res<Vec<&'a str>> {
     let worker = attempt.is_some() && task.is_some_and(|t| t.parse() == Ok(n));
     match (blocker, until) {
         (Some(_), Some(_)) => return Err("--blocker and --until exclude each other: a park waits for one of them".into()),
@@ -501,13 +501,24 @@ fn park<'a>(n: u64, blocker: Option<&'a str>, until: Option<&'a str>, task: Opti
         (None, Some(u)) => return Ok(vec!["until", u]),
         _ => {}
     }
+    // § 2 Stages: a stage park may wait for the owner or PM without a blocker or time
     match blocker {
-        None if worker => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
+        None if worker && !staged => Err("a worker park needs --blocker #M (file the blocker as a held task first) or, when only time is left, --until <UTC> (§ 7)".into()),
         None => Ok(vec![]),
         Some(_) if !worker => Err("--blocker is for a worker park; the owner or PM adds `Depends on #M` or parks with later".into()),
         Some(r) if !core::blocker_ref(r) || r == format!("#{n}") => Err(format!("bad --blocker {r}: one #M or <repo>#M, not this task")),
         Some(r) => Ok(vec![r]),
     }
+}
+
+/// § 2 Stages: `text` with the `Stages:` line of `later --stage`; each stage is an Acceptance item of `body`.
+fn stage_text(text: &str, staged: &[String], body: &str) -> Res<String> {
+    let ids = core::acceptance(body);
+    if let Some(bad) = staged.iter().find(|s| !ids.contains(s)) {
+        return Err(format!("bad --stage {bad}: one Acceptance item of this task ({})", if ids.is_empty() { "none".into() } else { ids.join(" ") }));
+    }
+    let line = core::stages_line(&format!("Stages: {}", staged.join(" "))).unwrap_or_default().join(" ");
+    Ok(if text.trim().is_empty() { format!("Stages: {line}") } else { format!("{}\nStages: {line}", text.trim_end()) })
 }
 
 fn task_text(cmd: &str, text: &str) -> Res<()> {
@@ -3091,7 +3102,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "later" => {
             let n = a.num(1)?;
-            emit(&[act(b, root, n, cmd, &park(n, a.one("blocker"), a.one("until"), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?, text, &op)], json)
+            let staged = a.all("stage");
+            let args = park(n, a.one("blocker"), a.one("until"), !staged.is_empty(), std::env::var("TASKQ_TASK").ok(), std::env::var("TASKQ_ATTEMPT").ok())?;
+            let text = if staged.is_empty() { text.to_string() } else { stage_text(text, &staged, &b.issue(n)?.body)? };
+            emit(&[act(b, root, n, cmd, &args, &text, &op)], json)
         }
         "steer" | "failed" => {
             let n = a.num(1)?;
@@ -3319,19 +3333,34 @@ mod tests {
     fn worker_park_needs_one_blocker_or_time() {
         let w = || (Some("7".to_string()), Some("42".to_string()));
         let (t, a) = w();
-        assert!(super::park(7, None, None, t, a).unwrap_err().contains("--blocker"));
-        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, t, a).is_err(), "{bad}"); }
+        assert!(super::park(7, None, None, false, t, a).unwrap_err().contains("--blocker"));
+        for bad in ["#7", "#x", "12", "#1 #2"] { let (t, a) = w(); assert!(super::park(7, Some(bad), None, false, t, a).is_err(), "{bad}"); }
         let (t, a) = w();
-        assert_eq!(super::park(7, Some("dashq#36"), None, t, a).unwrap(), ["dashq#36"]);
-        assert!(super::park(7, None, None, None, None).unwrap().is_empty());
-        assert!(super::park(7, None, None, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
-        assert!(super::park(7, Some("#12"), None, None, None).is_err());
+        assert_eq!(super::park(7, Some("dashq#36"), None, false, t, a).unwrap(), ["dashq#36"]);
+        assert!(super::park(7, None, None, false, None, None).unwrap().is_empty());
+        assert!(super::park(7, None, None, false, Some("8".into()), Some("42".into())).unwrap().is_empty(), "another task's env is not this task's worker");
+        assert!(super::park(7, Some("#12"), None, false, None, None).is_err());
         let (t, a) = w();
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
-        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
-        assert!(super::park(7, None, Some("2026-11-05"), None, None).unwrap_err().contains("bad --until"));
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), false, t, a).unwrap(), ["until", "2026-11-05T09:00:00Z"], "a worker waiting only for time parks with it");
+        assert_eq!(super::park(7, None, Some("2026-11-05T09:00:00Z"), false, None, None).unwrap(), ["until", "2026-11-05T09:00:00Z"]);
+        assert!(super::park(7, None, Some("2026-11-05"), false, None, None).unwrap_err().contains("bad --until"));
         let (t, a) = w();
-        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), t, a).unwrap_err().contains("exclude"));
+        assert!(super::park(7, Some("#12"), Some("2026-11-05T09:00:00Z"), false, t, a).unwrap_err().contains("exclude"));
+    }
+
+    // Chain: § 2 Stages, § 5 `later --stage` (#1880). Risk: a worker cannot park after a finished stage, a stage outside the
+    // issue's Acceptance reaches the board, or the `Stages:` line breaks the § 5 `Reason:`/`Next:` text.
+    #[test]
+    fn stage_park_records_acceptance_items() {
+        let (t, a) = (Some("7".to_string()), Some("42".to_string()));
+        assert!(super::park(7, None, None, true, t, a).unwrap().is_empty(), "a stage park may wait for the owner");
+        let body = "## Goal\ng\n\n## Acceptance\nA1. a\nA2. b\n- A3. c\n";
+        assert_eq!(super::stage_text("Reason: soak\nNext: A3", &["A2".into(), "A1".into()], body).unwrap(), "Reason: soak\nNext: A3\nStages: A1 A2");
+        assert_eq!(super::stage_text("", &["A3".into()], body).unwrap(), "Stages: A3");
+        assert!(super::stage_text("", &["A4".into()], body).unwrap_err().contains("bad --stage A4: one Acceptance item of this task (A1 A2 A3)"));
+        assert!(super::stage_text("", &["A1".into()], "no items").unwrap_err().contains("(none)"));
+        let text = super::stage_text("Reason: soak", &["A1".into()], body).unwrap();
+        assert_eq!(crate::core::stages_line(&text), Some(vec!["A1".to_string()]));
     }
 
     use super::*;

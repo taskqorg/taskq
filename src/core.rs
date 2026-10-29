@@ -181,11 +181,48 @@ pub struct Task {
     /// A timed park's UTC time (§ 2 `later until <UTC>`): the service writes `requeue` at that board time.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
+    /// Finished stages (§ 2 Stages): the last accepted `later` entry's `Stages:` line, sorted by number; kept until the next one.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stages: Vec<String>,
 }
 
 /// The issue text whose `Depends on` lines keep `t` waiting (§ 1): `body` plus a worker park's blocker (§ 2).
 pub fn dep_body(body: &str, t: &Task) -> String {
     t.blocker.as_ref().map_or_else(|| body.to_string(), |r| format!("{body}\nDepends on {r}\n"))
+}
+
+/// The task's stages (§ 2 Stages): its Acceptance item ids `A<k>` in body order, each once.
+pub fn acceptance(body: &str) -> Vec<String> {
+    let mut ids: Vec<String> = vec![];
+    for l in body.lines() {
+        let l = l.trim_start();
+        let l = l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")).unwrap_or(l);
+        let Some((id, _)) = l.split_once(". ") else { continue };
+        if stage_id(id) && !ids.iter().any(|x| x == id) { ids.push(id.to_string()); }
+    }
+    ids
+}
+
+fn stage_id(s: &str) -> bool {
+    s.strip_prefix('A').is_some_and(|k| !k.is_empty() && k.len() <= 3 && k.bytes().all(|c| c.is_ascii_digit()) && !k.starts_with('0'))
+}
+
+/// A `later` text's `Stages:` line (§ 2 Stages): the finished set sorted by number, empty for `none`; `None` without a valid line.
+pub fn stages_line(text: &str) -> Option<Vec<String>> {
+    let rest = text.lines().find_map(|l| l.strip_prefix("Stages:"))?.trim();
+    if rest == "none" { return Some(vec![]); }
+    let mut ids: Vec<&str> = rest.split_whitespace().collect();
+    if ids.is_empty() || !ids.iter().all(|i| stage_id(i)) { return None; }
+    ids.sort_by_key(|i| i[1..].parse::<u32>().unwrap_or(0));
+    ids.dedup();
+    Some(ids.into_iter().map(String::from).collect())
+}
+
+/// R6 `stage k/n`: k is the position of the first open stage (all done: n), n the Acceptance item count; `None` before any record.
+pub fn stage(body: &str, done: &[String]) -> Option<(usize, usize)> {
+    let ids = acceptance(body);
+    if done.is_empty() || ids.is_empty() { return None; }
+    Some((ids.iter().position(|i| !done.contains(i)).map_or(ids.len(), |k| k + 1), ids.len()))
 }
 
 /// Whether `s` is a timed park's time (§ 2): `YYYY-MM-DDTHH:MM:SSZ`, a real UTC date and time.
@@ -521,7 +558,15 @@ pub fn project(n: u64, entries: &[Entry], deps_open: bool) -> Projection {
 pub fn task_context(n: u64, body: &str, entries: &[Entry]) -> String {
     let p = project(n, entries, false);
     let notes: Vec<String> = p.notes.iter().map(|id| format!("Note {id}:\n{}", delivery(n, entries, *id))).collect();
-    format!("Task goal and acceptance (binding):\n{body}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Check every note now; if one conflicts with acceptance, ask once immediately. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
+    // § 2 Stages: the next attempt continues at the first open stage, in the same worktree (§ 7 rule 2)
+    let ids = acceptance(body);
+    let stages = match ids.iter().find(|i| !p.task.stages.contains(i)) {
+        _ if p.task.stages.is_empty() || ids.is_empty() => String::new(),
+        Some(open) => format!("\n\nStages done: {}; continue at {open} (stage {}/{}) in the existing worktree; park again with `later --stage` or hand in once all are done.",
+            p.task.stages.join(" "), ids.iter().position(|i| i == open).unwrap_or(0) + 1, ids.len()),
+        None => format!("\n\nStages done: {}; all {} stages are done: check them and hand in the result.", p.task.stages.join(" "), ids.len()),
+    };
+    format!("Task goal and acceptance (binding):\n{body}{stages}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Check every note now; if one conflicts with acceptance, ask once immediately. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
 }
 
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
@@ -659,12 +704,15 @@ fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool
         (Doing | Review, "later", true) if l.args.len() == 1 && blocker_ref(l.args[0]) => {
             ready(t);
             t.blocker = Some(l.args[0].to_string());
+            if let Some(s) = stages_line(l.text) { t.stages = s; }
         }
         (Ready | Waiting | Doing | Review | Ask, "later" | "failed", _) => {
             end(t);
             t.state = if l.kind == "later" { Later } else { Failed };
             // § 2 timed park: a malformed time parks untimed, as N-1 folds every timed park
             t.until = (l.kind == "later" && l.args.len() == 2 && l.args[0] == "until" && utc(l.args[1])).then(|| l.args[1].to_string());
+            // § 2 Stages: a `later` records the finished stages; a stage park counts no retry
+            if let Some(s) = stages_line(l.text).filter(|_| l.kind == "later") { t.stages = s; }
         }
         _ => {}
     }
@@ -841,6 +889,28 @@ mod tests {
         assert!(super::golden(super::GOLDEN).unwrap() > 20);
         let wrong = super::GOLDEN.replacen("\"retries\": 2}", "\"retries\": 1}", 1);
         assert!(super::golden(&wrong).is_err(), "a wrong expectation must fail");
+    }
+
+    // Chain: § 2 Stages -> R6 `stage k/n` and the § 7 brief (#1880). Risk: a stage park loses the first open stage,
+    // counts a non-Acceptance line, or a resumed attempt restarts at A1 outside its worktree.
+    #[test]
+    fn stages_name_the_first_open_acceptance_item() {
+        use super::*;
+        let body = "## Acceptance\n- A1. spec\nA2. code\n* A3. tests\nA04. not an id\nA2. duplicate\nNote A9 is prose";
+        assert_eq!(acceptance(body), ["A1", "A2", "A3"]);
+        assert_eq!(stages_line("Reason: x\nStages: A3 A1 A1"), Some(vec!["A1".into(), "A3".into()]));
+        assert_eq!(stages_line("Stages: none"), Some(vec![]));
+        for bad in ["Stages: A1 B2", "Stages:", "Reason: x"] { assert_eq!(stages_line(bad), None, "{bad}"); }
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!((stage(body, &[]), stage(body, &s(&["A1", "A3"])), stage(body, &s(&["A1", "A2", "A3"]))), (None, Some((2, 3)), Some((3, 3))));
+        let log = |text: &str| vec![
+            Entry { id: 10, body: "taskq: spawn worker claude:s1 mac".into(), edited: false },
+            Entry { id: 11, body: format!("taskq: later until 2026-11-05T09:00:00Z attempt 10\nReason: wait\n{text}"), edited: false },
+            Entry { id: 12, body: "taskq: requeue\nop-id: wake-11".into(), edited: false },
+        ];
+        assert!(task_context(7, body, &log("Stages: A1")).contains("Stages done: A1; continue at A2 (stage 2/3) in the existing worktree"));
+        assert!(task_context(7, body, &log("Stages: A1 A2 A3")).contains("all 3 stages are done"));
+        assert!(!task_context(7, body, &log("")).contains("Stages done"), "a task without stage records reads as before");
     }
 
     // Chain: historical prefix semantics, including ignored entries; timings are observations, not a gate.
