@@ -98,7 +98,7 @@ fn board(p: &Value) -> String {
 
 /// Open-state totals over projects, one row per board and number, and the projects whose data is partial: incomplete
 /// or stale, without a board, or disagreeing with another registration of the same task (K-A2/K-A3).
-pub fn tally(ps: &[Value]) -> (BTreeMap<&'static str, usize>, Vec<String>, usize) {
+pub fn tally<'a>(ps: impl IntoIterator<Item = &'a Value>) -> (BTreeMap<&'static str, usize>, Vec<String>, usize) {
     let mut rows: HashMap<String, &Value> = HashMap::new();
     let mut partial: Vec<String> = vec![];
     let mut mark = |p: &Value| { let n = p["name"].as_str().unwrap_or("").to_string(); if !partial.contains(&n) { partial.push(n); } };
@@ -116,10 +116,15 @@ pub fn tally(ps: &[Value]) -> (BTreeMap<&'static str, usize>, Vec<String>, usize
     (totals, partial, open)
 }
 
-/// Counters in strip order; unknown (`null`) for every state while any project is partial, never zero (§ 4).
+/// Only loaded observations supply menu counts (section 4); failed projects keep their own counts unknown.
+fn loaded(p: &Value) -> bool {
+    p["complete"] == true && p["tasks_live"] != false && !board(p).is_empty()
+}
+
 fn observation(ps: &[Value]) -> Value {
-    let (t, partial, open) = tally(ps);
-    let known = partial.is_empty();
+    let (t, mut partial, open) = tally(ps.iter().filter(|p| loaded(p)));
+    let known = partial.is_empty() && (ps.is_empty() || ps.iter().any(loaded));
+    if !known && partial.is_empty() { partial = tally(ps).1; }
     json!({"counts": STATES.iter().map(|(s, n)| json!({"state": s, "name": n, "n": known.then(|| t[s])})).collect::<Vec<_>>(),
         "partial": partial, "open": known.then_some(open)})
 }
@@ -132,7 +137,9 @@ pub fn model(ps: &mut [Value], now: i64) -> Value {
     let elapsed = |from: &Value, to: Option<i64>| from.as_i64().filter(|f| *f > 0 && *f <= now && to.is_none_or(|t| t >= *f && t <= now)).map(|f| age(to.unwrap_or(now) - f));
     let mut ranked = vec![];
     let mut seen = std::collections::HashSet::new();
+    let loaded_boards: std::collections::HashSet<_> = ps.iter().filter(|p| loaded(p)).map(board).collect();
     for (i, p) in ps.iter_mut().enumerate() {
+        let p_complete = loaded(p);
         let o = observation(std::slice::from_ref(p));
         let b = board(p);
         p["age_text"] = json!(p["age"].as_i64().map(age));
@@ -152,7 +159,7 @@ pub fn model(ps: &mut [Value], now: i64) -> Value {
                 let end = s["end"].as_i64();
                 s["age"] = json!(if s["end"].is_null() || end.is_some() { elapsed(&s["start"], end) } else { None });
             }
-            let dup = !seen.insert(key.clone());
+            let dup = if !p_complete && loaded_boards.contains(&b) { true } else { !seen.insert(key.clone()) };
             t["dup"] = json!(dup);
             if !dup { ranked.push((order(t), key, i, j)); }
         }
@@ -210,6 +217,35 @@ mod tests {
         let mut ps = [json!({"name": "c", "issues": "x", "complete": false, "focus": ["p0"], "tasks": []})];
         let m = model(&mut ps, 100);
         assert_eq!((m["all"]["partial"].clone(), ps[0]["mode"].clone(), m["run"].clone()), (json!(["c"]), json!("run"), json!(true)));
+    }
+
+    // #1840 A1: a failed project must not hide loaded totals or count retained stale rows.
+    #[test]
+    fn loaded_projects_keep_counts_when_another_project_fails() {
+        let mut good = project("loaded", json!([{"n":1,"state":"doing"},{"n":2,"state":"ready"}]));
+        good["issues"] = json!("https://github.com/o/loaded/issues");
+        let mut bad = project("broken", json!([{"n":99,"state":"ask"}]));
+        bad["complete"] = json!(false);
+        bad["error"] = json!("no access to the repository");
+        let mut ps = [good, bad];
+        let m = model(&mut ps, 100);
+        assert_eq!(m["all"]["counts"][0]["n"], 1);
+        assert_eq!(m["all"]["counts"][2]["n"], 0, "retained failed rows are not loaded counts");
+        assert_eq!(m["all"]["open"], 2);
+        assert!(ps[1]["counts"][0]["n"].is_null(), "failed project's own count stays unknown");
+        assert_eq!(m["all"]["partial"], json!([]));
+        ps[1]["issues"] = ps[0]["issues"].clone();
+        ps[1]["tasks"][0]["n"] = json!(1);
+        ps.swap(0, 1);
+        let m = model(&mut ps, 100);
+        assert_eq!(m["all"]["open"], 2, "a failed registration cannot shadow a loaded board");
+        assert_eq!(ps[1]["tasks"][0]["dup"], false);
+        assert_eq!(ps[0]["tasks"][0]["dup"], true);
+        ps[1]["complete"] = json!(false);
+        let m = model(&mut ps, 100);
+        assert!(m["all"]["open"].is_null());
+        assert_eq!(ps[0]["tasks"][0]["dup"], false);
+        assert_eq!(ps[1]["tasks"][0]["dup"], true, "failed-only registrations still show each task once");
     }
 
     // Chain: menu.md Tasks list order and M3 age. Risk: rows leave strip/priority/number order or show an invented age.

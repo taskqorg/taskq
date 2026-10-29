@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 
 pub const KIND: Kind = Kind {
+    reload_token: false,
     name: "gitlab",
     user_key: "username",
     default_host: "gitlab.com",
@@ -281,7 +282,7 @@ impl Board for GitLab {
     }
 
     fn requests(&self) -> crate::requests::Budget {
-        self.api.budget.borrow().clone()
+        self.api.credentials.borrow().budget.borrow().clone()
     }
 
     fn url(&self, n: u64) -> String {

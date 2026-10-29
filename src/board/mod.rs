@@ -387,6 +387,8 @@ pub struct Kind {
     pub user_key: &'static str,
     pub default_host: &'static str,
     token: fn(&coreq::Tool, &str) -> Result<String>,
+    /// This provider supports reloading its installed credential before requests.
+    reload_token: bool,
     token_env: &'static [&'static str],
     api: fn(&str, &str, &str) -> Api,
     board: fn(Api) -> Box<dyn Board>,
@@ -416,7 +418,11 @@ impl Kind {
         let schema = label_schema(schema)?;
         let token = (self.token)(tool, host)?;
         let mut api = (self.api)(host, repo, &token);
-        api.pause = Some(crate::requests::pause_file(&tool.install, &api.root, &token));
+        api.credentials.get_mut().pause = Some(crate::requests::pause_file(&tool.install, &api.root, &token));
+        if self.reload_token {
+            let (tool, host, lookup) = (tool.clone(), host.to_string(), self.token);
+            api.token_source = Some((tool.install.clone(), Box::new(move || lookup(&tool, &host))));
+        }
         *api.label_schema.borrow_mut() = schema;
         Ok(Box::new(Profiled((self.board)(api))))
     }
@@ -431,16 +437,15 @@ pub struct Api {
     base: String,
     /// `https://api.github.com`, `https://host/api/v4`: the token goes nowhere else.
     root: String,
-    auth: String,
+    credentials: RefCell<Credentials>,
+    generation: std::cell::Cell<u64>,
+    /// Re-read the operator credential before requests; test-only APIs may use a fixed token.
+    token_source: Option<(std::path::PathBuf, Box<dyn Fn() -> Result<String>>)>,
     me: RefCell<Option<String>>,
     clock: RefCell<i64>,
     label_schema: RefCell<Option<bool>>,
-    /// Request accounting and rate-limit pause of this process (§ 4).
-    budget: crate::requests::Shared,
     /// Labels whose catalog definition this process has read back: verified once per process (§ 4 budget).
     labels_ok: RefCell<std::collections::HashSet<String>>,
-    /// The install's pause file of this API host and credential: every process there stops until its reset (§ 4).
-    pause: Option<std::path::PathBuf>,
     /// The last `ETag` and reply of each GET; a 304 reuses that reply, which GitHub does not count (§ 4 budget, #1819).
     etags: RefCell<std::collections::HashMap<String, (String, Reply)>>,
     /// The last GET was answered 304 Not Modified.
@@ -449,13 +454,38 @@ pub struct Api {
     transport: Option<Transport>,
 }
 
+/// All credential-scoped HTTP state changes together when the operator replaces the token.
+struct Credentials {
+    auth: String,
+    budget: crate::requests::Shared,
+    pause: Option<std::path::PathBuf>,
+}
+
 /// Cached conditional replies per process; past this the cache restarts empty.
 const ETAGS: usize = 256;
 
 impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
-        Api { base, root, auth: format!("Authorization: Bearer {token}"), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), budget, labels_ok: RefCell::default(), pause: None, etags: RefCell::default(), unchanged: Default::default(), #[cfg(test)] transport: None }
+        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), #[cfg(test)] transport: None }
+    }
+
+    /// Missing credentials fail closed; replacement drops user/conditional caches and the old token's pause.
+    fn refresh(&self) -> Result<()> {
+        let Some((install, source)) = &self.token_source else { return Ok(()) };
+        let token = source()?;
+        let auth = format!("Authorization: Bearer {token}");
+        if self.credentials.borrow().auth != auth {
+            *self.credentials.borrow_mut() = Credentials {auth, budget: crate::requests::Shared::for_api(&self.root, &token),
+                pause: Some(crate::requests::pause_file(install, &self.root, &token))};
+            *self.me.borrow_mut() = None;
+            self.etags.borrow_mut().clear();
+            self.labels_ok.borrow_mut().clear();
+            self.clock.replace(0);
+            self.unchanged.set(false);
+            self.generation.set(self.generation.get() + 1);
+        }
+        Ok(())
     }
 
     fn call(&self, method: &str, url: &str, body: Option<Value>) -> Result<Reply> {
@@ -470,10 +500,10 @@ impl Api {
     /// The reset while this budget, or the install's pause file, holds requests (§ 4).
     fn paused(&self) -> Option<i64> {
         let now = std::time::Instant::now();
-        if let Some((reset, wait)) = self.pause.as_deref().and_then(|f| crate::requests::recorded_pause(f, wall())) {
-            self.budget.borrow_mut().hold(reset, wait, now);
+        if let Some((reset, wait)) = self.credentials.borrow().pause.as_deref().and_then(|f| crate::requests::recorded_pause(f, wall())) {
+            self.credentials.borrow().budget.borrow_mut().hold(reset, wait, now);
         }
-        self.budget.borrow_mut().paused(now)
+        self.credentials.borrow().budget.borrow_mut().paused(now)
     }
 
     /// One request counted under `op`. While the board budget is exhausted nothing is sent (§ 4).
@@ -483,20 +513,21 @@ impl Api {
         if !url.starts_with(&format!("{}/", self.root)) {
             return Err(format!("refused: {url} is outside the board API"));
         }
-        if let Some(reason) = &self.budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
+        self.refresh()?;
+        if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
         if let Some(reset) = self.paused() {
             return Err(format!("{method} {url}: {}", crate::requests::paused_text(reset)));
         }
-        self.budget.borrow_mut().count(op.into());
+        self.credentials.borrow().budget.borrow_mut().count(op.into());
         crate::requests::tally(op);
         self.unchanged.set(false);
         let conditional = method == "GET" && body.is_none();
         let etag = conditional.then(|| self.etags.borrow().get(&url).map(|(e, _)| e.clone())).flatten();
         crate::profile::measure_classified("forge.call", || {
             #[cfg(test)]
-            let r = match &self.transport { Some(transport) => transport(method, &url, body), None => curl(method, &url, &self.auth, body.as_ref(), etag.as_deref()) };
+            let r = match &self.transport { Some(transport) => transport(method, &url, body), None => curl(method, &url, &self.credentials.borrow().auth, body.as_ref(), etag.as_deref()) };
             #[cfg(not(test))]
-            let r = curl(method, &url, &self.auth, body.as_ref(), etag.as_deref());
+            let r = curl(method, &url, &self.credentials.borrow().auth, body.as_ref(), etag.as_deref());
             let r=r.map_err(|message|(crate::profile::class(&message),message))?;
             if let Some(t) = r.header("date").and_then(http_date) {
                 *self.clock.borrow_mut() = t;
@@ -505,10 +536,10 @@ impl Api {
             let limited = url.ends_with("/graphql") && ["\"RATE_LIMIT\"", "\"RATE_LIMITED\""].iter().any(|t| r.body.contains(t));
             let status = if limited { 403 } else { r.status };
             let class=match status {400..=499=>"http4xx",500..=599=>"http5xx",_=>"other"};
-            let paused = self.budget.borrow_mut().observe(status, limited, |n| r.header(n).map(String::from), *self.clock.borrow(), std::time::Instant::now());
+            let paused = self.credentials.borrow().budget.borrow_mut().observe(status, limited, |n| r.header(n).map(String::from), *self.clock.borrow(), std::time::Instant::now());
             if let Some(reset) = paused {
                 // ponytail: the install's processes compare against their own wall clock, not the board's
-                if let Some(f) = &self.pause { let _ = std::fs::write(f, (wall() + reset - *self.clock.borrow()).to_string()); }
+                if let Some(f) = &self.credentials.borrow().pause { let _ = std::fs::write(f, (wall() + reset - *self.clock.borrow()).to_string()); }
                 return Err((class,format!("{method} {url}: HTTP {status} {}", crate::requests::paused_text(reset))));
             }
             if r.status == 304 && etag.is_some() {
@@ -551,13 +582,14 @@ impl Api {
     fn raw(&self, url: &str, form: Option<&std::path::Path>) -> Result<Vec<u8>> {
         let url = if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) };
         if !url.starts_with(&format!("{}/", self.root)) { return Err(format!("refused: {url} is outside the board API")); }
-        if let Some(reason) = &self.budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
+        self.refresh()?;
+        if let Some(reason) = &self.credentials.borrow().budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
         if let Some(reset) = self.paused() { return Err(format!("{url}: {}", crate::requests::paused_text(reset))); }
         let method = if form.is_some() { "POST" } else { "GET" };
         let op = self.op(method, &url);
-        self.budget.borrow_mut().count(op.clone());
+        self.credentials.borrow().budget.borrow_mut().count(op.clone());
         crate::requests::tally(&op);
-        let mut cfg = format!("silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n", quote(&url), quote(&self.auth));
+        let mut cfg = format!("silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n", quote(&url), quote(&self.credentials.borrow().auth));
         if let Some(f) = form { cfg += &format!("form = {}\n", quote(&format!("file=@{}", f.display()))); }
         let out = match coreq::process::exchange("board.http", Command::new("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(125)) {
             Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
@@ -582,6 +614,7 @@ impl Api {
 
     /// The board user, `key` its name field.
     fn me(&self, key: &str) -> Result<String> {
+        self.refresh()?;
         if let Some(m) = self.me.borrow().clone() {
             return Ok(m);
         }
@@ -592,6 +625,7 @@ impl Api {
     }
 
     fn now(&self, key: &str) -> Result<i64> {
+        self.refresh()?;
         if *self.clock.borrow() == 0 {
             self.me(key)?;
         }
@@ -599,6 +633,7 @@ impl Api {
     }
 
     fn canonical_labels(&self) -> Result<bool> {
+        self.refresh()?;
         if let Some(c) = *self.label_schema.borrow() { return Ok(c); }
         let all = self.all("/labels?per_page=100")?;
         let canonical = !all.iter().any(|v| matches!(v["name"].as_str(), Some("q-waiting" | "priority-1" | "priority-2")));
@@ -1735,7 +1770,7 @@ exit 0
             assert_eq!(api.call("POST", "https://api.github.com/graphql", None).is_ok(), status < 300 && !limited);
             if limited {
                 assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().contains("paused until"));
-                assert_eq!(api.budget.borrow().total(), 1);
+                assert_eq!(api.credentials.borrow().budget.borrow().total(), 1);
             }
         }
         let report = crate::profile::take_report();
@@ -1762,7 +1797,7 @@ exit 0
             let first = api.call("POST", "https://api.github.com/graphql", None).err().unwrap();
             assert!(first.contains("HTTP 403 rate limit: board requests paused until"), "{status}: {first}");
             assert!(api.call("POST", "https://api.github.com/graphql", None).err().unwrap().contains("paused until"));
-            assert!(api.budget.borrow().paused_until().is_some());
+            assert!(api.credentials.borrow().budget.borrow().paused_until().is_some());
             assert_eq!(*sent.borrow(), 1, "{status}: no GraphQL request is sent while paused");
         }
     }
@@ -1777,7 +1812,7 @@ exit 0
         let process = |status: u16| {
             let count = sent.clone();
             let mut api = (github::KIND.api)("github.com", "o/r", "private token");
-            api.pause = Some(crate::requests::pause_file(&install, &api.root, "private token"));
+            api.credentials.get_mut().pause = Some(crate::requests::pause_file(&install, &api.root, "private token"));
             api.transport = Some(Box::new(move |_, _, _| {
                 *count.borrow_mut() += 1;
                 Ok(Reply { status, body: "{}".into(), operation: "read", headers: vec![("retry-after".into(), "60".into())] })
@@ -1787,10 +1822,10 @@ exit 0
         assert!(process(429).call("GET", "/issues", None).err().unwrap().contains("paused until"));
         let other = process(200);
         assert!(other.call("GET", "/issues", None).err().unwrap().contains("paused until"));
-        assert!(other.budget.borrow().paused_until().is_some(), "service status shows the install's pause");
+        assert!(other.credentials.borrow().budget.borrow().paused_until().is_some(), "service status shows the install's pause");
         assert_eq!(*sent.borrow(), 1, "no process of the install sends while paused");
         let mut elsewhere = process(200);
-        elsewhere.pause = Some(crate::requests::pause_file(&install, &elsewhere.root, "other token"));
+        elsewhere.credentials.get_mut().pause = Some(crate::requests::pause_file(&install, &elsewhere.root, "other token"));
         assert!(elsewhere.call("GET", "/issues", None).is_ok(), "another credential keeps its own budget");
         std::fs::write(crate::requests::pause_file(&install, "https://api.github.com", "private token"), "1").unwrap();
         assert!(process(200).call("GET", "/issues", None).is_ok(), "a past reset holds nothing");
@@ -1934,7 +1969,7 @@ exit 0
             let different = make("invented-other-budget-token", 200);
             assert!(a.call("GET", "/issues", None).err().unwrap().contains("paused"));
             assert!(b.call("GET", "/issues", None).err().unwrap().contains("paused"));
-            assert_eq!(*sent.borrow(), 1); assert_eq!(b.budget.borrow().total(), 1);
+            assert_eq!(*sent.borrow(), 1); assert_eq!(b.credentials.borrow().budget.borrow().total(), 1);
             assert!(different.call("GET", "/issues", None).is_ok()); assert_eq!(*sent.borrow(), 2);
         }).join().unwrap();
     }
@@ -2100,7 +2135,7 @@ exit 0
         assert_eq!(token, "invented-gitlab-token");
         assert_eq!(gitlab::KIND.worker_env(&tool, "gitlab.example").unwrap(), vec![("GITLAB_TOKEN".into(), token.clone())]);
         let mut api = (gitlab::KIND.api)("gitlab.example", "o/r", &token);
-        assert_eq!(api.auth, "Authorization: Bearer invented-gitlab-token");
+        assert_eq!(api.credentials.borrow().auth, "Authorization: Bearer invented-gitlab-token");
         api.transport = Some(Box::new(|_, url, _| {
             assert!(url.starts_with("https://gitlab.example/api/v4/projects/o%2Fr/"), "{url}");
             let body = if url.ends_with("/issues/7") { r#"{"iid":7,"title":"t","state":"opened"}"# } else { r#"{"access_level":30}"# };
