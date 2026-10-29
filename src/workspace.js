@@ -31,8 +31,13 @@ const {create}=execution.module('workspace',{
    task:function(row){
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
     const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
-    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title)),reading:[
-     h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),h('div',{class:'conversation-tools'},h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
+    // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
+    const ev=row.event,url=row.board+'/'+row.task,busy=!!view.messageBusy;
+    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('div',{class:'conversation-tools'},api.eventButtons(ev)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
+     h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),
+      h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':'github')),
+      ev&&!ev.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
+      ev&&!ev.archived&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
      api.threadNotice(row.id),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
@@ -95,8 +100,9 @@ const {create}=execution.module('workspace',{
     const c=answers.answerCompose(p.issues,t);if(!c)return {};
     const off=!c.live,why=c.live?c.problem||'':c.problem;
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
-     reason:why,
-     tools:h('div',{class:'conversation-tools composer-bottom'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action',disabled:off||!!c.problem},icons.icon('arrow-up'),c.send)),
+     // #1781: an empty draft shows no validation line, and Send is the arrow icon (input-scroll 04)
+     reason:off||c.draft?why:'',
+     tools:h('div',{class:'conversation-tools composer-bottom'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action compact-action',title:c.send,'aria-label':c.send,disabled:off||!!c.problem},icons.icon('arrow-up'))),
      onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
