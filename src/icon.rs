@@ -156,8 +156,26 @@ pub fn svg(d:&Data,dark:bool)->String {
     let p=palette(dark);
     let color=|c|hex(if d.paused {p.muted}else{c});
     let peak=peak(&d.bins);
-    let mut out=String::from(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">"#);
-    if d.paused {out.push_str(r#"<defs><mask id="pause-clear"><rect width="22" height="22" fill="white"/><rect x="3.5" y="3.5" width="15" height="17.7" fill="black"/></mask></defs><g mask="url(#pause-clear)">"#);}
+    let mut counters=Vec::new();
+    let mut end=0.0f64;
+    for (i,(value,c)) in [(d.counts[0],p.work),(d.counts[1],p.ask),(d.counts[2].zip(d.blocked).map(|(a,b)|a.saturating_add(b)),p.muted)].into_iter().enumerate() {
+        if value==Some(0) {continue;}
+        let text=value.map_or("–".into(),|n|if n>99 {"99+".into()}else{n.to_string()});
+        let (paths,width)=counter(&text,color(c));
+        let x=if counters.is_empty() {[1.0f64,8.1,15.4][i]}else{[1.0f64,8.1,15.4][i].max(end+1.5)};
+        end=x+width;
+        counters.push((i,paths,width,x));
+    }
+    let ink=counters.iter().map(|c|c.2).sum::<f64>()+1.5*counters.len().saturating_sub(1) as f64;
+    let width=22.0f64.max(ink+2.0);
+    let mut right=width-1.0;
+    for (_,_,w,x) in counters.iter_mut().rev() {
+        *x=x.min(right-*w);right=*x-1.5;
+    }
+    let mut out=format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} 22">"#);
+    if d.paused {
+        out.push_str(&format!(r#"<defs><mask id="pause-clear"><rect width="{width}" height="22" fill="white"/><rect x="3.5" y="3.5" width="15" height="17.7" fill="black"/></mask></defs><g mask="url(#pause-clear)">"#));
+    }
     let empty=d.counts.iter().all(|n|*n==Some(0))&&d.blocked==Some(0)&&d.bins.iter().all(|b|b.complete()&&b.counts==[0;4]);
     write!(out,r#"<g id="summary-data" visibility="{}"><g id="chart" shape-rendering="crispEdges">"#,if empty {"hidden"}else{"visible"}).unwrap();
     for (i,b) in d.bins.iter().enumerate() {
@@ -173,10 +191,8 @@ pub fn svg(d:&Data,dark:bool)->String {
         out.push_str("</g>");
     }
     out.push_str(r#"</g><g id="counters">"#);
-    for (i,(value,c)) in [(d.counts[0],p.work),(d.counts[1],p.ask),(d.counts[2].zip(d.blocked).map(|(a,b)|a.saturating_add(b)),p.muted)].into_iter().enumerate() {
-        if value==Some(0) {continue;}
-        let text=value.map_or("–".into(),|n|n.to_string());
-        write!(out,r#"<g id="counter-{i}">{}</g>"#,counter(&text,[1.0,8.1,15.4][i],color(c))).unwrap();
+    for (i,paths,_,x) in counters {
+        write!(out,r#"<g id="counter-{i}" transform="translate({x} 0)">{paths}</g>"#).unwrap();
     }
     out.push_str("</g>");
     out.push_str("</g>");
@@ -197,10 +213,22 @@ fn q_svg(run:bool,p:&Palette,x:f64,y:f64,z:f64)->String {
 
 /// Rasterize the final SVG directly at device scale; resvg uses premultiplied RGBA.
 pub fn raster(svg:&str,n:u32)->Result<Rgba,String> {
+    raster_size(svg,n,false)
+}
+
+/// Menu-bar height stays fixed while I2 may expand its horizontal slot.
+pub fn raster_slot(svg:&str,n:u32)->Result<Rgba,String> {
+    raster_size(svg,n,true)
+}
+
+fn raster_size(svg:&str,n:u32,slot:bool)->Result<Rgba,String> {
     let tree=resvg::usvg::Tree::from_str(svg,&resvg::usvg::Options::default()).map_err(|e|e.to_string())?;
-    let mut pix=resvg::tiny_skia::Pixmap::new(n,n).ok_or("invalid icon dimensions")?;
-    resvg::render(&tree,resvg::tiny_skia::Transform::from_scale(n as f32/22.0,n as f32/22.0),&mut pix.as_mut());
-    let mut img=Rgba::new(n,n,n as f32/22.0);
+    let scale=n as f32/if slot {22.0}else{tree.size().width().max(tree.size().height())};
+    let w=if slot {(tree.size().width()*scale).ceil() as u32}else{n};
+    let mut pix=resvg::tiny_skia::Pixmap::new(w,n).ok_or("invalid icon dimensions")?;
+    let transform=resvg::tiny_skia::Transform::from_scale(scale,scale).post_translate(0.0,(n as f32-tree.size().height()*scale)/2.0);
+    resvg::render(&tree,transform,&mut pix.as_mut());
+    let mut img=Rgba::new(w,n,scale);
     for (to,from) in img.px.chunks_exact_mut(4).zip(pix.data().chunks_exact(4)) {
         let a=from[3] as u32;to[3]=from[3];
         if a>0 {for c in 0..3 {to[c]=((from[c] as u32*255+a/2)/a).min(255) as u8;}}
@@ -210,7 +238,7 @@ pub fn raster(svg:&str,n:u32)->Result<Rgba,String> {
 
 /// SF outlines are shared as paths, so WebKit and resvg paint identical glyph ink.
 #[cfg(target_os="macos")]
-fn counter(text:&str,x:f64,color:String)->String {
+fn counter(text:&str,color:String)->(String,f64) {
     use objc2_app_kit::{NSFont,NSFontWeightMedium};
     use objc2_core_foundation::{CGPoint,CGSize,CGRect};
     use objc2_core_text::{CTFont,CTFontOrientation};
@@ -252,26 +280,23 @@ fn counter(text:&str,x:f64,color:String)->String {
             }
             (paths,left,right-left)
         };
-        let(mut paths,mut left,width)=outline(text);
-        if width>5.6 {let fallback=outline("9+");let chosen=if fallback.2<=5.6 {fallback}else{outline("+")};paths=chosen.0;left=chosen.1;}
-        format!(r#"<g fill="{color}" transform="translate({} 9) scale(1 -1)">{paths}</g>"#,x-left)
+        let(paths,left,width)=outline(text);
+        (format!(r#"<g fill="{color}" transform="translate({} 9) scale(1 -1)">{paths}</g>"#,-left),width)
     }
 }
 
 #[cfg(not(target_os="macos"))]
-fn counter(text:&str,x:f64,color:String)->String {
+fn counter(text:&str,color:String)->(String,f64) {
     use resvg::usvg;
     static OPTIONS:std::sync::OnceLock<usvg::Options<'static>>=std::sync::OnceLock::new();
     let options=OPTIONS.get_or_init(||{let mut o=usvg::Options::default();o.fontdb_mut().load_system_fonts();o.fontdb_mut().set_sans_serif_family("Segoe UI");o});
     let layout=|s:&str|usvg::Tree::from_str(&format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><text id="value" y="9" font-family="Segoe UI" font-size="9" font-weight="500" fill="{color}">{s}</text></svg>"#),options).expect("fixed numeric SVG");
-    let mut tree=layout(text);
-    // Text bounds include side bearings; align and fit the paths that are actually painted.
+    let tree=layout(text);
+    // Text bounds include side bearings; align the paths that are actually painted.
     let ink=|t:&usvg::Tree|t.node_by_id("value").and_then(|n|match n {usvg::Node::Text(t)=>Some(t.flattened().bounding_box()),_=>None});
-    let width=|t:&usvg::Tree|ink(t).map_or(0.0,|b|b.width());
-    if width(&tree)>5.6 {tree=layout("9+");if width(&tree)>5.6 {tree=layout("+");}}
-    let left=ink(&tree).map_or(0.0,|b|b.x());
+    let (left,width)=ink(&tree).map_or((0.0,0.0),|b|(b.x(),b.width()));
     let svg=tree.to_string(&usvg::WriteOptions::default());
-    format!(r#"<g transform="translate({} 0)">{}</g>"#,x-left as f64,&svg[svg.find('>').unwrap()+1..svg.rfind("</svg>").unwrap()])
+    (format!(r#"<g transform="translate({} 0)">{}</g>"#,-left as f64,&svg[svg.find('>').unwrap()+1..svg.rfind("</svg>").unwrap()]),width as f64)
 }
 
 #[cfg(test)]
@@ -431,6 +456,46 @@ mod tests {
         }
     }
 
+    // #1789 A1/A2: exact labels and measured ink must survive every position without collisions or clipping.
+    #[test]
+    fn exact_two_digit_counters_reclaim_space_before_widening() {
+        let bins=(0..6).map(|i|Bin {start:i as f64,end:(i+1) as f64,counts:[1,0,0,0],missing:vec![],ongoing:i==5}).collect();
+        let mut data=Data {counts:[Some(0);4],blocked:Some(0),bins,paused:false};
+        for dark in [false,true] {
+            for n in [0,9,10,12,99,100] {
+                for mask in 1u32..8 {
+                    data.counts=[Some(0);4];
+                    for i in 0..3 {if mask&(1<<i)!=0 {data.counts[i]=Some(n);}}
+                    let vector=svg(&data,dark);
+                    let tree=resvg::usvg::Tree::from_str(&vector,&resvg::usvg::Options::default()).unwrap();
+                    let mut right=0.0;
+                    for i in 0..3 {
+                        let node=tree.node_by_id(&format!("counter-{i}"));
+                        if data.counts[i]==Some(0) {assert!(node.is_none());continue;}
+                        let bounds=node.unwrap().abs_bounding_box();
+                        if n>=10 {assert!(bounds.width()>7.0,"{n} must retain multiple glyphs, not an overflow plus: {bounds:?}");}
+                        assert!(bounds.x()>=right && bounds.right()<=tree.size().width()-0.99,"separate in-bounds ink: {vector}");
+                        assert!(bounds.bottom()<10.5,"counter cannot touch the chart");
+                        right=bounds.right()+1.49;
+                    }
+                    if n==100 {
+                        for value in &mut data.counts[..3] {if *value!=Some(0) {*value=Some(usize::MAX);}}
+                        assert_eq!(svg(&data,dark),vector,"100 and larger counts share the 99+ cap");
+                    }
+                    if mask.count_ones()==1 {assert_eq!(tree.size().width(),22.0,"hidden zero cells absorb two digits and 99+");}
+                    for size in [22,44,256] {
+                        let image=raster(&vector,size).unwrap();assert_eq!((image.w,image.h),(size,size));
+                        let slot=raster_slot(&vector,size).unwrap();assert_eq!(slot.h,size);assert_eq!(slot.w,(tree.size().width()*size as f32/22.0).ceil() as u32);
+                    }
+                }
+            }
+            data.counts=[Some(100);4];data.paused=true;
+            let paused=raster_slot(&svg(&data,dark),44).unwrap();
+            assert!((0..20).any(|y|(44..paused.w).any(|x|paused.px[((y*paused.w+x)*4+3) as usize]>0)),"pause mask must retain the extended counters");
+            data.paused=false;
+        }
+    }
+
     // A2/A3/A4/A5: SVG semantics survive every viewport; other events cannot alter closed height.
     #[test]
     fn six_columns_keep_quantity_marks_palette_and_device_bounds() {
@@ -458,9 +523,9 @@ mod tests {
         assert_eq!(before.matches(r#"y="17.5" width="2.5" height="3""#).count(),after.matches(r#"y="17.5" width="2.5" height="3""#).count());
         for b in &mut data.bins {b.counts=[0;4];b.missing.clear();}
         let zero=svg(&data,false);assert_eq!(zero.matches(r#"data-mark="zero""#).count(),6);assert!(!zero.contains("NaN"));
-        data.counts=[None,Some(999999),Some(1),Some(0)];
+        data.counts=[None,Some(9),Some(1),Some(0)];
         let vector=svg(&data,false);let tree=resvg::usvg::Tree::from_str(&vector,&resvg::usvg::Options::default()).unwrap();
-        for (i,left) in [1.0,8.1,15.4].into_iter().enumerate() {let bounds=tree.node_by_id(&format!("counter-{i}")).unwrap().bounding_box();assert!((bounds.x()-left).abs()<0.01&&bounds.width()<=5.61,"ink alignment and overflow at cell {i}: {bounds:?}");}
+        for (i,left) in [1.0,8.1,15.4].into_iter().enumerate() {let bounds=tree.node_by_id(&format!("counter-{i}")).unwrap().abs_bounding_box();assert!((bounds.x()-left).abs()<0.01&&bounds.width()<=5.61,"ink alignment and overflow at cell {i}: {bounds:?}");}
         data.counts=[Some(0);4];data.blocked=Some(3);let blocked=svg(&data,false);
         data.counts[2]=Some(3);data.blocked=Some(0);assert_eq!(svg(&data,false),blocked,"ready + blocked retains meaning");
         data.counts=[Some(0);4];assert!(svg(&data,false).contains(r#"id="empty-q""#));

@@ -55,7 +55,7 @@ Rule IDs, the rule-change gate and coverage: [rule IDs](docs/design/rule-ids.md#
 Looks/sound: one line each (R13).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
-- UI: Preact/Signals/Wouter, O1–O3; [six bins, palette A; no Custom; History-only Ask](docs/design/icon-summary.md).
+- UI: Preact/Signals/Wouter O1–O3 [palette A; exact counts; no Custom; History-only Ask](docs/design/icon-summary.md).
 - Conversations: reading first; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows; growing input ([menu]). Group headers follow M2.
 - Standalone: [onboarding][onb]; [telemetry][tel]: local SQLite/WAL, 30 days; sent async only under revocable `taskq-telemetry/1`. `profile export` feeds analysis, `guide` guides agents. Migration keeps legacy rows; board is task truth (R1).
