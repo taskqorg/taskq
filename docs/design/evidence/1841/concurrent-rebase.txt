@@ -1,0 +1,10 @@
+$ docs/design/evidence/1841/concurrent-rebase.sh <worktree> <temp> 9e88f4007a202de5c293e8b83fc203d730d9e1d7 41a3f44416a292d423b92e01cf8241572f490fbf
+Windows 11, Git Bash, node v24.5.0, 2026-10-29. Each task edits src/task-workspace.js (task-a line 1, task-b last line),
+builds, runs tests/task-workspace.test.cjs and commits everything git sees.
+old task-a commits: docs/design/task-workspace.sources.json src/task-workspace.js
+old task-b commits: docs/design/task-workspace.sources.json src/task-workspace.js
+old rebase task-b onto task-a: CONFLICT in docs/design/task-workspace.sources.json
+new task-a commits: src/task-workspace.js
+new task-b commits: src/task-workspace.js
+new rebase task-b onto task-a: clean, 2 commits
+After the clean rebase: npm run build; node tests/task-workspace.test.cjs -- PASS
