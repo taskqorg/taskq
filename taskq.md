@@ -59,8 +59,8 @@ Looks/sound: one line each (R13).
 - Conversations: reading first; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
 - Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows; growing input ([menu]). Group headers follow M2.
-- Standalone: [onboarding][onb]; [telemetry][tel]: local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export` for analysis, `guide` for agents. Migration keeps legacy rows (R1).
-- README page: header, setup phrase, one sentence, features, screenshots, use cases, one taskq.md link, release checksum/provenance verification, license, donate.
+- Standalone: [onboarding][onb]; [telemetry][tel]: local SQLite/WAL, 30 days, async only under revocable `taskq-telemetry/1`. `profile export`: analysis; `guide`: agents. Migration keeps legacy rows (R1).
+- README: header, setup phrase, sentence, what you get, screenshots, use cases, taskq.md link, release checksum/provenance verification, license, donate.
 - Header: `docs/header.webp` with the caption `Agents working.` stays at the top, verbatim.
 - Setup phrase: one `text` block, verbatim `Install taskq from https://github.com/taskqorg/taskq and set it up for this project.`; new-project variant beside it.
 - What you get/use cases: shipped behavior only. 3 linked chats (UC-02/03/07, UC-09, UC-14): context, request, clarification, owner decision, action, outcome. Real output: taskq in any agent chat; task moved to another runtime. Illustrations are not session evidence; historical phrase checks cover proposed commands only.
