@@ -45,9 +45,29 @@ const state={font:20,theme:'dark',host:'fixture-host',version:'fixture',projects
  assert.equal(await page.locator('.attach-label').count(),0,'text-only answers hide unusable Attach');
  assert.doesNotMatch(await page.locator('.answer-composer').innerText(),/Attachments: none|A number typed/);
  await shot('after-question-940-light');
- await page.locator('.thread-detail .conversation-info>summary').click();
- assert.match(await page.locator('.conversation-info').innerText(),/text only|Numbers typed/);
+ // #1781: the text-only limit moved from Task info to the answer help icon right of Send (input-scroll 04); history sits bottom-left
+ assert.equal(await page.locator('.answer-composer .composer-bottom>details.command-history-menu:first-child .lucide-history').count(),1);
+ const help=page.locator('.answer-composer .composer-help');assert.equal(await help.evaluate(e=>e.open),false);
+ await help.locator('summary').click();
+ assert.match(await help.innerText(),/text only|Numbers typed/);
+ await page.locator('.answer-composer .command-history-menu>summary').click();await page.locator('[data-a=answer-history]').first().click();
+ assert.equal(await page.locator('.answer-composer textarea').inputValue(),state.ai.history[0],'history fills the answer draft only');
+ assert.deepEqual(await page.evaluate(()=>[...new Set(sent.filter(m=>/answer/.test(m.a||'')).map(m=>m.a))]),['answer-local'],'history saves the local draft and never sends an answer');
  assert.equal(await page.locator('[data-qac=choose]').count(),question.question.choices.length,'source options retained');
+ // #1781: an 800x600 window at 18 px under Windows 140 % Text size renders 572x429 CSS px; options and Done must stay
+ // above the pinned answer composer without scrolling (the native badge capture hid them below the fold)
+ for(const theme of ['dark','light']){
+  const small=await browser.newPage({viewport:{width:572,height:429}});small.on('pageerror',e=>errors.push(e.message));
+  await small.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await small.addScriptTag({path:'tests/fixtures/conversation-shots.js'});
+  await small.evaluate(theme=>{window.ipc={postMessage:()=>{}};taskqConversationShot('badge',{font:18,theme,version:'fixture',ai:{}});},theme);
+  await small.locator('.journey-card [data-qac=choose]').first().waitFor();
+  assert.equal(await small.locator('.journey-card .qac-done').count(),1,'#1781: the fixture has a Done line');
+  const fold=await small.evaluate(()=>{const top=document.querySelector('.answer-composer').getBoundingClientRect().top,reader=document.querySelector('.conversation-reader');
+   return {scroll:reader.scrollTop,below:['.journey-card [data-qac=choose]','.journey-card .qac-done','.journey-card .qac-problem'].flatMap(s=>[...document.querySelectorAll(s)]).filter(e=>e.getBoundingClientRect().bottom>top+1).map(e=>e.textContent.trim())};});
+  assert.deepEqual(fold,{scroll:0,below:[]},'#1781: options, Done and the question sit above the composer at 572x429 / 18 px / '+theme);
+  assert.equal(await small.locator('.journey-card').getAttribute('aria-label'),'#841 · Keep the old API?','#1773 A3: the card keeps number and title as its accessible name');
+  await small.close();
+ }
  // A4: the same CSS raises usable controls to 44 px for touch; no palette/type/icon change.
  const touch=await browser.newPage({viewport:{width:350,height:740},hasTouch:true});
  await touch.setContent(fs.readFileSync('build/web/workspace.html','utf8'));await touch.evaluate(s=>{window.ipc={postMessage:()=>{}};taskq.receive(s);},state);

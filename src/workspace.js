@@ -31,13 +31,19 @@ const {create}=execution.module('workspace',{
    task:function(row){
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
     const composer=p&&t?.state==='ask'?api.answerComposer(p,t):{};
-    return {header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title)),reading:[
-     h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,'Details'),h('div',{class:'conversation-tools'},h('a',{href:row.board+'/'+row.task,'data-url':row.board+'/'+row.task},'Board'),api.eventButtons(row.event)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.')),
+    // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
+    const ev=row.event,url=row.board+'/'+row.task,busy=!!view.messageBusy;
+    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('div',{class:'conversation-tools'},api.eventButtons(ev)),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
+     h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),
+      h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':'github')),
+      ev&&!ev.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
+      ev&&!ev.archived&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
      api.threadNotice(row.id),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
-      // #1773 A3: the task shows as one card in the chat: number, title, agent state, then the question
-      h('article',{class:'journey-card','data-phase':t.state},h('div',{class:'journey-heading'},h('strong',null,'#'+t.n+' · '+t.title),h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
+      // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -88,15 +94,20 @@ const {create}=execution.module('workspace',{
     else if(!conversations.reveal(r.id,false)){conversations.show('recent');conversations.select('event:'+r.key,false);}
    },
    // A1: a record's technical identity, read only on demand
-   ids:function(r,controls){return h('details',{class:'ids conversation-info','data-view-key':'ids:'+r.key},h('summary',null,'Details'),controls,h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
+   ids:function(r,controls){return h('details',{class:'ids conversation-info','data-view-key':'ids:'+r.key},h('summary',null,...(r.kind==='question'?[icons.icon('info'),'Task info']:['Details'])),controls,h('p',{class:'meta'},r.kind==='question'?'Task #'+r.task+' · question revision '+r.revision:(r.host||'Unknown host')+' · request '+r.id+' · state '+r.state));},
    plain:function(state){return {launched:'Launched in the native session',launching:'Launching',pending:'Waiting to launch',failed:'Launch failed',unknown:'Delivery unknown'}[state]||(state?String(state).replace(/[-_]/g,' '):'State unknown');},
    // A3: one composer for a task answer: context, validation and Send; the card above keeps choices, receipt and recovery
    answerComposer:function(p,t){
     const c=answers.answerCompose(p.issues,t);if(!c)return {};
     const off=!c.live,why=c.live?c.problem||'':c.problem;
     return {body:h('section',{class:'answer-composer','aria-label':'Answer #'+t.n},pm.composer({text:c.draft,disabled:off,id:'answer-draft',field:'answer',label:c.send==='Requeue'?'Requeue reason':'Your answer',placeholder:c.send==='Requeue'?'Reason to requeue':c.choices?'Or type an answer':'What you did',
-     reason:why,
-     tools:h('div',{class:'conversation-tools composer-bottom'},c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action',disabled:off||!!c.problem},icons.icon('arrow-up'),c.send)),
+     // #1781: an empty draft shows no validation line, and Send is the arrow icon (input-scroll 04)
+     reason:off||c.draft?why:'',
+     // #1781: the bottom row matches the chat composer: command history left; Send, then the answer help icon, right (input-scroll 04)
+     tools:h('div',{class:'conversation-tools composer-bottom'},
+      h('details',{'data-view-key':'answer-history',class:'command-history-menu'},h('summary',{class:'compact-action',title:'History','aria-label':'History'},icons.icon('history')),h('div',{class:'conversation-history'},(view.S.ai?.history||[]).map((text,i)=>h('button',{'data-a':'answer-history','data-index':i,disabled:off},text)),h('p',{class:'meta'},'History fills the draft only; nothing is sent.'))),
+      c.requeue!=null&&h('button',{'data-a':'answer-requeue',disabled:off||!!c.requeue},'Requeue'),h('button',{'data-a':'answer-send',class:'primary-action compact-action',title:c.send,'aria-label':c.send,disabled:off||!!c.problem},icons.icon('arrow-up')),
+      h('details',{class:'composer-help','data-view-key':'answer-help'},h('summary',{class:'compact-action',title:'Answer help','aria-label':'Answer help'},icons.icon('info')),h('p',{class:'meta'},'Task answers take text only; add files or PDFs on the board. Numbers typed here are sent as text; use the option buttons to choose.'))),
      onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}))};
    },
    answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
@@ -199,6 +210,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='new-request')api.navigate('conversations',{fresh:true,root:view.aiRoot});
      else if(b.dataset.a==='answer-send')api.answerAct('submit');
      else if(b.dataset.a==='answer-requeue')api.answerAct('requeue');
+     else if(b.dataset.a==='answer-history'){const c=view.answer,text=view.S.ai?.history?.[Number(b.dataset.index)];if(c&&typeof text==='string'){b.closest('details')?.removeAttribute('open');answers.answerInput(c.board,c.task,text,[text.length,text.length]);api.draw();}}
      else if(b.dataset.a==='answer-steer'){const t=answers.project(b.dataset.board)?.tasks?.find(t=>t.n===+b.dataset.task);if(t)answers.answerSteer(b.dataset.board,t);}
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){conversations.flush();state.flush();ui.send({a:'hide'});}

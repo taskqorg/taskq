@@ -210,7 +210,7 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return h('button',{class:'project','data-route':route},label);},
-answerSlot:function(t){return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision},t.state==='ask'?'Open question':'Open Conversations…');},
+answerSlot:function(t,compact){const label=t.state==='ask'?'Open question':'Open Conversations…';return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision,...(compact&&{class:'compact-action',title:label+' #'+t.n,'aria-label':label+' #'+t.n})},compact?icon('messages-square'):label);},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
@@ -463,14 +463,16 @@ runningAgents:function(compact=false){
       here&&api.resourceMeters(latest),h('details',{'data-view-key':'host-facts:'+host.name},h('summary',null,'Resource details'),(here?facts:['CPU and memory: not collected for remote hosts','Slots and reservations: unknown for remote hosts']).map(t=>h('div',{class:'body meta'},t)))));
   }
   // #1729 menu.md Running agents: the strip holds heartbeat hosts and this host; a host seen only in an execution stays in details.
-  const strip=sorted.filter(host=>host.beat||host.name===view.S.host);
+  const strip=sorted.filter(host=>host.beat||host.name===view.S.host),names=strip.map(host=>host.name);
+  // #1781: three letters, longer while another strip host shares the prefix (menu.md, #1729); the full name stays in the tooltip
+  const short=new Map(names.map(n=>{let k=3;while(k<n.length&&names.some(o=>o!==n&&o.slice(0,k)===n.slice(0,k)))k++;return [n,n.slice(0,k)];}));
   const warn=host=>host.name===view.S.host?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
   const text=host=>{const age=host.age!==null&&host.age>=0?host.age_text:'',busy=[...totals(host)].filter(([,n])=>n>0);
    return [host.name,...(!host.live?['runs unknown',...(age?[age+' old']:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):['idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
-  // #1701 S09/#1729 A2/#1775 A3: one chip per strip host under its full name, nonzero runtime marks with numbers; a partial
+  // #1701 S09/#1729 A2/#1775 A3: one chip per strip host under its short label, nonzero runtime marks with numbers; a partial
   // host keeps its counts and adds ?; the text label stays for Settings and AX.
   const chip=host=>{const unknown=!host.live,t=totals(host),age=host.age!==null&&host.age>=0?host.age_text:'',label=text(host),w=warn(host);
-   return h('span',{class:'host-chip'+(unknown?' unknown':''),role:'img','aria-label':label,title:label,key:host.name},h('strong',null,host.name),
+   return h('span',{class:'host-chip'+(unknown?' unknown':''),role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),
     unknown?h('span',{class:'meta'},age?'? '+age:'?'):[...[['claude','Claude'],['openai','Codex']].filter(([,k])=>t.get(k)>0).map(([mark,k])=>h('span',{class:'host-count',key:k},icon(mark),String(t.get(k)))),host.reasons.size>0&&h('span',{class:'meta',key:'?'},'?')],
     w.length>0&&h('span',{class:'alert'},w.join(' · ')));};
   if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:'',strip:h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Host unknown'))};

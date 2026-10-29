@@ -71,32 +71,35 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    await page.waitForFunction(y=>document.querySelector('.content').scrollTop>y+1,before,{timeout:1500});
    assert.equal(await page.locator('#taskq-popover').count(),0,'question details join the menu flow');
    await page.keyboard.press('Escape');assert.equal(await identity.getAttribute('aria-expanded'),'false');assert(await identity.evaluate(e=>e===document.activeElement));
-   const cue=row.locator('.question-attention');assert.equal(await cue.locator('[data-a=workspace]').count(),1,'one direct question action');
-   assert((await cue.locator('[data-a=workspace]').boundingBox()).height>=(coarse?44:32),'existing pointer target size retained');
-   assert.equal(await cue.locator('ol,[data-qac]').count(),0,'full choices stay in Conversations');
-   const excerpt=await cue.locator('.question-summary').evaluate(e=>({height:e.getBoundingClientRect().height,line:parseFloat(getComputedStyle(e).lineHeight)}));
-   assert(excerpt.height<=excerpt.line*2+1,'at most two summary lines');
-   for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[cue.locator('.question-summary')],[cue.locator('[data-a=workspace]')],[cue,'top'],[cue,'bottom'],[cue,'left'],[cue,'right']])for(const delta of [90,12]){
+   // #1781: the amber question glyph is the one direct question action (input-scroll 04); the closed row holds no question text.
+   const cue=row.locator('.question-shortcut');assert.equal(await row.locator('[data-a=workspace]').count(),1,'one direct question action');assert.equal(await cue.count(),1,'the action is the question glyph');
+   assert((await cue.boundingBox()).height>=(coarse?44:32),'existing pointer target size retained');
+   assert.equal(await row.locator('ol,[data-qac],.question-cue').count(),0,'question text and choices stay in Conversations');
+   for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[cue],[row,'top'],[row,'bottom'],[row,'left'],[row,'right']])for(const delta of [90,12]){
     // Center by actual scrolling, then test both directions at text, action and outer preview boundaries.
     await target.scrollIntoViewIfNeeded();let r=await target.boundingBox();await page.mouse.move(edge==='left'?r.x+1:edge==='right'?r.x+r.width-1:r.x+r.width/2,edge==='top'?r.y+1:edge==='bottom'?r.y+r.height-1:r.y+Math.min(r.height/2,20));
     for(const sign of [1,-1]){const y=await page.locator('.content').evaluate(e=>e.scrollTop);await page.mouse.wheel(0,sign*delta);await page.waitForFunction(({y,sign})=>sign*(document.querySelector('.content').scrollTop-y)>1,{y,sign},{timeout:1500});await frames(page);}
    }
-   assert.deepEqual(await cue.evaluate(e=>[e,...e.querySelectorAll('*')].filter(n=>['auto','scroll'].includes(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight).map(n=>n.className)),[],'no question scroll container');
+   assert.deepEqual(await row.evaluate(e=>[e,...e.querySelectorAll('*')].filter(n=>['auto','scroll'].includes(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight).map(n=>n.className)),[],'no question scroll container');
    await page.mouse.wheel(0,20000);await page.waitForFunction(()=>{const c=document.querySelector('.content');return c.scrollHeight-c.clientHeight-c.scrollTop<=1;});
    assert(await page.locator('[data-card]').last().evaluate(e=>e.getBoundingClientRect().bottom<=document.querySelector('.content').getBoundingClientRect().bottom+1),'last row remains reachable');
    await page.mouse.wheel(0,-20000);await page.waitForFunction(()=>document.querySelector('.content').scrollTop===0);
-   await page.locator('[data-a=search-open]').click();await page.locator('[data-task-query]').fill('Task');await cue.locator('[data-a=workspace]').scrollIntoViewIfNeeded();await frames(page);
-   const position=await page.locator('.content').evaluate(e=>e.scrollTop);await cue.locator('[data-a=workspace]').click();
+   await page.locator('[data-a=search-open]').click();await page.locator('[data-task-query]').fill('Task');await cue.scrollIntoViewIfNeeded();await frames(page);
+   const position=await page.locator('.content').evaluate(e=>e.scrollTop);await cue.click();
    const open=await page.evaluate(()=>messages.filter(m=>m.a==='workspace').at(-1).open);assert.deepEqual([open.root,open.board,open.task,open.revision],['/fixture/alpha',board,4,4]);
    // The native workspace is a separate window. Closing/returning and a status refresh leave menu context intact.
    await page.evaluate(s=>taskq.receive(s),{...s,page:undefined,theme,font});await frames(page);
    assert.equal(await page.locator('[data-task-query]').inputValue(),'Task');assert(Math.abs(await page.locator('.content').evaluate(e=>e.scrollTop)-position)<=2,'return preserves scroll');
    assert.equal(await page.locator('[data-a=view-list]').first().innerText(),'All tasks *','return preserves working view');
    assert.equal(await page.evaluate(()=>messages.filter(m=>['answer','control','start','message-action','ai-send'].includes(m.a)).length),0,'navigation has no side effect');
-   const overflow=await page.locator('.content,.content-body,[data-card],.question-attention,.question-attention button').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.className));assert.deepEqual(overflow,[],'narrow/large text reflows without root clipping');
-   await identity.click();const detail=row.locator('.question-task-details');assert.equal(await detail.locator('[data-a=control]').count(),2,'question lifecycle controls retained');await detail.getByRole('button',{name:'Pin task',exact:true}).click();assert.match(await page.locator('.task-pins').innerText(),/#4/);await page.locator('.task-pins [data-a=task-detail]').click();await page.locator('.task-pins').getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await page.locator('.task-pins').count(),0,'question pin and unpin retained');
+   const overflow=await page.locator('.content,.content-body,[data-card],.question-shortcut').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.className));assert.deepEqual(overflow,[],'narrow/large text reflows without root clipping');
+   await identity.click();const detail=row.locator('.question-task-details');
+   // #1781 G5: the details card is the neutral raised surface (amber edge only) and its Open question icon is amber (input-scroll 05)
+   const look=await detail.evaluate(e=>{const c=getComputedStyle(e),q=e.querySelector('.row-actions [data-a=workspace]'),h=e.querySelector('.popover-heading>strong');return {bg:c.backgroundColor,edge:c.borderLeftColor,icon:q&&getComputedStyle(q).color,ask:getComputedStyle(h).color};});
+   assert.equal(look.bg,theme==='dark'?'rgb(48, 58, 67)':'rgb(239, 242, 245)','neutral card');assert.equal(look.icon,look.ask,'amber Open question icon');assert.equal(look.edge,look.ask,'amber edge kept');
+   assert.equal(await detail.locator('[data-a=control]').count(),2,'question lifecycle controls retained');await detail.getByRole('button',{name:'Pin task',exact:true}).click();assert.match(await page.locator('.task-pins').innerText(),/#4/);await page.locator('.task-pins [data-a=task-detail]').click();await page.locator('.task-pins').getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await page.locator('.task-pins').count(),0,'question pin and unpin retained');
    if(out&&width===320&&font===20){await page.evaluate(s=>taskq.receive(s),{...s,page:undefined,theme,font,projects:[{...s.projects[0],tasks:s.projects[0].tasks.map(t=>t.n===4?{...t,title:'Task question: choose a compatible release window'}:t)}]});await row.scrollIntoViewIfNeeded();await page.screenshot({path:out+'/compact-question-'+theme+'.png'});}
-   await page.setViewportSize({width,height:430});assert.equal(await cue.locator('.question-summary').isVisible(),false,'short menu keeps identity/action without an excerpt');assert(await cue.locator('[data-a=workspace]').isVisible());
+   await page.setViewportSize({width,height:430});assert(await cue.isVisible(),'short menu keeps the question glyph');
    await page.close();
   }
   console.log('PASS #1740 A1-A5: real wheel/small-delta gestures, inline question controls, exact thread target and preserved menu context; 320/360px, 14/16/18/20px, both themes. Native macOS/Windows: Not tested.');

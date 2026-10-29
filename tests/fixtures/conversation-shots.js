@@ -25,6 +25,8 @@ function taskqConversationShot(step,state){
  taskq.receive({open:{page:'conversations',thread:'unread'}});
  const type=(el,text)=>{el.focus();el.value=text;el.dispatchEvent(new Event('input',{bubbles:true}));};
  setTimeout(()=>{
+  // #1781: the badge screen shows the empty answer with its placeholder, even after an earlier screen typed a draft
+  if(step==='badge'){const a=document.querySelector('[data-c-field=answer]');if(a&&a.value)type(a,'');}
   if(step==='question'){const a=document.querySelector('[data-c-field=answer]');if(a)type(a,'Keep compatibility for one more release, then remove it.');}
   if(step==='chat'){document.querySelector('[data-c=select][data-id=pm-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t)type(t,'What should we check before implementation?');},300);}
   if(step==='owner'){document.querySelector('[data-c=select][data-id=owner-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}},50);}
