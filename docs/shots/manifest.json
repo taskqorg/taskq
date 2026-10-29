@@ -1,7 +1,7 @@
 {
-  "version": "4.6.39",
-  "sourceCommit": "ff46b3e898527d7c10181e4a9162828a70b43106",
-  "binarySha256": "8fa966bf01c68569c568bf2b260fc44e3bf24be7443415ff38808556d31ff0f2",
+  "version": "4.6.40",
+  "sourceCommit": "58334fc02763f69b10000cc5a6a03493d9dbdd7a",
+  "binarySha256": "8ba232c446bc90bb42987a4f0dd935a6935e269b0edd97718b4594e1e1590921",
   "environment": {
     "os": "Windows",
     "arch": "x86_64",
@@ -46,11 +46,11 @@
     },
     {
       "file": "icon-summary-run-dark.png",
-      "sha256": "a43af84146ef36d936d176a70c381d59ef3bfe3093ba4dfa646e702a6531d8db"
+      "sha256": "c61441941376c61d28fd4af87e2378963169a18e44d90510b61faa82defdba51"
     },
     {
       "file": "popover-dark-project-16.png",
-      "sha256": "090caa5b5371c4f29877ecbd203217607a876900883bbc152844c4ece2e826b4"
+      "sha256": "f86e0969e3df59c11b16a5e97d3de6baf9c13e95564e2720b340a2dfd1df91f4"
     }
   ]
 }
