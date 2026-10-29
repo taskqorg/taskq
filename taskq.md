@@ -166,7 +166,7 @@ Loop:
 Service/tray text: R7/R6; menu labels ≤ 32 characters, lines ≤ 160.
 ### Profiling (#988)
 Coreq always records actions; owned methods: bounded opt-in detail. UI/board/agent work; local store, optional sync. Follow [shared profiling](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md); [detail][prof] owns coverage and qualification. R8/R13: ended executions need terminal proof; repair needs native termination or exact execution release; hostless repair needs proven ownership. Profiling never controls recovery/admission. Selftest reads board fresh; nonlive unresolved attempts past ttl warn once, never fail; fresh children, never task rows, exclude live work. Owner waits keep evidence; reopened build/review needs new terminal. Instrumentation/receipts never fail or block operations; selftest fails on unavailable, empty or unflushed capture. [R8 limits][tel]. [Stage tokens](docs/design/profiling.md#stage-tokens) per `model`.
-### Host link (#1832)
+### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 | Command | Does |

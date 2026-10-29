@@ -1,6 +1,6 @@
 # Host link
 
-Accepted implementation target under [taskq.md § 4 Host link](../../taskq.md#host-link-1832) (#1832). It lets the owner's Conversations panel show a live worker session that runs on another registered host of the same board ([live worker panel](ai-workspace.md#workspace-dialogue-d1d8)). Code: `src/link.rs`; the request path is `conversations::worker_read` and `conversations::serve`.
+Accepted implementation target under [taskq.md § 4 Host link](../../taskq.md#host-link) (#1832). It lets the owner's Conversations panel show a live worker session that runs on another registered host of the same board ([live worker panel](ai-workspace.md#workspace-dialogue-d1d8)). Code: `src/link.rs`; the request path is `conversations::worker_read` and `conversations::serve`.
 
 ## Contract detail
 
