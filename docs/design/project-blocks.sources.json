@@ -24,7 +24,7 @@
   "designRevision": "75757d5d843159726a2ea44ca1615f9cf7fd18fd",
   "files": {
     "tests/fixtures/project-blocks.json": "0b049c5f09b368de869672b2b4bbe1b387c1b210e14afabb371ad7c0342794b8",
-    "docs/design/visual-style.md": "14eb6d67e3512dd2bc9741bcd6e73c340e58f1fbf59d0f69ef70005b125bf3ae",
+    "docs/design/visual-style.md": "aa0983062841421d73a918af3db8a6167c5f0269df85e68ca93f338552fdbe39",
     "src/project-blocks.js": "0ec4472064825f8bee2f4b21ddb9a46e24e5b68ade8a2afeffb7cb91c31fecd5",
     "docs/design/menu-next-variants.html": "0cb616825c0f84703dbd19da67149aa9dceaaf4431f5fd193c2df7bae4e0f86c",
     "src/project-blocks.LICENSE": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57",

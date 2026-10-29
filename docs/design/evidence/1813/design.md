@@ -38,7 +38,7 @@ Rejected alternative: permit unrestricted low background opacity with backing Of
 
 ## Implementation and verification
 
-1. Record the answer in the root Product contract and its linked menu/visual specification before code (R13). Keep M1.1 and its existing range, persistence and native failure protection.
+1. Record the answer in the root contract and its linked menu/visual specification before code (R13). Keep M1.1 and its existing range, persistence and native failure protection.
 2. Add the mutually exclusive background-only mode beside the whole-window mode, independent saved background opacity and backing strength, validated IPC and startup/readback. Switching modes must not leave native alpha below 100% in background-only mode; rollback and save errors remain visible.
 3. Reuse the current Appearance controls and shared CSS. Preserve palette, geometry, navigation, drafts, disabled semantics and separate-window opacity. Check normal, selected, disabled, error, popover and shared project/answer/resource content.
 4. Extend existing opacity browser/preference checks at their affected boundary. Add a rendered-content check for foreground and ancestor opacity, with explicit handling of invisible hit targets. Retain whole-window-mode checks. Record failure before and pass after the implementation.

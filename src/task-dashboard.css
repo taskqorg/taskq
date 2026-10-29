@@ -90,3 +90,8 @@
 .menu.background-only .held-shortcut button{background-color:var(--work)}
 .menu.background-only :is(:disabled,[aria-disabled=true]){opacity:1;cursor:default}
 .menu.background-only .tqp{--hover:var(--surface)}
+/* WKWebView ignores accent-color on some range thumbs; paint the foreground cue explicitly. */
+.menu.background-only input[type=range]{-webkit-appearance:none;appearance:none}
+.background-only input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--muted)}
+.background-only input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-6px;border:1px solid var(--work);border-radius:50%;background:var(--work)}
+.background-only input[type=range]:disabled::-webkit-slider-thumb{border-color:var(--muted);background:var(--muted)}

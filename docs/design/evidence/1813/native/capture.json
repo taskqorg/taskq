@@ -1,0 +1,17 @@
+{
+  "source": "c32296d1575721e05672371ebb16f252f43519f9",
+  "binarySha256": "bd989f7b3395e03d1e6ff5d7856037d0b0e0741954f5b4cefe6d4a94f2adcfb0",
+  "renderer": "WKWebView page snapshot; not desktop composition",
+  "os": "macOS 27.0.1 arm64",
+  "font": 20,
+  "settings": {
+    "opacity": 90,
+    "opacity_mode": "background",
+    "background_opacity": 0,
+    "backing_strength": 98
+  },
+  "files": {
+    "light-appearance-20.png": "30496e7985e14561af0f295ca150f9d9f7fd53af0c80a2bc1e8ae97c8142edea",
+    "dark-appearance-20.png": "9cb506b0c5938b490bbfa80917425a57105e9054fbc9b7139ecb918036794896"
+  }
+}

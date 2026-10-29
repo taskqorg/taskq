@@ -15,7 +15,7 @@ function inspect(){
  const contrast=(a,b)=>{a=lum(a);b=lum(b);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);};
  const blend=(fg,bg)=>fg.slice(0,3).map((v,i)=>fg[3]*v+(1-fg[3])*bg[i]);
  const failures=[],opacity=[],samples=[];
- const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width&&r.height&&r.bottom>0&&r.top<innerHeight&&s.visibility==='visible'&&s.display!=='none';};
+ const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width&&r.height&&s.visibility==='visible'&&s.display!=='none';};
  const check=(e,label,min)=>{
   if(!visible(e))return;
   const chain=[];for(let a=e;a&&a!==document.body;a=a.parentElement){chain.unshift(a);if(Number(getComputedStyle(a).opacity)!==1)opacity.push(label+' ancestor '+a.className);}
@@ -52,13 +52,18 @@ function inspect(){
    await page.evaluate(s=>taskq.receive(s),{...s,page:route});
    const result=await page.evaluate(inspect);assert.deepEqual(result.opacity,[],route+' full foreground alpha');assert.deepEqual(result.failures,[],route+' AA at minimum backing');
   }
+  await page.evaluate(s=>taskq.receive(s),{...s,page:'home'});await page.locator('[data-a=view-editor]').click();
+  assert.deepEqual((await page.evaluate(inspect)).failures,[],'floating content retains AA backing');
+  assert.deepEqual((await page.evaluate(inspect)).opacity,[],'floating controls retain full alpha');
+  await page.locator('#taskq-popover [data-a=popup-close]').first().click();
+  await page.evaluate(s=>taskq.receive(s),{...s,opacity_error:'Native alpha refused'});assert.match(await page.locator('[role=alert]').innerText(),/Native alpha refused/);
   await page.evaluate(s=>taskq.receive(s),{...s,page:'appearance'});
   // Shared consumer defaults and unfilled semantic text must also survive the lowest backing.
   await page.evaluate(()=>{const body=document.querySelector('.content-body');const sample=document.createElement('div');sample.id='contrast-sample';sample.innerHTML='<div class="body"><span class="work">Work</span> <span class="review">Review</span> <span class="failed">Failed</span></div><div class="tqp">Project <small>Secondary</small></div><div class="qac">Answer <span class="qac-muted">Secondary</span></div><div class="rsc">Resource <span class="rsc-muted">Secondary</span><button disabled>Unavailable</button></div>';body.prepend(sample);});
   const shared=await page.evaluate(inspect);assert.deepEqual(shared.opacity,[]);assert.deepEqual(shared.failures,[],'shared and unfilled semantic body text retain AA');
   // Mutation proves the guard rejects a faded control and a faded ancestor.
-  for(const selector of ['.content-body','#backing-strength']){
-   await page.locator(selector).evaluate(e=>e.style.opacity='.5');assert((await page.evaluate(inspect)).opacity.length>0,'opacity mutation must fail');await page.locator(selector).evaluate(e=>e.style.removeProperty('opacity'));
+  for(const selector of ['.content-body','#backing-strength','.ui-icon svg']){
+   await page.locator(selector).first().evaluate(e=>e.style.opacity='.5');assert((await page.evaluate(inspect)).opacity.length>0,'opacity mutation must fail');await page.locator(selector).first().evaluate(e=>e.style.removeProperty('opacity'));
   }
   for(const strength of [98,99,100]){await page.evaluate(s=>taskq.receive(s),{...s,backing_strength:strength});assert.deepEqual((await page.evaluate(inspect)).failures,[]);}
   await page.evaluate(()=>document.getElementById('contrast-sample')?.remove());
