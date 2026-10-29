@@ -36,7 +36,7 @@ Commands: `npm run build`; `node docs/design/evidence/1805/check.cjs --evidence 
 | Proposed navigation | Pass | Three separate simulated destinations; Back restores trigger focus |
 | Equal counts | Pass | `2 shown · 2 total` retains both labels |
 | Visual inspection | Pass | Actual-size A and B, long name, equal/unknown counts, collapsed groups; A also inspected in light; palette/assets reused |
-| Owner visual acceptance | Not tested | Choose A or B before implementation; these images do not approve themselves |
+| Owner visual acceptance | Pass | Second owner answer selects A and the §7.8 native-at-release route |
 | Native Mac/Windows and screen reader | Not tested | Browser evidence does not qualify installed rendering, native effects or assistive technology |
 | Rule-change gate | Pass | `python3 scripts/check.py --rules --base 89f007c75e2fa33c27b4cd7bbc9b48b3411ce5d9`: changed M2 is named by the trusted owner answer |
 | Merge-result CI | Not tested | This is the design checkpoint; no result or merge is submitted |
@@ -51,7 +51,7 @@ The production change is confined to the dashboard header/rendering, its local p
 
 ### Failure before and pass after (R12, §7.4)
 
-`node tests/menu-project-groups.browser.cjs` against the unchanged product bundle failed at `M2: each deduplicated group needs an independent collapse control` (`0 !== 2`). The same instrument passes after the implementation. Retained protections: exact board/root targets, independent name navigation, full task titles, known/unknown counts, deduplication and pins, existing navigation IPC, keyboard focus and target sizes. No existing guard or assertion was removed or weakened.
+`node tests/menu-project-groups.browser.cjs` against the unchanged product bundle failed at `M2: each deduplicated group needs an independent collapse control` (`0 !== 2`). The same instrument passes after the implementation. Retained protections: exact board/root targets, independent name navigation, full task titles, known/unknown counts, deduplication and pins, existing navigation IPC, keyboard focus and target sizes. No existing guard or assertion was removed or weakened. A second reproduction found that keyboard collapse left a task popover anchored to a hidden row (`1 !== 0`); the shared collapse handler now closes details belonging to that group, retaining focus on the arrow. The same browser case then passes.
 
 - `node tests/task-views.test.cjs`: Pass; legacy navigation defaults expanded, malformed collapse input is rejected, normalized choices round-trip.
 - `node tests/tray-view-state.test.cjs`: Pass; existing navigation boundaries remain protected.
