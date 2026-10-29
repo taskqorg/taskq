@@ -26,12 +26,27 @@ pub struct Shared(std::sync::Arc<Mutex<Budget>>);
 impl Default for Shared {
     fn default() -> Self { Self(std::sync::Arc::new(Mutex::new(Budget::default()))) }
 }
+/// The key of one API host and credential: a SHA-256, never the token.
+pub fn key(root: &str, auth: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, format!("{root}\0{auth}").as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The pause file of one API host and credential in `install`: the reset (Unix seconds) every process there honours.
+pub fn pause_file(install: &std::path::Path, root: &str, auth: &str) -> std::path::PathBuf {
+    install.join(format!("requests-paused-{}", &key(root, auth)[..16]))
+}
+
+/// A pause another process recorded in `file`: its reset while in the future, at most [`MAX_PAUSE`] ahead.
+pub fn recorded_pause(file: &std::path::Path, wall: i64) -> Option<(i64, i64)> {
+    let reset = std::fs::read_to_string(file).ok()?.trim().parse::<i64>().ok()?;
+    (reset > wall).then(|| (reset, (reset - wall).min(MAX_PAUSE)))
+}
+
 impl Shared {
     pub fn for_api(root: &str, auth: &str) -> Self {
         if !crate::host::active() { return Self::default(); }
         static BUDGETS: std::sync::OnceLock<Mutex<BTreeMap<String, std::sync::Arc<Mutex<Budget>>>>> = std::sync::OnceLock::new();
-        let key = ring::digest::digest(&ring::digest::SHA256, format!("{root}\0{auth}").as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect::<String>();
-        Self(BUDGETS.get_or_init(Default::default).lock().expect("board budget registry poisoned").entry(key).or_default().clone())
+        Self(BUDGETS.get_or_init(Default::default).lock().expect("board budget registry poisoned").entry(key(root, auth)).or_default().clone())
     }
     pub fn borrow(&self) -> std::sync::MutexGuard<'_, Budget> {
         match self.0.lock() {
@@ -85,6 +100,11 @@ impl Budget {
             Some((until, reset)) if now < until => Some(reset),
             _ => { self.paused = None; None }
         }
+    }
+
+    /// Pauses for `wait` seconds until `reset`, as another process of this install recorded (§ 4).
+    pub fn hold(&mut self, reset: i64, wait: i64, now: Instant) {
+        if self.paused(now).is_none() { self.paused = Some((now + Duration::from_secs(wait.clamp(1, MAX_PAUSE) as u64), reset)); }
     }
 
     pub fn paused_until(&self) -> Option<i64> {

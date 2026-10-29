@@ -164,7 +164,7 @@ One loop:
 - Owner sessions: [setup/AI/retro](docs/design/ai-workspace.md#contract-detail) launch once, visible; C1 threads/D1–D8, no §3 admission controls. PM: [opt-in grant](docs/design/pm-requests.md#contract-detail).
 - Incident reports ([incidents](docs/design/incidents.md#contract-detail)): `incident_reports` (§ 9) defaults to true; `false` or `TASKQ_INCIDENT_REPORTS=off` disables. Setup and the shipping update disclose destination and opt-out before any send. Only a catalog fault reports, with an allowlisted payload; a report never changes a task, the queue or an exit code.
 - Data: [bounds/handover][hsd], `src/data.rs`: text logs hourly.
-- Log and board budget: [contract detail](docs/budget-1032.md#contract-detail) owns counting, pause and alarm formats. Service threads share one counter and pause per API host/token, and one hourly record per host. CLI/worker processes count separately. The board user's 5000 requests/h serve all hosts and clients; at <=20 % remaining log once per reset and show the alarm in service status/list and R6.
+- Log and board budget: [contract detail](docs/budget-1032.md#contract-detail) owns counting, pause and alarm formats. Service threads share one counter and pause per API host/token, and one hourly record per host. CLI/worker processes count separately; a pause stops every process of the install. The board user's 5000 requests/h serve all hosts and clients; at <=20 % remaining log once per reset and show the alarm in service status/list and R6.
 
 Service/tray text follows R7 and R6 names; menu labels ≤ 32 characters, lines ≤ 160.
 ### Profiling (#988)

@@ -207,6 +207,10 @@ pub fn iso(s: &str) -> Option<i64> {
 }
 
 /// HTTP `Date`: `Mon, 12 Oct 2026 10:00:00 GMT`.
+fn wall() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
+}
+
 pub fn http_date(s: &str) -> Option<i64> {
     let w: Vec<&str> = s.split_whitespace().collect();
     let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -390,7 +394,9 @@ impl Kind {
     /// The board of `repo` on the web `host`, with the token this board's lookup finds (§ 9).
     pub fn open(&self, host: &str, repo: &str, schema: Option<&str>, tool: &coreq::Tool) -> Result<Box<dyn Board>> {
         let schema = label_schema(schema)?;
-        let api = (self.api)(host, repo, &(self.token)(tool, host)?);
+        let token = (self.token)(tool, host)?;
+        let mut api = (self.api)(host, repo, &token);
+        api.pause = Some(crate::requests::pause_file(&tool.install, &api.root, &token));
         *api.label_schema.borrow_mut() = schema;
         Ok(Box::new(Profiled((self.board)(api))))
     }
@@ -413,6 +419,8 @@ pub struct Api {
     budget: crate::requests::Shared,
     /// Labels whose catalog definition this process has read back: verified once per process (§ 4 budget).
     labels_ok: RefCell<std::collections::HashSet<String>>,
+    /// The install's pause file of this API host and credential: every process there stops until its reset (§ 4).
+    pause: Option<std::path::PathBuf>,
     #[cfg(test)]
     transport: Option<Transport>,
 }
@@ -420,7 +428,7 @@ pub struct Api {
 impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
-        Api { base, root, auth: format!("Authorization: Bearer {token}"), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), budget, labels_ok: RefCell::default(), #[cfg(test)] transport: None }
+        Api { base, root, auth: format!("Authorization: Bearer {token}"), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), budget, labels_ok: RefCell::default(), pause: None, #[cfg(test)] transport: None }
     }
 
     fn call(&self, method: &str, url: &str, body: Option<Value>) -> Result<Reply> {
@@ -432,6 +440,15 @@ impl Api {
         crate::requests::op(method, url.strip_prefix(&self.base).or_else(|| url.strip_prefix(&self.root)).unwrap_or(url))
     }
 
+    /// The reset while this budget, or the install's pause file, holds requests (§ 4).
+    fn paused(&self) -> Option<i64> {
+        let now = std::time::Instant::now();
+        if let Some((reset, wait)) = self.pause.as_deref().and_then(|f| crate::requests::recorded_pause(f, wall())) {
+            self.budget.borrow_mut().hold(reset, wait, now);
+        }
+        self.budget.borrow_mut().paused(now)
+    }
+
     /// One request counted under `op`. While the board budget is exhausted nothing is sent (§ 4).
     fn send(&self, method: &str, url: &str, body: Option<Value>, op: &str) -> Result<Reply> {
         // absolute URLs come from pagination headers: the token goes only to the configured API
@@ -440,7 +457,7 @@ impl Api {
             return Err(format!("refused: {url} is outside the board API"));
         }
         if let Some(reason) = &self.budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
-        if let Some(reset) = self.budget.borrow_mut().paused(std::time::Instant::now()) {
+        if let Some(reset) = self.paused() {
             return Err(format!("{method} {url}: {}", crate::requests::paused_text(reset)));
         }
         self.budget.borrow_mut().count(op.into());
@@ -460,6 +477,8 @@ impl Api {
             let class=match status {400..=499=>"http4xx",500..=599=>"http5xx",_=>"other"};
             let paused = self.budget.borrow_mut().observe(status, limited, |n| r.header(n).map(String::from), *self.clock.borrow(), std::time::Instant::now());
             if let Some(reset) = paused {
+                // ponytail: the install's processes compare against their own wall clock, not the board's
+                if let Some(f) = &self.pause { let _ = std::fs::write(f, (wall() + reset - *self.clock.borrow()).to_string()); }
                 return Err((class,format!("{method} {url}: HTTP {status} {}", crate::requests::paused_text(reset))));
             }
             if !(200..300).contains(&r.status) {
@@ -487,7 +506,7 @@ impl Api {
         let url = if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) };
         if !url.starts_with(&format!("{}/", self.root)) { return Err(format!("refused: {url} is outside the board API")); }
         if let Some(reason) = &self.budget.borrow().unknown { return Err(format!("board requests held: {reason}")); }
-        if let Some(reset) = self.budget.borrow_mut().paused(std::time::Instant::now()) { return Err(format!("{url}: {}", crate::requests::paused_text(reset))); }
+        if let Some(reset) = self.paused() { return Err(format!("{url}: {}", crate::requests::paused_text(reset))); }
         let method = if form.is_some() { "POST" } else { "GET" };
         let op = self.op(method, &url);
         self.budget.borrow_mut().count(op.clone());
@@ -1555,6 +1574,36 @@ exit 0
             assert!(api.budget.borrow().paused_until().is_some());
             assert_eq!(*sent.borrow(), 1, "{status}: no GraphQL request is sent while paused");
         }
+    }
+
+    // Chain: § 4 board budget. Risk: a rate-limit reply pauses only the process that got it; PM, worker and DashQ
+    // CLI processes of the same install keep sending until the reset and stretch the board's block.
+    #[test]
+    fn rate_limit_pause_stops_every_process_of_the_install() {
+        let install = std::env::temp_dir().join(format!("taskq-pause-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&install).unwrap();
+        let sent = std::rc::Rc::new(RefCell::new(0));
+        let process = |status: u16| {
+            let count = sent.clone();
+            let mut api = (github::KIND.api)("github.com", "o/r", "private token");
+            api.pause = Some(crate::requests::pause_file(&install, &api.root, "private token"));
+            api.transport = Some(Box::new(move |_, _, _| {
+                *count.borrow_mut() += 1;
+                Ok(Reply { status, body: "{}".into(), operation: "read", headers: vec![("retry-after".into(), "60".into())] })
+            }));
+            api
+        };
+        assert!(process(429).call("GET", "/issues", None).err().unwrap().contains("paused until"));
+        let other = process(200);
+        assert!(other.call("GET", "/issues", None).err().unwrap().contains("paused until"));
+        assert!(other.budget.borrow().paused_until().is_some(), "service status shows the install's pause");
+        assert_eq!(*sent.borrow(), 1, "no process of the install sends while paused");
+        let mut elsewhere = process(200);
+        elsewhere.pause = Some(crate::requests::pause_file(&install, &elsewhere.root, "other token"));
+        assert!(elsewhere.call("GET", "/issues", None).is_ok(), "another credential keeps its own budget");
+        std::fs::write(crate::requests::pause_file(&install, "https://api.github.com", "private token"), "1").unwrap();
+        assert!(process(200).call("GET", "/issues", None).is_ok(), "a past reset holds nothing");
+        let _ = std::fs::remove_dir_all(&install);
     }
 
     // Chain: board list/readback -> malformed successful HTTP page -> explicit failure, never an empty queue/catalog.
