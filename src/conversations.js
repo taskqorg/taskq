@@ -15,13 +15,28 @@ module.exports=execution.module('conversations',{
   let sidebar={pins:[],collapsed:[],archived:{}},sidebarPending=null,revealed=null,activityRead=null,activityTimer=null,activityTimes={},activityChecks={};
   let owner={id:'main',detached:[]},queue=[],pending=null,timer=null,composing=false,saveTimer=null,navTimer=null;
   // D4/D7: the open dialogue view of one launched conversation; reads bypass the draft queue.
-  const measured=new WeakMap();
   let view=null,reads={},pollTimer=null,opened=[],positions={},synced=false,unified=false,observed=null,resize=null;
   // #1831: one attempt-fenced live tail, owned only by the visible task thread.
-  let live=null,workerPaused=false;
+  let live=null,workerPaused=false,linked=null,linkedReads={};
   const api=execution.module('conversations.instance',{
    id:function(){return Array.from(window.crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');},
    note:function(text,id=selected){notices[id||'list']=text;},
+   linked:function(c,p){
+    if(!c||!p||!c.sent&&!c.request)return [];
+    if(linked?.id!==c.id){linked={id:c.id,rows:[],known:new Set(),checked:new Set(),busy:false,page:1,more:false,reason:''};api.linkedRead(c.id);}
+    const rows=p.tasks.filter(t=>t.conversation?.id===c.id),current=new Set(rows.map(t=>t.n));
+    for(const n of linked.known)if(!current.has(n)&&!linked.checked.has(n)&&!linked.rows.some(t=>t.n===n)&&!Object.values(linkedReads).some(r=>r.conversation===c.id&&r.task===n))api.linkedRead(c.id,n);
+    for(const t of rows)linked.known.add(t.n);
+    return [...rows,...linked.rows.filter(t=>!current.has(t.n))];
+   },
+   linkedRead:function(conversation,task,page=1){
+    if(!linked||linked.id!==conversation||!task&&linked.busy)return;
+    if(task)linked.checked.add(task);
+    const id=api.id();linkedReads[id]={conversation,task,page};if(!task)linked.busy=true;
+    ui.send({a:'conversation-dialogue',action:'tasks',id,conversation,...(task?{task}:{page})});
+    ui.defer(()=>{if(linkedReads[id])api.receive({dialogueReceipt:{id,conversation,action:'tasks',state:'unknown',reason:'Task readback missing; nothing was replayed'}});},30000);
+   },
+   linkedTools:function(){return linked&&[linked.reason&&h('p',{role:'status'},'Task history unknown: '+linked.reason),h('div',{class:'conversation-tools'},h('button',{'data-c':'linked-refresh',disabled:linked.busy},'Refresh task history'),linked.page>1&&h('button',{'data-c':'linked-newer',disabled:linked.busy},'Newer results'),linked.more&&h('button',{'data-c':'linked-older',disabled:linked.busy},'Older results'))];},
    current:function(){return items.find(c=>c.id===selected);},
    ids:function(){return items.map(c=>c.id);},
    opened:function(){return opened;},
@@ -34,13 +49,13 @@ module.exports=execution.module('conversations',{
     if(!row||!!row.archived!==(list==='archive'))selected=null;
     selection[list]=selected;onSelect?.(selected);return selected;
    },
-   capture:function(){const el=menu.querySelector('.conversation-reader');if(el?.parentElement.dataset.threadId&&!el.querySelector('.dialogue-transcript'))api.place(el.parentElement.dataset.threadId,el.scrollTop);},
-   // a pixel offset for a thread reader, a record anchor for a transcript; the oldest beyond SAVED are dropped
+   capture:function(){const el=menu.querySelector('.conversation-reader');if(el?.parentElement.dataset.threadId&&!el.querySelector('.dialogue-transcript')){const a=api.mark(el);api.place(el.parentElement.dataset.threadId,a?.board?{key:a.key,y:a.y}:el.scrollTop);}},
+   // Stable board/native record offsets share the bounded navigation; plain readers retain pixel positions.
    place:function(id,value){
     if(id!==undefined){delete positions[id];if(value!==undefined)positions[id]=value;}
     for(const k of Object.keys(positions)){if(Object.keys(positions).length<=SAVED&&JSON.stringify(positions).length<=SAVED_BYTES)break;delete positions[k];}
    },
-   anchored:function(v){return !!v&&typeof v==='object'&&Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0&&Number.isFinite(v.y);},
+   anchored:function(v){return !!v&&typeof v==='object'&&Number.isFinite(v.y)&&(/^(task|brief|question|answer|result):[0-9]+(?::[0-9]+)?$/.test(v.key)||Number.isSafeInteger(v.at)&&v.at>=0&&Number.isSafeInteger(v.i)&&v.i>=0);},
    editable:function(c){return !!c&&(!owner.conversation||owner.conversation===c.id)&&!(owner.detached||[]).includes(c.id)&&!c.deleted;},
    // The draft names only an unsent request; a sent or native thread keeps its title while the owner types the next message.
    title:function(c){const line=s=>(s||'').split('\n').find(s=>s.trim())?.trim();return c.title||(c.sent||c.request?line(c.sent?.text)||'Native request':line(c.text)||'New request');},
@@ -65,14 +80,18 @@ module.exports=execution.module('conversations',{
     ui.defer(()=>{if(reads[id]){api.settle({id,conversation,state:'unknown',reason:'Dialogue read receipt missing'});draw();}},30000);
    },
    settle:function(r){
-    const op=reads[r.id];if(!op)return;delete reads[r.id];
+    const op=reads[r.id];if(!op||r.conversation!==op.conversation)return;delete reads[r.id];
     if(view?.id!==op.conversation)return;if(view.busy[op.kind]===r.id)view.busy[op.kind]=null;
+    if(op.gen!==view.gen)return;
     const v=r.value,el=menu.querySelector('.conversation-reader');
     if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';const c=api.current();if(c&&Object.hasOwn(v,'updated')){c.updated=v.updated;activityTimes[c.id]={updated:v.updated,reason:v.updated_reason};}api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
-    if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';return;}
+    if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';if(/shrank|replaced/.test(view.reason)){view.lost=view.reason;view.stick=false;}return;}
     // Q-A3/A5: a reply for a replaced window, or for a cursor the window no longer ends at, is obsolete
     if(op.gen!==view.gen)return;
-    view.reason='';view.size=v.size;
+    if(v.generation&&view.source&&v.generation!==view.source&&(view.items.length||view.end>0)){
+     view.gen++;view.items=[];view.start=view.end=null;view.source=v.generation;view.stick=false;view.anchor=null;view.lost='Transcript source changed. Choose Latest to open the current source.';view.reason=view.lost;api.place(view.id);return;
+    }
+    view.source=v.generation||view.source;view.reason='';view.size=v.size;
     if(el&&!view.stick&&view.items.length&&menu.querySelector('.dialogue-transcript')?.dataset.id===view.id)view.anchor=api.mark(el)||view.anchor;
     const have=new Set(view.items.map(api.key)),fresh=v.items.filter(item=>!have.has(api.key(item)));
     if(op.kind==='initial'){
@@ -84,39 +103,39 @@ module.exports=execution.module('conversations',{
     else if(op.kind==='after'&&op.after===view.end){view.items.push(...fresh);view.end=v.end;view.quiet.after=fresh.length?0:view.quiet.after+1;if(fresh.length){view.announce=fresh.length+(fresh.length===1?' new message':' new messages');if(!view.stick)view.unseen=true;}}
    },
    key:function(item){return item.at+':'+item.i;},
-   // Q-A3: the first transcript record visible in the reading viewport and its offset from the viewport top
+   // Q-A3: the first visible native or board record and its offset from the viewport top
    mark:function(el){
-    const nodes=el.querySelectorAll('.dialogue-transcript>[data-key]');if(!nodes.length)return null;
+    const nodes=el.querySelectorAll('.dialogue-transcript>[data-key],[data-reading-key]');if(!nodes.length)return null;
     const top=el.getBoundingClientRect().top;let lo=0,hi=nodes.length-1;
     while(lo<hi){const mid=(lo+hi)>>1;if(nodes[mid].getBoundingClientRect().bottom<=top)lo=mid+1;else hi=mid;}
-    return {key:nodes[lo].dataset.key,y:nodes[lo].getBoundingClientRect().top-top};
+    const node=nodes[lo];return {key:node.dataset.readingKey||node.dataset.key,board:!!node.dataset.readingKey,y:node.getBoundingClientRect().top-top};
    },
-   // Q-A3: the one owner of transcript scroll correction: follow the end, or keep the anchored record at its offset
+   // Q-A3: one scroll correction owner: follow the end, or keep the anchored record at its offset
    hold:function(el,state=view){
     if(state.stick){el.scrollTop=el.scrollHeight;return;}
-    const a=state.anchor,node=a&&el.querySelector('.dialogue-transcript>[data-key="'+a.key+'"]');
+    const a=state.anchor,node=a&&el.querySelector(a.board?'[data-reading-key="'+a.key+'"]':'.dialogue-transcript>[data-key="'+a.key+'"]');
     if(node)el.scrollTop+=node.getBoundingClientRect().top-el.getBoundingClientRect().top-a.y;
    },
    // Q-A3: font, width and content size changes keep the anchor too
    observe:function(log){
-    if(observed===log)return;resize?.disconnect();observed=log;
-    resize=new window.ResizeObserver(()=>{const el=observed?.isConnected&&observed.closest('.conversation-reader'),state=live?.thread===observed?.dataset.id?live:view;if(el&&state&&(state.thread||state.id)===observed.dataset.id)api.hold(el,state);});resize.observe(log);
+    resize?.disconnect();observed=log;
+    resize??=new window.ResizeObserver(()=>{const el=observed?.isConnected&&observed.closest('.conversation-reader'),state=live?.thread===observed?.dataset.id?live:view;if(el&&state&&(state.thread||state.id)===observed.dataset.id)api.hold(el,state);});resize.observe(log);for(const card of log.closest('.conversation-reader').querySelectorAll('.journey-card,.thread-card'))resize.observe(card);
    },
    // Q-A4: read earlier or later records while they are within one viewport of the visible area; short and
    // ignored-only pages leave the edge near, so the next draw reads again until the viewport fills or the cursor ends
-   edge:function(el){
-    const log=el.querySelector('.dialogue-transcript');if(!log||view.end===null||view.reason||view.busy.initial)return;
+   edge:function(el,v=view){
+    const log=el.querySelector('.dialogue-transcript');if(!log||v.end===null||v.reason||v.busy.initial)return;
     const box=el.getBoundingClientRect(),r=log.getBoundingClientRect(),margin=el.clientHeight;
-    if(view.start>0&&!view.busy.before&&view.quiet.before<FILL&&r.top>box.top-margin)api.read('before',{before:view.start});
-    if(view.end<view.size&&!view.busy.after&&view.quiet.after<FILL&&r.bottom<box.bottom+margin)api.read('after',{after:view.end});
+    if(v.start>0&&!v.busy.before&&v.quiet.before<FILL&&r.top>box.top-margin)(v===live?api.workerRead:api.read)('before',{before:v.start});
+    if(v.end<v.size&&!v.busy.after&&v.quiet.after<FILL&&r.bottom<box.bottom+margin)(v===live?api.workerRead:api.read)('after',{after:v.end});
    },
    // Q-A5: evict whole records beyond two viewports, the farther side first; records that hold a selection stay
    // mounted while it is in use, so copy keeps its text
-   trim:function(el){
-    const items=view.items;if(items.length<=WINDOW)return false;
-    const log=el.querySelector('.dialogue-transcript'),nodes=log.querySelectorAll(':scope>[data-key]');if(nodes.length!==items.length)return false;
+   trim:function(el,v=view){
+    const items=v.items;if(items.length<=WINDOW)return false;
+    const log=el.querySelector('.dialogue-transcript'),nodes=items.map(item=>{const node=log.querySelector('[data-key="'+api.key(item)+'"]');return node?.closest('.dialogue-steps:not([open])')||node;});if(nodes.some(n=>!n))return false;
     const box=el.getBoundingClientRect(),over=el.clientHeight*2,excess=items.length-WINDOW,sel=window.getSelection(),held=[];
-    if(sel&&!sel.isCollapsed)for(const n of [sel.anchorNode,sel.focusNode]){const node=n?.parentElement?.closest('.dialogue-transcript>[data-key]');if(node&&log.contains(node))held.push([...nodes].indexOf(node));}
+    if(sel&&!sel.isCollapsed)for(const n of [sel.anchorNode,sel.focusNode]){const node=n?.parentElement?.closest('[data-key]'),index=node&&log.contains(node)?items.findIndex(i=>api.key(i)===node.dataset.key):-1;if(index>=0)held.push(index);}
     let top=0,bottom=items.length;
     while(top<items.length&&nodes[top].getBoundingClientRect().bottom<box.top-over)top++;
     while(bottom>top&&nodes[bottom-1].getBoundingClientRect().top>box.bottom+over)bottom--;
@@ -125,19 +144,20 @@ module.exports=execution.module('conversations',{
     let a=Math.min(top,excess-b);while(a>0&&items[a].i>0)a--;
     let cut=items.length-b;while(cut<items.length&&items[cut].i>0)cut++;
     if(!a&&cut===items.length)return false;
-    if(cut<items.length)view.end=items[cut].at;if(a)view.start=items[a].at;
-    view.items=items.slice(a,cut);return true;
+    if(cut<items.length)v.end=items[cut].at;if(a)v.start=items[a].at;
+    v.items=items.slice(a,cut);return true;
    },
    // Q-A4: detached from the end, or new output arrived below the reader
-   latest:function(){return !!view&&view.end!==null&&!view.reason&&!view.stick;},
+   latest:function(){return !!view&&!view.stick&&(view.end!==null||!!view.lost);},
    jump:function(){return api.latest()&&h('button',{'data-c':'latest',class:'dialogue-latest'},view.unseen?'New messages · Jump to latest':'Jump to latest');},
-   // only this action and Send resume following; a window that does not hold the end is replaced by the newest page
-   follow:function(){view.unseen=false;view.stick=true;view.lost='';api.place(view.id);if(view.end!==null&&view.end<view.size){view.gen++;view.busy.before=view.busy.after=null;api.read('initial');}},
+   // only Latest resumes following; a window that does not hold the end is replaced by the newest page
+   pause:function(){const el=menu.querySelector('.conversation-reader'),s=live?.thread===selected?live:view?.id===selected?view:null;if(s&&s.stick){s.stick=false;s.anchor=el&&api.mark(el);draw();}},
+   follow:function(){const reset=!!view.reason;view.unseen=false;view.stick=true;view.lost='';view.reason='';api.place(view.id);if(reset||view.end===null||view.end<view.size||view.items.length===0){view.gen++;view.busy.before=view.busy.after=null;api.read('initial');}},
    open:function(c){
     if(view?.id!==c.id){
      reads={};const saved=api.anchored(positions[c.id])?positions[c.id]:null;
-     view={id:c.id,items:[],start:null,end:null,size:null,gen:0,from:saved?.at,reason:'',lost:'',announce:'',unseen:false,quiet:{before:0,after:0},status:null,statusReason:'',busy:{},stick:!saved,anchor:saved&&{key:saved.at+':'+saved.i,y:saved.y},ticks:0,form:null};
-     api.read('initial',saved?{after:saved.at}:{});api.read('status');
+     view={id:c.id,items:[],start:null,end:null,size:null,gen:0,from:saved?.at,source:saved?.g,reason:'',lost:'',announce:'',unseen:false,quiet:{before:0,after:0},status:null,statusReason:'',busy:{},stick:!saved,anchor:saved&&{key:saved.key||saved.at+':'+saved.i,board:!!saved.key,y:saved.y},ticks:0,form:null};
+     api.read('initial',saved?.at!==undefined?{after:saved.at}:{});api.read('status');
     }
     if(!pollTimer)pollTimer=ui.defer(api.poll,2000);
    },
@@ -145,7 +165,7 @@ module.exports=execution.module('conversations',{
    poll:function(){
     pollTimer=null;const c=api.current();
     if(!view||c?.id!==view.id||!menu.querySelector('.dialogue-transcript'))return;
-    if(!view.busy.initial&&!view.busy.after){if(view.end===null)api.read('initial',view.from!==undefined?{after:view.from}:{});else if(view.end>=view.size)api.read('after',{after:view.end});}
+    if(!view.lost&&!view.busy.initial&&!view.busy.after){if(view.end===null)api.read('initial',view.from!==undefined?{after:view.from}:{});else if(view.end>=view.size)api.read('after',{after:view.end});}
     if(++view.ticks%5===0&&!view.busy.status)api.read('status');
     pollTimer=ui.defer(api.poll,2000);
    },
@@ -179,7 +199,7 @@ module.exports=execution.module('conversations',{
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before},v.busy.before?'Loading earlier…':'Load earlier'),
      v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?v.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief'),h('p',{class:'conversation-text'},item.text)):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief'),h('p',{class:'conversation-text'},item.text)):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
@@ -215,38 +235,48 @@ module.exports=execution.module('conversations',{
    // another host answers through the host link (#1832), and a host that does not answer reads unknown, never empty.
    worker:function(thread,t,p){
     if(workerPaused||!p?.alive||p.complete===false||!(t?.local_session||t?.host)||t.state!=='doing'||t.role!=='worker'||!t.attempt){api.workerStop();return null;}
-    if(live?.attempt!==t.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();live={thread,root:p.root,attempt:t.attempt,items:[],end:null,reason:'',busy:null,timer:null,timeout:null,ended:false,stick:true,anchor:null};}
-    if(!live.ended&&!live.busy&&!live.timer)live.timer=ui.defer(api.workerRead,live.end===null&&!live.reason?0:1000);
+    if(live?.attempt!==t.attempt||live.thread!==thread||live.root!==p.root){api.workerStop();const saved=api.anchored(positions[thread])?positions[thread]:null;live={thread,root:p.root,attempt:t.attempt,items:[],start:null,end:null,size:null,source:saved?.g,from:saved?.at,gen:0,quiet:{before:0,after:0},reason:'',busy:{},request:null,timer:null,timeout:null,ended:false,stick:!saved,anchor:saved&&{key:saved.key||saved.at+':'+saved.i,board:!!saved.key,y:saved.y}};}
+    if(!live.ended&&!live.request&&!live.timer)live.timer=ui.defer(()=>api.workerRead(live.end===null?'initial':'after'),live.end===null&&!live.reason?0:1000);
     const label={assistant:'Worker',owner:'You · via the board'};
     return h('details',{class:'worker-live','data-view-key':'worker-live:'+thread,open:true},h('summary',null,'Live session · '+t.runtime+(t.local_session?'':' on '+t.host)),
      !live.stick&&h('button',{'data-c':'worker-latest',class:'dialogue-latest'},'Jump to latest'),
      h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Live worker session','data-id':thread},
+      live.start>0&&h('button',{'data-c':'worker-earlier',disabled:!!live.request},'Load earlier'),live.end<live.size&&live.quiet.after>=FILL&&h('button',{'data-c':'worker-later',disabled:!!live.request},'Load later'),
       live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
       live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
    },
-   workerRead:function(){
-    const l=live;if(!l)return;l.timer=null;
+   workerRead:function(kind='after',extra={}){
+    const l=live;if(!l||l.request)return;ui.cancel(l.timer);l.timer=null;
     if(workerPaused||l.ended||!menu.querySelector('.worker-live')?.checkVisibility()){api.workerStop();return;}
-    const id=api.id();l.busy=id;
-    ui.send({a:'conversation-dialogue',id,conversation:l.thread,root:l.root,attempt:l.attempt,action:'transcript',...(l.end===null?{}:{after:l.end})});
-    l.timeout=ui.defer(()=>{if(live===l&&l.busy===id){l.busy=null;l.reason='Live read receipt missing';draw();}},30000);
+    if(kind==='after'&&l.end<l.size&&!Object.keys(extra).length)return;
+    const cursor=Object.keys(extra).length?extra:kind==='initial'?(l.from!==undefined?{after:l.from}:{}):kind==='before'?{before:l.start}:{after:l.end};
+    const id=api.id();l.request={id,kind,gen:l.gen,...cursor};l.busy[kind]=id;
+    ui.send({a:'conversation-dialogue',id,conversation:l.thread,root:l.root,attempt:l.attempt,action:'transcript',...cursor});
+    l.timeout=ui.defer(()=>{if(live===l&&l.request?.id===id){l.request=null;l.busy[kind]=null;l.reason='Live read receipt missing';draw();}},30000);
    },
    workerSettle:function(r){
-    const l=live;if(!l||l.busy!==r.id)return false;l.busy=null;ui.cancel(l.timeout);
+    const l=live,op=l?.request;if(!op||op.id!==r.id||r.conversation!==l.thread)return false;l.request=null;l.busy[op.kind]=null;ui.cancel(l.timeout);
+    if(op.gen!==l.gen)return true;
     const reader=menu.querySelector('.conversation-reader');if(reader&&!l.stick)l.anchor=api.mark(reader)||l.anchor;
     const was=l.reason,first=l.end===null;let fresh=[];
     if(r.value?.ended){l.ended=true;l.reason='';draw();return true;}
     if(r.state!=='accepted')l.reason=r.reason||'Transcript unknown';
-    else {l.reason='';const have=new Set(l.items.map(api.key));fresh=r.value.items.filter(i=>!have.has(api.key(i)));l.items=[...l.items,...fresh].slice(-WINDOW);l.end=r.value.end;}
-    // a quiet read schedules the next one without a repaint, so the steer composer below is not disturbed
-    if(first||fresh.length||was!==l.reason)draw();else if(!l.timer)l.timer=ui.defer(api.workerRead,1000);
+    else if(r.value.generation&&l.source&&r.value.generation!==l.source&&(l.items.length||l.end>0)){l.reason='Transcript source changed; reopen this task to read the current attempt.';l.ended=true;}
+    else {
+     const v=r.value;l.source=v.generation||l.source;l.reason='';l.size=v.size;
+     const have=new Set(l.items.map(api.key));fresh=v.items.filter(i=>!have.has(api.key(i)));
+     if(op.kind==='initial'){l.items=v.items;l.start=v.start;l.end=v.end;l.from=undefined;}
+     else if(op.kind==='before'&&op.before===l.start){l.items=[...fresh,...l.items];l.start=v.start;l.quiet.before=fresh.length?0:l.quiet.before+1;}
+     else if(op.kind==='after'&&op.after===l.end){l.items.push(...fresh);l.end=v.end;l.quiet.after=fresh.length?0:l.quiet.after+1;}
+    }
+    if(first||fresh.length||was!==l.reason)draw();else if(!l.timer)l.timer=ui.defer(()=>api.workerRead('after'),1000);
     return true;
    },
    // #1775: a tool line keeps the file name of an absolute path, never the local directories
    short:function(text){return String(text).replace(/(?<![^\s'"`=(])(?:~\/|\/)(?:[^\s/'"`]+\/)+([^\s/'"`]*)/g,'…/$1');},
    preview:function(){return preview&&h('section',{'aria-label':'Local file preview'},h('button',{'data-c':'preview-close'},'Close preview'),preview.file.mime.startsWith('image/')?h('img',{src:'data:'+preview.file.mime+';base64,'+preview.data,alt:preview.file.name}):h('pre',null,new window.TextDecoder().decode(Uint8Array.from(window.atob(preview.data),c=>c.charCodeAt(0)))));},
-   local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next};},
+   local:function(c){return {title:c.title||'',root:c.root||'',text:c.text||'',caret:c.caret||[0,0],scroll:c.scroll||0,next:!!c.next,...(c.replyAck?{reply_ack:c.replyAck}:{})};},
    // #1773 A4: the host refuses fractional scroll offsets and navigation over 4096 bytes; whole pixels and the newest opened threads fit
    nav:function(){ui.cancel(navTimer);navTimer=ui.defer(()=>{const whole=Object.fromEntries(Object.entries(scrolls).map(([k,v])=>[k,Math.max(0,Math.round(v)||0)]));let navigation;do navigation={list,search,selected:api.current()?.id||null,listOnly,scrolls:whole,threads:{selected,selection,opened,positions}};while(JSON.stringify(navigation).length>4096&&opened.shift());ui.send({a:'conversation-navigation',navigation});},100);},
    select:function(id,focus=true){revealed=id;const prior=api.current();if(prior&&(prior.version||0)!==(prior.saved||0))api.save(prior);selected=id;onSelect?.(id);selection[list]=id;listOnly=false;focusDraft=focus;confirmDelete=false;preview=null;api.nav();draw();},
@@ -273,7 +303,7 @@ module.exports=execution.module('conversations',{
     if(op.action!=='save')api.note('',op.conversation);
     pending={...op,id:api.id(),revision:c.revision||0,version:c.version||0};
     ui.send({a:op.action==='window'?'conversation-window':'conversation-action',...pending});
-    ui.cancel(timer);timer=ui.defer(()=>{if(pending){failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;api.note(failure.reason,failure.conversation);draw();}},30000);
+    ui.cancel(timer);timer=ui.defer(()=>{if(pending){if(pending.action==='reply'){const c=items.find(c=>c.id===pending.conversation);if(c)c.reply={id:pending.id};}failure={...pending,reason:'Native receipt missing; refresh or retry saving. Submitted requests must use Check delivery.'};pending=null;api.note(failure.reason,failure.conversation);draw();}},30000);
    },
    action:function(action,extra={},id=selected){
     const c=items.find(c=>c.id===id);if(!c||!api.editable(c)&&!['archive','restore'].includes(action)||failure||c.archived&&!['restore','delete','preview'].includes(action))return;
@@ -310,6 +340,13 @@ module.exports=execution.module('conversations',{
     }
     if(s.dialogueReceipt){
      const r=s.dialogueReceipt;
+     if(r.action==='tasks'){
+      const op=linkedReads[r.id];if(!op||r.conversation!==op.conversation)return true;delete linkedReads[r.id];if(linked?.id!==op.conversation)return true;
+      if(!op.task)linked.busy=false;
+      if(r.state==='accepted'){const rows=(r.value?.tasks||[]).filter(t=>t.conversation?.id===op.conversation);
+       linked.rows=op.task?[...linked.rows.filter(t=>t.n!==op.task),...rows].slice(-200):rows;linked.reason=op.task&&!rows.length?'Task #'+op.task+' has no matching originating-chat receipt; open the board or refresh.':'';if(!op.task){linked.page=op.page;linked.more=!!r.value.more;}
+      }else linked.reason=r.reason||'Board read unavailable';return true;
+     }
      if(r.id===activityRead?.id){const id=activityRead.conversation;activityRead=null;activityTimes[id]=r.state==='accepted'?r.value:{updated:null,reason:r.reason||'Activity unknown'};activityTimer=ui.defer(()=>{activityTimer=null;api.pollActivity();},100);return true;}
      if(r.action==='activity'||api.workerSettle(r))return true;
      api.settle(r);return true;
@@ -319,8 +356,8 @@ module.exports=execution.module('conversations',{
     if(s.conversationReceipt){
      const r=s.conversationReceipt;if(r.id!==pending?.id)return true;
      const op=pending;pending=null;ui.cancel(timer);const c=items.find(c=>c.id===op.conversation),native=r.snapshot?.items?.find(c=>c.id===op.conversation);
-     if(c&&native){c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;c.updated=native.updated;if(['attach','remove'].includes(op.action))c.files=native.files;}
-     if(r.state!=='accepted'&&['reply','watch','unwatch'].includes(op.action)){
+     if(c&&native){c.reply=native.reply;c.revision=native.revision;c.request=native.request;c.sent=native.sent;c.dialogue=native.dialogue;c.updated=native.updated;if(['attach','remove'].includes(op.action))c.files=native.files;}
+     if(r.state!=='accepted'&&['reply','watch','unwatch'].includes(op.action)&&!(op.action==='reply'&&r.state!=='rejected'&&(!native||native.reply)&&r.reason!=='working'&&!r.reason?.startsWith('open in '))){
       // D3: a refused turn or watch change is definite; its text shows and the draft stays.
       if(c)c.sending=false;api.note(op.action==='reply'?'Not sent: '+(r.reason||'delivery unknown')+'. Draft kept.':r.reason||'Watch change unknown',op.conversation);api.next();
      }else if(r.state!=='accepted'){
@@ -337,7 +374,7 @@ module.exports=execution.module('conversations',{
        if(r.value.file.mime.startsWith('image/'))ui.effect('conversations.previewImage',()=>new Promise((resolve,reject)=>{const image=new window.Image();ui.listen(image,'load',()=>resolve(r.value));ui.listen(image,'error',()=>reject(Error('Image preview unavailable; file and draft kept')));image.src='data:'+r.value.file.mime+';base64,'+r.value.data;}),value=>{if(value.file){preview=value;api.note('Local preview',op.conversation);}else api.note(value.reason,op.conversation);draw();});
        else {preview=r.value;api.note('Local preview',op.conversation);}
       }
-      if(c&&op.action==='reply'){c.sending=false;if(c.version===op.typed){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];c.version=(c.version||0)+1;api.save(c);}api.note('Message delivered · PM replies here.',op.conversation);if(view?.id===c.id){api.follow();api.read('status');}}
+      if(c&&['reply','reply-check'].includes(op.action)){c.replyAck=op.action==='reply'?op.id:op.op_id;c.reply=null;c.sending=false;if(c.version===op.typed&&(op.action==='reply'||r.value?.unchanged===true)){c.text='';c.caret=[0,0];for(const f of c.files)queue.push({conversation:c.id,action:'remove',file:f.id});c.files=[];}c.version=(c.version||0)+1;api.save(c);api.note('Message saved · check PM activity separately.',op.conversation);if(view?.id===c.id)api.read('status');}
       if(view?.id===op.conversation&&op.action==='watch'&&r.value){view.status={...view.status,watch:r.value};view.form=null;api.form();api.note('Watch saved. Its prompt is sent when due and the session is idle.',op.conversation);}
       if(view?.id===op.conversation&&op.action==='unwatch'){view.status={...view.status,watch:'no watch'};view.form=null;api.form();api.note('Watch removed',op.conversation);}
       if(op.action==='cancel')api.note('Cancelled before native launch. No runtime work was rolled back.',op.conversation);
@@ -351,7 +388,7 @@ module.exports=execution.module('conversations',{
     const incoming=s.conversations;
     if(incoming?.sidebar&&!sidebarPending)sidebar=incoming.sidebar;
     if(incoming){
-     for(const n of incoming.items||[]){const c=items.find(c=>c.id===n.id);if(c){c.request=n.request;c.sent=n.sent;c.dialogue=n.dialogue;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
+     for(const n of incoming.items||[]){const c=items.find(c=>c.id===n.id);if(c){c.request=n.request;c.sent=n.sent;c.dialogue=n.dialogue;c.reply=n.reply;if(!pending&&!queue.some(o=>o.conversation===c.id)&&(c.saved??0)===(c.version??0)){Object.assign(c,n);}}else items.push({...n,version:0,saved:n.revision===0?-1:0});}
      if(incoming.complete)for(const c of items){if(c.revision>0&&!incoming.items.some(n=>n.id===c.id)){c.deleted=true;if(c.text===c.sent?.text)c.text='';c.sent=null;c.request=null;c.files=[];queue=queue.filter(o=>o.conversation!==c.id);if(pending?.conversation===c.id){pending=null;ui.cancel(timer);}if(failure?.conversation===c.id)failure=null;}}
     }
     if(!hydrated){hydrated=true;const nav=incoming?.navigation;if(nav){list=nav.list==='archive'?'archive':'recent';search=nav.search||'';selection=nav.selection||{};scrolls=nav.scrolls||{};selected=nav.selected;listOnly=nav.listOnly===true;}if(nav?.threads&&typeof nav.threads==='object'){
@@ -370,6 +407,7 @@ module.exports=execution.module('conversations',{
     if(failure)return 'Native save/delivery unknown. Keep the draft and resolve the receipt.';
     if(snapshot.conversations?.complete!==true)return snapshot.conversations?.reason||'Native draft storage unavailable; refresh before sending.';
     if(api.launched(c)){
+     if(c.reply)return 'Reply delivery needs readback. Draft and files kept.';
      if(c.archived)return 'Restore before sending.';
      if(!(c.text||'').trim())return 'Write a message for the session.';
      if(c.files?.some(f=>f.error))return 'Resolve attachment errors before sending.';
@@ -441,7 +479,7 @@ module.exports=execution.module('conversations',{
     const tools=c&&!c.archived?h('div',{class:'conversation-tools composer-bottom'},!disabled&&h('label',{class:'attach-label compact-action',title:'Attach files'},icons.icon('paperclip'),h('span',{class:'sr-only'},'Attach'),h('input',{type:'file',multiple:true,accept:'.txt,.md,.png,.jpg,.jpeg,.webp','data-c-field':'files','aria-label':'Attach files'})),
      (c.sent||c.request)&&button('file-plus-2','New from draft',{'data-c':'from-draft',class:'compact-action',disabled:disabled||!!owner.conversation||!c.text.trim()}),
      h('details',{'data-view-key':'conversation-history',class:'command-history-menu'},h('summary',{class:'compact-action',title:'History','aria-label':'History'},icons.icon('history')),h('div',{class:'conversation-history'},(snapshot.ai?.history||[]).map((text,i)=>h('button',{'data-c':'history','data-index':i,disabled},text)),h('button',{'data-c':'clear-history'},'Clear command history'),h('p',{class:'meta'},'History fills only. Permanent deletion is available in Archive.'))),
-     h('button',{'data-c':dialogue?'reply':'send',class:'primary-action compact-action',title:'Send','aria-label':'Send',disabled:!!bad},icons.icon('arrow-up')),
+     c.reply&&h('button',{'data-c':'reply-check',disabled:!!pending},'Check delivery'),h('button',{'data-c':dialogue?'reply':'send',class:'primary-action compact-action',title:'Send','aria-label':'Send',disabled:!!bad},icons.icon('arrow-up')),
      // #1775: file limits sit behind one info icon beside Send (conversations-input-scroll 06)
      h('details',{class:'composer-help','data-view-key':'composer-help'},h('summary',{class:'compact-action',title:'File limits and message help','aria-label':'File limits and message help'},icons.icon('info')),h('p',{class:'meta'},'UTF-8 text/Markdown, PNG/JPEG/WebP. 4 files, 5 MiB each, 20 MiB per draft, 100 MiB owned storage. PDF unavailable (0 pages). Sources stay untouched.'))):null;
     const win=owner.conversation?button('panel-left-close','Return to main',{'data-c':'return',class:'compact-action'}):(owner.detached||[]).includes(c?.id)?button('panels-top-left','Raise window',{'data-c':'raise',class:'compact-action',disabled:!!pending}):button('panels-top-left','Detach',{'data-c':'detach',class:'compact-action',disabled:!!pending});
@@ -464,12 +502,12 @@ module.exports=execution.module('conversations',{
         h('p',{class:'meta'},dialogue?'Send replies to this session. New from draft starts a separate request.':'Send shares this request and selected files with the visible native session.'),
         disabled&&h('p',{class:'meta'},'Attachments cannot be added while this record is read-only.')),
        c.archived&&h('div',null,h('p',{class:'meta'},'Archived in TaskQ only; the native conversation stays. Restore before reply.'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Source files, native chats, sessions and board tasks stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record'))),
-       api.preview(),dialogue?api.transcript(c):h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),c.request&&c.request.state!=='launched'&&h('p',{role:'status'},c.request.reason||c.request.next||'Native launch: '+c.request.state),c.sent&&h('article',null,h('h2',null,'Sent request'),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery')),
-       extra.notice,
-       !c.archived&&pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[dialogue&&view?.id===c.id&&api.jump(),h('p',{class:'meta composer-destination',title:dialogue?'Send replies to the recorded '+(runtime||'native')+' session. Change the separate request destination in Details.':'Change the project in Conversation info.'},icons.icon('folder'),(snapshot.projects?.find(p=>p.root===(dialogue?c.sent?.root||c.request?.root||c.root:c.root))?.name||'Project unavailable')+' · '+(dialogue?runtime||'Runtime unknown':snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
+       !c.sent&&!c.request&&h('p',{class:'conversation-intro'},'Describe work for '+(snapshot.projects?.find(p=>p.root===c.root)?.name||'the selected project')+'. First Send opens your project manager chat. Tasks start only after assignment.'),api.preview(),dialogue?api.transcript(c):h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),c.request&&c.request.state!=='launched'&&h('p',{role:'status'},c.request.reason||c.request.next||'Native launch: '+c.request.state),c.sent&&h('article',null,h('h2',null,'Sent request'),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery')),
+       extra.notice,extra.cards,
+       !c.archived&&(extra.editor||pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[dialogue&&view?.id===c.id&&api.jump(),h('p',{class:'meta composer-destination',title:dialogue?'Send replies to the recorded '+(runtime||'native')+' session. Change the separate request destination in Details.':'Change the project in Conversation info.'},icons.icon('folder'),(snapshot.projects?.find(p=>p.root===(dialogue?c.sent?.root||c.request?.root||c.root:c.root))?.name||'Project unavailable')+' · '+(dialogue?runtime||'Runtime unknown':snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
         // #1773 A3/A5: files sit above the input and the tools row closes the input box; the shared DashQ composer stays unchanged
                h('div',{class:'conversation-files'},(c.files||[]).map(f=>h('div',{class:'conversation-file',key:f.id},h('button',{'data-c':'preview','data-file':f.id,disabled},f.name+' · '+f.bytes+' B'),button('x','Remove '+f.name,{'data-c':'remove','data-file':f.id,disabled}))))],
-        tools,reason:bad==='Write a message for the session.'?'':bad}))
+        tools,reason:bad==='Write a message for the session.'?'':bad})))
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
      h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notices[selected||'list']||'',pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
@@ -487,10 +525,16 @@ module.exports=execution.module('conversations',{
    },
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();
-    if(action==='worker-latest'&&live){live.stick=true;live.anchor=null;draw();}
+    if(action==='linked-refresh'){linked.checked.clear();api.linkedRead(selected);}
+    else if(action==='linked-older')api.linkedRead(selected,undefined,linked.page+1);
+    else if(action==='linked-newer')api.linkedRead(selected,undefined,Math.max(1,linked.page-1));
+    else if(action==='worker-earlier'&&live){live.quiet.before=0;api.workerRead('before');}
+    else if(action==='worker-later'&&live){live.quiet.after=0;api.workerRead('after',{after:live.end});}
+    else if(action==='worker-latest'&&live){live.stick=true;live.anchor=null;if(live.end<live.size){live.gen++;live.items=[];live.start=live.end=null;live.request=null;live.busy={};api.workerRead('initial');}draw();}
     else if(action==='row-pin'){api.sidebar('pin',b.dataset.id,!sidebar.pins.includes(b.dataset.id));}
     else if(action==='group-collapse')api.sidebar('collapse',b.dataset.group,!sidebar.collapsed.includes(b.dataset.group));
     else if(action==='row-archive'){return true;}
+    else if(action==='reply-check'&&c?.reply){if(failure?.conversation===c.id)failure=null;api.action('reply-check',{op_id:c.reply.id,typed:c.version||0});}
     else if(action==='new'&&!owner.conversation)api.fresh();
     else if(action==='select'){if((owner.detached||[]).includes(b.dataset.id))ui.send({a:'conversation-window',action:'raise',conversation:b.dataset.id});else api.select(b.dataset.id);}
     else if(action==='search-open'){listOnly=true;searchOpen=true;focusSearch=true;api.nav();draw();}
@@ -528,17 +572,19 @@ module.exports=execution.module('conversations',{
     ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){search=e.target.value;api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);draw();});
     ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});
+    ui.listen(menu,'wheel',e=>{if(e.deltaY<0&&e.target.closest('.conversation-reader'))api.pause();},{passive:true});
+    ui.listen(menu,'keydown',e=>{if(['ArrowUp','PageUp','Home'].includes(e.key)&&e.target.closest('.conversation-reader')&&!e.target.matches('input,textarea,select'))api.pause();});
     ui.listen(menu,'scroll',e=>{
      if(e.target.classList?.contains('conversation-rows')){scrolls[list]=e.target.scrollTop;api.nav();return;}
      if(!e.target.classList?.contains('conversation-reader'))return;
-     if(!e.target.querySelector('.dialogue-transcript')){api.place(selected,e.target.scrollTop);api.nav();return;}
-     if(live?.thread===selected){const was=live.stick;if(e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24)live.stick=false;live.anchor=api.mark(e.target);if(was!==live.stick)draw();return;}
+     if(!e.target.querySelector('.dialogue-transcript')){const a=api.mark(e.target);api.place(selected,a?.board?{key:a.key,y:a.y}:e.target.scrollTop);api.nav();return;}
+     if(live?.thread===selected){const was=live.stick;if(e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24)live.stick=false;live.anchor=api.mark(e.target);const a=live.anchor&&live.items.find(i=>api.key(i)===live.anchor.key);api.place(selected,live.stick?undefined:live.anchor?.board?{key:live.anchor.key,y:Math.round(live.anchor.y)}:!a?undefined:{at:a.at,i:a.i,y:Math.round(live.anchor.y),...(live.source?{g:live.source}:{})});api.nav();api.edge(e.target,live);if(was!==live.stick)draw();return;}
      if(view?.id!==selected||view.end===null||!view.items.length)return;
      // Q-A3/A4: a reader at the end of a window that holds the file end follows; anywhere else keeps its record anchor
      // #1747: while Jump to latest replaces the window, a scroll event of the old window keeps following
-     const shown=api.latest();if(!view.busy.initial)view.stick=view.end>=view.size&&e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight<24;if(view.stick)view.unseen=false;
+     const shown=api.latest();if(!view.busy.initial&&(view.end<view.size||e.target.scrollHeight-e.target.scrollTop-e.target.clientHeight>=24))view.stick=false;if(view.stick)view.unseen=false;
      view.anchor=api.mark(e.target);const a=view.anchor&&view.items.find(item=>api.key(item)===view.anchor.key);
-     api.place(selected,view.stick||!a?undefined:{at:a.at,i:a.i,y:Math.round(view.anchor.y)});api.nav();
+     api.place(selected,view.stick?undefined:view.anchor?.board?{key:view.anchor.key,y:Math.round(view.anchor.y)}:!a?undefined:{at:a.at,i:a.i,y:Math.round(view.anchor.y),...(view.source?{g:view.source}:{})});api.nav();
      api.edge(e.target);if(shown!==api.latest()||view.busy.before||view.busy.after)draw();
     },true);
     ui.listen(menu,'toggle',e=>{if(e.target.classList?.contains('conversation-info')&&view){view.stick=false;const detail=menu.querySelector('.conversation-reader');if(detail)view.anchor=api.mark(detail);}},true);
@@ -549,24 +595,20 @@ module.exports=execution.module('conversations',{
     ui.listen(document,'keydown',e=>{if(e.target.dataset?.cField==='text'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();const c=api.current();if(api.problem(c))return;if(api.launched(c))api.action('reply',{typed:c.version||0});else api.action('send',{runtime:snapshot.ai?.runtime?.id});}});
    },
    grow:function(){
-    for(const input of menu.querySelectorAll('.conversation-composer textarea')){
-     const style=window.getComputedStyle(input),width=input.getBoundingClientRect().width,key=JSON.stringify([input.value,width,style.font,style.lineHeight]);
-     if(measured.get(input)===key)continue;
-     const mirror=input.cloneNode();mirror.removeAttribute('id');mirror.removeAttribute('data-c-field');mirror.disabled=true;mirror.tabIndex=-1;mirror.setAttribute('aria-hidden','true');mirror.value=input.value;
-     Object.assign(mirror.style,{position:'absolute',visibility:'hidden',pointerEvents:'none',width:width+'px',height:'0',minHeight:'0',maxHeight:'none'});
-     input.after(mirror);const height=mirror.scrollHeight+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);mirror.remove();
-     input.style.height=Math.max(parseFloat(style.minHeight)||0,height)+'px';measured.set(input,key);
-    }
+    pm.grow(menu);
     const reader=menu.querySelector('.conversation-reader'),editor=reader?.querySelector(':scope>.conversation-composer,:scope>.answer-composer');
-    if(reader)reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight*.45);
+    if(reader){
+     reader.classList.toggle('long-draft',!!editor&&editor.getBoundingClientRect().height>reader.clientHeight);
+     const tools=editor?.querySelector('.composer-bottom');if(tools){const r=reader.getBoundingClientRect(),e=editor.getBoundingClientRect();reader.style.setProperty('--composer-left',e.left+'px');reader.style.setProperty('--composer-width',e.width+'px');reader.style.setProperty('--composer-bottom',Math.max(0,window.innerHeight-r.bottom)+'px');reader.style.setProperty('--composer-tools-height',tools.getBoundingClientRect().height+'px');}
+    }
    },
    afterDraw:function(){
     if(!menu.querySelector('.worker-live')?.checkVisibility())api.workerStop();
     api.pollActivity();
     api.grow();
     const log=menu.querySelector('.dialogue-transcript'),detail=menu.querySelector('.conversation-reader'),open=api.current();
-    if(live&&detail&&log){api.observe(log);api.hold(detail,live);}
-    if(detail&&!log){const p=positions[selected];detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;}
+    if(live&&detail&&log){api.observe(log);api.hold(detail,live);if(api.trim(detail,live))draw();else api.edge(detail,live);}
+    if(detail&&!log){const p=positions[selected];if(p?.key)api.hold(detail,{stick:false,anchor:{key:p.key,board:true,y:p.y}});else detail.scrollTop=(typeof p==='number'?p:null)??open?.scroll??0;}
     if(log&&open){api.open(open);api.observe(log);api.hold(detail);}
     const c=api.current(),input=menu.querySelector('[data-c-field=text]'),record=menu.querySelector('.conversation-record');const rows=menu.querySelector('.conversation-rows');if(focusSearch){focusSearch=false;menu.querySelector('[data-c-field=search]')?.focus();}if(rows)rows.scrollTop=scrolls[list]||0;if(record&&c)record.scrollTop=c.scroll||0;if(focusDraft&&input&&!input.disabled){focusDraft=false;const row=menu.querySelector('[data-c=select][data-id="'+c.id+'"]');if(row?.checkVisibility()){row.scrollIntoView({block:'nearest'});scrolls[list]=rows.scrollTop;api.nav();}input.focus({preventScroll:true});input.setSelectionRange(...(c.caret||[0,0]));}
     if(log&&open){if(api.trim(detail))draw();else api.edge(detail);}},

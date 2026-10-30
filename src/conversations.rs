@@ -15,9 +15,13 @@ pub(crate) struct File {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Sent { #[serde(default)] pub revision: u64, pub text: String, pub root: String, pub runtime: String, pub files: Vec<File> }
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Reply { pub id:String, pub input:String, pub revision:u64 }
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Draft {
+    #[serde(skip_serializing_if="Option::is_none")] pub reply: Option<Reply>,
     pub revision: u64, pub title: String, pub root: String, pub text: String, pub caret: [usize;2],
     pub scroll: u32, pub archived: bool, pub deleting: bool, pub next: bool, pub parent: Option<String>, pub files: Vec<File>, pub sent: Option<Sent>,
 }
@@ -42,6 +46,7 @@ fn rows(v:&Value)->Res<BTreeMap<String,Draft>> {
     if v["conversations"].is_null() {return Ok(BTreeMap::new());}
     let rows:BTreeMap<String,Draft>=serde_json::from_value(v["conversations"].clone()).map_err(|_|"Workspace draft metadata unreadable; kept")?;
     if rows.iter().any(|(id,d)|!crate::resources::id(id)||d.text.len()>65536||d.title.chars().count()>120||d.files.len()>4
+        ||d.reply.as_ref().is_some_and(|r|!crate::resources::id(&r.id))
         ||d.sent.as_ref().is_some_and(|s|s.text.len()>65536||s.files.len()>4)
         ||d.files.iter().chain(d.sent.iter().flat_map(|s|&s.files)).any(|f|!valid_file(f))) {return Err("Workspace draft metadata invalid; kept".into());}
     Ok(rows)
@@ -203,6 +208,30 @@ pub(crate) fn snapshot(install:&Path)->Value {
     })();result.unwrap_or_else(|reason|json!({"items":[],"complete":false,"reason":reason}))
 }
 
+pub(crate) fn reply_pending(install:&Path,id:&str)->Res<bool> {
+    Ok(rows(&preferences(install)?)?.get(id).is_some_and(|d|d.reply.is_some()))
+}
+
+fn reply(install:&Path,id:&str,m:&Value,native:&crate::dialogue::Native)->Res<Value> {
+    let op=m["id"].as_str().filter(|s|crate::resources::id(s)).ok_or("Reply operation identity missing")?;
+    let input=crate::setup::locked(install,||{
+        let mut p=preferences(install)?;let mut drafts=rows(&p)?;let d=drafts.get_mut(id).ok_or("Draft unavailable")?;
+        if d.reply.is_some() {return Err("Original reply delivery unresolved; check the same operation".into());}
+        if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
+        if d.archived||d.deleting||d.text.trim().is_empty() {return Err("Restore the draft and write a message before sending".into());}
+        let input=task(install,id,&d.text,&d.files)?;d.reply=Some(Reply{id:op.into(),input:input.clone(),revision:d.revision});
+        p["conversations"]=json!(drafts);persist(install,&p)?;Ok(input)
+    })?;
+    let result=crate::dialogue::send_op(install,id,&input,Some(op),native);
+    if result.as_ref().is_err_and(|e| !e.uncertain) {
+        crate::setup::locked(install,||{
+            let mut p=preferences(install)?;let mut drafts=rows(&p)?;if let Some(d)=drafts.get_mut(id).filter(|d|d.reply.as_ref().is_some_and(|r|r.id==op)){d.reply=None;}
+            p["conversations"]=json!(drafts);persist(install,&p)
+        })?;
+    }
+    result.map(|_|Value::Null).map_err(|e|e.reason)
+}
+
 /// Every effect uses an exact preference revision; setup remains the only launch authority.
 pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
     let id=m["conversation"].as_str().unwrap_or("");let action=m["action"].as_str().unwrap_or("");
@@ -217,11 +246,13 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
         }
         // D2/D6 workspace dialogue writes of a launched conversation; the draft stays until the workspace clears it.
         match action {
-            "reply"=>{
+            "reply-check"=>{
                 let p=preferences(install)?;let drafts=rows(&p)?;let d=drafts.get(id).ok_or("Draft unavailable")?;
-                if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
-                if d.archived||d.deleting||d.text.trim().is_empty() {return Err("Restore the draft and write a message before sending".into());}
-                return crate::dialogue::send(install,id,&task(install,id,&d.text,&d.files)?,&crate::dialogue::NATIVE).map(|_|Value::Null);
+                let r=d.reply.as_ref().filter(|r|m["op_id"]==r.id).ok_or("Original reply identity unavailable; draft kept")?;
+                return if crate::dialogue::accepted(install,id,&r.id,&r.input)? {Ok(json!({"unchanged":d.revision==r.revision}))}else{Err("Delivery unknown; original intent kept; no resend".into())};
+            }
+            "reply"=>{
+                return reply(install,id,m,&crate::dialogue::NATIVE);
             }
             "watch"=>{
                 let events:Vec<String>=serde_json::from_value(m["events"].clone()).map_err(|_|"Watch events must be a list")?;
@@ -241,6 +272,7 @@ pub(crate) fn act(install:&Path,m:&Value,registered:&[String])->Value {
             let mut p=preferences(install)?;let mut drafts=rows(&p)?;let d=drafts.entry(id.into()).or_default();
             if d.deleting&&action!="delete" {return Err("Deletion incomplete; retry Delete without restoring history".into());}
             if m["revision"].as_u64()!=Some(d.revision) {return Err("Draft revision changed; refresh before editing or sending".into());}
+            if action=="save" && d.reply.as_ref().is_some_and(|r|m["draft"]["reply_ack"]==r.id){let r=d.reply.as_ref().unwrap();if !crate::dialogue::accepted(install,id,&r.id,&r.input)? {return Err("Reply acknowledgement has no matching native receipt; draft kept".into());}d.reply=None;}
             let prior=(d.title.clone(),d.root.clone(),d.text.clone(),d.files.clone());
             match action {
                 "save"=>{
@@ -319,6 +351,18 @@ pub(crate) fn dialogue(install:&Path,m:&Value)->Value {
             "status"=>{
                 let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
                 Ok(crate::dialogue::status(install,&r,true,&crate::dialogue::NATIVE))
+            }
+            "tasks"=>{
+                let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;
+                let root=Path::new(r.root.as_deref().ok_or("Owner project unavailable")?);
+                if !crate::host::project_paths(install)?.iter().any(|p|p==root) {return Err("Owner project is not registered".into());}
+                let (cfg,raw)=crate::load(root)?;
+                let b=cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(install))?;
+                let mut value=if let Some(n)=m["task"].as_u64().filter(|n|*n>0) {crate::closed_pin(&*b,n,!cfg.board.closed_reason)?}
+                    else {crate::closed_history(&*b,m["page"].as_u64().and_then(|n|u32::try_from(n).ok()).filter(|n|*n>0).unwrap_or(1),None,!cfg.board.closed_reason)?};
+                if value["tasks"].as_array().is_some_and(|rows|rows.iter().any(|t|!t["error"].is_null())) {return Err("Task history incomplete; board comments unavailable".into());}
+                value["tasks"]=json!(value["tasks"].as_array().into_iter().flatten().filter(|t|t["conversation"]["id"]==id).cloned().collect::<Vec<_>>());
+                Ok(value)
             }
             "activity"=>{let r=crate::setup::read(&crate::setup::dir(install).join(format!("{id}.json")))?;Ok(crate::dialogue::activity(&r))},
             "transcript"=>crate::dialogue::transcript(install,id,m["before"].as_u64(),m["after"].as_u64()),
@@ -487,6 +531,48 @@ mod tests {
         fn attach(&self,id:&str,name:&str,mime:&str,data:&[u8])->Value {self.act(id,"attach",json!({"file":{"id":"invented-file","name":name,"mime":mime,"hash":"0".repeat(64),"bytes":data.len()},"data":STANDARD.encode(data)}))}
     }
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.0);}}
+
+    // #1929 A6: definite refusal releases Send, but uncertain storage never permits a replay.
+    #[test]
+    fn conversation_1929_reply_refusal_keeps_editable_input() {
+        fn never(_: &Path,_: &crate::setup::Request)->Res<std::process::Command> {panic!("no native dispatch")}
+        fn unknown(_: &Path,_: &crate::setup::Request)->Res<bool> {Err("invented probe failure".into())}
+        fn free(_: &Path,_: &crate::setup::Request)->Res<bool> {Ok(false)}
+        let f=Fixture::new();f.save("owner","Keep this reply");f.attach("owner","note.txt","text/plain",b"Keep this file");
+        let request=crate::setup::Request{schema:2,id:"owner".into(),created:1,host:"h".into(),platform:"macos".into(),client:"c".into(),runtime:"claude".into(),targets:vec![],brief:"b".into(),state:"launched".into(),job:None,session:Some("invented-session".into()),url:None,reason:None,root:None,pm:false};
+        let dir=crate::setup::dir(&f.0);fs::create_dir_all(dir.join("owner")).unwrap();
+        fs::write(dir.join("owner.json"),serde_json::to_vec(&request).unwrap()).unwrap();
+        let original=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
+        let message=json!({"id":"operation","revision":original.revision});
+        let error=reply(&f.0,"owner",&message,&crate::dialogue::Native{turn:never,holder:unknown}).unwrap_err();
+        assert!(error.contains("native holder unknown"));
+        assert_eq!(rows(&preferences(&f.0).unwrap()).unwrap()["owner"],original,"a pre-store refusal must clear intent without changing text/files");
+        assert!(crate::dialogue::turn(&f.0,"owner").unwrap().is_none());
+        // A failed store is not proof that no turn was saved; retain its exact operation and input.
+        fs::create_dir(dir.join("owner/turn.json").with_extension("tmp")).unwrap();
+        assert!(reply(&f.0,"owner",&message,&crate::dialogue::Native{turn:never,holder:free}).is_err());
+        let saved=rows(&preferences(&f.0).unwrap()).unwrap()["owner"].clone();
+        assert_eq!(saved.text,original.text);assert_eq!(saved.files,original.files);
+        assert_eq!(saved.reply.unwrap().id,"operation");
+    }
+
+    // #1929 A6: restart/check reads the immutable turn, never dispatches; new edits remain independent.
+    #[test]
+    fn conversation_1929_unknown_reply_keeps_draft_and_reconciles_without_dispatch() {
+        let f=Fixture::new();f.save("owner","Original reply");
+        let mut p=preferences(&f.0).unwrap();let mut drafts=rows(&p).unwrap();let d=drafts.get_mut("owner").unwrap();
+        d.reply=Some(Reply{id:"operation".into(),input:"Immutable native input".into(),revision:d.revision});p["conversations"]=json!(drafts);persist(&f.0,&p).unwrap();
+        let dir=crate::setup::dir(&f.0).join("owner");fs::create_dir_all(&dir).unwrap();
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["state"],"unknown");
+        let t=crate::dialogue::Turn{op_id:Some("operation".into()),input:"Immutable native input".into(),state:"pending".into(),..Default::default()};
+        fs::write(dir.join("turn.json"),serde_json::to_vec(&t).unwrap()).unwrap();
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["value"]["unchanged"],true);
+        f.save("owner","New independent draft");
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"operation"}))["value"]["unchanged"],false);
+        assert_eq!(rows(&preferences(&f.0).unwrap()).unwrap()["owner"].text,"New independent draft");
+        assert_eq!(crate::dialogue::turn(&f.0,"owner").unwrap(),Some(t));
+        assert_eq!(f.act("owner","reply-check",json!({"op_id":"foreign"}))["state"],"unknown");
+    }
 
     // #1831 A2/A3: forged client session/host, replaced attempts and remote or unknown executions never select a file.
     #[test]

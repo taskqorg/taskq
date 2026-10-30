@@ -15,6 +15,7 @@ const MINUTE: u128 = 60_000;
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Turn {
+    #[serde(default, skip_serializing_if="Option::is_none")] pub op_id: Option<String>,
     pub input: String, pub state: String, pub at: u128, #[serde(default)] pub watch: bool,
     #[serde(default)] pub pid: Option<u32>, #[serde(default)] pub started: Option<String>, #[serde(default)] pub outcome: Option<String>,
 }
@@ -30,6 +31,12 @@ pub struct Watch {
 /// The native side, replaceable in tests: the turn command and the D3 holder check.
 pub struct Native { pub turn: fn(&Path, &Request) -> Res<std::process::Command>, pub holder: fn(&Path, &Request) -> Res<bool> }
 pub const NATIVE: Native = Native { turn: crate::runtime::owner::turn, holder: crate::runtime::owner::holder };
+
+#[derive(Debug)]
+pub struct SendError { pub reason: String, pub uncertain: bool }
+impl From<String> for SendError {
+    fn from(reason:String)->Self {Self{reason,uncertain:false}}
+}
 
 fn own(install: &Path, id: &str) -> Res<PathBuf> {
     if !crate::setup::owner_id(id) { return Err("Invalid or reserved draft identity".into()); }
@@ -65,16 +72,27 @@ fn launched(install: &Path, id: &str) -> Res<Request> {
 /// D2/D3 Send: refuse while a turn runs (`working`) or a native holder has the session; otherwise persist the immutable
 /// input before the service dispatches it. The draft stays with the workspace either way.
 pub fn send(install: &Path, id: &str, input: &str, native: &Native) -> Res<()> {
-    let r = launched(install, id)?;
-    let own = own(install, id)?;
-    if busy(&turn(install, id)?) { return Err("working".into()); }
-    if (native.holder)(&own, &r).map_err(|e| format!("native holder unknown ({e}); not sent"))? { return Err(crate::runtime::owner::open_in(&r.runtime)); }
-    crate::setup::locked(install, || queue(install, id, input, false))
+    send_op(install,id,input,None,native).map_err(|e|e.reason)
 }
 
-fn queue(install: &Path, id: &str, input: &str, watch: bool) -> Res<()> {
-    if busy(&turn(install, id)?) { return Err("working".into()); }
-    store(&own(install, id)?.join("turn.json"), &Turn { input: input.into(), state: "pending".into(), at: now(), watch, ..Turn::default() })
+pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
+    Ok(turn(install,id)?.is_some_and(|t|t.op_id.as_deref()==Some(op)&&t.input==input))
+}
+
+pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)->Result<(),SendError> {
+    if let Some(op)=op {if accepted(install,id,op,input)? {return Ok(());}}
+    let r = launched(install, id)?;
+    let own = own(install, id)?;
+    if busy(&turn(install, id)?) { return Err("working".to_string().into()); }
+    if (native.holder)(&own, &r).map_err(|e| format!("native holder unknown ({e}); not sent"))? { return Err(crate::runtime::owner::open_in(&r.runtime).into()); }
+    // Lock acquisition is a refusal; only an attempted store can leave an uncertain receipt.
+    crate::setup::locked(install, || Ok(queue(install,id,input,false,op)))?
+}
+
+fn queue(install: &Path, id: &str, input: &str, watch: bool, op: Option<&str>) -> Result<(),SendError> {
+    if busy(&turn(install, id)?) { return Err("working".to_string().into()); }
+    store(&own(install, id)?.join("turn.json"), &Turn { op_id:op.map(String::from), input: input.into(), state: "pending".into(), at: now(), watch, ..Turn::default() })
+        .map_err(|reason|SendError{reason,uncertain:true})
 }
 
 fn now() -> u128 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()) }
@@ -151,7 +169,8 @@ fn step(install: &Path, r: &Request, now: u128, held: bool, native: &Native) -> 
     let mut input = w.prompt.clone();
     if !lines.is_empty() { input.push_str(&format!("\n\nNew TaskQ events:\n{}", lines.join("\n"))); }
     crate::setup::locked(install, || {
-        queue(install, &r.id, &input, true)?;
+        if crate::conversations::reply_pending(install,&r.id)? {return Ok(());}
+        queue(install, &r.id, &input, true,None).map_err(|e|e.reason)?;
         w.last_turn = Some(now); w.next_due = now + w.every as u128 * MINUTE; w.seen = newest;
         store(&own.join("watch.json"), &w)
     })
@@ -251,7 +270,7 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     let path = crate::runtime::owner::transcript(&r.runtime, r.session.as_deref().unwrap_or_default())?;
     let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
     mark_brief(&mut page.items, &r.brief);
-    Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
 /// #1831: the live view of a resolved task worker's session `<rt>:<id>` on this host, read like an owner
@@ -262,7 +281,7 @@ pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>)
     let (codex, path) = crate::runtime::worker_transcript(rt, id)?;
     let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
     worker_roles(&mut page.items);
-    Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
 /// #1834: a user item whose text, or the turn input file its pointer names, ends with the service's marker is TaskQ's,
@@ -357,6 +376,48 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         panic!("turn never ended")
+    }
+
+    // #1929 A6: same operation readback never starts or queues another native turn.
+    #[test]
+    fn conversation_1929_reply_readback_binds_input_and_operation() {
+        let install=tmp();request(&install,"owner","claude",None);
+        let native=Native{turn:never,holder:free};
+        assert!(!accepted(&install,"owner","op-a","Hello").unwrap());
+        send_op(&install,"owner","Hello",Some("op-a"),&native).unwrap();
+        let first=turn(&install,"owner").unwrap();
+        assert!(accepted(&install,"owner","op-a","Hello").unwrap());
+        assert!(!accepted(&install,"owner","op-b","Hello").unwrap());
+        assert!(!accepted(&install,"owner","op-a","Changed").unwrap());
+        send_op(&install,"owner","Hello",Some("op-a"),&Native{turn:never,holder:held}).unwrap();
+        assert_eq!(turn(&install,"owner").unwrap(),first);
+        assert!(send_op(&install,"owner","Changed",Some("op-a"),&native).is_err());
+        fs::remove_dir_all(install).unwrap();
+    }
+
+    // #1929 A6: a due watch cannot replace the only receipt while its reply acknowledgement is lost.
+    #[test]
+    fn conversation_1929_watch_waits_for_reply_acknowledgement() {
+        let install=tmp();request(&install,"owner","claude",None);
+        crate::conversations::act(&install,&json!({"conversation":"owner","action":"save","revision":0,"draft":{"title":"","root":"","text":"Keep reply","caret":[0,0],"scroll":0}}),&[]);
+        let mut p=crate::conversations::preferences(&install).unwrap();
+        p["conversations"]["owner"]["reply"]=json!({"id":"operation","input":"Immutable input","revision":1});
+        crate::conversations::persist(&install,&p).unwrap();
+        let native=Native{turn:never,holder:free};
+        let path=own(&install,"owner").unwrap().join("turn.json");
+        let t=Turn{op_id:Some("operation".into()),input:"Immutable input".into(),state:"dispatching".into(),..Default::default()};
+        store(&path,&t).unwrap();set_watch(&install,"owner","Watch input",5,&[],0).unwrap();
+        tick(&install,6*MINUTE,&native).unwrap();
+        let finished=turn(&install,"owner").unwrap().unwrap();assert_eq!(finished.state,"done");
+        tick(&install,6*MINUTE,&native).unwrap();
+        assert_eq!(turn(&install,"owner").unwrap(),Some(finished),"watch must leave the receipt intact until acknowledgement");
+        let check=crate::conversations::act(&install,&json!({"conversation":"owner","action":"reply-check","op_id":"operation"}),&[]);
+        assert_eq!(check["state"],"accepted");
+        let ack=crate::conversations::act(&install,&json!({"conversation":"owner","action":"save","revision":1,"draft":{"title":"","root":"","text":"New independent draft","caret":[0,0],"scroll":0,"reply_ack":"operation"}}),&[]);
+        assert_eq!(ack["state"],"accepted");
+        tick(&install,6*MINUTE,&native).unwrap();
+        let next=turn(&install,"owner").unwrap().unwrap();assert!(next.watch);assert_eq!(next.input,"Watch input");
+        fs::remove_dir_all(install).unwrap();
     }
 
     #[test]

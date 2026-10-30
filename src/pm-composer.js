@@ -1,5 +1,6 @@
 'use strict';
 const {h,render}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
+const measured=new WeakMap();
 const api=execution.module('pm-composer',{
  request:function(context,text,op,now){
   if(!text.trim()||new TextEncoder().encode(text).length>65536)throw Error('Write 1–65536 UTF-8 bytes');
@@ -19,6 +20,17 @@ const api=execution.module('pm-composer',{
   const url=native.url,safe=typeof url==='string'&&(/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url)||(local&&/^codex:\/\/threads\/[A-Za-z0-9-]+$/.test(url)));
   return h('div',{class:'pm-handoff'},h('p',{role:'status'},(native.kind||native.state||'unknown')+': '+(native.reason||native.next||(native.state==='launched'&&native.session?'Continue in the native session':'Native outcome unknown'))),h('p',{class:'meta'},(native.runtime||'Runtime unknown')+' · '+(native.host||'Host unknown')+(native.session?' · '+native.session:'')),safe&&h('a',{href:url,'data-url':url,class:'native-session'},'Open session'));
  },
+ grow:function(root){
+    const window=root.ownerDocument.defaultView;
+    for(const input of root.querySelectorAll('.conversation-composer textarea')){
+     const style=window.getComputedStyle(input),width=input.getBoundingClientRect().width,key=JSON.stringify([input.value,width,style.font,style.lineHeight,style.minHeight]);
+     if(measured.get(input)===key)continue;
+     const mirror=input.cloneNode();mirror.removeAttribute('id');mirror.removeAttribute('data-c-field');mirror.disabled=true;mirror.tabIndex=-1;mirror.setAttribute('aria-hidden','true');mirror.value=input.value;
+     Object.assign(mirror.style,{position:'absolute',visibility:'hidden',pointerEvents:'none',width:width+'px',height:'0',minHeight:'0',maxHeight:'none'});
+     input.after(mirror);const height=mirror.scrollHeight+parseFloat(style.borderTopWidth)+parseFloat(style.borderBottomWidth);mirror.remove();
+     input.style.height=Math.max(parseFloat(style.minHeight)||0,height)+'px';measured.set(input,key);
+    }
+ },
  composer:function({text,disabled=false,id='pm-draft',field='text',label='Request draft',reason='',placeholder='Ask AI…',before,files,tools,after,onInput,onPaste,onDrop,onDragOver}){
   return h('div',{class:'conversation-composer',onPaste,onDrop,onDragOver},before,h('label',{for:id,class:'sr-only'},label),h('textarea',{id,'data-c-field':field,rows:3,value:text,disabled,'aria-describedby':id==='conversation-draft'?'conversation-reason':id+'-reason',placeholder,onInput}),files,tools,h('p',{id:id==='conversation-draft'?'conversation-reason':id+'-reason',class:'meta'},reason),after);
  },
@@ -28,7 +40,7 @@ const api=execution.module('pm-composer',{
   else if(draft.receipt?.native)draft.receipt={outcome:'unknown',reason:'No bound request for this receipt'};
   const local=execution.module('pm-composer.instance',{
    paint:function(){
-    render(h('section',{class:'pm-composer','aria-label':'PM request'},api.composer({text:draft.text,disabled:!!draft.request,reason:pending?'Checking delivery…':draft.receipt?.reason||adapter.context().reason||'Replies stay in the native session.',onInput:e=>{draft.text=e.currentTarget.value;adapter.save(draft);local.paint();},tools:h('div',{class:'conversation-tools'},h('button',{disabled:pending||invalid||!!draft.request||!draft.text.trim()||!!adapter.context().reason,onClick:()=>local.send(false)},'Send'),draft.request&&h('button',{disabled:pending||invalid||!adapter.reconcile,onClick:()=>local.send(true)},'Check delivery'))}),draft.receipt&&h('p',{role:'status'},draft.receipt.outcome),api.handoff(draft.receipt?.native)),el);
+    render(h('section',{class:'pm-composer','aria-label':'PM request'},api.composer({text:draft.text,disabled:!!draft.request,reason:pending?'Checking delivery…':draft.receipt?.reason||adapter.context().reason||'Replies stay in the native session.',onInput:e=>{draft.text=e.currentTarget.value;adapter.save(draft);local.paint();},tools:h('div',{class:'conversation-tools'},h('button',{disabled:pending||invalid||!!draft.request||!draft.text.trim()||!!adapter.context().reason,onClick:()=>local.send(false)},'Send'),draft.request&&h('button',{disabled:pending||invalid||!adapter.reconcile,onClick:()=>local.send(true)},'Check delivery'))}),draft.receipt&&h('p',{role:'status'},draft.receipt.outcome),api.handoff(draft.receipt?.native)),el);api.grow(el);
    },
    send:function(reconcile){
     if(invalid||pending||reconcile&&!draft.request||!reconcile&&draft.request)return;

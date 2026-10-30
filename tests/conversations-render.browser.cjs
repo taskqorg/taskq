@@ -163,10 +163,10 @@ async function historyCase(browser,html,runtime){
    if(sample.state==='unavailable'){s.projects[0].alive=false;c.title='Long request with unavailable service';c.files[0].name='a-long-owner-selected-file-name-that-must-wrap-without-hiding-controls.md';}
    if(sample.state==='empty'){s.conversations.items=[];s.conversations.navigation.selected=null;}
    await page.setContent(html.toString());await page.evaluate(s=>{window.ipc={postMessage:()=>{}};taskq.receive(s);taskq.receive({open:{page:'conversations'}});},s);
-   // #1741 Q-A2: Send tools stay outside the one reading viewport, without scrolling to reveal them.
-   const geometry=await page.evaluate(()=>({client:innerWidth,scroll:document.documentElement.scrollWidth,heading:document.querySelector('h1').getBoundingClientRect().top,composer:document.querySelector('.conversation-composer')?.getBoundingClientRect().toJSON(),send:document.querySelector('[data-c=send],[data-c=from-draft]')?.getBoundingClientRect().toJSON()}));
+   // #1929 A3 refines Q-A2: a growing composer shares the reader; Send stays reachable and the field never scrolls internally.
+   const geometry=await page.evaluate(()=>({client:innerWidth,scroll:document.documentElement.scrollWidth,heading:document.querySelector('h1').getBoundingClientRect().top,composer:document.querySelector('.conversation-composer')?.getBoundingClientRect().toJSON(),input:(()=>{const e=document.querySelector('.conversation-composer textarea');return e&&{client:e.clientHeight,scroll:e.scrollHeight};})(),send:document.querySelector('[data-c=send],[data-c=from-draft]')?.getBoundingClientRect().toJSON()}));
    assert(geometry.scroll<=geometry.client,'F3 horizontal overflow: '+sample.name);assert(geometry.heading>=0,'fixed bar reachable: '+sample.name);
-   if(geometry.composer)assert(geometry.composer.bottom<=sample.height&&geometry.composer.top>=0,'composer reachable through detail scroll: '+sample.name);
+   if(geometry.input)assert(geometry.input.client>=geometry.input.scroll-1,'growing input has no inner scroll: '+sample.name);
    if(geometry.send)assert(geometry.send.top>=0&&geometry.send.bottom<=sample.height,'Send fully visible without scrolling: '+sample.name);
    assert.deepEqual(errors,[]);
    const file=sample.name+'.png';await page.screenshot({path:path.join(out,file)});

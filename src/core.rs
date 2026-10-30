@@ -595,6 +595,15 @@ pub fn task_context(n: u64, body: &str, entries: &[Entry]) -> String {
     format!("Task goal and acceptance (binding):\n{body}{stages}\n\nTask notes (oldest first):\n{}\n\nAcceptance remains binding. Check every note now; if one conflicts with acceptance, ask once immediately. Before hand-in, read inbox again and check the result against acceptance with all notes.", if notes.is_empty() { "none".into() } else { notes.join("\n\n") })
 }
 
+/// R1/#1929: only the first accepted hold associates a task with an owner chat; lifecycle is unchanged.
+pub fn conversation(n: u64, entries: &[Entry]) -> Option<String> {
+    let p = project(n, entries, false);
+    let id = p.changes.iter().find(|(_, _, t)| t.state == State::Held)?.0;
+    let e = entries.iter().find(|e| e.id == id && !e.edited)?;
+    let ids: Vec<_> = e.body.lines().filter_map(|l| l.strip_prefix("conversation: ")).collect();
+    match ids.as_slice() { [id] if crate::setup::owner_id(id) => Some((*id).into()), _ => None }
+}
+
 fn step(t: &mut Task, resume: &mut Option<State>, id: u64, l: &Line, first: bool) {
     use State::*;
     if l.attempt.is_some() && l.attempt != t.attempt {

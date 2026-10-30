@@ -77,25 +77,30 @@ answerWon:function(board,t){
 // #1918 A5: the conversation is append-only: every answered question stays as it was asked, read-only, then its
 // answer line, in board order; an open question follows as the live card
 answerHistory:function(t){
-  return (t.history||[]).map(({question:q,answered:a},i)=>[h('section',{key:'asked:'+i,class:'thread-card asked','aria-label':'Question '+(i+1)+' of #'+t.n},
-    h('p',{class:'conversation-text'},q?.parsed&&q.problem||q?.text||'No recorded question.'),
-    q?.parsed&&q.choices?.length?h('ol',{class:'asked-choices'},q.choices.map(c=>h('li',{key:c.id,value:c.id},c.label??c.text,c.recommended?' ★':''))):null),
-   h('p',{key:'answered:'+i,class:'body answered',role:'status'},won({answered:a||{}}))]);
+  return (t.history||[]).map(({question:q,answered:a},i)=>{
+   const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
+   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+(i+1)+' of #'+t.n},h('div',{dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,reason:'Recorded question'})}})),
+    h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}))];
+  });
 },
 // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
 answerSteerComposer:function(board,t){
-  const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));
-  if(!steer||t.state!=='doing'||!api.answerWon(board,t)||!late&&!(steers[key]??saved[key]?.draft??'').trim()&&!saved[key]?.files?.length)return null;
-  const text=steers[key]??saved[key]?.draft??'',r=[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.op.action==='steer').at(-1);
-  if(!text.trim()&&!r&&[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&r.answered&&r.state==='accepted'))return null;
-  const sending=r?.state==='sending',reason=!r?'Your answer was not sent. Steer the working agent with it instead.':r.state==='accepted'?'Steer sent to the agent.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'')+(r.next?' · '+r.next:'');
-  const files=saved[key]?.files||[],problem=replyFiles.problem(files);
-  return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled:sending,id:'steer-draft',field:'steer',label:'Steer the agent',placeholder:'Tell the working agent what to change',reason:problem||reason,...api.fileEvents(board,t.n,sending),files:api.fileControls(board,t.n,sending),
-   tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:sending||!!problem||!text.trim()&&!files.length},'Steer')),
-   onInput:e=>{steers[key]=e.currentTarget.value;draw();}}));
+  const key=board+'#'+t.n,local=saved[key],text=steers[key]??local?.draft??'',files=local?.files||[];
+  if(!steer||t.state==='ask')return null;
+  const x=t.executions?.find(x=>x.attempt===t.attempt),working=t.state==='doing'&&t.role==='worker'&&!!t.attempt&&x?.state==='running',p=api.project(board),available=working&&p?.alive&&p.complete===true;
+  if(!working&&!text.trim()&&!files.length)return h('p',{class:'meta'},t.state==='review'?'Reviewer input is read-only. Open the board for decisions.':'This attempt has ended or is unavailable. No worker message will be sent.');
+  const changed=!!local?.steerAttempt&&local.steerAttempt!==t.attempt;
+  const r=local?.op?.action==='steer'?local.receipt:null,sending=r?.state==='sending',unknown=r?.state==='unknown',disabled=!available||sending||unknown;
+  const reason=changed?'Worker attempt changed. Draft kept; edit it to address the current worker.':!available?'Worker input is unavailable for this attempt. Draft and files kept.':!r?'Message goes to this worker through the board; delivery does not prove it was consumed.':r.state==='accepted'?'Message saved on the board; worker consumption is unconfirmed.':(STATE[r.state]||r.state)+(r.reason?': '+r.reason:'');
+  const problem=replyFiles.problem(files),receiptKey=p?.root+'#'+local?.op?.id;
+  return h('section',{class:'answer-composer','aria-label':'Steer #'+t.n},steer({text,disabled,id:'steer-draft',field:'steer',label:'Message the worker',placeholder:'Tell the working agent what to change',reason:problem||reason,...api.fileEvents(board,t.n,disabled),files:api.fileControls(board,t.n,disabled),
+   tools:h('div',{class:'conversation-tools composer-bottom'},h('button',{'data-a':'answer-steer','data-board':board,'data-task':t.n,class:'primary-action',disabled:disabled||changed||!!problem||!text.trim()&&!files.length},'Send'),unknown&&h('button',{'data-a':'answer-retry','data-key':receiptKey},'Check delivery')),
+   onInput:e=>{steers[key]=e.currentTarget.value;save(board,t,{...(saved[key]||component().fresh(t)),draft:e.currentTarget.value,steerAttempt:t.attempt});draw();}}));
 },
 answerSteer:function(board,t){
   const key=board+'#'+t.n,text=(steers[key]??saved[key]?.draft??'').trim();
+  if(saved[key]?.op?.action==='steer'&&['sending','unknown'].includes(saved[key]?.receipt?.state))return answerSend(board,saved[key].op);
+  if(t.state!=='doing'||t.role!=='worker'||!t.executions?.some(x=>x.attempt===t.attempt&&x.state==='running')||saved[key]?.steerAttempt&&saved[key].steerAttempt!==t.attempt)return Promise.resolve(null);
   const files=saved[key]?.files||[];
   if(!text&&!files.length||replyFiles.problem(files))return Promise.resolve(null);
   steers[key]=text;

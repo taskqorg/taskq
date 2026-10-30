@@ -5,7 +5,7 @@ taskq queues GitHub/GitLab agents; linked `Contract detail` applies; board state
 ### Change rule
 Rule changes name the R-number, edit this file with code and list amended R-numbers in the result. Changed rules keep numbers; new rules get the next one. A rule conflicting with this file elsewhere is a defect. No history, dates or decision logs.
 ### R1. The board's own objects are the only state
-Trusted comments are truth; labels project them. Public: labels, issue text, `taskq:` comments (§2), heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue. Non-task exceptions: minimal native recovery identity (§3); [DashQ connection state](docs/design/enrollment.md); owner requests, tray AI history and agentq preferences (§4); incidents/profiles; host policy/migration backup; emergency hold; operator [resource grants/receipts][src]. Fresh `status.json` checks the per-root pid; `<install>/service` checks native host identity/generation (§ 4).
+Trusted comments are truth; labels project them. Public: labels, issue text, `taskq:` comments (§2), heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue. Non-task exceptions: minimal native recovery identity (§3); [DashQ][dq]; owner requests, tray AI history and agentq preferences (§4); incidents/profiles; host policy/migration backup; emergency hold; [operator grants/receipts][src]. Fresh `status.json` checks per-root pid; `<install>/service` checks native host identity/generation (§4). [Chat](docs/design/ai-workspace.md).
 ### R2. One task, one attempt
 One coherent outcome is one task, any diff size, with ≤ 1 live attempt (worker or reviewer). Split only as [shared task preparation][sq-prepare] allows, as tasks linked by `Depends on #N`. A live attempt is never moved to another host or session; a new attempt replaces it (§ 4).
 ### R3. Roles
@@ -171,7 +171,7 @@ Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 | Command | Does |
 |---|---|
-| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H]` / `taskq start N [M..]` | labels: § 6; add: new held issue, prints `#<N> held`; start: § 1 held |
+| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held`; §1 start |
 | `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | § 1 create/optional-start receipts; `add` routing/scope/dependency flags apply |
 | `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |

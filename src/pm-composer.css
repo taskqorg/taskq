@@ -1,5 +1,5 @@
 .pm-composer { font: inherit; color: inherit; line-height: 1.5; padding: 16px; }
-.pm-composer textarea { box-sizing: border-box; width: 100%; min-height: 96px; resize: vertical; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; padding: 8px; }
+.pm-composer textarea { box-sizing: border-box; width: 100%; min-height: 96px; resize: none; overflow: hidden; max-height: none; font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 8px; padding: 8px; }
 .pm-composer .conversation-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
 .pm-composer button { font: inherit; color: inherit; background: transparent; border: 1px solid currentColor; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 .pm-composer button:disabled { opacity: .5; cursor: default; }

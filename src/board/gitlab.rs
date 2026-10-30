@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 use std::cell::RefCell;
 
 pub const KIND: Kind = Kind {
+    closed_reason: false,
     reload_token: false,
     name: "gitlab",
     user_key: "username",

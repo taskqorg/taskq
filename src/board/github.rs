@@ -4,6 +4,7 @@ use super::{Api, Board, image_name, Comment, Issue, Kind, Publish, Result, encod
 use serde_json::{Value, json};
 
 pub const KIND: Kind = Kind {
+    closed_reason: true,
     name: "github",
     user_key: "login",
     default_host: "github.com",

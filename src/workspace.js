@@ -25,10 +25,28 @@ const {create}=execution.module('workspace',{
    conversations:function(){
     const threads=api.threads(),id=conversations.sync(threads,view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null),row=threads.find(t=>t.id===id),selected=row?.id;
     const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
+    const c=!selected&&conversations.current(),project=c&&snapshot.value.projects.find(p=>p.root===(c.sent?.root||c.request?.root||c.root)),linked=c&&project?conversations.linked(c,project):[];
+    const target=view.pmTask?.conversation===c?.id&&linked.find(t=>t.n===view.pmTask.task&&t.state==='ask');
+    const editor=target&&api.answerComposer(project,target).body;
+    const cards=linked.map(t=>pages.linkedTask(project,t,c));
+    if(c&&(c.sent||c.request))cards.push(conversations.linkedTools());
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
-    return [reports.section(snapshot.value.projects||[]),conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.report?{header:h('h2',null,row.title),reading:[h('p',null,row.result||'Work finished. Open its result to review checks and open items.'),h('button',{'data-report':'open','data-root':row.root,'data-n':row.report},'Read result')]}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    return [reports.section(snapshot.value.projects||[]),conversations.body({rows:threads,selected,marks,cards,editor:editor&&h('section',{class:'answer-composer'},h('button',{'data-a':'pm-return'},'Back to PM draft'),editor),busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.report?{header:h('h2',null,row.title),reading:[h('p',null,row.result||'Work finished. Open its result to review checks and open items.'),h('button',{'data-report':'open','data-root':row.root,'data-n':row.report},'Read result')]}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      // #1819: the window's one stale-data line sits in the status footer, which is already a live region
      footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]})];
+   },
+   linkedTask:function(p,t,c){
+    const active=view.pmTask?.conversation===c.id&&view.pmTask.task===t.n,local=answers.load(p.issues,t),pending=local?.op?.action==='start'&&['sending','unknown','accepted'].includes(local.receipt?.state);
+    return h('article',{key:'linked:'+t.n,class:'journey-card linked-task','data-phase':t.state,'data-task':t.n},
+     h('div',{class:'journey-heading','data-reading-key':'task:'+t.n},h('strong',null,'#'+t.n+' '+t.title),h('span',{class:'journey-state','data-state':t.state},{held:'Brief ready · not assigned',doing:t.executions?.some(x=>x.attempt===t.attempt&&x.state==='running')?'Worker is working':'Worker activity unknown',ask:'Worker asks you',review:t.role==='reviewer'?'Reviewer is checking':'Awaiting review / publication',closed:'Task closed · '+(t.close?.outcome||t.outcome||'outcome unknown')}[t.state]||t.state)),
+     h('details',{open:t.state==='held','data-reading-key':'brief:'+t.n,'data-view-key':'linked-brief:'+t.n},h('summary',null,'Brief'),h('p',{class:'conversation-text'},t.conversation.brief)),
+     t.state==='held'&&h('button',{'data-a':'pm-assign','data-task':t.n,disabled:c.archived||pending||!p.alive||p.complete!==true},'Assign task'),
+     answers.answerHistory(t),t.state==='ask'&&h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})),
+     t.state==='ask'&&!active&&!c.archived&&h('button',{'data-a':'pm-answer','data-task':t.n},'Write an answer'),
+     t.conversation.verdict&&h('section',{'data-reading-key':'result:'+t.n,'aria-label':t.state==='closed'?'Final result':t.state==='review'?'Candidate result':'Earlier result'},h('p',{class:'meta'},t.state==='closed'?'Final result':t.state==='review'?'Candidate result · awaiting publication':'Earlier result'),h('p',{class:'conversation-text'},t.conversation.verdict)),
+     t.result&&h('p',{class:'meta'},'Candidate: '+t.result+' · publication is separate'),
+     answers.answerNotices(p.issues,t.n),pending&&local.receipt.state==='unknown'&&h('button',{'data-a':'answer-retry','data-key':p.root+'#'+local.op.id},'Check delivery'),
+     h('button',{'data-a':'workspace','data-board':p.issues,'data-root':p.root,'data-task':t.n},'Task activity'));
    },
    // #1699 A3: the task thread: question card with source choice ids, order and recommendation, then the shared answer composer
    task:function(row){
@@ -50,7 +68,7 @@ const {create}=execution.module('workspace',{
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
       // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
-      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?[answers.answerHistory(t),h('p',{class:'conversation-text'},t.question?.text||t.card||(!t.history?.length?'No recorded question.':''))]:[answers.answerHistory(t),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):!t.history?.length&&(answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'))]),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:t.executions?.some(x=>x.attempt===t.attempt&&x.state==='running')?'Worker is working':'Worker activity unknown',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?[answers.answerHistory(t),h('p',{class:'conversation-text'},t.question?.text||t.card||(!t.history?.length?'No recorded question.':''))]:[answers.answerHistory(t),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):!t.history?.length&&(answers.answerWon(p.issues,t)||h('p',{role:'status'},t.wait||'There is no open question.'))]),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -124,7 +142,8 @@ const {create}=execution.module('workspace',{
       h('details',{class:'composer-help','data-view-key':'answer-help'},h('summary',{class:'compact-action',title:'Answer help','aria-label':'Answer help'},icons.icon('info')),h('p',{class:'meta'},'Paste, drop or pick images and files. Send uploads them to this task’s board. TaskQ sets no size or count cap; board and storage limits may refuse a file. Numbers typed here are text; remove files to choose an option.'))),
      onInput:e=>{answers.answerInput(p.issues,t.n,e.currentTarget.value,[e.currentTarget.selectionStart,e.currentTarget.selectionEnd]);api.draw();}}))};
    },
-   answerAct:function(type){const c=view.answer;if(c)answers.answerAct(c.board,c.task,type);},
+   answerContext:function(){return view.answer||(view.pmTask?.conversation===conversations.current()?.id?view.pmTask:null);},
+   answerAct:function(type){const c=api.answerContext();if(c)answers.answerAct(c.board,c.task,type);},
    draw:function(){
     conversations.capture();
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
@@ -135,7 +154,7 @@ const {create}=execution.module('workspace',{
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
-    const field=menu.querySelector('[data-c-field=answer]');if(field&&field!==answerField){answerField=field;const t=view.answer&&view.S?.projects.find(p=>p.issues===view.answer.board)?.tasks?.find(t=>t.n===view.answer.task),c=t&&answers.answerCompose(view.answer.board,t);if(Array.isArray(c?.caret))field.setSelectionRange(...c.caret);}
+    const field=menu.querySelector('[data-c-field=answer]');if(field&&field!==answerField){answerField=field;const target=api.answerContext(),t=target&&view.S?.projects.find(p=>p.issues===target.board&&(!target.root||p.root===target.root))?.tasks?.find(t=>t.n===target.task),c=t&&answers.answerCompose(target.board,t);if(Array.isArray(c?.caret))field.setSelectionRange(...c.caret);}
     conversations.afterDraw();state.flush();
    },
    // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
@@ -188,7 +207,7 @@ const {create}=execution.module('workspace',{
     }
     if(s.diagnose){ui.execution.diagnose(s.diagnose.selector,Math.max(0,Math.min(60000,s.diagnose.until_ms-Date.now())),s.diagnose.limit);return;}
     if(['capmsg','focus_receipt','action_error','resources_receipt','aiError'].some(k=>s[k])){operations.receive(s);return;}
-    if(s.answerReceipt){answers.answerReceipt(s.answerReceipt);return;}
+    if(s.answerReceipt){const c=api.answerContext(),local=c&&answers.load(c.board,{n:c.task});if(view.pmTask&&local?.op?.id===s.answerReceipt.id&&s.answerReceipt.state==='accepted')view.pmTask=null;answers.answerReceipt(s.answerReceipt);return;}
     if(s.replyFileReceipt){answers.answerFileReceipt(s.replyFileReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
@@ -212,6 +231,12 @@ const {create}=execution.module('workspace',{
       if(b.dataset.route==='recovery'){api.navigate('operations',{operation:'recovery'});return;}
       if(operations.operationAction(b.dataset))return;
      }
+     if(b.dataset.a==='pm-return'){view.pmTask=null;api.draw();return;}
+     if(b.dataset.a==='pm-answer'||b.dataset.a==='pm-assign'){
+      const c=conversations.current(),p=c&&view.S.projects.find(p=>p.root===(c.sent?.root||c.request?.root||c.root)),t=p?.tasks.find(t=>t.n===+b.dataset.task&&t.conversation?.id===c.id);if(!t||c.archived)return;
+      if(b.dataset.a==='pm-answer'){view.pmTask={conversation:c.id,board:p.issues,root:p.root,task:t.n};api.draw();menu.querySelector('[data-c-field=answer]')?.focus();}
+      else if(t.state==='held'&&(t.controls||[]).includes('start')){const op=require('./task-controls.js').op(t,'start','conversation.'+c.id);answers.save(p.issues,t,{...(answers.load(p.issues,t)||{draft:'',files:[]}),op,receipt:{state:'sending'}});ui.effect('workspace.assign',()=>answers.answerSend(p.issues,op),()=>{});api.draw();}return;
+     }
      if(conversations.click(b))return;
      if(reports.click(b,snapshot.value?.projects||[]))return;
      if(b.dataset.a==='home'){if(view.page!=='conversations')api.navigate('conversations');return;}
@@ -228,7 +253,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='new-request')api.navigate('conversations',{fresh:true,root:view.aiRoot});
      else if(b.dataset.a==='answer-send')api.answerAct('submit');
      else if(b.dataset.a==='answer-requeue')api.answerAct('requeue');
-     else if(b.dataset.a==='answer-history'){const c=view.answer,text=view.S.ai?.history?.[Number(b.dataset.index)];if(c&&typeof text==='string'){b.closest('details')?.removeAttribute('open');answers.answerInput(c.board,c.task,text,[text.length,text.length]);api.draw();}}
+     else if(b.dataset.a==='answer-history'){const c=api.answerContext(),text=view.S.ai?.history?.[Number(b.dataset.index)];if(c&&typeof text==='string'){b.closest('details')?.removeAttribute('open');answers.answerInput(c.board,c.task,text,[text.length,text.length]);api.draw();}}
      else if(b.dataset.a==='answer-steer'){const t=answers.project(b.dataset.board)?.tasks?.find(t=>t.n===+b.dataset.task);if(t)answers.answerSteer(b.dataset.board,t);}
      else if(b.dataset.a==='back')api.back();
      else if(b.dataset.a==='hide'){conversations.workerClose();conversations.flush();state.flush();ui.send({a:'hide'});}
@@ -238,7 +263,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
     ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);});
-    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{const c=view.answer;if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
+    for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{const c=api.answerContext();if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);
     ui.listen(document,'keydown',e=>{

@@ -127,6 +127,10 @@ Touch only this project, ~/.claude, ~/.codex and the OS temp dir. Task-state wri
 ")
 }
 
+fn conversation_brief(id: &str) -> String {
+    format!("Originating TaskQ chat: {id}. When filing work from this chat, use taskq add --conversation {id} --op-id pm.{id}.<stable-request-key> with the ordinary title, goal and acceptance. Reconcile uncertain creation with the identical operation; never invent another ID. Present the held brief here and wait for the owner to Assign it; do not start chat-origin tasks from prose. Assignment uses the board Start receipt. Relay questions and outcomes here. Never infer task state from your own prose.")
+}
+
 pub const RETRO: &str = "Retrospective (`taskq retro`): read the Proposals section of docs/use-cases/README.md and the board's
 recent `ask`, `answer` and `requeue` entries (`taskq status --json`, `taskq inbox N`). Give the owner numbered
 recommendations: simpler flows, missing options, quick commands. File each one the owner accepts with `taskq add`.";
@@ -151,7 +155,7 @@ pub fn agentq(install:&Path,id:&str,runtime:&str,targets:Vec<String>)->Res<Reque
 pub fn open(install: &Path, root: &Path, task: &str) -> Res<Request> {
     if task.trim().is_empty() { return Err("Write a request before sending".into()); }
     let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
-    save(install, crate::runtime::OWNER, None, vec![], Some(root.clone()), |_, _| project_brief(&root, task.trim()))
+    save(install, crate::runtime::OWNER, None, vec![], Some(root.clone()), |r, _| format!("{}\n{}", project_brief(&root, task.trim()), conversation_brief(&r.id)))
 }
 
 /// A workspace retry reads the same owner-session request; its identity never means a second launch.
@@ -159,12 +163,12 @@ pub fn open_id(install: &Path, root: &Path, task: &str, id: &str, runtime: &str,
     if !crate::resources::id(id) { return Err("Invalid owner request ID".into()); }
     if task.trim().is_empty() { return Err("Write a request before sending".into()); }
     let root = root.canonicalize().map_err(|e| format!("project {}: {e}", root.display()))?.display().to_string();
-    save_id(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), false, |_, _| project_brief(&root, task))
+    save_id(install, runtime, None, vec![], Some(root.clone()), Some((id, read_only)), false, |r, _| format!("{}\n{}", project_brief(&root, task), conversation_brief(&r.id)))
 }
 
 pub(crate) fn open_pm(install:&Path,root:&Path,task:&str,id:&str,runtime:&str)->Res<Request> {
     let root=root.canonicalize().map_err(|_|"PM project unavailable")?.display().to_string();
-    save_id(install,runtime,None,vec![],Some(root.clone()),Some((id,false)),true,|_,_|project_brief(&root,task))
+    save_id(install,runtime,None,vec![],Some(root.clone()),Some((id,false)),true,|r,_|format!("{}\n{}",project_brief(&root,task),conversation_brief(&r.id)))
 }
 
 fn save(install: &Path, runtime: &str, client: Option<&str>, targets: Vec<String>, root: Option<String>, brief: impl FnOnce(&Request, &str) -> String) -> Res<Request> {

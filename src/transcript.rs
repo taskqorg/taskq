@@ -14,7 +14,37 @@ const RECORD: u64 = 16 * 1024 * 1024;
 /// Complete records between two byte offsets of the transcript: `start` and `end` are record boundaries and the
 /// cursors for the previous and next read; `size` is the file length at the read.
 #[derive(Debug)]
-pub struct Page { pub items: Vec<Value>, pub start: u64, pub end: u64, pub size: u64 }
+pub struct Page { pub generation: String, pub items: Vec<Value>, pub start: u64, pub end: u64, pub size: u64 }
+
+/// Native file identity plus its immutable prefix; appends preserve it, replacement is never mixed into a window.
+// shortcut: later in-place rewrites are undetected; add a provider epoch if one occurs.
+fn generation(path: &Path) -> Res<String> {
+    let mut file=fs::File::open(path).map_err(|e|format!("transcript identity unknown: {e}"))?;
+    let meta=file.metadata().map_err(|e|format!("transcript identity unknown: {e}"))?;
+    #[cfg(unix)]
+    let identity={use std::os::unix::fs::MetadataExt;format!("{}:{}",meta.dev(),meta.ino())};
+    #[cfg(windows)]
+    let identity={
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::{Foundation::HANDLE,Storage::FileSystem::{FILE_ID_INFO,FileIdInfo,GetFileInformationByHandleEx}};
+        let mut id=FILE_ID_INFO::default();
+        unsafe {GetFileInformationByHandleEx(HANDLE(file.as_raw_handle()),FileIdInfo,
+            (&mut id as *mut FILE_ID_INFO).cast(),std::mem::size_of::<FILE_ID_INFO>() as u32)}
+            .map_err(|e|format!("transcript identity unknown: {e}"))?;
+        format!("{}:{:?}",id.VolumeSerialNumber,id.FileId.Identifier)
+    };
+    #[cfg(not(any(unix,windows)))]
+    let identity=format!("{:?}",meta.created().map_err(|_|"transcript creation identity unavailable")?);
+    let mut prefix=vec![];
+    (&mut file).take(meta.len().min(128)).read_to_end(&mut prefix).map_err(|e|format!("transcript unreadable: {e}"))?;
+    let prefix=&prefix[..prefix.iter().position(|b|*b==b'\n').map_or(prefix.len(),|i|i+1)];
+    let digest=ring::digest::digest(&ring::digest::SHA256,&prefix);
+    Ok(format!("{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
+}
+fn page(path:&Path,generation:String,items:Vec<Value>,start:u64,end:u64,size:u64)->Res<Page> {
+    if self::generation(path)?!=generation {return Err("transcript replaced during read; view unknown".into());}
+    Ok(Page{generation,items,start,end,size})
+}
 
 fn range(path: &Path, start: u64, end: u64) -> Res<Vec<u8>> {
     let mut f = fs::File::open(path).map_err(|e| format!("transcript unreadable: {e}"))?;
@@ -28,6 +58,7 @@ fn len(path: &Path) -> Res<u64> { fs::metadata(path).map(|m| m.len()).map_err(|e
 
 /// The complete records that end at `before` (the file end when none): one chunk back, more only for a longer record.
 pub fn before(codex: bool, path: &Path, before: Option<u64>) -> Res<Page> {
+    let generation=generation(path)?;
     let size = len(path)?;
     let end = before.unwrap_or(size);
     if end > size { return Err("transcript shrank; view unknown".into()); }
@@ -47,7 +78,7 @@ pub fn before(codex: bool, path: &Path, before: Option<u64>) -> Res<Page> {
                     Some(i) => { let n = records.len(); records.drain(..(i + 1).min(n - 1)); records[0].0 }
                     None => from + first as u64,
                 };
-                return Ok(Page { items: records.into_iter().flat_map(|(_, items)| items).collect(), start, end: from + last as u64, size });
+                return page(path,generation,records.into_iter().flat_map(|(_,items)|items).collect(),start,from+last as u64,size);
             }
             None if from > 0 && read < RECORD => read *= 2,
             None => return Err("transcript record exceeds 16 MiB; view unknown".into()),
@@ -58,6 +89,7 @@ pub fn before(codex: bool, path: &Path, before: Option<u64>) -> Res<Page> {
 /// The complete records that start at `from`: D4 polling while the view is open, and forward reads of an evicted
 /// range. One chunk, more only for a longer record; a partial record at the file end waits for its newline.
 pub fn after(codex: bool, path: &Path, from: u64) -> Res<Page> {
+    let generation=generation(path)?;
     let size = len(path)?;
     if from > size { return Err("transcript shrank; view unknown".into()); }
     let mut read = CHUNK;
@@ -73,9 +105,9 @@ pub fn after(codex: bool, path: &Path, from: u64) -> Res<Page> {
                     Some(i) if i < records.len() => { let at = records[i].0; records.truncate(i); at }
                     _ => from + last as u64,
                 };
-                return Ok(Page { items: records.into_iter().flat_map(|(_, items)| items).collect(), start: from, end, size });
+                return page(path,generation,records.into_iter().flat_map(|(_,items)|items).collect(),from,end,size);
             }
-            None if end == size => return Ok(Page { items: vec![], start: from, end: from, size }),
+            None if end == size => return page(path,generation,vec![],from,from,size),
             None if read < RECORD => read *= 2,
             None => return Err("transcript record exceeds 16 MiB; view unknown".into()),
         }
@@ -287,6 +319,24 @@ mod tests {
     fn key(i: &Value) -> (u64, u64) { (i["at"].as_u64().unwrap(), i["i"].as_u64().unwrap()) }
 
     // D-A3: a 10 MiB transcript opens in one chunk read, scrolls up to its first record and appends while open
+    // #1929 A4: byte offsets alone must not merge replacement sources; appending keeps generation.
+    #[test]
+    fn conversation_1929_generation_survives_append_and_detects_replacement() {
+        let dir=std::env::temp_dir().join(format!("taskq-generation-{}",crate::runtime::uuid()));fs::create_dir(&dir).unwrap();let p=dir.join("log");
+        let line=b"{\"type\":\"ignored\"}\n";fs::write(&p,line).unwrap();let first=before(false,&p,None).unwrap().generation;
+        use std::io::Write;fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(line).unwrap();
+        assert_eq!(before(false,&p,None).unwrap().generation,first);
+        let replacement=dir.join("new");fs::write(&replacement,line).unwrap();
+        #[cfg(windows)] {
+            use std::os::windows::fs::FileTimesExt;
+            let created=fs::metadata(&p).unwrap().created().unwrap();
+            fs::OpenOptions::new().write(true).open(&replacement).unwrap().set_times(fs::FileTimes::new().set_created(created)).unwrap();
+            assert_eq!(fs::metadata(&replacement).unwrap().created().unwrap(),created);
+        }
+        fs::remove_file(&p).unwrap();fs::rename(replacement,&p).unwrap();
+        assert_ne!(before(false,&p,None).unwrap().generation,first);fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn ten_mib_claude_transcript_pages_by_cursor() {
         let dir = tmp();

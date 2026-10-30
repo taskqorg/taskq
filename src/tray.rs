@@ -83,6 +83,7 @@ enum Ev {
     Answer(Value),
     /// D4/D7 dialogue read receipt for one workspace surface.
     Dialogue(String, Value),
+    Conversation(String, Value),
     /// A notification click: its request identifier (M14)
     Note(String),
 }
@@ -851,7 +852,7 @@ impl ActionQueue {
         let operation=if allowed.contains(&"capacity") {"tray.capacity.execute"}else{"tray.focus.execute"};
         let worker=std::thread::Builder::new().name(operation.into()).spawn(move || {
             while let Ok(job)=receiver.recv() {
-                let operation=match job.message["a"].as_str() {Some("reports")=>"tray.reports.execute",Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("completed")=>"tray.history.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
+                let operation=match job.message["a"].as_str() {Some("conversation-action")=>"tray.conversation.execute",Some("reports")=>"tray.reports.execute",Some("answer")=>"tray.answer.execute",Some("resources")=>"tray.resources.execute",Some("completed")=>"tray.history.execute",Some("recovery-read")=>"tray.recovery.read",Some("recovery-apply")=>"tray.recovery.apply",Some("restart")=>"tray.restart.execute",Some("stop")=>"tray.stop.execute",Some("uninstall")=>"tray.uninstall.execute",_=>operation};
                 tracing::dispatcher::with_default(&job.dispatch,|| {
                     let _context=job.context.as_ref().map(|c|c.span().entered());
                     let result=coreq::telemetry::capture::operation(operation,||std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -869,7 +870,7 @@ impl ActionQueue {
     }
     fn submit(&self,message:&Value) -> crate::Res<()> {
         let action=message["a"].as_str().unwrap_or("");let id=message["id"].as_str().unwrap_or("");
-        let name=match action {"reports"=>"tray.reports.dispatch","answer"=>"tray.answer.dispatch","completed"=>"tray.history.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
+        let name=match action {"conversation-action"=>"tray.conversation.dispatch","reports"=>"tray.reports.dispatch","answer"=>"tray.answer.dispatch","completed"=>"tray.history.dispatch","resources"=>"tray.resources.dispatch","recovery-read"|"recovery-apply"=>"tray.recovery.dispatch","pause"=>"tray.pause.dispatch","resume"=>"tray.resume.dispatch","focus"=>"tray.focus.dispatch","capacity"=>"tray.capacity.dispatch","restart"=>"tray.restart.dispatch","stop"=>"tray.stop.dispatch","uninstall"=>"tray.uninstall.dispatch",_=>"tray.invalid.dispatch"};
         coreq::telemetry::capture::operation(name,|| {
             if !self.allowed.contains(&action) {return Err(("invalid-command","Unsupported queued command"));}
             if id.is_empty() || id.len()>64 || !id.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'-'|b'.')) {
@@ -878,7 +879,7 @@ impl ActionQueue {
             let mut frozen=message.clone();frozen.as_object_mut().map(|m|m.remove("context"));
             let bytes=serde_json::to_vec(&frozen).map_err(|_|("request-too-large","Command payload too large; action not submitted"))?;
             // § 5: the envelope stays bounded; a person's literal reply has no length cap.
-            let reply_bytes=if action=="answer" && frozen["op"]["text"].is_string() {frozen["op"]["text"].to_string().len()} else {0};
+            let reply_bytes=if action=="conversation-action" && frozen["prompt"].is_string() {frozen["prompt"].to_string().len()}else if action=="answer" && frozen["op"]["text"].is_string() {frozen["op"]["text"].to_string().len()} else {0};
             if bytes.len().saturating_sub(reply_bytes)>20<<10 {return Err(("request-too-large","Command payload too large; action not submitted"));}
             let root=message["root"].as_str().filter(|root|!root.is_empty()).ok_or(("invalid-root","Project root missing; action not submitted"))?;
             if self.worker.is_finished() {return Err(("worker-unavailable","Command worker unavailable; action not submitted"));}
@@ -1251,6 +1252,13 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
         let mut receipt=result.unwrap_or_else(|reason|json!({"reason":reason}));receipt["root"]=json!(root);receipt["id"]=json!(id);
         let _=coreq::telemetry::capture::operation("tray.reports.report",||replies.send_event(Ev::Answer(json!({"reportReceipt":receipt}))),|_|"ui-closed");
     })?;
+    // #1929 A6: the existing bounded queue keeps native holder probes off the window event loop.
+    let replies=proxy.clone();
+    let conversation_actions=ActionQueue::start(install.clone(),&["conversation-action"],false,
+        |install,_,m|Ok(crate::conversations::act(install,m,&roots(install))),move |surface,id,result|{
+            let receipt=result.unwrap_or_else(|reason|json!({"id":id,"state":"unknown","reason":reason}));
+            let _=coreq::telemetry::capture::operation("tray.conversation.report",||replies.send_event(Ev::Conversation(surface.to_string_lossy().into(),receipt)),|_|"ui-closed");
+        })?;
     let mut ui: Option<(Window, WebView)> = None;
     let mut workspace: Option<(Window, WebView)> = None;
     let mut workspace_web: Option<WebCalls> = None;
@@ -1563,6 +1571,12 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
                 else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
             }
+            Event::UserEvent(Ev::Conversation(surface,receipt)) => {
+                let script=format!("taskq.receive({})",json!({"conversationReceipt":receipt}));
+                if surface=="main" {if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
+                else if let Some((_,wv,calls))=detached.get_mut(&surface) {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
+                shown.clear();workspace_shown.clear();detached_shown.clear();
+            }
             Event::UserEvent(Ev::WorkspaceEvaluated(surface,id,result)) => {if surface=="main" {if let Some(calls)=&mut workspace_web {calls.finish(id,result);}}else if surface==SETTINGS_SURFACE {if let Some(calls)=&mut settings_web {calls.finish(id,result);}}else if surface==VIEWS_SURFACE {if let Some(calls)=&mut views_web {calls.finish(id,result);}}else if let Some((_,_,calls))=detached.get_mut(&surface){calls.finish(id,result);}}
             Event::UserEvent(Ev::Workspace(surface,message)) => {
                 let Ok(input)=serde_json::from_str::<Value>(&message) else {return};
@@ -1633,6 +1647,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let id=m["conversation"].as_str().unwrap_or("");
                         // CS5: local archive/restore may organize a detached chat; draft edits stay with its owner.
                         let allowed=matches!(m["action"].as_str(),Some("archive"|"restore"))||if surface=="main" {!detached_ids.iter().any(|s|s==id)}else{surface==id};
+                        if allowed&&matches!(m["action"].as_str(),Some("reply"|"reply-check"|"watch"|"unwatch")) {
+                            let mut request=m.clone();request["root"]=json!(surface);
+                            if let Err(reason)=conversation_actions.submit(&request){web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":{"id":m["id"],"state":"rejected","reason":reason}})),"tray.web.receive",&proxy,calls);}return;
+                        }
                         let receipt=if allowed {crate::conversations::act(&install,&m,&roots(&install))}else{json!({"id":m["id"],"state":"unknown","reason":"Draft ownership moved; edit only in its owner window"})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"conversationReceipt":receipt})),"tray.web.receive",&proxy,calls);
                         shown.clear();workspace_shown.clear();detached_shown.clear();

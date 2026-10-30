@@ -73,9 +73,9 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   call('answerReceipt',{root:'project',id:lost.id,state:'accepted',note:true,reason:'Saved as a task note; queued to steer the worker',next:'',answered:{by:'alex',text:'use x'}});
   assert.equal((await lostPromise).state,'accepted');
   assert(call('answerToast').includes('task note saved'),'a note is not shown as an accepted answer');
-  const running={n:900,state:'doing',revision:8};project.tasks=[running];
+  const running={n:900,state:'doing',role:'worker',attempt:8,executions:[{attempt:8,state:'running'}],revision:8};project.tasks=[running];
   const thread=call('answerWon',board,running)+call('answerSteerComposer',board,running)+call('answerNotices',board,900);
-  assert(thread.includes('Answered by alex: use x')&&thread.includes('Saved as a task note')&&!thread.includes('data-a="answer-steer"'),thread);
+  assert(thread.includes('Answered by alex: use x')&&thread.includes('Saved as a task note')&&/data-a="answer-steer"[^>]*disabled/.test(thread)&&!thread.includes('value="use y"'),thread);
   assert(!/revision|taskq|alert/.test(thread),thread);
   assert(call('answerNotices').includes('#900 · Answered by alex: use x'),'Attention names the winner too');
   // #1861 A2/A4: the owner repeating the PM's answer got a duplicate note, a red error and the option twice.
@@ -98,7 +98,8 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   call('answerSend',board,refused);
   call('answerReceipt',{root:'project',id:refused.id,state:'rejected',reason:'#900 is closed',next:''});
   assert(/alert/.test(notice(refused.id)),'a real refusal stays red');
-  assert.equal(call('answerSteerComposer',board,{...running,state:'review'}),'','steer needs a running worker');
+  assert.match(call('answerSteerComposer',board,{...running,state:'review'}),/Reviewer input is read-only/,'#1929 A6: explain the reviewer boundary');
+  assert(!call('answerSteerComposer',board,{...running,state:'review'}).includes('data-a="answer-steer"'),'reviewer has no send action');
   assert.equal(call('answerWon',board,{...running,state:'ask'}),'','a new question replaces the answered line');
   call('save',board,{n:900},{draft:'one new instruction'});
   const steerAt=sent.length;call('answerSteer',board,running);
@@ -107,19 +108,20 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   assert.deepEqual(plain(steering),{id:steering.id,task:900,revision:8,action:'steer',text:'one new instruction'});
   call('answerReceipt',{root:'project',id:steering.id,state:'accepted'});
   assert(call('answerToast').includes('#900 · steer sent'));
-  assert(call('answerSteerComposer',board,running).includes('Steer sent to the agent.')&&!call('answerSteerComposer',board,running).includes('use y'),'a sent steer clears the composer');
+  assert(call('answerSteerComposer',board,running).includes('Message saved on the board; worker consumption is unconfirmed.')&&!call('answerSteerComposer',board,running).includes('use y'),'a sent steer clears the composer');
   // #1785 A2: an answer from another client reached this tray only as a receipt, so the thread kept offering a closed question.
   // The refreshed status row's `answered` names it before anything is sent; steer stays for an unsent draft only.
-  const elsewhere={n:901,state:'doing',revision:9,answered:{by:'sam',text:'ship it'}};project.tasks=[elsewhere];
+  const elsewhere={n:901,state:'doing',role:'worker',attempt:9,executions:[{attempt:9,state:'running'}],revision:9,answered:{by:'sam',text:'ship it'}};project.tasks=[elsewhere];
   assert(call('answerWon',board,elsewhere).includes('Answered by sam: ship it'));
-  assert.equal(call('answerSteerComposer',board,elsewhere),'','no draft, no steer offer');
+  assert(call('answerSteerComposer',board,elsewhere).includes('Message the worker'),'#1929 A5: offer worker input before any draft or question');
   // #1918 A5: after an answer the conversation was rebuilt from the task state and lost the question card, and a second
   // question replaced the first question and its answer. Protection: ask, answer, ask, answer, ask keeps both answered
   // questions in board order, each then its answer line, then the open question's live card.
   const q=(problem,first)=>({parsed:true,text:'Problem: '+problem+'\n1. '+first+'\n2. Wait',problem,choices:[{id:1,text:first,recommended:true},{id:2,text:'Wait'}]});
   const asked=[{question:q('Ship now?','Ship it'),answered:{by:'sam',text:'ship it'}},{question:q('Tag it?','Tag'),answered:{by:'',text:'not yet'}}];
   const once=call('answerHistory',{...elsewhere,history:asked.slice(0,1)});
-  assert(/Ship now\?.*<li value="1">Ship it ★<\/li><li value="2">Wait<\/li>.*Answered by sam: ship it/.test(once),once);
+  assert(/Ship now\?.*Ship it.*Recommended.*Wait.*Answered by sam: ship it/.test(once),once);
+  assert([...once.matchAll(/<button[^>]*>/g)].every(b=>b[0].includes('disabled')),'historical choices stay read-only');
   const open={...elsewhere,state:'ask',history:asked},three=call('answerHistory',open)+call('answerSlot',{...open,key:board+'/901'});
   assert(/Ship now\?.*Answered by sam: ship it.*Tag it\?.*Answered by another client: not yet.*data-answer=/.test(three),three);
   assert.equal(call('answerHistory',{...elsewhere,history:undefined}),'','no answered question, no history');

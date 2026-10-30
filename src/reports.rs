@@ -230,7 +230,7 @@ pub struct Proposal {
 }
 impl Proposal {
     fn task(&self,n:u64)->crate::NewTask {
-        crate::NewTask {title:self.title.clone(),goal:self.goal.clone(),acceptance:self.acceptance.clone(),scope:self.scope.clone(),
+        crate::NewTask {conversation:None,title:self.title.clone(),goal:self.goal.clone(),acceptance:self.acceptance.clone(),scope:self.scope.clone(),
             deps:vec![n],kind:self.kind.clone(),runtime:self.runtime.clone(),priority:self.priority.clone(),host:None,labels:vec![]}
     }
 }
@@ -361,7 +361,7 @@ fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reaso
     let reason=reason.trim();
     if reason.is_empty()||reason.chars().count()>180||reason.contains(['\r','\n']) {return Err("Give a one-line reason, at most 180 characters".into());}
     let label=if action=="reopen" {"Reopen"}else{"Follow-up"};
-    let task=crate::NewTask{title:format!("{label} #{n}"),
+    let task=crate::NewTask{conversation:None,title:format!("{label} #{n}"),
         goal:format!("{label} #{n}: {reason}"),acceptance:vec![format!("The operator's reason is addressed: {reason}")],
         scope:vec![format!("Source: {}",b.url(n)),format!("Reason: {reason}")],deps:vec![n],kind:None,runtime:None,priority:None,host:None,labels:vec![]};
     crate::task_body(b,&task,&crate::Op::default())?;
