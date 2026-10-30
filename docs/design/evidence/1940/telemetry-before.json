@@ -1,0 +1,22 @@
+{
+  "qualification": "Windows isolated CLI; 9 invented collected reports; no board credentials; not deployed",
+  "source": "baf107d094c14d98b4282128f363db083523b768",
+  "binary_sha256": "14240324a9f232760f90a409abd1f94f1724eb32a3d02f87a5fa7ecb49ca1842",
+  "loader": "Cargo supplies GNU WebView2 loader search paths; bare debug binary failed 0xC0000135",
+  "commands": [
+    {
+      "command": "taskq reports --json",
+      "wall_ms_including_cargo": 473.303,
+      "outcome": "ok",
+      "reports": 9
+    },
+    {
+      "command": "taskq reports 1 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --action open --json",
+      "wall_ms_including_cargo": 1403.958,
+      "outcome": "ok",
+      "reports": 1
+    }
+  ],
+  "cached_operations": [],
+  "source_unchanged": true
+}

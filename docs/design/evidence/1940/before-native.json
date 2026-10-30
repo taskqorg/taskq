@@ -1,0 +1,24 @@
+[
+  {
+    "phase": "before",
+    "route": "reports",
+    "exit": 0,
+    "elapsed_ms": 2141,
+    "binary_sha256": "d7bfa27ebcee7ec66800d71c81779dda2de377a005133e83137a521c2cb71bee",
+    "images": [
+      "popover-dark-reports-16.png",
+      "popover-light-reports-16.png"
+    ]
+  },
+  {
+    "phase": "before",
+    "route": "reports-conversations",
+    "exit": 0,
+    "elapsed_ms": 3078,
+    "binary_sha256": "d7bfa27ebcee7ec66800d71c81779dda2de377a005133e83137a521c2cb71bee",
+    "images": [
+      "popover-dark-reports-conversations-16.png",
+      "popover-light-reports-conversations-16.png"
+    ]
+  }
+]

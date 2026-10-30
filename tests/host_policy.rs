@@ -15,11 +15,16 @@ fn service_status_observes_exact_owner_without_project_cwd() {
     let mut record=json!({"schema":1,"pid":native.pid,"started":native.started,"instance":"run-a","at":now,"version":"fixture"});
     fs::write(install.join("service"),record.to_string()).unwrap();
     fs::write(root.join(".taskq/status.json"),json!({"pid":native.pid,"host_instance":"run-a","at":now,"complete":false}).to_string()).unwrap();
+    let budget=Duration::from_secs(if cfg!(windows) {60} else {10});
     let command=|cwd:&std::path::Path,args:&[&str]| {
-        let output=coreq::process::output("test.host-status",Command::new(env!("CARGO_BIN_EXE_taskq"))
+        let began=std::time::Instant::now();
+        let output=match coreq::process::output("test.host-status",Command::new(env!("CARGO_BIN_EXE_taskq"))
             .args(args).current_dir(cwd).env("TASKQ_INSTALL",&install).env_remove("TASKQ_ROOT")
             .env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_TASK").env_remove("COREQ_TRACE_CONTEXT")
-            .env("TASKQ_INCIDENT_REPORTS","off"),Duration::from_secs(10)).unwrap();
+            .env("TASKQ_INCIDENT_REPORTS","off"),budget) {
+            Ok(out)=>{eprintln!("host observation {args:?}: elapsed={:?}",began.elapsed());out},
+            Err(error)=>panic!("host observation {args:?}: {error}; elapsed={:?}, budget={budget:?}",began.elapsed()),
+        };
         assert!(output.status.success());output
     };
     let run=|cwd:&std::path::Path,args:&[&str]|serde_json::from_slice::<Value>(&command(cwd,args).stdout).unwrap();

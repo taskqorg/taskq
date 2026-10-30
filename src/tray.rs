@@ -650,7 +650,12 @@ fn project(install: &Path, root: &str) -> Value {
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
+    out["reports"] = crate::reports::freshness(s["reports"].clone(),now(),ttl,bad_report_reason(&s,live));
     out
+}
+
+fn bad_report_reason(s:&Value,live:bool)->Option<&str> {
+    if !live {Some("Service status missing or stale; report collection unknown")} else {s["error"].as_str()}
 }
 
 /// #1591: the page gets each observation's live state from the one Rust rule. Task, host and execution rows age by
@@ -904,6 +909,7 @@ fn queued_answer(install:&Path,_root:&Path,message:&Value)->crate::Res<Value> {O
 fn queued_resources(_install:&Path,_root:&Path,_message:&Value)->crate::Res<Value> {resources()}
 /// MP14 Completed: one board history page through the owner CLI; the tray itself stays token-free.
 fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
+    if m["transcript"]!=true {return crate::reports::cached_history(root,m);}
     let mut c=owner_command(root)?;c.args(history_args(m));
     let out=crate::platform::output("tray.history-read",&mut c,Duration::from_secs(60))?;
     serde_json::from_slice(&out.stdout).map_err(|_|String::from_utf8_lossy(&out.stderr).lines().find(|l|!l.trim().is_empty()).unwrap_or("board history read failed").to_string())
@@ -912,15 +918,13 @@ fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
 /// §7 Reports use the owner CLI, the registered project and its board token. Never trust task data as authority.
 fn queued_reports(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let action=m["action"].as_str().ok_or("report action missing")?;
-    let mut command=owner_command(root)?;command.arg("reports");
-    if action=="list" {
-        if let Some(before)=m["before"].as_str() {command.args(["--before",before]);}
-        else {command.args(["--page",&m["page"].as_u64().filter(|p|*p>0).unwrap_or(1).to_string()]);}
-    } else {
-        if !["open","read","later","drop","make"].contains(&action) {return Err("unsupported report action".into());}
-        let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;
-        command.arg(n.to_string()).args(["--action",action,"--sha",m["sha"].as_str().ok_or("report SHA missing")?]);
-    }
+    if action=="list" {return crate::reports::cached_list(root,m["page"].as_u64().unwrap_or(1) as usize,None);}
+    if action=="open" {return crate::reports::cached_open(root,m["n"].as_u64().ok_or("report task missing")?,m["sha"].as_str().ok_or("report SHA missing")?);}
+    if !["read","accept","followup","reopen","later","drop","make"].contains(&action) {return Err("unsupported result action".into());}
+    let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;
+    let mut command=owner_command(root)?;
+    command.arg("reports").arg(n.to_string()).args(["--action",action,"--sha",m["sha"].as_str().ok_or("report SHA missing")?]);
+    if let Some(reason)=m["text"].as_str() {command.args(["--text",reason]);}
     command.arg("--json");
     let out=crate::platform::output("tray.reports-command",&mut command,Duration::from_secs(180))?;
     if !out.status.success() {return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}
@@ -1168,7 +1172,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations");
+    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations");
     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
     let mut settings = Settings::load(&install);
@@ -2171,9 +2175,11 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
 const ROUTES: [&str; 25] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
-const REPORT_SHOTS:[(&str,&str);2]=[
+const REPORT_SHOTS:[(&str,&str);4]=[
     ("reports",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'menu')")),
     ("reports-conversations",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'conversations')")),
+    ("results",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqResultShot.bind(null,'menu')")),
+    ("results-conversations",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqResultShot.bind(null,'conversations')")),
 ];
 
 /// Snapshot steps: theme, page (`home` or a project root), text size, a script run on the page; only `routes` unless empty.
@@ -3345,7 +3351,7 @@ mod tests {
     #[test]
     fn reports_snapshots_are_opt_in_and_cover_both_surfaces_and_themes() {
         let install=std::env::temp_dir();
-        for route in ["reports","reports-conversations"] {
+        for route in ["reports","reports-conversations","results","results-conversations"] {
             let selected=vec![route.to_string()];let cases=shots(&install,&selected);
             assert_eq!(cases.len(),2);assert_eq!(shot_name(&install,&selected,0),format!("dark-{route}-16"));
             assert_eq!(shot_name(&install,&selected,1),format!("light-{route}-16"));

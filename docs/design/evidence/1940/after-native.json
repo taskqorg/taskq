@@ -1,0 +1,26 @@
+[
+  {
+    "phase": "after",
+    "source": "baf107d094c14d98b4282128f363db083523b768",
+    "route": "reports",
+    "exit": 0,
+    "elapsed_ms": 3641,
+    "binary_sha256": "14240324a9f232760f90a409abd1f94f1724eb32a3d02f87a5fa7ecb49ca1842",
+    "images": [
+      "popover-dark-reports-16.png",
+      "popover-light-reports-16.png"
+    ]
+  },
+  {
+    "phase": "after",
+    "source": "baf107d094c14d98b4282128f363db083523b768",
+    "route": "reports-conversations",
+    "exit": 0,
+    "elapsed_ms": 15359,
+    "binary_sha256": "14240324a9f232760f90a409abd1f94f1724eb32a3d02f87a5fa7ecb49ca1842",
+    "images": [
+      "popover-dark-reports-conversations-16.png",
+      "popover-light-reports-conversations-16.png"
+    ]
+  }
+]

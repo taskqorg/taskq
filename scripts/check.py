@@ -337,6 +337,10 @@ def check_environment(environment):
 def test_environment(environment, install):
     """Owner-operation fixtures use their own installation, never the launching worker's identity or credentials."""
     env = dict(environment)
+    # Windows process fixtures spawn peers inside each harness case. Bound oversubscription,
+    # preserving their own concurrency and wall-clock deadlines and an explicit runner override.
+    if sys.platform == 'win32':
+        env.setdefault('RUST_TEST_THREADS', str(min(4, os.cpu_count() or 1)))
     for key in ('TASKQ_TASK', 'TASKQ_ATTEMPT', 'TASKQ_ROLE', 'TASKQ_ROOT', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID',
                 'CLAUDE_CODE_SESSION_ID', 'COREQ_TRACE_CONTEXT', 'GH_TOKEN', 'GITHUB_TOKEN', 'GITLAB_TOKEN', 'TASKQ_INCIDENT_REPORTS'):
         env.pop(key, None)
@@ -391,8 +395,13 @@ def main():
         if scope != 'docs':
             run(['npm', 'ci', '--ignore-scripts', '--no-audit', '--no-fund'])
             run(['npm', 'run', 'build'])
+            # npm ci removes the documented no-save browser instrument dependency.
+            if os.environ.get('RUNNER_OS') is None and any(p.startswith('tests/') and p.endswith('.browser.cjs') for p in paths):
+                run(['npm', 'install', '--no-save', '--package-lock=false', '--ignore-scripts', '--no-audit', '--no-fund', 'playwright@1.64.1'])
             with tempfile.TemporaryDirectory(prefix='taskq-tests-') as install:
-                run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']), environment=test_environment(env, install))
+                test_env = test_environment(env, install)
+                print('Rust harness threads:', test_env.get('RUST_TEST_THREADS', 'runtime default'), flush=True)
+                run(['cargo', '+stable', 'test', '--locked'] + ([] if scope == 'full' else ['--bin', 'taskq', 'core::tests']), environment=test_env)
             if scope == 'full':
                 with tempfile.TemporaryDirectory(prefix='taskq-gate-') as install:
                     run(['cargo', '+stable', 'run', '--locked', '--', 'selftest'], {'TASKQ_SELFTEST_OFFLINE':'1', 'TASKQ_INCIDENT_REPORTS':'off'}, environment=test_environment(env, install))

@@ -3,6 +3,179 @@ use crate::{board::{Board, Comment, Issue}, core::Entry, Res};
 use serde::Deserialize;
 use serde_json::{Value,json};
 use std::path::Path;
+fn now()->i64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs() as i64)}
+
+/// R1/R12: disposable board projection. Negative discoveries are cached too; immutable content is SHA-bound.
+#[derive(Default)]
+pub struct Cache {
+    entries: std::collections::BTreeMap<u64,(i64,i64,Option<Value>)>,
+    value: Value,
+    verified: Option<i64>,
+}
+impl Cache {
+    fn retaining(value:Value)->Self {
+        let entries=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten())
+            .filter_map(|r|r["n"].as_u64().map(|n|(n,(-1,0,Some(r.clone()))))).collect();
+        Self{entries,value,..Default::default()}
+    }
+    pub fn collect(&mut self,b:&dyn Board) {
+        let result=coreq::telemetry::capture::operation("reports.collect",|| -> Res<Value> {
+            // Start before paging: updates racing a later page must remain inside the next overlap.
+            let verified=b.now()?;
+            let issues=coreq::telemetry::capture::operation("reports.collect.list",|| -> Res<Vec<(Issue,i64)>> {
+                if let Some(since)=self.verified {
+                    return Ok(b.issues(Some(since-1))?.into_iter().map(|i|{let closed=i.closed.or_else(||self.entries.get(&i.number).and_then(|(_,_,r)|r.as_ref()).and_then(|r|r["closed"].as_i64())).unwrap_or(i.updated);(i,closed)}).collect());
+                }
+                let mut all=Vec::new();let mut page=1;
+                loop {let (rows,more)=b.closed_tasks(page,None)?;all.extend(rows);if !more {break;}page+=1;}
+                Ok(all)
+            },|_|"board-read")?;
+            let mut next=if self.verified.is_none(){Default::default()}else{self.entries.clone()};let mut errors=Vec::new();
+            for (i,closed) in issues {
+                let old=self.entries.get(&i.number);
+                // Board timestamps have second precision. A read in that same second needs one settled re-read.
+                let reusable=i.updated>0 && old.is_some_and(|(at,proof,row)|*at==i.updated && *proof>i.updated && row.as_ref().is_none_or(|r|r["kind"]=="task"||r["reason"].is_null()));
+                let row=if reusable {
+                    old.unwrap().2.clone()
+                } else {
+                    match coreq::telemetry::capture::operation("reports.collect.comments",||b.comments(i.number),|_|"board-read") {
+                        Ok(comments)=>project(&i,closed,&comments,b.url(i.number)),
+                        Err(e)=>{errors.push(format!("#{}: {e}",i.number));if let Some((_,_,row))=old {next.insert(i.number,(-1,0,row.clone()));}continue;}
+                    }
+                };
+                let row=row.map(|mut row| {
+                    if row["visible"]==true && row["kind"]=="report" {
+                        let source=old.and_then(|(_,_,r)|r.as_ref()).filter(|r|r["sha"]==row["sha"] && r["body"].is_string());
+                        let content=match source {Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
+                            coreq::telemetry::capture::operation("reports.collect.source",|| -> Res<(Value,Value)> {
+                                let body=b.source(&format!("docs/research/{}.md",i.number),row["sha"].as_str().ok_or("report SHA missing")?)?.replace("\r\n","\n");
+                                let tasks=proposals(&body)?;
+                                for t in &tasks {crate::task_body(b,&t.task(i.number),&crate::Op::default())?;}
+                                Ok((json!(body),json!(tasks)))
+                            },|_|"report-source")
+                        }};
+                        match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(reason)=>row["reason"]=json!(reason)}
+                    }row
+                });
+                if let Some(reason)=row.as_ref().filter(|r|r["kind"]=="report").and_then(|r|r["reason"].as_str()) {errors.push(format!("#{}: {reason}",i.number));}
+                next.insert(i.number,(i.updated,if reusable{old.unwrap().1}else{verified},row));
+            }
+            self.entries=next;
+            if errors.is_empty() {self.verified=Some(verified);}
+            let mut rows:Vec<Value>=self.entries.values().filter_map(|(_,_,r)|r.clone()).collect();
+            rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
+            let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
+            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now()}))
+        },|_|"board-read");
+        match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(reason);}}
+    }
+}
+
+/// One background read per project; no board handle crosses threads and no collection blocks supervision.
+#[derive(Default)]
+pub struct Collector {
+    cache: Option<Cache>,
+    pending: Option<std::sync::mpsc::Receiver<Cache>>,
+    started: Option<std::time::Instant>,
+    closes: String,
+    value: Value,
+    invalidated: bool,
+}
+impl Collector {
+    /// Drain completion from the existing local service tick, without waking a board pass.
+    pub fn received(&mut self)->bool {
+        if let Some(rx)=&self.pending {
+            match rx.try_recv() {
+                Ok(cache)=>{self.value=cache.value.clone();self.cache=Some(cache);self.pending=None;return true;},
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>{self.pending=None;self.value["complete"]=json!(false);self.value["reason"]=json!("report collector stopped before readback");return true;},
+                Err(_)=>{}
+            }
+        }
+        false
+    }
+    pub fn tick(&mut self,root:&Path,poll:u64,ttl:i64,enabled:bool)->Value {
+        if self.value.is_null() {self.value=cached(root);}
+        self.received();
+        let closes=std::fs::read_to_string(crate::dot(root).join("events")).unwrap_or_default().lines().filter(|l|l.contains(" close ")).collect::<Vec<_>>().join("\n");
+        if closes!=self.closes {self.closes=closes;self.invalidated=true;}
+        if enabled && self.pending.is_none() && (self.invalidated || self.started.is_none_or(|t|t.elapsed().as_secs()>=poll.max(1))) {
+            self.invalidated=false;self.started=Some(std::time::Instant::now());
+            let mut cache=self.cache.take().unwrap_or_else(||Cache::retaining(self.value.clone()));let root=root.to_path_buf();let (tx,rx)=std::sync::mpsc::channel();
+            match std::thread::Builder::new().name("reports".into()).spawn(move || {
+                let result=crate::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install)));
+                match result {Ok(board)=>cache.collect(board.as_ref()),Err(reason)=>{cache.value["complete"]=json!(false);cache.value["reason"]=json!(reason);}}
+                let _=tx.send(cache);
+            }) {
+                Ok(_)=>self.pending=Some(rx),
+                Err(e)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(format!("report collector unavailable: {e}"));}
+            }
+        }
+        freshness(self.value.clone(),now(),ttl,None)
+    }
+}
+
+pub fn freshness(mut value:Value,now:i64,ttl:i64,unavailable:Option<&str>)->Value {
+    if !value.is_object() {value=json!({"reports":[],"complete":false,"reason":"Reports not collected yet"});}
+    if !value["reports"].is_array() || !value["complete"].is_boolean() {value["complete"]=json!(false);value["reason"]=json!("Report collection invalid; waiting for the service");}
+    let reason=unavailable.map(String::from).or_else(|| match value["observed"].as_i64() {
+        Some(at) if crate::snapshot::live(now-at,ttl)=>None,
+        Some(_)=>Some("Report collection is stale; waiting for the service".into()),
+        None=>Some(value["reason"].as_str().unwrap_or("Reports not collected yet").into())
+    });
+    if let Some(reason)=reason {value["complete"]=json!(false);value["reason"]=json!(reason);}
+    value
+}
+
+pub fn cached(root:&Path)->Value {
+    let result=crate::data::json(&crate::dot(root).join("status.json"));
+    let (value,reason)=match result {Ok(Some(s))=>(s["reports"].clone(),s["error"].as_str().map(String::from)),Ok(None)=>(Value::Null,None),Err(e)=>(Value::Null,Some(e))};
+    freshness(value,now(),crate::snapshot::ttl(root),reason.as_deref())
+}
+
+pub fn cached_list(root:&Path,page:usize,before:Option<(i64,u64)>)->Res<Value> {
+    coreq::telemetry::capture::operation("reports.list.cached",|| -> Res<Value> {
+        let mut value=cached(root);let rows=value["reports"].as_array().cloned().unwrap_or_default();
+        let rows:Vec<_>=rows.into_iter().filter(|r|before.is_none_or(|p|(r["closed"].as_i64().unwrap_or(0),r["n"].as_u64().unwrap_or(0))<p)).collect();
+        let start=if before.is_some(){0}else{page.saturating_sub(1).saturating_mul(crate::board::CLOSED_PAGE)};
+        let selected:Vec<_>=rows.iter().skip(start).take(crate::board::CLOSED_PAGE).cloned().collect();
+        value["more"]=json!(rows.len()>start.saturating_add(crate::board::CLOSED_PAGE));
+        value["next"]=json!(selected.last().map(|r|format!("{}:{}",r["closed"],r["n"])));value["page"]=json!(page);value["reports"]=json!(selected);Ok(value)
+    },|_|"cache-read")
+}
+
+/// Legacy Completed presentation reads the same projection; its IPC request is never a board request.
+pub fn cached_history(root:&Path,m:&Value)->Res<Value> {
+    let value=cached(root);let page=m["page"].as_u64().unwrap_or(1).max(1) as usize;
+    let mut rows:Vec<Value>=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten()).filter(|r|
+        m["task"].as_u64().is_none_or(|n|r["n"]==n)&&m["since"].as_i64().is_none_or(|t|r["closed"].as_i64().unwrap_or(0)>=t)).cloned().collect();
+    rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
+    let start=if m["task"].is_number(){0}else{(page-1)*crate::board::CLOSED_PAGE};
+    Ok(json!({"source":"service","page":page,"tasks":rows.iter().skip(start).take(crate::board::CLOSED_PAGE).collect::<Vec<_>>(),"more":rows.len()>start+crate::board::CLOSED_PAGE,"reason":value["reason"],"complete":value["complete"]}))
+}
+
+pub fn cached_open(root:&Path,n:u64,sha:&str)->Res<Value> {
+    coreq::telemetry::capture::operation("reports.open.cached",|| -> Res<Value> {
+        if !identity(sha) {return Err("result identity must be full SHA or collected close identity".into());}
+        let value=cached(root);
+        let row=value["reports"].as_array().into_iter().flatten().find(|r|r["n"]==n && r["sha"]==sha);
+        match row {Some(row)=>Ok(json!({"report":row,"complete":value["complete"],"reason":value["reason"]})),None=>Ok(json!({"reason":value["reason"].as_str().unwrap_or("Report not in the collected snapshot; waiting for the service"),"complete":false}))}
+    },|_|"cache-read")
+}
+
+/// Reads bypass board construction and token lookup, so offline navigation cannot become a login/API probe.
+pub fn read_cli(root:&Path,a:&crate::Args)->Res<Option<Value>> {
+    if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json","text"].contains(&k.as_str())||v.len()!=1) {return Err("results: use --action, --sha, --page, --before, --text and --json once each".into());}
+    if a.one("text").is_some()&&!matches!(a.one("action"),Some("followup"|"reopen")) {return Err("--text supplies the reason for followup or reopen".into());}
+    if a.pos.len()==1 {
+        if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
+        let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
+        let before=a.one("before").map(|s|s.split_once(':').and_then(|(t,n)|Some((t.parse::<i64>().ok()?,n.parse::<u64>().ok()?))).ok_or("report cursor must be TIME:N")).transpose()?;
+        return cached_list(root,page,before).map(Some);
+    }
+    if a.one("page").is_some()||a.one("before").is_some() {return Err("--page/--before list reports without a task number".into());}
+    if a.one("action").unwrap_or("open")=="open" {return cached_open(root,a.num(1)?,a.need("sha")?).map(Some);}
+    Ok(None)
+}
 
 #[derive(Clone, Debug, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,19 +212,29 @@ fn log(comments:&[Comment])->Vec<Entry> {
 
 /// Markers never alter fold or release a dependency. The first terminal decision for this SHA wins.
 pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value> {
-    if i.open||!i.trusted||i.reason.as_deref().is_some_and(|r|r!="completed")
-        ||!i.labels.iter().any(|l|l=="taskq")||!i.labels.iter().any(|l|l=="research"||l=="docs") {return None;}
+    if i.open||!i.trusted
+        ||!i.labels.iter().any(|l|l=="taskq") {return None;}
     let p=crate::core::project(i.number,&log(comments),false);
     let t=p.task;
-    let sha=t.result?;
     let result=p.changes.iter().rev().find(|(_,before,after)|before.state==crate::core::State::Doing&&after.state==crate::core::State::Review);
-    let registered=result.and_then(|(id,_,_)|comments.iter().find(|c|c.id==*id)).is_some_and(|c|c.body.lines().any(|l|l==format!("Report: docs/research/{}.md",i.number)));
-    if !i.labels.iter().any(|l|l=="research")&&!registered {return None;}
+    let handin=result.and_then(|(id,_,_)|comments.iter().find(|c|c.id==*id));
+    let registered=handin.is_some_and(|c|c.body.lines().any(|l|l==format!("Report: docs/research/{}.md",i.number)));
+    let completed=i.reason.as_deref().is_none_or(|r|r=="completed");
+    let report=completed&&(i.labels.iter().any(|l|l=="research")||registered);
+    let closing=p.changes.iter().rev().find(|(_,before,after)|before.state!=crate::core::State::Closed&&after.state==crate::core::State::Closed)
+        .and_then(|(id,_,_)|comments.iter().find(|c|c.id==*id));
+    let sha=t.result.unwrap_or_else(||format!("close-{}",closing.map_or(i.number,|c|c.id)));
+    if report&&!identity_sha(&sha) {return None;}
     // Legacy research with an already answered decision must not reappear as unread work.
-    if !registered && comments.iter().any(|c|c.trusted&&!c.edited&&c.body.lines().next().is_some_and(|l|l=="taskq: answer"||l.starts_with("taskq: answer "))) {return None;}
+    let legacy_answered=report&&!registered && comments.iter().any(|c|c.trusted&&!c.edited&&c.body.lines().next().is_some_and(|l|l=="taskq: answer"||l.starts_with("taskq: answer ")));
     let mut sorted:Vec<_>=comments.iter().filter(|c|c.trusted&&!c.edited).collect();sorted.sort_by_key(|c|c.id);
-    let (mut read,mut decision,mut made,mut making)=(false,"none",json!([]),false);
+    let (mut read,mut decision,mut made,mut making)=(legacy_answered,if legacy_answered{"answered"}else{"none"},json!([]),false);
     for c in sorted {
+        if !report {
+            if c.body.lines().next()==Some(&format!("taskq: result-read {sha}")) {read=true;}
+            if c.body.lines().next()==Some(&format!("taskq: result-accept {sha}")) {read=true;decision="accepted";}
+            continue;
+        }
         if matches!(decision,"drop"|"made") {break;}
         let line=c.body.lines().next().unwrap_or("");
         for (kind,value) in [("read","none"),("later","later"),("making","none"),("drop","drop"),("made","made")] {
@@ -65,10 +248,23 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
             }
         }
     }
-    Some(json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,
-        "decision":decision,"visible":!matches!(decision,"drop"|"made"),"pending_decision":if making&&!matches!(decision,"made"|"drop"){Some("make")}else{None},"tasks_made":made}))
+    let text=|c:Option<&Comment>|c.and_then(|c|c.body.split_once('\n').map(|(_,text)|text)).unwrap_or("").to_string();
+    let accepted_close:Vec<_>=closing.into_iter().map(|c|Entry{id:c.id,body:c.body.clone(),edited:false}).collect();
+    let mut row=json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::merge_receipt(&accepted_close),
+        "comments_through":comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.id).max().unwrap_or(0),
+        "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made"),"pending_decision":if making&&!matches!(decision,"made"|"drop"){Some("make")}else{None},"tasks_made":made});
+    let details=text(handin);let verdict=text(closing);
+    row["result"]=json!(details.lines().find_map(|l|l.strip_prefix("Changed: ")));
+    row["pr"]=json!(format!("{details}\n{verdict}").split(|c:char|c.is_whitespace()||matches!(c,'('|')'|'['|']'|'<'|'>')).filter(|u|u.starts_with("https://")&&(u.contains("/pull/")||u.contains("/merge_requests/"))).last().map(|u|u.trim_end_matches(|c:char|!c.is_ascii_alphanumeric()).to_string()));
+    row["close"]=json!(crate::display::close_outcome(Some(&verdict),None));
+    if !report {row["body"]=json!(details);row["verdict"]=json!(verdict);if handin.is_none() {row["reason"]=json!("No accepted hand-in recorded; result details unknown");}}
+    Some(row)
 }
 
+fn identity_sha(sha:&str)->bool {sha.len()==40&&sha.bytes().all(|b|b.is_ascii_hexdigit())}
+fn identity(sha:&str)->bool {identity_sha(sha)||sha.strip_prefix("close-").is_some_and(|id|!id.is_empty()&&id.bytes().all(|b|b.is_ascii_digit()))}
+
+#[cfg(test)]
 pub fn list_before(b:&dyn Board,page:usize,before:Option<(i64,u64)>)->Res<Value> {
     let mut rows=Vec::new();
     for (i,closed) in b.research_tasks()? {
@@ -87,16 +283,18 @@ pub fn list_before(b:&dyn Board,page:usize,before:Option<(i64,u64)>)->Res<Value>
 fn list(b:&dyn Board,page:usize)->Res<Value> {list_before(b,page,None)}
 
 fn current(b:&dyn Board,n:u64,sha:&str)->Res<Value> {
-    if sha.len()!=40||!sha.bytes().all(|b|b.is_ascii_hexdigit()) {return Err("report SHA must be full 40-hex".into());}
+    if !identity(sha) {return Err("result identity invalid".into());}
     let i=b.issue(n)?;
+    if i.number!=n {return Err("result issue identity mismatch".into());}
     let row=project(&i,0,&b.comments(n)?,b.url(n)).ok_or("not a completed research report")?;
     if row["sha"]!=sha {return Err("report changed; refresh before deciding".into());} Ok(row)
 }
 
 fn mark(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64])->Res<Value> {
     let row=current(b,n,sha)?;
-    if row["visible"]==false||kind=="read"&&row["read"]==true||kind=="later"&&row["decision"]=="later"||kind=="making"&&row["pending_decision"]=="make" {return Ok(row);}
-    let text=format!("taskq: report-{kind} {sha}{}",if kind=="made" {format!("\n{}",json!(made))} else {String::new()});
+    if row["visible"]==false||kind=="read"&&row["read"]==true||kind=="accept"&&row["decision"]=="accepted"||kind=="later"&&row["decision"]=="later"||kind=="making"&&row["pending_decision"]=="make" {return Ok(row);}
+    let prefix=if row["kind"]=="task" {"result"}else{"report"};
+    let text=format!("taskq: {prefix}-{kind} {sha}{}",if kind=="made" {format!("\n{}",json!(made))} else {String::new()});
     let id=b.comment(n,&text)?;
     let comments=b.comments(n)?;
     if !comments.iter().any(|c|c.id==id&&c.trusted&&!c.edited&&c.body==text) {return Err("report write readback unknown; refresh before retrying".into());}
@@ -104,13 +302,40 @@ fn mark(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64])->Res<Value> {
 }
 
 pub fn act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
+    act_with_reason(b,root,raw,n,sha,action,"")
+}
+pub fn act_with_reason(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str)->Res<Value> {
+    if action=="open" {return cached_open(root,n,sha);}
     if crate::dispatch::agent() {return Err("report decisions require the owner CLI, outside an attempt".into());}
-    owner_act(b,root,raw,n,sha,action)
+    let result=if matches!(action,"followup"|"reopen") {successor(b,root,raw,n,sha,action,reason)}else {owner_act(b,root,raw,n,sha,action)};
+    let _=crate::poke(root);result
+}
+
+fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str)->Res<Value> {
+    let row=current(b,n,sha)?;
+    if row["kind"]!="task" {return Err("reports use Make tasks for proposed work".into());}
+    let reason=reason.trim();
+    if reason.is_empty()||reason.chars().count()>180||reason.contains(['\r','\n']) {return Err("Give a one-line reason, at most 180 characters".into());}
+    let label=if action=="reopen" {"Reopen"}else{"Follow-up"};
+    let task=crate::NewTask{title:format!("{label} #{n}"),
+        goal:format!("{label} #{n}: {reason}"),acceptance:vec![format!("The operator's reason is addressed: {reason}")],
+        scope:vec![format!("Source: {}",b.url(n)),format!("Reason: {reason}")],deps:vec![n],kind:None,runtime:None,priority:None,host:None,labels:vec![]};
+    crate::task_body(b,&task,&crate::Op::default())?;
+    let hash=ring::digest::digest(&ring::digest::SHA256,reason.as_bytes());
+    let hash:String=hash.as_ref().iter().map(|b|format!("{b:02x}")).collect();
+    let op=crate::Op{id:Some(format!("result.{n}.{sha}.{action}.{hash}")),revision:None};
+    let receipt=crate::add_task(b,root,raw,&task,&op)?;
+    Ok(json!({"report":row,"successor":receipt.task,"successor_url":(receipt.task>0).then(||b.url(receipt.task)),"receipt":receipt,"reason":(receipt.outcome!="accepted").then(||receipt.reason.clone())}))
 }
 
 pub(crate) fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
-    if !["open","read","later","drop","make"].contains(&action) {return Err("report action must be open, read, later, drop or make".into());}
+    if !["open","read","accept","later","drop","make"].contains(&action) {return Err("result action must be open, read, accept, followup, reopen, later, drop or make".into());}
     let prior=current(b,n,sha)?;
+    if prior["kind"]=="task" {
+        if !matches!(action,"read"|"accept") {return Err("completed task actions are read, accept, followup or reopen".into());}
+        return Ok(json!({"report":mark(b,n,sha,action,&[])?}));
+    }
+    if action=="accept" {return Err("reports use Make tasks, Later or Drop".into());}
     if prior["visible"]==false {return Ok(json!({"report":prior}));}
     if matches!(action,"read"|"later"|"drop") {
         let row=if action=="drop"&&prior["pending_decision"]=="make" {prior} else {mark(b,n,sha,action,&[])?};
@@ -215,7 +440,143 @@ mod tests {
         b.raw(n,"taskq: close",true,false);b.close(n).unwrap();
         let body="# Question\nQ\n# Findings\nEvidence\n# Options\nPros/cons\n# Recommendation\nR\n# Proposed tasks\n```taskq-tasks\n[{\"title\":\"Document limits\",\"goal\":\"Show retry limits.\",\"acceptance\":[\"Help names retry limits.\"],\"type\":\"docs\"},{\"title\":\"Protect retries\",\"goal\":\"Keep retries bounded.\",\"acceptance\":[\"A failed request stops at its retry limit.\"]}]\n```";
         b.state.borrow_mut().report_sources.push((format!("docs/research/{n}.md"),sha.clone(),body.into()));
-        b.state.borrow_mut().report_closed.insert(n,45);(b,claim,n,sha)
+        b.state.borrow_mut().report_closed.insert(n,45);
+        b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().closed=Some(45);
+        (b,claim,n,sha)
+    }
+
+    // Chain: §7 Results -> trusted completion/seen markers -> held successor with immutable create claim.
+    // Risk: acknowledgement reopens a dependency, old markers hide a new SHA, or retry duplicates correction work.
+    #[test] fn ordinary_results_acknowledge_and_reopen_without_reopening_dependencies() {
+        let (b,claim,n,sha)=board();
+        {let mut st=b.state.borrow_mut();
+        st.issues.iter_mut().find(|i|i.number==n).unwrap().labels=vec!["taskq".into(),"code".into()];
+        let (_,result)=st.comments.iter_mut().find(|(task,c)|*task==n&&c.body.starts_with("taskq: result ")).unwrap();
+        result.body=result.body.split_once('\n').unwrap().0.to_string()+"\nChanged: Requests recover once.\nChecks: replay -- passed\nOpen: none\nhttps://example.com/invented-evidence";}
+        let root=std::env::temp_dir().join(format!("taskq-results-{}",crate::runtime::uuid()));std::fs::create_dir_all(&root).unwrap();
+        let raw=json!({"create_claim_issue":claim});
+        let row=current(&b,n,&sha).unwrap();assert_eq!(row["kind"],"task");assert!(row["body"].as_str().unwrap().contains("Checks: replay"));
+        for (trusted,edited,s) in [(false,false,sha.clone()),(true,true,sha.clone()),(true,false,"b".repeat(40))] {b.raw(n,&format!("taskq: result-read {s}"),trusted,edited);}
+        assert_eq!(current(&b,n,&sha).unwrap()["read"],false);
+        assert_eq!(owner_act(&b,&root,&raw,n,&sha,"read").unwrap()["report"]["decision"],"none");
+        assert_eq!(owner_act(&b,&root,&raw,n,&sha,"accept").unwrap()["report"]["decision"],"accepted");
+        let opened=successor(&b,&root,&raw,n,&sha,"reopen","Preserve the retry receipt").unwrap();
+        assert!(opened["reason"].is_null(),"{opened}");let child=opened["successor"].as_u64().unwrap();
+        let issue=b.issue(child).unwrap();assert!(issue.body.contains("Reason: Preserve the retry receipt"));assert!(issue.body.contains(&format!("Depends on #{n}")));
+        assert!(issue.labels.contains(&"q-held".into()));assert!(!issue.labels.contains(&"taskq".into()));
+        b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().title="Renamed after creation".into();
+        let count=b.state.borrow().issues.len();assert_eq!(successor(&b,&root,&raw,n,&sha,"reopen","Preserve the retry receipt").unwrap()["successor"],child);
+        assert_eq!(b.state.borrow().issues.len(),count);assert!(!b.issue(n).unwrap().open);
+        assert_eq!(crate::core::fold(n,&crate::board::entries(&b,n).unwrap(),false).state,crate::core::State::Closed);
+        assert!(successor(&b,&root,&raw,n,&sha,"reopen","").is_err());
+        let mut cache=Cache::default();cache.collect(&b);assert_eq!(cache.value["reports"][0]["kind"],"task");
+        assert_eq!(cache.value["reports"][0]["read"],true);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // A5/A6: paging must not skip racing updates; a restart may retain data but never assert a failed read is healthy.
+    #[test] fn collection_cursor_precedes_paging_and_restart_retains_failed_rows() {
+        let (b,_,n,sha)=board();let before=b.now().unwrap();b.state.borrow_mut().closed_page_advance=10;
+        let mut cache=Cache::default();cache.collect(&b);assert_eq!(cache.verified,Some(before));
+        b.raw(n,&format!("taskq: report-later {sha}"),true,false);
+        b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().updated=before+2;
+        cache.collect(&b);assert_eq!(cache.value["reports"][0]["decision"],"later","update inside paging window must be revisited");
+        let mut restarted=Cache::retaining(cache.value.clone());b.state.borrow_mut().fail_comment_reads=1;
+        restarted.collect(&b);assert_eq!(restarted.value["complete"],false);assert_eq!(restarted.value["reports"][0]["n"],n);
+        assert!(restarted.value["reason"].as_str().unwrap().contains("comment read failed"));
+    }
+
+    // §7/R12: ignored close comments cannot manufacture delivery evidence or replace the accepted verdict.
+    #[test] fn result_verdict_uses_only_the_accepted_close() {
+        let (mut i,mut comments)=fixture();i.labels=vec!["taskq".into(),"code".into()];
+        comments[2].body.push_str("\nChanged: Reviewed result\nChecks: A1 ok\ndelivery auto-merge r0: merged #20 as SHA");
+        comments.push(Comment{id:4,body:"taskq: close attempt 999\nChanged: Ignored\ndelivery auto-merge r0: merged #999 as SHA".into(),trusted:true,..Default::default()});
+        let row=project(&i,45,&comments,"invented".into()).unwrap();
+        assert!(row["verdict"].as_str().unwrap().contains("Reviewed result"));assert!(!row["verdict"].as_str().unwrap().contains("Ignored"));
+        assert!(row["merged"].as_str().unwrap().contains("#20"));assert!(!row["merged"].as_str().unwrap().contains("#999"));
+    }
+
+    // R6/§7: legacy answered research must not regain attention or disappear from Completed history.
+    #[test] fn legacy_answered_reports_remain_in_history_without_new_attention() {
+        let (b,_,n,_)=board();
+        {let mut st=b.state.borrow_mut();st.issues.iter_mut().find(|i|i.number==n).unwrap().labels=vec!["taskq".into(),"research".into()];
+        let (_,c)=st.comments.iter_mut().find(|(task,c)|*task==n&&c.body.starts_with("taskq: result ")).unwrap();c.body=c.body.lines().next().unwrap().into();}
+        b.raw(n,"taskq: answer 1",true,false);
+        let mut cache=Cache::default();cache.collect(&b);
+        assert!(cache.value["reports"].as_array().unwrap().is_empty());assert_eq!(cache.value["history"][0]["n"],n);assert_eq!(cache.value["history"][0]["read"],true);
+    }
+
+    // #1940 A5/A6/R12: a background collection must retain SHA content, observe new decisions/closures,
+    // and preserve useful rows as unknown on failure. Cached reads have no Board argument or token lookup.
+    #[test] fn collected_reports_refresh_without_losing_unknown_or_sha_identity() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
+        let first=cache.value.clone();assert_eq!(first["complete"],true);assert_eq!(first["reports"][0]["sha"],sha);
+        assert!(first["reports"][0]["body"].is_string());
+        // The source is immutable; an unchanged pass and a read marker need no source fetch.
+        b.state.borrow_mut().report_sources.clear();cache.collect(&b);assert_eq!(cache.value["reports"],first["reports"]);
+        mark(&b,n,&sha,"read",&[]).unwrap();cache.collect(&b);
+        assert_eq!(cache.value["reports"][0]["read"],true);assert!(cache.value["reports"][0]["body"].is_string());
+        // Replacing a result never borrows the old SHA's content or its read marker.
+        let replacement="b".repeat(40);let mut st=b.state.borrow_mut();
+        let result=st.comments.iter_mut().find(|(task,c)|*task==n&&c.body.starts_with("taskq: result ")).unwrap();
+        result.1.body=result.1.body.replace(&sha,&replacement);st.issues.iter_mut().find(|i|i.number==n).unwrap().updated+=1;drop(st);
+        cache.collect(&b);assert_eq!(cache.value["reports"][0]["read"],false);assert!(cache.value["reports"][0]["body"].is_null());
+        assert!(cache.value["reports"][0]["reason"].as_str().unwrap().contains("unavailable"));
+        b.state.borrow_mut().fail_comment_reads=1;cache.collect(&b);
+        assert_eq!(cache.value["complete"],false);assert_eq!(cache.value["reports"][0]["n"],n);
+        assert!(cache.value["reason"].is_string());
+        let (new,_,other,_) = board();
+        // A cold collection discovers an already closed report without any UI request.
+        let mut fresh=Cache::default();fresh.collect(&new);assert_eq!(fresh.value["reports"][0]["n"],other);
+    }
+
+    // A5/A6: same-second markers must become visible; settled historical issues must not cost another comment read.
+    #[test] fn collection_rechecks_same_second_updates_then_reuses_settled_projections() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
+        let updated=b.issue(n).unwrap().updated;
+        b.raw(n,&format!("taskq: report-later {sha}"),true,false);
+        b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().updated=updated;
+        b.advance(2);cache.collect(&b);assert_eq!(cache.value["reports"][0]["decision"],"later");
+        let reads=b.state.borrow().comment_reads;
+        cache.collect(&b);assert_eq!(b.state.borrow().comment_reads,reads,"settled unchanged projections reuse comments");
+        b.raw(n,&format!("taskq: report-drop {sha}"),true,false);cache.collect(&b);
+        assert!(cache.value["reports"].as_array().unwrap().is_empty());
+    }
+
+    #[test] fn close_event_invalidates_collection_before_the_next_due_pass() {
+        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);
+        let root=std::env::temp_dir().join(format!("taskq-report-close-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let (tx,rx)=std::sync::mpsc::channel();tx.send(cache).unwrap();
+        let mut collector=Collector{pending:Some(rx),started:Some(std::time::Instant::now()),..Default::default()};
+        assert_eq!(collector.tick(&root,300,300,false)["complete"],true);
+        std::fs::write(crate::dot(&root).join("events"),"invented #12 close 3\n").unwrap();
+        collector.tick(&root,300,300,false);assert!(collector.invalidated,"observe-only passes retain the requested refresh");
+        collector.tick(&root,300,300,true);assert!(collector.pending.is_some(),"close schedules without waiting for poll");
+        // No project config: the read-only worker must return unknown, never create or launch anything.
+        let failed=collector.pending.take().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(failed.value["complete"],false);assert!(failed.value["reason"].is_string());
+        assert!(!crate::dot(&root).join("poke").exists(),"completion must not force a new board read");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test] fn cache_fresh_stale_missing_and_corrupt_are_distinct() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);
+        let root=std::env::temp_dir().join(format!("taskq-report-cache-{}",crate::runtime::uuid()));
+        std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        assert_eq!(cached(&root)["complete"],false);
+        std::fs::write(crate::dot(&root).join("status.json"),"corrupt").unwrap();assert!(cached(&root)["reason"].is_string());
+        let at=cache.value["observed"].as_i64().unwrap();
+        assert_eq!(freshness(cache.value.clone(),at+300,300,None)["complete"],true);
+        let stale=freshness(cache.value.clone(),at+301,300,None);assert_eq!(stale["complete"],false);assert_eq!(stale["reports"][0]["n"],n);
+        let failed=freshness(cache.value.clone(),at,300,Some("Board unavailable"));assert_eq!(failed["reason"],"Board unavailable");
+        std::fs::write(crate::dot(&root).join("status.json"),json!({"reports":cache.value}).to_string()).unwrap();
+        assert_eq!(cached_list(&root,1,None).unwrap()["reports"][0]["n"],n);
+        let history=cached_history(&root,&json!({"task":n})).unwrap();assert_eq!(history["source"],"service");assert_eq!(history["tasks"][0]["n"],n);
+        assert!(cached_open(&root,n,&sha).unwrap()["report"]["body"].is_string());
+        assert_eq!(cached_open(&root,n,&"c".repeat(40)).unwrap()["complete"],false);
+        let mut old=cached(&root);old["observed"]=json!(0);std::fs::write(crate::dot(&root).join("status.json"),json!({"reports":old}).to_string()).unwrap();
+        let stale_history=cached_history(&root,&json!({"task":n})).unwrap();assert_eq!(stale_history["complete"],false);assert_eq!(stale_history["tasks"][0]["n"],n);assert!(stale_history["reason"].is_string());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Chain: §7 Reports -> exact source -> §1 claims/held drafts -> readback. Risk: one click admits tasks,

@@ -397,7 +397,7 @@ setup:function(){
 },
 attention:function(){
   const all=unique(view.S.projects.flatMap(tasks));
-  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)]),globalGroup('ask',all),globalGroup('failed',all),answerNotices()].filter(Boolean);
+  const parts=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)]),globalGroup('ask',all),globalGroup('failed',all),reports.current()?reports.section(view.S.projects):reports.attention(),answerNotices()].filter(Boolean);
   return parts.length?f(parts):'';
 },
 projects:function(){
@@ -507,7 +507,7 @@ runningAgents:function(compact=false){
 home:function(){
   const faults=[api.agentq(),setup(),...view.S.projects.flatMap(p=>[problem(p),incident(p,true),incidentNotice(p)])].filter(Boolean);
   const line=api.runningAgents(true);
-  return f(api.staleLine(),h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),dashboard.list(),reports.section(view.S.projects));
+  return f(api.staleLine(),h('details',{class:'dashboard-status','data-view-key':'dashboard-status'},h('summary',null,line.strip,faults.length>0&&h('span',{class:'attention',role:'img','aria-label':'Attention · '+faults.length,title:'Attention · '+faults.length},icon('circle-alert'),String(faults.length))),api.runningAgents(),controls(),faults),reports.current()?reports.section(view.S.projects):f(reports.attention(),dashboard.list(),reports.section(view.S.projects)));
 },
 routeBody:function(){
   switch(view.page){
@@ -641,8 +641,8 @@ head:function(){
   if(ports.settings){const W=view.settingsChrome||{};return shell.bar({title,crumbs,home:'Settings home',back:view.page!=='settings'||renderer.entries().length>0,actions:[],windows:[button('always-on-top','Always on top',{'data-a':'settings-top','aria-pressed':String(!!W.top)}),button(W.maximized?'minimize-2':'maximize-2',W.maximized?'Restore window':'Enlarge window',{'data-a':'settings-enlarge','aria-pressed':String(!!W.maximized)}),button('x','Close settings',{'data-a':'hide'})]});}
   if(ports.views)return shell.bar({title:'View · '+dashboard.current().name,actions:[],windows:[button('x','Close view window',{'data-a':'hide'})]});
   // R09/MP12, #1699 A2: one Conversations entry opens the thread screen at every count, the first unread thread with new events; the count is deduplicated, unknown never reads as zero; opening acknowledges nothing
-  const m=view.S.messages,count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count:null;
-  const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':'conversations','data-thread':count?'unread':'',title:'Conversations · '+(count===null?'unknown':count+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':count):'');
+  const m=view.S.messages,reportCount=reports.count(),count=m?.complete===true&&Number.isSafeInteger(m.count)?m.count+(reportCount||0):null;
+  const conversations=h('button',{type:'button',class:'conversations-entry','data-a':'workspace','data-page':'conversations','data-thread':count?'unread':'',title:'Conversations · '+(count===null?'unknown':count+(reportCount===null?'+?':'')+' new'),'aria-label':'Conversations · '+(count===null?'unknown':count+(reportCount===null?'+?':'')+' new')},icon('messages-square'),count?h('span',{class:'badge','aria-hidden':'true'},count>99?'99+':String(count)+(reportCount===null?'+?':'')):'');
   const actions=[p?.issues&&h('a',{href:p.issues,'data-url':p.issues,title:'Open Board','aria-label':'Open '+p.name+' Board'},icon(p.board_kind)),view.S.stop_modes&&button('octagon-x','Emergency stop',{'data-a':'stop-review'}),conversations,button('settings','Settings',{'data-route':'settings'})];
   const windows=[button(view.S.pinned?'pin-off':'pin','Keep menu open',{'data-a':'pin','aria-pressed':String(!!view.S.pinned)}),button('always-on-top','Always on top',{'data-a':'top','aria-pressed':String(!!view.S.top)}),button('x','Close menu',{'data-a':'hide'})];
   return shell.bar({title:view.page==='home'?'Tasks':title,crumbs,home:'Home',back:view.page!=='home'||renderer.entries().length>0||!!view.working,actions,windows});
@@ -733,7 +733,7 @@ receive:function(s){
   if(s.capmsg){if(api.recoveryReceipt(s.capmsg))return;if(view.hostCommand?.id===s.capmsg.id)api.lifecycleReceipt(s.capmsg);else resourceReceipt(s.capmsg);return;}
   if(s.open){openCard(s.open);return;}
   if(view.S?.size_anchor!==s.size_anchor)view.manualSize=null;
-  if(!ports.settings&&!ports.views)viewState.hydrate(s);api.adopt(s);view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
+  if(!ports.settings&&!ports.views)viewState.hydrate(s);reports.sync(s.projects||[]);api.adopt(s);view.receivedAt=performance.now();focusReadback();api.lifecycleReadback();
   // snapshot mode names the page
   if(s.page!==undefined&&s.page!==view.page){view.popup=null;view.page=s.page;view.taskFilter=null;view.working=null;view.workCard=null;renderer.clear();view.disclosures={};present(true);return;}
   // a tick does not take the caret out of the range fields

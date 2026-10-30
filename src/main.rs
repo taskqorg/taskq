@@ -90,7 +90,8 @@ const USAGE: &str = "taskq agents
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
- taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
+ taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--page N|--before TIME:N] --json
+ taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -159,7 +160,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -1221,6 +1222,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
     let mut pm_exchange = pm::Exchanger::default();
+    let mut reports = reports::Collector::default();
     let mut link = link::Server::default();
     let mut panics = host::Panics::default();
     let pokes = [d.join("poke"), cfg.install.join("poke")];
@@ -1403,6 +1405,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             status[k] = v;
         }
         status["diagnostics"] = s.service_diagnostics();
+        status["reports"] = reports.tick(&cfg.root,cfg.poll,cfg.ttl,!quiet);
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
         drop(wakeup);
         if host.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
@@ -1475,7 +1478,14 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
+            let results_ready=reports.received();
+            if results_ready {
+                status["reports"]=reports.tick(&cfg.root,cfg.poll,cfg.ttl,false);
+                status["tasks_age_seconds"]=json!(s.tasks_read.map(|t|t.elapsed().as_secs()));
+                status["at"]=json!(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0,|d|d.as_secs()));
+            }
             if sampled.is_some_and(|t| t.elapsed().as_secs() < 30) {
+                if results_ready {publish_status(&tool,&cfg.root,&status,host.as_ref());}
                 return;
             }
             sampled = Some(Instant::now());
@@ -2972,6 +2982,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
+        "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
 }
@@ -3172,16 +3183,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--revision names one task".into());
     }
     match cmd {
-        "reports" => {
-            if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json"].contains(&k.as_str())||v.len()!=1) {return Err("reports: use --action, --sha, --page, --before and --json once each".into());}
-            let value=if a.pos.len()==1 {
-                if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
-                let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
-                let before=a.one("before").map(|s|s.split_once(':').and_then(|(t,n)|Some((t.parse::<i64>().ok()?,n.parse::<u64>().ok()?))).ok_or("report cursor must be TIME:N")).transpose()?;
-                reports::list_before(b,page,before)?
-            } else {
-                if a.one("page").is_some()||a.one("before").is_some() {return Err("--page/--before list reports without a task number".into());}
-                reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
+        "reports"|"results" => {
+            let value=match reports::read_cli(root,a)? {
+                Some(value)=>value,
+                None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""))?
             };
             println!("{value}"); Ok(())
         }

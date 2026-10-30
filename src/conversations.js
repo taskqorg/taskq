@@ -424,8 +424,8 @@ module.exports=execution.module('conversations',{
        const age=Number.isFinite(r.at)?Math.max(0,Math.floor(((snapshot.now?Number(snapshot.now)*1000:Date.now())-r.at)/60000)):null;
        const when=age===null?'Update time unknown':age===0?'Now':age<60?age+'m ago':age<1440?Math.floor(age/60)+'h ago':Math.floor(age/1440)+'d ago';
        const blocked=!!sidebarPending||!!pending||!!failure||!!extra.busy;
-       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',{title:age===null?'Update time unknown: '+(activityTimes[r.id]?.reason||'The source did not supply an update time'):api.when(r.at)},[context,meta,when].filter(Boolean).join(' · '),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
-        h('div',{class:'conversation-row-actions'},icons.button(r.pin?'pin-off':'pin',r.pin?'Unpin':'Pin',{'data-c':'row-pin','data-id':r.id,class:'compact-action',disabled:blocked}),
+       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',{title:age===null?'Update time unknown: '+(activityTimes[r.id]?.reason||'The source did not supply an update time'):api.when(r.at)},[context,meta,when].filter(Boolean).join(' · '),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
+        !r.report&&h('div',{class:'conversation-row-actions'},icons.button(r.pin?'pin-off':'pin',r.pin?'Unpin':'Pin',{'data-c':'row-pin','data-id':r.id,class:'compact-action',disabled:blocked}),
          icons.button(r.archived?'archive-restore':'archive',r.archived?'Restore':'Archive',{'data-c':'row-archive','data-id':r.id,class:'compact-action',disabled:blocked,onClick:()=>{if(blocked)return;if(own)api.action(r.archived?'restore':'archive',{},r.id);else extra.archive?.(r);}})));
       }));
     });

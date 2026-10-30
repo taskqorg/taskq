@@ -969,6 +969,7 @@ pub struct FakeState {
     pub report_closed: std::collections::BTreeMap<u64,i64>,
     /// A real adapter that answers `publish` calls instead of the `publish` string above (#1939).
     pub publisher: Option<Box<dyn Board>>,
+    pub closed_page_advance: i64,
 }
 
 #[cfg(test)]
@@ -1026,10 +1027,11 @@ impl Board for Fake {
     }
     fn video_inline(&self) -> bool { self.state.borrow().video_inline }
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> {
+        let delay=self.state.borrow().closed_page_advance;self.advance(delay);
         let mut all: Vec<Issue> = self.state.borrow().issues.iter().filter(|i| !i.open && since.is_none_or(|t| i.updated >= t)).cloned().collect();
         all.sort_by_key(|i| std::cmp::Reverse(i.updated));
         let start = (page.max(1) as usize - 1) * CLOSED_PAGE;
-        Ok((all.iter().skip(start).take(CLOSED_PAGE).map(|i| (i.clone(), i.updated)).collect(), all.len() > start + CLOSED_PAGE))
+        Ok((all.iter().skip(start).take(CLOSED_PAGE).map(|i| (i.clone(), self.state.borrow().report_closed.get(&i.number).copied().unwrap_or(i.updated))).collect(), all.len() > start + CLOSED_PAGE))
     }
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> {
         if let Some(lists) = &self.state.borrow().lists { lists.fetch_add(1, std::sync::atomic::Ordering::SeqCst); }

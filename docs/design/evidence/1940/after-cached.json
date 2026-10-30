@@ -1,0 +1,66 @@
+{
+  "qualification": "Windows isolated CLI; 9 invented reports and 10 completed tasks; no board credentials; not deployed",
+  "source": "49940ae2c453d8be4631038552a4e8eb5764e028",
+  "binary_sha256": "b2b43d5eaec36929261ecd853a14f34cff552377586bf57c751fce5083e53b47",
+  "loader": "Cargo supplies GNU WebView2 loader search paths; bare debug binary failed 0xC0000135",
+  "commands": [
+    {
+      "command": "taskq reports --json",
+      "collected": 9,
+      "wall_ms_including_cargo": 1835.299,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq reports 1 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --action open --json",
+      "collected": 9,
+      "wall_ms_including_cargo": 1556.123,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq results --json",
+      "collected": 19,
+      "wall_ms_including_cargo": 1492.175,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq results 101 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --json",
+      "collected": 19,
+      "wall_ms_including_cargo": 1452.497,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq results 102 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --json",
+      "collected": 19,
+      "wall_ms_including_cargo": 1587.267,
+      "outcome": "ok"
+    }
+  ],
+  "cached_operations": [
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 418.039,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.open.cached",
+      "duration_ms": 26.388,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 36.72,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.open.cached",
+      "duration_ms": 20.231,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.open.cached",
+      "duration_ms": 26.808,
+      "outcome": "ok"
+    }
+  ],
+  "source_unchanged": true
+}
