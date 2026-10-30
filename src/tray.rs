@@ -1577,7 +1577,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if !valid {return;}
                         let p=proxy.clone();let source=id.to_string();
                         let built=WindowBuilder::new().with_title("TaskQ Request").with_decorations(false).with_inner_size(LogicalSize::new(640.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window|{
-                            WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(source.clone(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                            WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace(source.clone(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                         });
                         match built {
                             Ok((window,wv))=>{let mut calls=WebCalls::new();calls.workspace=true;calls.surface=id.into();window.set_visible(true);window.set_focus();detached.insert(id.into(),(window,wv,calls));}
@@ -1767,7 +1767,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if workspace.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ Workspace").with_decorations(false).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace("main".into(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                                WebViewBuilder::new().with_accept_first_mouse(true).with_html(WORKSPACE_HTML).with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Workspace("main".into(),r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
                                 Ok(window)=>{workspace=Some(window);let mut calls=WebCalls::new();calls.workspace=true;workspace_web=Some(calls);}
@@ -1786,7 +1786,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if settings_window.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ Settings").with_decorations(false).with_always_on_top(requests_file(&install)["settings_top"]==true).with_inner_size(LogicalSize::new(420.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_html(HTML).with_initialization_script("window.taskqSurface='settings';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Settings(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                                WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_initialization_script("window.taskqSurface='settings';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Settings(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
                                 Ok(window)=>{settings_window=Some(window);let mut calls=WebCalls::new();calls.workspace=true;calls.surface=SETTINGS_SURFACE.into();settings_web=Some(calls);settings_shown.clear();}
@@ -1802,7 +1802,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if views_window.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ View").with_decorations(false).with_inner_size(LogicalSize::new(480.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
-                                WebViewBuilder::new().with_html(HTML).with_initialization_script("window.taskqSurface='views';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Views(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
+                                WebViewBuilder::new().with_accept_first_mouse(true).with_html(HTML).with_initialization_script("window.taskqSurface='views';").with_navigation_handler(own_page).with_ipc_handler(move |r|{let _=p.send_event(Ev::Views(r.into_body()));}).build(&window).map(|wv|(window,wv)).map_err(|e|e.to_string())
                             });
                             match built {
                                 Ok(window)=>{views_window=Some(window);let mut calls=WebCalls::new();calls.workspace=true;calls.surface=VIEWS_SURFACE.into();views_web=Some(calls);views_shown.clear();}
@@ -2909,6 +2909,29 @@ fn own_page(u: String) -> bool { !u.starts_with("http") }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // M13 / #1966 A2: a new window must not consume the first control click just to activate the app.
+    #[test]
+    fn every_webview_accepts_first_mouse() {
+        fn check(dir: &Path) -> usize {
+            let mut count = 0;
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    count += check(&path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let source: String = fs::read_to_string(&path).unwrap().chars().filter(|c| !c.is_whitespace()).collect();
+                    for builder in source.split(concat!("WebView", "Builder::")).skip(1) {
+                        let chain = builder.split(".build(").next().unwrap();
+                        assert!(chain.contains(concat!(".with_accept", "_first_mouse(true)")), "{}: WebView must accept the first mouse click", path.display());
+                        count += 1;
+                    }
+                }
+            }
+            count
+        }
+        assert!(check(&Path::new(env!("CARGO_MANIFEST_DIR")).join("src")) > 0);
+    }
 
     // M15: Quit and Restart name the doing and review work they wait for within the 32-character menu label, and app
     // text never says service; a second tray on the host never takes the lock. Risk: Quit or Restart hides active
