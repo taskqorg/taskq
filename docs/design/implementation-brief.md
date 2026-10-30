@@ -4,6 +4,10 @@ Replace the current menu with the approved stable adaptive layout and a proper A
 This package specifies the target; it does not authorize deployment or claim backend gaps are resolved.
 
 
+## Current integration entry
+
+[UI30 reconciliation](ui-polish.md) is the implementation and acceptance map for #1924 and #1926–#1933. It applies scoped owner corrections to current main and extends the 72-group ledger; historical snapshots are not replacement files. [Report #1924](../research/1924.md) records provenance, conflicts and evidence limits. Earlier instructions to create tasks, keep #1738 held, restore archive guards, use answer caps or rebuild completed slices are historical. Current contracts and this reconciliation govern the affected targets. #1918 alone owns the shared state/history changes; no competing overlay or event stream is authorized. No application code, task start, PM message, installation or grant is authorized by this documentation.
+
 ## Current review revision
 
 The owner now requests the complete [review correction handoff](review-handoff.md): trace every R01–R44 remark, reconcile current work, then create coherent held outcomes. Use that entrypoint and evidence/review-package.json for the new PM delivery. This is a review of the closed #1578/#1580 deliveries, not a rerun of the original redesign plan. Do not start implementation.
