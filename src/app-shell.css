@@ -64,7 +64,7 @@
 .menu.workspace .overflow-actions{inset-inline-end:var(--outer)}
 
 /* M14: a separate warning never corrupts the numeric unread badge. */
-.notifications-entry .notification-warning{position:absolute;bottom:-3px;right:-3px;background:var(--surface);border-radius:50%;line-height:1}
+.notifications-entry .notification-warning{position:absolute;bottom:0;right:0;background:var(--surface);border-radius:50%;line-height:1}
 .notification-warning .ui-icon{width:12px;height:12px}
 .notification-panel .notification-row{display:flex;flex-direction:column;align-items:stretch;text-align:left;white-space:normal;overflow-wrap:anywhere}
 .notification-panel .notification-row.unread{border-inline-start:3px solid var(--work)}
