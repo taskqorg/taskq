@@ -22,6 +22,8 @@ Development loop (workers and reviewers):
 
 Keep the revision/diff identity, command, result, elapsed time, runner/tool versions and relevant native log or sequence with acceptance evidence. Remove an obsolete assertion only after naming the retained check that protects its risk. Core/receipt behavior and public asset hashes remain protected by their existing checks.
 
+`transcript::tests::conversation_1929_generation_survives_append_and_detects_replacement` gives the replacement file the original creation time on Windows. Merge-result CI exposed equal creation times and prefixes on distinct files; transcript generations now use the existing native file-ID API. The append-stability and replacement-detection assertions remain unchanged; the fixture needs no clock delay.
+
 `runtime::app_control::windows_pipe::tests::native_pipe_bounds_unread_writes_and_empty_reads` waits for its native peer's accept acknowledgement before starting the client I/O deadline. Without that handshake, the client could time out and close before the fixture server ran, causing an unrelated accept timeout. The 100ms I/O timeouts, 1s bound, local-endpoint refusal and both read/write cases remain unchanged (#1818).
 
 `profile::tests::profile_health_flags_project_status_older_than_two_refreshes` checks the file-backed formatter at exactly 120 and 121 seconds with one captured clock. Calling the full health report at those boundaries could cross a wall-clock second and mark the 120-second case stale. The full report still checks fresh and stale files away from the boundary; the threshold, default refresh and missing-time/status assertions remain unchanged.

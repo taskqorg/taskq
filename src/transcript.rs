@@ -19,12 +19,24 @@ pub struct Page { pub generation: String, pub items: Vec<Value>, pub start: u64,
 /// Native file identity plus its immutable prefix; appends preserve it, replacement is never mixed into a window.
 // shortcut: later in-place rewrites are undetected; add a provider epoch if one occurs.
 fn generation(path: &Path) -> Res<String> {
-    let meta=fs::metadata(path).map_err(|e|format!("transcript identity unknown: {e}"))?;
+    let mut file=fs::File::open(path).map_err(|e|format!("transcript identity unknown: {e}"))?;
+    let meta=file.metadata().map_err(|e|format!("transcript identity unknown: {e}"))?;
     #[cfg(unix)]
     let identity={use std::os::unix::fs::MetadataExt;format!("{}:{}",meta.dev(),meta.ino())};
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let identity={
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::{Foundation::HANDLE,Storage::FileSystem::{FILE_ID_INFO,FileIdInfo,GetFileInformationByHandleEx}};
+        let mut id=FILE_ID_INFO::default();
+        unsafe {GetFileInformationByHandleEx(HANDLE(file.as_raw_handle()),FileIdInfo,
+            (&mut id as *mut FILE_ID_INFO).cast(),std::mem::size_of::<FILE_ID_INFO>() as u32)}
+            .map_err(|e|format!("transcript identity unknown: {e}"))?;
+        format!("{}:{:?}",id.VolumeSerialNumber,id.FileId.Identifier)
+    };
+    #[cfg(not(any(unix,windows)))]
     let identity=format!("{:?}",meta.created().map_err(|_|"transcript creation identity unavailable")?);
-    let prefix=range(path,0,meta.len().min(128))?;
+    let mut prefix=vec![];
+    (&mut file).take(meta.len().min(128)).read_to_end(&mut prefix).map_err(|e|format!("transcript unreadable: {e}"))?;
     let prefix=&prefix[..prefix.iter().position(|b|*b==b'\n').map_or(prefix.len(),|i|i+1)];
     let digest=ring::digest::digest(&ring::digest::SHA256,&prefix);
     Ok(format!("{identity}:{}",digest.as_ref().iter().map(|b|format!("{b:02x}")).collect::<String>()))
@@ -314,7 +326,14 @@ mod tests {
         let line=b"{\"type\":\"ignored\"}\n";fs::write(&p,line).unwrap();let first=before(false,&p,None).unwrap().generation;
         use std::io::Write;fs::OpenOptions::new().append(true).open(&p).unwrap().write_all(line).unwrap();
         assert_eq!(before(false,&p,None).unwrap().generation,first);
-        let replacement=dir.join("new");fs::write(&replacement,line).unwrap();fs::remove_file(&p).unwrap();fs::rename(replacement,&p).unwrap();
+        let replacement=dir.join("new");fs::write(&replacement,line).unwrap();
+        #[cfg(windows)] {
+            use std::os::windows::fs::FileTimesExt;
+            let created=fs::metadata(&p).unwrap().created().unwrap();
+            fs::OpenOptions::new().write(true).open(&replacement).unwrap().set_times(fs::FileTimes::new().set_created(created)).unwrap();
+            assert_eq!(fs::metadata(&replacement).unwrap().created().unwrap(),created);
+        }
+        fs::remove_file(&p).unwrap();fs::rename(replacement,&p).unwrap();
         assert_ne!(before(false,&p,None).unwrap().generation,first);fs::remove_dir_all(dir).unwrap();
     }
 
