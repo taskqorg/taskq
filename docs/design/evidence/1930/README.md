@@ -29,7 +29,7 @@ Commands:
 - `cargo test --locked --bin taskq conversation_1930_observed_native_times_survive_pages_and_gaps`: Pass.
 - `cargo test --locked --bin taskq a_read_crosses_the_fake_relay_sealed_and_fenced`: Pass; remote timestamp bytes retained across the existing encrypted request/reply path, attempt/cursor fence and no retained history.
 - `node tests/dialogue.browser.cjs`, `node tests/conversations-flow.browser.cjs`, `node tests/worker-panel.browser.cjs`, `node tests/conversations-sidebar.browser.cjs`, `node tests/worker-steps.test.cjs`: Pass.
-- Canonical gate after the single rebase: pending below.
+- First canonical gate after the single rebase: Fail at 148.032 s, 748 unit tests passed; `status_json_matches_the_golden_fixture` still expected issue-creation times for two rows without comments. A4 changes only those two `updated` values to null; the remaining status/schema/lifecycle fixture is unchanged. Repeat canonical gate: pending below.
 
 The browser instrument uses the production `build/web/workspace.html`, Playwright 1.64.1, Chromium 156.0.8078.4 and WebKit 27.2 on macOS arm64. Temporary browser installation stays outside product state. This is neither an installed TaskQ WebKit view nor Windows WebView2 evidence.
 
