@@ -650,7 +650,12 @@ fn project(install: &Path, root: &str) -> Value {
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
+    out["reports"] = crate::reports::freshness(s["reports"].clone(),now(),ttl,bad_report_reason(&s,live));
     out
+}
+
+fn bad_report_reason(s:&Value,live:bool)->Option<&str> {
+    if !live {Some("Service status missing or stale; report collection unknown")} else {s["error"].as_str()}
 }
 
 /// #1591: the page gets each observation's live state from the one Rust rule. Task, host and execution rows age by
@@ -912,15 +917,12 @@ fn queued_history(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
 /// §7 Reports use the owner CLI, the registered project and its board token. Never trust task data as authority.
 fn queued_reports(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let action=m["action"].as_str().ok_or("report action missing")?;
-    let mut command=owner_command(root)?;command.arg("reports");
-    if action=="list" {
-        if let Some(before)=m["before"].as_str() {command.args(["--before",before]);}
-        else {command.args(["--page",&m["page"].as_u64().filter(|p|*p>0).unwrap_or(1).to_string()]);}
-    } else {
-        if !["open","read","later","drop","make"].contains(&action) {return Err("unsupported report action".into());}
-        let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;
-        command.arg(n.to_string()).args(["--action",action,"--sha",m["sha"].as_str().ok_or("report SHA missing")?]);
-    }
+    if action=="list" {return crate::reports::cached_list(root,m["page"].as_u64().unwrap_or(1) as usize,None);}
+    if action=="open" {return crate::reports::cached_open(root,m["n"].as_u64().ok_or("report task missing")?,m["sha"].as_str().ok_or("report SHA missing")?);}
+    if !["read","later","drop","make"].contains(&action) {return Err("unsupported report action".into());}
+    let n=m["n"].as_u64().filter(|n|*n>0).ok_or("report task missing")?;
+    let mut command=owner_command(root)?;
+    command.arg("reports").arg(n.to_string()).args(["--action",action,"--sha",m["sha"].as_str().ok_or("report SHA missing")?]);
     command.arg("--json");
     let out=crate::platform::output("tray.reports-command",&mut command,Duration::from_secs(180))?;
     if !out.status.success() {return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}

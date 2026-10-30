@@ -1221,6 +1221,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let mut telemetry_sync = telemetry_sync::Sender::default();
     let mut policy_exchange = resources::Exchanger::default();
     let mut pm_exchange = pm::Exchanger::default();
+    let mut reports = reports::Collector::default();
     let mut link = link::Server::default();
     let mut panics = host::Panics::default();
     let pokes = [d.join("poke"), cfg.install.join("poke")];
@@ -1403,6 +1404,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             status[k] = v;
         }
         status["diagnostics"] = s.service_diagnostics();
+        status["reports"] = reports.tick(&cfg.root,cfg.poll,cfg.ttl,!quiet);
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
         drop(wakeup);
         if host.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
@@ -2972,6 +2974,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
+        "reports" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
 }
@@ -3173,15 +3176,9 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
     }
     match cmd {
         "reports" => {
-            if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json"].contains(&k.as_str())||v.len()!=1) {return Err("reports: use --action, --sha, --page, --before and --json once each".into());}
-            let value=if a.pos.len()==1 {
-                if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
-                let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
-                let before=a.one("before").map(|s|s.split_once(':').and_then(|(t,n)|Some((t.parse::<i64>().ok()?,n.parse::<u64>().ok()?))).ok_or("report cursor must be TIME:N")).transpose()?;
-                reports::list_before(b,page,before)?
-            } else {
-                if a.one("page").is_some()||a.one("before").is_some() {return Err("--page/--before list reports without a task number".into());}
-                reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
+            let value=match reports::read_cli(root,a)? {
+                Some(value)=>value,
+                None=>reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
             };
             println!("{value}"); Ok(())
         }

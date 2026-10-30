@@ -96,13 +96,13 @@ const {create}=execution.module('workspace',{
      const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
-    return [...rows.values()];
+    return [...rows.values(),...reports.threads()];
    },
    openTask:function(board,task,root){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root);conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);},
    // #1699 A2: the menu badge selects the first unread thread, an open question first; nothing is acknowledged
    unread:function(){
     const e=(snapshot.value?.messages?.entries||[]).filter(r=>!r.archived&&!r.read),r=e.find(r=>r.kind==='question'&&r.state==='ask')||e.find(r=>r.kind==='question')||e.find(r=>r.kind==='request');
-    if(!r)return;
+    if(!r){const report=reports.unread()[0];if(report)reports.open(report.root,report.n);return;}
     if(r.kind==='question'){conversations.show('recent');conversations.select('task:'+r.board+'/'+r.task,false);}
     else if(!conversations.reveal(r.id,false)){conversations.show('recent');conversations.select('event:'+r.key,false);}
    },
@@ -195,7 +195,7 @@ const {create}=execution.module('workspace',{
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
     if(!Array.isArray(s.projects))return;
-    const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
+    const first=snapshot.value===null;reports.sync(s.projects);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
     // #1680 A4: request status lives on its conversation (handoff), never on other pages
