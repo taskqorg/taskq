@@ -26,7 +26,7 @@ const {create}=execution.module('workspace',{
     const threads=api.threads(),id=conversations.sync(threads,view.answer?'task:'+view.answer.board+'/'+view.answer.task:view.message?'event:'+view.message:null),row=threads.find(t=>t.id===id),selected=row?.id;
     const marks=Object.fromEntries((snapshot.value.messages?.entries||[]).filter(r=>r.kind==='request'&&!r.archived&&!r.read).map(r=>[r.id,'Unread']));
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
-    return [reports.section(snapshot.value.projects||[]),conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    return [reports.section(snapshot.value.projects||[]),conversations.body({rows:threads,selected,marks,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.report?{header:h('h2',null,row.title),reading:[h('p',null,row.result||'Work finished. Open its result to review checks and open items.'),h('button',{'data-report':'open','data-root':row.root,'data-n':row.report},'Read result')]}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      // #1819: the window's one stale-data line sits in the status footer, which is already a live region
      footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]})];
    },
@@ -96,7 +96,7 @@ const {create}=execution.module('workspace',{
      const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
-    return [...rows.values(),...reports.threads()];
+    const results=reports.threads(),done=new Set(results.map(r=>r.id));return [...rows.values()].filter(r=>!done.has(r.id)).concat(results);
    },
    openTask:function(board,task,root){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root);conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);},
    // #1699 A2: the menu badge selects the first unread thread, an open question first; nothing is acknowledged

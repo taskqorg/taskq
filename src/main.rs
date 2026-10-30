@@ -90,7 +90,8 @@ const USAGE: &str = "taskq agents
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
- taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
+ taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--page N|--before TIME:N] --json
+ taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
@@ -159,7 +160,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -2974,7 +2975,7 @@ fn run(argv: &[String]) -> Res<()> {
         }
         "tray" => tray(platform::default_install(), a.one("snapshot"), a.one("open").is_some(), &a.all("route").iter().flat_map(|r| r.split(',')).map(|r| r.trim().to_string()).filter(|r| !r.is_empty()).collect::<Vec<_>>(), a.one("icon")),
         "" => Err("command missing; use `taskq help`".into()),
-        "reports" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
+        "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
 }
@@ -3175,10 +3176,10 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         return Err("--revision names one task".into());
     }
     match cmd {
-        "reports" => {
+        "reports"|"results" => {
             let value=match reports::read_cli(root,a)? {
                 Some(value)=>value,
-                None=>reports::act(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"))?
+                None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""))?
             };
             println!("{value}"); Ok(())
         }

@@ -10,7 +10,7 @@ fn reports_list_and_open_use_collected_data_without_board_credentials() {
     std::fs::write(root.join("taskq.json"),r#"{"board":"github","repo":"invented/reports"}"#).unwrap();
     let at=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let sha="a".repeat(40);
-    let snapshot=json!({"reports":{"complete":true,"observed":at,"reports":[{"n":12,"sha":sha,"closed":40,"read":false,"body":"Invented report body","tasks":[]}]}}).to_string();
+    let snapshot=json!({"reports":{"complete":true,"observed":at,"reports":[{"n":12,"sha":sha,"closed":40,"read":false,"body":"Invented report body","tasks":[]},{"n":13,"kind":"task","sha":sha,"closed":39,"read":false,"body":"Changed: Recovered once.\nChecks: retry -- pass\nOpen: none"}]}}).to_string();
     let status=root.join(".taskq/status.json");std::fs::write(&status,&snapshot).unwrap();
     let run=|args:&[&str]| {
         let out=Command::new(env!("CARGO_BIN_EXE_taskq")).args(args).current_dir(&root)
@@ -20,6 +20,8 @@ fn reports_list_and_open_use_collected_data_without_board_credentials() {
     };
     assert_eq!(run(&["reports","--json"])["reports"][0]["n"],12);
     assert_eq!(run(&["reports","12","--sha",&sha,"--json"])["report"]["body"],"Invented report body");
+    assert_eq!(run(&["results","--json"])["reports"].as_array().unwrap().len(),2);
+    assert_eq!(run(&["results","13","--sha",&sha,"--json"])["report"]["kind"],"task");
     assert_eq!(std::fs::read_to_string(&status).unwrap(),snapshot,"opening does not acknowledge read or decide a report");
     assert!(!root.join(".taskq/poke").exists(),"navigation never schedules board work");
     let exported=Command::new(env!("CARGO_BIN_EXE_taskq")).args(["profile","export","--since","1h"]).current_dir(&root)

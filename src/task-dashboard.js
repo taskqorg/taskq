@@ -90,7 +90,7 @@ module.exports=execution.module('taskDashboard',{
     if(pin){if(!pin.loading)return;ui.cancel(pin.timer);pin.loading=false;pin.reason=page.reason;pin.value=!page.reason&&page.tasks?.[0]?.n===pin.task?page.tasks[0]:null;if(!pin.value&&!pin.reason)pin.reason='Board response omitted the task';present();return;}
     const e=view.completed?.entries.find(e=>e.id===page.id&&e.root===page.root);if(!e?.loading)return;ui.cancel(e.timer);e.loading=false;
     if(page.reason)e.reason=page.reason;
-    else{if(e.replace){e.tasks=[];e.replace=false;}e.page=page.page||e.page+1;e.more=page.more===true;e.tasks.push(...(page.tasks||[]).filter(t=>!e.tasks.some(x=>x.n===t.n)));}present();},
+    if(!page.reason||page.source==='service'&&page.tasks?.length&&!e.tasks.length){if(e.replace){e.tasks=[];e.replace=false;}e.page=page.page||e.page+1;e.more=page.more===true;e.tasks.push(...(page.tasks||[]).filter(t=>!e.tasks.some(x=>x.n===t.n)));}present();},
    outcome:function(t){return t.outcome==='success'&&typeof t.merged==='string'&&t.merged?['git-merge','review','Merged']:outcomes[t.outcome]||outcomes.unknown;},
    completed:function(){const c=api.criteria(),{entries}=api.history(),pinned=new Set(api.model().pins.map(p=>p.ref));
     const shown=entries.flatMap(e=>{if(!e.replace)e.shown=e.tasks.filter(t=>views.matches(t,c.query)&&(!c.outcomes.length||c.outcomes.includes(t.outcome in outcomes?t.outcome:'unknown')));

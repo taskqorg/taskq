@@ -37,11 +37,11 @@ a.open(projects[0].root,12);let aliasOp=aliases.at(-1);a.receive({id:aliasOp.id,
 a.act('drop');aliasOp=aliases.at(-1);a.receive({id:aliasOp.id,root:aliasOp.root,report:{...row,decision:'drop',visible:false}});
 assert.deepEqual(a.rows().map(r=>r.n),[13],'Drop cannot leave the same report under another registration');
 const unread=[{root:'new-project',name:'New',issues:'https://github.com/o/new/issues'}];
-assert(!JSON.stringify(a.section(unread)).includes('No reports waiting for a decision.'),'an uncollected project is unknown, not empty');
+assert(!JSON.stringify(a.section(unread)).includes('No results waiting for review.'),'an uncollected project is unknown, not empty');
 assert.equal(a.rows().length,0,'removed registrations cannot leave actionable cached reports');
 const failures=[],u=create({send:m=>failures.push(m),draw(){},defer(){},id:()=>String(failures.length+1)});
 const empty=[{...projects[0],reports:{complete:true,observed:100,reports:[]}}];
-u.toggle(empty);assert(JSON.stringify(u.section(empty)).includes('No reports waiting for a decision.'));
+u.toggle(empty);assert(JSON.stringify(u.section(empty)).includes('No results waiting for review.'));
 const unavailable=[{...empty[0],reports:{complete:false,reason:'Board unavailable',reports:[]}}];
-assert(!JSON.stringify(u.section(unavailable)).includes('No reports waiting for a decision.'),'a failed collection cannot report a healthy empty board');
+assert(!JSON.stringify(u.section(unavailable)).includes('No results waiting for review.'),'a failed collection cannot report a healthy empty board');
 assert(JSON.stringify(u.section(unavailable)).includes('Board unavailable'));
