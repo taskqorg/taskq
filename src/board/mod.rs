@@ -55,6 +55,8 @@ pub trait Board {
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { Err("research reports unsupported on this board".into()) }
     /// Repository text at an immutable accepted result SHA; never the local checkout or moving main.
     fn source(&self, _path: &str, _sha: &str) -> Result<String> { Err("report source unsupported on this board".into()) }
+    /// I3: earliest recorded addition of `taskq`, including removed labels; None proves no recorded admission.
+    fn first_admission(&self, _n: u64) -> Result<Option<(u64, i64)>> { Err("first-admission history unsupported".into()) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>>;
     fn comment(&self, n: u64, body: &str) -> Result<u64>;
     /// Edits comment `id` of issue `n`: an edited entry is ignored by `fold` (§ 2).
@@ -300,6 +302,7 @@ impl Board for Profiled {
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { self.op("list", |b| b.closed_tasks(page, since)) }
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { self.op("list", |b| b.research_tasks()) }
     fn source(&self, path: &str, sha: &str) -> Result<String> { self.op("read", |b| b.source(path, sha)) }
+    fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> { self.op("history", |b| b.first_admission(n)) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>> { self.op("inbox", |b| b.comments(n)) }
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.op(if body.starts_with("taskq: spawn ") { "claim" } else { "comment" }, |b| b.comment(n, body))
@@ -919,6 +922,7 @@ pub struct Fake {
 pub struct FakeState {
     pub issues: Vec<Issue>,
     pub comments: Vec<(u64, Comment)>,
+    pub admissions: std::collections::BTreeMap<u64, Result<Option<(u64, i64)>>>,
     pub clock: i64,
     pub next_id: u64,
     /// `pending` or `failed` makes `publish` refuse; anything else merges.
@@ -996,6 +1000,7 @@ impl Fake {
 
 #[cfg(test)]
 impl Board for Fake {
+    fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> { self.state.borrow().admissions.get(&n).cloned().unwrap_or(Ok(None)) }
     fn research_tasks(&self)->Result<Vec<(Issue,i64)>> {
         let st=self.state.borrow();
         Ok(st.issues.iter().filter(|i|!i.open&&i.labels.iter().any(|l|l=="research"||l=="docs"))

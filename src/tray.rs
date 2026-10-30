@@ -647,6 +647,7 @@ fn project(install: &Path, root: &str) -> Value {
         "incident": s["incident"], "incident_line": s.get("incident").map(crate::incident::line), "incident_notice": s["incident_notice"],
         "incident_repo": crate::platform::RELEASE_REPO});
     out["events_error"] = json!(events_error);
+    out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
     out
@@ -717,7 +718,7 @@ struct Summary {
     since: Option<i64>,
 }
 
-/// Exact event count order (M6); only closed controls column height.
+/// Retained event-detail order (M6); incoming has separately versioned board coverage.
 const KINDS: [&str; 4] = { let s = crate::display::SERIES; [s[0].0, s[1].0, s[2].0, s[3].0] };
 
 fn summary(ps: &[Value], (start, end): (i64, i64)) -> Summary {
@@ -730,15 +731,35 @@ fn summary_at(ps: &[Value], (start, end): (i64, i64), now:i64) -> Summary {
         let b=start as f64+(end as f64-start as f64)*(i+1) as f64/6.0;
         let mut missing:Vec<String>=ps.iter().filter(|p|p["since"].as_i64().is_none_or(|t|t as f64>a)).map(|p|p["name"].as_str().or(p["issues"].as_str()).unwrap_or("unknown source").to_string()).collect();
         if a>now as f64 {missing.push("future interval".into());}
-        icon::Bin {start:a,end:b,counts:[0;4],missing,ongoing:a<=now as f64&&(now as f64)<b}
+        let mut incoming_missing:Vec<String>=ps.iter().filter_map(|p| {
+            let source=p["name"].as_str().or(p["issues"].as_str()).unwrap_or("unknown source");
+            let v=&p["incoming"];
+            let identity=format!("{}/0",p["issues"].as_str().unwrap_or("").trim_end_matches('/'));
+            let reason=if !crate::incoming::valid(v,&identity) {Some(v["reason"].as_str().unwrap_or("New not collected or source changed").to_string())}
+                else if v["missing"].as_array().is_none_or(|m|!m.is_empty()) {Some(format!("New incomplete: {}",v["missing"]))}
+                else if v["start"].as_i64().is_none_or(|t|t as f64>a) || v["end"].as_i64().is_none_or(|t|(t as f64)<b.min(now as f64)) {Some("New outside verified coverage".to_string())}
+                else {None};
+            let another=ps.iter().any(|other|other["issues"]==p["issues"] && crate::incoming::valid(&other["incoming"],&identity)
+                && other["incoming"]["missing"].as_array().is_some_and(|m|m.is_empty())
+                && other["incoming"]["start"].as_i64().is_some_and(|t|t as f64<=a)
+                && other["incoming"]["end"].as_i64().is_some_and(|t|t as f64>=b.min(now as f64)));
+            reason.filter(|_|!another).map(|r|format!("{source}: {r}"))
+        }).collect();
+        incoming_missing.sort();incoming_missing.dedup();
+        icon::Bin {start:a,end:b,counts:[0;4],incoming:0,incoming_missing,missing,ongoing:a<=now as f64&&(now as f64)<b}
     }).collect();
     let mut ev = std::collections::HashSet::new();
     for p in ps {
-        for e in p["events"].as_array().into_iter().flatten() {
+        let identity=format!("{}/0",p["issues"].as_str().unwrap_or("").trim_end_matches('/'));
+        let incoming=p["incoming"]["events"].as_array().filter(|_|crate::incoming::valid(&p["incoming"],&identity));
+        for e in p["events"].as_array().into_iter().flatten().filter(|e|e[1]!="new").chain(incoming.into_iter().flatten()) {
             let (t, kind) = (e[0].as_i64().unwrap_or(0), e[1].as_str().unwrap_or(""));
-            let Some(k) = KINDS.iter().position(|x| *x == kind) else { continue };
-            if end > start && t >= start && t < end && ev.insert(format!("{} {} {kind}", p["issues"], e[2])) {
-                bins[(((t as i128 - start as i128) * 6 / (end as i128 - start as i128)) as usize).min(5)].counts[k] += 1;
+            let k = KINDS.iter().position(|x| *x == kind);
+            if k.is_none() && kind!="new" {continue;}
+            if end > start && t >= start && t < end && ev.insert(format!("{} {} {} {kind}", p["issues"], e[3], e[2])) {
+                let bin=&mut bins[(((t as i128-start as i128)*6/(end as i128-start as i128)) as usize).min(5)];
+                let count=if let Some(k)=k {&mut bin.counts[k]} else {&mut bin.incoming};
+                *count=count.saturating_add(1);
             }
         }
     }
@@ -4050,6 +4071,30 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    // Chain: M6. UX30-21: source identity, complete zero, lower bounds, half-open boundaries and multi-host deduplication.
+    #[test]
+    fn incoming_coverage_keeps_legacy_and_exact_event_sources_distinct() {
+        let legacy=json!({"name":"legacy","issues":"u","tasks":[],"since":0,"events":[[1,"close","1",7],[2,"ask","2",7],[3,"new","unproven",8]]});
+        let old=summary_at(&[legacy.clone()],(1,7),7);
+        assert!(old.bins.iter().all(|b|!b.incoming_complete()));
+        assert_eq!(old.bins.iter().map(|b|b.incoming).sum::<u32>(),0,"unversioned lines never prove incoming");
+        assert_eq!(icon::peak(&old.bins),1,"known completed/question stacks remain");
+        let vector=icon::svg(&icon_data(&old),false);
+        assert!(vector.contains("data-mark=\"completed\"")&&vector.contains("data-mark=\"ask\""));
+        let mut p=legacy.clone();p["incoming"]=json!({"schema":1,"board":"u/0","start":1,"end":7,"missing":[],"events":[[1,"new","10",7],[2,"new","11",8],[7,"new","12",9]]});
+        let fresh=summary_at(&[p.clone(),p.clone(),legacy.clone()],(1,7),7);
+        assert!(fresh.bins.iter().all(icon::Bin::incoming_complete),"another host's legacy cache cannot erase verified board coverage");
+        assert_eq!(fresh.bins.iter().map(|b|b.incoming).collect::<Vec<_>>(),[1,1,0,0,0,0],"exact [start,end) and one event across hosts");
+        assert_eq!(icon::peak(&fresh.bins),2);
+        assert!(fresh.bins[2..].iter().all(|b|b.incoming==0&&b.incoming_complete()),"complete zero differs from unknown");
+        p["incoming"]["start"]=json!(3);
+        let partial=summary_at(&[p.clone()],(1,7),7);
+        assert!(!partial.bins[0].incoming_complete()&&partial.bins[2].incoming_complete());
+        assert!(!icon::svg(&icon_data(&partial),false).split("id=\"bin-0\"").nth(1).unwrap().split("</g>").next().unwrap().contains("data-mark=\"completed\""),"an interval gap stays unknown, retaining bounds in detail");
+        p["incoming"]["board"]=json!("foreign/0");
+        assert_eq!(summary_at(&[p],(1,7),7).bins.iter().map(|b|b.incoming).sum::<u32>(),0);
+    }
+
     // A8: real event identity, half-open bounds and incomplete sources feed the same renderer.
     #[test]
     fn approved_real_history_fixtures_use_one_six_bin_svg() {
@@ -4073,15 +4118,21 @@ mod tests {
         let font="Segoe UI (requested; native qualification pending)".to_string();
         let mut paused=day.clone();paused.run=false;
         let mut zero=day.clone();zero.counts=[0;4];zero.blocked=0;
-        for b in &mut zero.bins {b.counts=[0;4];}
+        for b in &mut zero.bins {b.counts=[0;4];b.incoming=0;b.incoming_missing.clear();}
         let mut failed=zero.clone();failed.bins[2].counts[1]=1;
         let mut unknown=zero.clone();unknown.bins[0].missing=vec!["synthetic missing source".into()];unknown.bins[0].counts[0]=999;
         let mut ask=zero.clone();ask.bins[0].counts[2]=3;
         ask.bins[2].counts=[2,1,1,0];
         ask.bins[4].missing=vec!["synthetic missing source".into()];ask.bins[4].counts=[999,0,2,0];
-        for (name,s) in [("day",&day),("hour",&hourly),("incomplete",&aggregate),("paused",&paused),("synthetic-zero",&zero),("synthetic-failed",&failed),("synthetic-unknown",&unknown),("synthetic-ask",&ask)] {
+        let mut stack=zero.clone();stack.counts=[12,3,15,0];
+        for (i,b) in stack.bins.iter_mut().enumerate() {b.counts=[(i+1) as u32,1,2,7];b.incoming=(6-i) as u32;}
+        let mut partial=stack.clone();partial.bins[2].incoming_missing=vec!["synthetic incoming gap".into()];
+        let mut rare=zero.clone();rare.bins[0].counts=[10000,1,1,0];rare.bins[0].incoming=1;
+        let mut overflow=stack.clone();overflow.counts=[100,99,12,0];
+        for (name,s) in [("day",&day),("hour",&hourly),("incomplete",&aggregate),("paused",&paused),("synthetic-zero",&zero),("synthetic-failed",&failed),("synthetic-unknown",&unknown),("synthetic-ask",&ask),("synthetic-stack",&stack),("synthetic-partial-new",&partial),("synthetic-rare",&rare),("synthetic-overflow",&overflow)] {
             for dark in [false,true] {
                 let vector=icon::svg(&icon_data(s),dark);
+                let history_vector=icon::svg(&icon::Data {paused:false,..icon_data(s)},dark);
                 for n in [18,22,33,44,66,256] {assert_eq!(icon::raster(&vector,n).unwrap().w,n);}
                 if std::env::var_os("TASKQ_ICON_EVIDENCE").is_none() {
                     let theme=if dark {"dark"}else{"light"};
@@ -4089,13 +4140,13 @@ mod tests {
                     assert_eq!(saved["bins"],json!(s.bins),"browser/native bins and exact counts");
                     assert_eq!(saved["peak"],icon::peak(&s.bins));assert_eq!(saved["palette"],icon::css(dark));
                     let chart=|svg:&str|svg.split(r#"<g id="chart""#).nth(1).unwrap().split(r#"</g><g id="counters">"#).next().unwrap().to_string();
-                    assert_eq!(chart(saved["svg"].as_str().unwrap()),chart(&vector),"all surfaces retain canonical heights, colors and marks");
+                    assert_eq!(chart(saved["svg"].as_str().unwrap()),chart(&history_vector),"History retains canonical heights, colors and marks");
                 }
                 if let Ok(dir)=std::env::var("TASKQ_ICON_EVIDENCE") {
                     let dir=Path::new(&dir);fs::create_dir_all(dir).unwrap();let theme=if dark {"dark"}else{"light"};
                     fs::write(dir.join(format!("{name}-{theme}.svg")),&vector).unwrap();
                     for n in [18,44,66,256] {fs::write(dir.join(format!("{name}-{theme}-{n}.png")),icon::raster(&vector,n).unwrap().png()).unwrap();}
-                    fs::write(dir.join(format!("{name}-{theme}.json")),json!({"bins":s.bins,"peak":icon::peak(&s.bins),"svg":vector,"start":s.bins[0].start,"end":s.bins[5].end,"tz":"local","since":s.since,"palette":icon::css(dark),"captured":captured,"font":font,"compact":format!("data:image/png;base64,{}",base64(&compact(s.run,dark,2.0).png()))}).to_string()).unwrap();
+                    fs::write(dir.join(format!("{name}-{theme}.json")),json!({"bins":s.bins,"peak":icon::peak(&s.bins),"svg":history_vector,"icon_svg":vector,"start":s.bins[0].start,"end":s.bins[5].end,"tz":"local","since":s.since,"palette":icon::css(dark),"captured":captured,"font":font,"compact":format!("data:image/png;base64,{}",base64(&compact(s.run,dark,2.0).png()))}).to_string()).unwrap();
                 }
             }
         }

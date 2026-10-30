@@ -18,11 +18,13 @@ final class Capture: NSObject, WKNavigationDelegate {
         super.init()
         window.contentView=web;window.orderBack(nil);web.navigationDelegate=self
         try FileManager.default.createDirectory(atPath:output,withIntermediateDirectories:true)
+        let displayData=try Data(contentsOf:URL(fileURLWithPath:root+"/tests/fixtures/display-model.json"))
+        let display=(try JSONSerialization.jsonObject(with:displayData) as! [String:Any])["display"]!
         for theme in ["light","dark"] {
-            for (name,page) in [("day","cadence"),("hour","cadence"),("incomplete","cadence"),("day","appearance")] {
+            for (name,page) in [("day","cadence"),("hour","cadence"),("incomplete","cadence"),("day","appearance"),("synthetic-stack","cadence"),("synthetic-partial-new","cadence"),("synthetic-overflow","appearance")] {
                 let data=try Data(contentsOf:URL(fileURLWithPath:root+"/tests/fixtures/icon-history/"+name+"-"+theme+".json"))
                 let history=try JSONSerialization.jsonObject(with:data) as! [String:Any]
-                let s:[String:Any] = ["page":page,"font":16,"size":[360,800],"size_anchor":"fixed","theme":theme,"period":name=="hour" ? "1h" : "1d","host":"Frozen capture","version":"1598 candidate","platform":"macos","now":history["captured"]!,"palette":history["palette"]!,"view":"full","history":history,"icons":["full":history["svg"]!,"icon":history["compact"]!],"projects":[["root":"frozen","name":"Frozen TaskQ capture","tasks":[],"focus":[],"labels":[],"alive":true]],"ai":["draft":""]]
+                let s:[String:Any] = ["display":display,"page":page,"font":16,"size":[360,800],"size_anchor":"fixed","theme":theme,"period":name=="hour" ? "1h" : "1d","host":"Frozen capture","version":"1931 candidate","platform":"macos","now":history["captured"]!,"palette":history["palette"]!,"view":"full","history":history,"icons":["full":history["svg"]!,"icon":history["compact"]!],"projects":[["root":"frozen","name":"Frozen TaskQ capture","tasks":[],"focus":[],"labels":[],"alive":true]],"ai":["draft":""]]
                 inputs.append((name+"-"+theme+"-"+page,s))
             }
         }
@@ -30,7 +32,7 @@ final class Capture: NSObject, WKNavigationDelegate {
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { next() }
     func next() {
-        if index==inputs.count {assert(index==8);NSApp.terminate(nil);return}
+        if index==inputs.count {assert(index==14);NSApp.terminate(nil);return}
         let (name,state)=inputs[index]
         do {
             let json=String(data:try JSONSerialization.data(withJSONObject:state),encoding:.utf8)!

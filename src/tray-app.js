@@ -269,21 +269,22 @@ custom:function(){
   d.error&&h('div',{class:'body alert',role:'alert'},d.error),h('button',{class:'project','data-a':'range'},'Show [start, end)'));},
 history:function(){
   const H=view.S.history,rows=H.bins,n=rows.length;
-  const kinds=view.S.display.series.map(x=>x.name.toLowerCase()),colors=['work','failed','ask','ready'];
+  const kinds=['completed','new','ask','failed','blocked'],colors=['work','new','ask','failed','ready'];
+  const values=b=>[b.counts[0],b.incoming??0,b.counts[2],b.counts[1],b.counts[3]],missing=(b,k)=>b.missing.length||(k===1&&(b.incoming_missing?.length??1));
   const identity=b=>b.start+'/'+b.end,stamp=t=>new Date(t*1000).toLocaleString([],{timeZone:H.tz==='UTC'?'UTC':undefined,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',...(Number.isInteger(t)?{}:{fractionalSecondDigits:3})})+' '+(H.tz==='UTC'?'UTC':zone),quantity=(count,missing)=>missing?(count?'≥'+count:'? (0 observed)'):String(count);
   const selected=Math.max(0,rows.findIndex(b=>identity(b)===view.historyBin));
-  const incomplete=rows.some(b=>b.missing.length),tot=kinds.map((_,k)=>rows.reduce((a,b)=>a+b.counts[k],0));
-  const detail=b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(b.counts[i],b.missing.length)).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length?' · incomplete: '+b.missing.join(', '):'');
+  const incomplete=rows.some(b=>b.missing.length||b.incoming_missing?.length),tot=kinds.map((_,k)=>rows.reduce((a,b)=>a+values(b)[k],0)),partial=kinds.map((_,k)=>rows.some(b=>missing(b,k)));
+  const detail=b=>'['+stamp(b.start)+', '+stamp(b.end)+') · '+kinds.map((k,i)=>k+' '+quantity(values(b)[i],missing(b,i))).join(', ')+(b.ongoing?' · ongoing':'')+(b.missing.length||b.incoming_missing?.length?' · incomplete: '+[...b.missing,...(b.incoming_missing||[])].join(', '):'');
   return h('details',{class:'group hist','data-view-key':'history'},api.disclosure('chart-no-axes-column',['History ',h('span',{class:'meta'},view.S.display.periods.find(x=>x.id===view.S.period)?.name)]),
     h('div',{class:'options periods'},view.S.display.periods.map(({id:k,name:l})=>h('button',{'data-set':'period','data-v':k,'aria-pressed':String(view.S.period===k||k==='custom'&&view.draft!=null)},l))),
     view.draft&&custom(),h('div',{class:'body meta'},when(H.start,H.tz)+' – '+when(H.end,H.tz)),
-    h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+quantity(tot[i],incomplete)))),
+    h('div',{class:'history-legend body meta'},kinds.map((k,i)=>h('span',null,h('i',{class:colors[i]}),k+' '+quantity(tot[i],partial[i])))),
     h('div',{class:'body meta history-label'},'Events · oldest → newest'),
-    h('div',{class:'history-plot'},raw(H.svg?.replace('viewBox="0 0 22 22"','viewBox="1 10.5 20 11" preserveAspectRatio="none"')),
+    h('div',{class:'history-plot'},raw(H.svg?.replace(/viewBox="0 0 [^"]+"/,'viewBox="1 10.5 20 11" preserveAspectRatio="none"')),
       h('div',{class:'history-targets',role:'group','aria-label':'Event history; six equal bins'},rows.map((b,i)=>h('button',{'data-history-bin':identity(b),'aria-label':detail(b),'aria-pressed':String(i===selected),title:detail(b)})))),
-    h('div',{class:'body meta history-detail',role:'status'},rows[selected]?when(rows[selected].start,H.tz)+' – '+when(rows[selected].end,H.tz)+' · '+kinds.map((k,i)=>k+' '+quantity(rows[selected].counts[i],rows[selected].missing.length)).join(' · ')+(rows[selected].ongoing?' · ongoing':''):'History unavailable'),
+    h('div',{class:'body meta history-detail',role:'status'},rows[selected]?when(rows[selected].start,H.tz)+' – '+when(rows[selected].end,H.tz)+' · '+kinds.map((k,i)=>k+' '+quantity(values(rows[selected])[i],missing(rows[selected],i))).join(' · ')+(rows[selected].ongoing?' · ongoing':''):'History unavailable'),
     incomplete&&h('div',{class:'body meta'},'Incomplete · observed lower bounds'),h('details',{'data-view-key':'history-source'},api.disclosure('info','Source and exact interval'),h('div',{class:'body meta history-exact'},rows[selected]?detail(rows[selected]):'History unavailable'),
-      h('div',{class:'body meta history-sources'},'Sources: '+(view.S.projects.map(p=>p.name+(p.since!=null?' events since '+stamp(p.since):' unknown: '+(p.events_error||'no history'))).join('; ')||'none registered')),h('div',{class:'body meta'},'Counts are events, not current tasks. Peak '+(H.peak??'unknown')+' closed; Ask and Failed use fixed marks. Collection start does not prove uninterrupted collection.')));},
+      h('div',{class:'body meta history-sources'},'Sources: '+(view.S.projects.map(p=>p.name+(p.since!=null?' events since '+stamp(p.since):' unknown: '+(p.events_error||'no history'))+(p.incoming?.schema===1?' · New coverage '+(p.incoming.start==null?'unknown':stamp(p.incoming.start)+' – '+stamp(p.incoming.end)):' · New not collected')).join('; ')||'none registered')),h('div',{class:'body meta'},'Counts are events, not current tasks. Peak '+(H.peak??'unknown')+' events (Completed + available New + Ask + Failed). Counts are not unique-task productivity. Collection start does not prove uninterrupted collection.')));},
 update:function(){if(!ports.workspace)return api.operationLauncher('update',null,'Review updates…');
   const up=view.S.projects.find(p=>p.update&&p.update!==p.version);
   if(view.updating&&view.S.projects.some(p=>p.root===view.updating.root&&p.alive===true&&p.version===view.updating.v))return h('div',{class:'row meta'},'Updated to '+view.updating.v+': read from status.json');

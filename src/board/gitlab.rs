@@ -205,6 +205,28 @@ fn link(p: &Value) -> String {
 pub(super) const MERGE_STATUS_READS: u32 = 5;
 #[cfg(not(test))]
 const MERGE_STATUS_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+/// Complete paginated board history, never issue creation or current queue size.
+fn first_admission(events: &[Value]) -> Result<Option<(u64, i64)>> {
+    if events.iter().any(|v| v["action"] == "add" && !v["label"]["name"].is_string()) {return Err("label history incomplete".into());}
+    events.iter().filter(|v| v["action"] == "add" && v["label"]["name"] == "taskq")
+        .map(|v| Ok((v["id"].as_u64().filter(|id| *id > 0).ok_or("admission ID unavailable")?,
+            iso(&s(v, "created_at")).filter(|at| *at > 0).ok_or("admission time unavailable")?)))
+        .collect::<Result<Vec<_>>>().map(|events| events.into_iter().min_by_key(|(id, at)| (*at, *id)))
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    #[test]
+    fn earliest_label_event_is_the_only_arrival() {
+        let mut events = json!([{"id":9,"event":"labeled","action":"add","label":{"name":"taskq"},"created_at":"2026-10-30T12:01:00Z"},{"id":3,"event":"labeled","action":"add","label":{"name":"taskq"},"created_at":"2026-10-30T12:00:00Z"},{"id":2,"event":"unlabeled","action":"remove","label":{"name":"taskq"},"created_at":"2026-10-30T11:59:00Z"}]);
+        assert_eq!(first_admission(events.as_array().unwrap()).unwrap(), Some((3, iso("2026-10-30T12:00:00Z").unwrap())));
+        events[1]["created_at"] = Value::Null;
+        assert!(first_admission(events.as_array().unwrap()).is_err());
+        assert_eq!(first_admission(&[]).unwrap(), None);
+    }
+}
+
 #[cfg(test)]
 const MERGE_STATUS_WAIT: std::time::Duration = std::time::Duration::ZERO;
 
@@ -291,6 +313,11 @@ impl Board for GitLab {
         if v["encoding"]!="base64" {return Err("report source encoding unknown".into());}
         let bytes=STANDARD.decode(s(&v,"content").replace(['\r','\n'],"")).map_err(|_|"report source encoding invalid")?;
         String::from_utf8(bytes).map_err(|_|"report source is not UTF-8".into())
+    }
+
+    fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> {
+        let events = self.api.all(&format!("/issues/{n}/resource_label_events?per_page=100"))?;
+        first_admission(&events)
     }
 
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {

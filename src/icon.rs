@@ -9,9 +9,18 @@ pub struct Bin {
     pub end: f64,
     pub counts: [u32; 4],
     pub missing: Vec<String>,
+    #[serde(default)]
+    pub incoming: u32,
+    #[serde(default = "incoming_unknown")]
+    pub incoming_missing: Vec<String>,
     pub ongoing: bool,
 }
-impl Bin { pub fn complete(&self) -> bool { self.missing.is_empty() } }
+fn incoming_unknown() -> Vec<String> { vec!["New not collected".into()] }
+impl Bin {
+    pub fn complete(&self) -> bool { self.missing.is_empty() }
+    pub fn incoming_complete(&self) -> bool { self.incoming_missing.is_empty() }
+    fn total(&self, incoming: bool) -> u64 { self.counts[..3].iter().map(|n| *n as u64).sum::<u64>() + if incoming {self.incoming as u64} else {0} }
+}
 
 pub struct Data {
     pub counts: [Option<usize>; 4],
@@ -95,17 +104,17 @@ fn rrect(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> impl Fn(f32, f32) -> boo
 }
 
 pub struct Palette {
-    pub ink: [u8;4], pub work: [u8;4], pub ask: [u8;4], pub muted: [u8;4], pub failed: [u8;4], pub review: [u8;4],
+    pub ink: [u8;4], pub work: [u8;4], pub incoming: [u8;4], pub ask: [u8;4], pub muted: [u8;4], pub failed: [u8;4], pub review: [u8;4],
 }
 pub fn palette(dark: bool) -> Palette {
-    if dark { Palette { ink:[236,239,242,255], work:[56,232,160,255], ask:[255,194,71,255], muted:[185,198,216,255], failed:[255,99,120,255], review:[188,163,235,255] } }
-    else { Palette { ink:[37,41,48,255], work:[8,127,91,255], ask:[153,82,0,255], muted:[83,97,113,255], failed:[201,38,65,255], review:[130,80,223,255] } }
+    if dark { Palette { ink:[236,239,242,255], work:[56,232,160,255], incoming:[110,168,255,255], ask:[255,194,71,255], muted:[185,198,216,255], failed:[255,99,120,255], review:[188,163,235,255] } }
+    else { Palette { ink:[37,41,48,255], work:[8,127,91,255], incoming:[31,101,197,255], ask:[153,82,0,255], muted:[83,97,113,255], failed:[201,38,65,255], review:[130,80,223,255] } }
 }
 fn hex(c:[u8;4])->String { format!("#{:02X}{:02X}{:02X}",c[0],c[1],c[2]) }
 /// The same semantic tokens supply menu counters and chart colors; no CSS color table.
 pub fn css(dark:bool)->String {
     let p=palette(dark);
-    format!("--work:{};--ask:{};--failed:{};--ready:{};--muted:{};--review:{}",hex(p.work),hex(p.ask),hex(p.failed),hex(p.muted),hex(p.muted),hex(p.review))
+    format!("--work:{};--ask:{};--failed:{};--ready:{};--muted:{};--new:{};--review:{}",hex(p.work),hex(p.ask),hex(p.failed),hex(p.muted),hex(p.muted),hex(p.incoming),hex(p.review))
 }
 
 /// The angular q (18·z pt, stroke 1.8·z, tail bottom right) at `(x0, y0)` with ▶ (admits) or Ⅱ inside.
@@ -146,16 +155,18 @@ pub fn compact(run: bool, dark: bool, s: f32) -> Rgba {
 }
 
 
-pub fn peak(bins:&[Bin])->u32 {
-    bins.iter().filter(|b|b.complete()).map(|b|b.counts[0]).max().unwrap_or(0)
+pub fn peak(bins:&[Bin])->u64 {
+    let incoming = bins.iter().any(Bin::incoming_complete);
+    bins.iter().filter(|b|b.complete() && (!incoming || b.incoming_complete())).map(|b|b.total(incoming)).max().unwrap_or(0)
 }
 
-/// One source for every surface. History changes the viewport and reveals Ask marks, preserving the shared vector geometry.
+/// One source for every surface; History changes only the viewport and adds exact accessible detail.
 #[tracing::instrument(name="icon.svg",skip_all)]
 pub fn svg(d:&Data,dark:bool)->String {
     let p=palette(dark);
     let color=|c|hex(if d.paused {p.muted}else{c});
     let peak=peak(&d.bins);
+    let incoming=d.bins.iter().any(Bin::incoming_complete);
     let mut counters=Vec::new();
     let mut end=0.0f64;
     for (i,(value,c)) in [(d.counts[0],p.work),(d.counts[1],p.ask),(d.counts[2].zip(d.blocked).map(|(a,b)|a.saturating_add(b)),p.muted)].into_iter().enumerate() {
@@ -172,22 +183,27 @@ pub fn svg(d:&Data,dark:bool)->String {
     for (_,_,w,x) in counters.iter_mut().rev() {
         *x=x.min(right-*w);right=*x-1.5;
     }
-    let mut out=format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} 22">"#);
+    let mut out=format!(r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} 22"><defs><pattern id="history-incomplete" width="2" height="2" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0V2" stroke="{}" stroke-width="0.5" opacity="0.65"/></pattern></defs>"#,color(p.muted));
     if d.paused {
         out.push_str(&format!(r#"<defs><mask id="pause-clear"><rect width="{width}" height="22" fill="white"/><rect x="3.5" y="3.5" width="15" height="17.7" fill="black"/></mask></defs><g mask="url(#pause-clear)">"#));
     }
-    let empty=d.counts.iter().all(|n|*n==Some(0))&&d.blocked==Some(0)&&d.bins.iter().all(|b|b.complete()&&b.counts==[0;4]);
+    let empty=d.counts.iter().all(|n|*n==Some(0))&&d.blocked==Some(0)&&d.bins.iter().all(|b|b.complete()&&b.incoming_complete()&&b.counts==[0;4]&&b.incoming==0);
     write!(out,r#"<g id="summary-data" visibility="{}"><g id="chart" shape-rendering="crispEdges">"#,if empty {"hidden"}else{"visible"}).unwrap();
     for (i,b) in d.bins.iter().enumerate() {
         let x=1.0+3.5*i as f64;
         write!(out,r#"<g id="bin-{i}" data-start="{}" data-end="{}">"#,b.start,b.end).unwrap();
-        let (y,h,c,mark)=if !b.complete() {(15.5,0.75,p.muted,"unknown")}
-            else if b.counts[0]==0 {(20.0,0.5,p.muted,"zero")}
-            else {let h=9.0*b.counts[0] as f64/peak.max(1) as f64;(20.5-h,h,p.work,"closed")};
-        write!(out,r#"<rect data-mark="{mark}" x="{x}" y="{y}" width="2.5" height="{h}" fill="{}"/>"#,color(c)).unwrap();
-        if b.counts[2]>0 {write!(out,r#"<rect data-mark="ask" visibility="hidden" x="{x}" y="12" width="2.5" height="0.75" fill="{}"/>"#,color(p.ask)).unwrap();}
-        if b.counts[1]>0 {write!(out,r#"<rect data-mark="failed" x="{x}" y="10.5" width="2.5" height="0.75" fill="{}"/>"#,color(p.failed)).unwrap();}
-        if b.ongoing {write!(out,r#"<rect data-mark="ongoing" x="{x}" y="21" width="2.5" height="0.5" fill="{}"/>"#,color(p.muted)).unwrap();}
+        if b.complete() && (!incoming || b.incoming_complete()) {
+            let mut bottom=20.5;
+            for (mark,n,c) in [("completed",b.counts[0],p.work),("new",if incoming {b.incoming}else{0},p.incoming),("ask",b.counts[2],p.ask),("failed",b.counts[1],p.failed)] {
+                if n==0 {continue;}
+                let h=9.0*n as f64/peak.max(1) as f64;
+                bottom-=h;
+                write!(out,r#"<rect data-mark="{mark}" x="{x}" y="{bottom}" width="2.5" height="{h}" fill="{}"/>"#,color(c)).unwrap();
+            }
+        }
+        if !b.complete() || !b.incoming_complete() {
+            write!(out,r#"<rect data-mark="unknown" x="{x}" y="11.5" width="2.5" height="9" fill="url(#history-incomplete)"/>"#).unwrap();
+        }
         out.push_str("</g>");
     }
     out.push_str(r#"</g><g id="counters">"#);
@@ -428,38 +444,42 @@ mod tests {
         }
     }
 
-    // #1725 A2–A4: History can reveal Ask without changing icon pixels, Closed scale or coverage marks.
+    // Chain: M6. UX30-20/22: one linear event scale, no minimum heights, and no invented arrivals in legacy history.
     #[test]
-    fn history_ask_marks_preserve_closed_zero_unknown_and_icon_pixels() {
-        let bins = [0, 0, 1, 2, 999, 0].into_iter().enumerate().map(|(i, closed)| Bin {
-            start: i as f64, end: (i + 1) as f64, counts: [closed, u32::from(i == 2), [3, 0, 1, 0, 2, 0][i], 0],
-            missing: if i == 4 { vec!["synthetic missing source".into()] } else { vec![] }, ongoing: i == 5,
-        }).collect();
-        let mut data = Data { counts: [Some(1); 4], blocked: Some(0), bins, paused: false };
-        assert_eq!(peak(&data.bins), 2);
-        for dark in [false, true] {
+    fn selected_event_stack_uses_quantities_on_every_surface() {
+        let mut data = Data {counts:[Some(1);4], blocked:Some(0), paused:false, bins:vec![
+            Bin {incoming:0,incoming_missing:vec![],start:0.0,end:1.0,counts:[2,1,3,99],missing:vec![],ongoing:true},
+        ]};
+        assert_eq!(peak(&data.bins), 6, "Completed + Ask + Failed, never Blocked");
+        data.bins[0].incoming=1;
+        assert_eq!(peak(&data.bins),7);
+        for dark in [false,true] {
             let vector = svg(&data, dark);
-            let bin = |i| vector.split(&format!(r#"<g id="bin-{i}" "#)).nth(1).unwrap().split("</g>").next().unwrap();
-            assert_eq!(vector.matches(r#"data-mark="ask""#).count(), 3, "ask-only, mixed and observed incomplete Ask");
-            for i in [0, 2, 4] {
-                assert!(bin(i).contains(r#"data-mark="ask" visibility="hidden""#), "icons hide History-only Ask");
-                assert!(bin(i).contains(&format!(r#"y="12" width="2.5" height="0.75" fill="{}""#, hex(palette(dark).ask))));
+            let tree=resvg::usvg::Tree::from_str(&vector,&resvg::usvg::Options::default()).unwrap();
+            assert_eq!(tree.size().height(),22.0);
+            let mut bottom=20.5;
+            for (mark,n,color) in [("completed",2,palette(dark).work),("new",1,palette(dark).incoming),("ask",3,palette(dark).ask),("failed",1,palette(dark).failed)] {
+                let h=9.0*n as f64/7.0;bottom-=h;
+                assert!(vector.contains(&format!(r#"data-mark="{mark}" x="1" y="{bottom}" width="2.5" height="{h}" fill="{}""#,hex(color))),"{vector}");
             }
-            for (i, mark) in [(0, "zero"), (1, "zero"), (2, "closed"), (2, "failed"), (4, "unknown"), (5, "ongoing")] {
-                assert!(bin(i).contains(&format!(r#"data-mark="{mark}""#)));
-            }
-            assert!(bin(2).contains(r#"y="16" width="2.5" height="4.5""#), "Closed 1 / peak 2");
-            let asks: Vec<_> = data.bins.iter().map(|b| b.counts[2]).collect();
-            for b in &mut data.bins { b.counts[2] = 0; }
-            assert_eq!(raster(&vector, 256).unwrap().px, raster(&svg(&data, dark), 256).unwrap().px, "menu-bar/Dock keep closed-only pixels");
-            for (b, ask) in data.bins.iter_mut().zip(asks) { b.counts[2] = ask; }
+            for mark in ["zero","ongoing"] {assert!(!vector.contains(&format!(r#"data-mark="{mark}""#)));}
+            assert!(!vector.contains(r#"visibility="hidden""#), "Ask is shared with the small icon");
         }
+        data.bins[0].counts=[u32::MAX,1,0,0];data.bins[0].incoming=u32::MAX;
+        assert_eq!(peak(&data.bins),2*u32::MAX as u64+1,"sum cannot overflow");
+        let vector=svg(&data,false);
+        assert!(vector.contains(&format!(r#"height="{}""#,9.0/(2*u32::MAX as u64+1) as f64)),"rare failed event keeps its actual subpixel height");
+        data.bins[0].incoming_missing=vec!["legacy New unavailable".into()];
+        assert_eq!(peak(&data.bins),u32::MAX as u64+1,"legacy known series retain a usable scale");
+        let vector=svg(&data,false);
+        assert!(vector.contains(r#"data-mark="completed""#)&&vector.contains(r#"data-mark="failed""#)&&vector.contains(r#"data-mark="unknown""#));
+        assert!(!vector.contains(r#"data-mark="new""#));
     }
 
     // #1789 A1/A2: exact labels and measured ink must survive every position without collisions or clipping.
     #[test]
     fn exact_two_digit_counters_reclaim_space_before_widening() {
-        let bins=(0..6).map(|i|Bin {start:i as f64,end:(i+1) as f64,counts:[1,0,0,0],missing:vec![],ongoing:i==5}).collect();
+        let bins=(0..6).map(|i|Bin {incoming:0,incoming_missing:vec![],start:i as f64,end:(i+1) as f64,counts:[1,0,0,0],missing:vec![],ongoing:i==5}).collect();
         let mut data=Data {counts:[Some(0);4],blocked:Some(0),bins,paused:false};
         for dark in [false,true] {
             for n in [0,9,10,12,99,100] {
@@ -496,10 +516,10 @@ mod tests {
         }
     }
 
-    // A2/A3/A4/A5: SVG semantics survive every viewport; other events cannot alter closed height.
+    // Chain: M6. Shared event geometry survives every viewport; incomplete bins and Blocked never set the scale.
     #[test]
     fn six_columns_keep_quantity_marks_palette_and_device_bounds() {
-        let bins:Vec<Bin>=[4,0,999,12,7,4].into_iter().enumerate().map(|(i,c)|Bin {start:i as f64,end:(i+1) as f64,counts:[c,0,0,0],missing:if i==2 {vec!["synthetic missing source".into()]}else{vec![]},ongoing:i==5}).collect();
+        let bins:Vec<Bin>=[4,0,999,12,7,4].into_iter().enumerate().map(|(i,c)|Bin {incoming:0,incoming_missing:vec![],start:i as f64,end:(i+1) as f64,counts:[c,0,0,0],missing:if i==2 {vec!["synthetic missing source".into()]}else{vec![]},ongoing:i==5}).collect();
         let mut data=Data {counts:[Some(0);4],blocked:Some(0),bins,paused:false};
         assert!(raster("",44).is_err(),"missing published SVG stays a render error");
         for dark in [false,true] {
@@ -507,8 +527,8 @@ mod tests {
             assert_eq!(svg.matches("data-start=").count(),6);
             assert!(svg.contains(r#"y="17.5" width="2.5" height="3""#),"4 / peak 12");
             assert_eq!(svg.matches(r#"data-mark="unknown""#).count(),1);
-            assert_eq!(svg.matches(r#"data-mark="zero""#).count(),1);
-            assert_eq!(svg.matches(r#"data-mark="ongoing""#).count(),1);
+            assert_eq!(svg.matches(r#"data-mark="zero""#).count(),0);
+            assert_eq!(svg.matches(r#"data-mark="ongoing""#).count(),0);
             assert!(svg.contains(&hex(palette(dark).work)));
             for n in [16,18,22,33,44,66,256] {let image=raster(&svg,n).unwrap();assert_eq!((image.w,image.h),(n,n));assert!(image.px.chunks_exact(4).any(|p|p[3]>0));}
         }
@@ -517,12 +537,14 @@ mod tests {
             let p=palette(dark);assert_eq!([p.work,p.ask,p.failed,p.muted,p.review],expected,"approved palette A");
         }
         assert!(css(false).ends_with(";--review:#8250DF")&&css(true).ends_with(";--review:#BCA3EB"),"Review accent token");
-        let before=svg(&data,false);data.bins[0].counts=[4,8,7,6];
+        let before=svg(&data,false);data.bins[0].counts[3]=6;
+        assert_eq!(svg(&data,false),before,"Blocked is exact detail only");
+        data.bins[0].counts=[4,8,7,6];
         let after=svg(&data,false);
         assert!(after.contains(r#"data-mark="failed""#));
-        assert_eq!(before.matches(r#"y="17.5" width="2.5" height="3""#).count(),after.matches(r#"y="17.5" width="2.5" height="3""#).count());
+        assert_eq!(peak(&data.bins),19,"Completed + Failed + Ask share the scale");
         for b in &mut data.bins {b.counts=[0;4];b.missing.clear();}
-        let zero=svg(&data,false);assert_eq!(zero.matches(r#"data-mark="zero""#).count(),6);assert!(!zero.contains("NaN"));
+        let zero=svg(&data,false);assert_eq!(zero.matches(r#"data-mark="zero""#).count(),0);assert!(!zero.contains("NaN"));
         data.counts=[None,Some(9),Some(1),Some(0)];
         let vector=svg(&data,false);let tree=resvg::usvg::Tree::from_str(&vector,&resvg::usvg::Options::default()).unwrap();
         for (i,left) in [1.0,8.1,15.4].into_iter().enumerate() {let bounds=tree.node_by_id(&format!("counter-{i}")).unwrap().abs_bounding_box();assert!((bounds.x()-left).abs()<0.01&&bounds.width()<=5.61,"ink alignment and overflow at cell {i}: {bounds:?}");}

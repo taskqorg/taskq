@@ -576,6 +576,11 @@ impl Board for GitHub {
         String::from_utf8(bytes).map_err(|_|"report source is not UTF-8".into())
     }
 
+    fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> {
+        let events = self.api.all(&format!("/issues/{n}/events?per_page=100"))?;
+        first_admission(&events)
+    }
+
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
         Ok(self.api.all(&format!("/issues/{n}/comments?per_page=100"))?.iter().map(|v| Comment {
             id: v["id"].as_u64().unwrap_or(0),
@@ -754,6 +759,28 @@ fn raw_path<'a>(root: &str, base: &str, url: &'a str) -> Option<(&'a str, &'a st
     let cdn = (root == "https://api.github.com").then(|| cdn_url(base, "", "")).and_then(|p| url.strip_prefix(p.trim_end_matches('/')));
     let (sha, file) = cdn.or_else(|| url.strip_prefix(&format!("{}/raw/", web(root, base))))?.split_once('/')?;
     (hex40(sha) && !file.is_empty() && !file.split('/').any(|p| p.is_empty() || p == "..")).then_some((sha, file))
+}
+
+/// Complete paginated board history, never issue creation or current queue size.
+fn first_admission(events: &[Value]) -> Result<Option<(u64, i64)>> {
+    if events.iter().any(|v| v["event"] == "labeled" && !v["label"]["name"].is_string()) {return Err("label history incomplete".into());}
+    events.iter().filter(|v| v["event"] == "labeled" && v["label"]["name"] == "taskq")
+        .map(|v| Ok((v["id"].as_u64().filter(|id| *id > 0).ok_or("admission ID unavailable")?,
+            iso(&s(v, "created_at")).filter(|at| *at > 0).ok_or("admission time unavailable")?)))
+        .collect::<Result<Vec<_>>>().map(|events| events.into_iter().min_by_key(|(id, at)| (*at, *id)))
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    #[test]
+    fn earliest_label_event_is_the_only_arrival() {
+        let mut events = json!([{"id":9,"event":"labeled","action":"add","label":{"name":"taskq"},"created_at":"2026-10-30T12:01:00Z"},{"id":3,"event":"labeled","action":"add","label":{"name":"taskq"},"created_at":"2026-10-30T12:00:00Z"},{"id":2,"event":"unlabeled","action":"remove","label":{"name":"taskq"},"created_at":"2026-10-30T11:59:00Z"}]);
+        assert_eq!(first_admission(events.as_array().unwrap()).unwrap(), Some((3, iso("2026-10-30T12:00:00Z").unwrap())));
+        events[1]["created_at"] = Value::Null;
+        assert!(first_admission(events.as_array().unwrap()).is_err());
+        assert_eq!(first_admission(&[]).unwrap(), None);
+    }
 }
 
 #[cfg(test)]
