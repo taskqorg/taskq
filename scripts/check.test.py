@@ -169,4 +169,17 @@ assert 'R9' not in approval([spawn, comment(2, 'taskq: ask attempt 1\nProblem: F
                             comment(3, 'taskq: answer 1\nop-id: repeated id'),
                             comment(4, 'taskq: ask attempt 1\nProblem: New\n1. change R9\n2. keep'),
                             comment(5, 'taskq: answer 1\nop-id: repeated id')]), 'duplicate operations cannot approve a new ask'
+# #1918: a reviewer requeue readied the task, but the gate dropped the next attempt's approved M8 ask.
+def review_requeue(i, flag='', worker=None):
+    return [comment(i, 'taskq: result ' + 'a'*40 + f' attempt {worker or i - 1}'), comment(i + 1, 'taskq: spawn reviewer claude:invented win'),
+            comment(i + 2, f'taskq: requeue{flag} attempt {i + 1}'), comment(i + 3, 'taskq: spawn worker claude:invented win')]
+approve_m8 = lambda i, rule='M8': [comment(i, f'taskq: ask attempt {i - 1}\nProblem: Approve {rule}\n1. approve {rule}\n2. keep R9'), comment(i + 1, '1')]
+text = approval([spawn, *review_requeue(2), *approve_m8(6)])
+assert 'M8' in text and 'R9' not in text, text
+three = [spawn, *review_requeue(2), *review_requeue(6), *review_requeue(10)]
+assert approval(three + approve_m8(14)) == '', 'the 3rd retry asks with the limit card, which fold models outside this gate'
+three[7] = comment(8, 'taskq: requeue main-moved attempt 7')
+assert 'M8' in approval(three + approve_m8(14)), 'main-moved keeps retries'
+assert 'M8' in approval([spawn, *review_requeue(2), *approve_m8(6, 'M3'), *review_requeue(8, worker=5), *review_requeue(12), *approve_m8(16)]), \
+    'an answer resets retries'
 print('PASS approval association preserves revision, attempt, trust and selected-option fences')
