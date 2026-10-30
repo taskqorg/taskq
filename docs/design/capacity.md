@@ -199,6 +199,8 @@ A Codex worker whose turn fails on a transient model error mid-work continues in
 
 ## Runtime login
 
+`taskq agents` (taskq.md § 5) prints, per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only; no login, token value or board; unreadable: `unknown` (R12); `not logged in` admits nothing.
+
 The service probes each startable runtime's login at most every 5 minutes (taskq.md § 5 `taskq agents`):
 
 - Claude: `claude auth status` JSON gives login, account, and kind (`authMethod` and `subscriptionType`); Claude reports no refresh time that taskq reads. Codex: `codex login status` gives login and account; `auth_mode` and `last_refresh` come from `$CODEX_HOME/auth.json` (default `~/.codex`). `codex-app` shares Codex's login. A CLI missing from the service PATH reads `not installed`.

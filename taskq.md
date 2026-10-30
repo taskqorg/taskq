@@ -184,7 +184,7 @@ Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 | `taskq approve N [--sha SHA]` / `taskq recipe NAME --run ID [--goal G] [--start]` | § 7 owner approval of the current result (refused with `TASKQ_ATTEMPT`) / recipe run |
 | `taskq status [--only L,..] [--json]` / `taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]]` | Read-only R6; `--only`: any label (absent: all). JSON/history: [menu] |
 | `taskq inbox N [--json]` / `taskq retro` | task text, folded state and log (a requeue says what to fix); `--json`: progress, answers `{by, at, revision, option, text}`; `retro`: owner session (§ 4) on use-case proposals and board `ask`/`answer`/`requeue` history, filing accepted ones via `add` |
-| `taskq issue N` / `taskq issue N --comment T\|--label L [--op-id ID] [--json]` | any issue of the configured board, task or not. Read: JSON `{number, url, title, state, labels, body, comments}`, comments `{id, author, created, edited, trusted, body}`, `url` canonical. Write: one comment or label, read back; `--json` receipt `{issue, url, op_id, outcome, comment\|label, reason, next}`. Op id: comment last line `op-id: <id>`; a repeat returns the first comment, changed text refused; a present label is accepted unwritten. Refused: first line `taskq:`, labels `taskq`, `taskq-host`, `q-*` (task commands own them) |
+| `taskq issue N [--comment T\|--label L] [--op-id ID] [--json]` | read any board issue, or add a comment or label: [detail][iss] |
 | `taskq wait [--window MIN] [--only L,..]` | PM: block until a task moves to `ask`, `review` with options, closed or `failed`; print `ask #N` etc. or `tick`; folds issues updated since the cursor `<root>/.taskq/pm-cursor` (a cache, R1) |
 | `taskq cleanup [--force]` | remove clean worktrees and branches of closed tasks; `--force` also dirty ones (R11) |
 | `taskq update [--check]` / `taskq enroll <https-url> [--headless] [--telemetry]` / `taskq connection status` / `taskq disconnect` | update: § 8 (coreq), one sweep; enroll: approve board scope in a browser (`--headless`: print code), `connected` only once DashQ projects the first snapshot; status offline; disconnect, pairing, revoke, host observations, admission: [DashQ connection][dq] |
@@ -193,7 +193,7 @@ Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 | `taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] \| --revoke ID \| --json]` | the host operator's [resource grants][src], project IDs, revisions, receipts; `--json`: overlay projection; grant/revoke refused under `TASKQ_ATTEMPT`. A DashQ resource operation writes host capacity like `service capacity`, only inside an active grant of this connection |
 | `taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. \| --revoke ID] [--json]` | [PM authority/receipts](docs/design/pm-requests.md); owner-only, off by default |
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail][prof] |
-| `taskq agents` | per startable runtime (`claude`, `codex`; macOS/Windows `codex-app` on Codex's login), limit 0 too: binary or `not installed`, version, login, account, kind, last refresh; read-only; no login, token value or board; unreadable: `unknown` (R12); `not logged in` admits nothing ([runtime login](docs/design/capacity.md#runtime-login)) |
+| `taskq agents` | read-only login probe per startable runtime: [runtime login](docs/design/capacity.md#runtime-login) |
 | `taskq selftest` | load config, fold built-in `tests/golden`, read the board; no writes |
 - Task writes: `#N <state>`; close adds one publication link/SHA line.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each; a compact one links its full diagnostic in `.taskq/cli-errors.log`, else keeps raw output (R12).
@@ -297,3 +297,4 @@ A cutover is one step per project, not per host; board formats never mix. No mig
 [hsd]: docs/design/host-service.md#contract-detail
 [tel]: docs/design/standalone-telemetry.md
 [onb]: docs/design/standalone-onboarding.md
+[iss]: docs/design/issue-command.md#contract-detail
