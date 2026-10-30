@@ -1189,7 +1189,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         std::thread::sleep(Duration::from_secs(cfg.poll.max(1)));
     }
     adopt(&mut s, &cfg.install, &cfg.root)?;
-    let mut incoming = incoming::Reader::new(cfg.clone(), c.raw["label_schema"].as_str().map(str::to_string));
+    let mut incoming = incoming::Reader::new(cfg.clone(), c.raw["label_schema"].as_str().map(str::to_string), &c.board.url(0));
     let is_installed = installed(&cfg.install);
     let began = Instant::now();
     log!("{}", incident::disclosure(Some(&cfg.root)));
