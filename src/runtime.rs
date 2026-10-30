@@ -1030,11 +1030,36 @@ fn rule_text(root: &Path, task: &str, resume: bool, fetch: impl FnMut(&str) -> R
 }
 
 /// The mandatory bodies are repeated so continuation/compaction cannot silently retain old rules.
-fn rules(root: &Path, resume: bool, mut fetch: impl FnMut(&str) -> Result<String, String>) -> Result<String, StartError> {
+fn rules(root: &Path, resume: bool, fetch: impl FnMut(&str) -> Result<String, String>) -> Result<String, StartError> {
+    let text = bundle(root, resume, false, fetch)?;
+    if text.len() > RULES_CAP { return Err(over_cap(root, text.len())); }
+    Ok(text)
+}
+
+/// #1946: the cap refusal is deterministic, so the service asks once instead of retrying (`rules-cap`); it names the
+/// contract file to trim, never a local path (§ 7 rule 6).
+pub(crate) fn over_cap(root: &Path, len: usize) -> StartError {
+    let name = contract_path(root).ok().and_then(|(p, _)| p.file_name().map(|n| n.to_string_lossy().into_owned())).unwrap_or_else(|| "taskq.md".into());
+    StartError { message: format!("rules bundle {len} bytes, {} over the {RULES_CAP}-byte cap\nNext: trim {name} below the cap, then retry", len - RULES_CAP), class: "rules-cap", reportable: false, no_start: true }
+}
+
+/// § 8 Rule delivery: `taskq rules size` measures the continuation bundle, the larger one, with the working-tree
+/// contract a branch proposes, so project CI fails before the edit reaches worker starts (#1946). Ok: size and cap.
+pub fn rules_size(root: &Path) -> Result<(usize, usize), StartError> {
+    rules_size_with(root, rule_file)
+}
+
+fn rules_size_with(root: &Path, fetch: impl FnMut(&str) -> Result<String, String>) -> Result<(usize, usize), StartError> {
+    let len = bundle(root, true, true, fetch)?.len();
+    if len > RULES_CAP { Err(over_cap(root, len)) } else { Ok((len, RULES_CAP)) }
+}
+
+/// `tree`: the working-tree contract instead of the `origin/main` one starts use (#1479).
+fn bundle(root: &Path, resume: bool, tree: bool, mut fetch: impl FnMut(&str) -> Result<String, String>) -> Result<String, StartError> {
     let revision=shared_revision(root,&mut fetch)?;
     let _snapshot=tracing::info_span!("taskq.rules.snapshot",shared_spec=revision.as_str()).entered();
     let dir = specq_dir(root,&revision);
-    let (spec, contract) = match base_contract(root)? {
+    let (spec, contract) = match if tree { None } else { base_contract(root)? } {
         Some((spec, Some(bytes))) => (spec, String::from_utf8(bytes).map_err(|_| refused("contract", "invalid UTF-8"))?),
         Some((_, None)) => (command_contract(), CONTRACT.into()),
         None => {
@@ -1070,7 +1095,6 @@ fn rules(root: &Path, resume: bool, mut fetch: impl FnMut(&str) -> Result<String
     }
     text.push_str("Index of project docs (read on demand in your worktree):\n");
     for (path, title) in docs(root)? { text.push_str(&format!("- {path}: {title}\n")); }
-    if text.len() > RULES_CAP { return Err(refused("rules", format!("{} bytes over the {RULES_CAP}-byte cap", text.len() - RULES_CAP))); }
     Ok(text)
 }
 
@@ -4501,6 +4525,10 @@ mod tests {
             assert!(text.contains(&format!("contract `{} at origin/main {fresh}`", root.join("serverq.md").display())));
             assert!(!text.contains("Stale root contract") && !text.contains("Local root edit"));
         }
+        // #1946: `taskq rules size` checks the contract a branch proposes, before it reaches origin/main
+        let tree = bundle(&root, true, true, rule).unwrap();
+        assert!(tree.contains("# Local root edit") && !tree.contains("Fresh origin contract"));
+        assert_eq!(rules_size_with(&root, rule).unwrap().0, tree.len());
         git(&up, &["rm", "-q", "serverq.md", "taskq.md"]);
         git(&up, &["commit", "-q", "-m", "drop"]);
         assert!(rule_text(&root, "task", false, rule).is_err(), "a registered contract absent at the base refuses");
@@ -4584,6 +4612,29 @@ mod tests {
         std::fs::write(root.join("taskq.md"), "x".repeat(RULES_CAP)).unwrap();
         assert!(rule_text(&root, "task", false, rule).unwrap_err().to_string().contains("cap"));
         assert!(rule_text(&root, "task", true, rule).unwrap_err().to_string().contains("cap"), "resume also enforces the mandatory-body cap");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // Chain: § 8 rule delivery, #1946 (pilotq#169). Risk: a contract edit over the cap merges unnoticed and every worker
+    // start then fails until the owner trims it; the size check must fail first and the start refusal must name the file.
+    #[test]
+    fn rules_size_reports_headroom_and_the_cap_refusal_names_the_contract() {
+        let root = rules_root("size");
+        std::fs::write(root.join("taskq.json"), r#"{"repo":"group/pilotq"}"#).unwrap();
+        let contract = "# Project contract\nProject rule.\n";
+        std::fs::write(root.join("pilotq.md"), contract).unwrap();
+        let (len, cap) = rules_size_with(&root, rule).unwrap();
+        assert!(cap == RULES_CAP && len < cap && len > contract.len());
+        let over = cap - len + 100;
+        std::fs::write(root.join("pilotq.md"), format!("{contract}{}", "x".repeat(over))).unwrap();
+        let e = rules_size_with(&root, rule).unwrap_err();
+        assert_eq!(e.class(), "rules-cap");
+        assert_eq!(e.to_string(), format!("rules bundle {} bytes, 100 over the {cap}-byte cap\nNext: trim pilotq.md below the cap, then retry", cap + 100));
+        for resume in [false, true] {
+            let e = rule_text(&root, "task", resume, rule).unwrap_err();
+            assert!(e.class() == "rules-cap" && e.no_start && !e.reportable, "{resume}: {e}");
+            assert!(e.to_string().contains("trim pilotq.md") && !e.to_string().contains(&root.display().to_string()), "no local path (§ 7 rule 6): {e}");
+        }
         std::fs::remove_dir_all(&root).ok();
     }
 

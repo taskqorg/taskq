@@ -1756,6 +1756,15 @@ impl<'a> Service<'a> {
                 }
                 continue;
             };
+            // #1946: a never-started attempt has no session to resume; the reply to its start refusal starts afresh
+            let runs: Vec<_> = v.projection.executions.iter().filter(|x| x.attempt == a).collect();
+            if !runs.is_empty() && runs.iter().all(|x| !x.accepted && x.release == Some(core::Release::NoStart)) {
+                let text = "Reason: start refused before launch; the reply starts a fresh attempt";
+                // a reviewer gone keeps the result (§ 2); a worker requeue ends the attempt
+                if t.state == State::Review { self.gone(n, t, a, &[], text)?; } else { self.post(n, core::entry("requeue", &[], Some(a), text))?; }
+                touched.insert(n);
+                continue;
+            }
             let (rt, session) = rt_of(t).unwrap_or(("", ""));
             let mut session = session.to_string();
             let mut l = Launch { files: String::new(), execution: None, task: n, title: v.issue.title.clone(), attempt: a, role: t.role.clone().unwrap_or_default(), rt: rt.into(), session: session.clone(), url: self.board.url(n), resume: None };
@@ -2313,6 +2322,12 @@ impl<'a> Service<'a> {
                 // without a fresh fold a gone could park the task on a card without options: post nothing, report the
                 // read error; the next pass reconciles the no-start proof and posts the limit card (#1123).
                 let log = crate::board::entries(self.board, l.task).map_err(|r| format!("#{} {text}; gone not posted: {r}", l.task))?;
+                // #1946 (pilotq#170): the cap refusal repeats until the contract shrinks, so one ask replaces gone retries
+                if e.class() == "rules-cap" {
+                    let card = format!("Problem: start refused: {}\n1. Retry after trimming ★\n2. later: park the task", e.to_string().replace("\nNext: ", "; "));
+                    self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&format!("rules-cap-{execution}")), None))?;
+                    return Ok(());
+                }
                 if l.resume.is_some() {
                     let failures = core::executions(l.task, &log).iter().filter(|x| x.attempt == l.attempt && x.through == through && x.release == Some(core::Release::NoStart)).count();
                     if failures >= core::GONE_MAX as usize {
@@ -4025,6 +4040,48 @@ Open: none")).unwrap();
             assert_eq!(task(&b, n).state, State::Ready);
             assert!(b.comments(n).unwrap().last().unwrap().body.contains("start failed: private failure text"));
             assert_eq!(crate::incident::take_detected(), if reports { vec!["dispatch.start"] } else { vec![] });
+        }
+    }
+
+    // Chain: § 8 rule delivery cap -> § 2 ask, #1946 (pilotq#170). Risk: a deterministic cap refusal burns two gone
+    // retries before the owner hears of it, or the answer resumes a session that never started.
+    #[test]
+    fn a_rules_cap_refusal_asks_once_and_its_answer_starts_a_fresh_attempt() {
+        for role in ["worker", "reviewer"] {
+            let b = Fake::default();
+            let n = b.create("task", "", &[TASK_LABEL.into()]).unwrap();
+            let result = "a".repeat(40);
+            if role == "reviewer" {
+                let w = b.comment(n, "taskq: spawn worker claude:w other").unwrap();
+                b.comment(n, &core::entry("result", &[&result], Some(w), "Changed: x\nOpen: none")).unwrap();
+                release_execution(&b, n, w, w, "exit").unwrap();
+            }
+            let c = cfg("local");
+            let starts = Rc::new(RefCell::new(0));
+            let counted = starts.clone();
+            let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |_| {
+                *counted.borrow_mut() += 1;
+                Err(crate::runtime::over_cap(std::path::Path::new("/nonexistent"), 128 * 1024 + 5))
+            }));
+            let v = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.remove(0);
+            s.claim(&v, role, "claude").unwrap();
+            let t = task(&b, n);
+            let a = t.attempt.unwrap();
+            assert_eq!((t.state, t.retries, *starts.borrow()), (State::Ask, 0, 1), "{role}: one start, no gone retry");
+            let card = t.card.unwrap();
+            assert!(card.starts_with("Problem: start refused: rules bundle 131077 bytes, 5 over the 131072-byte cap; trim taskq.md below the cap"), "{card}");
+            assert!(card.contains("1. Retry after trimming ★") && card.contains("2. later:"), "{card}");
+            assert!(!b.comments(n).unwrap().iter().any(|c| c.body.starts_with("taskq: gone")), "{role}");
+            b.comment(n, "taskq: answer 1").unwrap();
+            assert_eq!(task(&b, n).attempt, Some(a), "{role}: the answer returns to the never-started attempt");
+            s.pass().unwrap();
+            let t = task(&b, n);
+            assert_eq!(*starts.borrow(), 1, "{role}: no resume of a session that never started");
+            if role == "worker" {
+                assert_eq!((t.state, t.attempt), (State::Ready, None), "the reply starts a fresh attempt");
+            } else {
+                assert_eq!((t.state, t.attempt, t.result.as_deref()), (State::Review, None, Some(result.as_str())), "a fresh reviewer keeps the result");
+            }
         }
     }
 
