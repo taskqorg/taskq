@@ -49,3 +49,5 @@ Use the frozen day/hour fixtures with unavailable New and retained known series,
 Share vector geometry, data and palette; calibrate SF/Segoe ink and actual OS slot/DPI separately. Preserve Windows availability until native qualification. No repeated PNG resizing, width rebinning or dropped bins. Native/runtime gaps remain unknown under R12.
 
 Counter order remains Work / Ask / Ready+Blocked, oldest-left/newest-right. Keep I1/I2 exact 1–99 and 99+, hidden-zero space reclamation and native slot widening from #1789. The older snapshot’s fixed square and 9+/+ wording are not adopted.
+
+Implementation checks and remaining native gaps: [#1931 evidence](evidence/1931/README.md).

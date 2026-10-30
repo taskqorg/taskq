@@ -14,9 +14,9 @@ final class Capture: NSObject, WKNavigationDelegate {
         let config=WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         web=WKWebView(frame:NSRect(x:0,y:0,width:360,height:800),configuration:config)
-        window=NSWindow(contentRect:NSRect(x:-20000,y:-20000,width:360,height:800),styleMask:[.borderless],backing:.buffered,defer:false)
+        window=NSWindow(contentRect:NSRect(x:100,y:100,width:360,height:800),styleMask:[.borderless],backing:.buffered,defer:false)
         super.init()
-        window.contentView=web;window.orderBack(nil);web.navigationDelegate=self
+        window.contentView=web;window.orderFront(nil);web.navigationDelegate=self
         try FileManager.default.createDirectory(atPath:output,withIntermediateDirectories:true)
         let displayData=try Data(contentsOf:URL(fileURLWithPath:root+"/tests/fixtures/display-model.json"))
         let display=(try JSONSerialization.jsonObject(with:displayData) as! [String:Any])["display"]!
@@ -28,6 +28,9 @@ final class Capture: NSObject, WKNavigationDelegate {
                 inputs.append((name+"-"+theme+"-"+page,s))
             }
         }
+        DispatchQueue.main.asyncAfter(deadline:.now()+30) {
+            if self.index<self.inputs.count {fputs("native capture did not finish in 30s\n",stderr);exit(1)}
+        }
         web.loadHTMLString(try String(contentsOfFile:root+"/build/web/tray.html",encoding:.utf8),baseURL:URL(fileURLWithPath:root+"/"))
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { next() }
@@ -38,7 +41,15 @@ final class Capture: NSObject, WKNavigationDelegate {
             let json=String(data:try JSONSerialization.data(withJSONObject:state),encoding:.utf8)!
             web.evaluateJavaScript("window.taskq.receive("+json+")") {_,error in
                 if let error=error {fputs("native JS failed: \(error)\n",stderr);exit(1)}
-                DispatchQueue.main.async {self.capture(name)}
+                // Wait for the committed page and compositor, not only the IPC callback.
+                self.web.callAsyncJavaScript("await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))); return document.querySelectorAll('.history-plot [data-mark=unknown]').length",arguments:[:],in:nil,in:.page) {result in
+                    switch result {
+                    case .success(let unknown):
+                        print("native DOM \(name): unknown marks \(unknown)")
+                        self.capture(name)
+                    case .failure(let error): fputs("native paint failed: \(error)\n",stderr);exit(1)
+                    }
+                }
             }
         } catch {fputs("native state failed: \(error)\n",stderr);exit(1)}
     }
