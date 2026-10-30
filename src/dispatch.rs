@@ -92,6 +92,15 @@ pub fn answered_in(n: u64, log: &[Entry], p: &core::Projection, comments: &[boar
     Some(Answered { by: comments.iter().find(|c| c.id == id).map(|c| c.author.clone()).unwrap_or_default(), text: core::delivery(n, log, id) })
 }
 
+/// #1918 conversation history: every accepted answer of `log` in board order, with the card it closed; late answers
+/// saved as notes closed no card and stay out.
+pub fn history(n: u64, log: &[Entry], p: &core::Projection, comments: &[board::Comment]) -> Vec<(Option<String>, Answered)> {
+    p.answers.iter().filter(|a| !a.late).map(|a| {
+        let by = comments.iter().find(|c| c.id == a.id).map(|c| c.author.clone()).unwrap_or_default();
+        (core::card_before(n, log, a.id), Answered { by, text: core::delivery(n, log, a.id) })
+    }).collect()
+}
+
 /// The answer that beat a late `answer` on `log` (#1785); one more comment read names its writer, when it can.
 fn answered(b: &dyn Board, n: u64, kind: &str, log: &[Entry], deps: bool) -> Option<Answered> {
     let p = core::project(n, log, deps);
@@ -710,6 +719,24 @@ pub fn recover(b: &dyn Board, root: &Path, rows: &[Row]) -> Vec<Receipt> {
 mod tests {
     use super::*;
     use crate::board::Fake;
+
+    // Chain: § 2 ask/answer log -> snapshot history -> conversation. Risk (#1918 A5): a second question replaced the
+    // first question and its answer, so the conversation lost earlier decisions.
+    #[test]
+    fn history_keeps_every_answered_question_in_board_order() {
+        let ask = |q: &str| format!("taskq: ask attempt 10\nDone: checked\nProblem: {q}\n1. Ship - + now; - risk\n2. Wait - + safe; - slow");
+        let log: Vec<Entry> = [(10, "taskq: spawn worker claude:s win".to_string()), (11, ask("First?")), (12, "taskq: answer 1".into()),
+            (13, ask("Second?")), (14, "taskq: answer\nnot yet".into()), (15, ask("Third?"))]
+            .into_iter().map(|(id, body)| Entry { id, body, edited: false }).collect();
+        let comment = |id, author: &str| board::Comment { id, created: 0, body: String::new(), trusted: true, edited: false, author: author.into() };
+        let comments = [comment(12, "sam"), comment(14, "alex")];
+        let p = core::project(7, &log, false);
+        assert_eq!(p.task.state, State::Ask, "the third question is open");
+        let h = history(7, &log, &p, &comments);
+        let shown: Vec<_> = h.iter().map(|(c, a)| (c.as_deref().and_then(|c| c.lines().find(|l| l.starts_with("Problem: "))), a.by.as_str(), a.text.as_str())).collect();
+        assert_eq!(shown, [(Some("Problem: First?"), "sam", "Ship - + now; - risk"), (Some("Problem: Second?"), "alex", "not yet")]);
+        assert_eq!(answered_in(7, &log, &p, &comments), None, "the open question has no answer yet");
+    }
 
     // Chain: § 5 all clients -> shared dispatcher -> stored board text. Risk: length rejects or loses a human reply.
     #[test]

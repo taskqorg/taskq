@@ -227,7 +227,7 @@ taskRow:function(t,global){const p=view.S.projects.find(p=>p.root===t.root);retu
 syncLine:function(o){return syncView.row(o)||'';},
 staleLine:function(){return syncView.staleRow(view.S)||'';},
 // #1819: the snapshot as received, with the shared pending store laid over it.
-adopt:function(s){view.raw=s;if(Array.isArray(s.sync))view.sync=s.sync;view.S=syncView.overlay(s,view.sync);},
+adopt:function(s){view.S=s;},
 taskOrder:function(a,b){return require('./task-views.js').compare(a,b);},
 startButton:function(rows){
   const held=rows.filter(t=>t.state==='held');
@@ -697,8 +697,6 @@ receive:function(s){
   if(s.dashboard){if(!ports.views)dashboard.adopt(s.dashboard);else if(s.initial||!document.hasFocus()){view.dashboard=require('./task-views.js').normalize(s.dashboard);view.sentDashboard=JSON.stringify(view.dashboard);present();}return;}
   if(s.settingsOpen){if(ports.settings&&view.S&&s.settingsOpen.page!==view.page)navigate(s.settingsOpen.page);return;}
   if(Object.hasOwn(s,'agentqError')){view.agentqError=s.agentqError;present();return;}
-  // #1819: the store changed; every window redraws at once instead of on the next tick
-  if(Array.isArray(s.sync)&&!s.projects){view.sync=s.sync;if(view.raw){view.S=syncView.overlay(view.raw,view.sync);present();}return;}
   if(ports.workspace&&s.projects){api.adopt(s);focusReadback();api.lifecycleReadback();present();return;}
   if(s.answerReceipt){startOperations.answerReceipt(s.answerReceipt);return;}
   if(s.replyFileReceipt){startOperations.answerFileReceipt(s.replyFileReceipt);return;}

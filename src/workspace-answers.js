@@ -74,6 +74,14 @@ answerWon:function(board,t){
   const r=t.state==='ask'?null:[...answerFeedback.values()].filter(r=>r.board===board&&r.op.task===t.n&&r.answered).at(-1)||(t.answered&&{answered:t.answered});
   return r?h('p',{class:'body answered',role:'status'},won(r)):null;
 },
+// #1918 A5: the conversation is append-only: every answered question stays as it was asked, read-only, then its
+// answer line, in board order; an open question follows as the live card
+answerHistory:function(t){
+  return (t.history||[]).map(({question:q,answered:a},i)=>[h('section',{key:'asked:'+i,class:'thread-card asked','aria-label':'Question '+(i+1)+' of #'+t.n},
+    h('p',{class:'conversation-text'},q?.parsed&&q.problem||q?.text||'No recorded question.'),
+    q?.parsed&&q.choices?.length?h('ol',{class:'asked-choices'},q.choices.map(c=>h('li',{key:c.id,value:c.id},c.label??c.text,c.recommended?' ★':''))):null),
+   h('p',{key:'answered:'+i,class:'body answered',role:'status'},won({answered:a||{}}))]);
+},
 // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`
 answerSteerComposer:function(board,t){
   const key=board+'#'+t.n,late=[...answerFeedback.values()].some(r=>r.board===board&&r.op.task===t.n&&(r.answered||r.op.action==='steer'));

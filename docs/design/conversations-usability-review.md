@@ -80,12 +80,18 @@ Use the accepted two-column workspace. The sidebar contains New, Search, Recent/
 The selected pane has three sibling regions:
 
 1. A stable compact heading: title, project, recorded runtime, current state and a menu for secondary actions. No editable title input permanently occupying the toolbar. Keep task and owner-thread types visibly distinct.
-2. One reading viewport: ordered messages, question content/choices and local delivery outcomes. Use clear You/Agent attribution, timestamps when available, readable paragraphs and restrained separators. Tools collapse to concise activity lines. Technical IDs and launch/watch diagnostics disclose on demand. Do not fabricate message times or token streaming that the native reader does not supply.
+2. One reading viewport: ordered messages, question content/choices and local delivery outcomes. Use clear You/Agent attribution, timestamps when available, readable paragraphs and restrained separators. Tools collapse as [tool collapse](#tool-collapse-1918) states. Technical IDs and launch/watch diagnostics disclose on demand. Do not fabricate message times or token streaming that the native reader does not supply.
 3. A stable bottom composer: the current destination, editable draft, attachment chips where supported and one Send action. It remains visible while reading old messages. The heading and composer reserve layout space; neither overlays the transcript. Keep the textarea modest at rest, grow to a bounded height and allow its own native text-edit scroll only for a long draft. This is an intentional editor exception, not a nested history panel.
 
 For an ordinary owner conversation, Send continues the recorded native session. **New from draft** moves to the secondary menu, with its separate-session effect stated before use. New still creates a separate draft explicitly. Project/runtime context remains visible; launched-session context is not disguised as a mutable destination selector. Preserve all existing supported context overrides before launch.
 
 For a task question, show the question and exact source-numbered choices in the reading viewport. The composer says **Answer #N** and supports free text. Choice buttons submit their displayed source choice under existing revision/consequence rules; typing `1` remains literal text. A question change keeps the draft, fences all submit routes and places one concise Review updated question action beside the current question/composer. Reviewing never submits. Keep unsupported file answers clear in compact help; do not spend a permanent toolbar row on a disabled attachment picker.
+
+After the answer the question stays in the reading viewport: the question card, then `Answered by <who>: <text>`, then later events, in that order (#1918). The thread appends; it is never rebuilt from the current task state, which only removes the composer.
+
+#### Tool collapse (#1918)
+
+Consecutive worker tool calls show as one collapsible line: the step count and a summary of the files touched, the commands run and the tests run, each list short and deduplicated. While the worker runs, the current step shows live on that line. Expanding the line shows each step in order. A message from You or the agent ends the group; the next tool call starts a new one.
 
 Question answers remain board operations. Owner messages remain native-session turns. A task thread without a question must explain its current state and available session/board destination; it must not pretend to support arbitrary worker chat.
 

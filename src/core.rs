@@ -385,6 +385,12 @@ fn pick(card: &str, s: &str) -> Option<usize> {
     (m.len() == 1).then(|| m[0])
 }
 
+/// The open card just before entry `id`: the question an answer at `id` closed (#1918 conversation history).
+pub fn card_before(n: u64, entries: &[Entry], id: u64) -> Option<String> {
+    let before: Vec<Entry> = entries.iter().filter(|x| x.id < id).cloned().collect();
+    fold(n, &before, false).card
+}
+
 /// What a resumed child receives for inbox entry `id` (§ 2): its text, else option K of the card it answers, else its
 /// first line; never empty.
 pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {

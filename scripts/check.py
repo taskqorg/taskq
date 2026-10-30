@@ -173,7 +173,7 @@ def test_diff(base, head=None):
 def approval_text(comments, task):
     """An owner's picked answer approves its ask context and chosen option, never the other options."""
     parts, pending, seen = [], None, set()
-    state, attempt_id, resume, last = 'ready', None, None, 0
+    state, attempt_id, resume, last, retries = 'ready', None, None, 0, 0
     for c in sorted(comments, key=lambda c: int(c['id'])):
         if c.get('author_association') not in {'OWNER', 'MEMBER', 'COLLABORATOR'} or not c.get('created_at') or c['created_at'] != c.get('updated_at'):
             continue
@@ -237,13 +237,18 @@ def approval_text(comments, task):
             last = int(c['id'])
         elif kind == 'requeue' and own is None and state in {'ready', 'doing', 'review', 'ask', 'later', 'failed'}:
             pending = None
-            state, attempt_id, last = 'ready', None, int(c['id'])
+            state, attempt_id, last, retries = 'ready', None, int(c['id']), 0
+        elif kind == 'requeue' and own is not None and state in {'doing', 'review'}:
+            # § 2 row 9: an attempt requeue readies the task; its 3rd retry asks with the unmodelled limit card.
+            retries += not head.startswith('taskq: requeue main-moved ')
+            pending = None
+            state, attempt_id, last = ('ready' if retries < 3 else 'unknown'), None, int(c['id'])
         elif kind in {'later', 'failed'} and state in {'ready', 'doing', 'review', 'ask'}:
             pending = None
             state, attempt_id, last = (kind if own is None else 'unknown'), None, int(c['id'])
         elif kind == 'close' and state in {'review', 'later', 'failed'}:
             state, attempt_id, pending = 'closed', None, None
-        elif (kind == 'requeue' and own is not None and state in {'doing', 'review'}) or (kind in {'gone', 'usage-limit', 'publish', 'publication-blocked', 'publication-failed', 'rebased'} and state in {'doing', 'review'}):
+        elif kind in {'gone', 'usage-limit', 'publish', 'publication-blocked', 'publication-failed', 'rebased'} and state in {'doing', 'review'}:
             pending = None
             state, attempt_id = 'unknown', None
         if not pending:
@@ -263,7 +268,7 @@ def approval_text(comments, task):
             context = [line for line in pending[1] if not re.match(r'\+?[0-9]+\. |To answer:', line.strip())]
             parts.extend(['\n'.join(context), opts[picked]])
         if kind == 'answer' or alias or picked in opts:
-            pending = None
+            pending, retries = None, 0
             state = resume
             last = int(c['id'])
     return '\n'.join(parts)
