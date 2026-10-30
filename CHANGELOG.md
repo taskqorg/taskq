@@ -3,6 +3,14 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.48
+
+Board budget: heartbeat and PR updates patch the kept open list without a GraphQL relist, and report sources missing at their result SHA settle instead of being re-paged (#1970). Admission history reads use valid telemetry and deleted labels settle once (#1960). Free-plan private repositories probe rules once and show the manual-merge wait (#1936). No board change.
+
+Workers: a task closed during an attempt is reopened with one ask (#1950); an over-cap rules bundle is caught before merge and asked once at start (#1951); pending PR publications follow a switch to direct delivery (#1942); a GitLab close waits for a running MR pipeline instead of ending as gone (#1939); Make settles the claim issue on boards without `create_claim_issue` (#1945). Service: a read-only project setup check runs after install (#1938); a Linux re-exec hands a sandboxed Codex worker over instead of killing it (#1920). No board change.
+
+Menu and tray: finished results move into Notifications (#1965); Results show completed work and reports instantly (#1956); Tasks show compact board counts, collapsed status icons, unified inline inspection and exact agent navigation (#1958, #1955); hosts show agent totals and a shared runtime breakdown (#1948); Summary shows event stacks with admission history (#1947); menu alignment, headings and sticky task filters (#1944); one tray state channel, and Conversations keep question history (#1918). No board change.
+
 ## v4.6.47
 
 GitLab: `add --op-id` accepts the issue GitLab stores without the trailing newline, so a PilotQ add no longer retries (#1914); taskq merges an MR only when the project has auto-close of referenced issues off, so MR text can no longer close an issue (#1909). Set `autoclose_referenced_issues` false on each GitLab project before results publish there. Add: a labelled host keeps its own host and refuses a board it does not serve (#1912). Board: a full page answered 304 is reread (#1904); tasks whose notes pile up are flagged (#1905). CLI: `taskq claim-issue` (#1907); `taskq help` carries the PM command catalog (#1910). No board change.
