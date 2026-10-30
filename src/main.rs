@@ -19,6 +19,7 @@ mod dispatch;
 mod display;
 mod enrollment;
 mod incident;
+mod incoming;
 mod labels;
 mod link;
 mod recipe;
@@ -1188,6 +1189,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         std::thread::sleep(Duration::from_secs(cfg.poll.max(1)));
     }
     adopt(&mut s, &cfg.install, &cfg.root)?;
+    let mut incoming = incoming::Reader::new(cfg.clone(), c.raw["label_schema"].as_str().map(str::to_string), &c.board.url(0));
     let is_installed = installed(&cfg.install);
     let began = Instant::now();
     log!("{}", incident::disclosure(Some(&cfg.root)));
@@ -1390,7 +1392,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             None => { status["complete"] = json!(false); status["reason"] = json!(error.as_deref().unwrap_or("no board read yet")); status["tasks"] = json!([]); }
         }
         for (k, v) in [("focus", if focus_error.is_some() { Value::Null } else { json!(s.focus) }), ("focus_error", json!(focus_error)), ("focus_command",command), ("kids", json!(kids)), ("issues", json!(issues)), ("log", json!(log)),
-            ("tasks_age_seconds", json!(s.tasks_read.map(|t| t.elapsed().as_secs()))), ("request", json!(request)), ("events_since", json!(s.events_since)),
+            ("tasks_age_seconds", json!(s.tasks_read.map(|t| t.elapsed().as_secs()))), ("request", json!(request)), ("events_since", json!(s.events_since)), ("incoming", incoming.tick()),
             ("gui", json!({"listed": s.gui().is_ok(), "reason": s.gui().err(), "stale_grant": s.gui_stale, "grants": grants, "binary": cfg.install.join("taskq")})), ("waits", json!(s.waits.iter().map(|(n, reason)| json!({"task": n, "reason": reason})).collect::<Vec<_>>())),
             ("execution_waits", json!(s.execution_waits)), ("capacity", s.capacity_json()), ("hold", json!(s.hold)), ("access", json!(access.iter().map(|e| e.json()).collect::<Vec<_>>())), ("agents", json!(agents.as_ref().map(|a| &a.1))),
             ("stop_progress",json!(s.stop_progress)), ("poll", json!(cfg.poll)),

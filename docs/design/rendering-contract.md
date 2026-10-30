@@ -48,7 +48,7 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 - Follow [approved decisions](../reviews/visual-decisions.md) and [I1–I6](icon-summary.md). Current task counters remain separate from event counts.
 - All four surfaces share the selected period (default 24 hours). Exactly six equal source bins for every period, oldest left; presets use epoch-aligned whole bins of period / 6, newest containing now. Exact custom [start,end) bounds stay fixed.
 - Deduplicate by board, event identity and kind before binning. Preserve closed, failed, ask and blocked counts and missing-source information.
-- The UI30 target uses stack A from I3/I4: Closed, New, Ask, Failed, one shared quantitative scale. First-admission provenance and missing-series coverage follow I3; retries are not arrivals. Current source remains closed-only until #1931 implements and qualifies this target.
+- The canonical renderer uses stack A from I3/I4: Completed, New, Ask, Failed, one shared quantitative scale. I3 owns first-admission provenance, missing-series coverage and compatibility; retries are not arrivals. Native qualification remains separate (R12).
 - Incomplete coverage never becomes zero or enters the peak. Detail retains observed lower bounds and missing sources. Collection start alone cannot prove uninterrupted coverage.
 
 <a id="r-ui5-cadence-raster"></a>

@@ -1,0 +1,99 @@
+# Summary A implementation — #1931
+
+The shared Rust SVG now stacks Completed, New, Ask and Failed on one linear event scale. Six chronological bins, current Work / Ask / Ready+Blocked counters, exact 1–99/99+, native numeral outlines, slot widening, compact Q and pause behavior are retained. Blocked remains exact History detail. Unknown New never erases known legacy completion/question history or becomes a complete zero.
+
+## Candidate and authority
+
+Original reviewed implementation: `c9af254b50631aa8b552005957b32195d255dbcc`, based on `04e43344db6dafcd94c46e06ecd13d908ebcefa2`; initial hand-in: `072b33b012e4cbda3bd4061f80b16dee311157ca`. The current conflict-resolution candidate is recorded below. No installation, service restart, permission change, real task admission or PM message was performed.
+
+R13 applies the selected I3/I4 target and owner answers `6524988858` (M6), `6525408616` (M1), plus steer `6525411430`. Amended rules: M1, M6, I3, R-UI4 and the menu Contract detail's History source. I1/I2, R1/R8/R9/R12 and the #1789 counter decisions remain protected. No R-numbered principle body changes.
+
+The v2 packet SHA-256 was verified as `e397147ee8fe6d6867af8ecfe604141e9921b0ce6c46e2f059a03851e9b3342d`; its entry, plan, acceptance, issue map and selected-A reference were inspected. Its counter reversal and B/C alternatives are not implemented.
+
+## Conflict-resolution candidate
+
+Rebased implementation `db90f4732f4586ecd0dba462be6e9886c2b394a6` is based on `33a28abccee144fbb7e98dc91af2c390ce67abf1`, as requested by the review requeue. Before resolution, GitHub reported PR #1947 `CONFLICTING`; the rebase reproduced a content conflict in `src/tray-app.js`.
+
+The resolution retains #1944's shared `api.disclosure` for History and Source, along with Summary A's per-series totals, New coverage and event-scale explanation. `git range-diff` confirms those two shared headers are the only implementation adjustment to the original patch; no counter, source, palette or native geometry changed.
+
+The old browser selector `.hist>summary>.meta` then failed with `Timeout 30000ms exceeded`. It now locates the period inside the shared disclosure label and compares its right edge to the containing summary. This repairs the test's DOM assumption while retaining its clipping protection; no bound or accepted behavior was relaxed.
+
+Fresh checks: `node tests/tray-history.browser.cjs` PASS (72 fixture/geometry cells) and `node tests/ui-polish.browser.cjs` PASS (416 geometry cells, sticky/wheel behavior and 12-route inventory; no before-control artifact supplied). The four-kind stack and unknown-source History screenshots were opened and inspected at 360 logical px / DPR 2: both disclosure headers, all six slots, exact detail and explicit unknowns remain readable. [Rebased History](07-history-rebase.png) is browser evidence, not native OS acceptance. Native observations in the original table below were not repeated; its platform limits remain unchanged under R12.
+
+| Fresh selected gate stage | Observed result |
+|---|---|
+| `python3 scripts/check.py --base 33a28abccee144fbb7e98dc91af2c390ce67abf1` | **sandbox-blocked, not PASS**; rule gate accepted M1/M6; 716 unit tests passed, 35 ignored; integration 20 passed, 1 blocked, 1 ignored; 305.046 s / 900 s |
+| Blocked integration | Same `telemetry_process::resume_records_its_result_without_releasing_the_host_hold` sandbox refusal as the original candidate; no permission, assertion or execution policy changed |
+| Remaining component/artifact stages | All 29 Node tests and 3 artifact commands PASS in 65.616 s; run separately after the full gate stopped, without a second full run |
+| Isolated offline selftest | `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest`: PASS, 113 traces, formats and 8 committed observations; board/tools intentionally unknown |
+
+Fresh browser and full-gate evidence qualifies the rebased sources. Green merge-result `merge_group` CI is still required by R12/§7; no native requalification, installation or release is claimed.
+
+## Board-budget correction
+
+Review requeue `6526745306` identified a fresh `History` on every collector restart and a coverage watermark reused as the update-list cursor. One failed source held that cursor at the month floor, causing a repeated full list and replaying resolved per-issue reads after restart. This violates the § 4 board budget; the existing first-admission semantics and Summary A geometry remain binding.
+
+The collector now seeds its initial value and scan progress from the board-matched `status.json incoming` cache. The cache contains settled source observations, unresolved sources and the successful-list cursor; it remains disposable and rebuilds solely from the board (R1/I3). A successful list advances its cursor even while coverage is incomplete. A pass reads at most five issue event histories; least-recently-tried sources run first, so a failed source cannot starve unvisited ones. Each history still reads complete pagination. A settled first admission is reused across later task updates; known absence is reused only while the issue update is unchanged. Recent updates wait for the existing 30-second settlement interval. Cache loss, malformed progress or another board cannot establish coverage or invent arrivals. Month expiry bounds the source cache.
+
+Before correction, `cargo test --locked --bin taskq collection_bounds_cold_restart_and_failed_source_requests` failed its request bound on a 1006-issue fixture. After correction, `cargo test --locked --bin taskq incoming` passed six cases in 0.86 s (24.28 s build). The request fixture restarts after every batch, requires no more than five event-source reads per pass, checks the advancing incremental list cursor, preserves the known New event and incomplete coverage, then requires only the incremental list plus the one failed source. After that source recovers, a settled restart makes one list request and no event-history requests. Cache loss/corruption, foreign identity, clock regression, settled Held-to-start admission and rolling expiry also pass; existing nonblocking-reader, provenance and tray partial-coverage guards remain.
+
+These are adapter-fixture request counts, not a deployed collector or real-network throughput measurement. The cold issue-list and each selected history may require multiple HTTP pages. OS shell/Dock, Windows/accessibility and live cross-host restart qualification remain Not tested. No rebase was performed for this budget-only requeue: it did not request `main-moved` conflict recovery (§ 7).
+
+The corrected candidate's `python3 scripts/check.py --base 33a28abccee144fbb7e98dc91af2c390ce67abf1` ran once: 718 unit tests passed, 35 ignored; integration 20 passed, 1 sandbox-blocked, 1 ignored. It stopped at the unchanged `telemetry_process::resume_records_its_result_without_releasing_the_host_hold` refusal, `sandbox-exec: sandbox_apply: Operation not permitted`, after 129.888 s / 900 s. This is **sandbox-blocked, not PASS**. No permission or assertion was relaxed. All remaining 32 component/artifact commands passed separately in 57.070 s; the History browser instrument passed its 72 cells. Isolated offline selftest passed 113 traces, formats and 8 committed observations in 1.758 s; board/tools remain intentionally unknown. No full-gate retry or native rerun was performed. R12/§7 still require green merge-result `merge_group` CI.
+
+## Data and compatibility
+
+[I3](../../icon-summary.md#first-admission-source-and-compatibility) owns the source, schema and rollback. A read-only collector uses each trusted issue's earliest recorded `taskq` label addition, including first Held admission and manual admission. Closed and label-removed issues are included. Identity is board + issue + event ID, with the original board time. Retries, resumes, requeues and later label additions do not create another arrival. The collector never blocks the service heartbeat/admission loop.
+
+`incoming` schema 1 is an optional projection in the existing `status.json`. Old readers ignore it; absent, corrupt, unsupported or foreign projections are unknown. The original four-kind `events` file is unchanged. Cache loss rebuilds from recorded board events, never creation dates/current queue counts. A failed scan or dead collector retains known lower bounds with explicit incomplete coverage. Rollback ignores the projection and preserves original files and board history; no task database or board log format is added.
+
+API references: [GitHub issue events](https://docs.github.com/en/rest/issues/events#list-issue-events), [GitLab resource label events](https://docs.gitlab.com/api/resource_label_events/). One live read of #1931 verified GitHub label event `34694958160`, `2026-10-30T13:34:09Z`, `labeled`, `taskq`. This confirms the source record, not a deployed collector or a live cross-host restart flow. GitLab parsing is fixture-tested; its live endpoint and cold full-history scan cost are Not tested.
+
+## Original-candidate verification
+
+| Check | Observed result |
+|---|---|
+| Before: `cargo test --locked --bin taskq selected_event_stack_uses_quantities_on_every_surface` | FAIL: Completed 2 + Ask 3 + Failed 1 produced peak 2, expected 6 |
+| After: the same check; `cargo test --locked --bin taskq icon::tests` | PASS; 6 passed, 1 subprocess helper ignored. Peak 6; adding New 1 gives 7. Exact geometry, rare subpixel segments, overflow-safe sums, palette, empty Q, pause and #1789 counter/canvas bounds retained |
+| `cargo test --locked --bin taskq incoming` | PASS, 4 cases: restart/cache loss, first Held/manual admission, retries/runtime changes, closure/label removal, missing/corrupt/foreign sources, complete zero, half-open boundaries, cross-host deduplication and nonblocking/dead collector |
+| `cargo test --locked --bin taskq admission_tests` | PASS, 2 provider parsers; earliest addition only, malformed time rejected, empty event list distinct |
+| `cargo test --locked --bin taskq approved_real_history_fixtures_use_one_six_bin_svg` | PASS; frozen day/hour and original exact event counts retained; legacy New unavailable; synthetic stack/gap/rare/overflow fixtures added. Duplicate-source failure fixed by deduplicating missing reasons without changing its assertion |
+| `node tests/tray-history.browser.cjs` | PASS, 72 cells: 12 scenarios × 2 themes × DPR 1/2; plus 3 widths × 4 fonts × DPR 1/2. Six bins, canonical SVG identity, exact/lower-bound detail, keyboard selection, refresh identity, no horizontal overflow, widened counter viewport and pause retained |
+| `python3 scripts/check.py --base 04e43344db6dafcd94c46e06ecd13d908ebcefa2` | **sandbox-blocked, not PASS**; R13 gate accepted changed M1/M6; 714 unit tests passed, 35 ignored; integration 20 passed, 1 blocked, 1 ignored. 209.087 s / 900 s; no retry |
+| Blocked integration | `telemetry_process::resume_records_its_result_without_releasing_the_host_hold`: `sandbox-exec: sandbox_apply: Operation not permitted`. No permission or assertion was relaxed |
+| Skipped gate stages run separately | All 29 `tests/*.test.cjs` scripts plus 3 artifact scripts passed: 32 commands, 60.714 s. Isolated offline selftest: 113 golden traces, formats and 9 committed observations PASS; board/tools intentionally unknown |
+| Native WebKit instrument | PASS: 14 frozen views at 360 × 800 logical / 720 × 1600 backing pixels, macOS 27.0.1 arm64. Final representative frames opened and inspected |
+| Native TaskQ snapshot adapter | PASS: isolated fixture installation, actual menu-bar geometry 34 pt @2x, final 68 × 68 Summary export. Natural-size glyphs/columns inspected; no bitmap resizing stage |
+| Actual shell presentation | **Not tested:** visible menu-bar placement, live Dock presentation, other physical displays/scales, native Windows notification area/Segoe/readability, screen readers and integrated owner review |
+
+The browser instrument used Playwright 1.64.1 and its headless Chromium shell. Tool dependencies were isolated from the repository lockfile. Full gate was run once after rebase; remaining stages were run separately after its sandbox refusal. Publication still needs green merge-result `merge_group` CI (R12, §7).
+
+The previous Closed-only/hidden-Ask/fixed-mark assertions were replaced under the approved M1/M6 change. The retained protections cover source identity, exact original event counts, stable time bins, missing coverage, type/collision bounds, compact identity, palette and pause. No check was weakened to hide an implementation failure.
+
+## Visual review set
+
+Seven images; no theme/size-only variants. All activity in the screenshots is frozen or explicitly synthetic, not a live productivity measurement.
+
+1. [Four quantitative stacks](01-stacks.png): canonical green/blue/amber/red order, equal bins, exact Blocked detail.
+2. [Legacy and partial sources](02-legacy-sources.png): unavailable New and observed lower bounds remain explicit.
+3. [One incoming interval gap](03-interval-gap.png): third bin hatched, excluded from scale, other stacks retained.
+4. [Overflow picker](04-overflow-picker.png): shared vector retains three exact counter groups and the 99+ cap; its 18px preview is dense and does not qualify menu-bar readability.
+5. [Canonical before/after](05-before-after.png): original baseline SVG, same recorded day under A, and labelled four-kind illustration. These are renderer exports, not OS shell screenshots.
+6. [Actual slot-sized export](06-native-slot.png): 34 pt @2x from TaskQ's native snapshot adapter; 68 × 68 pixels. This is an exported icon, not a capture of its placement in the OS shell.
+7. [Rebased History](07-history-rebase.png): fresh browser capture after the #1944 conflict resolution, with the shared disclosure headers and quantitative stack A.
+
+The initial offscreen WebKit instrument sometimes captured the previous SVG paint after the text had updated. A partial-New screenshot exposed the mismatch. The final instrument uses a visible isolated window, waits for two animation frames, records DOM unknown-mark counts and has a 30 s deadline. The final partial case has one DOM unknown mark and the visibly hatched third bin. This repairs the capture instrument; it does not assert an application rendering defect.
+
+## Acceptance map
+
+| Item | Result and limits |
+|---|---|
+| A1 | PASS: #1789 and I1–I6/R-UI4–5 reconciled; M1/M6 aligned under explicit answers; no counter reversal or width/type rollback |
+| A2 | PASS: shared event scale/order, six equal chronological bins, exact Blocked detail; canonical fixtures and browser/WebKit output |
+| A3 | PASS at model/adapter-fixture boundary, plus one live GitHub source read; deployed cross-host/restart collection Not tested |
+| A4 | PASS: legacy missing New unknown, known old series visible, interval gaps distinct from complete zero, retained lower bounds |
+| A5 | PASS: zero ticks, detached caps and ongoing underlines removed; no minimum colored segment height; event/productivity distinction explicit |
+| A6 | PASS at source/browser/WebKit boundaries: one Rust SVG and data projection; compact assets and native font paths retained; no study renderer shipped |
+| A7 | Logic, browser matrix, native WebKit and actual Mac slot geometry PASS; OS-shell presentation/Windows/accessibility and integrated native acceptance Not tested |
+
+Native integration remains for #1932/#1933. No release or rollout is claimed.
