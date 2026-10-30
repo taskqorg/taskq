@@ -517,6 +517,103 @@ mod create_claim_tests {
             assert_eq!((r.outcome, r.reason.as_str()), want, "{field}");
         }
     }
+
+    /// A GitLab project holding one closed research report #540 at `sha`, its report file and nothing else: no claim
+    /// issue and, in the caller's taskq.json, no `create_claim_issue`. Issues and notes are the shared JSON GitLab returns.
+    fn report_board(sha: &str, report: &str) -> (Box<dyn Board>, Rc<RefCell<Vec<Value>>>) {
+        let at = "2026-10-30T00:00:00Z";
+        let issue = move |n: u64, title: &str, labels: &[&str], state: &str| json!({"iid": n, "title": title, "description": "",
+            "labels": labels, "state": state, "author": {"id": 1}, "created_at": at, "updated_at": at});
+        let issues = Rc::new(RefCell::new(vec![issue(540, "Research report", &["taskq", "research"], "closed")]));
+        let notes: Rc<RefCell<Vec<(u64, u64, String)>>> = Rc::new(RefCell::new(vec![
+            (540, 1, "taskq: spawn worker invented:session host".into()),
+            (540, 2, format!("taskq: result {sha} attempt 1\nReport: docs/research/540.md")),
+            (540, 3, "taskq: close".into()),
+        ]));
+        let file = (format!("/projects/o%2Fr/repository/files/docs%2Fresearch%2F540.md?ref={sha}"),
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, report));
+        let list = issues.clone();
+        let mut api = api("gitlab.example", "o/r", "test");
+        *api.label_schema.borrow_mut() = Some(false);
+        api.transport = Some(Box::new(move |method, url, body| {
+            let full = url.trim_start_matches("https://gitlab.example/api/v4");
+            let path = full.split('?').next().unwrap();
+            let rest = path.strip_prefix("/projects/o%2Fr/issues").map(|r| r.trim_start_matches('/'));
+            let find = |n: &str| list.borrow().iter().position(|i| i["iid"].to_string() == n).unwrap();
+            let v = match (method, rest, rest.and_then(|r| r.split_once('/'))) {
+                _ if path == "/user" => json!({"username": "owner"}),
+                _ if path.starts_with("/projects/o%2Fr/members/all/") => json!({"access_level": 30}),
+                ("GET", _, _) if full == file.0 => json!({"encoding": "base64", "content": file.1}),
+                ("GET", Some(""), _) => json!(list.borrow().iter().filter(|i| !full.contains("state=opened") || i["state"] == "opened").collect::<Vec<_>>()),
+                ("POST", Some(""), _) => {
+                    let body = body.unwrap();
+                    let labels: Vec<_> = body["labels"].as_str().unwrap().split(',').filter(|l| !l.is_empty()).collect();
+                    let n = list.borrow().iter().filter_map(|i| i["iid"].as_u64()).max().unwrap() + 1;
+                    // GitLab keeps the description without its trailing newline (#1914)
+                    let mut created = issue(n, body["title"].as_str().unwrap(), &labels, "opened");
+                    created["description"] = json!(body["description"].as_str().unwrap().trim());
+                    list.borrow_mut().push(created);
+                    json!({"iid": n})
+                }
+                ("GET", _, Some((n, "notes"))) => json!(notes.borrow().iter().filter(|(i, ..)| i.to_string() == n).map(|(_, id, body)|
+                    json!({"id": id, "body": body, "system": false, "author": {"id": 1, "username": "owner"}, "created_at": at, "updated_at": at})).collect::<Vec<_>>()),
+                ("POST", _, Some((n, "notes"))) => {
+                    let id = 100 + notes.borrow().len() as u64;
+                    notes.borrow_mut().push((n.parse().unwrap(), id, body.unwrap()["body"].as_str().unwrap().into()));
+                    json!({"id": id})
+                }
+                ("GET", Some(n), None) => list.borrow()[find(n)].clone(),
+                ("PUT", Some(n), None) => {
+                    let (body, k) = (body.unwrap(), find(n));
+                    let mut all = list.borrow_mut();
+                    let csv = |key: &str| body[key].as_str().unwrap_or("").split(',').filter(|l| !l.is_empty()).map(String::from).collect::<Vec<_>>();
+                    let mut labels: Vec<String> = serde_json::from_value(all[k]["labels"].clone()).unwrap();
+                    labels.retain(|l| !csv("remove_labels").contains(l));
+                    labels.extend(csv("add_labels").into_iter().filter(|l| !labels.contains(l)).collect::<Vec<_>>());
+                    all[k]["labels"] = json!(labels);
+                    all[k].clone()
+                }
+                _ => panic!("unexpected {method} {url}"),
+            };
+            Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: "read" })
+        }));
+        ((KIND.board)(api), issues)
+    }
+
+    // Chain: § 7 Reports Make on GitLab -> claim issue setup -> § 1 create claims -> held drafts (#1945). Defect:
+    // gradus/cyprusbz#540, a GitLab board without `create_claim_issue`, refused Make with 'configure create_claim_issue
+    // before idempotent create', so its proposed task was filed by hand as #541. Risk: Make creates a task without a
+    // claim, leaves the key unwritten, or a retry creates a second claim issue or task.
+    #[test]
+    fn gitlab_report_make_settles_the_claim_issue_and_creates_held_drafts_once() {
+        let sha = "a".repeat(40);
+        let report = "# Question\nQ\n# Findings\nEvidence\n# Options\nPros/cons\n# Recommendation\nR\n# Proposed tasks\n```taskq-tasks\n[{\"title\":\"Follow the report\",\"goal\":\"Do the recommended change.\",\"acceptance\":[\"The change is visible.\"]}]\n```\n";
+        let (b, issues) = report_board(&sha, report);
+        let root = std::env::temp_dir().join(format!("taskq-gitlab-make-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("taskq.json"), r#"{"board": "gitlab", "repo": "o/r"}"#).unwrap();
+        let config = || -> Value { serde_json::from_str(&std::fs::read_to_string(root.join("taskq.json")).unwrap()).unwrap() };
+        let made = crate::reports::owner_act(b.as_ref(), &root, &config(), 540, &sha, "make").unwrap();
+        assert_eq!(made["report"]["decision"], "made", "{made}");
+        assert_eq!(config()["create_claim_issue"], 541, "the claim issue is written to taskq.json and read back");
+        assert_eq!(config()["repo"], "o/r", "other keys stay");
+        let claim = b.issue(541).unwrap();
+        assert_eq!(claim.title, super::super::CLAIM_TITLE);
+        assert_eq!(made["report"]["tasks_made"], json!([542]));
+        let task = b.issue(542).unwrap();
+        assert!(task.open && task.labels.contains(&"q-held".into()) && !task.labels.contains(&"taskq".into()), "{:?}", task.labels);
+        assert!(task.body.contains("Depends on #540"));
+        assert_eq!(crate::core::fold(542, &super::super::entries(b.as_ref(), 542).unwrap(), false).state, crate::core::State::Held);
+        assert!(b.comments(541).unwrap().iter().any(|c| c.body.starts_with(&format!("taskq: create-claim report.540.{sha}.1\n"))));
+        assert!(b.comments(540).unwrap().iter().any(|c| c.body == format!("taskq: report-made {sha}\n[542]")));
+        // a retry, with the written key or without it, creates nothing
+        for raw in [config(), json!({"board": "gitlab", "repo": "o/r"})] {
+            let again = crate::reports::owner_act(b.as_ref(), &root, &raw, 540, &sha, "make").unwrap();
+            assert_eq!(again["report"]["tasks_made"], json!([542]));
+            assert_eq!(issues.borrow().len(), 3);
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[cfg(test)]
