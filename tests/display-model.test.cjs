@@ -10,7 +10,7 @@ const n=s=>fx.display.all.counts.find(x=>x.state===s).n;
 assert.equal(fx.cli.split('\n')[0],'In work '+(n('doing')+n('review'))+' · Waiting for answer '+n('ask')+' · Ready '+n('ready'));
 for(const {state,name,n:v} of fx.projects[0].counts)if(v)assert(page.includes('aria-label="a · '+name+': '+v+'"'),state);
 // order and labels: page groups follow the strip order and the model names; rows inside a group follow `rank`
-const groups=[...page.matchAll(/<div class="row meta"><span>([^<]+)<\/span>/g)].map(m=>m[1]);
+const groups=[...page.matchAll(/<h2 class="section-heading task-group-heading"><span>([^<]+)<\/span>/g)].map(m=>m[1]);
 assert.deepEqual(groups,fx.display.states.filter(s=>fx.projects[0].tasks.some(t=>t.state===s.id)).map(s=>s.name));
 const shown=[...page.matchAll(/data-card="[^"]*\/(\d+)"/g)].map(m=>Number(m[1]));
 assert.deepEqual(shown,[...fx.projects[0].tasks].sort((a,b)=>a.rank-b.rank).map(t=>t.n));

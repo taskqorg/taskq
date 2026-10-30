@@ -2,7 +2,8 @@
 // The bridge is substituted; Rust settings tests cover the real tray.json adapter.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const project={root:'fixture-alpha',name:'Alpha',issues:'https://example.org/alpha/issues',alive:true,complete:true,focus:['all'],labels:[],cap_saved:{error:'Fixture'},tasks:Array.from({length:35},(_,i)=>({n:i+1,state:i%2?'ready':'doing',title:'Persist this filtered task list across restart '+(i+1),revision:1}))};
-const snapshot={font:16,theme:'dark',version:'old',projects:[project],ai:{draft:''},notify:{projects:{}}};
+project.board_kind='github';project.counts=require('./fixtures/display-model.json').display.states.map(({id:state,name})=>({state,name,n:project.tasks.filter(t=>t.state===state).length}));
+const snapshot={display:require('./fixtures/display-model.json').display,font:16,theme:'dark',version:'old',projects:[project],ai:{draft:''},notify:{projects:{}}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
