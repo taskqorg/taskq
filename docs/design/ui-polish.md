@@ -14,6 +14,10 @@ Current taskq.md and explicit owner decisions override historical snapshots. Cur
 - #1918 exclusively owns the canonical snapshot, original-op-id readback, append-only Q&A and grouped steps. #1928/#1929/#1930 consume its result; no second state overlay, history store, writer or event channel. Ask ID → spawn ID may decrease revision: numeric revision order is not acceptance proof.
 - #1738/#1739/#1740–#1743 and subsequent closed fixes stay closed. Reuse bounded reader, composer, receipts, task file transport, native adapters and remote host link. Closure is historical delivery evidence, never automatic qualification of the integrated candidate (R12).
 
+The #1928 owner note distinguishes an approved queued review as `merge queue · CI`. Use the existing queue receipt and publication detail, including CI progress when known; otherwise show progress as unknown. Keep canonical `state: review`, counters, ordering and service polling unchanged. Native session and read-only progress are separate adapter-supplied targets; older adapters' recorded `session_url` remains compatible without synthesizing a URL.
+
+[Implementation evidence for #1928](evidence/1928/README.md) records source/browser results and the remaining native and sandbox qualification gaps.
+
 ## Requirement destinations
 
 Every row is required. The named check is an existing entry to extend, not an assertion that the target already passes. Integrated functional/interaction/visual and native results are **Not tested** until evidence is attached. Scenario definitions are below. No feature removal is approved.

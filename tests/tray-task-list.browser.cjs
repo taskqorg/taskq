@@ -29,7 +29,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    assert.equal(await menu.getAttribute('aria-expanded'),'false');
    await menu.focus();await page.keyboard.press('Enter');
    assert.equal(await menu.getAttribute('aria-expanded'),'true');
-   const actions=page.locator('#taskq-popover');
+   const actions=page.locator('.task-inline-details');
    assert.deepEqual(await actions.locator('button').evaluateAll(b=>b.map(x=>x.textContent.trim())).then(x=>x.length>0),true,'failed row menu offers its controls');
    if(out&&font===16&&anchor==='top'&&(platform==='macos'||theme==='light'))await page.screenshot({path:out+'/'+(platform==='macos'?'mac':'windows')+'-'+theme+'-row-menu.png'});
    await page.keyboard.press('Escape');
@@ -74,7 +74,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    assert.equal(await page.locator('#taskq-popover').count(),0,'question details join the menu flow');
    await page.keyboard.press('Escape');assert.equal(await identity.getAttribute('aria-expanded'),'false');assert(await identity.evaluate(e=>e===document.activeElement));
    // #1781: the amber question glyph is the one direct question action (input-scroll 04); the closed row holds no question text.
-   const cue=row.locator('.question-shortcut');assert.equal(await row.locator('[data-a=workspace]').count(),1,'one direct question action');assert.equal(await cue.count(),1,'the action is the question glyph');
+   const cue=row.locator('.question-shortcut');assert.equal(await row.locator('.question-shortcut[data-a=workspace]').count(),1,'one direct question action');assert.equal(await cue.count(),1,'the action is the question glyph');
    assert((await cue.boundingBox()).height>=(coarse?44:32),'existing pointer target size retained');
    assert.equal(await row.locator('ol,[data-qac],.question-cue').count(),0,'question text and choices stay in Conversations');
    for(const [target,edge] of [[identity],[row.locator('.tqp-task-title')],[cue],[row,'top'],[row,'bottom'],[row,'left'],[row,'right']])for(const delta of [90,12]){
@@ -97,7 +97,7 @@ const snapshot={display:require('./fixtures/display-model.json').display,platfor
    const overflow=await page.locator('.content,.content-body,[data-card],.question-shortcut').evaluateAll(es=>es.filter(e=>e.scrollWidth>e.clientWidth+1).map(e=>e.className));assert.deepEqual(overflow,[],'narrow/large text reflows without root clipping');
    await identity.click();const detail=row.locator('.question-task-details');
    // #1781 G5: the details card is the neutral raised surface (amber edge only) and its Open question icon is amber (input-scroll 05)
-   const look=await detail.evaluate(e=>{const c=getComputedStyle(e),q=e.querySelector('.row-actions [data-a=workspace]'),h=e.querySelector('.popover-heading>strong');return {bg:c.backgroundColor,edge:c.borderLeftColor,icon:q&&getComputedStyle(q).color,ask:getComputedStyle(h).color};});
+   const look=await detail.evaluate(e=>{const c=getComputedStyle(e),q=e.querySelector('.popover-heading>[data-a=workspace]');return {bg:c.backgroundColor,edge:c.borderLeftColor,icon:q&&getComputedStyle(q).color,ask:getComputedStyle(q).color};});
    assert.equal(look.bg,theme==='dark'?'rgb(48, 58, 67)':'rgb(239, 242, 245)','neutral card');assert.equal(look.icon,look.ask,'amber Open question icon');assert.equal(look.edge,look.ask,'amber edge kept');
    assert.equal(await detail.locator('[data-a=control]').count(),2,'question lifecycle controls retained');await detail.getByRole('button',{name:'Pin task',exact:true}).click();assert.match(await page.locator('.task-pins').innerText(),/#4/);await page.locator('.task-pins [data-a=task-detail]').click();await page.locator('.task-pins').getByRole('button',{name:'Unpin task',exact:true}).click();assert.equal(await page.locator('.task-pins').count(),0,'question pin and unpin retained');
    if(out&&width===320&&font===20){await page.evaluate(s=>taskq.receive(s),{...s,page:undefined,theme,font,projects:[{...s.projects[0],tasks:s.projects[0].tasks.map(t=>t.n===4?{...t,title:'Task question: choose a compatible release window'}:t)}]});await row.scrollIntoViewIfNeeded();await page.screenshot({path:out+'/compact-question-'+theme+'.png'});}

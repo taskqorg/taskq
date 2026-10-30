@@ -514,13 +514,13 @@
      "expect": {
       "open": true,
       "text": {
-       "#taskq-popover": "T7"
+       ".task-inline-details": "View agent"
       },
       "fits": true
      }
     },
     {
-     "click": "#taskq-popover [data-a=control][data-control=stop]"
+     "click": ".task-inline-details [data-a=control][data-control=stop]"
     },
     {
      "expect": {
@@ -553,7 +553,7 @@
     {
      "expect": {
       "open": true,
-      "focus": "#taskq-popover"
+      "focus": ".task-inline-details"
      }
     },
     {

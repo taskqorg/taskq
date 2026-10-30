@@ -681,6 +681,10 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
     let published = object.remove("session_url").and_then(|u| u.as_str().filter(|u| crate::runtime::remote_url(u)).map(String::from));
     object.remove("session_reason");
     object.insert("local_session".into(), json!(false));
+    object.insert("native_session_url".into(), Value::Null);
+    object.insert("progress_url".into(), Value::Null);
+    object.insert("native_session_reason".into(), json!("No verified native session target"));
+    object.insert("progress_reason".into(), json!("No read-only progress target published"));
     let session = row["session"].as_str().unwrap_or("").to_string();
     let words: Vec<&str> = session.split_whitespace().collect();
     let Some((rt, id)) = words.first().and_then(|s| s.split_once(':')) else { return };
@@ -689,6 +693,10 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
     row["runtime"] = json!(rt);
     row["host"] = json!(host);
     row["local_session"] = json!(own);
+    // M3/UX30-10: native and read-only progress are distinct adapter observations.
+    if !own {
+        row["progress_url"] = json!(page.map(|p| format!("{p}{}", row["n"].as_u64().unwrap_or(0))));
+    }
     let a = crate::runtime::of(rt);
     if !a.remote && !own {
         if a.codex {
@@ -696,11 +704,13 @@ fn task_session(root: &Path, local: &str, page: Option<&str>, row: &mut Value) {
                 Some(p) => row["session_url"] = json!(format!("{p}{}", row["n"].as_u64().unwrap_or(0))),
                 None => row["session_reason"] = json!(format!("Codex session opens only on {host}")),
             }
+            row["native_session_reason"] = json!(format!("Codex session opens only on {host}"));
         }
         return;
     }
     let (_, url) = crate::runtime::session_link(root, own, rt, id, row["n"].as_u64().unwrap_or(0), row["attempt"].as_u64().unwrap_or(0), row["role"].as_str().unwrap_or(""), published);
     row["session_url"] = json!(url);
+    row["native_session_url"] = json!(url);
 }
 
 /// What the icon and the history show: in work, `ask`, ready, failed over all projects (one task per board and issue), whether
@@ -4268,6 +4278,8 @@ mod tests {
         let mut row = json!({"n": 938, "session": "codex:valid-thread win"});
         task_session(Path::new("."), "win", None, &mut row);
         assert_eq!((row["session_url"].clone(), row["runtime"].clone()), (json!("codex://threads/valid-thread"), json!("codex")), "local codex: deep link");
+        assert_eq!(row["native_session_url"], row["session_url"]);
+        assert!(row["progress_url"].is_null());
         let mut codex = json!({"session": "codex:valid-thread mac"});
         task_session(Path::new("."), "win", None, &mut codex);
         assert!(codex["session_url"].is_null());
@@ -4275,9 +4287,25 @@ mod tests {
         let mut paged = json!({"n": 7, "session": "codex:valid-thread mac"});
         task_session(Path::new("."), "win", Some("https://d/projects#board-o%2Fr-task-"), &mut paged);
         assert_eq!(paged["session_url"], "https://d/projects#board-o%2Fr-task-7", "remote codex: DashQ progress page, never codex://");
+        assert_eq!(paged["progress_url"], paged["session_url"]);
+        assert!(paged["native_session_url"].is_null());
+        assert_eq!(paged["native_session_reason"], "Codex session opens only on mac");
+        for runtime in ["codex", "codex-app"] {
+            let mut app = json!({"n": 7, "session": format!("{runtime}:valid-thread win")});
+            task_session(Path::new("."), "win", None, &mut app);
+            assert_eq!(app["native_session_url"], "codex://threads/valid-thread");
+            task_session(Path::new("."), "mac", Some("http://relay.example/progress/"), &mut app);
+            assert_eq!(app["progress_url"], "http://relay.example/progress/7");
+            assert!(app["native_session_url"].is_null());
+        }
         let mut remote = json!({"session": "claude:valid-thread mac", "session_url": url});
         task_session(Path::new("."), "win", None, &mut remote);
         assert_eq!((remote["local_session"].clone(), remote["session_url"].clone()), (json!(false), json!(url)), "remote claude: link");
+        assert_eq!(remote["native_session_url"], url);
+        let mut both = json!({"n": 7, "session": "claude:valid-thread mac", "session_url": url});
+        task_session(Path::new("."), "win", Some("https://relay.example/progress/"), &mut both);
+        assert_eq!(both["native_session_url"], url);
+        assert_eq!(both["progress_url"], "https://relay.example/progress/7");
         let mut forged = json!({"session": "claude:valid-thread mac", "session_url": "https://evil.example/session_1"});
         task_session(Path::new("."), "win", None, &mut forged);
         assert!(forged["session_url"].is_null(), "only a canonical claude.ai URL");

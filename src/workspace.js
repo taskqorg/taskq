@@ -35,21 +35,22 @@ const {create}=execution.module('workspace',{
     const p=view.S.projects.find(p=>p.issues===row.board&&(!row.root||p.root===row.root)),t=p?.tasks?.find(t=>t.n===row.task);
     const composer=!row.archived&&p&&t?.state==='ask'?api.answerComposer(p,t):{};
     // #1781: Task info above the title; the title row holds the board, Mark read and Archive icons (input-scroll 04)
-    const ev=row.event,url=row.board+'/'+row.task,busy=!!view.messageBusy;
-    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('button',{'data-a':'message-delete','data-key':ev.key,disabled:busy},'Delete permanently'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
+    const ev=row.event,url=t?.url||row.board+'/'+row.task,busy=!!view.messageBusy;
+    return {header:[h('details',{class:'ids conversation-info','data-view-key':'answer-ids:'+row.id},h('summary',null,icons.icon('info'),'Task info'),ev?.archived&&h('button',{'data-a':'message-delete','data-key':ev.key,disabled:busy},'Delete permanently'),h('p',{class:'meta'},'Task #'+row.task+' · attempt '+(t?.attempt??'unknown')+' · '+(t?.role||'Role unknown')+' · '+(t?.host||'Host unknown')+' · question revision '+(t?.revision??row.revision??'unknown'))),
      h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},(p?.name||row.project||'Board')+' · '+row.title),
-      h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':'github')),
+      h('a',{class:'compact-action',href:url,'data-url':url,title:'Open #'+row.task+' on the board','aria-label':'Open #'+row.task+' on the board'},icons.icon(p?.board_kind==='gitlab'?'gitlab':p?.board_kind==='github'?'github':'external-link')),
       ev&&!row.archived&&!ev.read&&icons.button('check-check','Mark read',{'data-a':'message-read','data-key':ev.key,class:'compact-action',disabled:busy}),
       row.archived?h('button',{'data-a':'thread-restore','data-thread':row.id,disabled:busy},'Restore'):ev&&icons.button('archive','Archive',{'data-a':'message-archive','data-key':ev.key,class:'compact-action',disabled:busy}))],reading:[
      row.archived&&h('p',{role:'status'},'Archived in TaskQ · read-only. Restore before replying.'),
      api.threadNotice(row.id),
+     t&&h('div',{class:'task-destinations'},require('./project-blocks.js').destinations(t).map(d=>d.url?h('a',{href:d.url,'data-url':d.url,'data-destination':d.kind},d.label):h('p',{class:'meta','data-destination':d.kind},d.label+' unavailable: '+d.reason))),
      // #1819: the task's pending operation (Sending, Waiting GitHub, Done, Failed with Retry), as on the menu row
      syncView.row(t?.sync),
      !p||!t?h('p',{role:'status'},'This task is unavailable in the current snapshot. Refresh or open its board; no answer was sent.'):
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
       // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
-      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?h('p',{class:'conversation-text'},t.question?.text||t.card||'No recorded question.'):[answers.answerHistory(t),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):!t.history?.length&&(answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'))]),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?[answers.answerHistory(t),h('p',{class:'conversation-text'},t.question?.text||t.card||(!t.history?.length?'No recorded question.':''))]:[answers.answerHistory(t),t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):!t.history?.length&&(answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.'))]),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -129,7 +130,7 @@ const {create}=execution.module('workspace',{
     const s=snapshot.value,active=document.activeElement,focus=state.capture().focus,scroll=view.restoreScroll??menu.querySelector('.content')?.scrollTop??0;
     document.documentElement.style.colorScheme=s?.theme||'light dark';menu.style.setProperty('--size',(s?.font||16)+'px');for(const entry of (s?.palette||'').split(';')){const [key,value]=entry.split(':');if(key&&value)menu.style.setProperty(key,value);}
     const actions=[icons.button('rotate-ccw','Refresh workspace status',{'data-a':'refresh'}),h('details',{class:'shell-overflow','data-view-key':'navigation-actions'},h('summary',{title:'Workspace navigation','aria-label':'Workspace navigation'},icons.icon('ellipsis')),h('nav',{class:'overflow-actions','aria-label':'Workspace'},[['conversations','Conversations'],['sessions','Work sessions']].map(([route,label])=>h('button',{'data-route':route},label))))];
-    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations',actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
+    renderer.render(keyed([shell.bar({title:routes[view.page]?.title||'Unavailable',home:'Workspace home',back:view.page!=='conversations'||renderer.entries().length>0,actions,windows:[icons.button('always-on-top','Always on top',{'data-a':'workspace-pin','aria-pressed':String(!!view.workspacePin)}),icons.button(view.workspaceMaximized?'minimize-2':'maximize-2',view.workspaceMaximized?'Restore window':'Enlarge window',{'data-a':'workspace-enlarge','aria-pressed':String(!!view.workspaceMaximized)}),icons.button('x','Close workspace',{'data-a':'hide'})]}),
      h('main',{class:'content'+(view.page==='conversations'?' conversation-content':'')},h('div',{class:'content-body'},view.unavailable&&h('p',{role:'status'},view.unavailable+' The surviving destination is Conversations.'),s?api.route():h('p',null,'Loading workspace. Refresh if status does not arrive.'),[view.navigationError,view.localError,s?.ai?.error].filter(Boolean).map(error=>h('p',{role:'alert'},error)),h('p',{class:'meta',role:'status','aria-live':'polite','aria-atomic':'true','data-status':'workspace'},view.notice||''))),h('footer',{class:'status-footer'},h('span',null,'TaskQ '+(s?.version?'v'+s.version:'version unknown')),h('button',{class:'workspace-resize','data-a':'workspace-resize','aria-label':'Resize workspace',title:'Resize workspace; arrow keys adjust size'}))]),'/'+view.page);
     answers.mountAnswers();if(view.page==='operations')operations.mountResources();state.restore(view.disclosures);menu.querySelector('.content').scrollTop=scroll;view.restoreScroll=null;
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
@@ -161,7 +162,7 @@ const {create}=execution.module('workspace',{
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
      if(context?.thread==='unread')api.unread();
      else if(context?.board&&context?.task)api.openTask(context.board,context.task,context.root);
-     else if(r?.kind==='question')api.openTask(r.board,r.task,r.root);
+     else if(r?.task&&r?.board)api.openTask(r.board,r.task,r.root);
      else if(r&&!conversations.reveal(r.id,false)){conversations.show(r.archived?'archive':'recent');conversations.select('event:'+r.key,false);}
     }
     view.disclosures={};view.restoreScroll=0;
@@ -218,7 +219,7 @@ const {create}=execution.module('workspace',{
      if(b.dataset.a==='toast-dismiss'){view.toast=null;api.draw();}
      else if(b.dataset.route)api.navigate(b.dataset.route,{section:'conversations'});
      // #1699 A2/A7: selecting a thread acknowledges nothing; its draft, caret and scroll stay with it
-     else if(b.dataset.a==='thread'){
+     else if(b.dataset.a==='workspace'){api.navigate('conversations',{board:b.dataset.board,root:b.dataset.root,task:+b.dataset.task});}else if(b.dataset.a==='thread'){
       const row=api.threads().find(t=>t.id===b.dataset.thread);if(!row)return;conversations.flush();
       conversations.select(row.id,false);
       view.restoreScroll=0;api.draw();state.flush();

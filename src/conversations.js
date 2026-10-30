@@ -473,7 +473,18 @@ module.exports=execution.module('conversations',{
       ]:h('p',null,'Choose a thread or New. Launched requests continue here as native turns.'))),
      h('footer',{class:'conversation-status',role:'status','aria-live':'polite'},notices[selected||'list']||'',pending?.conversation===selected&&' · Saving…',undo&&h('button',{'data-c':'undo'},'Undo archive'),failure&&failure.conversation!==selected&&h('span',null,' · Saving blocked by ',h('button',{'data-c':'reply-open','data-id':failure.conversation},api.title(items.find(c=>c.id===failure.conversation)||{title:failure.conversation})),'. Open it to resolve the receipt.'),failure?.conversation===selected&&h('button',{'data-c':'retry-save'},failure.action==='send'||failure.action==='reconcile'?'Check original delivery':['reply','watch','unwatch'].includes(failure.action)?'Check status':'Retry native save'),extra.footer));
    },
-   sessions:function(){return [h('p',{class:'meta'},'Recorded workers and reviewers. Opening a target sends no input.'),(snapshot.projects||[]).map(p=>h('section',{key:p.root},h('h2',null,p.name),(!p.alive||p.complete===false)&&h('p',{role:'status'},'Session state unknown: project snapshot stale or incomplete.'),(p.tasks||[]).filter(t=>t.session||t.until).map(t=>h('article',{key:t.n},h('a',{href:p.issues+'/'+t.n},'#'+t.n+' '+t.title),t.session&&h('p',{class:'meta'},(t.role||'Attempt')+' · '+(t.runtime||t.session)+' · '+(t.host||'Host unknown')+' · '+t.state),t.until&&h('p',{class:'meta'},blocks.parked(t)),t.session&&(t.session_url?h('a',{href:t.session_url,'data-url':t.session_url},'Open recorded session'):h('p',{class:'meta'},t.session_reason||'Verified session target unavailable.')))))),h('p',{class:'meta'},'Remote/headless dialogue uses the native runtime or existing CLI. No local session or gateway is created.')];},
+   sessions:function(){
+    const groups=(snapshot.projects||[]).map(p=>{
+     const tasks=(p.tasks||[]).filter(t=>t.session||t.until).map(t=>h('article',{key:t.n},
+      h('button',{'data-a':'workspace','data-root':p.root,'data-board':p.issues,'data-task':t.n},'#'+t.n+' '+t.title),
+      h('a',{href:t.url||p.issues+'/'+t.n,'data-url':t.url||p.issues+'/'+t.n},'Open issue'),
+      t.session&&h('p',{class:'meta'},(t.role||'Role unknown')+' · '+(t.runtime||t.session)+' · '+(t.host||'Host unknown')+' · attempt '+(t.attempt||'unknown')+' · '+(t.state_name||t.state)),
+      t.until&&h('p',{class:'meta'},blocks.parked(t)),
+      t.session&&blocks.destinations(t).map(d=>d.url?h('a',{href:d.url,'data-url':d.url},d.label):h('p',{class:'meta'},d.label+' unavailable: '+d.reason))));
+     return h('section',{key:p.root},h('h2',null,p.name),(!p.alive||p.complete===false)&&h('p',{role:'status'},'Session state unknown: project snapshot stale or incomplete.'),tasks);
+    });
+    return [h('p',{class:'meta'},'Recorded task activity. Opening a task only reads its existing thread.'),groups,h('p',{class:'meta'},'No session is created and no input is sent by reading task activity.')];
+   },
    click:function(b){
     const action=b.dataset.c;if(!action)return false;const c=api.current();
     if(action==='worker-latest'&&live){live.stick=true;live.anchor=null;draw();}
