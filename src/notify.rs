@@ -66,6 +66,20 @@ pub fn set(n: &mut Value, m: &Value) -> bool {
     true
 }
 
+/// M14 local presentation metadata, never a task/decision operation. IDs bind to exact displayed events.
+pub fn inbox_set(n: &mut Value, m: &Value) -> bool {
+    let Some(action) = m["action"].as_str().filter(|a| ["read", "clear"].contains(a)) else { return false };
+    let Some(ids) = m["ids"].as_array().filter(|ids| !ids.is_empty()) else { return false };
+    if ids.iter().any(|id| id.as_str().is_none_or(|id| id.len()>4096 || serde_json::from_str::<Vec<Value>>(id).is_err())) { return false }
+    if !n.is_object() { *n=json!({}); }
+    if !n["inbox"].is_object() { n["inbox"]=json!({}); }
+    for id in ids {
+        let id=id.as_str().unwrap();
+        if n["inbox"][id]!="cleared" { n["inbox"][id]=json!(if action=="clear" {"cleared"} else {"read"}); }
+    }
+    true
+}
+
 /// True when any kind of any project may post a banner: the first such setting asks the OS for permission.
 pub fn wants_banner(n: &Value, roots: &[String]) -> bool {
     KINDS.iter().any(|k| ["banner", "sound"].contains(&host(n, k)) || roots.iter().any(|r| ["banner", "sound"].contains(&mode(n, r, k))))
@@ -421,6 +435,24 @@ mod os {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // M14: read/clear survives restart, never alters OS cursors or downgrades a cleared event; reject invalid IPC atomically.
+    #[test]
+    fn inbox_markers_are_exact_idempotent_and_persisted() {
+        let id=json!(["https://example.org/issues","event",7,[100,"ask","9"]]).to_string();
+        let mut n=json!({"cursor":{"/p":"prior"},"kinds":{"ask":"sound"}});
+        assert!(inbox_set(&mut n,&json!({"action":"read","ids":[id]})));
+        assert_eq!(n["inbox"][&id],"read");
+        let mut saved:Value=serde_json::from_str(&n.to_string()).unwrap();
+        assert!(inbox_set(&mut saved,&json!({"action":"clear","ids":[id]})));
+        assert!(inbox_set(&mut saved,&json!({"action":"read","ids":[id]})));
+        assert_eq!(saved["inbox"][&id],"cleared");
+        let before=saved.clone();
+        assert!(!inbox_set(&mut saved,&json!({"action":"read","ids":[id,"invalid"]})));
+        assert_eq!(saved,before,"invalid batch changes nothing");
+        assert_eq!(saved["cursor"],n["cursor"]);
+        assert_eq!(saved["kinds"],n["kinds"]);
+    }
 
     fn proj(events: Value) -> Value {
         json!({"root": "/p", "name": "p", "tasks": [{"n": 7, "title": "Fix it"}], "events": events})

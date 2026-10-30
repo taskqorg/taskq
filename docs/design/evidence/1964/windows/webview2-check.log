@@ -1,0 +1,6 @@
+{"userAgent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0","width":320,"dpr":1.399999976158142,"nativeIPC":true}
+bell-before-click "Notifications · 12 unread"
+bell-before-click "Notifications · 12 unread"
+bell-before-click "Notifications · 12 unread"
+bell-before-click "Notifications · 12 unread"
+PASS M-A24/M-A25/M-A26: 4 native Windows WebView2 cells, dark/light × 16/20px at 320px; Home, exact targets, group, failures, race, clear, question retention, 99+, partial history

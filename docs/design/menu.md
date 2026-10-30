@@ -262,8 +262,20 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 
 ## M14 Notifications
 
+### Panel and attention
+
+- The header's bundled Lucide `bell` opens `notifications`, one in-menu panel, separate from `notification-settings` (OS delivery settings). Home and Attention retain current work, unresolved questions and faults; no Finished/New result rows or Results section. Conversations retains its existing result reader; its header badge counts messages/questions only, never finished results.
+- The bell badge counts unread **events**, including members of collapsed groups, capped visually at `99+`; zero has no badge. Tooltip and accessible name say `Notifications · N unread`. Incomplete sources say `Notifications · N loaded unread · history incomplete`, with a separate warning mark and reason in the panel; never `1+?` or an unknown reported as zero. Questions retain their existing question glyph/count and stay on Home until answered, regardless of notification read, clear or age.
+- Use collected results (one per exact result SHA) and retained project events, newest first; a collected result replaces its matching close-event row. Deduplicate identical board/event identities across project registrations. Each row names kind, project, task and Read/Unread; opening it marks only that event read and opens its existing task/result card. Opening the panel or expanding a group acknowledges nothing. Missing history or cached content stays explicit; no board read is needed to navigate.
+- Events of the same project, kind and numbered title series (`Cadence v4 1/10` … `10/10`) within ten minutes of the previous series member form one collapsed expandable row. Match the title prefix and denominator; distinct prefixes, projects, kinds, repeated sequence numbers and longer quiet gaps start another group. Show member and unread counts; members remain individually readable and openable in newest-first order. Unnumbered events remain individual rows; interleaved unrelated events do not split a series.
+- `Mark all read` marks the displayed snapshot, including collapsed members; later arrivals remain unread. Completed-result reads retain the existing SHA-bound board marker/readback; other event read markers are host-local. `Clear read` hides only confirmed read notifications on this host, never drops a report, accepts a result, answers a question, deletes event history or changes a task. Unread events survive. Read/clear state survives tray restart in `tray.json`; failed persistence/readback stays explicit and retains the prior state. Clearing can be repeated safely.
+- Native snapshot routes: `notifications` for loaded data; `notification-settings` for OS delivery; opt-in fixture cases `notifications-home`, `notifications-panel`, `notifications-expanded`, `notifications-result`.
+- This uses the [comparison and owner walkthrough](evidence/1964/README.md); M14 changes presentation and notification metadata only, not §2 lifecycle or OS-banner delivery. Unaffected geometry and glyphs keep the pinned visual reference.
+
+### OS delivery
+
 - The tray posts native OS notifications (macOS Notification Center, Windows toast) for new board events read from each project's `events` (§ 4 Tray). A closed task keeps its title in its banner and card.
-- Event kinds: `ask` (a question waits for the owner), `close`, `failed` and `gone`. Settings > Notifications sets each kind to Off, Silent (menu badge only), Banner or Banner with sound. Defaults: `ask` Banner with sound, `failed` and `gone` Banner, `close` Off.
+- Event kinds: `ask` (a question waits for the owner), `close`, `failed` and `gone`. Settings > Notifications (`notification-settings`) sets OS delivery for each kind to Off (no OS delivery), Silent (no OS banner), Banner or Banner with sound. Panel retention/read state is independent of these delivery modes. Defaults: `ask` Banner with sound, `failed` and `gone` Banner, `close` Off.
 - A project may override the host setting per kind (Inherit by default); the project page shows the effective value.
 - A notification names the project, the task title and the kind; a click opens the menu (or the pinned window) on that task's card, for `ask` the answer card (target TW2: the workspace task-answer context).
 - Once per event (§ 4 Tray): events at or before a project's cursor (the last notified event id), or older than the first tray start with notifications on, never notify. More than 3 events within 10 s become one summary notification per project.
@@ -315,6 +327,9 @@ Canonical selections/default candidates: [D01–D14](decision-register.md). The 
 
 [Verification](verification.md) separates historical evidence from the current candidate. General principles change per [shared-rule improvement](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules); TaskQ behavior changes here under R13.
 | M-A22 | Each kind follows its host or project setting; an event notifies once across tray restarts; a burst becomes one summary; a click opens the card; OS denial shows Blocked and posts nothing. |
+| M-A24 | Bell opens one newest-first panel; event count caps at 99+ with exact accessible count; incomplete sources are explicit; questions remain independently visible on Home. |
+| M-A25 | Series expand to every event; open reaches the exact card; mark all read preserves new arrivals; clear read preserves unread events, questions and task state across restart. |
+| M-A26 | Home has no finished-result/event feed; Notifications and delivery settings remain distinct and usable in both themes at 320 px without horizontal scroll. |
 | M-A23 | On macOS and Windows: launcher Open starts service and tray; a second Open raises the window; Quit names active work, and readback shows the service stopped and no tray pid; reopen restores both; a second tray across install folders exits. Restart reads back a new service generation and one tray pid; a non-default install's tray leaves `TaskQ.lnk` untouched; the Dock item and taskbar pin open TaskQ after a release update. |
 
 ## Contract detail

@@ -6,6 +6,7 @@
     "src/anchored-popover.js",
     "src/answer-card.js",
     "src/app-shell.js",
+    "src/notification-panel.js",
     "src/project-blocks.js",
     "src/reply-files.js",
     "src/reports.js",

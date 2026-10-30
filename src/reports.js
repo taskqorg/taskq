@@ -4,7 +4,7 @@ const {h}=require('preact'),ui=require('./ui-runtime.js'),{execution}=ui;
 // §7: both surfaces use this view; the board owns read/decision state, memory holds only an in-flight view.
 const {create,body}=execution.module('reports',{
 create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('')}){
- let expanded=false,projects=[],pages=new Map(),pending=new Map(),selected=null,notice='',full=false,draft=null,successor=null;
+ let expanded=false,projects=[],pages=new Map(),pending=new Map(),selected=null,notice='',full=false,draft=null,successor=null,readFailure='',readQueue=[];
  const receipts=new Map(),outcomes=new Map(),key=(root,n)=>root+'#'+n;
  const receiptKey=(root,n,sha)=>key(root,n)+'@'+sha;
  const active=op=>selected?.root===op.root&&selected.n===op.n&&selected.sha===op.sha;
@@ -13,7 +13,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
  function request(root,action,extra={}){
   if([...pending.values()].some(p=>p.root===root&&p.n===extra.n&&p.sha===extra.sha&&(action==='read'||p.action!=='read')))return;
   const op={id:id(),root,action,...extra};pending.set(op.id,op);send({a:'reports',...op});
-  defer(()=>{if(pending.delete(op.id)){outcome(op,'Result outcome unknown; waiting for service readback.');draw();}},180000);
+  defer(()=>{if(pending.delete(op.id)){if(op.action==='read')readFailure='Result read outcome unknown; waiting for service readback.';outcome(op,'Result outcome unknown; waiting for service readback.');api.readNext();draw();}},180000);
  }
  function summary(text,heading){
   const lines=(text||'').split('\n'),start=lines.findIndex(l=>l.replace(/^#+\s*/,'').trim().toLowerCase()===heading.toLowerCase());
@@ -46,16 +46,26 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
   unread(){return api.rows().filter(r=>!r.read);},
   count(){return projects.every(p=>pages.has(p.root)&&!pages.get(p.root).unknown)?api.unread().length:null;},
   current(){return selected;},
+  feedback(){return notice;},
+  readFailure(){return readFailure;},
+  markRead(rows){
+   readFailure='';const seen=new Set([...readQueue,...pending.values()].map(r=>receiptKey(r.root,r.n,r.sha)));
+   for(const r of rows)if(!seen.has(receiptKey(r.root,r.n,r.sha))){readQueue.push(r);seen.add(receiptKey(r.root,r.n,r.sha));}
+   api.readNext();
+  },
+  // M14: serialize bulk reads through the existing bounded native command queue.
+  readNext(){if([...pending.values()].some(p=>p.action==='read'))return;const r=readQueue.shift();if(r)request(r.root,'read',{n:r.n,sha:r.sha});},
   open(root,n){return execution.action('reports.card.open',()=>{const r=api.rows().find(r=>r.root===root&&r.n===n);if(!r)return;selected={...r};expanded=true;full=false;const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';draft=null;successor=prior?.successor||null;draw();if((r.body||r.kind==='task')&&!r.read)request(root,'read',{n,sha:r.sha});})();},
   move(step){const rows=api.rows(),i=rows.findIndex(r=>r.root===selected?.root&&r.n===selected?.n),r=rows[i+step];if(r)api.open(r.root,r.n);},
   act(action,text){if(!selected)return;outcome(selected,'',null);request(selected.root,action,{n:selected.n,sha:selected.sha,...(text===undefined?{}:{text})});draw();},
   receive(r){
    const op=pending.get(r.id);if(!op||op.root!==r.root)return false;pending.delete(r.id);const shown=active(op);
    if(r.reason){
+    if(op.action==='read')readFailure=r.reason;
     if(r.report?.n===op.n&&r.report.sha===op.sha)remember(op,r.report);
     const made=Array.isArray(r.receipts)?r.receipts:[],uncertain=r.receipt?.task;
     outcome(op,r.reason+(made.length?' · Created held drafts: '+made.map(n=>'#'+n).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: #'+uncertain:''),undefined,shown);
-    draw();return true;
+    api.readNext();draw();return true;
    }
    if(r.report?.n===op.n&&r.report.sha===op.sha){
     const p=pages.get(r.root),report=remember(op,r.report);
@@ -64,8 +74,8 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
     if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>'#'+n).join(', '):'Report dropped.'):(op.action==='later'?'Kept in Reports for later.':''),undefined,shown);
     if(r.successor>0){outcome(op,'Created held draft. Read it back and start it separately.',{n:r.successor,url:r.successor_url||(typeof r.report.url==='string'?r.report.url.replace(/\d+$/,String(r.successor)):null)},shown);if(shown&&draft===op.action)draft=null;}
     if(op.action==='accept')outcome(op,'Result accepted.',undefined,shown);
-   }else outcome(op,'Report receipt unknown; waiting for service readback.',undefined,shown);
-   draw();return true;
+   }else {if(op.action==='read')readFailure='Result read receipt unknown; waiting for service readback.';outcome(op,'Report receipt unknown; waiting for service readback.',undefined,shown);}
+   api.readNext();draw();return true;
   },
   click(b,ps){
    const action=b.dataset.report;if(!action)return false;
@@ -81,15 +91,14 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    else if(['accept','make','later','drop'].includes(action))api.act(action);
    return true;
   },
-  attention(){return api.unread().map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},(r.kind==='task'?'Finished':'Report')+' · '+(projects.find(p=>p.root===r.root)?.name||'Project')+' · #'+r.n+(r.kind==='task'?' · New result':' · Needs decision')),h('span',null,r.title)));},
   threads(){return api.rows().map(r=>({id:'task:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'/'+r.n,root:r.root,report:r.n,title:r.title,result:r.result,updated:r.closed*1000,status:r.kind==='task'?'Finished':'Report',marker:r.read?'':r.kind==='task'?'New result':'Needs decision'}));},
-  section(ps){
+  section(ps,reader=false){
    api.sync(ps);const loaded=api.count()!==null,rows=api.rows(),busy=selected&&[...pending.values()].some(p=>p.root===selected.root&&p.n===selected.n&&p.action!=='read'),project=root=>projects.find(p=>p.root===root)?.name||'Project unavailable';
    const ordinary=selected?.kind==='task',position=rows.findIndex(r=>r.root===selected?.root&&r.n===selected?.n);
    return h('section',{class:'reports-section group','aria-label':'Results',key:'reports'},
-    h('button',{class:'project',type:'button','data-report':'toggle','aria-expanded':String(expanded)},'Results · '+(loaded?rows.length:'unknown'),api.unread().length?' · '+api.unread().length+' new':''),
+    !reader&&h('button',{class:'project',type:'button','data-report':'toggle','aria-expanded':String(expanded)},'Results · '+(loaded?rows.length:'unknown'),api.unread().length?' · '+api.unread().length+' new':''),
     expanded&&h('div',{class:'reports-content body'},
-     selected&&h('div',{class:'options'},h('button',{'data-report':'back'},'All results'),h('button',{'data-report':'previous',disabled:position<=0},'Previous'),h('button',{'data-report':'next',disabled:position<0||position>=rows.length-1},'Next')),
+     selected&&h('div',{class:'options'},h('button',{'data-report':'back'},reader?'All events':'All results'),h('button',{'data-report':'previous',disabled:position<=0},'Previous'),h('button',{'data-report':'next',disabled:position<0||position>=rows.length-1},'Next')),
      notice&&h('p',{role:'status'},notice),
      successor&&h(successor.url?'a':'span',{href:successor.url,'data-url':successor.url},'Read held draft #'+successor.n),
      projects.map(p=>pages.get(p.root)?.reason&&h('p',{role:'status',key:p.root},p.name+': '+pages.get(p.root).reason)),
