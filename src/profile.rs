@@ -990,6 +990,102 @@ fn store_line(install:&Path)->String {
     read().unwrap_or_else(|e|format!("Telemetry store: unknown ({e})\n"))
 }
 
+/// The PM telemetry procedure that `profile watch` serves and `taskq help` links.
+pub const WATCH_DOC: &str = "https://github.com/taskqorg/taskq/blob/main/docs/design/profiling.md#pm-telemetry-watch";
+
+/// #1910 one stall line for a `status.json` task row at `now` (Unix s), thresholds of [`WATCH_DOC`]; a row matches its first rule.
+fn stall(t:&serde_json::Value,now:u64)->Option<String> {
+    let since=|k:&str|t[k].as_u64().map(|s|now.saturating_sub(s));
+    let age=|s:u64|crate::age(s as i64);
+    let reason=match t["state"].as_str()? {
+        "doing" => since("updated").filter(|s|*s>3600).map(|s|format!("doing, no board event for {}",age(s))),
+        "ready" => since("since").filter(|s|*s>900).map(|s|format!("ready for {}{}",age(s),
+            t["admission"]["code"].as_str().map_or(String::new(),|c|format!(" (admission {c})")))),
+        "ask" => since("since").filter(|s|*s>1800).map(|s|format!("ask unanswered for {}",age(s))),
+        "review" => t["publication"]["since"].as_u64().map(|s|now.saturating_sub(s)).filter(|s|*s>1800).map(|s|format!("merge queue for {}",age(s))),
+        "later" => t["until"].as_str().filter(|u|*u<crate::board::stamp(now as i64).as_str()).map(|u|format!("later past its until {u}")),
+        _ => None,
+    };
+    let reason=reason.or_else(|| (t["stuck"]==true).then(|| format!("stuck in {} for {}",t["state"].as_str().unwrap_or("unknown"),age(t["age_s"].as_u64().unwrap_or(0)))))?;
+    Some(format!("#{} {reason}",t["n"]))
+}
+
+/// #1910 action errors that are new (none in the previous window) or growing against it; counts are [previous, current].
+fn action_lines(counts:&BTreeMap<(String,String),[u64;2]>)->Vec<String> {
+    counts.iter().filter(|(_,[p,c])|c>p).map(|((op,err),[p,c])|
+        format!("{op} {err}: {c}{}",if *p==0 {" (new)".into()} else {format!(" (previous {p})")})).collect()
+}
+
+/// #1910 one cadence line from a root's `events` lines and `status.json` rows over `[from, now]` (Unix s).
+fn cadence(project:&str,events:&str,tasks:&[serde_json::Value],from:u64)->(String,Vec<String>) {
+    let mut closed=0;
+    let mut health=Vec::new();
+    for l in events.lines() {
+        let mut w=l.split_whitespace();
+        let (Some(at),Some(n),Some(kind))=(w.next().and_then(|t|t.parse::<u64>().ok()),w.next(),w.next()) else {continue};
+        if at<from {continue;}
+        match kind {"close"=>closed+=1,"failed"|"gone"=>health.push(format!("{project} {n} {kind}")),_=>{}}
+    }
+    let new=tasks.iter().filter(|t|t["created"].as_u64().is_some_and(|c|c>=from)).count();
+    let net=new as i64-closed as i64;
+    (format!("{project}: closed {closed} · new {new} · net {net:+} · open {}",tasks.len()),health)
+}
+
+/// #1910 `taskq profile watch [--since W]`: the PM telemetry pass over this install, no board calls ([`WATCH_DOC`]).
+pub fn watch(install:&Path,since:Option<&str>)->Result<String,String> {
+    let now_ms=now_ms().ok_or("system clock before 1970")?;
+    let window=since.unwrap_or("1h");
+    let from=since_ms(window,now_ms)?;
+    let (now,start)=(now_ms/1000,from/1000);
+    let mut out=format!("PM telemetry watch: this install, last {window}; growth against the {window} before; no board calls\nProcedure: {WATCH_DOC}\n");
+    let (mut stalls,mut health,mut cadences)=(Vec::new(),Vec::new(),Vec::new());
+    for root in crate::host::projects(install).map_err(|e|e.to_string())? {
+        let name=root.file_name().map_or("project".into(),|n|n.to_string_lossy().into_owned());
+        let status=crate::data::json(&crate::dot(&root).join("status.json"));
+        let st=match &status {Ok(Some(st)) if st["at"].as_u64().is_some_and(|at|now.saturating_sub(at)<=2*st["poll"].as_u64().unwrap_or(60).max(1))=>st,
+            _=>{stalls.push(status_line(&name,&status,now));continue}};
+        let project=st["project"].as_str().unwrap_or(&name).to_owned();
+        let tasks=st["tasks"].as_array().cloned().unwrap_or_default();
+        stalls.extend(tasks.iter().filter_map(|t|stall(t,now)).map(|s|format!("{project} {s}")));
+        let events=fs::read_to_string(crate::dot(&root).join("events")).unwrap_or_default();
+        let (line,h)=cadence(&project,&events,&tasks,start);
+        cadences.push(line);health.extend(h);
+    }
+    let list=|title:&str,v:&[String]|if v.is_empty() {format!("{title}: none\n")} else {format!("{title}:\n{}",v.iter().map(|l|format!("- {l}\n")).collect::<String>())};
+    out+=&list("Stalls",&stalls);
+    out+=&match crate::telemetry::diagnostic::action_errors(install,from.saturating_sub(now_ms-from),from) {
+        Ok(counts)=>list("Action errors, new or growing",&action_lines(&counts)),
+        Err(e)=>format!("Action errors: unknown ({e})\n"),
+    };
+    let mut projection=Projection::new(Some(from),Some("board"));
+    out+=&match crate::telemetry::visit_samples(install,&["board"],|lane,sample|projection.push(lane,sample)) {
+        Ok(())=>board_watch(&projection.finish().1),
+        Err(e)=>format!("Board: unknown ({e})\n"),
+    };
+    out+=&list("Failed or gone",&health);
+    out+=&list(&format!("Cadence per board, last {window} (new: open tasks created in the window)"),&cadences);
+    Ok(out)
+}
+
+/// #1910 board calls in the window: totals, then each operation over 1 % failed, and a lowest `remaining` under 500.
+fn board_watch(rows:&[Row])->String {
+    let mut ops:BTreeMap<&str,(u64,u64)>=BTreeMap::new();
+    let mut low:Option<u64>=None;
+    for r in rows.iter().filter(|r|r.kind=="board") {
+        let o=ops.entry(r.name.as_deref().unwrap_or("unknown")).or_default();
+        o.0+=1;
+        if r.outcome.as_deref()==Some("failed") {o.1+=1;}
+        if let Some(m)=r.remaining {low=Some(low.map_or(m,|l|l.min(m)));}
+    }
+    let (calls,failed)=ops.values().fold((0,0),|a,o|(a.0+o.0,a.1+o.1));
+    if calls==0 {return "Board: unknown (no board calls recorded in the window)\n".into();}
+    let pct=|f:u64,n:u64|f as f64*100./n as f64;
+    let mut out=format!("Board: {calls} calls · failed {failed} ({:.2}%) · lowest remaining {}\n",pct(failed,calls),low.map_or("unknown (not reported)".into(),|l|l.to_string()));
+    for (op,(n,f)) in ops.iter().filter(|(_,(n,f))|pct(*f,*n)>1.) {out+=&format!("- {op} failed {f} of {n} ({:.2}%)\n",pct(*f,*n));}
+    if low.is_some_and(|l|l<500) {out+="- rate limit: remaining under 500\n";}
+    out
+}
+
 /// § 5 `taskq profile export|tasks|board [--since D]` over this host's retained log; no board access.
 pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, String> {
     if name == "guide" {
@@ -1000,7 +1096,8 @@ pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, S
         if since.is_some() {return Err("profile health does not accept --since".into());}
         return Ok(health(install));
     }
-    if !["export", "tasks", "board", "actions"].contains(&name) { return Err(format!("unknown profile view: {name} (guide, export, tasks, board, actions or health)")); }
+    if name=="watch" {return watch(install,since);}
+    if !["export", "tasks", "board", "actions"].contains(&name) { return Err(format!("unknown profile view: {name} (guide, export, tasks, board, actions, health or watch)")); }
     let now = now_ms().ok_or("system clock before 1970")?;
     let since = since.map(|s| since_ms(s, now)).transpose()?;
     if name=="export" {return crate::telemetry::export(install,since);}
@@ -1011,7 +1108,7 @@ pub fn view(install: &Path, name: &str, since: Option<&str>) -> Result<String, S
     match name {
         "tasks" => render_tasks_rows(&header,&rows).map_err(String::from),
         "board" => render_board_rows(&header,&rows).map_err(String::from),
-        _ => Err(format!("unknown profile view: {name} (guide, export, tasks, board, actions or health)")),
+        _ => Err(format!("unknown profile view: {name} (guide, export, tasks, board, actions, health or watch)")),
     }
 }
 
@@ -1535,6 +1632,43 @@ Transitions: 9 unique of 11 rows"), "{tasks}");
         assert_eq!(since_ms("2h", 10_000_000), Ok(2_800_000));
         assert!(since_ms("2w", 1).is_err() && since_ms("h", 1).is_err() && since_ms("1日", 1).is_err() && since_ms("", 1).is_err());
         assert!(view(Path::new("/nonexistent-taskq"), "lunch", None).unwrap_err().contains("unknown profile view"));
+    }
+
+    #[test]
+    fn watch_flags_the_pm_thresholds() {
+        // Risk (#1910): a PM telemetry pass that misses a stall, a growing error or a board failure, or flags a healthy row as one.
+        let now=1_800_000_000;
+        let row=|v:serde_json::Value|stall(&v,now);
+        assert_eq!(row(serde_json::json!({"n":1,"state":"doing","updated":now-3601})).as_deref(),Some("#1 doing, no board event for 1h"));
+        assert_eq!(row(serde_json::json!({"n":2,"state":"doing","updated":now-3600})),None);
+        assert_eq!(row(serde_json::json!({"n":3,"state":"ready","since":now-901,"admission":{"code":"capacity"}})).as_deref(),Some("#3 ready for 15m (admission capacity)"));
+        assert_eq!(row(serde_json::json!({"n":4,"state":"ask","since":now-1801})).as_deref(),Some("#4 ask unanswered for 30m"));
+        assert_eq!(row(serde_json::json!({"n":5,"state":"review","publication":{"since":now-1801}})).as_deref(),Some("#5 merge queue for 30m"));
+        assert_eq!(row(serde_json::json!({"n":6,"state":"later","until":"2000-01-01T00:00:00Z"})).as_deref(),Some("#6 later past its until 2000-01-01T00:00:00Z"));
+        assert_eq!(row(serde_json::json!({"n":7,"state":"later","until":"2999-01-01T00:00:00Z"})),None);
+        assert_eq!(row(serde_json::json!({"n":8,"state":"held","stuck":true,"age_s":7200})).as_deref(),Some("#8 stuck in held for 2h"));
+        let counts=BTreeMap::from([(("a".into(),"exit".into()),[0,2]),(("b".into(),"timeout".into()),[3,4]),(("c".into(),"exit".into()),[5,5]),(("d".into(),"exit".into()),[2,0])]);
+        assert_eq!(action_lines(&counts),["a exit: 2 (new)","b timeout: 4 (previous 3)"]);
+        let events=format!("{} #1 close a
+{} #2 close b
+{} #3 failed c exit
+{} #4 gone d
+not an event
+",now-7200,now-60,now-30,now-10);
+        let tasks=[serde_json::json!({"created":now-100}),serde_json::json!({"created":now-100}),serde_json::json!({"created":now-9000})];
+        let (line,health)=cadence("o/a",&events,&tasks,now-3600);
+        assert_eq!(line,"o/a: closed 1 · new 2 · net +1 · open 3");
+        assert_eq!(health,["o/a #3 failed","o/a #4 gone"]);
+        let call=|name:&str,outcome:&str,remaining:Option<u64>|Row {kind:"board".into(),name:Some(name.into()),outcome:Some(outcome.into()),remaining,..Default::default()};
+        let mut rows:Vec<Row>=(0..99).map(|_|call("list","ok",Some(4000))).collect();
+        rows.push(call("list","failed",Some(450)));
+        rows.push(call("claim","failed",None));
+        let board=board_watch(&rows);
+        assert_eq!(board,"Board: 101 calls · failed 2 (1.98%) · lowest remaining 450
+- claim failed 1 of 1 (100.00%)
+- rate limit: remaining under 500
+","list at 1.00% stays under the 1% flag: {board}");
+        assert!(board_watch(&[]).contains("unknown"));
     }
 
 }

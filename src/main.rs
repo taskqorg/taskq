@@ -89,7 +89,7 @@ const USAGE: &str = "taskq agents
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
  taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
- taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
+ taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
  taskq cleanup [--force] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
@@ -102,9 +102,33 @@ const USAGE: &str = "taskq agents
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
- taskq tray [--open | --snapshot DIR [--route R,..]] | taskq selftest | taskq --version
+ taskq tray [--open | --snapshot DIR [--route R,..]] | taskq selftest | taskq --version | taskq help [--json]
 Writes to a task take [--op-id ID] [--revision R] [--json] (taskq.md section 5).
 Text templates and limits: taskq.md sections 1, 2, 5, 7.";
+
+/// #1910: the one PM command catalog; `taskq help` renders it, `taskq help --json` prints it for other PM surfaces.
+const PM_COMMANDS: &str = include_str!("pm-commands.json");
+
+fn help(json: bool) -> Res<String> {
+    if json { return Ok(PM_COMMANDS.trim_end().into()); }
+    let catalog: Value = serde_json::from_str(PM_COMMANDS).map_err(|e| format!("PM command catalog: {e}"))?;
+    let mut out = format!("{USAGE}
+
+PM commands (catalog: taskq help --json):
+");
+    for c in catalog["commands"].as_array().into_iter().flatten() {
+        out += &format!("  {}
+      {}
+", c["use"].as_str().unwrap_or_default(), c["purpose"].as_str().unwrap_or_default());
+    }
+    out += "PM procedures:
+";
+    for p in catalog["procedures"].as_array().into_iter().flatten() {
+        out += &format!("  '{}': {}; procedure: {}
+", p["trigger"].as_str().unwrap_or_default(), p["command"].as_str().unwrap_or_default(), p["doc"].as_str().unwrap_or_default());
+    }
+    Ok(out.trim_end().into())
+}
 
 // ---------- arguments ----------
 
@@ -2726,7 +2750,7 @@ fn run(argv: &[String]) -> Res<()> {
         telemetry::diagnostic::select(selector,Duration::from_millis(milliseconds),limit)?;
     } else if a.one("diagnose-ms").is_some() || a.one("diagnose-limit").is_some() {return Err("diagnostic limits require --diagnose".into());}
     if a.pos.is_empty() || a.pos.first().is_some_and(|s| s == "help") || a.pos.iter().any(|s| s == "-h") || a.flags.contains_key("help") {
-        println!("{USAGE}");
+        println!("{}", help(a.flags.contains_key("json"))?);
         return Ok(());
     }
     a.read_text(&mut std::io::stdin().lock())?;
@@ -5272,6 +5296,19 @@ mod tests {
         run(&["service".into(), "pause".into(), "--help".into()]).unwrap();
         run(&["close".into(), "12".into(), "--help".into()]).unwrap();
         assert!(USAGE.contains("--recommend K"));
+        // Risk (#1910): the PM catalog drifts from the CLI, or help stops rendering it for PM surfaces.
+        let catalog: Value = serde_json::from_str(PM_COMMANDS).unwrap();
+        let text = help(false).unwrap();
+        assert!(text.starts_with(USAGE));
+        for c in catalog["commands"].as_array().unwrap() {
+            let (name, usage) = (c["name"].as_str().unwrap(), c["use"].as_str().unwrap());
+            let mut words = name.split(' ');
+            let first = words.next().unwrap();
+            assert!((USAGE.contains(&format!("taskq {first}")) || USAGE.contains(&format!("taskq service {first}"))) && words.all(|w| USAGE.contains(&format!("|{w}|"))), "{name} is not a taskq command");
+            assert!(text.contains(usage) && text.contains(c["purpose"].as_str().unwrap()), "{name}");
+        }
+        assert!(text.contains("'taskq телеметрия': taskq profile watch --since 1h; procedure: ") && text.contains(profile::WATCH_DOC));
+        assert_eq!(serde_json::from_str::<Value>(&help(true).unwrap()).unwrap(), catalog);
         assert!(USAGE.contains("--snapshot DIR"));
         assert!(USAGE.contains("taskq service capacity [--host H] [--max N|none] [--claude N] [--codex N] [--codex-app N] [--load-gate on|off] [--cpu-max P] [--memory-min P] [--claim any|labelled] [--default-runtime claude|codex]"));
         run(&["service".into(), "capacity".into(), "--help".into()]).unwrap();

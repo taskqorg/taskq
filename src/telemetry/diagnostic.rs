@@ -170,6 +170,33 @@ pub fn actions(install:&Path,since:Option<u64>)->Result<String,String> {
     })
 }
 
+/// #1910 `profile watch`: failed actions with an error class per operation, counted before `split` and from it on.
+pub fn action_errors(install:&Path,from:u64,split:u64)->Result<BTreeMap<(String,String),[u64;2]>,String> {
+    let capture=capture().ok();
+    if let Some(capture)=capture {capture.flush()?;}
+    tracing::subscriber::with_default(tracing::subscriber::NoSubscriber::default(),|| {
+        let reader=coreq::telemetry::Reader::open(&install.join("telemetry.log/universal.sqlite3"))?;
+        let mut counts=BTreeMap::new();
+        let mut cursor=0;
+        loop {
+            let page=reader.export_kinds(&["method"],from.min(i64::MAX as u64) as i64,cursor,1024)?;
+            for row in page["events"].as_array().ok_or("invalid action page")? {
+                let event=&row["observation"];
+                if event["outcome"]!="failed" {continue;}
+                let error=event["error"].as_str().filter(|e|*e!="none").unwrap_or("unknown");
+                let operation=event["operation"].as_str().ok_or("missing action operation")?;
+                let at=event["started_ms"].as_u64().ok_or("missing action time")?;
+                if at<from {continue;}
+                let c:&mut [u64;2]=counts.entry((operation.to_owned(),error.to_owned())).or_default();
+                c[usize::from(at>=split)]+=1;
+            }
+            if page["more"]==false {break;}
+            cursor=page["next"].as_i64().ok_or("missing action cursor")?;
+        }
+        Ok(counts)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

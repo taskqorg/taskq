@@ -148,6 +148,35 @@ Churn (#1905), observe only: an open task over 100 board notes, or with more tha
 | Command | Does |
 |---|---|
 | `taskq profile [export\|tasks\|board] [--since 30m\|24h\|7d]` | no board; this host's retained log, all projects ([detail](profiling.md)). Bare: § 4. `export`: JSON lines, a header (columns, window, samples), one row per observation: `kind at_ms project task attempt entry name from to runtime host us prev_s outcome error remaining calls tokens input_tokens cache_read_tokens cache_write_tokens model output_tokens unknown` (schema 3). `tasks`: time in state (`Project Task State Runtime Host Count Total p50/p95/max`). `board`: operations (`Operation Count p50/p95/max Failed% Errors Lowest-remaining`). Unknown reads unknown with reason, never zero |
+| `taskq profile watch [--since 1h]` | no board; the [PM telemetry watch](#pm-telemetry-watch) pass of this install |
+
+## PM telemetry watch
+
+The PM procedure behind the trigger `taskq телеметрия` (#1910). It is listed in the PM command catalog `src/pm-commands.json`, which `taskq help` renders and `taskq help --json` prints for other PM surfaces; no other repository keeps a copy.
+
+Run `taskq profile watch [--since W]` (default `1h`). It reads only this install: the `status.json` and `events` of each registered project, the retained action store and the board samples. It makes no board call. Other hosts join after #1832.
+
+Checks and thresholds, printed in this order with `none` when clean:
+
+| Section | Flags |
+|---|---|
+| Stalls | `doing` with no board event for more than 1 h; `ready` for more than 15 min (with its admission code, to see if the host had free slots); `ask` unanswered for more than 30 min; `review` waiting in the merge queue for more than 30 min; `later` past its `--until`; any other row the service marks stuck; a project whose `status.json` is missing or older than two polls |
+| Action errors | a failed action class (operation, error) that is new or grows against the previous window of the same length |
+| Board | calls, failures and the lowest rate-limit `remaining`; an operation over 1 % failed; `remaining` under 500 |
+| Failed or gone | `failed` and `gone` events in the window |
+| Cadence | per board: closes, new open tasks, net and open count in the window |
+
+Actions:
+
+- Fix technical causes yourself. File one finding task per root cause; do not file a third follow-up on one symptom.
+- Batch owner-only items into one ask.
+- Check that each close matches its acceptance. A task closed on the board (not by taskq) is suspect: read who closed it. Known cause: a GitLab closing keyword in MR text closes the issue on merge, even inside "Do not close #N".
+- Answer the open `ask` rows that are the PM's to answer.
+- Report in short Russian: anomalies only, plus one cadence line per host; `норм` when clean.
+
+Known baseline (2026-10-30, 1 h window), not news: `cleanup.git` `merge_base`/branch `exit` on almost every call (mac, win); `runtime.stop` `stop-unconfirmed` (mac, pds18); `gui.tcc_log` timeout about 8/h (mac); `reports.candidate` `exit`; win `runtime.version` and login timeouts; pds18 `publish` 3.6 % failed (1 of 28).
+
+Limits: cadence counts the tasks created in the window that are still open, so a task created and closed in the window counts only as a close; CPU (ceiling 70 %) is not read and stays a manual check; the pass reads one install.
 
 ## Coverage and delivery
 
