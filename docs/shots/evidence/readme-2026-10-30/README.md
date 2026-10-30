@@ -20,4 +20,6 @@ All three final native images are inspected individually. Request text and send 
 
 ## Checks
 
-The native capture command, screenshot freshness check, image/capture-input hashes and whitespace check pass. Final browser and selected-gate results are appended after completion. Full-gate failures in the original mixed working tree were historical observations and do not qualify this isolated candidate. No merge, release or deployment is performed by this publication.
+The native capture command, screenshot freshness check, image/capture-input hashes and whitespace check pass. Browser checks pass at 960 and 390 px: every image loads, no horizontal page overflow, and all three disclosures open. The final page renders and all three native screenshots were opened and visually inspected. Full-gate failures in the original mixed working tree were historical observations and do not qualify this isolated candidate. No merge, release or deployment is performed by this publication.
+
+The selected gate `python3 scripts/check.py --base 516af799a8806031f27d37ed816d353bcd700aa0` passed on code commit `f3be11ae06c4842a8fefa0487dc35fb89a352441` in 197.293 seconds: 693 Rust unit tests and 21 integration tests passed, offline selftest and Node/artifact-script checks passed. The suite ignored 35 unit and one integration case under its normal policy. This final documentation-only follow-up records those results; source, fixtures, images and dependencies are unchanged. GitHub CI and merge acceptance are separate.
