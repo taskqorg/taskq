@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.43
+
+Capacity: a `taskq.json` runtime limit above the host ceiling now clamps to the ceiling instead of holding every launch on that host; a host 0 stays disabled (#1890). No board change.
+
 ## v4.6.42
 
 Workers: a task can carry stages, one per Acceptance item; `later N --stage A<k>` records finished stages in the later text, the next attempt continues at the first open one, and status shows `stage k/n` (#1883). `taskq inbox N --json` lists every accepted answer with writer, board time and question revision, so clients such as PilotQ read answers through the CLI (#1887). No board change: 4.6.41 hosts read the `Stages:` line as plain later text.
