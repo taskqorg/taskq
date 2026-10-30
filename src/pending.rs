@@ -145,8 +145,11 @@ impl Pending {
             let r = &mut tasks[i];
             if readback && let (Some(state), Some(read)) = (&op.state, op.read) {
                 if r["state"] == "ask" && state != "ask" {
-                    let asked = if r["question"].is_null() { op.asked.clone() } else { r["question"].take() };
-                    r["asked"] = asked;
+                    // the closed question joins the conversation history with its answer, after the earlier ones
+                    let question = if r["question"].is_null() { op.asked.clone() } else { r["question"].take() };
+                    let answered = if op.answered.is_object() { op.answered.clone() } else { json!({"by": "", "text": ""}) };
+                    if !r["history"].is_array() { r["history"] = json!([]); }
+                    r["history"].as_array_mut().unwrap().push(json!({"question": question, "answered": answered}));
                     r["card"] = Value::Null;
                     r["question"] = Value::Null;
                 }
@@ -220,7 +223,7 @@ mod tests {
         let row = shown(&p, &before);
         assert_eq!((row["state"].as_str(), row["revision"].as_u64()), (Some("doing"), Some(25)));
         assert_eq!((row["card"].clone(), row["question"].clone()), (Value::Null, Value::Null), "the question is closed on every surface");
-        assert_eq!(row["asked"]["text"], QUESTION, "the conversation keeps the question");
+        assert_eq!(row["history"], json!([{"question": before[0]["tasks"][0]["question"], "answered": {"by": "you", "text": "Ship"}}]), "the conversation keeps the question");
         assert_eq!(row["answered"], json!({"by": "you", "text": "Ship"}));
         assert!(row.get("sync").is_none(), "accepted is the board's readback, not a pending mark");
         assert_eq!(row["controls"], json!(crate::snapshot::controls("doing")));
@@ -231,6 +234,20 @@ mod tests {
         assert_eq!(shown(&p, &before)["state"], "doing", "a lagging read after confirmation still shows the readback");
         assert!(p.observe(before.as_array().unwrap(), now + CONFIRMED));
         assert_eq!(p.json(), json!([]));
+    }
+
+    // Chain: second owner answer -> readback -> conversation history. Risk (#1918 A5): the closed question replaced the
+    // earlier question and its answer instead of appending after them.
+    #[test]
+    fn an_accepted_answer_appends_its_question_after_earlier_ones() {
+        let mut p = Pending::default();
+        let earlier = json!({"question": {"text": "Problem: First?"}, "answered": {"by": "sam", "text": "Wait"}});
+        let mut before = projects("ask", 30, &["ask-op"]);
+        before[0]["tasks"][0]["history"] = json!([earlier]);
+        p.begin(&request("tray.1", None), &before);
+        assert!(p.receipt(&json!({"answerReceipt": {"root": "/p", "id": "tray.1", "state": "accepted"}, "sync": {"state": "doing", "revision": 25}})));
+        let row = shown(&p, &before);
+        assert_eq!(row["history"], json!([earlier, {"question": before[0]["tasks"][0]["question"], "answered": {"by": "you", "text": "Ship"}}]));
     }
 
     // Chain: control while offline -> failed -> one Retry. Risk (#1819): an outbox replays it later, or Retry

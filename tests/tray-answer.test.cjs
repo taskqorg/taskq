@@ -113,12 +113,16 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   const elsewhere={n:901,state:'doing',revision:9,answered:{by:'sam',text:'ship it'}};project.tasks=[elsewhere];
   assert(call('answerWon',board,elsewhere).includes('Answered by sam: ship it'));
   assert.equal(call('answerSteerComposer',board,elsewhere),'','no draft, no steer offer');
-  // #1918 A5: after an answer the conversation was rebuilt from the task state and lost the question card. The row's
-  // `asked` keeps it, read-only, above the answer line; a new question replaces both.
-  const asked={...elsewhere,asked:{parsed:true,text:'Problem: Ship now?\n1. Ship it\n2. Wait',problem:'Ship now?',choices:[{id:1,text:'Ship it',recommended:true},{id:2,text:'Wait'}]}};
-  const history=call('answerAsked',asked)+call('answerWon',board,asked);
-  assert(/Ship now\?.*<li value="1">Ship it ★<\/li><li value="2">Wait<\/li>.*Answered by sam: ship it/.test(history),history);
-  assert.equal(call('answerAsked',{...asked,state:'ask'}),'','an open question shows only its live card');
+  // #1918 A5: after an answer the conversation was rebuilt from the task state and lost the question card, and a second
+  // question replaced the first question and its answer. Protection: ask, answer, ask, answer, ask keeps both answered
+  // questions in board order, each then its answer line, then the open question's live card.
+  const q=(problem,first)=>({parsed:true,text:'Problem: '+problem+'\n1. '+first+'\n2. Wait',problem,choices:[{id:1,text:first,recommended:true},{id:2,text:'Wait'}]});
+  const asked=[{question:q('Ship now?','Ship it'),answered:{by:'sam',text:'ship it'}},{question:q('Tag it?','Tag'),answered:{by:'',text:'not yet'}}];
+  const once=call('answerHistory',{...elsewhere,history:asked.slice(0,1)});
+  assert(/Ship now\?.*<li value="1">Ship it ★<\/li><li value="2">Wait<\/li>.*Answered by sam: ship it/.test(once),once);
+  const open={...elsewhere,state:'ask',history:asked},three=call('answerHistory',open)+call('answerSlot',{...open,key:board+'/901'});
+  assert(/Ship now\?.*Answered by sam: ship it.*Tag it\?.*Answered by another client: not yet.*data-answer=/.test(three),three);
+  assert.equal(call('answerHistory',{...elsewhere,history:undefined}),'','no answered question, no history');
   call('save',board,{n:901},{draft:'wait'});
   assert(call('answerSteerComposer',board,elsewhere).includes('wait'),'a kept draft becomes steer');
   call('save',board,{n:901},{draft:''});

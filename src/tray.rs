@@ -3801,7 +3801,7 @@ mod tests {
             assert_eq!(ask(&st), (json!("doing"), json!(0), false, 0), "list, dot, badge and icon keep the readback");
             assert!(notify::due(&mut n, st["projects"].as_array().unwrap(), now(), &mut bursts).is_empty(), "no notification asks again");
             let t = &st["projects"][0]["tasks"][0];
-            assert_eq!((t["asked"]["text"].as_str(), t["answered"].clone(), t["card"].clone()), (Some(card), json!({"by": "you", "text": "Ship"}), Value::Null),
+            assert_eq!((t["history"][0]["question"]["text"].as_str(), t["history"][0]["answered"].clone(), t["card"].clone()), (Some(card), json!({"by": "you", "text": "Ship"}), Value::Null),
                 "the conversation keeps the question, then the answer");
         }
         // the board's readback carries the op id; a lagging read after it still never reopens the question
