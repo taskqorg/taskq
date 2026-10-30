@@ -160,7 +160,8 @@ impl Policy {
         let mut out = BTreeMap::new();
         for (rt, n) in v["limits"].as_object().into_iter().flatten() {
             let n = n.as_u64().and_then(|n| u32::try_from(n).ok()).ok_or(format!("project limits.{rt}: invalid count"))?;
-            if self.cap.limits.get(rt).is_some_and(|host| n > *host) { return Err(format!("project limits.{rt} raises host ceiling")); }
+            // The shared taskq.json cannot know each host's ceiling: it only lowers, so a higher count clamps (§ 3 Capacity).
+            let n = self.cap.limits.get(rt).map_or(n, |host| n.min(*host));
             out.insert(rt.clone(), n);
         }
         for (rt, n) in self.overlay(root).and_then(|(_, e)| e["limits"].as_object()).into_iter().flatten() {
@@ -2385,7 +2386,7 @@ mod tests {
         for v in [json!({"admission": "bad"}), json!({"codex": [false]}), json!({"load_gate": {"enabled": "yes"}}), json!({"update_every": 0})] {
             assert!(Policy::parse(v, "invented").is_err());
         }
-        assert!(policy().project(Path::new("/p"), &json!({"limits": {"codex": 3}})).is_err());
+        assert_eq!(policy().project(Path::new("/p"), &json!({"limits": {"codex": 3}})).unwrap().limits["codex"], 2, "a project count above the host clamps, never holds");
         fs::remove_dir_all(install).unwrap();
     }
 
@@ -2400,6 +2401,9 @@ mod tests {
         assert_eq!(p.project(Path::new("/a"), &json!({})).unwrap().limits["codex"], 4);
         assert_eq!(p.project(Path::new("/a"), &json!({"limits": {"codex": 3}})).unwrap().limits["codex"], 3, "the lower of both");
         assert_eq!(p.project(Path::new("/b"), &json!({})).unwrap().limits["codex"], 5, "another root untouched");
+        assert_eq!(p.project(Path::new("/b"), &json!({"limits": {"codex": 9}})).unwrap().limits["codex"], 5, "a taskq.json count above the host ceiling clamps, never holds");
+        let off = Policy::parse(json!({"limits": {"codex": 5, "claude": 0}}), "invented").unwrap();
+        assert_eq!(off.project(Path::new("/b"), &json!({"limits": {"claude": 4}})).unwrap().limits["claude"], 0, "a host 0 stays disabled");
         assert_eq!(p.project(Path::new("/a"), &json!({})).unwrap().limits["claude"], 5, "another runtime untouched");
         assert_eq!(p.project_limits(Path::new("/a"), &json!({})).unwrap(), BTreeMap::from([("codex".to_string(), 4)]));
         let e = json!({});
