@@ -1221,6 +1221,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     let mut paused_logged: Option<i64> = None;
     // the budget alarm is logged once per reset
     let mut low_logged: Option<Option<i64>> = None;
+    let mut pace_logged: Option<i64> = None;
     let mut hour: (Instant, BTreeMap<String, u64>) = (Instant::now(), BTreeMap::new());
     let mut last_hour: Option<BTreeMap<String, u64>> = None;
     let mut dashq = enrollment::Sender::default();
@@ -1481,6 +1482,18 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         }
         // #1357: a failed handover retries at `poll`; its reduced pass may list the board for unknown ownership.
         let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
+        // #1985: the board user's quota serves every host; a burn that would spend it before the reset stretches the pass
+        let wait = match budget.pace(wait, cfg.ttl.max(0) as u64 * 2 / 3, Instant::now()) {
+            Some(paced) => {
+                if pace_logged != budget.reset {
+                    log!("board budget pacing: pass wait {paced} s for {wait} s; {}/{}{} until {}", budget.remaining.unwrap_or(0), budget.limit.unwrap_or(0),
+                        budget.resource.as_deref().map(|r| format!(" {r}")).unwrap_or_default(), budget.reset.map_or("unknown".into(), board::stamp));
+                    pace_logged = budget.reset;
+                }
+                paced
+            }
+            None => wait,
+        };
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
             let results_ready=reports.received();

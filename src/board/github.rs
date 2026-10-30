@@ -666,7 +666,7 @@ impl Board for GitHub {
     }
 
     fn now(&self) -> Result<i64> {
-        self.api.now(KIND.user_key)
+        self.api.now(KIND.user_key, Some("/rate_limit"))
     }
 
     fn me(&self) -> Result<String> {
