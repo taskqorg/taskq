@@ -60,6 +60,9 @@ pub struct History {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     failed: BTreeMap<u64, (i64, String)>,
     listed: Option<i64>,
+    // Newest issue update a scan returned: the list asks from it, so an unchanged board repeats one URL and answers 304 (#1985).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    newest: Option<i64>,
     through: Option<i64>,
     start: Option<i64>,
     missing: Vec<String>,
@@ -87,11 +90,13 @@ impl History {
     pub fn refresh(&mut self, board: &dyn Board, now: i64) {
         let floor = now - MONTH;
         if self.listed.is_some_and(|t|t>now) {self.missing=vec!["admission scan clock moved backwards".into()];return;}
-        let after = self.listed.map_or(floor, |t| (t - 30).max(floor));
+        // The newest seen update is never after the last scan, so asking from it still covers every later update.
+        let after = self.newest.or(self.listed).map_or(floor, |t| (t - 30).max(floor));
         let issues = match board.issues(Some(after)) {
             Ok(issues) => issues,
             Err(e) => { self.missing = vec![format!("admission scan: {e}")]; return; }
         };
+        self.newest = issues.iter().map(|i| i.updated).filter(|t| *t <= now).chain(self.newest).max();
         for issue in issues.iter().filter(|i| i.trusted && !crate::service::is_host(i)) {
             if let Some((updated,event))=self.seen.get_mut(&issue.number) {
                 // A settled earliest admission is immutable; comments and later label changes cannot create another.
@@ -195,7 +200,8 @@ mod tests {
             reads.borrow_mut().clear();
             h.refresh(board.as_ref(),now);
             let requests=reads.borrow();
-            assert!(requests[0].ends_with(&format!("/issues?state=all&per_page=100&since={}",crate::board::stamp(now-130))),"an unresolved source cannot reset the list cursor: {}",requests[0]);
+            assert!(requests[0].ends_with(&format!("/issues?state=all&per_page=100&since={}",crate::board::stamp(70))),
+                "an unresolved source cannot reset the list cursor, which repeats from the newest update (#1985): {}",requests[0]);
             assert!(requests.iter().filter(|u|u.contains("/events?")).count()<=5);
             assert!(!requests.iter().any(|u|u.contains("/issues/2/")),"a resolved source is not read again after restart");
             assert!(now<21000,"failures cannot starve unvisited sources");
