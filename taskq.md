@@ -49,8 +49,8 @@ Stop workers/reviewers only after close/parking/replacement, except owner-confir
 ### R12. Unverified means unknown
 Follow [shared verification][sq-verify]. Gate `python3 scripts/check.py` ([selection](docs/testing.md)): PRs Linux; `merge_group` affected-OS matrix, the merge gate; main push none. Release needs exact-source CI and staged offline selftest. [Live acceptance](docs/runtime-qualification.md) reruns for changed runtime paths, permissions or clients. Prototypes are instruments; [UI acceptance][uia] owns browser/screenshot/native scope. A state marked `⟳` ([menu] M8) is expected, unconfirmed.
 ### R13. Spec first
-Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and its [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps stay in [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); the [implementation brief](docs/design/implementation-brief.md) maps the accepted product to code. [Security](SECURITY.md).
-Rule IDs, the rule-change gate and coverage: [rule IDs](docs/design/rule-ids.md#contract-detail).
+Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps: [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); [implementation brief](docs/design/implementation-brief.md) maps accepted product to code. [Security](SECURITY.md).
+Rule IDs, rule-change gate, coverage: [detail](docs/design/rule-ids.md#contract-detail).
 ## Product
 Looks/sound: one line each (R13).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
@@ -165,7 +165,7 @@ Coreq always records actions; owned methods: bounded opt-in detail. UI/board/age
 ### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ### Admission history
-[I3](docs/design/icon-summary.md#first-admission-source-and-compatibility): deleted-label events admit nothing; malformed records wait for an issue update.
+[I3](docs/design/icon-summary.md#first-admission-source-and-compatibility): deleted labels admit nothing; malformed records wait for an issue update.
 ## 5. Commands
 | Command | Does |
 |---|---|
