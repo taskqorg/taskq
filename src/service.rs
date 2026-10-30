@@ -4767,6 +4767,8 @@ Open: none")).unwrap();
         s.focus.clear();
         for _ in 0..3 { s.pass().unwrap(); }
         assert_eq!(reads() - before, 1, "open attempt passes reuse one store read");
+        // #1950: a close in `doing` is reopened; the attempt ends through a result and the reviewer's close
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
         b.comment(n, "taskq: close").unwrap();
         b.close(n).unwrap();
         s.pass().unwrap();
