@@ -144,7 +144,7 @@ pub struct Row {
     pub task: Task,
     /// § 2 revision: the expected `--revision` of the next command.
     pub revision: u64,
-    /// Latest trusted board comment or issue creation, never the snapshot/poll time (CS2).
+    /// Newest trusted, unedited board comment; missing time never borrows issue creation (D-A19).
     pub updated: Option<i64>,
     /// An unresolved external execution blocks the next submission even after a task state change.
     pub execution_wait: Option<String>,
@@ -370,7 +370,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         url: b.url(v.issue.number),
         task: v.projection.task.clone(),
         revision: v.projection.revision,
-        updated: v.comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.created).chain(Some(v.issue.created)).filter(|t|*t>0).max(),
+        updated: v.comments.iter().filter(|c|c.trusted&&!c.edited).max_by_key(|c|c.id).map(|c|c.created).filter(|t|*t>0),
         execution_wait: executions.iter().find(|x|x["state"]!="running" || x["attempt"].as_u64()!=v.projection.task.attempt)
             .map(|x|format!("execution {} on {}: {}: {}",x["id"],x["host"].as_str().unwrap_or("?"),
                 x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable")))
@@ -1097,7 +1097,10 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
             board::Comment{id:3,created:600,trusted:true,edited:true,..Default::default()}],blockers:vec![]};
         let read=|v:View|from_views("board",&crate::board::Fake::default(),&crate::tests::cfg(),1000,&[v],&[]).json()["tasks"][0]["updated"].clone();
         assert_eq!(read(View{issue:v.issue.clone(),projection:crate::core::project(1,&[],false),log:vec![],comments:v.comments.clone(),blockers:vec![]}),150);
-        v.comments.clear();assert_eq!(read(v),100);
+        // #1930 A4 explicitly removes the issue-creation fallback while retaining trusted/unedited filtering.
+        v.comments.push(board::Comment{id:4,created:0,trusted:true,edited:false,..Default::default()});
+        assert!(read(View{issue:v.issue.clone(),projection:crate::core::project(1,&[],false),log:vec![],comments:v.comments.clone(),blockers:vec![]}).is_null(),"a missing newest event cannot borrow an older comment time");
+        v.comments.clear();assert!(read(v).is_null(),"issue creation is not conversation activity");
     }
 
 }

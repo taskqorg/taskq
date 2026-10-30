@@ -8,6 +8,7 @@
     "src/app-shell.js",
     "src/notification-panel.js",
     "src/project-blocks.js",
+    "src/relative-time.js",
     "src/reply-files.js",
     "src/reports.js",
     "src/resource-controls.js",

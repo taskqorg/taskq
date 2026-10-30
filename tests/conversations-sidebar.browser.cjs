@@ -38,7 +38,7 @@ s.conversations.items.push({...draft('native-b','alpha',null),sent:{text:'Start'
  assert.deepEqual(await groupOrder(),['Pinned','Beta','Alpha','Other'],'CS1: all three sources share ordered groups');
  const all=await page.locator('.conversation-row').evaluateAll(es=>es.map(e=>e.dataset.id||e.dataset.thread));assert.equal(all.length,new Set(all).size,'one identity, one group');
  assert.equal(await page.locator('[data-conversation-group][aria-label=Beta] [data-c=select][data-id=native-b]').count(),1,'launched chat stays in its original project when next-draft destination differs');
- assert.match(await row('missing').innerText(),/Project unavailable/);assert.match(await row('missing').innerText(),/Update time unknown/);await row('owner-a').hover();await shot('01-inline-groups');
+ assert.match(await row('missing').innerText(),/Project unavailable/);assert.match(await row('missing').innerText(),/Time unknown/);await row('owner-a').hover();await shot('01-inline-groups');
  const input=page.locator('[data-c-field=text]');await input.fill('Retained current draft');
  await click('owner-a','Pin');await row('owner-a').getByRole('button',{name:'Unpin',exact:true}).waitFor();
  assert.equal(await page.locator('[data-conversation-group=pinned]').locator('.conversation-row').count(),2);assert.equal(await input.inputValue(),'Retained current draft');assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-id'),'pm-a');

@@ -1,0 +1,115 @@
+{
+  "note": "Timestamps and native record shapes observed read-only on 2026-10-31; all message/tool contents below are invented replacements. No native paths or session IDs retained.",
+  "records": [
+    {
+      "provider": "claude",
+      "kind": "user",
+      "record": {
+        "type": "user",
+        "timestamp": "2026-10-30T18:52:26.570Z",
+        "message": {
+          "role": "user",
+          "content": "Invented replacement text"
+        }
+      }
+    },
+    {
+      "provider": "claude",
+      "kind": "tool",
+      "record": {
+        "type": "assistant",
+        "timestamp": "2026-10-30T18:52:34.060Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "name": "Read",
+              "input": {
+                "file_path": "invented.rs"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "provider": "claude",
+      "kind": "assistant",
+      "record": {
+        "type": "assistant",
+        "timestamp": "2026-10-30T18:53:04.081Z",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Invented replacement text"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "kind": "user",
+      "record": {
+        "type": "response_item",
+        "timestamp": "2026-10-30T22:21:48.396Z",
+        "payload": {
+          "type": "message",
+          "role": "user",
+          "content": [
+            {
+              "type": "input_text",
+              "text": "Invented replacement text"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "kind": "assistant",
+      "record": {
+        "type": "response_item",
+        "timestamp": "2026-10-30T22:21:52.167Z",
+        "payload": {
+          "type": "message",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "Invented replacement text"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "provider": "codex",
+      "kind": "tool",
+      "record": {
+        "type": "response_item",
+        "timestamp": "2026-10-30T22:21:54.044Z",
+        "payload": {
+          "type": "custom_tool_call",
+          "name": "exec",
+          "input": "text(await tools.exec_command({cmd:\"echo invented\"}));"
+        }
+      }
+    }
+  ],
+  "board": [
+    {
+      "comment": 6523625372,
+      "created_at": "2026-10-30T13:10:16Z",
+      "seconds": 1793365816
+    },
+    {
+      "comment": 6534732938,
+      "created_at": "2026-10-30T22:21:38Z",
+      "seconds": 1793398898
+    }
+  ]
+}
