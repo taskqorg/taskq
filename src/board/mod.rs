@@ -65,6 +65,8 @@ pub trait Board {
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64>;
     fn edit(&self, n: u64, body: &str) -> Result<()>;
     fn close(&self, n: u64) -> Result<()>;
+    /// § 4 step 5: reopens a task closed during a worker attempt.
+    fn reopen(&self, _n: u64) -> Result<()> { Err("reopen unsupported on this board".into()) }
     /// The board's clock in seconds; leases never use local clocks (§ 4).
     fn now(&self) -> Result<i64>;
     fn me(&self) -> Result<String>;
@@ -312,6 +314,7 @@ impl Board for Profiled {
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64> { self.op("write", |b| b.create(title, body, labels)) }
     fn edit(&self, n: u64, body: &str) -> Result<()> { self.op("write", |b| b.edit(n, body)) }
     fn close(&self, n: u64) -> Result<()> { self.op("close", |b| b.close(n)) }
+    fn reopen(&self, n: u64) -> Result<()> { self.op("close", |b| b.reopen(n)) }
     fn now(&self) -> Result<i64> { self.0.now() }
     fn me(&self) -> Result<String> { self.0.me() }
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
@@ -1135,6 +1138,16 @@ impl Board for Fake {
         i.open = false;
         i.closed = Some(t);
         i.reason = Some("completed".into());
+        i.updated = t;
+        Ok(())
+    }
+    fn reopen(&self, n: u64) -> Result<()> {
+        let mut st = self.state.borrow_mut();
+        let t = st.tick();
+        let i = st.get(n)?;
+        i.open = true;
+        i.closed = None;
+        i.reason = None;
         i.updated = t;
         Ok(())
     }

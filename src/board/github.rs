@@ -632,6 +632,10 @@ impl Board for GitHub {
         self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "closed" }))).map(|_| ())
     }
 
+    fn reopen(&self, n: u64) -> Result<()> {
+        self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "open" }))).map(|_| ())
+    }
+
     fn now(&self) -> Result<i64> {
         self.api.now(KIND.user_key)
     }
