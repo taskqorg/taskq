@@ -646,7 +646,10 @@ impl Snapshot {
     }
 
     /// R6 text report.
-    pub fn text(&self, cfg: &Config, raw: &Value) -> Res<String> {
+    pub fn text(&self, cfg: &Config, raw: &Value) -> Res<String> { self.text_with(cfg, raw, None) }
+
+    /// R6 text report with the `Decide:` part of [`crate::reports::decide`] after Questions (#1979).
+    pub fn text_with(&self, cfg: &Config, raw: &Value, decide: Option<&Value>) -> Res<String> {
         if let Some(r) = &self.reason {
             return Err(r.clone());
         }
@@ -696,6 +699,10 @@ impl Snapshot {
             out.push("Questions (answer N.M):\n| Question | Brief reason | Options |\n|---|---|---|".into());
             out.extend(qs);
         }
+        if let Some(d) = decide.and_then(decide_text) {
+            out.push(String::new());
+            out.push(d);
+        }
         let mut parked = vec![];
         for state in [State::Held, State::Later] {
             let rows: Vec<String> = self.tasks.iter().filter(|r| r.task.state == state).map(|r| match r.task.until.as_deref().and_then(crate::board::iso) {
@@ -732,6 +739,18 @@ impl Snapshot {
         }
         Ok(out.join("\n"))
     }
+}
+
+/// R6 Decide: one row per undecided report, as [`crate::reports::decide`] orders them; unknown collection says so.
+pub fn decide_text(d: &Value) -> Option<String> {
+    if d["complete"] != true {
+        return Some(format!("Decide: unknown ({})", compact(d["reason"].as_str().unwrap_or("reports not collected yet"), 160)));
+    }
+    let rows: Vec<String> = d["rows"].as_array()?.iter().map(|r| format!("| [#{} {}]({}) | {} | {} | {} |",
+        r["n"], cell(&compact(r["title"].as_str().unwrap_or(""), 60)), r["url"].as_str().unwrap_or(""), r["verdict"].as_str().unwrap_or("unknown"),
+        age(r["age_s"].as_i64().unwrap_or(0)), cell(r["recommendation"].as_str().unwrap_or("")))).collect();
+    if rows.is_empty() { return None; }
+    Some(format!("Decide:\n| Report | Verdict | Age | Recommendation |\n|---|---|---|---|\n{}", rows.join("\n")))
 }
 
 /// R6 timed park: board time `t` on this host's clock, `2026-11-05 10:00`.

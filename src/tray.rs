@@ -926,6 +926,7 @@ fn queued_reports(_install:&Path,root:&Path,m:&Value)->crate::Res<Value> {
     let mut command=owner_command(root)?;
     command.arg("reports").arg(n.to_string()).args(["--action",action,"--sha",m["sha"].as_str().ok_or("report SHA missing")?]);
     if let Some(reason)=m["text"].as_str() {command.args(["--text",reason]);}
+    if let Some(until)=m["until"].as_str().filter(|u|action=="later"&&crate::core::utc(u)) {command.args(["--until",until]);}
     command.arg("--json");
     let out=crate::platform::output("tray.reports-command",&mut command,Duration::from_secs(180))?;
     if !out.status.success() {return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());}

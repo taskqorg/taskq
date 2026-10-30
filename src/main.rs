@@ -90,7 +90,7 @@ const USAGE: &str = "taskq agents
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
- taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--page N|--before TIME:N] --json
+ taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--until UTC] [--page N|--before TIME:N] --json
  taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
@@ -795,19 +795,23 @@ fn close_check(text: &str, issue: &board::Issue, t: &Task, deferred: bool) -> Re
     if t.state != State::Review || text.is_empty() {
         return Ok(());
     }
-    close_verdict(text, &issue.body)?;
+    close_verdict(text, &issue.body, reports::experiment(issue))?;
     if deferred && text.lines().any(|l| l.starts_with("Checks:") && l.contains("CI") && (l.contains("merge-result") || l.contains("merge_group"))) {
         return Ok(());
     }
     if t.result.as_deref().is_some_and(|sha| text.lines().any(|l| l.starts_with("Checks:") && l.contains(sha))) { Ok(()) } else { Err("Checks: name the exact result SHA with the CI outcome".into()) }
 }
 
-fn close_verdict(text: &str, body: &str) -> Res<()> {
+/// #1979: an experiment's close carries one `Verdict: confirmed|refuted|inconclusive <evidence>` line after Changed.
+fn close_verdict(text: &str, body: &str, experiment: bool) -> Res<()> {
     let lines: Vec<String> = text.lines().filter(|l| !l.trim().is_empty()).map(String::from).collect();
     limit("verdict", &lines, 3, 12, 240)?;
-    let f = fields(text, &[("Changed", 1, 2, 240), ("Checks", 1, 8, 240), ("Open", 1, 2, 240)])?;
+    let f = fields(text, &[("Changed", 1, 2, 240), ("Verdict", 0, 1, 240), ("Checks", 1, 8, 240), ("Open", 1, 2, 240)])?;
     limit("verdict", &f.concat(), 3, 12, 240)?;
-    let checks = f[1].join(" ");
+    if (experiment || !f[1].is_empty()) && reports::outcome_verdict(&f[1].join("\n")).is_none() {
+        return Err("Verdict: an experiment closes with `Verdict: confirmed|refuted|inconclusive <evidence>` after Changed".into());
+    }
+    let checks = f[2].join(" ");
     for k in body.lines().filter_map(|l| l.trim().strip_prefix('A')?.split_once('.')?.0.parse::<u32>().ok()) {
         if !["ok", "gap", "unknown"].iter().any(|v| checks.contains(&format!("A{k} {v}"))) {
             return Err(format!("Checks: name A{k} ok|gap|unknown"));
@@ -820,7 +824,7 @@ fn close_verdict(text: &str, body: &str) -> Res<()> {
 fn formats_selftest() -> Res<String> {
     let checks = ["cargo test --locked -- pass".to_string()];
     result_text(1, "Changed: x\nOpen: none", &checks, &[], None, &[])?;
-    close_verdict("Changed: x\nChecks: A1 ok; CI green on the SHA\nOpen: none", "A1. y")?;
+    close_verdict("Changed: x\nChecks: A1 ok; CI green on the SHA\nOpen: none", "A1. y", false)?;
     let card = ask_card(1, "Done: not started\nProblem: pick one", &["Left - + fast; - ugly".into(), "Right - + clean; - slow".into()], Some("2"), &[])?;
     let log: Vec<Entry> = [entry("spawn", &["worker", &format!("{}:s", runtime::OWNER), "mac"], None, ""), entry("ask", &[], Some(1), &card), "taskq answer 2".into()]
         .into_iter().enumerate().map(|(i, body)| Entry { id: i as u64 + 1, body, edited: false }).collect();
@@ -3201,7 +3205,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "reports"|"results" => {
             let value=match reports::read_cli(root,a)? {
                 Some(value)=>value,
-                None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""))?
+                None=>reports::act_with_reason(b,root,&c.raw,a.num(1)?,a.need("sha")?,a.one("action").unwrap_or("open"),a.one("text").unwrap_or(""),a.one("until"))?
             };
             println!("{value}"); Ok(())
         }
@@ -3419,10 +3423,14 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 return Ok(());
             }
             let snap = snapshot::read(b, cfg, &c.raw, &a.all("only").iter().flat_map(|x| x.split(',')).map(String::from).collect::<Vec<_>>());
+            // #1979 Decide: undecided reports from the collected projection, no board call
+            let decide = reports::decide(&reports::cached(&cfg.root), reports::now());
             if a.flags.contains_key("json") {
-                json_output(&serde_json::to_string_pretty(&snap.json()).map_err(|e| e.to_string())?, a.one("json-file"))?;
+                let mut v = snap.json();
+                v["decide"] = decide;
+                json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
-                println!("{}", snap.text(cfg, &c.raw)?);
+                println!("{}", snap.text_with(cfg, &c.raw, Some(&decide))?);
                 // § 6: the live service's open setup gaps follow the report
                 for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
             }
@@ -4709,11 +4717,27 @@ mod tests {
         assert!(result_text(7, "Changed: c\nOpen: none", &[], &[], None, &[]).unwrap_err().contains("Checks: 0 lines"));
         assert!(result_text(7, "summary", &checks, &[], None, &[]).is_err());
         let body = "## Acceptance\nA1. a\nA2. b\n";
-        assert!(close_verdict("Changed: c\nChecks: A1 ok, A2 gap; CI green on abc\nOpen: A2", body).is_ok());
-        assert!(close_verdict("Changed: c\nChecks: A1 ok; CI green\nOpen: none", body).unwrap_err().contains("A2"));
-        assert!(close_verdict("Changed: c\nChecks: A1 ok, A2 ok\nOpen: none", body).unwrap_err().contains("CI"));
-        assert!(close_verdict("A1 ok, A2 ok; c; open: none", body).is_err(), "the old one-line verdict is rejected");
+        assert!(close_verdict("Changed: c\nChecks: A1 ok, A2 gap; CI green on abc\nOpen: A2", body, false).is_ok());
+        assert!(close_verdict("Changed: c\nChecks: A1 ok; CI green\nOpen: none", body, false).unwrap_err().contains("A2"));
+        assert!(close_verdict("Changed: c\nChecks: A1 ok, A2 ok\nOpen: none", body, false).unwrap_err().contains("CI"));
+        assert!(close_verdict("A1 ok, A2 ok; c; open: none", body, false).is_err(), "the old one-line verdict is rejected");
         assert_eq!(formats_selftest().unwrap(), "formats: ask card, result, close verdict PASS");
+    }
+
+    // Chain: #1979 experiment close. Risk: an experiment closes with no verdict and its outcome is never decided.
+    #[test]
+    fn experiment_close_needs_a_verdict() {
+        let body = "Hypothesis: x is faster\n## Acceptance\nA1. a\n";
+        let plain = "Changed: c\nChecks: A1 ok; CI green on abc\nOpen: none";
+        assert!(close_verdict(plain, body, true).unwrap_err().contains("Verdict"), "no verdict, no close");
+        assert!(close_verdict(plain, body, false).is_ok(), "other tasks close as before");
+        let good = "Changed: c\nVerdict: refuted p95 rose 12% in bench run 3\nChecks: A1 ok; CI green on abc\nOpen: none";
+        assert!(close_verdict(good, body, true).is_ok());
+        assert!(close_verdict(&good.replace("refuted", "maybe"), body, true).is_err(), "unknown verdict word");
+        assert!(close_verdict(&good.replace("refuted", "Confirmed."), body, false).is_ok(), "case and trailing punctuation");
+        assert!(reports::experiment(&board::Issue { body: body.into(), ..Default::default() }));
+        assert!(reports::experiment(&board::Issue { labels: vec!["research".into()], ..Default::default() }));
+        assert!(!reports::experiment(&board::Issue { body: "A1. no hypothesis here".into(), ..Default::default() }));
     }
 
     // Chain: § 2 card to hand-typed answer. Risk: a hand-typed answer to a rendered card is ignored.
@@ -4730,6 +4754,24 @@ mod tests {
         let log = entries(&b, n).unwrap();
         assert_eq!(fold(n, &log, false).state, State::Doing);
         assert_eq!(core::delivery(n, &log, log.last().unwrap().id), "Right - + clean; - slow");
+    }
+
+    // Chain: #1979 experiment close -> verdict label readback -> Decide. Risk: the board loses the verdict,
+    // a stale verdict label survives, or an unconfirmed label write still publishes.
+    #[test]
+    fn experiment_close_writes_one_verdict_label_before_publication() {
+        let (b, c) = (Fake::default(), cfg());
+        let n = b.create("Invented experiment", "Hypothesis: a cache halves reads", &["taskq".into(), "code".into(), "verdict-confirmed".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        let verdict = "Changed: c\nVerdict: refuted reads fell 3% only\nChecks: A1 ok; CI green on abc\nOpen: none";
+        b.state.borrow_mut().fail_labels = true;
+        let r = close_one(&b, &c, n, verdict, &Op::default());
+        assert!(!r.ok() && b.issue(n).unwrap().open, "a failed label write refuses the close: {}", r.text());
+        assert!(close_one(&b, &c, n, verdict, &Op::default()).ok());
+        let labels = b.issue(n).unwrap().labels;
+        assert!(labels.contains(&"verdict-refuted".into()) && !labels.contains(&"verdict-confirmed".into()), "{labels:?}");
+        assert!(!b.issue(n).unwrap().open);
     }
 
     // Chain: § 5 commands to board entries. Risk: a rejected command writes; close does not publish.
@@ -5547,7 +5589,7 @@ mod tests {
         assert_eq!(width("é🦀"), 2);
         assert!(one_line("option", &["a\rb".into()]).is_err());
         let text = "Changed: visible\nChecks: A1 ok\nChecks: A2 ok; CI green on abc\nOpen: none";
-        close_verdict(text, "A1. a\nA2. b").unwrap();
+        close_verdict(text, "A1. a\nA2. b", false).unwrap();
         assert!(task_text("requeue", "unlabelled reason").is_err());
         assert!(task_text("requeue", &format!("Reason: ok{}", " ".repeat(240))).is_err());
         let e = task_text("requeue", &format!("Reason: {}\nNext: a\nb", "r".repeat(240))).unwrap_err();
