@@ -35,8 +35,12 @@ impl Cache {
                 let old=self.entries.get(&i.number);
                 // Board timestamps have second precision. A read in that same second needs one settled re-read.
                 let reusable=i.updated>0 && old.is_some_and(|(at,proof,row)|*at==i.updated && *proof>i.updated && row.as_ref().is_none_or(|r|r["kind"]=="task"||r["reason"].is_null()||r["missing"]==true));
+                // #1973: open, untrusted or non-task issues (heartbeats, live tasks) never project; reading their comments
+                // each time they move cost most of the board budget.
                 let row=if reusable {
                     old.unwrap().2.clone()
+                } else if !projectable(&i) {
+                    None
                 } else {
                     match coreq::telemetry::capture::operation("reports.collect.comments",||b.comments(i.number),|_|"board-read") {
                         Ok(comments)=>project(&i,closed,&comments,b.url(i.number)),
@@ -75,8 +79,10 @@ impl Cache {
 }
 
 /// One background read per project; no board handle crosses threads and no collection blocks supervision.
+/// #1973: the reader thread keeps its board, so `/user` and conditional replies survive between passes.
 #[derive(Default)]
 pub struct Collector {
+    worker: Option<std::sync::mpsc::Sender<(Cache,std::sync::mpsc::Sender<Cache>)>>,
     cache: Option<Cache>,
     pending: Option<std::sync::mpsc::Receiver<Cache>>,
     started: Option<std::time::Instant>,
@@ -103,18 +109,37 @@ impl Collector {
         if closes!=self.closes {self.closes=closes;self.invalidated=true;}
         if enabled && self.pending.is_none() && (self.invalidated || self.started.is_none_or(|t|t.elapsed().as_secs()>=poll.max(1))) {
             self.invalidated=false;self.started=Some(std::time::Instant::now());
-            let mut cache=self.cache.take().unwrap_or_else(||Cache::retaining(self.value.clone()));let root=root.to_path_buf();let (tx,rx)=std::sync::mpsc::channel();
-            match std::thread::Builder::new().name("reports".into()).spawn(move || {
-                let result=crate::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install)));
-                match result {Ok(board)=>cache.collect(board.as_ref()),Err(reason)=>{cache.value["complete"]=json!(false);cache.value["reason"]=json!(reason);}}
-                let _=tx.send(cache);
-            }) {
-                Ok(_)=>self.pending=Some(rx),
-                Err(e)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(format!("report collector unavailable: {e}"));}
+            let (tx,rx)=std::sync::mpsc::channel();let job=(self.cache.take().unwrap_or_else(||Cache::retaining(self.value.clone())),tx);
+            // A stopped reader hands the job back; one fresh reader replaces it.
+            let job=match &self.worker {Some(w)=>w.send(job).err().map(|e|e.0),None=>Some(job)};
+            match job {
+                None=>self.pending=Some(rx),
+                Some(job)=>match reader(root.to_path_buf()) {
+                    Ok(worker)=>{let _=worker.send(job);self.worker=Some(worker);self.pending=Some(rx);},
+                    Err(e)=>{self.worker=None;self.cache=Some(job.0);self.value["complete"]=json!(false);self.value["reason"]=json!(format!("report collector unavailable: {e}"));}
+                }
             }
         }
         freshness(self.value.clone(),now(),ttl,None)
     }
+}
+
+/// Opens the board on the first job and retries a failed open on the next; config changes apply on service restart.
+fn reader(root:std::path::PathBuf)->std::io::Result<std::sync::mpsc::Sender<(Cache,std::sync::mpsc::Sender<Cache>)>> {
+    let (go,jobs)=std::sync::mpsc::channel::<(Cache,std::sync::mpsc::Sender<Cache>)>();
+    std::thread::Builder::new().name("reports".into()).spawn(move || {
+        let mut board:Option<Box<dyn Board>>=None;
+        for (mut cache,tx) in jobs {
+            if board.is_none() {
+                match crate::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install))) {
+                    Ok(b)=>board=Some(b),Err(reason)=>{cache.value["complete"]=json!(false);cache.value["reason"]=json!(reason);}
+                }
+            }
+            if let Some(b)=&board {cache.collect(b.as_ref());}
+            let _=tx.send(cache);
+        }
+    })?;
+    Ok(go)
 }
 
 pub fn freshness(mut value:Value,now:i64,ttl:i64,unavailable:Option<&str>)->Value {
@@ -213,10 +238,11 @@ fn log(comments:&[Comment])->Vec<Entry> {
     comments.iter().filter(|c|c.trusted).map(|c|Entry{id:c.id,body:c.body.clone(),edited:c.edited}).collect()
 }
 
+fn projectable(i:&Issue)->bool {!i.open&&i.trusted&&i.labels.iter().any(|l|l=="taskq")}
+
 /// Markers never alter fold or release a dependency. The first terminal decision for this SHA wins.
 pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value> {
-    if i.open||!i.trusted
-        ||!i.labels.iter().any(|l|l=="taskq") {return None;}
+    if !projectable(i) {return None;}
     let p=crate::core::project(i.number,&log(comments),false);
     let t=p.task;
     let result=p.changes.iter().rev().find(|(_,before,after)|before.state==crate::core::State::Doing&&after.state==crate::core::State::Review);
@@ -544,6 +570,21 @@ mod tests {
         cache.collect(&b);assert_eq!(b.state.borrow().comment_reads,reads,"settled unchanged projections reuse comments");
         b.raw(n,&format!("taskq: report-drop {sha}"),true,false);cache.collect(&b);
         assert!(cache.value["reports"].as_array().unwrap().is_empty());
+    }
+
+    // #1973 A1: open tasks and host heartbeats move every minute but never project; they must cost no comment read.
+    #[test] fn open_and_heartbeat_updates_skip_comment_reads() {
+        // The second pass settles the closed fixture's same-second read before counting.
+        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let open=b.create("Live task","",&["taskq".into(),"code".into()]).unwrap();
+        let beat=b.create("Host heartbeat","",&["taskq-host".into()]).unwrap();b.close(beat).unwrap();
+        let reads=b.state.borrow().comment_reads;
+        for _ in 0..3 {
+            b.advance(2);let at=b.now().unwrap();
+            for n in [open,beat] {b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().updated=at;}
+            cache.collect(&b);assert_eq!(cache.value["complete"],true);
+        }
+        assert_eq!(b.state.borrow().comment_reads,reads,"no comment read for issues that cannot project");
     }
 
     // #1968 A4: a source missing at its result SHA is settled; it must not block the cursor or repeat reads.
