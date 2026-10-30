@@ -13,8 +13,8 @@ const {create}=execution.module('workspace',{
   // #1662 A3: task answers use the workspace's one composer; a card change repaints it once per tick
   const pm=require('./pm-composer.js');
   const answers=require('./workspace-answers.js').create(view,{menu,document,send:m=>{ui.send(m);if(m.a==='answer-local')state.flush();},draw:()=>api.draw(),composer:true,steer:pm.composer,changed:()=>{if(view.page==='conversations'&&view.answer&&!redraw)redraw=ui.defer(()=>{redraw=null;api.draw();},0);}});
-  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
-  const reports=require('./reports.js').create({draw:()=>api.draw()});
+  const conversations=require('./conversations.js').create({window,document,menu,draw:()=>api.draw(),navigate:(...args)=>api.navigate(...args),onSelect:id=>{if(view.result?.conversation!==id)view.result=null;const row=api.threads().find(t=>t.id===id);view.answer=row?.task?{root:row.root,board:row.board,task:row.task,revision:row.revision}:null;view.message=row?.event&&!row.task?row.event.key:null;}});
+  const reports=require('./reports.js').create({draw:()=>api.draw(),onOpen:r=>{if(r.next){const next=conversations.nextUnresolved(api.threads());if(next?.report)reports.open(next.root,next.report);else if(next)conversations.select(next.id,false);else{view.threadNotice={thread:'list',text:'No unresolved items in this view. Choose All to continue.'};api.draw();}return;}if(r.conversation&&conversations.ids().includes(r.conversation)){conversations.select(r.conversation,false);view.result={root:r.root,n:r.n,sha:r.sha,conversation:r.conversation};}else api.openTask(r.board||view.S.projects.find(p=>p.root===r.root)?.issues,r.n,r.root);}});
   const operationView=require('./tray-app.js').createState();
   const operations=require('./tray-app.js').create(operationView,{window,document,menu,workspace:true,render:()=>api.draw()});
   const {session,keyed}=execution.module('workspace.links',{session:function(url){return !!url&&/^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9]+$/.test(url);},
@@ -29,9 +29,12 @@ const {create}=execution.module('workspace',{
     const target=view.pmTask?.conversation===c?.id&&linked.find(t=>t.n===view.pmTask.task&&t.state==='ask');
     const editor=target&&api.answerComposer(project,target).body;
     const cards=linked.map(t=>pages.linkedTask(project,t,c));
+    const outcomes={};for(const p of snapshot.value.projects)for(const t of p.tasks||[])if(t.conversation?.id&&t.state==='ask')outcomes[t.conversation.id]={needsReply:true};for(const r of reports.threads())if(r.conversation){outcomes[r.conversation]={...outcomes[r.conversation],finished:true,needsDecision:!!(outcomes[r.conversation]?.needsDecision||r.needsDecision)};if(c?.id===r.conversation&&!linked.some(t=>t.n===r.report))cards.push(h('section',{key:r.id,class:'journey-card'},h('h3',null,r.title),h('p',null,r.result||r.status),h('button',{'data-report':'open','data-root':r.root,'data-n':r.report},'Read result and decide')));}
     if(c&&(c.sent||c.request))cards.push(conversations.linkedTools());
     const ev=!selected&&(snapshot.value.messages?.entries||[]).find(r=>r.kind==='request'&&r.id===conversations.current()?.id);
-    return [reports.section(snapshot.value.projects||[]),conversations.body({rows:threads,selected,marks,cards,editor:editor&&h('section',{class:'answer-composer'},h('button',{'data-a':'pm-return'},'Back to PM draft'),editor),busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:selected&&(row?.report?{header:h('h2',null,row.title),reading:[h('p',null,row.result||'Work finished. Open its result to review checks and open items.'),h('button',{'data-report':'open','data-root':row.root,'data-n':row.report},'Read result')]}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
+    const pmResult=view.result&&view.result.conversation===c?.id&&reports.rows(true).find(r=>r.root===view.result.root&&r.n===view.result.n&&r.sha===view.result.sha);
+    if(row?.report)reports.focus(row.root,row.report);else if(pmResult)reports.focus(pmResult.root,pmResult.n);
+    return [conversations.body({rows:threads,selected:selected||(pmResult?c.id:null),marks,cards,outcomes,editor:editor&&h('section',{class:'answer-composer'},h('button',{'data-a':'pm-return'},'Back to PM draft'),editor),resultReason:reports.count()===null?'Result collection incomplete; loaded rows shown, total unknown. '+reports.reason():null,busy:!!view.messageBusy,archive:r=>{if(r.event)api.messageAction(r.archived?'restore':'archive',[r.event.key],r.id);else conversations.sidebar(r.archived?'restore':'archive',r.id,undefined,r.root||'');},notice:ev&&[!ev.read&&!ev.archived&&h('button',{'data-a':'message-read','data-key':ev.key,class:'compact-action notice-read',title:'Mark read','aria-label':'Mark read',disabled:!!view.messageBusy},icons.icon('check')),api.threadNotice('conversation')],detail:pmResult?{header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},pmResult.title),h('button',{'data-a':'result-return'},'Back to conversation')),reading:reports.section(snapshot.value.projects||[])}:selected&&(row?.report?{header:h('div',{class:'conversation-tools thread-head'},h('h2',{class:'thread-title'},row.title),h('span',{class:'meta'},row.project)),reading:reports.section(snapshot.value.projects||[])}:row?.task?pages.task(row):row?pages.message(row):h('p',{role:'status'},'This thread is unavailable or was deleted. Choose another thread; nothing was sent.')),
      // #1819: the window's one stale-data line sits in the status footer, which is already a live region
      footer:[api.staleText(),api.threadNotice('list'),view.undoMessage&&h('button',{'data-a':'message-restore','data-key':view.undoMessage,disabled:!!view.messageBusy},'Undo archive')]})];
    },
@@ -44,6 +47,7 @@ const {create}=execution.module('workspace',{
      answers.answerHistory(t),t.state==='ask'&&h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})),
      t.state==='ask'&&!active&&!c.archived&&h('button',{'data-a':'pm-answer','data-task':t.n},'Write an answer'),
      t.conversation.verdict&&h('section',{'data-reading-key':'result:'+t.n,'aria-label':t.state==='closed'?'Final result':t.state==='review'?'Candidate result':'Earlier result'},h('p',{class:'meta'},t.state==='closed'?'Final result':t.state==='review'?'Candidate result · awaiting publication':'Earlier result',time.stamp(null,'Result','Result timestamp unavailable in the board adapter')),h('p',{class:'conversation-text'},t.conversation.verdict)),
+     t.state==='closed'&&reports.rows(true).some(r=>r.root===p.root&&r.n===t.n)&&h('button',{'data-report':'open','data-root':p.root,'data-n':t.n},'Read result and decide'),
      t.result&&h('p',{class:'meta'},'Candidate: '+t.result+' · publication is separate'),
      answers.answerNotices(p.issues,t.n),pending&&local.receipt.state==='unknown'&&h('button',{'data-a':'answer-retry','data-key':p.root+'#'+local.op.id},'Check delivery'),
      h('button',{'data-a':'workspace','data-board':p.issues,'data-root':p.root,'data-task':t.n},'Task activity'));
@@ -106,6 +110,7 @@ const {create}=execution.module('workspace',{
     for(const {id,root} of refs.values()){if(!rows.has(id)){const cut=id.lastIndexOf('/'),task=Number(id.slice(cut+1)),board=id.slice(5,cut);rows.set(id,{id,task,board,root,title:'#'+task});}else if(root)rows.get(id).root=root;}
     for(const row of rows.values())if(row.task){
      const matches=S.projects.filter(p=>p.issues===row.board&&(!row.root||p.root===row.root)),p=matches.length===1?matches[0]:null,t=p?.tasks?.find(t=>t.n===row.task);
+     if(t?.conversation?.id&&owned.has(t.conversation.id)&&!refs.has(row.id)){rows.delete(row.id);continue;}
      if(t){row.title='#'+t.n+' '+t.title;row.revision=t.revision;row.updated=time.seconds(t.updated);row.updated_reason=t.updated_reason;}
      if(p){row.root=p.root;row.project=p.name;}
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
@@ -114,9 +119,11 @@ const {create}=execution.module('workspace',{
      const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
-    const results=reports.threads(),done=new Set(results.map(r=>r.id));return [...rows.values()].filter(r=>!done.has(r.id)).concat(results);
+    const collected=reports.threads(),results=collected.filter(r=>!r.conversation||!owned.has(r.conversation)||refs.has(r.id));
+    for(const r of results){r.archived=Object.hasOwn(local.archived||{},r.id);r.project=S.projects.find(p=>p.root===r.root)?.name;}
+    const done=new Set(collected.map(r=>r.id));return [...rows.values()].filter(r=>!done.has(r.id)).concat(results);
    },
-   openTask:function(board,task,root){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root);conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);},
+   openTask:function(board,task,root){const id='task:'+board+'/'+Number(task);conversations.flush();conversations.remember(id,root,true);conversations.show(api.threads().find(r=>r.id===id)?.archived?'archive':'recent');conversations.select(id,false);},
    // #1699 A2: the menu badge selects the first unread thread, an open question first; nothing is acknowledged
    unread:function(){
     const e=(snapshot.value?.messages?.entries||[]).filter(r=>!r.archived&&!r.read),r=e.find(r=>r.kind==='question'&&r.state==='ask')||e.find(r=>r.kind==='question')||e.find(r=>r.kind==='request');
@@ -155,7 +162,7 @@ const {create}=execution.module('workspace',{
     if(active?.isConnected)active.focus({preventScroll:true});else if(focus)state.focus(focus);
     // a new answer field takes its saved caret once
     const field=menu.querySelector('[data-c-field=answer]');if(field&&field!==answerField){answerField=field;const target=api.answerContext(),t=target&&view.S?.projects.find(p=>p.issues===target.board&&(!target.root||p.root===target.root))?.tasks?.find(t=>t.n===target.task),c=t&&answers.answerCompose(target.board,t);if(Array.isArray(c?.caret))field.setSelectionRange(...c.caret);}
-    conversations.afterDraw();state.flush();
+    if(view.page==='conversations'&&menu.querySelector('.report-card'))reports.mount(menu);conversations.afterDraw();state.flush();
    },
    // #1680 A3: a failing route keeps the shell (Home, Back, Close); its class and site reach tray stderr, not the page-wide fence
    route:function(){
@@ -171,7 +178,7 @@ const {create}=execution.module('workspace',{
     if(page==='request'){page='conversations';context={...context,fresh:true};}
     // #1699 A2: the removed Inbox, message and answer routes open their thread in Conversations
     if(page==='messages'){page='conversations';context={...context,thread:'unread'};}
-    if(page==='answer'||page==='message')page='conversations';
+    if(page==='answer'||page==='message'||page==='results'||page==='reports')page='conversations';
     if(Object.hasOwn(routes,page))view.unavailable=null;
     else {view.unavailable='Requested destination is not available.';page='conversations';}
     renderer.push(state.capture());view.page=page;
@@ -180,7 +187,7 @@ const {create}=execution.module('workspace',{
     if(page==='conversations'){
      const r=context?.key&&snapshot.value?.messages?.entries?.find(r=>r.key===context.key);
      if(context?.thread==='unread')api.unread();
-     else if(context?.board&&context?.task)api.openTask(context.board,context.task,context.root);
+     else if(context?.board&&context?.task){const root=context.root||snapshot.value.projects.find(p=>p.issues===context.board)?.root;if(context.sha){if(!reports.open(root,Number(context.task),context.sha)){view.answer=null;view.result=null;conversations.select(null,false);view.threadNotice={thread:'list',text:'The requested result SHA is unavailable. Choose the current result to review it; nothing was acknowledged.'};}}else api.openTask(context.board,context.task,root);}
      else if(r?.task&&r?.board)api.openTask(r.board,r.task,r.root);
      else if(r&&!conversations.reveal(r.id,false)){conversations.show(r.archived?'archive':'recent');conversations.select('event:'+r.key,false);}
     }
@@ -214,7 +221,7 @@ const {create}=execution.module('workspace',{
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
     if(!Array.isArray(s.projects))return;
-    const first=snapshot.value===null;reports.sync(s.projects);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
+    const first=snapshot.value===null;reports.hydrate(s.workspace_local);reports.sync(s.projects);snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;
     // #1680 A4: request status lives on its conversation (handoff), never on other pages
@@ -250,6 +257,7 @@ const {create}=execution.module('workspace',{
       view.restoreScroll=0;api.draw();state.flush();
      }
      else if(['message-read','message-archive','message-restore','message-delete'].includes(b.dataset.a))api.messageAction(b.dataset.a.slice(8),[b.dataset.key],api.thread(b.dataset.key));
+     else if(b.dataset.a==='result-return'){view.result=null;api.draw();}
      else if(b.dataset.a==='new-request')api.navigate('conversations',{fresh:true,root:view.aiRoot});
      else if(b.dataset.a==='answer-send')api.answerAct('submit');
      else if(b.dataset.a==='answer-requeue')api.answerAct('requeue');
@@ -262,11 +270,12 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='sync-retry')ui.send({a:'sync-retry',root:b.dataset.root,id:b.dataset.id});
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
-    ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);});
+    ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.cField==='result-reason')reports.reasonInput(e.target.value,[e.target.selectionStart,e.target.selectionEnd]);});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{const c=api.answerContext();if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);
     ui.listen(document,'keydown',e=>{
+     if(e.target.dataset?.cField==='result-reason'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();reports.reasonSend();return;}
      if(e.target.dataset?.cField==='answer'&&e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&!composing&&e.keyCode!==229){e.preventDefault();api.answerAct('submit');return;}
      if(e.key==='Escape'){conversations.flush();const overflow=menu.querySelector('.shell-overflow[open]');if(overflow){overflow.open=false;overflow.querySelector('summary').focus();return;}conversations.workerClose();state.flush();ui.send({a:'hide'});}
      if(e.altKey&&e.key==='ArrowLeft'&&view.page!=='conversations'){e.preventDefault();api.back();}

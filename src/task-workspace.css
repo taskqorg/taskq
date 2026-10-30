@@ -77,8 +77,5 @@ h1{font-size:1em;margin:6px 4px;overflow-wrap:anywhere}.footer{border-top:1px so
 .report-card h2,.report-card h3{font-size:1em;margin:12px 0 6px}
 .report-card p{margin:8px 0}
 .reports-section{flex-shrink:0}
-.workspace .reports-section{flex:0 1 auto;min-height:0;max-height:50%;overflow-y:auto}
-.workspace .reports-section:has(.report-card){flex:1;max-height:none}
-.workspace .reports-section:has(.report-card)~.conversations{display:none}
 
 .history-legend i.new{background:var(--new)}

@@ -509,6 +509,7 @@ fn valid_navigation(v:&Value)->bool {
     if v.is_null(){return true;}
     v.is_object()&&v.to_string().len()<=4096
         &&(v["list"].is_null()||v["list"].as_str().is_some_and(|s|["recent","archive"].contains(&s)))
+        &&(v["filter"].is_null()||v["filter"].as_str().is_some_and(|s|["all","reply","decision","finished"].contains(&s)))
         &&(v["search"].is_null()||v["search"].as_str().is_some_and(|s|s.chars().count()<=512))
         &&(v["selected"].is_null()||v["selected"].as_str().is_some_and(crate::setup::owner_id))
         &&(v["listOnly"].is_null()||v["listOnly"].is_boolean())

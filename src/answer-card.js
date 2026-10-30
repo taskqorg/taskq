@@ -6,14 +6,17 @@ const replyFiles=require('./reply-files.js');
 const {fresh,textProblem,status,step,render,compose,receipt,mount,replay}=execution.module("answer-card",{
 fresh:function(row) { return {draft: '', bound: row.revision, op: null, receipt: null}; },
 textProblem:function(q, text, files) {
+    if(q?.resultReason && (text.trim().length===0 || [...text.trim()].length>180 || /[\r\n]/.test(text))) return 'Give a one-line reason, at most 180 characters';
     return replyFiles.problem(files)|| (text.trim() || files?.length ? null : 'Type an answer');
   },
 status:function(row, local, cap) {
     const q = row.question;
+    if(row.resultDecision && local.bound!==row.revision) return 'stale';
+    if(row.resultDecision && row.state==='closed' && q?.parsed && row.repeatable && local.receipt?.state==='accepted' && cap?.answer) return 'actionable';
     // a receipt belongs to the question it answered; one in flight or unknown holds across refreshes, an answered one
     // stays beside its task after the question is gone
     if (local.op && local.receipt && (HELD.includes(local.receipt.state) || local.op.revision === row.revision || !q)) return local.receipt.state;
-    if (!manageable(row, cap) && (!q || !q.parsed || !cap || !cap.answer || !['ask', 'review'].includes(row.state))) return 'read-only';
+    if (!manageable(row, cap) && (!q || !q.parsed || !cap || !cap.answer || !(row.resultDecision ? row.state==='closed' : ['ask', 'review'].includes(row.state)))) return 'read-only';
     if (local.bound !== row.revision && (local.draft.trim()||local.files?.length)) return 'changed';
     return 'actionable';
   },
@@ -41,12 +44,17 @@ step:function(row, local, cap, ev, newId) {
         if (!LIVE.includes(st)||l.files?.length) return {local, send: null};
         const c = row.question.choices.find(x => x.id === ev.id);
         if (!c || c.consequential) return {local, send: null};
+        if(row.resultDecision && c.local) return {local:l,send:null};
+        if(row.resultDecision && c.reason) return {local:{...l,intent:c.reason},send:null};
         return start({choice: c.id});
       }
       case 'submit':
+        if(row.resultDecision && (!row.question.resultReason || !l.intent)) return {local,send:null};
         if (!cap || !cap.answer || !LIVE.includes(st) || textProblem(draftQuestion(row, cap), l.draft,l.files)) return {local, send: null};
         // an unparsed fallback card takes a requeue reason; a parsed owner action without options takes a text answer
         return start(fallback(row, cap) ? {action: 'requeue', text: l.draft.trim()} : {text: l.draft.trim()}, st === 'changed' && !fallback(row, cap) ? l.bound : row.revision);
+      case 'cancel-result':
+        return row.resultDecision&&LIVE.includes(st)?{local:{...l,intent:null},send:null}:{local,send:null};
       case 'requeue':
         if (!manageable(row, cap) || !LIVE.includes(st) || textProblem(REQUEUE, l.draft,l.files)) return {local, send: null};
         return start({action: 'requeue', text: l.draft.trim()});
@@ -205,7 +213,7 @@ paint:function() {
         if (text != null && text !== locals.get(k).draft) apply(k, {type: 'input', text});
         if (caret) { const c = cards.get(k), local = {...locals.get(k), caret}; locals.set(k, local); adapter.save?.(c.board, c.row, local); }
       },
-      act(board, n, type) { const k = key(board, {n}); if (cards.has(k) && ['submit', 'requeue'].includes(type)) apply(k, {type}); },
+      act(board, n, type) { const k = key(board, {n}); if (cards.has(k) && ['submit', 'requeue', 'cancel-result'].includes(type)) apply(k, {type}); },
       // rows: [{board, row}] of open questions; a row that left keeps no state
       update(rows) {
         cards.clear();

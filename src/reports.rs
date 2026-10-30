@@ -50,7 +50,7 @@ impl Cache {
                     }
                 };
                 let row=row.map(|mut row| {
-                    if row["visible"]==true && row["kind"]=="report" {
+                    if row["kind"]=="report" {
                         let source=old.and_then(|(_,_,r)|r.as_ref()).filter(|r|r["sha"]==row["sha"] && (r["body"].is_string()||r["missing"]==true));
                         let content=match source {Some(r) if r["missing"]==true=>Err(r["reason"].as_str().unwrap_or_default().to_string()),Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
                             coreq::telemetry::capture::operation("reports.collect.source",|| -> Res<(Value,Value)> {
@@ -202,7 +202,7 @@ pub fn cached_open(root:&Path,n:u64,sha:&str)->Res<Value> {
     coreq::telemetry::capture::operation("reports.open.cached",|| -> Res<Value> {
         if !identity(sha) {return Err("result identity must be full SHA or collected close identity".into());}
         let value=cached(root);
-        let row=value["reports"].as_array().into_iter().flatten().find(|r|r["n"]==n && r["sha"]==sha);
+        let row=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten()).find(|r|r["n"]==n && r["sha"]==sha);
         match row {Some(row)=>Ok(json!({"report":row,"complete":value["complete"],"reason":value["reason"]})),None=>Ok(json!({"reason":value["reason"].as_str().unwrap_or("Report not in the collected snapshot; waiting for the service"),"complete":false}))}
     },|_|"cache-read")
 }
@@ -277,16 +277,13 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     let mut sorted:Vec<_>=comments.iter().filter(|c|c.trusted&&!c.edited).collect();sorted.sort_by_key(|c|c.id);
     let (mut read,mut decision,mut made,mut making,mut until)=(legacy_answered,if legacy_answered{"answered"}else{"none"},json!([]),false,None);
     for c in sorted {
-        if !report {
-            if c.body.lines().next()==Some(&format!("taskq: result-read {sha}")) {read=true;}
-            if c.body.lines().next()==Some(&format!("taskq: result-accept {sha}")) {read=true;decision="accepted";}
-            continue;
-        }
-        if matches!(decision,"drop"|"made") {break;}
+        if matches!(decision,"accepted"|"drop"|"made"|"answered") {break;}
         let line=c.body.lines().next().unwrap_or("");
-        for (kind,value) in [("read","none"),("later","later"),("making","none"),("drop","drop"),("made","made")] {
-            if line==format!("taskq: report-{kind} {sha}") {
-                if kind=="drop"&&making {continue;}
+        let prefix=if report{"report"}else{"result"};
+        for (kind,value) in [("read","none"),("accept","accepted"),("later","later"),("making","none"),("drop","drop"),("made","made")] {
+            if !report&&matches!(kind,"making"|"made") {continue;}
+            if line==format!("taskq: {prefix}-{kind} {sha}") {
+                if matches!(kind,"drop"|"accept")&&making {continue;}
                 if kind=="made" {
                     let Some(tasks)=c.body.split_once('\n').and_then(|(_,s)|serde_json::from_str::<Vec<u64>>(s).ok()).filter(|v|!v.is_empty()&&v.len()<=8&&v.iter().all(|n|*n>0)) else {continue;};
                     made=json!(tasks);
@@ -301,7 +298,8 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     let accepted_close:Vec<_>=closing.into_iter().map(|c|Entry{id:c.id,body:c.body.clone(),edited:false}).collect();
     let mut row=json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::merge_receipt(&accepted_close),
         "comments_through":comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.id).max().unwrap_or(0),
-        "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made"),"pending_decision":if making&&!matches!(decision,"made"|"drop"){Some("make")}else{None},"tasks_made":made});
+        "conversation":crate::core::conversation(i.number,&log(comments)),
+        "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made")&&!(report&&decision=="accepted"),"pending_decision":if making&&!matches!(decision,"made"|"drop"|"accepted"){Some("make")}else{None},"tasks_made":made});
     let details=text(handin);let verdict=crate::core::verdict(i.number,&log(comments),&text(closing));
     row["result"]=json!(details.lines().find_map(|l|l.strip_prefix("Changed: ")));
     row["pr"]=json!(format!("{details}\n{verdict}").split(|c:char|c.is_whitespace()||matches!(c,'('|')'|'['|']'|'<'|'>')).filter(|u|u.starts_with("https://")&&(u.contains("/pull/")||u.contains("/merge_requests/"))).last().map(|u|u.trim_end_matches(|c:char|!c.is_ascii_alphanumeric()).to_string()));
@@ -377,7 +375,7 @@ fn current(b:&dyn Board,n:u64,sha:&str)->Res<Value> {
 fn mark(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64])->Res<Value> {mark_until(b,n,sha,kind,made,None)}
 fn mark_until(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64],until:Option<&str>)->Res<Value> {
     let row=current(b,n,sha)?;
-    if row["visible"]==false||kind=="read"&&row["read"]==true||kind=="accept"&&row["decision"]=="accepted"||kind=="later"&&row["decision"]=="later"&&row["later_until"].as_str()==until||kind=="making"&&row["pending_decision"]=="make" {return Ok(row);}
+    if row["visible"]==false||matches!(row["decision"].as_str(),Some("accepted"|"drop"|"made"|"answered"))||kind=="read"&&row["read"]==true||kind=="accept"&&row["decision"]=="accepted"||kind=="later"&&row["decision"]=="later"&&row["later_until"].as_str()==until||kind=="making"&&row["pending_decision"]=="make" {return Ok(row);}
     let prefix=if row["kind"]=="task" {"result"}else{"report"};
     let tail=match (kind,until) {("made",_)=>format!("\n{}",json!(made)),("later",Some(u))=>format!("\nuntil {u}"),_=>String::new()};
     let text=format!("taskq: {prefix}-{kind} {sha}{tail}");
@@ -400,7 +398,7 @@ pub fn act_with_reason(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:
 
 fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str)->Res<Value> {
     let row=current(b,n,sha)?;
-    if row["kind"]!="task" {return Err("reports use Make tasks for proposed work".into());}
+    if row["pending_decision"]=="make" {return Err("Make tasks already started; reconcile its held drafts before another decision.".into());}
     let reason=reason.trim();
     if reason.is_empty()||reason.chars().count()>180||reason.contains(['\r','\n']) {return Err("Give a one-line reason, at most 180 characters".into());}
     let label=if action=="reopen" {"Reopen"}else{"Follow-up"};
@@ -421,19 +419,18 @@ fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str
     if until.is_some()&&action!="later" {return Err("--until sets a report Later's revisit date".into());}
     let prior=current(b,n,sha)?;
     if prior["kind"]=="task" {
-        if !matches!(action,"read"|"accept") {return Err("completed task actions are read, accept, followup or reopen".into());}
+        if !matches!(action,"read"|"accept"|"later"|"drop") {return Err("completed task actions are read, accept, later, drop, followup or reopen".into());}
         return Ok(json!({"report":mark(b,n,sha,action,&[])?}));
     }
-    if action=="accept" {return Err("reports use Make tasks, Later or Drop".into());}
     if prior["visible"]==false {return Ok(json!({"report":prior}));}
     // #1979 Decide: a Later without a revisit date is not a decision.
     if action=="later" {
         let at=until.filter(|u|crate::core::utc(u)).and_then(crate::board::iso).ok_or("Later needs --until YYYY-MM-DDTHH:MM:SSZ, the revisit date")?;
         if at<=b.now()? {return Err("Later's revisit date must be in the future".into());}
     }
-    if matches!(action,"read"|"later"|"drop") {
-        let row=if action=="drop"&&prior["pending_decision"]=="make" {prior} else {mark_until(b,n,sha,action,&[],until)?};
-        return Ok(if action=="drop"&&row["pending_decision"]=="make" {json!({"report":row,"reason":"Make tasks already started; reconcile its held drafts before another decision."})} else {json!({"report":row})});
+    if matches!(action,"read"|"accept"|"later"|"drop") {
+        let row=if matches!(action,"accept"|"drop")&&prior["pending_decision"]=="make" {prior} else {mark_until(b,n,sha,action,&[],until)?};
+        return Ok(if matches!(action,"accept"|"drop")&&row["pending_decision"]=="make" {json!({"report":row,"reason":"Make tasks already started; reconcile its held drafts before another decision."})} else {json!({"report":row})});
     }
     let body=b.source(&format!("docs/research/{n}.md"),sha)?.replace("\r\n","\n");
     let tasks=proposals(&body)?;
@@ -537,6 +534,29 @@ mod tests {
         b.state.borrow_mut().report_closed.insert(n,45);
         b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().closed=Some(45);
         (b,claim,n,sha)
+    }
+
+    // Chain: Product / RC4–RC7 -> report decisions and claims. Risk: Accept hides partial drafts,
+    // decided content disappears, or a report correction reopens a completed dependency.
+    #[test] fn conversations_1977_decisions_keep_history_and_creation_fences() {
+        let (b,claim,n,sha)=board();let raw=json!({"create_claim_issue":claim});
+        let root=std::env::temp_dir().join(format!("taskq-1977-{}",crate::runtime::uuid()));std::fs::create_dir_all(crate::dot(&root)).unwrap();
+        let accepted=owner_act(&b,&root,&raw,n,&sha,"accept").unwrap();
+        assert_eq!(accepted["report"]["decision"],"accepted");assert_eq!(accepted["report"]["read"],true);
+        let count=b.comments(n).unwrap().len();owner_act(&b,&root,&raw,n,&sha,"accept").unwrap();assert_eq!(b.comments(n).unwrap().len(),count);
+        assert_eq!(owner_act(&b,&root,&raw,n,&sha,"make").unwrap()["report"]["decision"],"accepted");
+        let corrected=successor(&b,&root,&raw,n,&sha,"reopen","Keep the original receipt").unwrap();
+        let child=corrected["successor"].as_u64().unwrap();assert!(b.issue(child).unwrap().labels.contains(&"q-held".into()));assert!(!b.issue(n).unwrap().open);
+        let mut cache=Cache::default();cache.collect(&b);assert!(cache.value["reports"].as_array().unwrap().is_empty());
+        assert!(cache.value["history"][0]["body"].is_string(),"decided report content stays readable");
+        std::fs::write(crate::dot(&root).join("reports.json"),cache.value.to_string()).unwrap();
+        assert!(cached_open(&root,n,&sha).unwrap()["report"]["body"].is_string());
+        let (other,oc,on,os)=board();mark(&other,on,&os,"making",&[]).unwrap();
+        let pending=owner_act(&other,&root,&json!({"create_claim_issue":oc}),on,&os,"accept").unwrap();
+        assert!(pending["reason"].is_string());assert_eq!(pending["report"]["pending_decision"],"make");
+        other.raw(on,&format!("taskq: report-accept {os}"),true,false);
+        assert_eq!(current(&other,on,&os).unwrap()["pending_decision"],"make","a raced acknowledgement cannot win against a make reservation");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Chain: §7 Results -> trusted completion/seen markers -> held successor with immutable create claim.

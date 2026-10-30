@@ -51,7 +51,7 @@ Taskq.md § Product adopts these details (R13). Implementation covers all three 
 
 ## Reports and finished work candidate (#1977)
 
-The owner-requested merged destination follows [RC1–RC7](reports.md#conversations-design-checkpoint-1977). The [design review](reports-conversations.md) contains the operator-path comparison, preservation ledger, six-screen reference and qualification gaps. This extends the existing sidebar rather than replacing CS1–CS6; changed geometry still awaits approval.
+The owner-requested merged destination follows [RC1–RC7](reports.md#conversations-design-checkpoint-1977). The [design review](reports-conversations.md) contains the operator-path comparison, preservation ledger, six-screen reference and qualification gaps. This extends the existing sidebar rather than replacing CS1–CS6; native qualification remains separate from design acceptance.
 
 Keep All / Needs reply / Needs decision / Finished filters directly above the grouped list, with one search field. Pin/project/Other membership, row actions, collapse and source timestamps retain CS1–CS6. All includes active conversations, questions and collected finished work. Attention labels distinguish Needs reply, Needs decision, Unread result, Accepted and Dropped; reading alone never displays Decided. Archive is a separate local view, not the Finished filter. Failed or incomplete collections keep cached rows and an unknown reason.
 
