@@ -168,7 +168,7 @@ Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 ## 5. Commands
 | Command | Does |
 |---|---|
-| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H]` / `taskq start N [M..]` | labels: § 6; add: new held issue, prints `#<N> held`; start: § 1 held |
+| `taskq labels` / `taskq add "<title>" --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0\|1\|2] [--host H] [--conversation ID --op-id ID]` / `taskq start N [M..]` | §6 labels; add: `#<N> held`; §1 start |
 | `taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]` | § 1 create/optional-start receipts; `add` routing/scope/dependency flags apply |
 | `taskq ask N --text Q [--option O..] [--recommend K] [--link URL..]` | question card |
 | `taskq answer N --text A` / `taskq answer N.K [M.K..]` / `taskq pick N.K --text R` | owner's answer or option pick, all checked first; `pick`: § 2 PM view |
