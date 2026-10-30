@@ -89,6 +89,7 @@ pub struct Collector {
     closes: String,
     value: Value,
     invalidated: bool,
+    written: Value,
 }
 impl Collector {
     /// Drain completion from the existing local service tick, without waking a board pass.
@@ -120,8 +121,22 @@ impl Collector {
                 }
             }
         }
+        // #1975: rows live in their own file; a failed write retries on the next tick and status keeps only counts.
+        if self.value!=self.written && crate::platform::write_atomic(&file(root),&self.value.to_string()).is_ok() {self.written=self.value.clone();}
         freshness(self.value.clone(),now(),ttl,None)
     }
+}
+
+/// #1975: `<root>/.taskq/reports.json` holds the rows; `status.json` (and so `service status --json`) holds this.
+pub fn summary(value:&Value)->Value {
+    let rows=value["reports"].as_array();
+    json!({"complete":value["complete"],"reason":value["reason"],"observed":value["observed"],"count":rows.map(Vec::len),
+        "unread":rows.map(|r|r.iter().filter(|r|r["read"]!=true).count()),"history":value["history"].as_array().map(Vec::len)})
+}
+fn file(root:&Path)->std::path::PathBuf {crate::dot(root).join("reports.json")}
+/// The collected rows; a status written before #1975 still carries them inline until the service rewrites.
+pub fn stored(root:&Path,status:&Value)->Value {
+    match crate::data::json(&file(root)) {Ok(Some(v))=>v,_ if status["reports"]["reports"].is_array()=>status["reports"].clone(),_=>Value::Null}
 }
 
 /// Opens the board on the first job and retries a failed open on the next; config changes apply on service restart.
@@ -156,7 +171,7 @@ pub fn freshness(mut value:Value,now:i64,ttl:i64,unavailable:Option<&str>)->Valu
 
 pub fn cached(root:&Path)->Value {
     let result=crate::data::json(&crate::dot(root).join("status.json"));
-    let (value,reason)=match result {Ok(Some(s))=>(s["reports"].clone(),s["error"].as_str().map(String::from)),Ok(None)=>(Value::Null,None),Err(e)=>(Value::Null,Some(e))};
+    let (value,reason)=match result {Ok(Some(s))=>(stored(root,&s),s["error"].as_str().map(String::from)),Ok(None)=>(stored(root,&Value::Null),None),Err(e)=>(Value::Null,Some(e))};
     freshness(value,now(),crate::snapshot::ttl(root),reason.as_deref())
 }
 
@@ -606,6 +621,8 @@ mod tests {
         let (tx,rx)=std::sync::mpsc::channel();tx.send(cache).unwrap();
         let mut collector=Collector{pending:Some(rx),started:Some(std::time::Instant::now()),..Default::default()};
         assert_eq!(collector.tick(&root,300,300,false)["complete"],true);
+        let rows=stored(&root,&Value::Null);assert!(rows["reports"][0]["body"].is_string(),"#1975: rows land in reports.json");
+        assert_eq!(summary(&rows)["count"],1);assert!(summary(&rows).get("reports").is_none(),"status keeps counts, never rows");
         std::fs::write(crate::dot(&root).join("events"),"invented #12 close 3\n").unwrap();
         collector.tick(&root,300,300,false);assert!(collector.invalidated,"observe-only passes retain the requested refresh");
         collector.tick(&root,300,300,true);assert!(collector.pending.is_some(),"close schedules without waiting for poll");

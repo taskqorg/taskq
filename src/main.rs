@@ -1405,7 +1405,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             status[k] = v;
         }
         status["diagnostics"] = s.service_diagnostics();
-        status["reports"] = reports.tick(&cfg.root,cfg.poll,cfg.ttl,!quiet);
+        status["reports"] = reports::summary(&reports.tick(&cfg.root,cfg.poll,cfg.ttl,!quiet));
         let published = publish_status(&tool, &cfg.root, &status, host.as_ref());
         drop(wakeup);
         if host.is_none() && is_installed && published && began.elapsed().as_secs() >= cfg.rollback_after {
@@ -1480,7 +1480,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let mut tick = || {
             let results_ready=reports.received();
             if results_ready {
-                status["reports"]=reports.tick(&cfg.root,cfg.poll,cfg.ttl,false);
+                status["reports"]=reports::summary(&reports.tick(&cfg.root,cfg.poll,cfg.ttl,false));
                 status["tasks_age_seconds"]=json!(s.tasks_read.map(|t|t.elapsed().as_secs()));
                 status["at"]=json!(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0,|d|d.as_secs()));
             }
@@ -2315,6 +2315,13 @@ fn service_project_fields(root:&Path,status:Res<Option<Value>>)->String {
     out.join("\n")
 }
 
+/// #1975: one registered project in `service status --json`. Report rows stay in `taskq results`; a status written
+/// before the split still carries them inline, so they are cut to counts here too.
+fn service_project(root:&Path,binding:&str,read:&Res<Option<Value>>)->Value {
+    let mut status=read.as_ref().ok().and_then(Option::as_ref).cloned();
+    if let Some(s)=status.as_mut().filter(|s|s["reports"]["reports"].is_array()) {s["reports"]=reports::summary(&s["reports"]);}
+    json!({"root":root,"host_binding":binding,"status":status,"error":read.as_ref().err()})
+}
 fn service_report(a:&Args)->Res<()> {
     let install=platform::default_install();
     let service=host::service_status(&install);
@@ -2329,8 +2336,7 @@ fn service_report(a:&Args)->Res<()> {
     let installation=host::installation_status(&install,a.one("request"));
     let lifecycle=if a.one("request").is_some()&&installation["id"].is_string() {installation.clone()}else{lifecycle::status(&install,a.one("request"))};
     if a.flags.contains_key("json") {
-        let projects:Vec<_>=rows.into_iter().map(|(root,status)|json!({"root":root,"host_binding":binding(&status),
-            "status":status.as_ref().ok().and_then(Option::as_ref),"error":status.as_ref().err()})).collect();
+        let projects:Vec<_>=rows.into_iter().map(|(root,status)|service_project(root,binding(&status),&status)).collect();
         println!("{}",json!({"schema":"taskq.service/1","service":service,"projects":projects,"registry_error":registry.as_ref().err(),"restart":if lifecycle["action"].as_str().is_some_and(|action|action!="restart") {Value::Null}else{lifecycle.clone()},"lifecycle":lifecycle,"installation":installation}));
     } else {
         println!("{}",host::service_line(&service));
@@ -5674,6 +5680,37 @@ mod tests {
         fs::write(dot(&root).join("status.json"), r#"{"error":"board failed","tasks":[]}"#).unwrap();
         assert!(service_fields(&root).contains("Counts: unknown"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    // Chain: #1975 report rows -> reports.json; status.json and `service status --json` keep counts.
+    // Risk: every collected report embedded per board (2 MB on 7 boards) breaks PilotQ's 1 MiB tool cap.
+    #[test]
+    fn service_status_json_stays_bounded_with_many_reports_per_board() {
+        let at = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        let rows: Vec<Value> = (0..600).map(|n| json!({"n":n,"kind":"report","sha":"a".repeat(40),"closed":at,"read":n%2==0,"visible":true,
+            "title":"Invented report title","body":"Invented report body line.\n".repeat(80),"tasks":[]})).collect();
+        let value = json!({"reports":rows,"history":rows[..25],"complete":true,"reason":null,"observed":at});
+        // About 25 KB of other status per board, the largest measured without reports.
+        let filler = json!({"tasks":(0..60).map(|n|json!({"n":n,"state":"ready","title":"Invented task title ".repeat(10)})).collect::<Vec<_>>()});
+        let mut projects = Vec::new();
+        for i in 0..7 {
+            let root = std::env::temp_dir().join(format!("taskq-bound-{}-{i}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(dot(&root)).unwrap();
+            fs::write(dot(&root).join("reports.json"), value.to_string()).unwrap();
+            // Board 0 keeps a status written before #1975, rows inline.
+            let reports = if i == 0 {value.clone()} else {reports::summary(&value)};
+            let status = json!({"at":at,"tasks":filler["tasks"],"reports":reports});
+            fs::write(dot(&root).join("status.json"), status.to_string()).unwrap();
+            let read = data::json(&dot(&root).join("status.json"));
+            projects.push(service_project(&root, "current", &read));
+            assert_eq!(reports::cached_list(&root, 1, None).unwrap()["reports"][0]["n"], 0, "results keep the rows");
+            fs::remove_dir_all(&root).unwrap();
+        }
+        assert_eq!(projects[1]["status"]["reports"]["count"], 600);
+        assert_eq!(projects[0]["status"]["reports"]["unread"], 300);
+        let out = json!({"schema":"taskq.service/1","projects":projects}).to_string();
+        assert!(out.len() < 256 * 1024, "service status --json is {} bytes", out.len());
     }
 
     // Chain: § 5 error diagnostics. Risk: a compact error loses its full diagnostic.

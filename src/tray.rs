@@ -650,7 +650,7 @@ fn project(install: &Path, root: &str) -> Value {
     out["incoming"] = s["incoming"].clone();
     // #1819: the stale line compares the board read age with the service poll
     out["poll"] = s["poll"].clone();
-    out["reports"] = crate::reports::freshness(s["reports"].clone(),now(),ttl,bad_report_reason(&s,live));
+    out["reports"] = crate::reports::freshness(crate::reports::stored(r,&s),now(),ttl,bad_report_reason(&s,live));
     out
 }
 
