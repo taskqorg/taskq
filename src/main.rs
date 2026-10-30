@@ -3535,7 +3535,8 @@ fn with_test_capture<T>(run: impl FnOnce(&coreq::telemetry::Store, &Path) -> T) 
     telemetry::settle(Duration::from_secs(30));capture.flush().unwrap();
     drop(capture);drop(store);
     // #1640: Windows can keep a just-closed store file busy (os error 32) for a moment; a lasting hold still fails.
-    for left in (0..50).rev() {match fs::remove_dir_all(&dir) {Err(e) if left>0&&e.raw_os_error()==Some(32)=>std::thread::sleep(Duration::from_millis(100)),other=>{other.unwrap();break}}}
+    // #1939: Linux CI saw a store file appear during removal (DirectoryNotEmpty); retry it the same way.
+    for left in (0..50).rev() {match fs::remove_dir_all(&dir) {Err(e) if left>0&&(e.raw_os_error()==Some(32)||e.kind()==std::io::ErrorKind::DirectoryNotEmpty)=>std::thread::sleep(Duration::from_millis(100)),other=>{other.unwrap();break}}}
     result
 }
 

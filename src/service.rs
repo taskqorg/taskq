@@ -2872,6 +2872,69 @@ mod tests {
         assert_eq!(comments.iter().filter(|e| e.body.starts_with("taskq: close")).count(), 1);
     }
 
+    // Chain: § 7 GitLab `direct` close -> MR created -> merge refused `ci_still_running` -> `publish` -> service pass -> merge
+    // or `publication-failed` (#1939). Defect (cyprusbz #540, MR !1196): close refused while the MR pipeline ran, the
+    // reviewer exited, the service wrote `gone` and a second reviewer burned a retry. Retained: the running pipeline is a
+    // visible wait with its link; green merges and closes once, red or cancelled fails once with the link and stops polling.
+    #[test]
+    fn gitlab_close_waits_for_the_mr_pipeline_then_merges_or_fails_once() {
+        for end in ["success", "failed", "canceled"] {
+            let (b, mut c) = (Fake::default(), cfg("win"));
+            c.publish = "direct".into();
+            let n = b.create("Invented GitLab close", "", &["taskq".into()]).unwrap();
+            let sha = "a".repeat(40);
+            let pipeline = Rc::new(RefCell::new("running"));
+            // created MRs, merges
+            let writes = Rc::new(RefCell::new((0, 0)));
+            let (p, w, result) = (pipeline.clone(), writes.clone(), sha.clone());
+            let link = "https://gitlab.example/o/r/-/pipelines/9";
+            b.state.borrow_mut().publisher = Some(crate::board::replying(&crate::board::gitlab::KIND, move |method, url| {
+                let (created, merged) = *w.borrow();
+                let mr = json!({"iid": 1196, "sha": result});
+                Ok(if url.contains("/merge_base?") { json!({"id": "c".repeat(40)}) }
+                    // the branch pipeline passed; the MR pipeline on the same SHA starts once the MR exists
+                    else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": if created == 0 { "success" } else { *p.borrow() }, "web_url": link}}) }
+                    else if url.contains("state=opened") { if created == 0 { json!([]) } else { json!([mr]) } }
+                    else if url.contains("state=merged") { json!([]) }
+                    else if method == "POST" && url.ends_with("/merge_requests") { w.borrow_mut().0 += 1; mr }
+                    else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": "ff", "autoclose_referenced_issues": false}) }
+                    else if method == "PUT" && url.ends_with("/merge_requests/1196/merge") { w.borrow_mut().1 += 1; json!({}) }
+                    else if url.ends_with("/merge_requests/1196") {
+                        let status = match *p.borrow() { "running" => "ci_still_running", "success" => "mergeable", _ => "ci_must_pass" };
+                        json!({"state": if merged > 0 { "merged" } else { "opened" }, "detailed_merge_status": status, "head_pipeline": {"status": *p.borrow(), "web_url": link}})
+                    }
+                    else { panic!("unexpected {method} {url}") })
+            }));
+            let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+            b.comment(n, &core::entry("result", &[&sha], Some(a), "candidate")).unwrap();
+            b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+            let verdict = format!("Changed: x\nChecks: A1 ok; CI green on {sha}\nOpen: none");
+            let op = crate::dispatch::Op::default();
+            let got = crate::dispatch::close_one(&b, &c, n, &verdict, &op);
+            assert!(got.ok() && got.extra.contains(link), "{end}: {got:?}");
+            assert_eq!((task(&b, n).state, task(&b, n).publication.as_deref()), (State::Review, Some(verdict.as_str())), "{end}");
+            assert!(crate::dispatch::close_one(&b, &c, n, &verdict, &op).ok(), "{end}: a repeated close keeps the saved verdict");
+            let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no reviewer while the MR pipeline runs")));
+            for _ in 0..2 { s.pass().unwrap(); }
+            let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+            assert!(row["publication"]["reason"].as_str().unwrap().contains(link), "{end}: {row}");
+            *pipeline.borrow_mut() = end;
+            s.pass().unwrap();
+            let (t, log) = (task(&b, n), b.comments(n).unwrap());
+            let count = |kind: &str| log.iter().filter(|e| e.body.starts_with(&format!("taskq: {kind}"))).count();
+            assert_eq!((count("gone"), count("spawn reviewer"), count("publish"), *writes.borrow()), (0, 1, 1, (1, usize::from(end == "success"))), "{end}");
+            if end == "success" {
+                assert_eq!((t.state, t.retries, count("close")), (State::Closed, 0, 1), "{end}");
+            } else {
+                assert_eq!((t.state, t.retries, count("publication-failed"), t.publication), (State::Ready, 1, 1, None), "{end}");
+                assert!(log.iter().any(|e| e.body.starts_with("taskq: publication-failed") && e.body.contains(&format!("CI {end} on {sha} {link}"))), "{end}");
+                let calls = b.state.borrow().publications;
+                s.pass().unwrap();
+                assert_eq!(b.state.borrow().publications, calls, "{end}: no publication polls after it failed");
+            }
+        }
+    }
+
     // Chain: section 7 publication -> refused enqueue -> status row reason and age, one `checks` record -> conflict requeue (#1820).
     // Defect (pilotq #106): a publication the pass could not move was only logged, so the task sat in review 50 minutes with no
     // board, menu or telemetry signal. Retained: every pass names the wait in the status row; a conflict requeues in the same pass.

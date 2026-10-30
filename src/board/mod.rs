@@ -73,8 +73,9 @@ pub trait Board {
     fn cancel_publication(&self, _n: u64, _sha: &str) -> Result<()> { Ok(()) }
     /// § 7: a task that closed without merging closes its open `taskq-<n>` PRs unmerged, branch kept; returns them.
     fn close_task_prs(&self, _n: u64, _reason: &str) -> Result<Vec<u64>> { Ok(vec![]) }
-    fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, _root: &std::path::Path, _enqueued: bool) -> Publish {
-        self.publish(n, sha, "pr", title, task_line)
+    /// Service retry of a saved `publish` in the configured `mode` (§ 7).
+    fn resume_publication(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, _root: &std::path::Path, _enqueued: bool) -> Publish {
+        self.publish(n, sha, mode, title, task_line)
     }
     fn url(&self, n: u64) -> String;
     /// Issue `n` of another repository on this board's host, for `Depends on <repo>#N` (§ 1); a bare name is under
@@ -112,6 +113,8 @@ pub enum Publish {
     Done(String),
     /// CI pending or missing: refuse, state unchanged.
     Pending(String),
+    /// Board CI still runs on a mergeable result: save `publish`, the service merges when it ends (#1939).
+    Waiting(String),
     /// CI failed or conflict: requeue with this message.
     Failed(String),
     /// Queue admission read back; save its id on the board.
@@ -131,7 +134,7 @@ impl Publish {
     pub fn outcome(&self) -> (&'static str, Option<&str>) {
         match self {
             Publish::Done(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("ok", None),
-            Publish::Pending(e) => ("retried", Some(e)),
+            Publish::Pending(e) | Publish::Waiting(e) => ("retried", Some(e)),
             Publish::Blocked(e) | Publish::Superseded { reason: e, .. } => ("ask", Some(e)),
             Publish::Failed(e) | Publish::MainMoved(e) => ("failed", Some(e)),
         }
@@ -318,9 +321,9 @@ impl Board for Profiled {
     fn defer_publication(&self, mode: &str) -> bool { self.0.defer_publication(mode) }
     fn cancel_publication(&self, n: u64, sha: &str) -> Result<()> { self.op("publish", |b| b.cancel_publication(n, sha)) }
     fn close_task_prs(&self, n: u64, reason: &str) -> Result<Vec<u64>> { self.op("publish", |b| b.close_task_prs(n, reason)) }
-    fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
+    fn resume_publication(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         let began = std::time::Instant::now();
-        let p = self.0.resume_publication(n, sha, title, task_line, root, enqueued);
+        let p = self.0.resume_publication(n, sha, mode, title, task_line, root, enqueued);
         let (outcome, err) = p.outcome();
         crate::profile::board_as("publish", began.elapsed(), outcome, err, self.0.requests().remaining);
         p
@@ -896,6 +899,14 @@ pub fn stamp(t: i64) -> String {
 
 // ---------- in-memory board ----------
 
+/// A `kind` adapter whose HTTP requests `reply` answers (method, URL -> JSON body or error), for tests outside this module.
+#[cfg(test)]
+pub fn replying(kind: &Kind, reply: impl Fn(&str, &str) -> Result<Value> + 'static) -> Box<dyn Board> {
+    let mut api = (kind.api)(if kind.name == "github" { "github.com" } else { "gitlab.example" }, "o/r", "test");
+    api.transport = Some(Box::new(move |method, url, _| reply(method, url).map(|v| Reply { status: 200, headers: vec![], body: v.to_string(), operation: operation(method) })));
+    (kind.board)(api)
+}
+
 /// A board in memory for tests: one clock tick per write, comment ids shared across issues like real boards.
 #[cfg(test)]
 #[derive(Default)]
@@ -949,6 +960,8 @@ pub struct FakeState {
     /// Immutable repository text for the Reports source adapter (path, SHA, body).
     pub report_sources: Vec<(String,String,String)>,
     pub report_closed: std::collections::BTreeMap<u64,i64>,
+    /// A real adapter that answers `publish` calls instead of the `publish` string above (#1939).
+    pub publisher: Option<Box<dyn Board>>,
 }
 
 #[cfg(test)]
@@ -1138,8 +1151,9 @@ impl Board for Fake {
         if state.fail_task_prs { Err("PR state unknown".into()) } else { Ok(vec![]) }
     }
 
-    fn publish(&self, _n: u64, sha: &str, _mode: &str, _title: &str, _task_line: &str) -> Publish {
+    fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
         self.state.borrow_mut().publications += 1;
+        if let Some(p) = &self.state.borrow().publisher { return p.publish(n, sha, mode, title, task_line); }
         match self.state.borrow().publish.as_str() {
             "pending" => Publish::Pending("CI pending".into()),
             "failed" => Publish::Failed("CI failed".into()),
@@ -1566,7 +1580,7 @@ mod tests {
                     crate::incident::take_detected();
                     let (h, calls) = publication_board(kind, mode, true, Some(true), ancestry);
                     let out = if mode == "direct" { h.publish(1, &"a".repeat(40), mode, "title", "Task: fake") }
-                        else { h.resume_publication(1, &"a".repeat(40), "title", "Task: fake", std::path::Path::new("unused"), false) };
+                        else { h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false) };
                     assert!(matches!(out, Publish::Done(_)));
                     assert_eq!(crate::incident::take_detected(), if ancestry == Some(false) { vec!["publication.not_on_main"] } else { vec![] });
                     assert_eq!(calls.borrow().iter().filter(|(method, _)| method != "GET").count(), 1);
@@ -1661,7 +1675,7 @@ mod tests {
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         let sha = "a".repeat(40);
-        let got = h.resume_publication(1, &sha, "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
+        let got = h.resume_publication(1, &sha, "pr", "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
         let Publish::Superseded { reason, merged } = got else { panic!("{got:?}") };
         assert_eq!(reason, format!("no open taskq-1 PR at result {sha}; merged taskq-1 PRs: #86 at ddddddd, #88 at eeeeeee"));
         assert_eq!(merged, "#86 at ddddddd, #88 at eeeeeee");
@@ -1700,7 +1714,7 @@ mod tests {
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let sha = "a".repeat(40);
-            let got = h.resume_publication(1, &sha, "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
+            let got = h.resume_publication(1, &sha, "pr", "title", "Task: fake", std::path::Path::new("missing-worktree"), false);
             match case {
                 "same" => assert_eq!(got, Publish::Done(format!("merged #114 as {} (head ddddddd, the result's patch-id); exact-SHA CI green on {}", "b".repeat(40), "d".repeat(40)))),
                 _ => assert!(matches!(&got, Publish::Superseded { merged, .. } if merged == "#114 at ddddddd"), "{case}: {got:?}"),
@@ -1792,7 +1806,7 @@ mod tests {
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race" | "head-moved" | "conflicting" | "enqueue-checks-running" | "enqueue-checks-failed");
-            let got = h.resume_publication(1, &sent, "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
+            let got = h.resume_publication(1, &sent, "pr", "title", "Task: invented", std::path::Path::new("missing-worktree"), prior);
             match scenario {
                 "new" | "draft" | "waiting" | "conflict-cleared" => assert!(matches!(got, Publish::Enqueued(_)), "{scenario}: {got:?}"),
                 "conflict" | "enqueue-conflict" | "conflicting" => assert_eq!(got, Publish::MainMoved("PR #1590 conflicts with main; conflict files: src/service.rs".into()), "{scenario}"),
@@ -1810,7 +1824,7 @@ mod tests {
             }
             if scenario == "waiting" {
                 // #1359: a waiting publication polls the queue each pass; main rules stay read once per process.
-                assert!(matches!(h.resume_publication(1, &sent, "title", "Task: invented", std::path::Path::new("missing-worktree"), prior), Publish::Enqueued(_)));
+                assert!(matches!(h.resume_publication(1, &sent, "pr", "title", "Task: invented", std::path::Path::new("missing-worktree"), prior), Publish::Enqueued(_)));
                 assert_eq!(*rules.borrow(), 1, "main rules reread");
             }
             assert!(!writes.borrow().iter().any(|b| b.get("merge_method").is_some()), "queue never calls REST merge");
@@ -1855,14 +1869,14 @@ mod tests {
         }));
         // A rebase would need the task worktree; this host has none, so any rebase attempt fails the pass.
         let root = std::path::Path::new("missing-worktree");
-        assert!(matches!(h.resume_publication(1, &head, "title", "Task: invented", root, false), Publish::Enqueued(_)));
+        assert!(matches!(h.resume_publication(1, &head, "pr", "title", "Task: invented", root, false), Publish::Enqueued(_)));
         assert!(writes.borrow().iter().all(|w| w.contains("enqueuePullRequest")), "only the enqueue writes: {:?}", writes.borrow());
         // Overlay: the merge queue merged the PR at the result head; the merge result is the commit the CI recording ran on.
         let mut done = recorded("queue-merged");
         done["data"]["node"]["headRefOid"] = head.clone().into();
         done["data"]["node"]["mergeCommit"]["oid"] = merge.clone().into();
         *state.borrow_mut() = done;
-        let got = h.resume_publication(1, &head, "title", "Task: invented", root, true);
+        let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, true);
         assert!(matches!(&got, Publish::Done(m) if m.contains(&format!("as {merge}; merge-result CI green"))), "{got:?}");
         assert_eq!(writes.borrow().len(), 1, "one enqueue, no rebase or push: {:?}", writes.borrow());
     }
@@ -1927,7 +1941,7 @@ exit 0
                     } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
-            let out = h.resume_publication(1, &sha, "title", "Task: invented", &root, false);
+            let out = h.resume_publication(1, &sha, "pr", "title", "Task: invented", &root, false);
             match mode {
                 "clean" => {
                     let Publish::Rebased(head) = out else { panic!("{out:?}") };
@@ -2080,7 +2094,7 @@ exit 0
     #[test]
     fn gitlab_merge_waits_for_mergeability() {
         // (merge statuses read in order, PUT merge refusal) -> outcome, merge writes
-        let cases: [(&[&str], Option<&str>, &str, usize); 7] = [
+        let cases: [(&[&str], Option<&str>, &str, usize); 9] = [
             (&["unchecked", "checking", "mergeable"], None, "Done", 1),
             (&["checking"], None, "Pending", 0),
             (&["conflict"], None, "Failed:conflict", 0),
@@ -2088,6 +2102,9 @@ exit 0
             (&["ci_must_pass"], None, "Failed:ci_must_pass", 0),
             (&["mergeable", "checking"], Some("HTTP 422 Branch cannot be merged"), "Pending", 1),
             (&["mergeable", "conflict"], Some("HTTP 422 Branch cannot be merged"), "Failed:conflict", 1),
+            // #1939: the MR pipeline runs, so the service merges it later
+            (&["ci_still_running"], None, "Waiting", 0),
+            (&["mergeable", "ci_still_running"], Some("HTTP 422 Branch cannot be merged"), "Waiting", 1),
         ];
         for (statuses, refusal, want, writes) in cases {
             let statuses: Vec<String> = statuses.iter().map(|s| s.to_string()).collect();
@@ -2123,12 +2140,48 @@ exit 0
             let got = match h.publish(1, &"a".repeat(40), "pr", "title", "Task: fake") {
                 Publish::Done(_) => "Done".to_string(),
                 Publish::Pending(_) => "Pending".to_string(),
+                Publish::Waiting(_) => "Waiting".to_string(),
                 Publish::Failed(m) => format!("Failed:{}", m.split(": ").nth(1).unwrap_or("")),
                 other => panic!("unexpected {other:?}"),
             };
             assert_eq!(got, want, "{want}");
             assert_eq!(*calls.borrow(), writes, "{want}: merge writes");
             if want == "Pending" && writes == 0 { assert_eq!(*reads.borrow(), gitlab::MERGE_STATUS_READS as usize, "bounded wait"); }
+        }
+    }
+
+    // Chain: § 7 GitLab close vs a pipeline that has not ended (#1939). Defect (cyprusbz #540, MR !1196): a running pipeline
+    // refused close like missing CI, so the reviewer ended as `gone`. Risk: a running pipeline is not a wait, a red one hides
+    // its link, a stuck one polls forever, or a missing board clock trips the deadline.
+    #[test]
+    fn gitlab_running_pipeline_waits_until_it_ends_or_its_deadline() {
+        let link = "https://gitlab.example/o/r/-/pipelines/9";
+        // (commit pipeline status, its start, board Date header) -> outcome
+        let cases = [
+            ("running", "2026-10-30T11:00:00Z", Some("Fri, 30 Oct 2026 12:00:00 GMT"), "Waiting"),
+            ("pending", "2026-10-30T11:00:00Z", Some("Fri, 30 Oct 2026 12:00:00 GMT"), "Waiting"),
+            ("running", "2026-10-29T11:00:00Z", Some("Fri, 30 Oct 2026 12:00:00 GMT"), "Blocked"),
+            ("running", "2026-10-29T11:00:00Z", None, "Waiting"),
+            ("failed", "2026-10-30T11:00:00Z", None, "Failed"),
+            ("canceled", "2026-10-30T11:00:00Z", None, "Failed"),
+            ("manual", "2026-10-30T11:00:00Z", None, "Pending"),
+        ];
+        for (status, created, date, want) in cases {
+            let h = http(&gitlab::KIND, None, Box::new(move |method, url, _| {
+                let value = if url.contains("/merge_base?") { json!({"id": "c".repeat(40)}) }
+                    else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": status, "created_at": created, "web_url": link}}) }
+                    else { panic!("unexpected {method} {url}") };
+                let headers = date.map(|d| vec![("Date".to_string(), d.to_string())]).unwrap_or_default();
+                Ok(Reply { status: 200, headers, body: value.to_string(), operation: operation(method) })
+            }));
+            let got = match h.publish(1, &"a".repeat(40), "direct", "title", "Task: fake") {
+                Publish::Waiting(m) => { assert!(m.contains(link) && m.contains(status), "{m}"); "Waiting" }
+                Publish::Blocked(m) => { assert!(m.contains(link) && m.contains("after 24 h"), "{m}"); "Blocked" }
+                Publish::Failed(m) => { assert!(m.ends_with(&format!("CI {status} on {} {link}", "a".repeat(40))), "{m}"); "Failed" }
+                Publish::Pending(m) => { assert!(m.contains(status), "{m}"); "Pending" }
+                other => panic!("unexpected {other:?}"),
+            };
+            assert_eq!(got, want, "{status} {created} {date:?}");
         }
     }
 
@@ -2200,7 +2253,7 @@ exit 0
                     else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
-            let out = h.resume_publication(1, &"a".repeat(40), "title", "Task: fake", std::path::Path::new("unused"), false);
+            let out = h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false);
             if undrafted {
                 assert!(matches!(&out, Publish::Done(m) if m.starts_with("merged #7 as bbbb")));
                 assert_eq!(*writes.borrow(), ["/graphql", "/repos/o/r/pulls/7/merge"], "ready before merge");
@@ -2218,7 +2271,7 @@ exit 0
             for second in [Some(false), Some(true), None] {
                 crate::incident::take_detected();
                 let (h, calls) = publication_board(kind, "pr", false, second, Some(true));
-                assert!(matches!(h.resume_publication(1, &"a".repeat(40), "title", "Task: fake", std::path::Path::new("unused"), false), Publish::Pending(_)), "reporting preserves first read outcome");
+                assert!(matches!(h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false), Publish::Pending(_)), "reporting preserves first read outcome");
                 assert_eq!(crate::incident::take_detected(), if second == Some(false) { vec!["publication.readback"] } else { vec![] });
                 let readback = calls.borrow().iter().skip_while(|(m, _)| m == "GET").filter(|(m, u)| m == "GET" && (u.ends_with("/pulls/7") || u.ends_with("/merge_requests/7"))).count();
                 assert_eq!(readback, 2);

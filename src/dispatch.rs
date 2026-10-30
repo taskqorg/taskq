@@ -402,11 +402,12 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                 return act(b, &cfg.root, n, "close", &[], verdict, op); // the stale receipt, before any publication
             }
             if let Err(r) = successor() { return r; }
+            // a saved verdict (queued, or waiting on GitLab CI) is the service's to publish
+            if t.publication.is_some() {
+                return Receipt { extra: "publication pending; the service reconciles it".into(), ..Receipt::accepted(n, op, t.state, rev) };
+            }
             // § 4 Profiling: `checks` is the CI verification and merge call
             if b.defer_publication(&cfg.publish) {
-                if t.publication.is_some() {
-                    return Receipt { extra: "publication pending; the service reconciles it".into(), ..Receipt::accepted(n, op, t.state, rev) };
-                }
                 let mut r = act(b, &cfg.root, n, "publish", &[], verdict, op);
                 if r.ok() {
                     r.extra = "publication pending; the service reconciles it".into();
@@ -422,7 +423,7 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
             let published = b.publish(n, &sha, &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)));
             let (outcome, err) = match &published {
                 Publish::Done(_) => ("ok", "none"),
-                Publish::Pending(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("retried", "none"),
+                Publish::Pending(_) | Publish::Waiting(_) | Publish::Enqueued(_) | Publish::Rebased(_) => ("retried", "none"),
                 Publish::MainMoved(m) => ("failed", crate::profile::class(m)),
                 Publish::Failed(m) | Publish::Blocked(m) | Publish::Superseded { reason: m, .. } => ("failed", crate::profile::class(m)),
             };
@@ -437,6 +438,12 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
                     r
                 }
                 Publish::Pending(m) | Publish::Blocked(m) | Publish::Superseded { reason: m, .. } => Receipt::rejected(n, op, format!("not closed: {m}")),
+                // #1939: a running pipeline ends the reviewer with a saved verdict, never `gone`
+                Publish::Waiting(m) => {
+                    let mut r = act(b, &cfg.root, n, "publish", &[], verdict, op);
+                    if r.ok() { r.extra = format!("publication pending: {m}; the service merges it when CI ends"); }
+                    r
+                }
                 Publish::Enqueued(_) | Publish::Rebased(_) => Receipt::rejected(n, op, "publication needs the service"),
                 Publish::MainMoved(m) => {
                     act(b, &cfg.root, n, "requeue", &["main-moved"], &m, &Op::default())
@@ -462,7 +469,7 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
     let rev = core::revision(n, log);
     let op = Op { revision: Some(rev), ..Default::default() };
     let write = |kind, args: &[&str], text: &str| act_as(b, &cfg.root, n, kind, args, text, &op, None, None);
-    match b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some()) {
+    match b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some()) {
         Publish::Done(m) => write("close", &[], &join(&[verdict, &format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision)])),
         Publish::Enqueued(id) if t.enqueued.is_none() => write("enqueued", &[&id], ""),
         Publish::Enqueued(_) => Receipt::accepted(n, &op, t.state, rev),
@@ -471,7 +478,7 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
         Publish::Failed(m) => write("publication-failed", &[], &core::limit_text(n, &t, "requeue", &format!("publication failed: {m}"))),
         Publish::Blocked(m) => write("publication-blocked", &[], &blocked_card(n, &m, None)),
         Publish::Superseded { reason, merged } => write("publication-blocked", &[], &blocked_card(n, &reason, Some(&merged))),
-        Publish::Pending(m) => Receipt::rejected(n, &op, m),
+        Publish::Pending(m) | Publish::Waiting(m) => Receipt::rejected(n, &op, m),
     }
 }
 

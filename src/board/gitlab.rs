@@ -71,15 +71,29 @@ impl GitLab {
         ok
     }
 
-    /// CI on `sha`: Ok(None) green, Ok(Some(msg)) failed, Err pending or missing.
-    fn ci(&self, sha: &str) -> Result<Option<String>> {
+    /// CI on `sha`: Ok(None) green, Ok(Some) the outcome that stops this close (failed, or still running), Err pending or missing.
+    fn ci(&self, sha: &str) -> Result<Option<Publish>> {
         let v = self.api.call("GET", &format!("/repository/commits/{sha}"), None)?.json()?;
-        match v["last_pipeline"]["status"].as_str() {
+        let p = &v["last_pipeline"];
+        match p["status"].as_str() {
             Some("success") => Ok(None),
-            Some(st @ ("failed" | "canceled")) => Ok(Some(format!("CI {st} on {sha}"))),
+            Some(st @ ("failed" | "canceled")) => Ok(Some(Publish::Failed(format!("CI {st} on {sha}{}", link(p))))),
+            Some(st) if RUNNING.contains(&st) => Ok(Some(self.running(&format!("CI on {sha}"), p))),
             Some(st) => Err(format!("CI {st} on {sha}")),
             None => Err(format!("no CI on {sha}")),
         }
+    }
+
+    /// § 7 wait on a running pipeline: the service merges once it ends (#1939); past the deadline only the owner can unblock it.
+    fn running(&self, what: &str, p: &Value) -> Publish {
+        let st = p["status"].as_str().unwrap_or("running");
+        // board clock only (§ 4); unknown clock or start never trips the deadline
+        let clock = *self.api.clock.borrow();
+        let age = iso(&s(p, "created_at")).filter(|_| clock > 0).map(|t| clock - t);
+        if age.is_some_and(|a| a > PIPELINE_DEADLINE) {
+            return Publish::Blocked(format!("{what} still {st} after {} h{}", PIPELINE_DEADLINE / 3600, link(p)));
+        }
+        Publish::Waiting(format!("{what} {st}{}: merges when it passes", link(p)))
     }
 
     fn publication_ancestry(&self, sha: &str, mode: &str) {
@@ -102,8 +116,8 @@ impl GitLab {
         if base == sha {
             return Ok(Publish::Done(format!("{sha} already on main")));
         }
-        if let Some(fail) = self.ci(sha)? {
-            return Ok(Publish::Failed(fail));
+        if let Some(stop) = self.ci(sha)? {
+            return Ok(stop);
         }
         // no fast-forward ref API: `direct` merges a fast-forward MR (§ 7)
         let mrs = self.api.call("GET", &format!("/merge_requests?source_branch={branch}&target_branch=main&state=opened"), None)?.json()?;
@@ -145,6 +159,7 @@ impl GitLab {
             // 422 'Branch cannot be merged' also answers a merge sent while GitLab rechecks: only a settled blocker fails (#1687)
             Err(e) if e.contains("HTTP 422") => return Ok(match self.merge_status(iid)? {
                 Status::Blocked(why) => Publish::Failed(format!("!{iid} cannot be merged: {why}: {e}")),
+                Status::Running(p) => self.running(&format!("!{iid} pipeline"), &p),
                 _ => Publish::Pending(format!("!{iid} merge refused while GitLab checks mergeability: {e}")),
             }),
             r => r?,
@@ -171,7 +186,19 @@ impl GitLab {
 enum Status {
     Mergeable,
     Checking(String),
+    /// `ci_still_running`: the MR's head pipeline (#1939).
+    Running(Value),
     Blocked(String),
+}
+
+/// Pipeline states that end by themselves; `manual` and `scheduled` wait for a person.
+const RUNNING: [&str; 5] = ["created", "waiting_for_resource", "preparing", "pending", "running"];
+/// A pipeline still running this long after it started needs the owner (§ 7).
+pub(super) const PIPELINE_DEADLINE: i64 = 24 * 3600;
+
+/// ` <pipeline url>` when the board names one.
+fn link(p: &Value) -> String {
+    p["web_url"].as_str().map_or(String::new(), |u| format!(" {u}"))
 }
 
 /// Reads of a checking MR before close gives up as Pending; the review retries the close later.
@@ -188,7 +215,9 @@ impl GitLab {
         // `detailed_merge_status` (GitLab 15.6+); legacy `merge_status` otherwise
         Ok(match (v["detailed_merge_status"].as_str(), v["merge_status"].as_str()) {
             (Some("mergeable"), _) | (None, Some("can_be_merged")) => Status::Mergeable,
-            (Some(st @ ("unchecked" | "checking" | "preparing" | "approvals_syncing" | "ci_still_running")), _)
+            (Some("ci_still_running"), _) => Status::Running(v["head_pipeline"].clone()),
+            (Some("ci_must_pass"), _) => Status::Blocked(format!("ci_must_pass{}", link(&v["head_pipeline"]))),
+            (Some(st @ ("unchecked" | "checking" | "preparing" | "approvals_syncing")), _)
             | (None, Some(st @ ("unchecked" | "checking" | "cannot_be_merged_recheck" | "cannot_be_merged_rechecking"))) => Status::Checking(st.into()),
             (Some(st), _) | (None, Some(st)) => Status::Blocked(st.into()),
             (None, None) => Status::Checking("unknown merge status".into()),
@@ -203,6 +232,7 @@ impl GitLab {
             match self.merge_status(iid)? {
                 Status::Mergeable => return Ok(None),
                 Status::Blocked(why) => return Ok(Some(Publish::Failed(format!("!{iid} cannot be merged: {why}")))),
+                Status::Running(p) => return Ok(Some(self.running(&format!("!{iid} pipeline"), &p))),
                 Status::Checking(st) => last = st,
             }
         }
