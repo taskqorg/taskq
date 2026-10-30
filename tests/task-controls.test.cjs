@@ -11,6 +11,9 @@ for(const [state,controls] of Object.entries(fx.states)){
 }
 assert.equal(c.render({n:7,revision:20,controls:['start','stop']},{except:['start']}).match(/data-control/g).length,1);
 assert.equal(c.render({n:7,revision:20}),'');
+// Chain: #1928 A5 / M3. Risk: provider guessing from a self-hosted hostname gives GitLab a GitHub close mark.
+for(const board of ['github','gitlab'])assert(c.render({n:7},{url:'https://forge.example/o/r/-/issues/7',board}).includes('<title>'+({github:'GitHub',gitlab:'GitLab'}[board])+'</title>'));
+assert(c.render({n:7},{url:'https://forge.example/o/r/issues/7'}).includes('lucide-external-link'),'unknown provider stays neutral');
 for(const x of fx.cases)assert.deepEqual(c.op(x.row,x.op.action,'dash'),x.op);
 const sandbox={setTimeout,clearTimeout,crypto:require('node:crypto').webcrypto};vm.createContext(sandbox);
 vm.runInContext(fs.readFileSync('build/web/task-controls.js','utf8'),sandbox);

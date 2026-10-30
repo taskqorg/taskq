@@ -37,8 +37,9 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
  if(out)await page.screenshot({path:out+'/question-dark-20.png'});
  await page.locator('[data-c-field=answer]').fill('Retained answer draft');
  state.projects[0].tasks[0]={...question,revision:question.revision+2};await page.evaluate(s=>taskq.receive(s),state);
- assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'stale','fresh revision cannot silently approve a retained draft');
- assert.equal(await page.locator('[data-c-field=answer]').inputValue(),'Retained answer draft');assert(await page.locator('[data-a=answer-send]').isDisabled());assert(await page.locator('[data-qac=choose]').first().isDisabled());
+ // #1918 canonical changed-card behavior: preserve the old-bound draft; explicit Send records it as a note.
+ assert.equal(await page.locator('.qac').getAttribute('data-qac-state'),'changed','a fresh card cannot silently rebind a retained draft');
+ assert.equal(await page.locator('[data-c-field=answer]').inputValue(),'Retained answer draft');assert(await page.locator('[data-a=answer-send]').isEnabled());assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='answer').length),0,'refresh and reading send nothing');
  await page.locator('[data-c=select][data-id=active-owner]').click();await page.locator('.conversation-info summary').click();
  for(const font of [18,20]){
   await page.evaluate(({s,font})=>taskq.receive({...s,font}),{s:state,font});
@@ -58,7 +59,7 @@ const state={font:20,theme:'dark',host:'fixture',projects:[{root:'fixture',name:
  await menu.evaluate(s=>taskq.receive(s),{...state,page:'home',platform:'macos',display:require('./fixtures/display-model.json').display,projects:[{...state.projects[0],board_kind:'github',tasks:['later','doing','review','ask'].map((state,i)=>({n:i+1,state,title:'Menu task '+(i+1),revision:i+10,controls:[]}))}]});
  for(const n of [1,2,3,4]){
   await menu.locator('[data-a=task-detail][data-key="'+board+'/'+n+'"]').click();
-  const entry=menu.locator((n===4?'#taskq-question-details':'#taskq-popover')+' [data-a=workspace]');assert.equal(await entry.count(),1,'one thread entry per task');
+  const entry=menu.locator('.task-inline-details [data-a=workspace]');assert.equal(await entry.count(),1,'one thread entry per task');
   await entry.click();const open=await menu.evaluate(()=>sent.filter(m=>m.a==='workspace').at(-1).open);assert.deepEqual([open.board,open.task,open.revision],[board,n,n+9]);await menu.keyboard.press('Escape');
  }
  assert.equal(await menu.evaluate(()=>sent.filter(m=>['answer','control','start','ai-send'].includes(m.a)).length),0,'opening a menu task has no lifecycle effect');await menu.close();

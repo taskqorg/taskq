@@ -1,6 +1,6 @@
 # Task workspace component
 
-Accepted under [taskq.md § 4](../../taskq.md#4-service) (#1645). TaskQ owns the task workspace: the menu, task list with saved views and the task detail popover. The tray and DashQ Tasks ([dashq#186](https://github.com/taskqorg/dashq/issues/186)) load the same released build unchanged; DashQ keeps no fork. [Menu](menu.md) M1–M14, [task controls](task-controls.md) and the [answer card](answer-card.md) stay the behavioral authority.
+Accepted under [taskq.md § 4](../../taskq.md#4-service) (#1645). TaskQ owns the task workspace: the menu, task list with saved views and inline task details. The tray and DashQ Tasks ([dashq#186](https://github.com/taskqorg/dashq/issues/186)) load the same released build unchanged; DashQ keeps no fork. [Menu](menu.md) M1–M14, [task controls](task-controls.md) and the [answer card](answer-card.md) stay the behavioral authority.
 
 ## Contract
 
@@ -21,6 +21,6 @@ Each release ships, under `SHA256SUMS`: `taskq-<v>-task-workspace.js`, `-task-wo
 
 - `narrow` (320×640): rows fit; the view editor opens, a state facet filters, Escape returns focus.
 - `large-text` (360×760, font 20): rows fit; a row opens its detail, which fits; Stop sends `answer`.
-- `keyboard`: Tab reaches a row without opening its detail; Enter or Space opens the detail with focus in it; Escape returns focus to the row (MP13). The shipped fixture still expects a focus preview until #1659 updates it.
+- `keyboard`: Tab reaches a row without opening its detail; Enter or Space opens the detail with focus in it; Escape returns focus to the row (MP13).
 
 Each step names a selector or key and an expectation (`count`, `open`, `focus`, `text`, `fits`, `sent`), so a consumer replays them on its pinned version.

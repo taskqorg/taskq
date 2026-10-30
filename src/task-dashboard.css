@@ -148,3 +148,12 @@
 
 /* Square disclosure slots stay inside their row when the arrow rotates. */
 .dashboard-status>summary:after,.menu .host-breakdown:after{width:1em;height:1em;line-height:1;display:flex;align-items:center;justify-content:center}
+/* M3/MP13: every task shares the list scroll and the question's raised surface. */
+.menu .task-inline-details{--task-accent:var(--muted);background:light-dark(#eff2f5,#303a43);border-left-color:var(--task-accent);color:light-dark(#243039,#eef2f5);overflow:visible}
+.task-inline-details.good{--task-accent:var(--work)}.task-inline-details.review{--task-accent:var(--review)}.task-inline-details.ask{--task-accent:var(--ask)}.task-inline-details.danger{--task-accent:var(--failed)}
+.task-inline-details .popover-heading>[data-a=workspace]{flex:1;text-align:left;justify-content:flex-start;color:var(--task-accent);border:0;background:transparent;display:flex;align-items:center;gap:5px}
+.task-destinations{display:flex;flex-direction:column;align-items:start;gap:4px;margin:4px 0}.task-destinations a{display:inline-flex;gap:5px;align-items:center;min-height:var(--target)}.task-destinations p{margin:0;overflow-wrap:anywhere}
+.task-row :is(.task-board,.tqp-mark){min-width:var(--target);min-height:var(--target);display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:transparent;color:inherit}.task-row .task-identity{border:0;background:transparent;min-height:var(--target)}
+.task-publication{font-size:.85em;color:var(--review)}
+.task-transcript-page{overflow-wrap:anywhere;user-select:text}.task-transcript-page h2{font-size:1em;margin:0;flex:1}.task-transcript-page:focus{outline:none}
+.background-only .task-inline-details{border-left-color:var(--task-accent)}

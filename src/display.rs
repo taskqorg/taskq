@@ -152,7 +152,7 @@ pub fn model(ps: &mut [Value], now: i64) -> Value {
         for (j, t) in ts.iter_mut().enumerate() {
             let key = format!("{b}/{}", t["n"]);
             t["key"] = json!(key);
-            t["state_name"] = json!(name(t["state"].as_str().unwrap_or("")));
+            t["state_name"] = json!(if t["state"] == "review" && t["enqueued"].as_str().is_some_and(|id| !id.is_empty()) { "merge queue · CI" } else { name(t["state"].as_str().unwrap_or("")) });
             t["age"] = json!(elapsed(&t["since"], None));
             t["total_age"] = json!(elapsed(&t["created"], None));
             for s in t["steps"].as_array_mut().into_iter().flatten() {
@@ -201,6 +201,21 @@ mod tests {
     #[test]
     fn age_is_short_units() {
         assert_eq!([-5, 59, 300, 7200, 259200].map(age), ["<1m", "<1m", "5m", "2h", "3d"]);
+    }
+
+    // Chain: #1928 owner note / R6 / M3. Risk: an approved queued review looks like a stalled reviewer;
+    // an unqueued publication or a different lifecycle state must never read as queued.
+    #[test]
+    fn queued_review_is_named_from_the_existing_queue_receipt() {
+        let mut ps = [project("a", json!([
+            {"n":1,"state":"review","enqueued":"invented-receipt"},
+            {"n":2,"state":"review","publication":{"reason":"manual merge needed"}},
+            {"n":3,"state":"doing","enqueued":"obsolete-receipt"}
+        ]))];
+        model(&mut ps, 1000);
+        for t in ps[0]["tasks"].as_array().unwrap() {
+            assert_eq!(t["state_name"], match t["n"].as_u64().unwrap() {1 => "merge queue · CI", 2 => "Review", _ => "Doing"});
+        }
     }
 
     // Chain: K-A2/K-A3 deduplication. Risk: a task registered twice counts twice, or a conflict shows a number.

@@ -521,6 +521,8 @@ impl Row {
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
             "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed,
             "controls": controls(self.task.state.name())});
+        if let Some(id) = &self.task.enqueued { row["enqueued"] = json!(id); }
+        if let Some(sha) = &self.task.result { row["result"] = json!(sha); }
         // R6 timed park: the UTC time and its reason; clients show it in local time
         if let Some(u) = &self.task.until { row["until"] = json!(u); row["later"] = json!(self.later); }
         // R6 / § 2 Stages: `stage k/n` and the finished stages

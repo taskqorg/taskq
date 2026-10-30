@@ -26,6 +26,7 @@ aggregate:function(all,selected=null){return '<section class="tqp" aria-label="A
 task:function(p,row,global=false,compact=false){
     // Closed has no counter (#1476) but notification cards still name it.
     const name=row.state_name??row.state,[mark,kind]=marks[row.state]||['circle',''];
+    const board=row.key?row.key.slice(0,row.key.lastIndexOf('/')):p.board.url;
     const rt=row.runtime,brand=rt==='claude'?'claude':['codex','codex-app'].includes(rt)?'openai':'';
     const remote=row.host&&!row.local_session;
     // M3: a remote row puts the remote mark before the runtime mark; the host name is its only text.
@@ -42,10 +43,12 @@ task:function(p,row,global=false,compact=false){
     if(compact){
       const elapsed=row.age!=null?'<span class="tqp-age">'+esc(row.age)+'</span>':'<span class="tqp-age" title="Current stage elapsed unknown">?</span>';
       // MP13: the runtime mark, and the remote mark only for a proven remote run, sit right before the elapsed time.
-      const label='Open '+(rt||'agent')+' session',reason=row.session_reason||'No verified session';
-      const runtime=brand?(target?'<a class="tqp-mark" href="'+target+'" data-url="'+target+'" aria-label="'+esc(label)+'" title="'+esc(label)+'">'+icon(brand)+'</a>':'<span class="tqp-mark" role="link" aria-disabled="true" title="'+esc(reason)+'" aria-label="'+esc(label+': '+reason)+'">'+icon(brand)+'</span>'):'';
+      const label='View '+(rt||'task')+' agent #'+row.n;
+      const runtime=brand?'<button type="button" class="tqp-mark" data-a="workspace" data-page="answer" data-root="'+esc(row.root||p.root||'')+'" data-board="'+esc(board)+'" data-task="'+esc(row.n)+'" data-revision="'+esc(row.revision)+'" aria-label="'+esc(label)+'" title="'+esc(label)+'">'+icon(brand)+'</button>':'';
+      const provider=p.board.kind==='gitlab'?'GitLab':p.board.kind==='github'?'GitHub':'recorded board';
+      const forge=url(row.url)?'<a class="task-board" href="'+url(row.url)+'" data-url="'+url(row.url)+'" aria-label="Open #'+esc(row.n)+' on '+provider+'" title="Open #'+esc(row.n)+' on '+provider+'">'+icon(p.board.kind)+'</a>':'<span class="task-board" aria-disabled="true" title="Issue target unavailable">'+icon(p.board.kind)+'</span>';
       const run=(row.host&&row.local_session===false?'<span class="tqp-mark" title="Remote host '+esc(row.host)+'" aria-label="Remote host">'+icon('network')+'</span>':'')+runtime;
-      return '<div class="tqp tqp-task"><div class="tqp-task-head"><span class="task-stage '+kind+'" aria-label="'+esc(name)+' · current stage" title="'+esc(name)+' · current stage">'+(compact&&row.state==='ask'?'<button type="button" class="question-shortcut" data-a="workspace" data-page="answer" data-root="'+esc(row.root||p.root||'')+'" data-board="'+esc(row.key.slice(0,row.key.lastIndexOf('/')))+'" data-revision="'+esc(row.revision)+'" data-task="'+esc(row.n)+'" aria-label="Open question #'+esc(row.n)+'" title="Open question #'+esc(row.n)+'">'+icon(mark)+'</button>':icon(mark))+'</span><button type="button" class="task-identity" data-a="task-detail" data-key="'+esc(row.key)+'" aria-haspopup="dialog" aria-controls="taskq-popover" aria-expanded="false" aria-label="Details for '+esc(p.name)+' #'+row.n+'">'+icon(p.board.kind)+(global?' '+esc(p.name):'')+' #'+esc(row.n)+'</button><span class="task-when">'+run+elapsed+'</span></div><div class="tqp-task-title">'+link(row.url,esc(row.title),'Open task #'+row.n)+'</div>'+parked+'</div>';
+      return '<div class="tqp tqp-task"><div class="tqp-task-head"><span class="task-stage '+kind+'" aria-label="'+esc(name)+' · current stage" title="'+esc(name)+' · current stage">'+(compact&&row.state==='ask'?'<button type="button" class="question-shortcut" data-a="workspace" data-page="answer" data-root="'+esc(row.root||p.root||'')+'" data-board="'+esc(board)+'" data-revision="'+esc(row.revision)+'" data-task="'+esc(row.n)+'" aria-label="Open question #'+esc(row.n)+'" title="Open question #'+esc(row.n)+'">'+icon(mark)+'</button>':icon(mark))+'</span>'+forge+'<button type="button" class="task-identity" data-a="task-detail" data-key="'+esc(row.key)+'" aria-controls="taskq-question-details" aria-expanded="false" aria-label="Details for '+esc(p.name)+' #'+row.n+'">'+(global?esc(p.name)+' ':'')+'#'+esc(row.n)+'</button>'+(row.state==='review'&&row.enqueued?'<span class="task-publication">'+esc(name)+'</span>':'')+'<span class="task-when">'+run+elapsed+'</span></div><div class="tqp-task-title">'+link(row.url,esc(row.title),'Open task #'+row.n)+'</div>'+parked+'</div>';
     }
     return '<div class="tqp tqp-task"><div class="tqp-task-head"><span class="'+kind+'" title="'+esc(name)+'" aria-label="'+esc(name)+'">'+icon(mark)+'</span> '+link(row.url,icon(p.board.kind)+' #'+esc(row.n),'Open task #'+row.n)+' <span class="tqp-meta">'+metadata+'</span> '+session+' '+wait+'</div><div class="tqp-task-title">'+esc(row.title)+'</div>'+parked+'</div>';
   },
@@ -78,5 +81,13 @@ const root=globalThis;
 
   // R6 #1823: a timed park names its UTC board time on this computer's clock, with the reason; plain text, callers escape.
   const {parkedText}=execution.module("project-blocks",{parkedText:row => row.until?'Parked until '+new Date(row.until).toLocaleString()+(row.later?': '+row.later.replace(/^Reason: /,''):''):''});
-  const api={marks,assets,counters,summary,aggregate,task,handle,parked:parkedText};
+  const {destinations}=execution.module('project-blocks',{
+   destinations:function(t){
+    // Older consumer adapters supply one session_url; classify its recorded target without inventing a URL.
+    const native=Object.hasOwn(t,'native_session_url')?t.native_session_url:t.local_session||t.runtime==='claude'?t.session_url:null;
+    const progress=Object.hasOwn(t,'progress_url')?t.progress_url:!t.local_session&&['codex','codex-app'].includes(t.runtime)?t.session_url:null;
+    return [['native',native,t.native_session_reason||t.session_reason,'Open native session'],['progress',progress,t.progress_reason||t.session_reason,'View read-only progress']].map(([kind,href,reason,label])=>({kind,label,url:url(href,kind==='native'&&t.local_session)?href:null,reason:reason||(kind==='native'?'No verified native session target':'No read-only progress target published')}));
+   }
+  });
+  const api={marks,assets,counters,summary,aggregate,task,handle,parked:parkedText,destinations};
   module.exports=api;

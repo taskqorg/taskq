@@ -51,11 +51,27 @@ const remoteClaude=q.task(p,{...row,runtime:'claude',local_session:false,session
 assert(remoteClaude.includes('href="https://claude.ai/code/session_014abc"'));
 assert(remoteClaude.indexOf('data-icon="network"')<remoteClaude.indexOf('data-icon="claude"')&&!remoteClaude.includes('Remote session'));
 assert(!q.task(p,row).includes('data-icon="network"'),'local rows carry no remote mark');
-// #1681 R05: the compact runtime mark is the direct session action, with the same safe-target boundary.
+// Chain: #1928 A3/A4 / M3 / UX30-09..10: runtime mark opens the exact TaskQ thread;
+// native/progress links keep adapter identity, protocol and remote restrictions separately.
 const compact=q.task(p,row,false,true);
-assert.match(compact,/class="tqp-mark"[^>]*href="codex:\/\/threads\//,'verified local mark opens its session');
-for(const session_url of [null,'javascript:alert(1)'])assert.match(q.task(p,{...row,session_url,session_reason:'No verified session'},false,true),/aria-disabled="true"[^>]*title="No verified session"/);
-assert(!q.task(p,{...row,local_session:false},false,true).includes('codex://'),'remote Codex cannot open locally');
+assert.match(compact,/class="tqp-mark" data-a="workspace" data-page="answer"/);
+assert(compact.includes('data-task="'+row.n+'"')&&compact.includes('data-revision="'+row.revision+'"'));
+for(const protocol of ['http:','https:']){
+ const relay=protocol+'//relay.example/open.html#codex://threads/invented';
+ assert.equal(q.destinations({local_session:true,native_session_url:relay})[0].url,relay,'native relay remains exact');
+ assert.equal(q.destinations({progress_url:relay})[1].url,relay,'progress remains a separate exact web target');
+}
+assert.equal(q.destinations({local_session:true,native_session_url:'codex://threads/invented'})[0].url,'codex://threads/invented');
+assert.equal(q.destinations({local_session:false,native_session_url:'codex://threads/invented'})[0].url,null,'remote native Codex cannot open locally');
+for(const href of [null,'javascript:alert(1)'])assert.equal(q.destinations({local_session:true,native_session_url:href})[0].url,null);
+for(const runtime of ['claude','codex','codex-app']){
+ const session_url=runtime==='claude'?'https://claude.ai/code/session_invented':'http://relay.example/open.html#codex://threads/invented';
+ assert.equal(q.destinations({runtime,local_session:true,session_url})[0].url,session_url,'older local adapter preserves its exact target');
+ const d=q.destinations({runtime,local_session:false,session_url});
+ assert.equal(d[runtime==='claude'?0:1].url,session_url,'older remote adapter preserves native/progress distinction');
+}
+assert.equal(q.destinations({native_session_reason:'Owning host unavailable'})[0].reason,'Owning host unavailable');
+assert.equal(q.destinations({progress_reason:'Connection unavailable'})[1].reason,'Connection unavailable');
 // Chain: M3 shared task row -> metadata/independent links -> full title block in every consumer.
 // Risk: a long title is truncated or pushes the session control into the title line.
 const splitRow=q.task(p,{...row,title:'Complete title '.repeat(30)},true);

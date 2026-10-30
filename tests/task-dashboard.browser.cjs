@@ -10,7 +10,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
   const open=async(s=state,viewport={width:360,height:760})=>{const p=await browser.newPage({viewport});p.on('pageerror',e=>{throw e;});await p.setContent(html);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});await p.evaluate(s=>taskq.receive(s),s);return p;};
-  let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover');
+  let p=await open();const list=()=>p.locator('[data-card]'),editor=()=>p.locator('#taskq-popover,.task-inline-details,.task-transcript-page');
   // #1775 M1: task search is an icon until opened or a query is active; a query keeps the field visible.
   const query=async()=>{const q=p.locator('[data-task-query]');if(!await q.count())await p.locator('[data-a=search-open]').click();return q;};
   assert.equal(await p.locator('[data-a=view-editor]').count(),1,'before: approved overlay editor missing; after: reachable');
@@ -136,7 +136,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await p.locator('[data-a=view-editor]').click();const popup=await editor().boundingBox();assert(popup.x>=0&&popup.y>=0&&popup.x+popup.width<=320.5&&popup.y+popup.height<=geometry.viewport+.5,'bounded anchored editor');
    if(out&&font===16){fs.mkdirSync(out,{recursive:true});await p.screenshot({path:out+'/'+theme+'-'+variant+'-editor.png'});}
    if(variant==='short'){const done=editor().getByRole('button',{name:'Done',exact:true});await done.scrollIntoViewIfNeeded();const end=await done.boundingBox();assert(end.y>=0&&end.y+end.height<=geometry.viewport+.5,'last overlay control remains reachable in short windows');await done.click();assert.equal(await editor().count(),0);}else await p.keyboard.press('Escape');if(out&&font===16)await p.screenshot({path:out+'/'+theme+'-'+variant+'.png'});
-   if(variant==='long'){const t=p.locator('[data-a=task-detail]').first();await t.click();assert.match(await editor().innerText(),/elapsed unknown/);await p.keyboard.press('Escape');}
+   if(variant==='long'){const t=p.locator('[data-a=task-detail]').first();await t.click();assert.equal(await p.locator('.tqp-age').first().getAttribute('title'),'Current stage elapsed unknown','unknown elapsed stays on the parent row');await p.keyboard.press('Escape');}
    else {assert.equal((await p.locator('.filter-header').innerText()).includes('?'),true,'partial never zero');}
    observations.push({theme,font,variant,...geometry});await p.close();
   }
@@ -145,7 +145,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
   p=await open(wide);await p.evaluate(()=>taskq.receive({settingsWindow:true,viewsWindow:true}));
   for(const a of ['view-editor','view-list']){await p.locator('[data-a='+a+']').click();assert.equal(await editor().count(),0,'no overlay with a View window');}
   assert.equal(await p.evaluate(()=>messages.filter(m=>m.a==='views-open').length),2,'both view controls open the View window');
-  await p.locator('[data-a=task-detail]').first().click();assert.equal(await editor().locator('.body.meta .review').evaluate(e=>getComputedStyle(e).color),'rgb(188, 163, 235)','A4: detail state line Review token');await p.keyboard.press('Escape');
+  await p.locator('[data-a=task-detail]').first().click();assert.equal(await editor().evaluate(e=>getComputedStyle(e).borderLeftColor),'rgb(188, 163, 235)','A4 / #1928: inline Review edge retains its token without repeating parent state');await p.keyboard.press('Escape');
   await p.waitForFunction(()=>messages.some(m=>m.a==='set'&&m.navigation?.dashboard));
   const model=await p.evaluate(()=>messages.filter(m=>m.a==='set'&&m.navigation?.dashboard).at(-1).navigation.dashboard);
   model.views.push({...model.views[0],id:'attention',name:'Attention'});

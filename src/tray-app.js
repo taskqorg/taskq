@@ -211,7 +211,7 @@ back:function(){
   viewState.focus(prior.focus);
 },
 routeButton:function(route,label=routes[route]){return h('button',{class:'project','data-route':route},label);},
-answerSlot:function(t,compact){const label=t.state==='ask'?'Open question':'Open Conversations…';return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision,...(compact&&{class:'compact-action',title:label+' #'+t.n,'aria-label':label+' #'+t.n})},compact?icon('messages-square'):label);},
+answerSlot:function(t,compact){const label=t.state==='ask'?'Open question':'View agent';return h('button',{'data-a':'workspace','data-page':'answer','data-root':t.root||'','data-board':t.key.slice(0,t.key.lastIndexOf('/')),'data-task':t.n,'data-revision':t.revision,...(compact&&{class:'compact-action',title:label+' #'+t.n,'aria-label':label+' #'+t.n})},compact?icon('messages-square'):[icon(t.state==='ask'?'messages-square':'terminal'),label]);},
 answerNotices:function(board){return startOperations.answerNotices(board);},
 answerToast:function(){return startOperations.answerToast();},
 tasks:function(p){return p.tasks.map(t=>({...t,root:p.root,project:p.name,boardIdentity:require('./task-views.js').identity(p),key:p.issues+'/'+t.n,url:t.url||p.issues+'/'+t.n}));},
