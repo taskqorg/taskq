@@ -5209,6 +5209,8 @@ mod tests {
         let e = platform::error_text("#7 is ready", None);
         assert!(e.starts_with("Error: #7 is ready\nNext: "));
         assert_eq!(e.lines().count(), 2);
+        // #1894: an error carrying its own fitting `Next:` line keeps it instead of the generic one.
+        assert_eq!(platform::error_text("no GitLab token: no f\nNext: write a token to f", None), "Error: no GitLab token: no f\nNext: write a token to f");
         let dep = c.board.create("ordinary issue", "", &[]).unwrap();
         let blocked = c.board.create("blocked", &format!("Depends on #{dep}"), &["taskq".into(), "selected".into()]).unwrap();
         let report = report(c.board.as_ref(), &c.cfg, &c.raw, &["selected".into()]).unwrap();

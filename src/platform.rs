@@ -215,6 +215,13 @@ pub fn terminate(code: i32) -> ! {
 }
 
 pub fn error_text(msg: &str, root: Option<&Path>) -> String {
+    // A message that already ends in its own fitting `Next:` line keeps it (#1894).
+    if let Some((problem, next)) = msg.split_once("\nNext: ")
+        && !problem.contains(['\r', '\n']) && !next.contains(['\r', '\n'])
+        && problem.chars().count() <= 153 && next.chars().count() <= 154
+    {
+        return format!("Error: {problem}\nNext: {next}");
+    }
     let next = if msg.chars().count() > 153 || msg.contains(['\r', '\n']) {
         use std::io::Write;
         let saved = root.ok_or_else(|| "outside a taskq project".to_string()).and_then(|root| {

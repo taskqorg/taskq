@@ -9,11 +9,24 @@ pub const KIND: Kind = Kind {
     name: "gitlab",
     user_key: "username",
     default_host: "gitlab.com",
-    token: |tool, host| tool.token(true, host),
+    token,
     token_env: &["GITLAB_TOKEN"],
     api,
     board: |api| Box::new(GitLab { api, members: RefCell::new(vec![]) }),
 };
+
+/// coreq's lookup (§ 9): env, `<install>/gitlab-token`, then `glab`. Reaching `glab` means no env token and no file.
+fn token(tool: &coreq::Tool, host: &str) -> Result<String> {
+    tool.token(true, host).map_err(|e| missing(&tool.install.join("gitlab-token"), host, &e))
+}
+
+/// Names what to provide when neither the file nor `glab` gave a token (#1894); other errors pass unchanged.
+fn missing(file: &std::path::Path, host: &str, e: &str) -> String {
+    match e.strip_prefix("board token lookup unavailable: ") {
+        Some(why) => format!("no GitLab token: no {} and `glab` cannot run ({why})\nNext: write a GitLab access token for {host} to that file, or install glab and log in to {host}", file.display()),
+        None => e.into(),
+    }
+}
 
 fn api(host: &str, repo: &str, token: &str) -> Api {
     let root = format!("https://{host}/api/v4");
@@ -396,6 +409,29 @@ pub(super) fn upload_id(root: &str, project: u64, url: &str) -> Option<u64> {
 #[cfg(test)]
 mod image_tests {
     use super::*;
+
+    // Chain: § 9 GitLab token lookup -> CLI error (#1894). Defect: with no `<install>/gitlab-token` and no `glab`, every
+    // board read failed with `board token lookup unavailable: process spawn: ...`, naming neither. Risk: the error loses
+    // the file, `glab` or the Next line, or rewrites another lookup error.
+    #[test]
+    fn missing_file_and_glab_name_both_with_next() {
+        let file = std::path::Path::new("/invented/install/gitlab-token");
+        let e = missing(file, "gitlab.example", "board token lookup unavailable: process spawn: No such file or directory (os error 2)");
+        let (error, next) = e.split_once('\n').unwrap();
+        assert_eq!(error, format!("no GitLab token: no {} and `glab` cannot run (process spawn: No such file or directory (os error 2))", file.display()));
+        assert_eq!(next, "Next: write a GitLab access token for gitlab.example to that file, or install glab and log in to gitlab.example");
+        assert_eq!(missing(file, "h", "no board token: set X_TOKEN or write f"), "no board token: set X_TOKEN or write f");
+        // End to end only where the host has no runnable `glab` and no env token.
+        let glab = std::process::Command::new("glab").arg("--version").output().is_ok();
+        if glab || std::env::var_os("GITLAB_TOKEN").is_some() { return; }
+        let install = std::env::temp_dir().join(format!("taskq-gitlab-missing-{}", std::process::id()));
+        std::fs::create_dir_all(&install).unwrap();
+        let tool = coreq::Tool { install: install.clone(), ..coreq::Tool::new("taskqgitlabmissingtest", "TaskQ", "fixture/unused", "1.2.3") };
+        let e = token(&tool, "gitlab.example").unwrap_err();
+        assert!(e.starts_with(&format!("no GitLab token: no {} and `glab` cannot run (", install.join("gitlab-token").display())), "{e}");
+        assert!(e.ends_with("\nNext: write a GitLab access token for gitlab.example to that file, or install glab and log in to gitlab.example"), "{e}");
+        std::fs::remove_dir_all(install).unwrap();
+    }
 
     // Chain: § 2 visual evidence on GitLab (#1782). Defect: csgo#378 embedded the upload API's relative url (and
     // GitLab 17.2 full_path), which issue notes rewrite into broken repository paths. Risk: a relative or foreign URL is
