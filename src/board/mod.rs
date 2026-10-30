@@ -91,6 +91,8 @@ pub trait Board {
     fn forget(&self) {}
     /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
     fn merge_ci_green(&self, sha: &str) -> Result<()> { Err(format!("merge_group CI unknown on {sha}")) }
+    /// #1935 `selftest`: why publication route `mode` cannot finish on this repository's plan; None when no gap is found.
+    fn delivery_gap(&self, _mode: &str) -> Result<Option<String>> { Ok(None) }
     /// § 2 visual evidence: stores the image file `path` for task `n` on the board and returns its absolute https URL.
     fn upload_file(&self, _n: u64, _path: &std::path::Path) -> Result<String> { Err("image upload unsupported on this board".into()) }
     /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
@@ -98,6 +100,9 @@ pub trait Board {
     /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
     fn video_inline(&self) -> bool { false }
 }
+
+/// #1935: a PR wait only a person can end (no queue or protection on the repository's plan); one board comment names it.
+pub const MANUAL_MERGE: &str = "needs a manual merge";
 
 #[derive(Debug, PartialEq)]
 pub enum Publish {
@@ -324,6 +329,7 @@ impl Board for Profiled {
     fn requests(&self) -> crate::requests::Budget { self.0.requests() }
     fn forget(&self) { self.0.forget() }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
+    fn delivery_gap(&self, mode: &str) -> Result<Option<String>> { self.op("read", |b| b.delivery_gap(mode)) }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_file(n, path)) }
     fn file(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.file(url)) }
     fn video_inline(&self) -> bool { self.0.video_inline() }
@@ -1136,6 +1142,7 @@ impl Board for Fake {
             "failed" => Publish::Failed("CI failed".into()),
             "queue-admitted" => Publish::Enqueued("MQ_1".into()),
             "queue-waiting" => Publish::Pending("merge_group CI pending".into()),
+            "manual-merge" => Publish::Pending(format!("PR #7 {MANUAL_MERGE}: invented plan gap; merge it: https://github.com/o/r/pull/7")),
             "queue-refused" => Publish::Pending("merge queue did not admit PR #7: Required status check build is in progress; CI build pending".into()),
             "queue-conflict" => Publish::MainMoved("queue merge conflict".into()),
             "queue-blocked" => Publish::Blocked("PR #7 merged, merge_group CI tests failure".into()),
@@ -1567,6 +1574,42 @@ mod tests {
             assert!(m.starts_with(&if kind.name == "github" { format!("merged #7{into} as bbbb") } else { format!("merged !7{into}") }), "{m}");
             assert!(calls.borrow().iter().all(|m| m == "GET"), "no second merge");
         }
+    }
+
+    // Chain: § 7 publication on a private GitHub Free board -> rules 403 probed once -> manual-merge wait with the PR link
+    // -> a person merges -> close as today; `selftest` names the plan gap (#1935).
+    // Defect (Kirsalina/desiign): the uncached 403 was read every pass and the task sat in review with no reason.
+    // Retained: one rules probe per credential, a waiting reason naming the PR, the merged-PR reconcile.
+    #[test]
+    fn a_free_plan_private_board_probes_rules_once_and_waits_for_a_manual_merge() {
+        let (rules, merged) = (std::rc::Rc::new(RefCell::new(0)), std::rc::Rc::new(RefCell::new(false)));
+        let (ruled, done) = (rules.clone(), merged.clone());
+        let pr = json!({"number": 7, "head": {"sha": "a".repeat(40)}, "html_url": "https://github.com/o/r/pull/7"});
+        let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+            assert_eq!(method, "GET", "no merge on a manual-merge board: {url}");
+            if url.ends_with("/rules/branches/main") {
+                *ruled.borrow_mut() += 1;
+                let body = json!({"message": "Upgrade to GitHub Pro or make this repository public to enable this feature.", "status": "403"}).to_string();
+                return Ok(Reply { status: 403, headers: vec![], body, operation: operation(method) });
+            }
+            let value = if url.contains("/compare/") { json!({"status": "diverged"}) }
+                else if url.contains("state=open") { if *done.borrow() { json!([]) } else { json!([pr]) } }
+                else if url.contains("state=closed") { json!([{"number": 7, "head": {"sha": "a".repeat(40)}, "merged_at": "x", "merge_commit_sha": "b".repeat(40), "base": {"ref": "main"}}]) }
+                else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
+                else if url.ends_with("/status") { json!({"total_count": 0}) }
+                else { panic!("unexpected {method} {url}") };
+            Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+        }));
+        for _ in 0..3 {
+            let got = h.publish(1, &"a".repeat(40), "pr", "title", "Task: fake");
+            assert!(matches!(&got, Publish::Pending(m) if m.starts_with(&format!("PR #7 {MANUAL_MERGE}: ")) && m.ends_with("merge it: https://github.com/o/r/pull/7")), "{got:?}");
+        }
+        assert!(h.delivery_gap("pr").unwrap().is_some_and(|g| g.contains("HTTP 403")));
+        assert_eq!(h.delivery_gap("direct").unwrap(), None);
+        assert_eq!(*rules.borrow(), 1, "one capability probe per board, not one per poll");
+        *merged.borrow_mut() = true;
+        let got = h.publish(1, &"a".repeat(40), "pr", "title", "Task: fake");
+        assert!(matches!(&got, Publish::Done(m) if m.starts_with("merged #7 as bbbb")), "{got:?}");
     }
 
     // Chain: § 7 publication with no open task PR and merged PRs only at other heads (#1777, pilotq#84).

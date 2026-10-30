@@ -43,6 +43,8 @@ pub const HOST_LABEL: &str = "taskq-host";
 /// The capacity reason of an empty focus (§ 4).
 pub const FOCUS_OFF: &str = "focus off: nothing admitted; set `taskq service focus all|<label..>`";
 pub const TASK_LABEL: &str = "taskq";
+/// #1935: the first words of the one board comment on a PR that waits for a person to merge it.
+const MANUAL_MERGE_NOTE: &str = "Waiting for a manual merge";
 const NATIVE_PASS_BUDGET:std::time::Duration=std::time::Duration::from_secs(20);
 
 /// The code the host's tray wrote on an interface fault (#1755) until a new tray clears it: a fixed code, else none.
@@ -1683,6 +1685,10 @@ impl<'a> Service<'a> {
             if self.publication_waits.get(&n) != Some(&r.reason) {
                 let (a, rt) = v.projection.executions.last().map_or((0, "other"), |x| (x.attempt, x.runtime.as_str()));
                 crate::profile::stage("checks", n, a, rt, Some(began.elapsed()), "retried", crate::profile::class(&r.reason), crate::profile::Usage::NoModel);
+                // #1935: a wait only a person ends gets one plain board comment, never a log entry; the board keeps it across restarts (R1)
+                if r.reason.contains(crate::board::MANUAL_MERGE) && !v.comments.iter().any(|c| c.trusted && c.body.starts_with(MANUAL_MERGE_NOTE)) {
+                    if let Err(e) = self.board.comment(n, &format!("{MANUAL_MERGE_NOTE}: {}", r.reason)) { log!("#{n} manual-merge note unknown: {e}"); }
+                }
                 self.publication_waits.insert(n, r.reason.clone());
             }
             let since = v.comments.iter().rev().find(|c| c.trusted && c.body.lines().next().and_then(|h| h.trim().strip_prefix("taskq:"))
@@ -2895,6 +2901,31 @@ mod tests {
         assert_eq!((t.state, t.retries), (State::Ready, 0), "main-moved keeps retries");
         assert!(b.comments(n).unwrap().iter().any(|e| e.body.starts_with("taskq: requeue main-moved") && e.body.contains("queue merge conflict")));
         assert!(s.publication_waits.is_empty());
+    }
+
+    // Chain: section 7 publication -> manual-merge wait -> status/menu row with the PR link -> one board comment (#1935).
+    // Defect (Kirsalina/desiign): review tasks waited up to 75 minutes for a person to merge with no reason on any surface.
+    // Retained: the row names the wait and PR; the board gets one plain comment, not one per pass and not a log entry.
+    #[test]
+    fn manual_merge_wait_is_shown_with_its_pr_and_commented_once() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented manual merge", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"a".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "manual-merge".into();
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        for _ in 0..3 { s.pass().unwrap(); }
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        assert!(row["wait"].as_str().unwrap().contains(crate::board::MANUAL_MERGE) && row["wait"].as_str().unwrap().contains("https://github.com/o/r/pull/7"), "{row}");
+        let notes: Vec<_> = b.comments(n).unwrap().into_iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).collect();
+        assert_eq!(notes.len(), 1, "one board comment, not one per pass");
+        assert!(notes[0].body.contains("https://github.com/o/r/pull/7"));
+        assert_eq!(task(&b, n).state, State::Review, "the note is no log entry");
+        s.publication_waits.clear();
+        s.pass().unwrap();
+        assert_eq!(b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count(), 1, "a restart reads the board note back (R1)");
     }
 
     // Chain: section 7 publication -> blocked outcome -> ask in one pass -> answer -> retry -> close (#1413).

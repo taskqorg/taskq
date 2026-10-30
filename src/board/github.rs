@@ -26,10 +26,15 @@ fn api(host: &str, repo: &str, token: &str) -> Api {
     Api::new(root.clone(), format!("{root}/repos/{repo}"), token)
 }
 
+/// The repository plan refuses branch rules: GitHub answers 403 "Upgrade to GitHub Pro" on a private Free repository.
+fn plan_gap(e: &str) -> bool { e.contains("HTTP 403") && e.contains("Upgrade to GitHub Pro") }
+
+const PLAN: &str = "this private repository's GitHub plan has no branch rules or merge queue";
+
 pub struct GitHub {
     pub(super) api: Api,
-    /// `main` branch rules, read once per credential (#1359). ponytail: same-token rules changes need a service restart.
-    rules: std::cell::RefCell<Option<(u64, Value)>>,
+    /// `main` branch rules, read once per credential (#1359), a plan refusal too (#1935). ponytail: same-token rules changes need a service restart.
+    rules: std::cell::RefCell<Option<(u64, Result<Value>)>>,
     /// The last open-issue list and when it was read: reused while the newest-updated probe answers 304 (#1819).
     open: std::cell::RefCell<Option<(std::time::Instant, Vec<Issue>)>>,
 }
@@ -154,10 +159,11 @@ impl GitHub {
 
     fn main_rules(&self) -> Result<Value> {
         self.api.refresh()?;
-        if let Some((_, v)) = self.rules.borrow().as_ref().filter(|(g, _)| *g == self.api.generation.get()) { return Ok(v.clone()); }
-        let v = self.api.call("GET", "/rules/branches/main", None)?.json()?;
-        *self.rules.borrow_mut() = Some((self.api.generation.get(), v.clone()));
-        Ok(v)
+        if let Some((_, v)) = self.rules.borrow().as_ref().filter(|(g, _)| *g == self.api.generation.get()) { return v.clone(); }
+        let v = self.api.call("GET", "/rules/branches/main", None).and_then(|r| r.json());
+        // #1935: a plan without branch rules refuses every read; probe it once, other failures retry next pass
+        if v.as_ref().is_ok() || v.as_ref().is_err_and(|e| plan_gap(e)) { *self.rules.borrow_mut() = Some((self.api.generation.get(), v.clone())); }
+        v
     }
 
     /// Remove PR `id` from the merge queue with readback; a merged or unreadable PR is an error (§ 7).
@@ -363,9 +369,9 @@ impl GitHub {
             self.publication_ancestry(sha, mode);
             return Ok(Publish::Done(format!("main fast-forwarded to {sha}")));
         }
-        let rules = self.main_rules()?;
-        let rules = rules.as_array().ok_or("unknown main rules")?;
-        let queue = rules.iter().any(|r| r["type"] == "merge_queue");
+        let rules = self.main_rules();
+        let manual = rules.as_ref().is_err_and(|e| plan_gap(e));
+        let queue = !manual && rules?.as_array().ok_or("unknown main rules")?.iter().any(|r| r["type"] == "merge_queue");
         let owner = self.api.base.rsplit_once("/repos/").map(|x| x.1).and_then(|r| r.split('/').next()).unwrap_or_default().to_string();
         let prs = self.api.call("GET", &format!("/pulls?head={owner}:{branch}&base=main&state=open"), None)?.json()?;
         let prs = prs.as_array().cloned().ok_or("PR list unknown")?;
@@ -399,6 +405,8 @@ impl GitHub {
         }
         let head = prs[0]["head"]["sha"].as_str().ok_or("PR head SHA unknown")?;
         if head != sha { return Ok(head_moved(&prs[0]["number"], head, sha)); }
+        // #1935: no queue and no protection on this plan; a person merges, the merged-PR reconcile above closes
+        if manual { return Err(format!("PR #{} {}: {PLAN}; merge it: {}", prs[0]["number"], super::MANUAL_MERGE, s(&prs[0], "html_url"))); }
         if queue { return self.queue(&prs[0], sha, enqueued); }
         match self.api.call("GET", "", None)?.json()?["private"].as_bool() {
             Some(true) => {},
@@ -491,6 +499,13 @@ fn head_moved(number: &Value, head: &str, sha: &str) -> Publish {
 impl Board for GitHub {
     fn forget(&self) { *self.open.borrow_mut() = None; }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
+    fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
+        if mode != "pr" { return Ok(None); }
+        match self.main_rules() {
+            Err(e) if plan_gap(&e) => Ok(Some(format!("{PLAN} (HTTP 403); each PR {}", super::MANUAL_MERGE))),
+            r => r.map(|_| None),
+        }
+    }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }
