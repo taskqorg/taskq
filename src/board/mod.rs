@@ -642,6 +642,8 @@ struct Credentials {
     auth: String,
     budget: crate::requests::Shared,
     pause: Option<std::path::PathBuf>,
+    /// The login kept for every process of the install (§ 4 budget).
+    user: Option<std::path::PathBuf>,
 }
 
 /// Cached conditional replies per process; past this the cache restarts empty.
@@ -650,7 +652,7 @@ const ETAGS: usize = 256;
 impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
-        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), #[cfg(test)] transport: None }
+        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None, user: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), #[cfg(test)] transport: None }
     }
 
     /// Missing credentials fail closed; replacement drops user/conditional caches and the old token's pause.
@@ -660,7 +662,7 @@ impl Api {
         let auth = format!("Authorization: Bearer {token}");
         if self.credentials.borrow().auth != auth {
             *self.credentials.borrow_mut() = Credentials {auth, budget: crate::requests::Shared::for_api(&self.root, &token),
-                pause: Some(crate::requests::pause_file(install, &self.root, &token))};
+                pause: Some(crate::requests::pause_file(install, &self.root, &token)), user: Some(crate::requests::user_file(install, &self.root, &token))};
             *self.me.borrow_mut() = None;
             self.etags.borrow_mut().clear();
             self.labels_ok.borrow_mut().clear();
@@ -705,6 +707,8 @@ impl Api {
         if let Some(reset) = self.paused() {
             return Err(format!("{method} {url}: {}", crate::requests::paused_text(reset)));
         }
+        let pace = self.credentials.borrow().budget.borrow().pace(*self.clock.borrow());
+        if let Some(wait) = pace { std::thread::sleep(wait); }
         self.credentials.borrow().budget.borrow_mut().count(op.into());
         crate::requests::tally(op);
         self.unchanged.set(false);
@@ -816,16 +820,29 @@ impl Api {
         if let Some(m) = self.me.borrow().clone() {
             return Ok(m);
         }
-        let v = self.call("GET", &format!("{}/user", self.root), None)?.json()?;
-        let m = s(&v, key);
+        let file = self.credentials.borrow().user.clone();
+        let kept = file.as_deref().and_then(|f| std::fs::read_to_string(f).ok()).map(|m| m.trim().to_string()).filter(|m| !m.is_empty());
+        let m = match kept {
+            Some(m) => m,
+            None => {
+                let m = s(&self.call("GET", &format!("{}/user", self.root), None)?.json()?, key);
+                if let Some(f) = &file { let _ = std::fs::write(f, &m); }
+                m
+            }
+        };
         *self.me.borrow_mut() = Some(m.clone());
         Ok(m)
     }
 
-    fn now(&self, key: &str) -> Result<i64> {
+    /// The board clock from the last reply's `Date`; before any reply, `free` (an endpoint the budget does not
+    /// count) or `GET /user` sets it.
+    fn now(&self, key: &str, free: Option<&str>) -> Result<i64> {
         self.refresh()?;
         if *self.clock.borrow() == 0 {
-            self.me(key)?;
+            match free {
+                Some(path) => { self.call("GET", &format!("{}{path}", self.root), None)?; }
+                None => { self.me(key)?; }
+            }
         }
         Ok(*self.clock.borrow())
     }
