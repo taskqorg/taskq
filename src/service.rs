@@ -3099,7 +3099,7 @@ mod tests {
         assert_eq!(task(&b, n).state, State::Closed);
     }
 
-    // Chain: § 7 rule 8 -> worker closes its own task -> § 1 dependency unknown -> § 4 step 5 reopen + one ask (#1950).
+    // Chain: § 7 rule 9 -> worker closes its own task -> § 1 dependency unknown -> § 4 step 5 reopen + one ask (#1950).
     // Risk (desiign#50): issue text said "write done and close"; the worker commented done and closed the issue, so the
     // close read as done, review was skipped and q-doing stayed on a closed issue.
     #[test]
