@@ -28,6 +28,14 @@ The owner widened #1940 to one Results flow for completed tasks and reports. Res
 
 `cargo test --locked --bin taskq reports::tests`: 11 pass. `cargo test --locked --test integration reports_cli`: passes, including committed timings. Reports component/receipt tests pass. The 16-cell browser instrument covers Menu/Conversations, dark/light, 350/940 px, 16/20 px. Its redundant intermediate visibility wait was replaced by a mounted-row barrier; the subsequent real click still requires visible, stable controls, and geometry checks remain.
 
-Full gate attempts and the final in-flight gate are recorded in the preservation handoff. The first passed Rust/integration/selftest and failed stale generated web hashes after a separator correction; the next passed those and Node checks, then timed out at the intermediate browser visibility wait. A focused rerun passed. No failed gate is reported as a pass (R12).
+Full gate attempts did not pass (R12). The first passed Rust/integration/selftest and failed stale generated web hashes after a separator correction; the next passed those and Node checks, then timed out at the intermediate browser visibility wait. A focused browser rerun passed. The final `python scripts/check.py --base 04e43344db6dafcd94c46e06ecd13d908ebcefa2` ended after 447.797 s: 701 Rust tests passed, 5 failed, 39 were ignored; later gate phases did not run. Failures:
+
+- `link::tests::a_read_crosses_the_fake_relay_sealed_and_fenced`
+- `runtime::app_control::tests::cancellation_is_owner_bound_bounded_and_never_replays_work`
+- `runtime::tests::file_stdin_handoff_preserves_bytes_and_never_waits_for_a_reader`
+- `telemetry::tests::older_tray_writer_hands_over_to_new_host`
+- `tray::tests::tray_collector_recovers_after_failed_election`
+
+Their causes are unverified; earlier successful runs are not a substitute for this failed candidate gate. No PR, deployment or Results completion is claimed. Work stays on `taskq-1940` pending the Reopen decision and remaining verification.
 
 `measure.py` recreates nine invented collected reports in an isolated installation and requires committed list/open timings. The earlier [cached read observation](after-cached.json) predates explicit action timing capture; it is not final performance qualification. Production collection and the expanded completed-task flow remain unverified.
