@@ -514,6 +514,12 @@ pub fn missing_cli(rt: &str) -> Option<String> {
     (!which(bin).is_absolute()).then(|| format!("{bin} CLI not found on the service PATH"))
 }
 
+/// § 6 setup check: the § 8 grant mode the owner gives `rt` on `os`; Claude has no Workspace enforcement off macOS.
+pub fn grant_mode(os: &str, rt: &str) -> &'static str { if os == "macos" || rt == "codex" { "workspace" } else { "full" } }
+
+/// § 6 setup check: whether `rt`'s sandbox on `os` needs `<root>/.codex` (see `linux_sandbox::ready`).
+pub fn needs_codex_dir(os: &str, rt: &str) -> bool { os == "linux" && rt == "codex" }
+
 /// An npm launcher is not the executor: SIGKILL cannot reach the native child through Node.
 pub(crate) fn codex_native(bin: PathBuf) -> Result<PathBuf,String> {
     if cfg!(windows) || !bin.exists() { return Ok(bin); }

@@ -6,6 +6,7 @@ macro_rules! log {
 }
 
 mod admission;
+mod check;
 #[cfg(any(target_os="macos",windows,test))]
 mod agentq;
 mod host;
@@ -261,14 +262,40 @@ fn hostname() -> String {
 }
 
 fn load(root: &Path) -> Res<(Config, Value)> {
-    let (mut cfg,raw)=project_config(root)?;
+    load_value(root, project_value(root)?)
+}
+
+fn load_value(root: &Path, v: Value) -> Res<(Config, Value)> {
+    let (mut cfg,raw)=project_config_value(root, v)?;
     if let Ok(policy)=host::Policy::read(&cfg.install) {policy.apply(&mut cfg);}
     Ok((cfg,raw))
 }
 
-fn project_config(root:&Path)->Res<(Config,Value)> {
+/// § 6 setup check: `load`, except that `publish` disagreeing with `delivery` is the `delivery` item, not an error.
+fn check_load(root: &Path) -> Res<(Config, Value, Result<String, String>)> {
+    let v = project_value(root)?;
+    match delivery(&v) {
+        Ok((_, preset, _)) => load_value(root, v).map(|(c, raw)| (c, raw, Ok(preset))),
+        Err(e) if e.contains(" disagrees with ") => {
+            let mut lenient = v;
+            if let Some(o) = lenient.as_object_mut() { o.remove("publish"); }
+            load_value(root, lenient).map(|(c, raw)| (c, raw, Err(e)))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+fn project_value(root: &Path) -> Res<Value> {
     let p = root.join("taskq.json");
-    let v: Value = serde_json::from_str(&fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display()))?;
+    serde_json::from_str(&fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))?).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+#[cfg(test)]
+fn project_config(root:&Path)->Res<(Config,Value)> {
+    project_config_value(root, project_value(root)?)
+}
+
+fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
     let str_or = |k: &str, d: &str| v[k].as_str().unwrap_or(d).to_string();
     let secs = |k: &str, d: u64| v[k].as_u64().unwrap_or(d);
     let h = hostname();
@@ -1177,6 +1204,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
     log!("taskq {} service on {} for {}", platform::VERSION, cfg.me, cfg.repo);
     let mut sampled: Option<Instant> = None;
     let mut agents: Option<(Instant, Value)> = None;
+    let mut pr_route: Option<(Instant, check::Probe)> = None;
     let mut dev_ci: Option<(String, Instant)> = None;
     let mut focus_error: Option<String> = None;
     let mut pruned: Option<Instant> = None;
@@ -1337,6 +1365,16 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
                 c.board.merge_ci_green(sha)
             });
         }
+        // § 6 setup check: local items each pass, the board's PR route at most hourly
+        if !quiet && s.cfg.publish == "pr" && pr_route.as_ref().is_none_or(|(t, _)| t.elapsed().as_secs() >= 3600) {
+            pr_route = Some((Instant::now(), c.board.pr_route()));
+        }
+        let limits = s.cap.as_ref().map_or_else(|_| s.cfg.limits.clone(), |cap| cap.limits.clone());
+        let open = s.snapshot.as_ref().map(|snap| snap.tasks.iter().map(|r| (r.n, r.labels.clone())).collect());
+        let setup_items = setup_items(&s.cfg, &limits, Ok(s.cfg.delivery.clone()), &agents.as_ref().map_or(Value::Null, |a| a.1["rows"].clone()), &access,
+            open, pr_route.as_ref().map(|r| r.1.clone()));
+        let mut setup = check::json(&project, &setup_items);
+        setup["checked"] = json!(at);
         let tool = platform::tool(&cfg.install);
         let error = r.as_ref().err().cloned();
         // #1845 A1: every TCC grant a gui worker needs, Screen Recording from the gui probe
@@ -1359,7 +1397,7 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             ("restart_waits", json!((d.join("restart").exists()||host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.restart))).then(|| lifecycle_waits(&s, host.as_ref().is_some_and(|h|h.lock().is_ok_and(|h|h.stopping)))))),
             ("incident", incident::status(&cfg.root)), ("incident_notice", json!(incident::notice(&cfg.root))),
             ("requests", requests_json), ("channel", json!(platform::channel(&cfg.install).ok())), ("dev", dev), ("connection", json!(dashq.outcome)), ("telemetry_sync", telemetry_sync.status.clone()), ("telemetry",telemetry::diagnostic::health()),
-            ("tidy", fs::read_to_string(d.join("tidy.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null))]
+            ("tidy", fs::read_to_string(d.join("tidy.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)), ("setup", setup)]
         {
             status[k] = v;
         }
@@ -2301,8 +2339,10 @@ fn service_report(a:&Args)->Res<()> {
             for l in runtime::login_lines(&status.as_ref().ok().and_then(Option::as_ref).map_or(Value::Null,|s|s["agents"]["rows"].clone())) {println!("{l}");}
             if let Some(dev)=status.as_ref().ok().and_then(Option::as_ref).map(|s|&s["dev"]).filter(|d|d.is_object()) {println!("{}",dev_line(dev));}
             let churn=status.as_ref().ok().and_then(Option::as_ref).map(snapshot::churn_lines).unwrap_or_default();
+            // § 6: open setup gaps, access refusals that hold launches included
+            let setup=check::status_lines(&status.as_ref().ok().and_then(Option::as_ref).map_or(Value::Null,|s|s["setup"].clone()));
             println!("{}\nProject owner: {owner}",service_project_fields(root,status));
-            for l in churn {println!("{l}");}
+            for l in churn.into_iter().chain(setup) {println!("{l}");}
             println!("{}",incident::line(&incident::status(root)));
             if notice||incident::notice(root) {println!("Incident reports: notice");}
         }
@@ -2311,7 +2351,7 @@ fn service_report(a:&Args)->Res<()> {
 }
 
 #[tracing::instrument(name="service.command",skip_all,fields(coreq_operation=match args.pos.get(1).map(String::as_str).unwrap_or("") {
-    sub @ ("install"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
+    sub @ ("install"|"check"|"run"|"onboard"|"focus"|"pause"|"resume"|"capacity"|"channel"|"permissions"|"resources"|"pm"|"hold"|"release"|"recover"|"status"|"restart"|"stop"|"complete-stop"|"uninstall"|"list")=>sub,
     _=>"invalid",
 }))]
 fn service(args: &Args) -> Res<()> {
@@ -2447,17 +2487,72 @@ fn service(args: &Args) -> Res<()> {
             }else{recover_cmd(&root,args.flags.contains_key("apply"),args.flags.contains_key("json"))}
         },
         "install" => {
-            let (cfg, _) = load(&root)?;
+            let (cfg, _, _) = check_load(&root)?;
             println!("{}",host::install_project(&cfg.install,&root)?);
             for l in tools::gaps(&cfg.install,Some(&root)) {println!("{l}");}
             // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
             if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
                 for l in runtime::owner::trust_gap(Path::new(&home),&root.canonicalize().map_err(|e|e.to_string())?) {println!("{l}");}
             }
-            Ok(())
+            // § 6: the tray's Add project runs this install, so a new project ends with its setup check
+            setup_check_cmd(&root, false)
         }
-        _ => Err("usage: taskq service install|run|onboard|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
+        "check" => {
+            if args.pos.len()!=2||args.flags.keys().any(|k|k!="json") {return Err("usage: taskq service check [--json]".into());}
+            setup_check_cmd(&root, args.flags.contains_key("json"))
+        }
+        _ => Err("usage: taskq service install|check|run|onboard|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
     }
+}
+
+/// § 6 setup check items of one project (#1938): read-only. The caller passes the effective runtime limits, the § 5
+/// `agents` rows, the § 8 Access report, the open tasks' labels and the board's PR route (`None`: not read).
+fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<String, String>, agents: &Value, access: &[policy::Effective],
+    open: Option<Vec<(u64, Vec<String>)>>, pr_route: Option<check::Probe>) -> Vec<check::Item> {
+    // in use: a limit above 0, or the default runtime that routes reviews unless its limit is 0
+    let runtimes = runtime::agent_runtimes().iter().filter(|rt| match limits.get(**rt) { Some(n) => *n > 0, None => **rt == cfg.default_runtime })
+        .map(|rt| {
+            let e = access.iter().find(|e| e.runtime == *rt);
+            check::Runtime {
+                name: rt.to_string(),
+                missing: runtime::missing_cli(rt),
+                login: agents.as_array().into_iter().flatten().find(|r| r["runtime"] == *rt).and_then(|r| r["login"].as_str()).map(String::from),
+                refused: e.and_then(|e| e.refused.clone()),
+                granted: e.is_some_and(|e| !e.grant.starts_with("none") && e.grant != "unknown"),
+            }
+        }).collect();
+    check::items(&check::Facts {
+        os: std::env::consts::OS.into(),
+        root: cfg.root.clone(),
+        host: cfg.me.clone(),
+        git: cfg.root.join(".git").exists(),
+        external: cfg.external.then(|| cfg.root.join("AGENTS.md").is_file()),
+        runtimes,
+        codex_dir: cfg.root.join(".codex").is_dir(),
+        labelled: cfg.labelled,
+        unlabelled: open.map(|v| v.into_iter().filter(|(_, l)| !l.iter().any(|l| l.starts_with("host-"))).map(|(n, _)| n).collect()),
+        token: (cfg.board.name == "github").then(|| board::github::token(&cfg.install).map(|_| ()).map_err(|_| "missing, empty or unreadable".to_string())),
+        delivery,
+        pr_route: (cfg.publish == "pr").then(|| pr_route.unwrap_or_else(|| check::Probe::Unknown("board not read".into()))),
+    })
+}
+
+/// `taskq service check [--json]` (§ 6): reads only; the board answers open tasks and the PR route when it opens.
+fn setup_check_cmd(root: &Path, json_out: bool) -> Res<()> {
+    let (cfg, raw, delivery) = check_load(root)?;
+    let limits = match host::Policy::read(&cfg.install) {
+        Ok(p) => p.project(&cfg.root, &raw).map(|c| c.limits),
+        Err(_) => service::capacity(&raw, &cfg.me).map(|c| c.limits),
+    }.unwrap_or_else(|_| cfg.limits.clone());
+    let access = policy::report(&cfg.install, &cfg.root, &cfg.permission_mode, &cfg.codex);
+    let (open, route) = match cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install)) {
+        Ok(b) => (b.issues(None).ok().map(|v| v.into_iter().filter(service::is_task).map(|i| (i.number, i.labels)).collect()),
+            (cfg.publish == "pr").then(|| b.pr_route())),
+        Err(e) => (None, Some(check::Probe::Unknown(e))),
+    };
+    let items = setup_items(&cfg, &limits, delivery, &runtime::agents(&cfg.install), &access, open, route);
+    if json_out { println!("{}", check::json(&project_name(&cfg.root), &items)); } else { for l in check::lines(&items) { println!("{l}"); } }
+    Ok(())
 }
 
 /// Host onboarding (§ 4, #1546): runtime logins and § 8 Access are read and named as owner steps; Claude trust is the
@@ -3299,6 +3394,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 json_output(&serde_json::to_string_pretty(&snap.json()).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
                 println!("{}", snap.text(cfg, &c.raw)?);
+                // § 6: the live service's open setup gaps follow the report
+                for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
             }
             Ok(())
         }
@@ -3625,6 +3722,43 @@ mod tests {
         fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "update_every": 900}"#).unwrap();
         assert_eq!(project_config(&t).unwrap().0.update_every, 900);
         fs::remove_dir_all(&t).unwrap();
+    }
+
+    // Defect (#1938 A6): `publish: pr` beside `delivery.preset: direct` refused every command, so the setup check could
+    // not say why. Protection: `check_load` keeps the project readable and reports the disagreement as the delivery item.
+    #[test]
+    fn check_load_reports_a_delivery_disagreement_as_an_item() {
+        let t = std::env::temp_dir().join(format!("taskq-check-load-{}", crate::runtime::uuid()));
+        fs::create_dir_all(&t).unwrap();
+        fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "publish": "pr", "delivery": {"preset": "direct", "revision": 1}}"#).unwrap();
+        assert!(load(&t).err().is_some_and(|e| e.contains("disagrees")), "ordinary commands keep refusing");
+        let (cfg, _, delivery) = check_load(&t).unwrap();
+        assert_eq!((cfg.publish.as_str(), delivery.unwrap_err().as_str()), ("direct", "taskq.json: publish pr disagrees with delivery.preset direct"));
+        fs::write(t.join("taskq.json"), r#"{"repo": "o/r", "delivery": {"preset": "local", "revision": 1}}"#).unwrap();
+        assert!(check_load(&t).is_err(), "only the disagreement is lenient");
+        fs::remove_dir_all(&t).unwrap();
+    }
+
+    // Defect (#1938 A6): codex limit 4 with no grant held every Codex launch; with default_runtime codex the reviewer
+    // never spawned either. Protection: a runtime with a limit or the review default is checked; one at limit 0 is not.
+    #[test]
+    fn setup_items_check_runtimes_in_use_only() {
+        let mut c = cfg();
+        c.default_runtime = "codex".into();
+        let refused = |rt: &str| policy::Effective { runtime: rt.into(), requested: String::new(), grant: "none (taskq.json is a request)".into(), mode: "legacy".into(),
+            enforcement: String::new(), profile: None, linux: false, windows: false, claude: None, codex: None,
+            refused: Some(format!("no operator grant and no policy store protection for {rt} on linux; grant a preset")) };
+        let access = [refused("claude"), refused("codex")];
+        let ids = |limits: &[(&str, u32)]| {
+            let limits = limits.iter().map(|(k, n)| (k.to_string(), *n)).collect();
+            setup_items(&c, &limits, Ok("auto-merge".into()), &Value::Null, &access, None, None).into_iter()
+                .filter(|i| i.id.starts_with("access ")).map(|i| (i.id, i.status)).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&[("codex", 4)]), [("access codex".to_string(), "gap")], "limit 4 and the review default");
+        assert_eq!(ids(&[]), [("access codex".to_string(), "gap")], "the review default alone is in use");
+        assert_eq!(ids(&[("codex", 0), ("claude", 2)]), [("access claude".to_string(), "gap")], "limit 0 is off");
+        let items = setup_items(&c, &BTreeMap::new(), Ok("auto-merge".into()), &Value::Null, &access, None, None);
+        assert_eq!(items.iter().find(|i| i.id == "pr-route").unwrap().status, "unknown", "an unread board stays unknown (R12)");
     }
 
     // Chain: #1661 A2 AS5 Checking. Risk: a probe in progress has no service signal, or the mark drops prior rows.

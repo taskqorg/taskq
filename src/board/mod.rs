@@ -99,6 +99,8 @@ pub trait Board {
     fn file(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
     /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
     fn video_inline(&self) -> bool { false }
+    /// § 6 setup check `pr-route`: whether `main` can merge a PR result (§ 7); unknown where unsupported.
+    fn pr_route(&self) -> crate::check::Probe { crate::check::Probe::Unknown("PR route check unsupported on this board".into()) }
 }
 
 /// #1935: a PR wait only a person can end (no queue or protection on the repository's plan); one board comment names it.
@@ -333,6 +335,7 @@ impl Board for Profiled {
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_file(n, path)) }
     fn file(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.file(url)) }
     fn video_inline(&self) -> bool { self.0.video_inline() }
+    fn pr_route(&self) -> crate::check::Probe { self.op("read", |b| Ok(b.pr_route())).unwrap_or_else(crate::check::Probe::Unknown) }
 }
 
 // ---------- time ----------
@@ -1525,6 +1528,33 @@ mod tests {
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         (h, calls)
+    }
+
+    // Defect (#1938 A6): a private repository whose plan has no branch rules answered the rules read with 403, and
+    // `publish: pr` never merged. Protection: the setup check names that a gap and follows the `try_publish` route.
+    #[test]
+    fn pr_route_follows_the_publication_route() {
+        use crate::check::Probe;
+        for (scenario, want) in [("403", "gap"), ("503", "unknown"), ("queue", "ok"), ("public", "gap"), ("strict", "ok"), ("loose", "gap"), ("other", "unknown")] {
+            let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+                assert_eq!(method, "GET", "the check only reads");
+                let value = if url.ends_with("/rules/branches/main") {
+                    match scenario {
+                        "403" => return Err("GET /rules/branches/main: HTTP 403 Upgrade to GitHub Pro".into()),
+                        "503" => return Err("GET /rules/branches/main: HTTP 503".into()),
+                        "queue" => json!([{"type": "merge_queue"}]),
+                        "strict" => json!([{"type": "required_status_checks", "ruleset_id": 1, "parameters": {"strict_required_status_checks_policy": true}}]),
+                        _ => json!([]),
+                    }
+                } else if url.ends_with("/repos/o/r") { match scenario { "public" => json!({"private": false}), "other" => json!({}), _ => json!({"private": true}) } }
+                else if url.ends_with("/rulesets/1") { json!({"current_user_can_bypass": "never"}) }
+                else if url.ends_with("/branches/main/protection") { return Err("HTTP 404".into()) }
+                else { panic!("unexpected {method} {url}") };
+                Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+            }));
+            let got = match h.pr_route() { Probe::Ok => "ok", Probe::Gap(_) => "gap", Probe::Unknown(_) => "unknown" };
+            assert_eq!(got, want, "{scenario}");
+        }
     }
 
     // Chain: § 7 publication on both boards. Risk: publication uses the wrong SHA or writes twice.
