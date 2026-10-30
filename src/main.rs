@@ -2890,7 +2890,13 @@ fn run(argv: &[String]) -> Res<()> {
                 print!("{}", runtime::pm(&find_root()?, phase).map_err(|e| e.to_string())?);
                 Ok(())
             }
-            _ => Err("usage: taskq rules compact ROOT ROLE TASK ATTEMPT | taskq rules pm start|compact".into()),
+            // #1946: project CI runs this so a contract edit over the cap fails before merge, not at worker start
+            [size] if size == "size" => {
+                let (len, cap) = runtime::rules_size(&find_root()?).map_err(|e| e.to_string())?;
+                println!("Rules: {len} of {cap} bytes, headroom {}", cap - len);
+                Ok(())
+            }
+            _ => Err("usage: taskq rules size | taskq rules compact ROOT ROLE TASK ATTEMPT | taskq rules pm start|compact".into()),
         },
         "selftest" => {
             let n = golden_selftest(core::GOLDEN, !platform::VERSION.contains('-')).map_err(|e| format!("fold: FAIL {e}"))?;
