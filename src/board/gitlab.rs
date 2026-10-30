@@ -412,6 +412,84 @@ pub(super) fn upload_id(root: &str, project: u64, url: &str) -> Option<u64> {
 }
 
 #[cfg(test)]
+mod create_claim_tests {
+    use super::*;
+    use super::super::Reply;
+    use std::{cell::RefCell, rc::Rc};
+
+    /// A GitLab project whose issue 1 holds create claims; `store` turns a POSTed (title, description, labels) into
+    /// what GitLab keeps.
+    fn board(store: fn(&str, &str, Vec<String>) -> (String, String, Vec<String>)) -> Box<dyn Board> {
+        let issues = Rc::new(RefCell::new(vec![(1u64, "Claims".to_string(), String::new(), vec![])]));
+        let notes: Rc<RefCell<Vec<(u64, u64, String)>>> = Rc::default();
+        let mut api = api("gitlab.example", "o/r", "test");
+        *api.label_schema.borrow_mut() = Some(false);
+        api.transport = Some(Box::new(move |method, url, body| {
+            let at = "2026-10-30T00:00:00Z";
+            let issue = |(n, title, body, labels): &(u64, String, String, Vec<String>)| json!({"iid": n, "title": title,
+                "description": body, "labels": labels, "state": "opened", "author": {"id": 1}, "created_at": at, "updated_at": at});
+            let path = url.split('?').next().unwrap().trim_start_matches("https://gitlab.example/api/v4");
+            let rest = path.strip_prefix("/projects/o%2Fr/issues").map(|r| r.trim_start_matches('/'));
+            let v = match (method, rest, rest.and_then(|r| r.split_once('/'))) {
+                _ if path == "/user" => json!({"username": "owner"}),
+                _ if path.starts_with("/projects/o%2Fr/members/all/") => json!({"access_level": 30}),
+                ("GET", Some(""), _) => json!(issues.borrow().iter().map(issue).collect::<Vec<_>>()),
+                ("POST", Some(""), _) => {
+                    let body = body.unwrap();
+                    let labels = body["labels"].as_str().unwrap().split(',').map(String::from).collect();
+                    let (title, text, labels) = store(body["title"].as_str().unwrap(), body["description"].as_str().unwrap(), labels);
+                    let n = issues.borrow().len() as u64 + 1;
+                    issues.borrow_mut().push((n, title, text, labels));
+                    json!({"iid": n})
+                }
+                ("GET", _, Some((n, "notes"))) => json!(notes.borrow().iter().filter(|(i, ..)| i.to_string() == n).map(|(_, id, body)|
+                    json!({"id": id, "body": body, "system": false, "author": {"id": 1, "username": "owner"}, "created_at": at, "updated_at": at})).collect::<Vec<_>>()),
+                ("POST", _, Some((n, "notes"))) => {
+                    let id = 100 + notes.borrow().len() as u64;
+                    notes.borrow_mut().push((n.parse().unwrap(), id, body.unwrap()["body"].as_str().unwrap().into()));
+                    json!({"id": id})
+                }
+                ("GET", Some(n), None) => issue(issues.borrow().iter().find(|i| i.0.to_string() == n).unwrap()),
+                _ => panic!("unexpected {method} {url}"),
+            };
+            Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: "read" })
+        }));
+        (KIND.board)(api)
+    }
+
+    // Chain: § 1 `add --op-id` on GitLab -> create readback and retry discovery (#1914). Defect: gradus/cyprusbz#540,
+    // GitLab keeps a description without the trailing newline `add` sends, so the first add reported 'create readback
+    // does not match the request' and every retry 'created issue conflicts with the immutable request'. Risk: a
+    // different title, body or label set is accepted as the requested issue.
+    #[test]
+    fn gitlab_add_op_id_accepts_its_stripped_description_and_still_refuses_other_content() {
+        let raw = json!({"create_claim_issue": 1});
+        let op = crate::Op { id: Some("pilotq-1.p18-t1".into()), ..Default::default() };
+        let body = "## Goal\nG\n\n## Acceptance\nA1. Check\n\nop-id: pilotq-1.p18-t1\n";
+        let labels = vec!["q-held".to_string()];
+        // GitLab strips the surrounding whitespace of a stored title and description
+        let b = board(|title, text, labels| (title.trim().into(), text.trim().into(), labels));
+        let n = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap();
+        let r = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
+        assert_eq!((r.outcome, r.task, r.state), ("accepted", n, Some("held")), "{}", r.reason);
+        let cases: [(&str, fn(&str, &str, Vec<String>) -> (String, String, Vec<String>)); 3] = [
+            ("title", |_, text, labels| ("Other".into(), text.into(), labels)),
+            ("body", |title, text, labels| (title.into(), text.replace("A1. Check", "A1. Other"), labels)),
+            ("labels", |title, text, labels| (title.into(), text.into(), [labels, vec!["bug".into()]].concat())),
+        ];
+        for (field, store) in cases {
+            let b = board(store);
+            let r = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
+            assert_eq!((r.outcome, r.reason.as_str()), ("unknown", "create readback does not match the request"), "{field}");
+            // labels move with the task state after start, so retry discovery identifies the issue by title and body
+            let r = crate::claimed_create(b.as_ref(), &raw, "T", body, &labels, "", &op).unwrap_err();
+            let want = if field == "labels" { ("accepted", "") } else { ("unknown", "created issue conflicts with the immutable request") };
+            assert_eq!((r.outcome, r.reason.as_str()), want, "{field}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod image_tests {
     use super::*;
 
