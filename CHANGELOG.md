@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.45
+
+GitLab: `taskq update` keeps `<install>/gitlab-token` (the post-update sweep deleted it, #1897); a missing GitLab token now names the token file and `glab` with a Next line (#1894). The first update to this release still runs the old sweep: restore `gitlab-token` once afterwards where it was deleted. No board change.
+
 ## v4.6.44
 
 Issues: `taskq issue N` reads any board issue on GitHub or GitLab as JSON; `--comment` and `--label` add one comment or label with readback, once per `--op-id`, so clients such as PilotQ read and write issues through the CLI (#1892). No board change.
