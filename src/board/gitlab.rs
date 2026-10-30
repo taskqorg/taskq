@@ -127,7 +127,12 @@ impl GitLab {
             // CI on a head that lacks current main proves nothing about the merge result (#1139)
             return Ok(Publish::Failed(format!("{branch} is not rebased on current main: rebase, rerun the checks and push")));
         }
-        if mode == "pr" && !matches!(self.api.call("GET", "", None)?.json()?["merge_method"].as_str(), Some("ff" | "rebase_merge")) {
+        let project = self.api.call("GET", "", None)?.json()?;
+        if project["autoclose_referenced_issues"] != false {
+            // MR or commit text such as 'Do not close #N' would close the task on merge, before its acceptance (csgo#428, #1909)
+            return Ok(Publish::Pending("project closes issues named in MR or commit text: set autoclose_referenced_issues to false".into()));
+        }
+        if mode == "pr" && !matches!(project["merge_method"].as_str(), Some("ff" | "rebase_merge")) {
             // main can move between the check above and the merge: only a fast-forward merge method refuses a stale head at merge time
             return Ok(Publish::Pending("project merge method does not require a rebased MR: set fast-forward or semi-linear".into()));
         }

@@ -1503,7 +1503,7 @@ mod tests {
             else if url.ends_with("/repos/o/r") { json!({"private": true}) }
             else if url.ends_with("/rules/branches/main") { json!([{"type": "required_status_checks", "ruleset_id": 1, "parameters": {"strict_required_status_checks_policy": true}}]) }
             else if url.ends_with("/rulesets/1") { json!({"current_user_can_bypass": "never"}) }
-            else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": "ff"}) }
+            else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": "ff", "autoclose_referenced_issues": false}) }
             else if url.contains("/git/ref/heads/taskq-") { json!({"object": {"sha": result}}) }
             else if url.ends_with("/git/refs/heads/main") { json!({"object": {"sha": result}}) }
             else if url.contains("/pulls?") { json!([{"number": 7, "head": {"sha": result}}]) }
@@ -1979,7 +1979,7 @@ exit 0
                             if !guard.starts_with("classic:") { return Err("HTTP 403 Resource not accessible by personal access token".into()) }
                             json!({"required_status_checks": {"strict": true}, "enforce_admins": {"enabled": guard == "classic:enforced"}})
                         }
-                        else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": if enforced { "ff" } else { "merge" }}) }
+                        else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": if enforced { "ff" } else { "merge" }, "autoclose_referenced_issues": false}) }
                         else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
                         else if url.ends_with("/status") { json!({"total_count": 0}) }
                         else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": "success"}}) }
@@ -2028,7 +2028,7 @@ exit 0
                 let result = "a".repeat(40);
                 let value = if url.contains("/merge_base?") { json!({"id": "c".repeat(40)}) }
                     else if url.ends_with("/repository/branches/main") { json!({"commit": {"id": "c".repeat(40)}}) }
-                    else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": "ff"}) }
+                    else if url.ends_with("/projects/o%2Fr") { json!({"merge_method": "ff", "autoclose_referenced_issues": false}) }
                     else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": "success"}}) }
                     else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result}]) }
                     else if url.ends_with("/merge") {
@@ -2056,6 +2056,48 @@ exit 0
             assert_eq!(got, want, "{want}");
             assert_eq!(*calls.borrow(), writes, "{want}: merge writes");
             if want == "Pending" && writes == 0 { assert_eq!(*reads.borrow(), gitlab::MERGE_STATUS_READS as usize, "bounded wait"); }
+        }
+    }
+
+    // Chain: § 7 GitLab merge vs auto-close of referenced issues (csgo#428, #1909). Risk: MR text such as 'Do not close #N'
+    // matches GitLab's closing pattern, so the merge closes the task before its acceptance passes and its worker stops.
+    #[test]
+    fn gitlab_merge_never_closes_the_task_by_mr_text() {
+        // project auto-close -> outcome, task closed by the merge
+        for (autoclose, want) in [(Some(true), "Pending"), (None, "Pending"), (Some(false), "Done")] {
+            for mode in ["direct", "pr"] {
+                let closed = std::rc::Rc::new(RefCell::new(false));
+                let seen = closed.clone();
+                let merged = std::rc::Rc::new(RefCell::new(false));
+                let h = http(&gitlab::KIND, None, Box::new(move |method, url, _| {
+                    let result = "a".repeat(40);
+                    let value = if url.contains("/merge_base?") { json!({"id": "c".repeat(40)}) }
+                        else if url.ends_with("/repository/branches/main") { json!({"commit": {"id": "c".repeat(40)}}) }
+                        else if url.ends_with("/projects/o%2Fr") {
+                            let mut p = json!({"merge_method": "ff"});
+                            if let Some(on) = autoclose { p["autoclose_referenced_issues"] = json!(on) }
+                            p
+                        }
+                        else if url.contains("/repository/commits/") { json!({"last_pipeline": {"status": "success"}}) }
+                        else if url.contains("/merge_requests?") { json!([{"iid": 7, "sha": result, "description": "Do not close #1 before the live check."}]) }
+                        else if url.ends_with("/merge") {
+                            // GitLab closes issues named after a closing keyword unless the project turned auto-close off
+                            *merged.borrow_mut() = true;
+                            *seen.borrow_mut() = autoclose != Some(false);
+                            json!({"squash_commit_sha": "b".repeat(40)})
+                        }
+                        else if url.ends_with("/merge_requests/7") { json!({"state": if *merged.borrow() { "merged" } else { "opened" }, "detailed_merge_status": "mergeable"}) }
+                        else { panic!("unexpected {method} {url}") };
+                    Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+                }));
+                let got = match h.publish(1, &"a".repeat(40), mode, "title", "Task: fake") {
+                    Publish::Done(_) => "Done",
+                    Publish::Pending(m) => { assert!(m.contains("autoclose_referenced_issues"), "{m}"); "Pending" }
+                    other => panic!("unexpected {other:?}"),
+                };
+                assert_eq!(got, want, "{mode} autoclose={autoclose:?}");
+                assert!(!*closed.borrow(), "{mode} autoclose={autoclose:?}: merge closed the task");
+            }
         }
     }
 
