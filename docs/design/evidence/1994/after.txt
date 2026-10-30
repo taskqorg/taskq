@@ -1,0 +1,8 @@
+Implementation source: 0eb09f234faef6ff99bfc32d1215e64909dff671
+Binary SHA-256: 6a7cbdfa28afbcece06808a3a0c6ab09817a4e99054b64958eb4ab4bbe223589
+Fixture: docs/design/tray-fixture.sh, EXTRA=0
+Windows TextScaleFactor: 140
+Snapshot exit: 0
+Native PNGs: 50
+Overflow diagnostics: 0
+Elapsed seconds: 44.859

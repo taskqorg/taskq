@@ -1,0 +1,11 @@
+Initial canonical gate: FAIL, 265.172 s; 744 passed, 2 failed, 39 ignored.
+local_capacity_crashes_never_replay_an_uncertain_write: committed != intent-saved
+power_loss_zeroed_records_are_set_aside_only_without_an_owner: 2 != 1
+Observed cause: reused process-ID fixture directories predated the run.
+Both unchanged exact host tests in fresh TEMP/TMP: PASS.
+Shared notifications browser check: PASS across Windows/macOS modes, Home/Settings, light/dark, 16/20 px.
+Fresh TEMP/TMP canonical gate: PASS, 195.063 s / 900 s.
+Rust unit: 746 passed, 39 ignored; integration: 19 passed, 1 ignored.
+Offline selftest: PASS; live board/tool probes explicitly unknown.
+Node/component/artifact checks and expanded notifications browser check: PASS.
+Native macOS: pending #1932; merge_group CI: pending; not installed.
