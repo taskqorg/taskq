@@ -1760,6 +1760,14 @@ fn add_host(given: Option<&str>, cfg: &Config) -> Option<String> {
     given.map(String::from).or_else(|| cfg.labelled.then(|| cfg.me.clone()))
 }
 
+/// § 9: a labelled host keeps its own host on every board; a board this host does not serve refuses the add,
+/// and the refusal names the fix (#1912).
+fn serve_hint(e: String, cfg: &Config) -> String {
+    if e.starts_with(&format!("--host {0}: no host named {0};", cfg.me)) {
+        format!("{e}\nNext: run taskq service install for this project on host {} so it serves this board", cfg.me)
+    } else { e }
+}
+
 /// host.json `claim` value (§ 9).
 fn claim_name(labelled: bool) -> &'static str { if labelled { "labelled" } else { "any" } }
 
@@ -3105,7 +3113,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 labels: vec![],
             };
             if finding {
-                let (mut body, labels) = task_body(b, &new, &Op::default())?;
+                let (mut body, labels) = task_body(b, &new, &Op::default()).map_err(|e| serve_hint(e, cfg))?;
                 let finding_request;
                 for (flag, values) in &a.flags {
                     if !["board", "source", "goal", "acceptance", "scope", "deps", "type", "runtime", "priority", "host", "evidence", "start", "json"].contains(&flag.as_str()) {
@@ -3141,7 +3149,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             } else if ["start", "source", "board", "evidence"].iter().any(|f| a.flags.contains_key(*f)) {
                 return Err("--start/--source/--board/--evidence require finding".into());
             }
-            emit(&[add_task(b, root, &c.raw, &new, &op)?], json)
+            emit(&[add_task(b, root, &c.raw, &new, &op).map_err(|e| serve_hint(e, cfg))?], json)
         }
         "start" => emit(&start_tasks(b, root, &a.pos[1..], &op)?, json),
         "approve" => emit(&[dispatch::approve(b, root, a.num(1)?, a.one("sha"), &op, dispatch::agent())], json),
@@ -3717,6 +3725,32 @@ mod tests {
         assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(true));
         let bad = parse(&["service", "capacity", "--claim", "some"]).unwrap();
         assert!(CapEdit::from_args(&bad).is_err());
+    }
+
+    // Chain: § 9 `claim` (#1912). Risk: a labelled host adding to a board it does not serve (PilotQ on pds18, a
+    // mac-only board) gets a refusal without its fix, or the add silently routes to another host.
+    #[test]
+    fn add_on_a_labelled_host_the_board_lacks_refuses_naming_service_install() {
+        let mut cfg = cfg();
+        cfg.labelled = true;
+        cfg.me = "pds18".into();
+        let c = Ctx { cfg, raw: json!({}), board: Box::new(Fake::default()) };
+        let add = |extra: &[&str]| {
+            let mut v = vec!["add", "T", "--goal", "G", "--acceptance", "observable"];
+            v.extend_from_slice(extra);
+            command(&c, "add", &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap())
+        };
+        let beat = |h: &str| c.board.create(&format!("taskq host {h}"), "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
+        beat("mac");
+        let refused = "--host pds18: no host named pds18; hosts: mac\nNext: run taskq service install for this project on host pds18 so it serves this board";
+        assert_eq!(add(&[]).unwrap_err(), refused, "labelled default: refused, never routed to the board's other host");
+        assert_eq!(add(&["--host", "pds18"]).unwrap_err(), refused);
+        assert_eq!(add(&["--host", "win"]).unwrap_err(), "--host win: no host named win; hosts: mac", "another host: today's refusal");
+        assert_eq!(c.board.issues(None).unwrap().len(), 1, "a refused add files nothing");
+        add(&["--host", "mac"]).unwrap();
+        beat("pds18");
+        add(&[]).unwrap();
+        assert!(c.board.issues(None).unwrap().pop().unwrap().labels.contains(&"host-pds18".into()), "a served board keeps this host");
     }
 
     // Chain: § 5 `service capacity --default-runtime` -> host.json `default_runtime` (#1668). Risk: a typo or
