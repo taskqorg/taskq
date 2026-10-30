@@ -386,6 +386,8 @@ pub struct Service<'a> {
     seen: HashMap<u64, State>,
     /// R6 stuck tasks already logged, by the board time of their newest log entry: one line until the task moves.
     stuck: HashMap<u64, i64>,
+    /// § 4 Churn tasks already logged: one line and one `service.churn` record until the flag clears.
+    churned: HashSet<u64>,
     /// The newest comment id an events pass saw; `gone` events come only from newer comments (§ 4)
     gone_after: Option<u64>,
     /// Newest comment id of the previous pass, for queue transitions; None before the first (§ 4 Profiling).
@@ -679,7 +681,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1327,6 +1329,7 @@ impl<'a> Service<'a> {
         self.copy_images();
         self.tasks_read = Some(std::time::Instant::now());
         self.log_stuck(now);
+        self.log_churn();
         // Local eligibility only: another host's heartbeat cannot qualify this runtime or hide its refusal.
         self.waits.clear();
         for v in &views {
@@ -1999,6 +2002,19 @@ impl<'a> Service<'a> {
             }
         }
         self.stuck.retain(|n, _| stuck.contains_key(n));
+    }
+    /// § 4 Churn: one `#N event churn ...` line and one `service.churn` telemetry record per flagged task until it clears.
+    fn log_churn(&mut self) {
+        let Some(snapshot) = &self.snapshot else { return };
+        let flagged: Vec<(u64, crate::snapshot::Churn)> = snapshot.tasks.iter().filter_map(|r| r.churn.map(|c| (r.n, c))).collect();
+        for (n, c) in &flagged {
+            if self.churned.insert(*n) {
+                self.log.push(format!("#{n} event churn notes {} spawns {} accepted {}", c.notes, c.spawns, c.accepted));
+                crate::profile::measure_counted("service.churn", || ((), [("task", *n), ("notes", c.notes), ("spawns", c.spawns), ("accepted", c.accepted)]
+                    .into_iter().map(|(k, v)| (k.to_string(), v)).collect()));
+            }
+        }
+        self.churned.retain(|n| flagged.iter().any(|(m, _)| m == n));
     }
 
     /// docs/design/worktrees.md: one tidy on the first pass after start, then at most hourly. A child this service
@@ -6313,6 +6329,33 @@ Open: none";
         b.advance(crate::snapshot::STUCK_AFTER);
         s.pass().unwrap();
         assert_eq!(lines(&s), 2, "a move rearms the line");
+    }
+
+    // Chain: § 4 Churn -> snapshot rows, status lines, service log (#1905). Risk: a looping task (taskq#1903: 144 notes,
+    // 64 spawns, 17 accepted) grows its notes unseen, or a normal task with an accepted spawn is flagged.
+    #[test]
+    fn churning_task_is_flagged_once_and_a_normal_task_not() {
+        let b = Fake::default();
+        let c = cfg("mac");
+        let park = |title: &str| { let n = b.create(title, "", &["taskq".into()]).unwrap(); b.comment(n, &core::entry("later", &[], None, "parked")).unwrap(); n };
+        let (looping, noisy, normal) = (park("Looping"), park("Noisy"), park("Normal"));
+        for _ in 0..6 { b.comment(looping, "taskq: spawn worker codex:- pds18").unwrap(); }
+        for i in 0..100 { b.comment(noisy, &format!("note {i}")).unwrap(); }
+        let spawn = b.comment(normal, "taskq: spawn worker codex:- pds18").unwrap();
+        b.comment(normal, &format!("taskq: accepted {spawn} attempt {spawn}")).unwrap();
+        let mut s = service(&b, &c, Default::default());
+        s.pass().unwrap();
+        s.pass().unwrap();
+        let lines = crate::snapshot::churn_lines(&s.snapshot.as_ref().unwrap().json());
+        assert_eq!(lines, [format!("#{looping} churn: notes 7 · spawns 6 · accepted 0"), format!("#{noisy} churn: notes 101 · spawns 0 · accepted 0")]);
+        let events = |s: &Service| s.log.iter().filter(|l| l.contains(" event churn ")).cloned().collect::<Vec<_>>();
+        assert_eq!(events(&s), [format!("#{looping} event churn notes 7 spawns 6 accepted 0"), format!("#{noisy} event churn notes 101 spawns 0 accepted 0")]);
+        assert_eq!(task(&b, looping).state, State::Later, "observe only");
+        b.advance(3601);
+        s.pass().unwrap();
+        let lines = crate::snapshot::churn_lines(&s.snapshot.as_ref().unwrap().json());
+        assert_eq!(lines, [format!("#{noisy} churn: notes 101 · spawns 0 · accepted 0")], "spawns older than an hour clear the flag");
+        assert_eq!(events(&s).len(), 2, "one line per flag");
     }
 
     // Chain: § 2 timed park -> service requeue at the board time (#1823). Risk: a time-only wait respawns at once and

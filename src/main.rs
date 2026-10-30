@@ -2267,7 +2267,9 @@ fn service_report(a:&Args)->Res<()> {
             println!("Channel: {}",status.as_ref().ok().and_then(Option::as_ref).and_then(|s|s["channel"].as_str()).unwrap_or("unknown"));
             for l in runtime::login_lines(&status.as_ref().ok().and_then(Option::as_ref).map_or(Value::Null,|s|s["agents"]["rows"].clone())) {println!("{l}");}
             if let Some(dev)=status.as_ref().ok().and_then(Option::as_ref).map(|s|&s["dev"]).filter(|d|d.is_object()) {println!("{}",dev_line(dev));}
+            let churn=status.as_ref().ok().and_then(Option::as_ref).map(snapshot::churn_lines).unwrap_or_default();
             println!("{}\nProject owner: {owner}",service_project_fields(root,status));
+            for l in churn {println!("{l}");}
             println!("{}",incident::line(&incident::status(root)));
             if notice||incident::notice(root) {println!("Incident reports: notice");}
         }
