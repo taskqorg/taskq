@@ -4,11 +4,30 @@ The shared Rust SVG now stacks Completed, New, Ask and Failed on one linear even
 
 ## Candidate and authority
 
-Implementation: `c9af254b50631aa8b552005957b32195d255dbcc`, rebased once onto `04e43344db6dafcd94c46e06ecd13d908ebcefa2`. Subsequent changes contain this evidence and the native capture instrument's paint barrier; shipped sources are unchanged. No installation, service restart, permission change, real task admission or PM message was performed.
+Original reviewed implementation: `c9af254b50631aa8b552005957b32195d255dbcc`, based on `04e43344db6dafcd94c46e06ecd13d908ebcefa2`; initial hand-in: `072b33b012e4cbda3bd4061f80b16dee311157ca`. The current conflict-resolution candidate is recorded below. No installation, service restart, permission change, real task admission or PM message was performed.
 
 R13 applies the selected I3/I4 target and owner answers `6524988858` (M6), `6525408616` (M1), plus steer `6525411430`. Amended rules: M1, M6, I3, R-UI4 and the menu Contract detail's History source. I1/I2, R1/R8/R9/R12 and the #1789 counter decisions remain protected. No R-numbered principle body changes.
 
 The v2 packet SHA-256 was verified as `e397147ee8fe6d6867af8ecfe604141e9921b0ce6c46e2f059a03851e9b3342d`; its entry, plan, acceptance, issue map and selected-A reference were inspected. Its counter reversal and B/C alternatives are not implemented.
+
+## Conflict-resolution candidate
+
+Rebased implementation `db90f4732f4586ecd0dba462be6e9886c2b394a6` is based on `33a28abccee144fbb7e98dc91af2c390ce67abf1`, as requested by the review requeue. Before resolution, GitHub reported PR #1947 `CONFLICTING`; the rebase reproduced a content conflict in `src/tray-app.js`.
+
+The resolution retains #1944's shared `api.disclosure` for History and Source, along with Summary A's per-series totals, New coverage and event-scale explanation. `git range-diff` confirms those two shared headers are the only implementation adjustment to the original patch; no counter, source, palette or native geometry changed.
+
+The old browser selector `.hist>summary>.meta` then failed with `Timeout 30000ms exceeded`. It now locates the period inside the shared disclosure label and compares its right edge to the containing summary. This repairs the test's DOM assumption while retaining its clipping protection; no bound or accepted behavior was relaxed.
+
+Fresh checks: `node tests/tray-history.browser.cjs` PASS (72 fixture/geometry cells) and `node tests/ui-polish.browser.cjs` PASS (416 geometry cells, sticky/wheel behavior and 12-route inventory; no before-control artifact supplied). The four-kind stack and unknown-source History screenshots were opened and inspected at 360 logical px / DPR 2: both disclosure headers, all six slots, exact detail and explicit unknowns remain readable. [Rebased History](07-history-rebase.png) is browser evidence, not native OS acceptance. Native observations in the original table below were not repeated; its platform limits remain unchanged under R12.
+
+| Fresh selected gate stage | Observed result |
+|---|---|
+| `python3 scripts/check.py --base 33a28abccee144fbb7e98dc91af2c390ce67abf1` | **sandbox-blocked, not PASS**; rule gate accepted M1/M6; 716 unit tests passed, 35 ignored; integration 20 passed, 1 blocked, 1 ignored; 305.046 s / 900 s |
+| Blocked integration | Same `telemetry_process::resume_records_its_result_without_releasing_the_host_hold` sandbox refusal as the original candidate; no permission, assertion or execution policy changed |
+| Remaining component/artifact stages | All 29 Node tests and 3 artifact commands PASS in 65.616 s; run separately after the full gate stopped, without a second full run |
+| Isolated offline selftest | `TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest`: PASS, 113 traces, formats and 8 committed observations; board/tools intentionally unknown |
+
+Fresh browser and full-gate evidence qualifies the rebased sources. Green merge-result `merge_group` CI is still required by R12/§7; no native requalification, installation or release is claimed.
 
 ## Data and compatibility
 
@@ -18,7 +37,7 @@ The v2 packet SHA-256 was verified as `e397147ee8fe6d6867af8ecfe604141e9921b0ce6
 
 API references: [GitHub issue events](https://docs.github.com/en/rest/issues/events#list-issue-events), [GitLab resource label events](https://docs.gitlab.com/api/resource_label_events/). One live read of #1931 verified GitHub label event `34694958160`, `2026-10-30T13:34:09Z`, `labeled`, `taskq`. This confirms the source record, not a deployed collector or a live cross-host restart flow. GitLab parsing is fixture-tested; its live endpoint and cold full-history scan cost are Not tested.
 
-## Verification
+## Original-candidate verification
 
 | Check | Observed result |
 |---|---|
@@ -41,7 +60,7 @@ The previous Closed-only/hidden-Ask/fixed-mark assertions were replaced under th
 
 ## Visual review set
 
-Six images; no theme/size-only variants. All activity in the screenshots is frozen or explicitly synthetic, not a live productivity measurement.
+Seven images; no theme/size-only variants. All activity in the screenshots is frozen or explicitly synthetic, not a live productivity measurement.
 
 1. [Four quantitative stacks](01-stacks.png): canonical green/blue/amber/red order, equal bins, exact Blocked detail.
 2. [Legacy and partial sources](02-legacy-sources.png): unavailable New and observed lower bounds remain explicit.
@@ -49,6 +68,7 @@ Six images; no theme/size-only variants. All activity in the screenshots is froz
 4. [Overflow picker](04-overflow-picker.png): shared vector retains three exact counter groups and the 99+ cap; its 18px preview is dense and does not qualify menu-bar readability.
 5. [Canonical before/after](05-before-after.png): original baseline SVG, same recorded day under A, and labelled four-kind illustration. These are renderer exports, not OS shell screenshots.
 6. [Actual slot-sized export](06-native-slot.png): 34 pt @2x from TaskQ's native snapshot adapter; 68 × 68 pixels. This is an exported icon, not a capture of its placement in the OS shell.
+7. [Rebased History](07-history-rebase.png): fresh browser capture after the #1944 conflict resolution, with the shared disclosure headers and quantitative stack A.
 
 The initial offscreen WebKit instrument sometimes captured the previous SVG paint after the text had updated. A partial-New screenshot exposed the mismatch. The final instrument uses a visible isolated window, waits for two animation frames, records DOM unknown-mark counts and has a 30 s deadline. The final partial case has one DOM unknown mark and the visibly hatched third bin. This repairs the capture instrument; it does not assert an application rendering defect.
 
