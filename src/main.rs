@@ -1241,9 +1241,8 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let reduced = panics.quarantined() || began.elapsed().as_secs() < panics.until;
         // #1766: an observe pass reads and reports only; exchanges, probes and pruning wait for the next ordinary pass
         let quiet = reduced || observe;
-        // § 3: capacity reloads before each admission decision; children are untouched
-        let cap = fs::read_to_string(cfg.root.join("taskq.json")).map_err(|e| e.to_string())
-            .and_then(|t| serde_json::from_str::<Value>(&t).map_err(|e| format!("taskq.json: {e}")))
+        // § 3: capacity reloads before each admission decision; children are untouched; § 7 delivery follows too (#1942)
+        let cap = s.reread_project()
             .and_then(|v| match &host {
                 Some(h) => {
                     let h = h.lock().map_err(|_| "host admission poisoned; launches held")?;

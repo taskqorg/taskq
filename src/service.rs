@@ -381,6 +381,8 @@ pub struct Service<'a> {
     cancelled_publications: HashMap<u64, u64>,
     /// #1820 each publication's last recorded wait reason: one `checks` observation per reason, never one per pass.
     publication_waits: HashMap<u64, String>,
+    /// The last invalid `taskq.json` delivery, logged once (#1942).
+    delivery_error: Option<String>,
     /// Closed-task terminal rows `repair_ended` proved are not this host's (#1359).
     unowned: HashSet<(u64, u64)>,
     /// The last worktree tidy (docs/design/worktrees.md); `None` runs one on the next pass.
@@ -704,7 +706,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -851,6 +853,26 @@ impl<'a> Service<'a> {
             self.gate.configure(c.gate);
         }
         self.cap = cap;
+    }
+
+    /// Rereads `taskq.json` for a pass (§ 3 capacity) and takes its § 7 delivery preset, so a pending publication
+    /// follows an owner's preset switch without a restart (#1942). An invalid preset keeps the last one, logged once.
+    pub fn reread_project(&mut self) -> Result<Value, String> {
+        let v = crate::project_value(&self.cfg.root)?;
+        match crate::delivery(&v) {
+            Ok(d) => {
+                if d != (self.cfg.publish.clone(), self.cfg.delivery.clone(), self.cfg.delivery_revision) {
+                    log!("delivery {} r{} (was {} r{})", d.1, d.2, self.cfg.delivery, self.cfg.delivery_revision);
+                    (self.cfg.publish, self.cfg.delivery, self.cfg.delivery_revision) = d;
+                }
+                self.delivery_error = None;
+            }
+            Err(e) => {
+                if self.delivery_error.as_ref() != Some(&e) { log!("{e}; keeping delivery {} r{}", self.cfg.delivery, self.cfg.delivery_revision); }
+                self.delivery_error = Some(e);
+            }
+        }
+        Ok(v)
     }
 
     fn may_launch(&self,task:u64) -> bool {
@@ -1747,19 +1769,22 @@ impl<'a> Service<'a> {
             let began = std::time::Instant::now();
             let r = crate::dispatch::resume_publication(self.board, &self.cfg, &v.issue, &v.projection.task, &v.log);
             if r.ok() { self.publication_waits.remove(&n); continue; }
-            log!("#{n} publication: {}", r.reason);
+            let published = v.comments.iter().rposition(|c| c.trusted && c.body.lines().next().and_then(|h| h.trim().strip_prefix("taskq:"))
+                .and_then(|h| h.split_whitespace().next()) == Some("publish"));
             // #1820 A2 (pilotq #106): a wait the pass cannot end is shown with its reason and age, never only logged
+            // #1942: logged when the reason changes, not every pass
             if self.publication_waits.get(&n) != Some(&r.reason) {
+                log!("#{n} publication: {}", r.reason);
                 let (a, rt) = v.projection.executions.last().map_or((0, "other"), |x| (x.attempt, x.runtime.as_str()));
                 crate::profile::stage("checks", n, a, rt, Some(began.elapsed()), "retried", crate::profile::class(&r.reason), crate::profile::Usage::NoModel);
-                // #1935: a wait only a person ends gets one plain board comment, never a log entry; the board keeps it across restarts (R1)
-                if r.reason.contains(crate::board::MANUAL_MERGE) && !v.comments.iter().any(|c| c.trusted && c.body.starts_with(MANUAL_MERGE_NOTE)) {
+                // #1935: a wait only a person ends gets one plain board comment per PR head (the `publish` entry before it),
+                // never a log entry; the board keeps it across restarts (R1)
+                if r.reason.contains(crate::board::MANUAL_MERGE) && !v.comments[published.map_or(0, |i| i + 1)..].iter().any(|c| c.trusted && c.body.starts_with(MANUAL_MERGE_NOTE)) {
                     if let Err(e) = self.board.comment(n, &format!("{MANUAL_MERGE_NOTE}: {}", r.reason)) { log!("#{n} manual-merge note unknown: {e}"); }
                 }
                 self.publication_waits.insert(n, r.reason.clone());
             }
-            let since = v.comments.iter().rev().find(|c| c.trusted && c.body.lines().next().and_then(|h| h.trim().strip_prefix("taskq:"))
-                .and_then(|h| h.split_whitespace().next()) == Some("publish")).map(|c| c.created);
+            let since = published.map(|i| v.comments[i].created);
             waiting.insert(n, crate::snapshot::PublicationWait { reason: r.reason, since, age_s: since.map(|t| now - t) });
         }
         self.publication_waits.retain(|n, _| views.iter().any(|v| v.issue.number == *n && v.projection.task.publication.is_some()));
@@ -3071,6 +3096,65 @@ mod tests {
         s.publication_waits.clear();
         s.pass().unwrap();
         assert_eq!(b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count(), 1, "a restart reads the board note back (R1)");
+        // #1942: a new PR head (a later `publish` entry) gets its own note
+        b.state.borrow_mut().publish = "queue-conflict".into();
+        s.pass().unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"b".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "manual-merge".into();
+        for _ in 0..2 { s.pass().unwrap(); }
+        assert_eq!(b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count(), 2, "one note per PR head");
+    }
+
+    // Chain: § 7 Result and close verdicts -> `publish` under `pr` -> manual-merge wait -> preset switched to `direct`
+    // -> next service pass fast-forwards main to the PR head -> one close (#1942). Defect (desiign #31, #39, #44): PRs
+    // published before a switch to `direct` stayed in review forever, `needs a manual merge` logged every pass.
+    // Retained: a pending publication takes the current preset with its exact-SHA CI; the wait is noted once.
+    #[test]
+    fn a_pr_published_before_a_switch_to_direct_is_delivered_directly() {
+        let (b, mut c) = (Fake::default(), cfg("win"));
+        c.root = std::env::temp_dir().join(format!("taskq-1942-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&c.root).unwrap();
+        let preset = |p: &str, r: u64| std::fs::write(c.root.join("taskq.json"), json!({"repo": "o/r", "delivery": {"preset": p, "revision": r}}).to_string()).unwrap();
+        preset("auto-merge", 2);
+        let n = b.create("Invented preset switch", "", &["taskq".into()]).unwrap();
+        let sha = "a".repeat(40);
+        // main fast-forwards
+        let forwards = Rc::new(RefCell::new(0));
+        let (f, head) = (forwards.clone(), sha.clone());
+        b.state.borrow_mut().publisher = Some(crate::board::replying(&crate::board::github::KIND, move |method, url| {
+            Ok(if url.contains("/compare/main...") { json!({"status": if *f.borrow() == 0 { "ahead" } else { "identical" }}) }
+                else if url.ends_with("/rules/branches/main") { return Err("HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature.".into()) }
+                else if url.contains("/pulls?head=o:taskq-1&base=main&state=open") { json!([{"number": 37, "head": {"sha": head}, "html_url": "https://github.com/o/r/pull/37"}]) }
+                else if url.contains("/check-runs") { json!({"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success"}]}) }
+                else if url.ends_with("/status") { json!({"total_count": 0}) }
+                else if url.ends_with("/git/ref/heads/taskq-1") { json!({"object": {"sha": head}}) }
+                else if method == "PATCH" && url.ends_with("/git/refs/heads/main") { *f.borrow_mut() += 1; json!({"object": {"sha": head}}) }
+                else { panic!("unexpected {method} {url}") })
+        }));
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&sha], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        // the service loop's pass: reread taskq.json, then pass
+        let pass = |s: &mut Service| { s.reread_project().unwrap(); s.pass().unwrap() };
+        for _ in 0..3 { pass(&mut s); }
+        let notes = |b: &Fake| b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count();
+        assert_eq!((task(&b, n).state, notes(&b), *forwards.borrow(), s.cfg.publish.as_str()), (State::Review, 1, 0, "pr"), "the `pr` wait is noted once");
+        // the owner edits taskq.json; the running service is not restarted
+        preset("direct", 3);
+        pass(&mut s);
+        let log = b.comments(n).unwrap();
+        let closes: Vec<_> = log.iter().filter(|e| e.body.starts_with("taskq: close")).collect();
+        assert_eq!((task(&b, n).state, closes.len(), *forwards.borrow(), notes(&b)), (State::Closed, 1, 1, 1));
+        assert!(closes[0].body.contains(&format!("delivery direct r3: main fast-forwarded to {sha}")), "{}", closes[0].body);
+        pass(&mut s);
+        assert_eq!((b.comments(n).unwrap().len(), *forwards.borrow()), (log.len(), 1), "closed once");
+        drop(s);
+        let _ = std::fs::remove_dir_all(&c.root);
     }
 
     // Chain: section 7 publication -> blocked outcome -> ask in one pass -> answer -> retry -> close (#1413).
