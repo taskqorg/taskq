@@ -464,7 +464,7 @@ fn render_stages_samples(samples:&[Sample]) -> Result<String, &'static str> {
 }
 
 /// § 4 Profiling board operation kinds, one per board adapter call.
-pub const BOARD_OPS: [&str; 9] = ["list", "inbox", "read", "claim", "comment", "label", "close", "write", "publish"];
+pub const BOARD_OPS: [&str; 10] = ["list", "inbox", "read", "claim", "comment", "label", "close", "write", "publish", "history"];
 #[cfg(test)] const BOARD_PREFIX: &str = "taskq-board ";
 #[cfg(test)] const TRANSITION_PREFIX: &str = "taskq-transition ";
 const STATES: [&str; 10] = ["ready", "waiting", "doing", "review", "merge-queue", "ask", "later", "failed", "closed", "held"];
@@ -1141,6 +1141,21 @@ pub(crate) mod tests {
         let capture=coreq::telemetry::capture::Capture::new(store,"taskq","test").unwrap();
         let guard=tracing::subscriber::set_default(tracing_subscriber::registry().with(capture.clone()));
         (capture,Collecting(guard))
+    }
+    // #1960 defect: `history` (#1947) was missing from BOARD_OPS, so every first-admission read failed its telemetry append.
+    // Risk kept: a board adapter op kind that telemetry rejects.
+    #[test]
+    fn every_profiled_board_op_appends() {
+        let dir=std::env::temp_dir().join(format!("taskq-board-ops-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        let (_capture,_guard)=collecting(&dir);
+        let kinds:Vec<&str>=include_str!("board/mod.rs").split("self.op(\"").skip(1).filter_map(|s|s.split_once("\", |b|").map(|p|p.0)).collect();
+        assert!(kinds.contains(&"history"),"{kinds:?}");
+        for op in kinds.into_iter().chain(["claim","comment","publish"]) {
+            let sample=crate::telemetry::Sample::Board(BoardOp {op:op.into(),us:1,outcome:"failed".into(),error:error("HTTP 502").into(),remaining:None,at_ms:Some(1)});
+            assert!(crate::telemetry::record(sample).is_ok(),"board op {op} must append");
+        }
+        let _=fs::remove_dir_all(&dir);
     }
     #[test]
     fn guide_needs_no_store() {
