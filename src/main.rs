@@ -3363,8 +3363,10 @@ fn application() {
     }
     #[cfg(target_os = "linux")]
     if std::env::current_exe().ok().is_some_and(|p| p == Path::new(linux_sandbox::HELPER)) {
-        if let Err(e) = linux_sandbox::run(&std::env::args().skip(1).collect::<Vec<_>>()) { eprintln!("{e}"); crate::platform::exit(1); }
-        return;
+        match linux_sandbox::run(&std::env::args().skip(1).collect::<Vec<_>>()) {
+            Ok(code) => crate::platform::exit(code),
+            Err(e) => { eprintln!("{e}"); crate::platform::exit(1); }
+        }
     }
     incident::install_panic_hook();
     #[allow(unused_mut)]
@@ -4699,9 +4701,16 @@ mod tests {
             let old="{\"type\":\"turn.started\"}\n{\"type\":\"turn.completed\"}\n";
             fs::write(&log,old).unwrap();
             let output=fs::File::options().append(true).open(&log).unwrap();
-            let child=std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact","tests::handover_native_child","--ignored","--nocapture"])
-                .env("TASKQ_IMAGE_ROOT",&root).stdin(std::process::Stdio::null()).stdout(output).stderr(std::process::Stdio::null()).spawn().unwrap();
+            let sandbox=std::env::var_os("TASKQ_IMAGE_SANDBOX").is_some();
+            let mut command=std::process::Command::new(std::env::current_exe().unwrap());
+            command.args(["--exact",if sandbox {"tests::sandbox_helper_child"} else {"tests::handover_native_child"},"--ignored","--nocapture"])
+                .env("TASKQ_IMAGE_ROOT",&root).stdin(std::process::Stdio::null()).stdout(output).stderr(std::process::Stdio::null());
+            // #1920: a host service spawns children on a project thread, which lives until the re-exec ends it.
+            let child=if sandbox {
+                let (sent,spawned)=std::sync::mpsc::channel();
+                std::thread::spawn(move || { sent.send(command.spawn()).unwrap(); loop { std::thread::park(); } });
+                spawned.recv().unwrap().unwrap()
+            } else { command.spawn().unwrap() };
             let native=coreq::process::identity(child.id()).unwrap();
             s.kids.push(Kid { unknown:None, stopping:false, session_url:None,execution,task:n,attempt:a,rt:"codex".into(),proc:Box::new(runtime::CliTurn {
                 proc:Box::new(child),log,pos:old.len() as u64,start:old.len() as u64,stopping:false,accepted:false,read_error:None,native,recovery:None
@@ -4729,6 +4738,7 @@ mod tests {
         adopt(&mut s,&c.install,&root).unwrap();
         adopt(&mut s,&c.install,&root).unwrap();
         assert_eq!(s.kids.len(),1,"retry after partial recovery retains the same native handle");
+        if cold!="ended" { assert_eq!(s.kids[0].proc.exited(),Ok(None),"the re-exec killed the live child"); }
         assert_eq!(s.kids[0].execution,execution); assert_eq!(s.delivered(a),a);
         let pid=s.kids[0].proc.id();
         if cold=="live" && !cfg!(any(target_os="macos",target_os="linux")) {
@@ -4757,7 +4767,9 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert_eq!(coreq::process::identity(pid).unwrap(),None);
-        let records=core::executions(n,&board::entries(&b,n).unwrap());
+        let entries=board::entries(&b,n).unwrap();
+        assert!(!entries.iter().any(|e|e.body.starts_with("taskq: gone")),"a handed-over child never gets gone");
+        let records=core::executions(n,&entries);
         assert!(records.iter().find(|x|x.id==execution).is_some_and(|x|x.accepted && x.release==Some(core::Release::Exit)));
         if !cold.is_empty() {
             // Crash after the board receipt but before local cleanup: the stale identity must not block startup.
@@ -4775,10 +4787,37 @@ mod tests {
     fn handover_native_child() {
         use std::io::Write;
         let root=PathBuf::from(std::env::var_os("TASKQ_IMAGE_ROOT").unwrap());
+        // Stand-in for bwrap `--die-with-parent`: SIGKILL once the thread that forked this process ends.
+        #[cfg(target_os="linux")]
+        if std::env::var_os("TASKQ_IMAGE_PDEATHSIG").is_some() { assert_eq!(unsafe { libc::prctl(libc::PR_SET_PDEATHSIG,libc::SIGKILL) },0); }
         let until=Instant::now()+Duration::from_secs(10);
         while !root.join("observe").exists() { assert!(Instant::now()<until); std::thread::sleep(Duration::from_millis(10)); }
         println!("\n{{\"type\":\"turn.started\"}}"); std::io::stdout().flush().unwrap();
         while !root.join("exit").exists() { assert!(Instant::now()<until); std::thread::sleep(Duration::from_millis(10)); }
+    }
+
+    #[cfg(target_os="linux")]
+    #[test]
+    #[ignore="Linux sandbox launcher for image handover fixture"]
+    fn sandbox_helper_child() {
+        let mut bwrap=std::process::Command::new(std::env::current_exe().unwrap());
+        bwrap.args(["--exact","tests::handover_native_child","--ignored","--nocapture"]).env("TASKQ_IMAGE_PDEATHSIG","1");
+        crate::platform::exit(linux_sandbox::supervise(bwrap).unwrap());
+    }
+
+    // Chain: Linux sandboxed Codex worker -> host re-exec from another thread -> adopted live child, exit receipt (#1920).
+    // Risk: bwrap `--die-with-parent` kills the worker when the re-exec ends the project thread that launched it.
+    #[cfg(target_os="linux")]
+    #[test]
+    fn sandboxed_child_survives_the_reexec() {
+        let root=std::env::temp_dir().join(format!("taskq-image-sandbox-{}",runtime::uuid()));
+        fs::create_dir_all(&root).unwrap();
+        let result=coreq::process::output("qualification.image-handover",std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","tests::handover_image_child","--ignored","--nocapture"])
+            .env("TASKQ_IMAGE_ROOT",&root).env("TASKQ_IMAGE_SANDBOX","1").env("TASKQ_IMAGE_PHASE","before"),Duration::from_secs(20));
+        assert!(result.is_ok(),"sandboxed image handover failed: {result:?}");
+        assert_eq!(fs::read_to_string(root.join("verified")).unwrap(),"same process; exact execution; accepted input; native exit");
+        fs::remove_dir_all(root).unwrap();
     }
 
     // § 8 re-exec preserves native CLI and Claude identity and defers for app ownership; no unit reload path remains.

@@ -1,6 +1,6 @@
 //! Linux §8: fixed launcher, entered only by the root-owned helper copy.
 use std::{path::{Path, PathBuf}, process::Command};
-use std::os::unix::{fs::MetadataExt, process::CommandExt};
+use std::os::unix::{fs::MetadataExt, process::ExitStatusExt};
 
 pub const HELPER: &str = "/usr/local/libexec/taskq-sandbox";
 const BWRAP: &str = "/usr/local/libexec/taskq-bwrap";
@@ -69,7 +69,7 @@ fn codex_args(git: Option<&Path>, args: &[String]) -> Vec<String> {
     args.iter().map(|a| if a == "sandbox_workspace_write.writable_roots=[]" { roots.clone() } else { a.clone() }).collect()
 }
 
-pub fn run(args: &[String]) -> Result<(), String> {
+pub fn run(args: &[String]) -> Result<i32, String> {
     if args.len() < 6 { return Err("linux sandbox: expected root, install, mode, Codex executable and exec arguments".into()); }
     let root = Path::new(&args[0]).canonicalize().map_err(|e| e.to_string())?;
     let install = Path::new(&args[1]).canonicalize().map_err(|e| e.to_string())?;
@@ -109,11 +109,18 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let p = p.canonicalize().map_err(|e| e.to_string())?;
         c.arg("--ro-bind").arg(&p).arg(&p);
     }
+    c.args(["--setenv", "TMPDIR", "/tmp", "--chdir"]).arg(&root).arg("--").arg(bin).args(codex_args(git.as_deref(), &args[4..]));
+    supervise(c)
+}
+
+/// The launcher stays bwrap's parent: `--die-with-parent` kills the sandbox when the thread that forked bwrap ends,
+/// and a service re-exec ends the project thread that started this launcher (#1920). Killing the launcher still ends it.
+pub(crate) fn supervise(mut c: Command) -> Result<i32, String> {
     // No sudo/setid escape, even when the host account has broader privileges.
     if unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) } != 0 { return Err(std::io::Error::last_os_error().to_string()); }
-    c.args(["--setenv", "TMPDIR", "/tmp", "--chdir"]).arg(&root).arg("--").arg(bin).args(codex_args(git.as_deref(), &args[4..]));
+    let s = c.status().map_err(|e| format!("linux sandbox: {e}"))?;
     coreq::telemetry::capture::before_exec();
-    Err(format!("linux sandbox: {}", c.exec()))
+    Ok(s.code().unwrap_or_else(|| 128 + s.signal().unwrap_or(0)))
 }
 
 #[cfg(test)]
