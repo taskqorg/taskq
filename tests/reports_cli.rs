@@ -22,6 +22,13 @@ fn reports_list_and_open_use_collected_data_without_board_credentials() {
     assert_eq!(run(&["reports","12","--sha",&sha,"--json"])["report"]["body"],"Invented report body");
     assert_eq!(std::fs::read_to_string(&status).unwrap(),snapshot,"opening does not acknowledge read or decide a report");
     assert!(!root.join(".taskq/poke").exists(),"navigation never schedules board work");
+    let exported=Command::new(env!("CARGO_BIN_EXE_taskq")).args(["profile","export","--since","1h"]).current_dir(&root)
+        .env("TASKQ_ROOT",&root).env("TASKQ_INSTALL",root.join("install")).bounded();
+    assert!(exported.status.success());
+    let events:Vec<Value>=String::from_utf8(exported.stdout).unwrap().lines().map(|l|serde_json::from_str(l).unwrap()).collect();
+    for op in ["reports.list.cached","reports.open.cached"] {
+        assert!(events.iter().any(|e|e["observation"]["operation"].as_str().is_some_and(|s|s.ends_with(op))&&e["observation"]["duration_us"].is_number()),"{op} must record committed load time without opt-in method profiling");
+    }
     std::fs::write(&status,"corrupt").unwrap();
     let unknown=run(&["reports","--json"]);assert_eq!(unknown["complete"],false);assert!(unknown["reason"].is_string());
     let _=std::fs::remove_dir_all(root);

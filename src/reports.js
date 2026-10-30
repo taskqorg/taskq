@@ -37,13 +37,13 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    }
    if(selected){const row=api.rows().find(r=>key(r.root,r.n)===key(selected.root,selected.n)&&r.sha===selected.sha);selected=row?{...selected,...row}:null;}
   },
-  toggle(ps){api.sync(ps);expanded=!expanded;draw();},
+  toggle(ps){return execution.action('reports.list.open',()=>{api.sync(ps);expanded=!expanded;draw();})();},
   refresh(){api.sync(projects);draw();},
   rows(){return projects.flatMap(p=>(pages.get(p.root)?.rows||[]).map(r=>({...r,root:p.root}))).sort((a,b)=>(b.closed||0)-(a.closed||0)||b.n-a.n);},
   unread(){return api.rows().filter(r=>!r.read);},
   count(){return projects.every(p=>pages.has(p.root)&&!pages.get(p.root).unknown)?api.unread().length:null;},
   current(){return selected;},
-  open(root,n){const r=api.rows().find(r=>r.root===root&&r.n===n);if(!r)return;selected={...r};expanded=true;full=false;notice='';draw();if(r.body&&!r.read)request(root,'read',{n,sha:r.sha});},
+  open(root,n){return execution.action('reports.card.open',()=>{const r=api.rows().find(r=>r.root===root&&r.n===n);if(!r)return;selected={...r};expanded=true;full=false;notice='';draw();if(r.body&&!r.read)request(root,'read',{n,sha:r.sha});})();},
   act(action){if(!selected)return;notice='';request(selected.root,action,{n:selected.n,sha:selected.sha});draw();},
   receive(r){
    const op=pending.get(r.id);if(!op||op.root!==r.root)return false;pending.delete(r.id);

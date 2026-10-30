@@ -13,8 +13,8 @@ pub struct Cache {
 }
 impl Cache {
     pub fn collect(&mut self,b:&dyn Board) {
-        let result=crate::profile::measure("reports.collect",|| -> Res<Value> {
-            let issues=crate::profile::measure("reports.collect.list",||b.research_tasks())?;
+        let result=coreq::telemetry::capture::operation("reports.collect",|| -> Res<Value> {
+            let issues=coreq::telemetry::capture::operation("reports.collect.list",||b.research_tasks(),|_|"board-read")?;
             let verified=b.now()?;
             let mut next=std::collections::BTreeMap::new();let mut rows=Vec::new();let mut errors=Vec::new();
             for (i,closed) in issues {
@@ -24,7 +24,7 @@ impl Cache {
                 let row=if reusable {
                     old.unwrap().2.clone()
                 } else {
-                    match crate::profile::measure("reports.collect.comments",||b.comments(i.number)) {
+                    match coreq::telemetry::capture::operation("reports.collect.comments",||b.comments(i.number),|_|"board-read") {
                         Ok(comments)=>project(&i,closed,&comments,b.url(i.number)),
                         Err(e)=>{errors.push(format!("#{}: {e}",i.number));if let Some((_,_,row))=old {if let Some(row)=row {rows.push(row.clone());}next.insert(i.number,(-1,0,row.clone()));}continue;}
                     }
@@ -33,12 +33,12 @@ impl Cache {
                     if row["visible"]==true {
                         let source=old.and_then(|(_,_,r)|r.as_ref()).filter(|r|r["sha"]==row["sha"] && r["body"].is_string());
                         let content=match source {Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
-                            crate::profile::measure("reports.collect.source",|| -> Res<(Value,Value)> {
+                            coreq::telemetry::capture::operation("reports.collect.source",|| -> Res<(Value,Value)> {
                                 let body=b.source(&format!("docs/research/{}.md",i.number),row["sha"].as_str().ok_or("report SHA missing")?)?.replace("\r\n","\n");
                                 let tasks=proposals(&body)?;
                                 for t in &tasks {crate::task_body(b,&t.task(i.number),&crate::Op::default())?;}
                                 Ok((json!(body),json!(tasks)))
-                            })
+                            },|_|"report-source")
                         }};
                         match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(reason)=>row["reason"]=json!(reason)}
                     }row
@@ -49,7 +49,7 @@ impl Cache {
             self.entries=next;
             rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
             Ok(json!({"reports":rows,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now()}))
-        });
+        },|_|"board-read");
         match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(reason);}}
     }
 }
@@ -110,23 +110,23 @@ pub fn cached(root:&Path)->Value {
 }
 
 pub fn cached_list(root:&Path,page:usize,before:Option<(i64,u64)>)->Res<Value> {
-    crate::profile::measure("reports.list.cached",|| -> Res<Value> {
+    coreq::telemetry::capture::operation("reports.list.cached",|| -> Res<Value> {
         let mut value=cached(root);let rows=value["reports"].as_array().cloned().unwrap_or_default();
         let rows:Vec<_>=rows.into_iter().filter(|r|before.is_none_or(|p|(r["closed"].as_i64().unwrap_or(0),r["n"].as_u64().unwrap_or(0))<p)).collect();
         let start=if before.is_some(){0}else{page.saturating_sub(1).saturating_mul(crate::board::CLOSED_PAGE)};
         let selected:Vec<_>=rows.iter().skip(start).take(crate::board::CLOSED_PAGE).cloned().collect();
         value["more"]=json!(rows.len()>start.saturating_add(crate::board::CLOSED_PAGE));
         value["next"]=json!(selected.last().map(|r|format!("{}:{}",r["closed"],r["n"])));value["page"]=json!(page);value["reports"]=json!(selected);Ok(value)
-    })
+    },|_|"cache-read")
 }
 
 pub fn cached_open(root:&Path,n:u64,sha:&str)->Res<Value> {
-    crate::profile::measure("reports.open.cached",|| -> Res<Value> {
+    coreq::telemetry::capture::operation("reports.open.cached",|| -> Res<Value> {
         if sha.len()!=40||!sha.bytes().all(|b|b.is_ascii_hexdigit()) {return Err("report SHA must be full 40-hex".into());}
         let value=cached(root);
         let row=value["reports"].as_array().into_iter().flatten().find(|r|r["n"]==n && r["sha"]==sha);
         match row {Some(row)=>Ok(json!({"report":row,"complete":value["complete"],"reason":value["reason"]})),None=>Ok(json!({"reason":value["reason"].as_str().unwrap_or("Report not in the collected snapshot; waiting for the service"),"complete":false}))}
-    })
+    },|_|"cache-read")
 }
 
 /// Reads bypass board construction and token lookup, so offline navigation cannot become a login/API probe.

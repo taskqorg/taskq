@@ -16,7 +16,7 @@ const report={...row,read:false,body:'# Question\n\nHow should interrupted reque
    queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,...value}}));}};taskq.receive(state);},{state,row,report});
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports').length),0,'pushed reports need no list request');
   if(surface==='workspace'){if(await page.locator('[data-c=list]').isVisible())await page.locator('[data-c=list]').click();assert((await page.locator('.conversation-rows').innerText()).includes('Needs decision'));}else assert((await page.locator('[data-a=workspace][data-page=conversations]').getAttribute('aria-label')).includes('1 new'));
-  await page.locator('[data-report=toggle]').click();await page.locator('.reports-section .report-row').waitFor({timeout:5000}).catch(async e=>{console.error({surface,theme,width,font,errors,text:await page.locator('.reports-section').innerText(),sent:await page.evaluate(()=>sent.filter(m=>m.a==='reports'))});throw e;});
+  await page.locator('[data-report=toggle]').click();await page.locator('.reports-section .report-row').waitFor({state:'attached',timeout:5000}).catch(async e=>{console.error({surface,theme,width,font,errors,text:await page.locator('.reports-section').innerText(),sent:await page.evaluate(()=>sent.filter(m=>m.a==='reports'))});throw e;});
   assert((await page.locator('.reports-section .report-row').innerText()).includes('Unread'));
   if(out&&surface==='tray'&&theme==='dark'&&width===350&&font===16){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'menu-unread.png')});}
   await page.locator('.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
