@@ -1,6 +1,6 @@
 # #1940 Results evidence
 
-Results includes completed tasks and reports. [The owner decision](https://github.com/taskqorg/taskq/issues/1940#issuecomment-6526379730) defines Reopen as a linked held successor carrying the reason; the original stays closed. R13 and the Results specification record that flow. §2 and §7 publication remain unchanged.
+Results includes completed tasks and reports. [The owner decision](https://github.com/taskqorg/taskq/issues/1940#issuecomment-6526379730) defines Reopen as a linked held successor carrying the reason; the original stays closed. The Results specification records that flow under R13. §2 and §7 publication remain unchanged.
 
 ## Baseline
 
@@ -18,7 +18,7 @@ Results includes completed tasks and reports. [The owner decision](https://githu
 
 These eight screens cover distinct before/after decisions across two result kinds and two surfaces. Light-theme captures are diagnostic artifacts outside this review set; the automated matrices cover theme, width and text-size variants. [Final native identity](final-native.json) names the exact source, binary SHA-256, routes and outcomes. Previous [Reports checkpoint captures](after-native.json) remain historical evidence.
 - Native effects use invented receipts. No real report was acknowledged or decided, no task was created and no host was installed or restarted. Cargo supplies the GNU debug loader paths; a bare debug invocation returned `0xC0000135`.
-- macOS native and PilotQ-side delivery: **Not tested**. This Windows attempt has no macOS surface; the available PilotQ boundary is the JSON CLI, not a verified PilotQ walkthrough.
+- macOS native: **missing required A7 evidence**, not an unsupported surface. This Windows attempt cannot capture WKWebView. [Held task #1957](https://github.com/taskqorg/taskq/issues/1957) must supply before/after images for both result kinds and surfaces before handoff. PilotQ-side delivery remains Not tested; only the JSON CLI boundary is verified.
 
 ## Failure and protection
 
@@ -56,3 +56,11 @@ The first unified Results gate took 199.390 s: 708 passed, one failed, 39 ignore
 The archive candidate's next gate passed 710 unit checks, then its status-observation integration fixture timed out in an unattributed 10s Windows process wrapper. This wrapper now matches the existing host CLI fixture budget: 60s on Windows, 10s elsewhere, without retries or changes to H-A1/H-A5 ownership/generation/unknown assertions or native deadlines. A focused run passed all 14 invocations (0.158–1.170s each, 14.95s total). The previous stall's cause is unknown; this is fixture-budget alignment and attribution, not a claimed product latency fix.
 
 The frozen code candidate `a8c53a18ba33ba359b866ab2030f5dbdde2aa7da` passed `python scripts/check.py --base 04e43344db6dafcd94c46e06ecd13d908ebcefa2` on Windows in 206.703 s of the 900 s budget, with no retries. Rust: 710 passed, 39 ignored; integration: 19 passed, one ignored. Component, offline selftest, release checks and both 16-cell browser matrices passed. The five original failures, board-poll regression and status-observation fixture all passed in this run. Ignored checks and offline board/tool probes remain unverified (R12). The final evidence-only commit records this outcome without changing the tested code.
+
+## Review repair
+
+Rebased the existing branch onto `ae6fc6c71130e7224f83e24083033b3a5be0f4b8` after the review returned its merge conflicts. The Reports specification and action adapter retain main's automatic claim-issue setup before Make reservation, and the fake board retains the publication adapter alongside the paging-clock fixture. R13 is restored verbatim; the proposed Results link now belongs under Product. The normalized contract is 297 lines and 61,433 UTF-8 bytes, within R8's 300-line/60-KiB bound.
+
+`python scripts/check.py --rules --base ae6fc6c71130e7224f83e24083033b3a5be0f4b8` refuses: `the task does not name Product (changed)`. The issue names R13 but no owner approval names the Product rule ID. This is an unresolved approval gate, not passing verification. The Product addition remains a proposal for the owner; no rule-gate exemption was added. The earlier full-gate result above does not qualify the rebased candidate. A new full gate must follow the recorded Product decision.
+
+Focused verification after conflict resolution: `cargo test --locked --bin taskq reports::tests` passed all 15 tests; `cargo test --locked --bin taskq gitlab_report_make` passed the preserved automatic claim-setup/held-creation path; `cargo test --locked --bin taskq core::tests::every_table_row_has_a_golden_trace` passed trace coverage and contract size. `git diff --check` passed. These are focused source checks; the rebased full gate, macOS evidence #1957 and merge-result CI remain outstanding. No test assertion or gate was weakened during this repair.
