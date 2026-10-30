@@ -48,7 +48,7 @@ At 90% opacity, ordinary body and enabled semantic text must retain WCAG AA 4.5:
 
 ## Background-only fills
 
-M1.2 uses the existing transparent webview and CSS color alpha, with native window alpha fixed at 100%. Preserve the foreground palette and geometry. Every menu, block, card, chrome, footer and popover fill follows background opacity (0–100%), with no readability backing floor, except the opaque sticky task-counter row (M3). At 0%, only the desktop shows behind foreground content outside the task-counter row; readability depends on that desktop.
+M1.2 uses the existing transparent webview and CSS color alpha, with native window alpha fixed at 100%. Preserve the foreground palette and geometry. Every menu, block, card, chrome, footer and popover fill follows background opacity (0–100%), with no readability backing floor, except the opaque sticky Home host strip and task-counter row (M3). At 0%, only the desktop shows behind foreground content outside these pinned rows; readability depends on that desktop.
 
 Text, icons, buttons, badges and control glyphs retain full opacity, including disabled controls and range tracks/thumbs. Input fills follow background opacity. Keep paired semantic foreground/fill colors, input boundaries and focus cues opaque. Decorative borders, dividers and shadows follow background opacity. Separate windows and the tray icon keep their existing treatment. Whole-window opacity permits 60–100%; the 90% contrast protection above remains checked, but lower values do not promise AA over arbitrary wallpaper.
 

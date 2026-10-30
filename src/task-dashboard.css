@@ -8,7 +8,8 @@
 .menu:not(.workspace) .head .window-controls{padding-left:2px}
 .menu .project:has(>.ui-icon){display:flex;gap:8px;white-space:normal}
 .menu .project>span:first-child{white-space:normal;overflow-wrap:anywhere;overflow:visible}
-.dashboard-status{border-bottom:1px solid var(--divider);padding-bottom:3px}.dashboard-status>summary{font-size:.85em;min-height:32px}
+/* M3.1: only the host summary sticks; expanded details keep the menu's scroll. */
+.dashboard-status{display:contents}.dashboard-status>summary{position:sticky;top:calc(-1 * var(--outer));z-index:6;background:var(--surface);box-shadow:8px 0 var(--surface),-8px 0 var(--surface);border-bottom:1px solid var(--divider);padding-bottom:3px;font-size:.85em;min-height:32px}
 /* UX30-06: atomic host chips wrap before the overall runtime counters. */
 .dashboard-status>summary{grid-template-columns:minmax(0,1fr) auto 1em;align-items:start}
 .menu .host-overview{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;min-width:0}
@@ -42,7 +43,7 @@
 .viewbar button{border:0;padding:3px 6px;font-size:.85em;white-space:nowrap;flex:none}.view-picks>button:first-child{font-weight:600;background:light-dark(#e9edf1,#37424c)}
 .viewbar>[data-a=search-open]{flex:none;border:0;color:var(--muted)}.task-search>[data-a=search-clear]{border:0;flex:none}.task-search input::-webkit-search-cancel-button{-webkit-appearance:none}
 .task-search{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--divider);padding:2px 4px}.task-search input{flex:1;width:100%;min-width:0;border:0;background:transparent;font:inherit;font-size:.85em;color:inherit;padding:3px 0}.task-search .meta{font-variant-numeric:tabular-nums}
-.filter-header{position:sticky;top:calc(-1 * var(--outer));z-index:5;padding:4px 0;background:var(--surface);box-shadow:8px 0 var(--surface),-8px 0 var(--surface)}.filter-header.pinned{box-shadow:8px 0 var(--surface),-8px 0 var(--surface),0 1px 0 var(--divider)}.filter-header .tqp-counts{gap:3px}
+.filter-header{position:sticky;top:calc(var(--host-strip-height,0px) - var(--outer));z-index:5;padding:4px 0;background:var(--surface);box-shadow:8px 0 var(--surface),-8px 0 var(--surface)}.filter-header.pinned{box-shadow:8px 0 var(--surface),-8px 0 var(--surface),0 1px 0 var(--divider)}.filter-header .tqp-counts{gap:3px}
 .project-group{display:flex;align-items:center;gap:5px;padding-top:6px;color:var(--muted);font-size:.85em}.project-group button{border:0;display:flex;align-items:center;gap:5px;text-align:left;overflow-wrap:anywhere}.project-group a{margin-left:auto}.project-group .ui-icon{width:14px;height:14px}
 .menu .task-row{display:block;border-bottom:1px solid var(--divider)}.task-row .tqp-task{padding:4px 2px 5px}.task-row .tqp-task-head{display:flex;align-items:center;flex-wrap:wrap;gap:0 5px}
 .task-row .task-identity{display:inline-flex;align-items:center;gap:4px;padding:2px;font-size:.85em;font-weight:500;white-space:normal}.task-row .task-when{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-size:.85em;white-space:nowrap}.task-row .task-stage{display:inline-flex;align-items:center;justify-content:center;flex:0 0 var(--target);width:var(--target);height:var(--target)}.tqp-mark{display:inline-flex}

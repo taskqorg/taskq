@@ -3745,6 +3745,38 @@ mod tests {
         fs::remove_dir_all(install).unwrap();
     }
 
+    // Chain: R6, § 4, #1967 A4: closing a heartbeat removes it from status, claim hosts and the tray strip input;
+    // an open stale host stays unknown, and retirement on one board does not retire it on another.
+    #[test]
+    fn retired_host_leaves_status_and_strip() {
+        use crate::board::Board;
+        let a = crate::board::Fake::default();
+        let b = crate::board::Fake::default();
+        let labels = [crate::service::HOST_LABEL.into()];
+        let retired = a.create("taskq host retired", "version 4", &labels).unwrap();
+        a.create("taskq host stale", "version 4", &labels).unwrap();
+        let other = b.create("taskq host retired", "version 4", &labels).unwrap();
+        a.advance(301);
+        let cfg = crate::tests::cfg();
+        let read = |board: &crate::board::Fake| crate::snapshot::read(board, &cfg, &json!({}), &[]);
+        assert_eq!(read(&a).hosts.len(), 2);
+        a.close(retired).unwrap();
+        let snap = read(&a);
+        assert_eq!(snap.hosts.iter().map(|h| h.name.as_str()).collect::<Vec<_>>(), ["stale"]);
+        let text = snap.text(&cfg, &json!({})).unwrap();
+        assert!(!text.contains("retired"));
+        assert!(text.contains("stale v4") && text.contains(" stale"), "{text}");
+        let (_, hosts) = crate::service::views(&a, &mut Default::default(), &mut Default::default()).unwrap();
+        assert_eq!(hosts.iter().filter_map(crate::service::host_name).collect::<Vec<_>>(), ["stale"]);
+        let status = snap.json();
+        let (strip, _) = liveness(&status, Some(0), cfg.ttl, &mut vec![]);
+        assert_eq!(strip.as_array().unwrap().len(), 1);
+        assert_eq!((strip[0]["name"].clone(), strip[0]["live"].clone()), (json!("stale"), json!(false)));
+        assert_eq!(read(&b).hosts[0].name, "retired");
+        b.close(other).unwrap();
+        assert!(read(&b).hosts.is_empty());
+    }
+
     // #1591 A3: an observation 61-299 s old reads live in the tray, as in the CLI (`snapshot::live`); older than ttl stale.
     // Risk: a 60 s literal in the tray marks a live service unknown between idle passes.
     #[test]

@@ -22,7 +22,7 @@ c.S.display=structuredClone(fx.display);
 for(const patch of [{complete:false},{age:301,alive:false,tasks_live:false},{age:0,tasks_age_seconds:301,tasks_live:false},{tasks_age_seconds:null,tasks_live:false},{tasks:[{n:1,executions:{}}]}]){
  page=render([{...project,...patch}]);assert.equal(host('mac'),'?');assert.deepEqual(totals(),{Codex:'?',Claude:'?'});assert(!page.includes('claude: 1 worker'));
 }
-for(const hosts of [null,{},[null],[{name:3}],[{name:'mac',live:false}]]){render([{...project,hosts}]);assert.equal(host('mac'),'?','a missing/stale heartbeat cannot establish idle or running');assert.equal(totals().Codex,'?');}
+for(const hosts of [null,{},[null],[{name:3}],[{name:'mac',live:false}]]){render([{...project,hosts}]);assert.equal(host('mac'),hosts?.[0]?.name==='mac'?'?':undefined,'a missing heartbeat has no chip; an open stale heartbeat cannot establish idle or running');assert.equal(totals().Codex,'?');}
 render([{...project,age:250}]);assert.equal(host('mac'),'2','Rust ttl flag remains authoritative within ttl');
 page=render([{...project,tasks:[...project.tasks,{n:8,executions:[{...execution(18,'mac','claude'),role:null}]}]}]);assert.equal(host('mac'),'2+?');assert.deepEqual(totals(),{Codex:'2+?',Claude:'1+?'});assert(page.includes('Partial: run state unknown'));
 page=render([project,{...project,root:'q',issues:'https://example.org/q',tasks_live:false,hosts:[{name:'win',live:true,age:100,age_text:'2m'}],tasks:[]}]);assert.equal(host('mac'),'2');assert.equal(host('win'),'1+?');assert(page.includes('stale task observation (q)'));assert(page.includes('Heartbeat · 5s old'),'freshest heartbeat wins');
@@ -40,6 +40,6 @@ render([{...project,tasks:[...project.tasks,{n:9,executions:[execution(19,'mac',
 page=render([{...project,hosts:[{name:'<img>',live:true}],tasks:[]}]);assert(page.includes('&lt;img&gt;')&&!page.includes('<img>'));
 render([{...project,hosts:['mac','macbook','hermes-fra1','hermes-win','win'].map(name=>({name,live:true}))}]);assert.deepEqual([...strip().matchAll(/<strong>([^<]*)<\/strong>/g)].map(m=>m[1]),['hermes-f','hermes-w','mac','macb','win']);assert(strip().includes('title="hermes-fra1 · idle · Total running agents: 0"'));
 c.S.agents={fresh:true,rows:[{runtime:'codex',state:'expired'},{runtime:'claude',state:'check-failed'}]};page=render([{...project,sample_age_text:'2m',capacity:{...project.capacity,cpu_percent:41.6,memory_available_percent:62.2}}]);assert.equal(host('mac'),'2');assert.deepEqual(totals(),{Codex:'2',Claude:'1'});assert(page.includes('Sign-in: Codex expired'));assert(page.includes('CPU 42% busy · memory 62% available · sampled 2m ago'));assert(strip().includes('class="host-warning"'));
-page=render([]);assert.equal(host('mac'),'?');assert.deepEqual(totals(),{Codex:'?',Claude:'?'});assert(page.includes('Capacity unknown'));
+page=render([]);assert.equal(host('mac'),undefined,'#1967 A4: no named strip chip without an open heartbeat');assert(strip().includes('Hosts ?'));assert.deepEqual(totals(),{Codex:'?',Claude:'?'});assert(page.includes('Capacity unknown'));
 module.exports={project};
 console.log('PASS UX30-06 / A1–A5: host/family totals, idle/partial/stale/conflict/duplicate/ended/runtime cases; roles, resources, source and sign-in preserved');

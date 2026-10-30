@@ -19,7 +19,7 @@ const html=fs.readFileSync(baseline?before+'/tray.html':'build/web/tray.html','u
  const c=p.locator('.content');
  for(const [name,fraction] of [['top',0],['middle',.5],['bottom',1]]){
   await c.evaluate((e,f)=>e.scrollTop=f*(e.scrollHeight-e.clientHeight),fraction);await p.evaluate(()=>new Promise(requestAnimationFrame));
-  const r=await p.locator('.filter-header').evaluate(e=>{const s=e.closest('.content'),a=e.getBoundingClientRect(),b=s.getBoundingClientRect();return {top:a.top,bottom:a.bottom,start:b.top,end:b.bottom,position:getComputedStyle(e).position,fill:getComputedStyle(e).backgroundColor};});
+  const r=await p.locator('.filter-header').evaluate(e=>{const s=e.closest('.content'),a=e.getBoundingClientRect(),b=s.getBoundingClientRect();return {top:a.top,bottom:a.bottom,start:s.querySelector('.dashboard-status>summary')?.getBoundingClientRect().bottom||b.top,end:b.bottom,position:getComputedStyle(e).position,fill:getComputedStyle(e).backgroundColor};});
   if(fraction)check(Math.abs(r.top-r.start)<=1&&r.bottom<=r.end,'sticky row fully visible at '+name);
   check(r.fill!=='rgba(0, 0, 0, 0)','opaque counter background at '+name);await shot(p,'menu-'+name);
  }
@@ -40,7 +40,7 @@ const html=fs.readFileSync(baseline?before+'/tray.html':'build/web/tray.html','u
    const scroll=p.locator('.content'),strip=p.locator('.filter-header'),chips=await strip.locator('button').evaluateAll(es=>es.map(e=>[e.dataset.state,e.getAttribute('aria-label'),e.textContent]));
    await p.locator('.task-row').nth(2).hover();await p.mouse.wheel(0,650);
    await p.waitForFunction(()=>document.querySelector('.filter-header').classList.contains('pinned'));
-   assert(await strip.evaluate(e=>{const r=e.getBoundingClientRect(),c=e.closest('.content').getBoundingClientRect(),s=getComputedStyle(e);return Math.abs(r.top-c.top)<1&&r.bottom<c.bottom&&s.backgroundColor!=='rgba(0, 0, 0, 0)'&&s.boxShadow!=='none';}));
+   assert(await strip.evaluate(e=>{const content=e.closest('.content'),r=e.getBoundingClientRect(),c=content.getBoundingClientRect(),s=getComputedStyle(e),top=content.querySelector('.dashboard-status>summary')?.getBoundingClientRect().bottom||c.top;return Math.abs(r.top-top)<1&&r.bottom<c.bottom&&s.backgroundColor!=='rgba(0, 0, 0, 0)'&&s.boxShadow!=='none';}));
    await strip.hover();const at=await scroll.evaluate(e=>e.scrollTop);await p.mouse.wheel(0,280);await p.waitForFunction(at=>document.querySelector('.content').scrollTop>at,at);
    assert.deepEqual(await strip.locator('button').evaluateAll(es=>es.map(e=>[e.dataset.state,e.getAttribute('aria-label'),e.textContent])),chips,'scroll cannot change counts, order or accessible names');
    await p.locator('.task-row').last().locator('.tqp-task-title a').focus();

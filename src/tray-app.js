@@ -487,8 +487,8 @@ runningAgents:function(compact=false){
       !unknown&&(runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},'No running agents')),
       here&&api.resourceMeters(latest),h('details',{'data-view-key':'host-facts:'+host.name},api.disclosure('sliders-horizontal','Resource details'),(here?facts:['CPU and memory: not collected for remote hosts','Slots and reservations: unknown for remote hosts']).map(t=>h('div',{class:'body meta'},t)))));
   }
-  // #1729 menu.md Running agents: the strip holds heartbeat hosts and this host; a host seen only in an execution stays in details.
-  const strip=sorted.filter(host=>host.beat||host.name===view.S.host),names=strip.map(host=>host.name);
+  // M3.1: only open-heartbeat hosts enter the strip; unobserved local and execution-only hosts stay in details.
+  const strip=sorted.filter(host=>host.beat),names=strip.map(host=>host.name);
   // #1781: three letters, longer while another strip host shares the prefix (menu.md, #1729); the full name stays in the tooltip
   const short=new Map(names.map(n=>{let k=3;while(k<n.length&&names.some(o=>o!==n&&o.slice(0,k)===n.slice(0,k)))k++;return [n,n.slice(0,k)];}));
   const warn=host=>host.name===view.S.host?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
@@ -614,7 +614,7 @@ project:function(p){
 filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=require('./task-views.js').normalize(null,{taskFilter:view.taskFilter});require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}return dashboard.list();},
 heading:function(label,mark){return h('h2',{class:'section-heading'},icon(mark),label);},
 disclosure:function(mark,children){return h('summary',{class:'settings-disclosure'},icon(mark),h('span',{class:'disclosure-label'},children));},
-stickyFilters:function(){const content=menu.querySelector('.content'),row=content?.querySelector('.filter-header');if(content)content.style.scrollPaddingTop=row?row.getBoundingClientRect().height+'px':'';if(row)row.classList.toggle('pinned',content.scrollTop>0&&row.getBoundingClientRect().top<=content.getBoundingClientRect().top+1);},
+stickyFilters:function(){const content=menu.querySelector('.content'),row=content?.querySelector('.filter-header'),host=content?.querySelector('.dashboard-status>summary'),height=host?.getBoundingClientRect().height||0;if(content){content.style.setProperty('--host-strip-height',height+'px');content.style.scrollPaddingTop=row||host?height+(row?.getBoundingClientRect().height||0)+'px':'';}if(row)row.classList.toggle('pinned',content.scrollTop>0&&row.getBoundingClientRect().top<=content.getBoundingClientRect().top+height+1);},
 settings:function(){
   const S=view.S,ps=S.projects,A=S.agents,line=api.runningAgents(true),st=S.notify?.status,svc=S.service?.state,up=ps.find(p=>p.update&&p.update!==p.version);
   const growth={auto:'Auto',top:'Down',bottom:'Up',fixed:'Fixed'}[S.size_anchor||'auto']||'Auto';
