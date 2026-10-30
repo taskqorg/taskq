@@ -1731,9 +1731,19 @@ fn cap_changes(old: &service::Capacity, new: &service::Capacity) -> String {
     if out.is_empty() { "no change".into() } else { out.join(", ") }
 }
 
-/// § 9: a task added on a `claim` `labelled` host keeps that host unless `--host` names one.
-fn add_host(given: Option<&str>, cfg: &Config) -> Option<String> {
-    given.map(String::from).or_else(|| cfg.labelled.then(|| cfg.me.clone()))
+/// § 9: a task added on a `claim` `labelled` host without `--host` gets that host if the board has it,
+/// else the board's sole host, else none (#1912: a board that never saw this host refused every add).
+fn add_host(given: Option<&str>, cfg: &Config, b: &dyn Board) -> Res<Option<String>> {
+    if given.is_some() || !cfg.labelled {
+        return Ok(given.map(String::from));
+    }
+    let known = board_hosts(b)?;
+    Ok(if known.contains(&cfg.me) { Some(cfg.me.clone()) } else if known.len() == 1 { known.into_iter().next() } else { None })
+}
+
+/// Host names of the board's trusted heartbeat issues (§ 4 step 3).
+fn board_hosts(b: &dyn Board) -> Res<Vec<String>> {
+    Ok(b.issues(None)?.iter().filter(|i| i.trusted).filter_map(service::host_name).map(String::from).collect())
 }
 
 /// host.json `claim` value (§ 9).
@@ -2593,9 +2603,8 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
         if let Some(name) = h.strip_prefix("host-") {
             return Err(format!("--host takes the host name without host-: --host {name}"));
         }
-        let issues = b.issues(None)?;
-        let known: Vec<&str> = issues.iter().filter(|i| i.trusted).filter_map(service::host_name).collect();
-        if !known.contains(&h) {
+        let known = board_hosts(b)?;
+        if !known.iter().any(|k| k == h) {
             return Err(format!("--host {h}: no host named {h}; hosts: {}", if known.is_empty() { "none".into() } else { known.join(", ") }));
         }
     }
@@ -3077,7 +3086,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 kind: a.one("type").map(String::from),
                 runtime: a.one("runtime").map(String::from),
                 priority: a.one("priority").map(String::from),
-                host: add_host(a.one("host"), cfg),
+                host: add_host(a.one("host"), cfg, b)?,
                 labels: vec![],
             };
             if finding {
@@ -3684,15 +3693,48 @@ mod tests {
         let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         let mut c = cfg();
         c.labelled = true;
-        assert_eq!(add_host(None, &c).as_deref(), Some("mac"), "labelled host: add without --host gets host-mac");
-        assert_eq!(add_host(Some("win"), &c).as_deref(), Some("win"), "--host wins over the labelled default");
+        let b = Fake::default();
+        for h in ["mac", "win"] {
+            b.create(&format!("taskq host {h}"), "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
+        }
+        assert_eq!(add_host(None, &c, &b).unwrap().as_deref(), Some("mac"), "labelled host: add without --host gets host-mac");
+        assert_eq!(add_host(Some("win"), &c, &b).unwrap().as_deref(), Some("win"), "--host wins over the labelled default");
         c.labelled = false;
-        assert_eq!(add_host(None, &c), None, "any-claim host: add stays unrouted");
-        assert_eq!(add_host(Some("win"), &c).as_deref(), Some("win"));
+        assert_eq!(add_host(None, &c, &b).unwrap(), None, "any-claim host: add stays unrouted");
+        assert_eq!(add_host(Some("win"), &c, &b).unwrap().as_deref(), Some("win"));
         let a = parse(&["service", "capacity", "--host", "mac", "--claim", "labelled"]).unwrap();
         assert_eq!(CapEdit::from_args(&a).unwrap().claim, Some(true));
         let bad = parse(&["service", "capacity", "--claim", "some"]).unwrap();
         assert!(CapEdit::from_args(&bad).is_err());
+    }
+
+    // Chain: § 9 `claim` (#1912). Risk: a labelled host the board never saw (PilotQ on pds18 adding to a mac-only
+    // board) refuses every add, or a board with several hosts gets a guessed one; an explicit --host stays checked.
+    #[test]
+    fn add_on_a_labelled_host_the_board_lacks_takes_its_sole_host() {
+        let mut cfg = cfg();
+        cfg.labelled = true;
+        cfg.me = "pds18".into();
+        let c = Ctx { cfg, raw: json!({}), board: Box::new(Fake::default()) };
+        let add = |extra: &[&str]| {
+            let mut v = vec!["add", "T", "--goal", "G", "--acceptance", "observable"];
+            v.extend_from_slice(extra);
+            command(&c, "add", &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap())
+        };
+        let beat = |h: &str| c.board.create(&format!("taskq host {h}"), "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
+        let hosts = || c.board.issues(None).unwrap().pop().unwrap().labels.into_iter().filter(|l| l.starts_with("host-")).collect::<Vec<_>>();
+        add(&[]).unwrap();
+        assert!(hosts().is_empty(), "no host on the board: no host label");
+        beat("mac");
+        add(&[]).unwrap();
+        assert_eq!(hosts(), vec!["host-mac"], "the board's sole host");
+        beat("win");
+        add(&[]).unwrap();
+        assert!(hosts().is_empty(), "several hosts, none this one: no host label");
+        assert_eq!(add(&["--host", "pds18"]).unwrap_err(), "--host pds18: no host named pds18; hosts: mac, win");
+        beat("pds18");
+        add(&[]).unwrap();
+        assert_eq!(hosts(), vec!["host-pds18"], "the board has this host: it keeps it");
     }
 
     // Chain: § 5 `service capacity --default-runtime` -> host.json `default_runtime` (#1668). Risk: a typo or
