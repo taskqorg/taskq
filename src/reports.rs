@@ -226,9 +226,9 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     let sha=t.result.unwrap_or_else(||format!("close-{}",closing.map_or(i.number,|c|c.id)));
     if report&&!identity_sha(&sha) {return None;}
     // Legacy research with an already answered decision must not reappear as unread work.
-    if report&&!registered && comments.iter().any(|c|c.trusted&&!c.edited&&c.body.lines().next().is_some_and(|l|l=="taskq: answer"||l.starts_with("taskq: answer "))) {return None;}
+    let legacy_answered=report&&!registered && comments.iter().any(|c|c.trusted&&!c.edited&&c.body.lines().next().is_some_and(|l|l=="taskq: answer"||l.starts_with("taskq: answer ")));
     let mut sorted:Vec<_>=comments.iter().filter(|c|c.trusted&&!c.edited).collect();sorted.sort_by_key(|c|c.id);
-    let (mut read,mut decision,mut made,mut making)=(false,"none",json!([]),false);
+    let (mut read,mut decision,mut made,mut making)=(legacy_answered,if legacy_answered{"answered"}else{"none"},json!([]),false);
     for c in sorted {
         if !report {
             if c.body.lines().next()==Some(&format!("taskq: result-read {sha}")) {read=true;}
@@ -252,7 +252,7 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     let accepted_close:Vec<_>=closing.into_iter().map(|c|Entry{id:c.id,body:c.body.clone(),edited:false}).collect();
     let mut row=json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::merge_receipt(&accepted_close),
         "comments_through":comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.id).max().unwrap_or(0),
-        "decision":decision,"visible":!matches!(decision,"drop"|"made"),"pending_decision":if making&&!matches!(decision,"made"|"drop"){Some("make")}else{None},"tasks_made":made});
+        "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made"),"pending_decision":if making&&!matches!(decision,"made"|"drop"){Some("make")}else{None},"tasks_made":made});
     let details=text(handin);let verdict=text(closing);
     row["result"]=json!(details.lines().find_map(|l|l.strip_prefix("Changed: ")));
     row["pr"]=json!(format!("{details}\n{verdict}").split(|c:char|c.is_whitespace()||matches!(c,'('|')'|'['|']'|'<'|'>')).filter(|u|u.starts_with("https://")&&(u.contains("/pull/")||u.contains("/merge_requests/"))).last().map(|u|u.trim_end_matches(|c:char|!c.is_ascii_alphanumeric()).to_string()));
@@ -494,6 +494,16 @@ mod tests {
         let row=project(&i,45,&comments,"invented".into()).unwrap();
         assert!(row["verdict"].as_str().unwrap().contains("Reviewed result"));assert!(!row["verdict"].as_str().unwrap().contains("Ignored"));
         assert!(row["merged"].as_str().unwrap().contains("#20"));assert!(!row["merged"].as_str().unwrap().contains("#999"));
+    }
+
+    // R6/§7: legacy answered research must not regain attention or disappear from Completed history.
+    #[test] fn legacy_answered_reports_remain_in_history_without_new_attention() {
+        let (b,_,n,_)=board();
+        {let mut st=b.state.borrow_mut();st.issues.iter_mut().find(|i|i.number==n).unwrap().labels=vec!["taskq".into(),"research".into()];
+        let (_,c)=st.comments.iter_mut().find(|(task,c)|*task==n&&c.body.starts_with("taskq: result ")).unwrap();c.body=c.body.lines().next().unwrap().into();}
+        b.raw(n,"taskq: answer 1",true,false);
+        let mut cache=Cache::default();cache.collect(&b);
+        assert!(cache.value["reports"].as_array().unwrap().is_empty());assert_eq!(cache.value["history"][0]["n"],n);assert_eq!(cache.value["history"][0]["read"],true);
     }
 
     // #1940 A5/A6/R12: a background collection must retain SHA content, observe new decisions/closures,
