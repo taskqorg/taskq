@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.49
+
+Board budget: report collection stops re-reading comments that cannot project and keeps one board per project, cutting Mac REST reads (#1974); report rows stay out of `taskq service status --json`, so the status output fits PilotQ's 1 MiB tool cap again (#1975). macOS: every TaskQ window accepts the first click (#1969). No board change.
+
 ## v4.6.48
 
 Board budget: heartbeat and PR updates patch the kept open list without a GraphQL relist, and report sources missing at their result SHA settle instead of being re-paged (#1970). Admission history reads use valid telemetry and deleted labels settle once (#1960). Free-plan private repositories probe rules once and show the manual-merge wait (#1936). No board change.
