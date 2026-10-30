@@ -2,6 +2,16 @@
 
 This candidate connects an originating owner chat to its held brief, assignment, worker question, answer, reviewer and result. R1/R13: the owner's selected board-held reference is on #1929; `add --conversation ID --op-id ID` records it on the first accepted `hold`. A create claim binds that reference. No task state, transcript or execution moves to a new database, scheduler, gateway or writer.
 
+## Main-moved correction
+
+The service requeued PR #1961 as `main-moved` after its accepted review. This attempt rebased the same three commits onto `0426dee15143f745bfd0df313f183750ab25c386` (§7.4). The only textual conflict was in `src/workspace.js`: the resolution retains both the main Results reader for a selected closed question and this task's originating-chat cards/shared answer composer. `git range-diff` shows no change to the reply-recovery and approved-command commits.
+
+The first `cargo test --locked --bin taskq conversation_1929_` failed to compile with `E0063`: main's new Results successor constructor lacked the added `NewTask.conversation` field. It now explicitly uses `None`, like report proposals; all constructors were checked. The same command then passed all six regressions. `cargo test --locked --bin taskq reports::tests` passed all 15 checks, including held successor creation, replay identity and preserving the closed dependency. No test or assertion changed.
+
+The unchanged `core::tests::every_table_row_has_a_golden_trace` then reproduced `taskq.md over 60 KiB`: the combined contract was 61,476 bytes. Shorter link labels and redundant wording in the already amended R1 preserve its meaning and all destinations; the contract is now 61,438 bytes and 297 lines. The same targeted guard passed after the correction; the 60 KiB/300-line assertions remain unchanged.
+
+The rebuilt browser instruments passed the PM flow and all 16 Reports plus 16 Results matrix cells. The existing Results regression also passed: a selected question becomes one completed result and opens its original reader without a route failure. The saved desktop/narrow fixture images below were visually inspected and retained, not regenerated after rebase (docs/testing.md). They show the originating-chat history and reachable composer; they are prior fixture images, not new native evidence.
+
 ## Before and after
 
 - `node tests/conversations-flow.browser.cjs` first failed with `A5: a working worker accepts input before any question`, `0 !== 1`. The same check now exercises worker input, retained draft, same-operation unknown reconciliation and the complete originating-chat chain with invented receipts. Native consumption remains separate.
@@ -18,7 +28,7 @@ Review correction (A6): `cargo test --locked --bin taskq conversation_1929_` rep
 
 The owner approved documenting `add --conversation ID --op-id ID` in the §5 command table through answer 6529355529. The table now exposes the existing syntax; R1 retains the approved origin-reference behavior. Before that answer, the rule gate rejected the §5 edit as unnamed by the task. No rule guard was changed. Amended contract IDs for this task: R1 and §5.
 
-Final candidate checks used macOS arm64 with warm caches, Rust 1.98.1 and Node 22.18.0. `python3 scripts/check.py --base 16b62345` passed the R1/§5 rule gate, contract guards, web build and 730 Rust unit checks (35 ignored). Integration passed 20 checks and stopped on `telemetry_process::resume_records_its_result_without_releasing_the_host_hold`: `sandbox-exec: sandbox_apply: Operation not permitted`. The gate took 73.233 s and is **sandbox-blocked**, never PASS; the assertion is unchanged and the full run was not retried.
+Previous candidate checks used macOS arm64 with warm caches, Rust 1.98.1 and Node 22.18.0. `python3 scripts/check.py --base 16b62345` passed the R1/§5 rule gate, contract guards, web build and 730 Rust unit checks (35 ignored). Integration passed 20 checks and stopped on `telemetry_process::resume_records_its_result_without_releasing_the_host_hold`: `sandbox-exec: sandbox_apply: Operation not permitted`. The gate took 73.233 s and is **sandbox-blocked**, never PASS; the assertion is unchanged and the full run was not retried.
 
 The remaining selected gate steps ran separately and passed in 142.752 s: offline selftest in a temporary isolated installation, all 29 Node component files, shot/release fixtures, and nine browser instruments (`conversations-declutter`, `conversations-flow`, `conversations-render`, `dialogue`, `pm-composer`, `conversations-stable`, `reply-files`, `worker-panel`, `workspace-communication`). Browser setup reused the existing temporary Playwright installation and headless launcher; no dependency or runtime was added. The final candidate SHA is on the task/PR. Publication requires green merge-result CI (§7/R12); these local observations do not qualify cold CI timing.
 
