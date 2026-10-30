@@ -45,7 +45,7 @@ node tests/conversations.browser.cjs
 node tests/tray-answer.browser.cjs
 ```
 
-The tray fixture has no board token or service. The Swift probe has only a local IPC sink. No owner session, real board answer, native launch, install, permission, service configuration or global UI setting was changed (A4, R9). No TCC denial or prompt was observed.
+The tray fixture has no board token or service. The Swift probe has only a local IPC sink. No owner session was started or resumed, and no real board answer, installation, permission, service configuration or global UI setting changed (A4, R9). No TCC denial or prompt was observed.
 
 ## Acceptance and limits
 
@@ -57,3 +57,14 @@ The tray fixture has no board token or service. The Swift probe has only a local
 | A4 | Pass for these disposable checks: no live owner or board action. |
 
 R12: these are native renderer snapshots and scripted DOM hit-tests, not a physical mouse, VoiceOver, provider or installed-release qualification. The result does not claim a missing-Send fix. R5 and §7 require the task result to retain that limitation. No task was closed, reopened or manually relabelled.
+
+## Canonical gate
+
+`python3 scripts/check.py` ran once after the one rebase, on source/test candidate `29ba7a09eaa790c7ca3938f1c5a9f19bb9f799de`, based on `f895a2d3`. The rebase added only another task's research document; tested application sources were unchanged. Outcome: **sandbox-blocked, not PASS**, 197.857 / 900 seconds, no retry.
+
+- Rule/change selection checks, production bundle generation and Rust unit driver passed: 752 passed, 35 ignored.
+- Integration: 21 passed, one blocked, one ignored. `telemetry_process::resume_records_its_result_without_releasing_the_host_hold` at `tests/telemetry_process.rs:189` reports `sandbox-exec: sandbox_apply: Operation not permitted`.
+- Later offline selftest and canonical component/artifact stages were not reached. The separate browser and native results above retain their own scope. No sandbox or guard was weakened.
+- Merge-result `merge_group` CI remains pending and is required for publication (R12, §7). No install or release is claimed.
+
+This final gate note changes evidence only; the tested application, test assertions, dependencies and native instrument stay unchanged.
