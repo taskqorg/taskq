@@ -3,7 +3,7 @@ use crate::{board::{Board, Comment, Issue}, core::Entry, Res};
 use serde::Deserialize;
 use serde_json::{Value,json};
 use std::path::Path;
-fn now()->i64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs() as i64)}
+pub(crate) fn now()->i64 {std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs() as i64)}
 
 /// R1/R12: disposable board projection. Negative discoveries are cached too; immutable content is SHA-bound.
 #[derive(Default)]
@@ -207,8 +207,9 @@ pub fn cached_open(root:&Path,n:u64,sha:&str)->Res<Value> {
 
 /// Reads bypass board construction and token lookup, so offline navigation cannot become a login/API probe.
 pub fn read_cli(root:&Path,a:&crate::Args)->Res<Option<Value>> {
-    if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json","text"].contains(&k.as_str())||v.len()!=1) {return Err("results: use --action, --sha, --page, --before, --text and --json once each".into());}
+    if a.flags.iter().any(|(k,v)|!["action","sha","page","before","json","text","until"].contains(&k.as_str())||v.len()!=1) {return Err("results: use --action, --sha, --page, --before, --text, --until and --json once each".into());}
     if a.one("text").is_some()&&!matches!(a.one("action"),Some("followup"|"reopen")) {return Err("--text supplies the reason for followup or reopen".into());}
+    if a.one("until").is_some()&&a.one("action")!=Some("later") {return Err("--until sets the revisit date of --action later".into());}
     if a.pos.len()==1 {
         if a.one("action").is_some()||a.one("sha").is_some() {return Err("report action needs a task number".into());}
         let page=a.one("page").unwrap_or("1").parse::<usize>().ok().filter(|p|*p>0).ok_or("report page must be positive")?;
@@ -272,7 +273,7 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     // Legacy research with an already answered decision must not reappear as unread work.
     let legacy_answered=report&&!registered && comments.iter().any(|c|c.trusted&&!c.edited&&c.body.lines().next().is_some_and(|l|l=="taskq: answer"||l.starts_with("taskq: answer ")));
     let mut sorted:Vec<_>=comments.iter().filter(|c|c.trusted&&!c.edited).collect();sorted.sort_by_key(|c|c.id);
-    let (mut read,mut decision,mut made,mut making)=(legacy_answered,if legacy_answered{"answered"}else{"none"},json!([]),false);
+    let (mut read,mut decision,mut made,mut making,mut until)=(legacy_answered,if legacy_answered{"answered"}else{"none"},json!([]),false,None);
     for c in sorted {
         if !report {
             if c.body.lines().next()==Some(&format!("taskq: result-read {sha}")) {read=true;}
@@ -288,6 +289,8 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
                     let Some(tasks)=c.body.split_once('\n').and_then(|(_,s)|serde_json::from_str::<Vec<u64>>(s).ok()).filter(|v|!v.is_empty()&&v.len()<=8&&v.iter().all(|n|*n>0)) else {continue;};
                     made=json!(tasks);
                 }
+                // #1979: the newest Later counts; one without a valid revisit date is not a decision.
+                if kind=="later" {until=c.body.split_once('\n').and_then(|(_,s)|s.trim().strip_prefix("until ")).filter(|u|crate::core::utc(u)).map(String::from);}
                 read=true;if kind=="making" {making=true;} else if kind!="read" {decision=value;}
             }
         }
@@ -301,8 +304,43 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     row["result"]=json!(details.lines().find_map(|l|l.strip_prefix("Changed: ")));
     row["pr"]=json!(format!("{details}\n{verdict}").split(|c:char|c.is_whitespace()||matches!(c,'('|')'|'['|']'|'<'|'>')).filter(|u|u.starts_with("https://")&&(u.contains("/pull/")||u.contains("/merge_requests/"))).last().map(|u|u.trim_end_matches(|c:char|!c.is_ascii_alphanumeric()).to_string()));
     row["close"]=json!(crate::display::close_outcome(Some(&verdict),None));
+    // #1979: the board label reads the verdict back; the accepted close line covers a label write still in flight.
+    row["experiment_verdict"]=json!(i.labels.iter().find_map(|l|l.strip_prefix("verdict-").and_then(|v|outcome_verdict(&format!("Verdict: {v}")))).or_else(||outcome_verdict(&verdict)));
+    row["later_until"]=json!(until);
     if !report {row["body"]=json!(details);row["verdict"]=json!(verdict);if handin.is_none() {row["reason"]=json!("No accepted hand-in recorded; result details unknown");}}
     Some(row)
+}
+
+pub const VERDICTS:[&str;3]=["confirmed","refuted","inconclusive"];
+
+/// #1979: the experiment verdict of the first `Verdict:` line, its word before any evidence.
+pub fn outcome_verdict(text:&str)->Option<&'static str> {
+    let line=text.lines().find_map(|l|l.trim().strip_prefix("Verdict:"))?;
+    let word=line.split_whitespace().next()?.trim_end_matches(|c:char|!c.is_ascii_alphabetic()).to_ascii_lowercase();
+    VERDICTS.into_iter().find(|v|*v==word)
+}
+
+/// #1979: an experiment task (specq experiment tasks), whatever its type: `research`, or a `Hypothesis:` body line.
+pub fn experiment(i:&Issue)->bool {
+    i.labels.iter().any(|l|l=="research")||i.body.lines().any(|l|l.trim_start_matches(['-','*',' ']).starts_with("Hypothesis:"))
+}
+
+/// The first prose line of the report's Recommendation section.
+fn recommendation(body:&str)->Option<String> {
+    let mut lines=body.lines().skip_while(|l|!(l.starts_with('#')&&l.trim_start_matches('#').trim().eq_ignore_ascii_case("Recommendation"))).skip(1);
+    lines.find(|l|!l.trim().is_empty()).filter(|l|!l.starts_with('#')).map(|l|crate::compact(l.trim(),120))
+}
+
+/// R6 Decide: undecided reports, oldest close first. Make tasks (made or reserved), Drop and a Later still before
+/// its revisit date decide; legacy answered research is out. Unknown collection never reads as an empty list (R12).
+pub fn decide(value:&Value,now:i64)->Value {
+    let mut rows:Vec<&Value>=value["reports"].as_array().into_iter().flatten().filter(|r|r["kind"]!="task"&&r["visible"]==true&&r["pending_decision"].is_null()
+        &&matches!(r["decision"].as_str(),Some("none"|"later"))
+        &&!(r["decision"]=="later"&&r["later_until"].as_str().and_then(crate::board::iso).is_some_and(|at|at>now))).collect();
+    rows.sort_by_key(|r|(r["closed"].as_i64().unwrap_or(0),r["n"].as_u64().unwrap_or(0)));
+    let rows:Vec<Value>=rows.into_iter().map(|r|json!({"n":r["n"],"title":r["title"],"url":r["url"],"sha":r["sha"],"verdict":r["experiment_verdict"].as_str().unwrap_or("unknown"),
+        "closed":r["closed"],"age_s":(now-r["closed"].as_i64().unwrap_or(now)).max(0),"recommendation":r["body"].as_str().and_then(recommendation),"later_until":r["later_until"]})).collect();
+    json!({"complete":value["complete"]==true,"reason":value["reason"],"rows":rows})
 }
 
 fn identity_sha(sha:&str)->bool {sha.len()==40&&sha.bytes().all(|b|b.is_ascii_hexdigit())}
@@ -334,11 +372,13 @@ fn current(b:&dyn Board,n:u64,sha:&str)->Res<Value> {
     if row["sha"]!=sha {return Err("report changed; refresh before deciding".into());} Ok(row)
 }
 
-fn mark(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64])->Res<Value> {
+fn mark(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64])->Res<Value> {mark_until(b,n,sha,kind,made,None)}
+fn mark_until(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64],until:Option<&str>)->Res<Value> {
     let row=current(b,n,sha)?;
-    if row["visible"]==false||kind=="read"&&row["read"]==true||kind=="accept"&&row["decision"]=="accepted"||kind=="later"&&row["decision"]=="later"||kind=="making"&&row["pending_decision"]=="make" {return Ok(row);}
+    if row["visible"]==false||kind=="read"&&row["read"]==true||kind=="accept"&&row["decision"]=="accepted"||kind=="later"&&row["decision"]=="later"&&row["later_until"].as_str()==until||kind=="making"&&row["pending_decision"]=="make" {return Ok(row);}
     let prefix=if row["kind"]=="task" {"result"}else{"report"};
-    let text=format!("taskq: {prefix}-{kind} {sha}{}",if kind=="made" {format!("\n{}",json!(made))} else {String::new()});
+    let tail=match (kind,until) {("made",_)=>format!("\n{}",json!(made)),("later",Some(u))=>format!("\nuntil {u}"),_=>String::new()};
+    let text=format!("taskq: {prefix}-{kind} {sha}{tail}");
     let id=b.comment(n,&text)?;
     let comments=b.comments(n)?;
     if !comments.iter().any(|c|c.id==id&&c.trusted&&!c.edited&&c.body==text) {return Err("report write readback unknown; refresh before retrying".into());}
@@ -346,12 +386,13 @@ fn mark(b:&dyn Board,n:u64,sha:&str,kind:&str,made:&[u64])->Res<Value> {
 }
 
 pub fn act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
-    act_with_reason(b,root,raw,n,sha,action,"")
+    act_with_reason(b,root,raw,n,sha,action,"",None)
 }
-pub fn act_with_reason(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str)->Res<Value> {
+/// `until`: a report Later's revisit time (#1979).
+pub fn act_with_reason(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reason:&str,until:Option<&str>)->Res<Value> {
     if action=="open" {return cached_open(root,n,sha);}
     if crate::dispatch::agent() {return Err("report decisions require the owner CLI, outside an attempt".into());}
-    let result=if matches!(action,"followup"|"reopen") {successor(b,root,raw,n,sha,action,reason)}else {owner_act(b,root,raw,n,sha,action)};
+    let result=if matches!(action,"followup"|"reopen") {successor(b,root,raw,n,sha,action,reason)}else {owner_act_until(b,root,raw,n,sha,action,until)};
     let _=crate::poke(root);result
 }
 
@@ -372,8 +413,10 @@ fn successor(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,reaso
     Ok(json!({"report":row,"successor":receipt.task,"successor_url":(receipt.task>0).then(||b.url(receipt.task)),"receipt":receipt,"reason":(receipt.outcome!="accepted").then(||receipt.reason.clone())}))
 }
 
-pub(crate) fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
+pub(crate) fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {owner_act_until(b,root,raw,n,sha,action,None)}
+fn owner_act_until(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str,until:Option<&str>)->Res<Value> {
     if !["open","read","accept","later","drop","make"].contains(&action) {return Err("result action must be open, read, accept, followup, reopen, later, drop or make".into());}
+    if until.is_some()&&action!="later" {return Err("--until sets a report Later's revisit date".into());}
     let prior=current(b,n,sha)?;
     if prior["kind"]=="task" {
         if !matches!(action,"read"|"accept") {return Err("completed task actions are read, accept, followup or reopen".into());}
@@ -381,8 +424,13 @@ pub(crate) fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action
     }
     if action=="accept" {return Err("reports use Make tasks, Later or Drop".into());}
     if prior["visible"]==false {return Ok(json!({"report":prior}));}
+    // #1979 Decide: a Later without a revisit date is not a decision.
+    if action=="later" {
+        let at=until.filter(|u|crate::core::utc(u)).and_then(crate::board::iso).ok_or("Later needs --until YYYY-MM-DDTHH:MM:SSZ, the revisit date")?;
+        if at<=b.now()? {return Err("Later's revisit date must be in the future".into());}
+    }
     if matches!(action,"read"|"later"|"drop") {
-        let row=if action=="drop"&&prior["pending_decision"]=="make" {prior} else {mark(b,n,sha,action,&[])?};
+        let row=if action=="drop"&&prior["pending_decision"]=="make" {prior} else {mark_until(b,n,sha,action,&[],until)?};
         return Ok(if action=="drop"&&row["pending_decision"]=="make" {json!({"report":row,"reason":"Make tasks already started; reconcile its held drafts before another decision."})} else {json!({"report":row})});
     }
     let body=b.source(&format!("docs/research/{n}.md"),sha)?.replace("\r\n","\n");
@@ -663,7 +711,15 @@ mod tests {
         assert!(owner_act(&b,&root,&raw,n,&"b".repeat(40),"drop").is_err());
         let opened=run("open");assert_eq!(opened["report"]["read"],true);assert_eq!(opened["report"]["tasks"].as_array().unwrap().len(),2);
         let count=b.comments(n).unwrap().len();run("open");assert_eq!(b.comments(n).unwrap().len(),count,"repeat open is read-only");
-        run("later");assert_eq!(list(&b,1).unwrap()["reports"][0]["closed"],45);
+        // #1979: a Later without a future revisit date is no decision and writes nothing.
+        let count=b.comments(n).unwrap().len();let now=b.now().unwrap();
+        assert!(owner_act(&b,&root,&raw,n,&sha,"later").unwrap_err().contains("--until"));
+        assert!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&crate::board::stamp(now))).unwrap_err().contains("future"));
+        assert!(owner_act_until(&b,&root,&raw,n,&sha,"drop",Some(&crate::board::stamp(now+60))).is_err(),"--until only with Later");
+        assert_eq!(b.comments(n).unwrap().len(),count);
+        let until=crate::board::stamp(now+3600);
+        assert_eq!(owner_act_until(&b,&root,&raw,n,&sha,"later",Some(&until)).unwrap()["report"]["later_until"],until.as_str());
+        assert_eq!(list(&b,1).unwrap()["reports"][0]["closed"],45);
         let missing=owner_act(&b,&root,&json!({}),n,&sha,"make").unwrap();assert!(missing["reason"].as_str().unwrap().contains("create_claim_issue"));
         assert_eq!(list(&b,1).unwrap()["reports"].as_array().unwrap().len(),1);
         let result=run("make");let made=result["report"]["tasks_made"].as_array().unwrap();assert_eq!(made.len(),2);
@@ -675,6 +731,45 @@ mod tests {
         let issues=b.state.borrow().issues.len();run("make");assert_eq!(b.state.borrow().issues.len(),issues);assert!(list(&b,1).unwrap()["reports"].as_array().unwrap().is_empty());
         assert!(!b.issue(n).unwrap().open);assert_eq!(crate::core::fold(n,&crate::board::entries(&b,n).unwrap(),false).state,crate::core::State::Closed);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // Chain: #1979 R6 Decide -> collected reports -> status rows. Risk: an undecided experiment outcome leaves focus,
+    // a Later without a date or a past revisit date hides it for good, or a decided report stays listed.
+    #[test] fn decide_lists_undecided_reports_oldest_first_and_returns_later_at_its_date() {
+        let (i,comments)=fixture();let sha="a".repeat(40);
+        let marker=|id,text:String|Comment{id,body:text,trusted:true,..Default::default()};
+        let body="# Question\nQ\n# Recommendation\n\nShip the cache behind a flag.\nMore detail.\n";
+        let row=|n:u64,closed:i64,labels:&[&str],extra:&[Comment]|{
+            let mut i=i.clone();i.number=n;i.labels.extend(labels.iter().map(|l|l.to_string()));
+            let mut cs=comments.clone();cs.extend_from_slice(extra);
+            let mut r=project(&i,closed,&cs,format!("invented/{n}")).unwrap();r["body"]=json!(body);r
+        };
+        let now=10_000;let at=|t:i64|crate::board::stamp(t);
+        let rows=vec![
+            row(5,300,&["verdict-refuted"],&[]),
+            row(6,100,&[],&[marker(4,format!("taskq: report-read {sha}"))]),
+            row(7,50,&[],&[marker(4,format!("taskq: report-later {sha}"))]),
+            row(8,60,&[],&[marker(4,format!("taskq: report-later {sha}\nuntil {}",at(now+60)))]),
+            row(9,70,&[],&[marker(4,format!("taskq: report-later {sha}\nuntil {}",at(now-60)))]),
+            row(10,80,&[],&[marker(4,format!("taskq: report-drop {sha}"))]),
+            row(11,90,&[],&[marker(4,format!("taskq: report-making {sha}"))]),
+        ];
+        let value=json!({"reports":rows.iter().filter(|r|r["visible"]==true).collect::<Vec<_>>(),"complete":true,"reason":null});
+        let d=decide(&value,now);
+        let ns:Vec<u64>=d["rows"].as_array().unwrap().iter().map(|r|r["n"].as_u64().unwrap()).collect();
+        assert_eq!(ns,[7,9,6,5],"undated and past Later return; future Later, Drop and Make tasks decide; oldest close first");
+        assert_eq!(d["rows"][3]["verdict"],"refuted","the board label reads the verdict back");
+        assert_eq!(d["rows"][0]["verdict"],"unknown","legacy reports have no verdict");
+        assert_eq!(d["rows"][3]["age_s"],now-300);assert_eq!(d["rows"][0]["recommendation"],"Ship the cache behind a flag.");
+        let close=marker(3,"taskq: close\nChanged: c\nVerdict: inconclusive need a second host".into());
+        let mut cs=comments.clone();cs[2]=close;
+        assert_eq!(project(&i,45,&cs,"invented".into()).unwrap()["experiment_verdict"],"inconclusive","close line covers a label still in flight");
+        let stale=decide(&json!({"reports":value["reports"],"complete":false,"reason":"Report collection is stale; waiting for the service"}),now);
+        assert_eq!(stale["complete"],false);
+        assert_eq!(crate::snapshot::decide_text(&stale).unwrap(),"Decide: unknown (Report collection is stale; waiting for the service)");
+        let text=crate::snapshot::decide_text(&d).unwrap();
+        assert!(text.starts_with("Decide:\n| Report | Verdict | Age | Recommendation |\n|---|---|---|---|\n| [#7 ](invented/7) | unknown |"),"{text}");
+        assert_eq!(crate::snapshot::decide_text(&decide(&json!({"reports":[],"complete":true}),now)),None,"nothing undecided prints nothing");
     }
 
     // §1/R1: known creation refusal must leave the report undecided and Drop available.

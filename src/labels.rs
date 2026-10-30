@@ -1,7 +1,7 @@
 //! Shared board catalog; label spellings do not change the fold.
 use crate::board::Result;
 
-pub const FIXED: &[&str] = &["taskq", "taskq-host", "q-held", "q-ready", "q-blocked", "q-doing", "q-review", "q-ask", "q-later", "q-failed", "p0", "p1", "p2", "code", "docs", "research", "asset", "run-codex", "run-claude", "run-codex-app", "prefer-codex", "prefer-claude", "assignee-only"];
+pub const FIXED: &[&str] = &["taskq", "taskq-host", "q-held", "q-ready", "q-blocked", "q-doing", "q-review", "q-ask", "q-later", "q-failed", "p0", "p1", "p2", "code", "docs", "research", "asset", "run-codex", "run-claude", "run-codex-app", "prefer-codex", "prefer-claude", "assignee-only", "verdict-confirmed", "verdict-refuted", "verdict-inconclusive"];
 
 pub fn canonical(name: &str) -> &str {
     match name { "q-waiting" => "q-blocked", "priority-1" => "p1", "priority-2" => "p2", _ => name }
@@ -37,6 +37,7 @@ pub fn definition(name: &str) -> Option<(&'static str, String)> {
         "p1" => ("D5D9DE", "Priority 1; admitted before priority 2", "edit issue labels"),
         "p2" => ("D5D9DE", "Priority 2; also the absent default", "edit issue labels"),
         "code" | "docs" | "research" | "asset" => ("D5D9DE", "Result type; no admission restriction", "edit issue labels"),
+        "verdict-confirmed" | "verdict-refuted" | "verdict-inconclusive" => ("D5D9DE", "Experiment verdict; read by Decide", "taskq close"),
         "assignee-only" => ("BAC7D3", "Board account must be an assignee", "edit assignees/labels"),
         "run-codex" | "run-claude" | "run-codex-app" => ("BAC7D3", "Requires this enabled runtime", "edit issue labels"),
         "prefer-codex" | "prefer-claude" => ("BAC7D3", "Legacy: prefer-codex reads as run-codex; prefer-claude as none", "edit issue labels"),

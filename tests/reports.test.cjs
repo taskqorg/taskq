@@ -26,7 +26,10 @@ const partial=JSON.stringify(r.section(projects));
 assert(partial.includes('Created held drafts: #20'),'confirmed drafts remain named');
 assert(partial.includes('Unverified draft: #21'),'known issue survives an unknown held-state readback');
 assert.equal(r.rows().length,1,'partial creation keeps the report available');
-r.act('later');op=sent.at(-1);r.receive({id:op.id,root:'fixture',report:{...row,read:true,decision:'later',visible:true}});assert.equal(r.rows().length,1);
+const until=new Date(Date.now()+86400000).toISOString().replace(/\.\d{3}Z$/,'Z');
+r.act('later',undefined,until);op=sent.at(-1);assert.equal(op.until,until,'Later carries its revisit date');
+r.receive({id:op.id,root:'fixture',report:{...row,read:true,decision:'later',visible:true,later_until:until}});assert.equal(r.rows().length,1);
+assert.deepEqual(r.decide(),[],'a future Later leaves Decide');assert(JSON.stringify(r.section(projects)).includes('Later: back in Decide on '+until.slice(0,10)));
 r.act('make');op=sent.at(-1);r.receive({id:op.id,root:'fixture',report:{...row,decision:'made',visible:false,tasks_made:[20]}});assert.equal(r.rows().length,0);
 assert(paints>0);console.log('PASS Reports: source-bound receipts, read, Later, partial/unknown protection, Make tasks and Drop dispatch');
 const aliases=[],a=create({send:m=>aliases.push(m),draw(){},defer(){},id:()=>String(aliases.length+1)});
@@ -36,6 +39,22 @@ a.toggle(duplicate);assert.equal(aliases.length,0,'no Reports read per registrat
 a.open(projects[0].root,12);let aliasOp=aliases.at(-1);a.receive({id:aliasOp.id,root:aliasOp.root,report:{...row,read:true}});
 a.act('drop');aliasOp=aliases.at(-1);a.receive({id:aliasOp.id,root:aliasOp.root,report:{...row,decision:'drop',visible:false}});
 assert.deepEqual(a.rows().map(r=>r.n),[13],'Drop cannot leave the same report under another registration');
+// Chain: #1979 R6 Decide -> app rows -> existing report card. Risk: an undecided report hides among read results,
+// a past Later never returns, or a decided report keeps its Decide row.
+const d=create({send(){},draw(){},defer(){},id:()=>'1'}),now=Math.floor(Date.now()/1000),iso=t=>new Date(t*1000).toISOString().replace(/\.\d{3}Z$/,'Z');
+const decideProject=[{root:'decide',name:'Decide',issues:'https://github.com/o/d/issues',reports:{complete:true,reports:[
+ {n:1,kind:'report',sha:'a',title:'New',closed:now-100,read:false,decision:'none',visible:true,experiment_verdict:'refuted'},
+ {n:2,kind:'report',sha:'a',title:'Old',closed:now-3*86400,read:true,decision:'none',visible:true},
+ {n:3,kind:'report',sha:'a',title:'Due',closed:now-200,read:true,decision:'later',later_until:iso(now-60),visible:true},
+ {n:4,kind:'report',sha:'a',title:'Waiting',closed:now-300,read:true,decision:'later',later_until:iso(now+3600),visible:true},
+ {n:5,kind:'task',sha:'a',title:'Task',closed:now,read:false,decision:'none',visible:true},
+ {n:6,kind:'report',sha:'a',title:'Making',closed:now-400,read:true,decision:'none',pending_decision:'make',visible:true}]}}];
+d.toggle(decideProject);assert.deepEqual(d.decide().map(r=>r.n),[2,3,1],'undecided and due reports, oldest close first');
+const listed=JSON.stringify(d.section(decideProject));
+assert(listed.includes('Decide · 3')&&listed.includes('#2 · Read · Decide · verdict unknown · 3d')&&listed.includes('#1 · Unread · Decide · refuted · 0d'),listed);
+assert(listed.indexOf('#2 · Read · Decide')<listed.indexOf('#5 · Unread'),'Decide rows come first');
+assert.equal(d.threads().find(t=>t.report===2).marker,'Needs decision','a read but undecided report stays marked');
+console.log('PASS Reports: Decide rows, verdict and age, Later revisit');
 const unread=[{root:'new-project',name:'New',issues:'https://github.com/o/new/issues'}];
 assert(!JSON.stringify(a.section(unread)).includes('No results waiting for review.'),'an uncollected project is unknown, not empty');
 assert.equal(a.rows().length,0,'removed registrations cannot leave actionable cached reports');
