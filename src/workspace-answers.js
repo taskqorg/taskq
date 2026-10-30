@@ -1,6 +1,6 @@
 'use strict';
 const ui=require('./ui-runtime.js'),{execution}=ui,{h}=require('preact');
-const replyFiles=require('./reply-files.js');
+const replyFiles=require('./reply-files.js'),time=require('./relative-time.js');
 const {create}=execution.module('workspace.answers',{
 create:function(view,{menu,document,send,draw,defer=ui.defer,cancel=ui.cancel,composer=false,changed,steer}){
  const answerRequests=new Map(),answerCards=new Map(),answerFeedback=new Map(),saved={},steers={};
@@ -79,8 +79,8 @@ answerWon:function(board,t){
 answerHistory:function(t){
   return (t.history||[]).map(({question:q,answered:a},i)=>{
    const row={n:t.n,title:t.title,url:t.url,state:'closed',revision:a?.revision||0,question:{choices:[],evidence:[],...q}},key=a?.revision??i;
-   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+(i+1)+' of #'+t.n},h('div',{dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,reason:'Recorded question'})}})),
-    h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}))];
+   return [h('section',{key:'asked:'+key,class:'thread-card asked','data-reading-key':'question:'+t.n+':'+key,'aria-label':'Question '+(i+1)+' of #'+t.n},time.stamp(null,'Recorded question','Question timestamp unavailable in the history adapter'),h('div',{dangerouslySetInnerHTML:{__html:component().render('history:'+t.n+':'+key,row,component().fresh(row),{answer:false,manage:false,composer:true,reason:'Recorded question'})}})),
+    h('p',{key:'answered:'+key,'data-reading-key':'answer:'+t.n+':'+key,class:'body answered',role:'status'},won({answered:a||{}}),time.stamp(null,'Recorded answer','Answer timestamp unavailable in the history adapter'))];
   });
 },
 // ...and while its worker runs, the owner's unsent answer (a late receipt or a kept draft) can steer it instead, in the consumer's composer `steer`

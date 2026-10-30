@@ -627,7 +627,7 @@ mod tests {
                 while Instant::now() < until {
                     for m in w.recv().unwrap() {
                         if answer {
-                            let _ = handle(&wi, &wkey, &m, &peers, &mut w.clone(), |r| { served.lock().unwrap().push(r.clone()); Ok(json!({"items": [{"at": 20, "i": 0, "role": "assistant", "text": "remote line"}], "start": 20, "end": 40, "size": 40})) });
+                            let _ = handle(&wi, &wkey, &m, &peers, &mut w.clone(), |r| { served.lock().unwrap().push(r.clone()); Ok(json!({"items": [{"at": 20, "i": 0, "role": "assistant", "text": "remote line", "updated": "2026-10-30T22:21:54.044Z"}], "start": 20, "end": 40, "size": 40})) });
                         }
                     }
                     for m in v.recv().unwrap() { let _ = handle(&vi, &vkey, &m, &[], &mut v.clone(), |_| Err("viewer serves nothing".into())); }
@@ -641,6 +641,7 @@ mod tests {
         let page = ask(&viewer_install, &vk, &worker_peer, &read, &mut relay.on(&vid)).unwrap();
         assert!(began.elapsed() < Duration::from_secs(2), "A1: well within 2 s on a fast link");
         assert_eq!(page["items"][0]["text"], "remote line");
+        assert_eq!(page["items"][0]["updated"],"2026-10-30T22:21:54.044Z","#1930 A7: encrypted remote reads retain source time verbatim");
         assert_eq!(*served.lock().unwrap(), vec![read.clone()], "A2: the server sees exactly the named attempt and cursor");
         assert!(fs::read_dir(viewer_install.join("link")).unwrap().next().is_none(), "principle 4: nothing kept");
         t.join().unwrap();

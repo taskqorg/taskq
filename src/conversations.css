@@ -178,3 +178,11 @@
 /* A long draft shares the reader; its primary tools remain at that reader's edge. */
 .conversation-reader.long-draft .composer-bottom{position:fixed;left:var(--composer-left);bottom:var(--composer-bottom);width:var(--composer-width)}
 .conversation-reader.long-draft .conversation-composer{padding-bottom:var(--composer-tools-height)}
+/* D-A19: stable timestamp geometry keeps minute ticks from rewrapping the reading anchor. */
+.relative-time{display:inline-block;inline-size:14ch;white-space:nowrap;text-align:end;font-variant-numeric:tabular-nums;font-size:inherit;color:var(--muted);margin-inline-start:.5em;flex:none}
+.relative-time:focus-visible{outline:2px solid var(--work);outline-offset:2px}
+.time-tooltip{position:fixed;z-index:10000;max-width:calc(100vw - 8px);padding:6px 8px;border:1px solid var(--edge);border-radius:4px;background:var(--surface);color:var(--text);font:inherit;overflow-wrap:anywhere;pointer-events:none}
+.dialogue-tool{display:flex;align-items:baseline;gap:4px;overflow:visible;white-space:normal}
+.dialogue-tool .tool-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.dialogue-tool .relative-time{font-size:1em;margin-inline-start:auto}
+@media(max-width:450px){.dialogue-status dl{grid-template-columns:minmax(0,1fr)}.dialogue-status dd{margin-block-end:4px}}

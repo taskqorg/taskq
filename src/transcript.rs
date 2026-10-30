@@ -575,6 +575,26 @@ mod tests {
         assert_eq!(after(false, &path, size).unwrap_err(), "transcript shrank; view unknown");
         fs::remove_dir_all(dir).unwrap();
     }
+    // #1930 A3/A4/A7: sanitized actual Claude/Codex metadata, never invented times or cursor-to-date inference.
+    #[test]
+    fn conversation_1930_observed_native_times_survive_pages_and_gaps() {
+        let fixture:Value=serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/tests/fixtures/conversation-time-provenance.json"))).unwrap();
+        let dir=tmp();let path=dir.join("native.jsonl");
+        for sample in fixture["records"].as_array().unwrap() {
+            let codex=sample["provider"]=="codex";let record=&sample["record"];
+            fs::write(&path,format!("{record}\n")).unwrap();
+            let page=before(codex,&path,None).unwrap();assert!(!page.items.is_empty());
+            for item in &page.items {assert_eq!(item["updated"],record["timestamp"]);assert_eq!(item["at"],0);}
+            assert_eq!(after(codex,&path,0).unwrap().items,page.items,"both read directions preserve source time and byte identity");
+            let mut missing=record.clone();missing.as_object_mut().unwrap().remove("timestamp");
+            fs::write(&path,format!("{record}\n{missing}\n")).unwrap();
+            let page=before(codex,&path,None).unwrap();assert!(page.items.last().unwrap()["updated"].is_null());
+            assert!(last_update(codex,&path).unwrap().is_null(),"a source gap cannot borrow the earlier record time");
+        }
+        for event in fixture["board"].as_array().unwrap() {assert_eq!(crate::board::iso(event["created_at"].as_str().unwrap()),event["seconds"].as_i64());}
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     // CS2/R12: native record time, not read time or trailing progress/partial writes, orders conversations.
     #[test]
     fn sidebar_activity_uses_the_newest_visible_native_record() {

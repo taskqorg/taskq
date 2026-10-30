@@ -1,5 +1,5 @@
 'use strict';
-const pm=require('./pm-composer.js'),blocks=require('./project-blocks.js');
+const pm=require('./pm-composer.js'),blocks=require('./project-blocks.js'),time=require('./relative-time.js');
 const {h}=require('preact'),ui=require('./ui-runtime.js'),icons=require('./ui-icons.js'),{execution}=ui;
 // D6: the event kinds a watch may follow.
 const EVENTS=['close','failed','ask','blocked','gone'];
@@ -84,7 +84,7 @@ module.exports=execution.module('conversations',{
     if(view?.id!==op.conversation)return;if(view.busy[op.kind]===r.id)view.busy[op.kind]=null;
     if(op.gen!==view.gen)return;
     const v=r.value,el=menu.querySelector('.conversation-reader');
-    if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';const c=api.current();if(c&&Object.hasOwn(v,'updated')){c.updated=v.updated;activityTimes[c.id]={updated:v.updated,reason:v.updated_reason};}api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';}return;}
+    if(op.kind==='status'){if(r.state==='accepted'){view.status=v;view.statusReason='';const c=api.current();if(c&&Object.hasOwn(v,'updated')){c.updated=v.updated;activityTimes[c.id]={updated:v.updated,reason:v.updated_reason};}api.form();}else {view.status=null;view.statusReason=r.reason||'Status unknown';activityTimes[view.id]={updated:null,reason:view.statusReason};}return;}
     if(r.state!=='accepted'){view.reason=r.reason||'Transcript unknown';if(/shrank|replaced/.test(view.reason)){view.lost=view.reason;view.stick=false;}return;}
     // Q-A3/A5: a reply for a replaced window, or for a cursor the window no longer ends at, is obsolete
     if(op.gen!==view.gen)return;
@@ -173,7 +173,6 @@ module.exports=execution.module('conversations',{
     if(view.form?.dirty)return;const w=view.status?.watch;
     view.form=w?.prompt?{prompt:w.prompt,every:String(w.every),events:[...(w.events||[])],dirty:false}:{prompt:'',every:'30',events:[],dirty:false};
    },
-   when:function(ms){return ms?new window.Date(Number(ms)).toLocaleString():'none';},
    // D7: the Status control shows the watch, last and next turn, outcome and last assistant line; it sets and removes the watch.
    status:function(c,disabled){
     const v=view?.id===c.id?view:null,s=v?.status,w=s?.watch,f=v?.form||{prompt:'',every:'30',events:[]},watching=!!w?.prompt,every=Number(f.every);
@@ -182,8 +181,8 @@ module.exports=execution.module('conversations',{
     return h('div',{class:'dialogue-status'},h('p',{class:'meta'},'Status · '+watchText),
      h('div',{class:'dialogue-status-body'},
       h('dl',null,
-       watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last turn',api.when(w.last_turn)),row('Next turn',api.when(w.next_due)),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
-       row('Latest turn',t?t.state+' · '+(t.outcome||(t.state==='done'?'outcome unknown':'outcome pending'))+' · '+api.when(t.at):'none'),
+       watching?[row('Prompt',w.prompt),row('Every',w.every+' minutes'),row('Events',(w.events||[]).join(', ')||'none'),row('Last watch dispatch',time.stamp(w.last_turn,'Watch dispatched')),row('Next scheduled turn',time.stamp(w.next_due,'Next scheduled turn')),row('Last outcome',w.last_outcome||'none')]:row('Watch',watchText),
+       row('Latest turn',t?[t.state+' · '+(t.outcome||(t.state==='done'?'outcome unknown':'outcome pending'))+' · ',time.stamp(t.at,'Turn submitted')]:time.stamp(null,'Turn submitted',s?'No turn timestamp in the status record':v?.statusReason||'Turn status unavailable')),
        row('Last assistant line',!s?'unknown':s.reason?'unknown: '+s.reason:s.last_line??'none in the last chunk')),
       h('div',{class:'dialogue-watch'},
        h('label',null,'Watch prompt',h('textarea',{'data-w-field':'prompt',value:f.prompt,rows:2,maxLength:65536,disabled,placeholder:'Check the board as the project rules say and report'})),
@@ -199,20 +198,20 @@ module.exports=execution.module('conversations',{
      v?.start>0&&h('button',{'data-c':'earlier',disabled:!!v.busy.before},v.busy.before?'Loading earlier…':'Load earlier'),
      v?.lost&&h('p',{role:'status',class:'dialogue-unknown'},v.lost),
      v?.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Transcript unknown: '+v.reason+(v.items.length?'. Showing what was read before.':'')),
-     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief'),h('p',{class:'conversation-text'},item.text)):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
+     !v||v.end===null?!v?.reason&&h('p',{class:'meta'},'Reading transcript…'):v.items.length?api.steps(v.items,api.state(c)==='working',item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded')):item.role==='brief'?h('details',{key,'data-key':key,class:'dialogue-brief'},h('summary',{class:'meta'},'Setup brief',time.stamp(item.updated,'Setup brief recorded')),h('p',{class:'conversation-text'},item.text)):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},label[item.role]||item.role,time.stamp(item.updated,(label[item.role]||item.role)+' message')),h('p',{class:'conversation-text'},item.text));}):h('p',{class:'meta'},v.start>0?'No messages in this chunk; Load earlier reads more.':'No messages in the transcript yet.'),
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
    // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
    // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
    steps:function(items,current,render){
-    const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text));};
+    const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},h('span',{class:'tool-label'},'Tool · '+api.short(item.text)),time.stamp(item.updated,'Tool recorded'));};
     for(let i=0;i<items.length;){
      if(items[i].role!=='tool'){out.push(render(items[i]));i++;continue;}
      let j=i;while(j<items.length&&items[j].role==='tool')j++;
      const run=items.slice(i,j),key=api.key(run[0]),now=current&&j===items.length;
      out.push(run.length===1?tool(run[0]):h('details',{key,'data-key':key,class:'dialogue-steps'},
-      h('summary',{class:'dialogue-tool'},api.stepSummary(run)+(now?' · now: '+api.short(run.at(-1).text):'')),run.map(tool)));
+      h('summary',{class:'dialogue-tool'},h('span',{class:'tool-label'},api.stepSummary(run)+(now?' · now: '+api.short(run.at(-1).text):'')),time.stamp(run.at(-1).updated,'Latest tool recorded',undefined,false)),run.map(tool)));
      i=j;
     }
     return out;
@@ -244,7 +243,7 @@ module.exports=execution.module('conversations',{
       live.start>0&&h('button',{'data-c':'worker-earlier',disabled:!!live.request},'Load earlier'),live.end<live.size&&live.quiet.after>=FILL&&h('button',{'data-c':'worker-later',disabled:!!live.request},'Load later'),
       live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
-      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
+      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn',time.stamp(item.updated,'Turn brief recorded')):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role,time.stamp(item.updated,(label[item.role]||item.role)+' message')),h('p',{class:'conversation-text'},item.text));})));
    },
    workerRead:function(kind='after',extra={}){
     const l=live;if(!l||l.request)return;ui.cancel(l.timer);l.timer=null;
@@ -438,14 +437,14 @@ module.exports=execution.module('conversations',{
    },
    // CS1–CS6: the three source types share one identity, project assignment and activity order.
    sidebarGroups:function(extra){
-    const projects=snapshot.projects||[],time=v=>typeof v==='string'?Date.parse(v):typeof v==='number'&&v>0?v:NaN;
+    const projects=snapshot.projects||[];
     const source=[...(extra.rows||[]).map(r=>({...r,thread:true})),...items.filter(c=>!c.deleted).map(c=>({...c,root:c.sent?.root||c.request?.root||c.root,title:api.title(c),meta:api.rowStatus(c)+((owner.detached||[]).includes(c.id)?' · Detached':''),marker:extra.marks?.[c.id]}))];
     const all=source.filter(r=>!!r.archived===(list==='archive')).map(r=>{
      const p=projects.find(p=>p.root===r.root&&(!r.board||p.issues===r.board)),group=p?JSON.stringify([p.root,p.issues||'']):'other';
-     return {...r,p,group,at:time(activityTimes[r.id]?.updated??(activityTimes[r.id]?null:r.updated)),pin:sidebar.pins.includes(r.id)};
+     return {...r,p,group,activity:activityTimes[r.id]?activityTimes[r.id].updated:r.updated,activityMs:time.value(activityTimes[r.id]?activityTimes[r.id].updated:r.updated),pin:sidebar.pins.includes(r.id)};
     });
-    const compare=(a,b)=>(Number.isFinite(b.at)?b.at:-1)-(Number.isFinite(a.at)?a.at:-1)||a.id.localeCompare(b.id);
-    const make=(id,name,rows)=>({id,name,total:rows.length,at:Math.max(-1,...rows.map(r=>Number.isFinite(r.at)?r.at:-1)),rows:rows.filter(r=>!search||[r.title,r.meta,r.root,r.id,r.p?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase())).sort(compare)});
+    const compare=(a,b)=>(b.activityMs??-1)-(a.activityMs??-1)||a.id.localeCompare(b.id);
+    const make=(id,name,rows)=>({id,name,total:rows.length,at:Math.max(-1,...rows.map(r=>r.activityMs??-1)),rows:rows.filter(r=>!search||[r.title,r.meta,r.root,r.id,r.p?.name,r.project].join(' ').toLowerCase().includes(search.toLowerCase())).sort(compare)});
     let groups;
     if(list==='archive')groups=[make('archive','Archived',all)];
     else {
@@ -459,10 +458,8 @@ module.exports=execution.module('conversations',{
       h(project?'button':'div',{class:'conversation-group-head',...(project?{'data-c':'group-collapse','data-group':g.id,'aria-expanded':String(open),disabled:!!sidebarPending}:{})},project&&icons.icon('arrow-down'),h('span',null,g.name),h('small',null,search?g.rows.length+'/'+g.total:String(g.total))),
       open&&g.rows.map(r=>{
        const own=items.find(c=>c.id===r.id),context=!r.p?(r.root||r.board||r.project?(r.project?r.project+' · ':'')+'Project unavailable':'No project'):(g.id==='pinned'||list==='archive'?r.p.name:''),meta=r.thread?(r.status??r.meta??''):r.meta;
-       const age=Number.isFinite(r.at)?Math.max(0,Math.floor(((snapshot.now?Number(snapshot.now)*1000:Date.now())-r.at)/60000)):null;
-       const when=age===null?'Update time unknown':age===0?'Now':age<60?age+'m ago':age<1440?Math.floor(age/60)+'h ago':Math.floor(age/1440)+'d ago';
        const blocked=!!sidebarPending||!!pending||!!failure||!!extra.busy;
-       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',{title:age===null?'Update time unknown: '+(activityTimes[r.id]?.reason||'The source did not supply an update time'):api.when(r.at)},[context,meta,when].filter(Boolean).join(' · '),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
+       return h('div',{key:r.id,class:'conversation-item'},h('button',{class:'conversation-row',...(r.report?{'data-report':'open','data-root':r.root,'data-n':r.report}:r.thread?{'data-a':'thread','data-thread':r.id}:{'data-c':'select','data-id':r.id}),'aria-current':r.id===selected?'page':null},h('span',null,r.title),h('small',null,[context,meta].filter(Boolean).join(' · '),(context||meta)?' · ':null,r.timeContext==='Request created'?'Created · ':null,time.stamp(r.activity,r.timeContext||'Last activity',activityTimes[r.id]?.reason||r.updated_reason||'The source did not supply an activity time',false),r.marker&&h('b',{class:'thread-marker'},' · '+r.marker))),
         !r.report&&h('div',{class:'conversation-row-actions'},icons.button(r.pin?'pin-off':'pin',r.pin?'Unpin':'Pin',{'data-c':'row-pin','data-id':r.id,class:'compact-action',disabled:blocked}),
          icons.button(r.archived?'archive-restore':'archive',r.archived?'Restore':'Archive',{'data-c':'row-archive','data-id':r.id,class:'compact-action',disabled:blocked,onClick:()=>{if(blocked)return;if(own)api.action(r.archived?'restore':'archive',{},r.id);else extra.archive?.(r);}})));
       }));
@@ -497,12 +494,12 @@ module.exports=execution.module('conversations',{
         h('div',{class:'conversation-tools'},c.archived?h('button',{'data-c':'delete-review',disabled:!api.editable(c)||!!pending},c.deleting?'Retry Delete':'Delete permanently'):null),
         h('label',null,'Project',h('select',{'data-c-field':'root',value:c.root,disabled},h('option',{value:''},'Choose a project'),!snapshot.projects?.some(p=>p.root===c.root)&&c.root&&h('option',{value:c.root},'Unavailable project'),(snapshot.projects||[]).map(p=>h('option',{value:p.root},p.name)))),
         h('p',{class:'meta'},(dialogue?'Session '+(runtime||'runtime not recorded'):snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
-        h('p',{class:'meta'},'Request '+c.id),pm.handoff(c.request,true),
+        h('p',{class:'meta'},'Request '+c.id),pm.handoff(c.request,true),c.request&&h('p',{class:'meta'},'Request created',time.stamp(c.request.created,'Request created')),
         dialogue&&!c.archived&&h('div',{class:'dialogue-bar'},api.status(c,disabled)),
         h('p',{class:'meta'},dialogue?'Send replies to this session. New from draft starts a separate request.':'Send shares this request and selected files with the visible native session.'),
         disabled&&h('p',{class:'meta'},'Attachments cannot be added while this record is read-only.')),
        c.archived&&h('div',null,h('p',{class:'meta'},'Archived in TaskQ only; the native conversation stays. Restore before reply.'),confirmDelete&&h('div',{role:'alert'},h('p',null,'Permanently remove this TaskQ record and its owned files? No undo. Source files, native chats, sessions and board tasks stay.'),h('button',{'data-c':'delete'},'Delete permanently now'),h('button',{'data-c':'delete-cancel'},'Keep record'))),
-       !c.sent&&!c.request&&h('p',{class:'conversation-intro'},'Describe work for '+(snapshot.projects?.find(p=>p.root===c.root)?.name||'the selected project')+'. First Send opens your project manager chat. Tasks start only after assignment.'),api.preview(),dialogue?api.transcript(c):h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),c.request&&c.request.state!=='launched'&&h('p',{role:'status'},c.request.reason||c.request.next||'Native launch: '+c.request.state),c.sent&&h('article',null,h('h2',null,'Sent request'),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery')),
+       !c.sent&&!c.request&&h('p',{class:'conversation-intro'},'Describe work for '+(snapshot.projects?.find(p=>p.root===c.root)?.name||'the selected project')+'. First Send opens your project manager chat. Tasks start only after assignment.'),api.preview(),dialogue?api.transcript(c):h('div',{class:'conversation-record',tabindex:'0','aria-label':'Request record'},c.sent&&!c.request&&h('p',{role:'status'},'Delivery unknown. Check the original request ID; nothing will be resent.'),c.request&&c.request.state!=='launched'&&h('p',{role:'status'},c.request.reason||c.request.next||'Native launch: '+c.request.state),c.sent&&h('article',null,h('h2',null,'Sent request',time.stamp(c.request?.created,'Request created')),h('p',{class:'meta'},(snapshot.projects?.find(p=>p.root===c.sent.root)?.name||'Original project unavailable')+' · '+c.sent.runtime),h('p',{class:'conversation-text'},c.sent.text),h('ul',null,c.sent.files.map(f=>h('li',{key:f.id},f.name+' · '+f.bytes+' bytes · SHA256 '+f.hash)))),c.request?.state==='pending'&&h('button',{'data-c':'cancel',disabled},'Cancel queued launch'),c.sent&&h('button',{'data-c':'reconcile',disabled:disabled||!!pending},'Check delivery')),
        extra.notice,extra.cards,
        !c.archived&&(extra.editor||pm.composer({text:c.text,disabled,id:'conversation-draft',placeholder:dialogue?'Reply to the '+(runtime||'native')+' session':c.sent?'Draft a separate next request':'Ask AI…',before:[dialogue&&view?.id===c.id&&api.jump(),h('p',{class:'meta composer-destination',title:dialogue?'Send replies to the recorded '+(runtime||'native')+' session. Change the separate request destination in Details.':'Change the project in Conversation info.'},icons.icon('folder'),(snapshot.projects?.find(p=>p.root===(dialogue?c.sent?.root||c.request?.root||c.root:c.root))?.name||'Project unavailable')+' · '+(dialogue?runtime||'Runtime unknown':snapshot.ai?.runtime?.name||'Runtime unknown')+' · '+(snapshot.host||'Host unknown')),
         // #1773 A3/A5: files sit above the input and the tools row closes the input box; the shared DashQ composer stays unchanged
@@ -569,6 +566,7 @@ module.exports=execution.module('conversations',{
     return true;
    },
    mount:function(){
+    time.mount(menu);
     ui.listen(menu,'input',e=>{const watch=e.target.dataset.wField;if(view?.form&&(watch==='prompt'||watch==='every')){view.form[watch]=e.target.value;view.form.dirty=true;draw();return;}const field=e.target.dataset.cField;if(field==='search'){search=e.target.value;api.nav();draw();return;}if(!['text','title'].includes(field))return;const c=api.current();if(!api.editable(c))return;if(field==='text'&&(c.sent||c.sending))c.next=true;c[field]=e.target.value;if(field==='text')c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;ui.cancel(saveTimer);saveTimer=ui.defer(()=>api.save(c),100);draw();});
     ui.listen(menu,'change',e=>{if(e.target.dataset.wField==='event'&&view?.form){view.form.events=view.form.events.filter(k=>k!==e.target.value).concat(e.target.checked?[e.target.value]:[]);view.form.dirty=true;draw();return;}const c=api.current();if(e.target.dataset.cField==='files'){api.files([...e.target.files]);e.target.value='';}if(e.target.dataset.cField==='root'&&api.editable(c)){if(c.sent||c.sending)c.next=true;c.root=e.target.value;c.version=(c.version||0)+1;api.save(c);draw();}});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{if(e.target.dataset.cField!=='text')return;const c=api.current();if(api.editable(c)&&JSON.stringify(c.caret)!==JSON.stringify([e.target.selectionStart,e.target.selectionEnd])){c.caret=[e.target.selectionStart,e.target.selectionEnd];c.version=(c.version||0)+1;api.save(c);}});

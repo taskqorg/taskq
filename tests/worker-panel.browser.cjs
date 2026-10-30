@@ -29,7 +29,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    await reply(m,{items:[{at:20,i:0,role:'owner',text:'Please keep the draft'},{at:30,i:0,role:'assistant',text:'Appended reply'}],end:40});
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Appended reply'));
    assert(Date.now()-began<2000,'A1: appended owner and worker turns arrive within 2 s');
-   assert.match(await panel.innerText(),/You · via the board\s+Please keep the draft/);
+   assert.match(await panel.locator('[data-key="20:0"] .meta').innerText(),/^You · via the board/);assert.equal(await panel.locator('[data-key="20:0"] .conversation-text').innerText(),'Please keep the draft');
    m=await read();await reply(m,{items:Array.from({length:25},(_,i)=>({at:40+i*10,i:0,role:'assistant',text:'Progress '+i+' '+('reading context '.repeat(12))})),end:300});
    const reader=page.locator('.conversation-reader');
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Progress 24'));
@@ -88,7 +88,7 @@ const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=requ
    m=await take();
    await page.evaluate(r=>taskq.receive({dialogueReceipt:r}),{id:m.id,conversation:thread,action:'transcript',state:'accepted',value:{items:[{at:0,i:0,role:'assistant',text:'Remote worker line'}],start:0,end:10,size:10}});
    await page.waitForFunction(()=>document.querySelector('.worker-live')?.textContent.includes('Remote worker line'));
-   assert.doesNotMatch(await panel.innerText(),/unknown/,'the next answered read clears the unknown reason');
+   assert.equal(await panel.locator('.dialogue-unknown').count(),0,'the next answered read clears the unknown reason; missing native time remains explicit');
    m=await take();assert.equal(m.after,10,'D4: the next read continues after the remote page');
   }
   assert.deepEqual(errors,[]);console.log('#1831/#1832 live worker panel: first render, append, attempt fence, teardown and remote host passed');

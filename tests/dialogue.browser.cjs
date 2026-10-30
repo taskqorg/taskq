@@ -31,12 +31,12 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   async function action(name){await page.waitForFunction(n=>sent.some(m=>m.action===n),name);return page.evaluate(n=>{const m=sent.filter(m=>m.action===n).at(-1);sent.splice(sent.indexOf(m),1);return m;},name);}
   async function receipt(m,r){const c=state.conversations.items.find(c=>c.id===m.conversation);c.revision++;await page.evaluate(r=>taskq.receive({conversationReceipt:r}),{id:m.id,snapshot:state.conversations,...r});}
   async function capture(name){if(evidence){fs.mkdirSync(evidence,{recursive:true});await page.screenshot({path:path.join(evidence,name+'.png')});}}
-  const view=page.locator('.dialogue-transcript'),detail=page.locator('.conversation-reader'),input=page.locator('[data-c-field=text]'),texts=()=>view.locator('.dialogue-item .conversation-text, .dialogue-tool').allInnerTexts();
+  const view=page.locator('.dialogue-transcript'),detail=page.locator('.conversation-reader'),input=page.locator('[data-c-field=text]'),texts=()=>view.locator('.dialogue-item .conversation-text, .dialogue-tool .tool-label').allInnerTexts();
 
   // A2/D4: the newest chunk in order, tool calls as one line, newest at the bottom.
   await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item').length>0);
   assert.deepEqual(await texts(),records.slice(40).map(r=>r.role==='tool'?'Tool · '+r.text:r.text),'last chunk in file order');
-  assert.equal(await view.locator('.dialogue-tool').first().evaluate(e=>getComputedStyle(e).whiteSpace),'nowrap','a tool call is one line');
+  assert.equal(await view.locator('.dialogue-tool .tool-label').first().evaluate(e=>getComputedStyle(e).whiteSpace),'nowrap','a tool call is one line');
   assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'opens at the newest record');
   assert.equal(await page.locator('.conversation-record').count(),0,'a launched conversation shows its transcript, not the request record');
   // Scrolling up loads the previous chunk without jumping away from the reading position; Load earlier reaches the first record.
@@ -66,7 +66,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   assert.deepEqual([m.prompt,m.every,m.events],['Check the board as the project rules say',5,['close','ask']],'events keep D6 order');
   const watch={prompt:m.prompt,every:5,events:['close','ask'],last_turn:null,last_outcome:null,next_due:Date.UTC(2026,9,23,10,5),seen:{}};
   status['claude-1665']={...status['claude-1665'],watch};await receipt(m,{state:'accepted',value:watch});
-  for(const text of [/Status · watch every 5 min/,/Prompt\s+Check the board/,/Every\s+5 minutes/,/Events\s+close, ask/,/Last turn\s+none/,/Next turn\s+\S/,/Last outcome\s+none/])assert.match(await details.innerText(),text);
+  for(const text of [/Status · watch every 5 min/,/Prompt\s+Check the board/,/Every\s+5 minutes/,/Events\s+close, ask/,/Last watch dispatch\s+Time unknown/,/Next scheduled turn\s+\S/,/Last outcome\s+none/])assert.match(await details.innerText(),text);
   await page.locator('[data-w-field=every]').fill('15');await page.locator('[data-c=watch]').click();m=await action('watch');assert.equal(m.every,15,'Save watch edits the same watch');
   await receipt(m,{state:'unknown',reason:'every must be at least 5 minutes'});assert.match(await page.locator('.conversation-status').innerText(),/every must be at least 5 minutes/);
   await capture('status-watch-dark-16');
