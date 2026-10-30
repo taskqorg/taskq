@@ -75,7 +75,7 @@ pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
  taskq labels
- taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H]
+ taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
  taskq start N [M..]
  taskq ask N --text Q --option O.. --recommend K [--link URL..]
@@ -906,20 +906,25 @@ fn closed_history(b: &dyn Board, page: u32, since: Option<i64>, gitlab: bool) ->
 
 /// P-W1: exact pin reads share Completed's outcome projection, never depend on its loaded page.
 fn closed_row(b: &dyn Board, i: &board::Issue, closed: Option<i64>, gitlab: bool) -> Value {
-    let log = entries(b, i.number);
+    let comments=b.comments(i.number);
+    let log=comments.as_ref().map_err(Clone::clone).and_then(|comments|board::reply::log(i.number,comments));
     // § 1: GitHub records why an issue closed; GitLab records no reason, so a closed GitLab issue is done
-    let outcome = match (i.reason.as_deref(), gitlab) { (Some("completed"), _) | (None, true) => "success", (Some("not_planned"), _) => "not_planned", _ => "unknown" };
+    let outcome = if !log.as_ref().is_ok_and(|log|fold(i.number,log,false).state!=State::Doing){"unknown"}else{match (i.reason.as_deref(), gitlab) { (Some("completed"), _) | (None, true) => "success", (Some("not_planned"), _) => "not_planned", _ => "unknown" }};
     let (result, pr) = log.as_ref().map_or((Value::Null, Value::Null), |log| {
         let t = fold(i.number, log, false);
         let pr = log.iter().flat_map(|e| e.body.split_whitespace()).filter(|w| w.starts_with("https://") && (w.contains("/pull/") || w.contains("/merge_requests/"))).last();
         (json!(t.publication.as_deref().and_then(|p| p.lines().next()).map(|l| l.trim_start_matches("Changed:").trim())), json!(pr.map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))))
     });
+    let conversation=log.as_ref().ok().and_then(|log|core::conversation(i.number,log));
+    let history=if conversation.is_some() {log.as_ref().ok().zip(comments.as_ref().ok()).map(|(log,comments)| {
+        dispatch::history(i.number,log,&core::project(i.number,log,false),comments).iter().map(|(q,a)|json!({"question":q.as_deref().map(snapshot::question),"answered":a})).collect::<Vec<_>>()
+    })}else{None};
     let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
     // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
     let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| e.body.split_once('\n').map_or("", |x| x.1)));
     let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
-    json!({"n": i.number, "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "error": log.err()})
+    json!({"n": i.number, "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "history":history,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
 }
 
 fn closed_pin(b: &dyn Board, n: u64, gitlab: bool) -> Res<Value> {
@@ -940,7 +945,7 @@ fn closed_transcript(b: &dyn Board, n: u64, host: &str, before: Option<u64>) -> 
     let (runtime,session) = native.split_once(':').ok_or("Worker session unavailable")?;
     let path = runtime::owner::transcript(runtime,session)?;
     let page = transcript::before(runtime::of(runtime).codex,&path,before)?;
-    Ok(json!({"items":page.items,"start":page.start,"end":page.end,"size":page.size}))
+    Ok(json!({"generation":page.generation,"items":page.items,"start":page.start,"end":page.end,"size":page.size}))
 }
 
 /// #1679: the PR/MR merge `close` read back (§ 7 `delivery <preset> r<R>: merged #P ..`, GitLab `merged !P`); none stays unknown.
@@ -2681,6 +2686,7 @@ fn tray(_install: PathBuf, _snapshot: Option<&str>, _open: bool, _routes: &[Stri
 /// The fields of one new task (§ 1), from `add` or a recipe (§ 7).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NewTask {
+    pub conversation: Option<String>,
     pub title: String,
     pub goal: String,
     pub acceptance: Vec<String>,
@@ -2761,13 +2767,16 @@ fn task_body(b: &dyn Board, t: &NewTask, op: &Op) -> Res<(String, Vec<String>)> 
 
 fn add_task(b: &dyn Board, root: &Path, raw: &Value, t: &NewTask, op: &Op) -> Res<Receipt> {
     let (body, labels) = task_body(b, t, op)?;
+    if t.conversation.as_ref().is_some_and(|id| !setup::owner_id(id)) { return Err("Invalid conversation ID".into()); }
+    if t.conversation.is_some() && op.id.is_none() { return Err("--conversation requires --op-id for same-request reconciliation".into()); }
+    let origin = t.conversation.as_ref().map_or(String::new(), |id| format!("conversation: {id}"));
     let n = if op.id.is_some() {
-        match claimed_create(b, raw, &t.title, &body, &labels, "", op) {
+        match claimed_create(b, raw, &t.title, &body, &labels, &origin, op) {
             Ok(n) => n,
             Err(r) => return Ok(r),
         }
     } else { b.create(&t.title, &body, &labels)? };
-    let r = act(b, root, n, "hold", &[], "", &Op::default());
+    let r = act(b, root, n, "hold", &[], &origin, &Op::default());
     Ok(Receipt { op_id: op.id.clone(), ..r }.wake(root))
 }
 
@@ -3199,6 +3208,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "add" | "finding" => {
             let finding = cmd == "finding";
+            if finding && a.one("conversation").is_some() { return Err("--conversation requires add".into()); }
             // § 1 task body: Goal, Acceptance, Scope, dependencies; limits checked before any write
             let title = a.pos.get(1).filter(|t| !t.trim().is_empty()).ok_or("title missing")?;
             let deps: Vec<u64> = a.all("deps").iter().flat_map(|d| d.split([',', ' '])).filter(|d| !d.is_empty()).map(|d| d.trim_start_matches('#').parse().map_err(|_| format!("bad --deps {d}"))).collect::<Res<_>>()?;
@@ -3216,6 +3226,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 return Err(format!("{} given more than once; pass each once (a two-line --goal uses one value with a newline)", repeated.join(", ")));
             }
             let new = NewTask {
+                conversation: a.one("conversation").map(String::from),
                 title: title.clone(),
                 goal: a.need("goal")?.to_string(),
                 acceptance: a.all("acceptance"),
@@ -3396,8 +3407,8 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     if a.flags.contains_key("transcript") {
                         let before = a.one("before").map(|v|v.parse::<u64>().map_err(|_|"bad --before")).transpose()?;
                         json!({"transcript":closed_transcript(b,n,&cfg.me,before).map_or_else(|reason|json!({"reason":reason}),|v|v)})
-                    } else { closed_pin(b,n,cfg.board.name=="gitlab")? }
-                } else { closed_history(b,page,since,cfg.board.name=="gitlab")? };
+                    } else { closed_pin(b,n,!cfg.board.closed_reason)? }
+                } else { closed_history(b,page,since,!cfg.board.closed_reason)? };
                 println!("{value}");
                 return Ok(());
             }
@@ -3956,6 +3967,36 @@ mod tests {
     }
 
     // Chain: § 5 taskq add -> § 1 held -> start. Risk: an invalid task is written, or a new task is admitted without `start`.
+    // #1929 A1/R1: creation owns one immutable chat link; replay cannot assign twice or retarget it.
+    #[test]
+    fn conversation_1929_hold_is_trusted_immutable_and_creation_bound() {
+        let c=Ctx{cfg:cfg(),raw:json!({"create_claim_issue":1}),board:Box::new(Fake::default())};
+        c.board.create("Claims","",&[]).unwrap();
+        let task=NewTask{title:"T".into(),goal:"G".into(),acceptance:vec!["Observable".into()],conversation:Some("owner-1929".into()),..Default::default()};
+        assert!(add_task(&*c.board,&c.cfg.root,&c.raw,&task,&Op::default()).is_err());
+        let op=Op{id:Some("pm.owner-1929.1".into()),revision:None};
+        assert!(add_task(&*c.board,&c.cfg.root,&c.raw,&task,&op).unwrap().ok());
+        let log=entries(&*c.board,2).unwrap();assert_eq!(core::conversation(2,&log).as_deref(),Some("owner-1929"));
+        let replay=add_task(&*c.board,&c.cfg.root,&c.raw,&task,&op).unwrap();assert!(replay.ok(),"{replay:?}");
+        assert_eq!(c.board.issues(None).unwrap().len(),2);
+        let changed=NewTask{conversation:Some("other-chat".into()),..task};
+        assert!(!add_task(&*c.board,&c.cfg.root,&c.raw,&changed,&op).unwrap().ok());
+        let mut hostile=log.clone();hostile.push(Entry{id:999,body:"taskq: hold\nconversation: forged".into(),edited:false});
+        assert_eq!(core::conversation(2,&hostile).as_deref(),Some("owner-1929"));
+        hostile[0].edited=true;assert!(core::conversation(2,&hostile).is_none_or(|id|id!="owner-1929"));
+        c.board.comment(2,"taskq: start").unwrap();
+        let attempt=c.board.comment(2,"taskq: spawn worker claude:fixture mac").unwrap();
+        c.board.comment(2,&format!("taskq: ask attempt {attempt}\nDone: Original work\nProblem: Keep compatibility?\nEvidence: [Original](https://example.org/evidence)\n1. Keep it ★\n2. Remove it")).unwrap();
+        c.board.comment(2,"taskq: answer 1").unwrap();
+        c.board.comment(2,&format!("taskq: result {} attempt {attempt}\nChanged: Done\nOpen: none","a".repeat(40))).unwrap();
+        c.board.comment(2,"taskq: close\nChanged: Done\nOpen: none").unwrap();
+        let mut issue=c.board.issue(2).unwrap();issue.open=false;issue.reason=Some("completed".into());
+        let closed=closed_row(&*c.board,&issue,None,false);assert_eq!(closed["history"].as_array().unwrap().len(),1);
+        assert_eq!(closed["history"][0]["question"]["done"],"Original work");
+        assert_eq!(closed["history"][0]["question"]["evidence"][0]["url"],"https://example.org/evidence");
+        assert_eq!(closed["conversation"]["id"],"owner-1929");
+    }
+
     #[test]
     fn add_uses_canonical_names_defaults_and_validates_before_writing() {
         let c = Ctx { cfg: cfg(), raw: json!({}), board: Box::new(Fake::default()) };

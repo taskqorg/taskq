@@ -47,7 +47,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   await page.evaluate(()=>document.querySelector('[data-c=earlier]').click());await page.waitForFunction(()=>document.querySelectorAll('.dialogue-transcript .dialogue-item, .dialogue-transcript .dialogue-tool').length===60);
   assert.equal(await page.locator('[data-c=earlier]').count(),0,'first record reached');assert.match((await texts())[0],/^Question 0 lorem/);
   // New records append while the view is open (2 s poll).
-  await detail.evaluate(e=>{e.scrollTop=e.scrollHeight;e.dispatchEvent(new Event('scroll',{bubbles:true}));});
+  await page.locator('[data-c=latest]').click(); // #1929 A4: only explicit Latest resumes follow
   log.push({role:'user',text:'Question 60'},{role:'assistant',text:'Answer 61'});
   await page.waitForFunction(()=>[...document.querySelectorAll('.dialogue-transcript .conversation-text')].at(-1)?.innerText==='Answer 61',null,{timeout:8000});
   assert(await detail.evaluate(e=>e.scrollHeight-e.scrollTop-e.clientHeight<2),'a reader at the bottom follows new records');
@@ -86,7 +86,7 @@ const records=Array.from({length:60},(_,i)=>i%3===2?{role:'tool',text:'Bash: tas
   status['claude-1665']={...status['claude-1665'],state:'idle'};await page.locator('[data-c=reply]').click();m=await action('reply');
   assert(await page.locator('[data-c=reply]').isDisabled(),'one turn at a time from the workspace');await input.press('Enter');assert.equal(await page.evaluate(()=>sent.filter(m=>m.action==='reply').length),0,'Enter cannot send a second turn');
   status['claude-1665']={...status['claude-1665'],state:'working'};await receipt(m,{state:'accepted'});
-  await page.waitForFunction(()=>document.querySelector('[data-c-field=text]').value==='');assert.match(await page.locator('.conversation-status').innerText(),/Message delivered/);
+  await page.waitForFunction(()=>document.querySelector('[data-c-field=text]').value==='');assert.match(await page.locator('.conversation-status').innerText(),/Message saved/);
   await page.waitForFunction(()=>/^PM is replying$/.test(document.querySelector('.dialogue-state').innerText));
   // The reply itself comes only from the transcript.
   log.push({role:'user',text:'Is the build green?'},{role:'assistant',text:'Yes, all checks pass.'});

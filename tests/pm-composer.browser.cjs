@@ -11,6 +11,10 @@ const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:
    const adapter={context:()=>f.request,load:()=>saved,save:v=>{saved=structuredClone(v);},id:()=>f.request.op_id,now:()=>f.request.issued_at,send:v=>{sent.push(v);return Promise.reject(Error('invented outage'));},reconcile:v=>{checked.push(v);return Promise.resolve({schema:f.schema,actor_id:v.actor_id,op_id:v.op_id,revision:v.revision,outcome:'accepted',request_id:'a'.repeat(64),native:{host:'invented-host',runtime:'claude',state:'launched',session:'invented-session',url:'https://claude.ai/code/session_invented'}});}};
    window.remount=()=>TaskqPmComposer.mount(document.querySelector('#pm'),adapter);remount();
   },f);
+  // #1929 A3: the exported composer shares natural growth without a field grip or inner scroll.
+  await page.locator('textarea').fill('Long owner draft\n'.repeat(100));
+  assert(await page.locator('textarea').evaluate(e=>e.clientHeight>=e.scrollHeight-1&&getComputedStyle(e).resize==='none'));
+  await page.evaluate(()=>remount());assert(await page.locator('textarea').evaluate(e=>e.clientHeight>=e.scrollHeight-1));
   await page.locator('textarea').fill(f.request.text);await page.getByRole('button',{name:'Send',exact:true}).click();
   await page.getByText('unknown',{exact:true}).waitFor();
   assert.equal(await page.locator('textarea').inputValue(),f.request.text);assert(await page.getByRole('button',{name:'Send',exact:true}).isDisabled());

@@ -15,6 +15,7 @@ const MINUTE: u128 = 60_000;
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Turn {
+    #[serde(default, skip_serializing_if="Option::is_none")] pub op_id: Option<String>,
     pub input: String, pub state: String, pub at: u128, #[serde(default)] pub watch: bool,
     #[serde(default)] pub pid: Option<u32>, #[serde(default)] pub started: Option<String>, #[serde(default)] pub outcome: Option<String>,
 }
@@ -65,16 +66,25 @@ fn launched(install: &Path, id: &str) -> Res<Request> {
 /// D2/D3 Send: refuse while a turn runs (`working`) or a native holder has the session; otherwise persist the immutable
 /// input before the service dispatches it. The draft stays with the workspace either way.
 pub fn send(install: &Path, id: &str, input: &str, native: &Native) -> Res<()> {
+    send_op(install,id,input,None,native)
+}
+
+pub fn accepted(install:&Path,id:&str,op:&str,input:&str)->Res<bool> {
+    Ok(turn(install,id)?.is_some_and(|t|t.op_id.as_deref()==Some(op)&&t.input==input))
+}
+
+pub fn send_op(install:&Path,id:&str,input:&str,op:Option<&str>,native:&Native)->Res<()> {
+    if let Some(op)=op {if accepted(install,id,op,input)? {return Ok(());}}
     let r = launched(install, id)?;
     let own = own(install, id)?;
     if busy(&turn(install, id)?) { return Err("working".into()); }
     if (native.holder)(&own, &r).map_err(|e| format!("native holder unknown ({e}); not sent"))? { return Err(crate::runtime::owner::open_in(&r.runtime)); }
-    crate::setup::locked(install, || queue(install, id, input, false))
+    crate::setup::locked(install, || queue(install,id,input,false,op))
 }
 
-fn queue(install: &Path, id: &str, input: &str, watch: bool) -> Res<()> {
+fn queue(install: &Path, id: &str, input: &str, watch: bool, op: Option<&str>) -> Res<()> {
     if busy(&turn(install, id)?) { return Err("working".into()); }
-    store(&own(install, id)?.join("turn.json"), &Turn { input: input.into(), state: "pending".into(), at: now(), watch, ..Turn::default() })
+    store(&own(install, id)?.join("turn.json"), &Turn { op_id:op.map(String::from), input: input.into(), state: "pending".into(), at: now(), watch, ..Turn::default() })
 }
 
 fn now() -> u128 { std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis()) }
@@ -151,7 +161,7 @@ fn step(install: &Path, r: &Request, now: u128, held: bool, native: &Native) -> 
     let mut input = w.prompt.clone();
     if !lines.is_empty() { input.push_str(&format!("\n\nNew TaskQ events:\n{}", lines.join("\n"))); }
     crate::setup::locked(install, || {
-        queue(install, &r.id, &input, true)?;
+        queue(install, &r.id, &input, true,None)?;
         w.last_turn = Some(now); w.next_due = now + w.every as u128 * MINUTE; w.seen = newest;
         store(&own.join("watch.json"), &w)
     })
@@ -251,7 +261,7 @@ pub fn transcript(install: &Path, id: &str, before: Option<u64>, after: Option<u
     let path = crate::runtime::owner::transcript(&r.runtime, r.session.as_deref().unwrap_or_default())?;
     let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
     mark_brief(&mut page.items, &r.brief);
-    Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
 /// #1831: the live view of a resolved task worker's session `<rt>:<id>` on this host, read like an owner
@@ -262,7 +272,7 @@ pub fn worker_transcript(session: &str, before: Option<u64>, after: Option<u64>)
     let (codex, path) = crate::runtime::worker_transcript(rt, id)?;
     let mut page = match after { Some(a) => crate::transcript::after(codex, &path, a)?, None => crate::transcript::before(codex, &path, before)? };
     worker_roles(&mut page.items);
-    Ok(json!({"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
+    Ok(json!({"generation":page.generation,"items": page.items, "start": page.start, "end": page.end, "size": page.size}))
 }
 
 /// #1834: a user item whose text, or the turn input file its pointer names, ends with the service's marker is TaskQ's,
@@ -357,6 +367,23 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
         panic!("turn never ended")
+    }
+
+    // #1929 A6: same operation readback never starts or queues another native turn.
+    #[test]
+    fn conversation_1929_reply_readback_binds_input_and_operation() {
+        let install=tmp();request(&install,"owner","claude",None);
+        let native=Native{turn:never,holder:free};
+        assert!(!accepted(&install,"owner","op-a","Hello").unwrap());
+        send_op(&install,"owner","Hello",Some("op-a"),&native).unwrap();
+        let first=turn(&install,"owner").unwrap();
+        assert!(accepted(&install,"owner","op-a","Hello").unwrap());
+        assert!(!accepted(&install,"owner","op-b","Hello").unwrap());
+        assert!(!accepted(&install,"owner","op-a","Changed").unwrap());
+        send_op(&install,"owner","Hello",Some("op-a"),&Native{turn:never,holder:held}).unwrap();
+        assert_eq!(turn(&install,"owner").unwrap(),first);
+        assert!(send_op(&install,"owner","Changed",Some("op-a"),&native).is_err());
+        fs::remove_dir_all(install).unwrap();
     }
 
     #[test]

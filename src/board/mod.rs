@@ -562,6 +562,8 @@ fn label_matches(v: &Value, name: &str, color: &str, description: &str) -> bool 
 /// One board: its setup facts and constructors. Each lives in its own module (taskq.md § 9); nothing outside a
 /// board module branches on which board it is.
 pub struct Kind {
+    /// This board records whether closure completed the task (§ 1).
+    pub closed_reason: bool,
     /// `board` in `taskq.json`.
     pub name: &'static str,
     /// The user name field of the CLI's `api user`.
