@@ -157,16 +157,22 @@ bridge accepts the request. Each change to the store goes to every open window
 (menu, Conversations, request windows, Settings, View) at once, never on the 2 s
 tick; a window opened later receives it with its first snapshot.
 
-- Phases: `sending` (the CLI write runs), `waiting` (Waiting GitHub: the write was
-  accepted; the next status snapshot has not shown it yet), `done` (the snapshot row
-  shows the receipt revision; shown 5 s, then dropped), `failed` (not sent, unknown or
-  refused; a Retry button resends the same operation once on click).
-- Rows show the expected state at once, marked unconfirmed: `Doing ⟳`. The expected
-  state comes from the control (start: Ready, stop: Failed, later: Later, retry:
-  Ready; an answer: Doing with a live run, else Ready) and is replaced by the receipt's
-  readback state. A refused or stale write shows the real state and a short reason;
-  it never asks to confirm again. Unverified stays unknown (R12): the overlay never
-  changes counts, the board or `status.json`.
+- One channel (#1918): the tray applies the store to the projects it reads before it
+  builds anything else, so the task list, project dots, counts, Messages badge, tray
+  icon, notifications and Conversations all read that one snapshot and never
+  disagree. No window keeps an optimistic overlay of its own.
+- Phases: `sending` (the CLI write runs; the row keeps the board's state and shows
+  `Sending`), `accepted` (the receipt read the write back by its op id; the readback
+  state, revision and answer apply to the row), `failed` (not sent, unknown or
+  refused; a Retry button resends the same operation once on click), `mismatch` (a
+  refused or stale write: the real state and a short reason for 30 s; it never asks to
+  confirm again). Nothing shows a state the board has not read back.
+- Confirmation is by op id, never by revision compare: § 2 revision drops after an
+  answer (the ask entry id gives way to the spawn id), so a revision compare would take
+  the pre-answer `status.json` for confirmation. A snapshot row lists the op ids of
+  its recent log entries (`ops`); an accepted operation holds until a row carries its
+  op id, or the task leaves the snapshot, and then 60 s more, so a lagging board read
+  never shows the question open again. A stale snapshot never settles it.
 - An accepted write appends its task to `<root>/.taskq/reread` and pokes the service;
   the next pass drops that task's cached comments and skips the 304 shortcut, so it
   rereads that task.
@@ -178,7 +184,8 @@ tick; a window opened later receives it with its first snapshot.
 - Stale data: when a project snapshot is older than two poll intervals or missing,
   every window shows one line `Data from HH:MM` (the oldest observation time).
 - Telemetry: CoreQ operation `tray.sync` records each write's latency from request to
-  confirmation and its outcome (`done`, `failed`, `mismatch`); no second collector.
+  op-id confirmation and its outcome (`observed`, `failed`, `mismatch`); no second
+  collector.
 
 Deferred follow-up contracts (not acceptance claims for this slice):
 - Selective recovery: E-A1–E-A9, including durable hold, owned-process identity, unknown-liveness refusal and selected fenced restart with readback. Keep ordinary pause distinct.

@@ -7,6 +7,8 @@ const EVENTS=['close','failed','ask','blocked','gone'];
 // at most FILL pages in a row without a view item are read without a user action;
 // reading anchors persist for the SAVED most recently read threads within SAVED_BYTES of the 4096-byte navigation.
 const WINDOW=600,SAVED=24,SAVED_BYTES=1536,FILL=8;
+// #1918 A6: tools whose argument names the files they read or change; a command naming a test runner is a test
+const FILE_TOOLS=/^(Read|Edit|MultiEdit|Write|NotebookEdit|apply_patch|read_file|write_file|view)$/,TEST=/\b(test|tests|pytest|unittest|selftest|check\.py)\b/i;
 module.exports=execution.module('conversations',{
  create:function({window,document,menu,draw,navigate,onSelect}){
   let snapshot={},hydrated=false,items=[],selected=null,list='recent',search='',selection={},scrolls={},listOnly=false,focusDraft=false,focusSearch=false,searchOpen=false,undo=null,notices={},failure=null,preview=null,confirmDelete=false;
@@ -181,6 +183,32 @@ module.exports=execution.module('conversations',{
      v?.end<v?.size&&v.quiet.after>=FILL&&h('button',{'data-c':'later',disabled:!!v.busy.after},v.busy.after?'Loading later…':'Load later'),
      c.archived&&api.jump())];
    },
+   // #1918 A6: consecutive tool calls fold into one collapsible line (docs/design/conversations-usability-review.md#tool-collapse-1918);
+   // a message ends the group. `current`: the worker runs, so the last group names its latest step live.
+   steps:function(items,current,render){
+    const out=[],tool=item=>{const key=api.key(item);return h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text));};
+    for(let i=0;i<items.length;){
+     if(items[i].role!=='tool'){out.push(render(items[i]));i++;continue;}
+     let j=i;while(j<items.length&&items[j].role==='tool')j++;
+     const run=items.slice(i,j),key=api.key(run[0]),now=current&&j===items.length;
+     out.push(run.length===1?tool(run[0]):h('details',{key,'data-key':key,class:'dialogue-steps'},
+      h('summary',{class:'dialogue-tool'},api.stepSummary(run)+(now?' · now: '+api.short(run.at(-1).text):'')),run.map(tool)));
+     i=j;
+    }
+    return out;
+   },
+   // "N steps · files a.rs, b.js · 2 commands · tests cargo test": each list deduplicated and cut to three names
+   stepSummary:function(run){
+    const files=new Set(),tests=new Set();let commands=0;
+    for(const item of run){
+     const text=String(item.text),name=item.tool_name||text.split(' ')[0],arg=text.slice(name.length).trim();
+     if(FILE_TOOLS.test(name))for(const f of arg.split(/\s+/).filter(Boolean))files.add(f.split(/[\\/]/).pop());
+     else if(TEST.test(arg))tests.add(api.short(arg).slice(0,40));
+     else commands++;
+    }
+    const list=(label,s)=>s.size?label+' '+[...s].slice(0,3).join(', ')+(s.size>3?' +'+(s.size-3):''):'';
+    return [run.length+' steps',list('files',files),commands?commands+(commands===1?' command':' commands'):'',list('tests',tests)].filter(Boolean).join(' · ');
+   },
    workerStop:function(){if(live){ui.cancel(live.timer);ui.cancel(live.timeout);}live=null;},
    workerClose:function(){workerPaused=true;api.workerStop();},
    // The browser names only a registered project and attempt. The native adapter selects the session (A2); a worker on
@@ -195,7 +223,7 @@ module.exports=execution.module('conversations',{
      h('div',{class:'dialogue-transcript',role:'log','aria-live':'off','aria-label':'Live worker session','data-id':thread},
       live.ended&&h('p',{role:'status',class:'meta'},'Worker attempt ended'),
       live.reason&&h('p',{role:'status',class:'dialogue-unknown'},'Live session unknown: '+live.reason),
-      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):live.items.map(item=>{const key=api.key(item);return item.role==='tool'?h('p',{key,'data-key':key,class:'dialogue-tool',title:api.short(item.text)},'Tool · '+api.short(item.text)):item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
+      live.end===null?!live.reason&&h('p',{class:'meta'},'Reading session…'):api.steps(live.items,!live.ended,item=>{const key=api.key(item);return item.role==='brief'?h('p',{key,'data-key':key,class:'meta'},'TaskQ brief for this turn'):h('article',{key,'data-key':key,class:'dialogue-item '+item.role},h('p',{class:'meta'},item.kind==='answer'?'Your answer · via the board':label[item.role]||item.role),h('p',{class:'conversation-text'},item.text));})));
    },
    workerRead:function(){
     const l=live;if(!l)return;l.timer=null;

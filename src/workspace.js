@@ -49,7 +49,7 @@ const {create}=execution.module('workspace',{
      [(!p.alive||p.complete===false)&&h('p',{role:'status'},'Project status is unavailable, stale or partial. Refresh or inspect the board; answers are disabled.'),
       // #1773 A3: the task shows as one card in the chat: agent state, then the question; #1781: the thread title above
       // already names number and title (input-scroll 04), so the card keeps them only as its accessible name
-      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?h('p',{class:'conversation-text'},t.question?.text||t.card||'No recorded question.'):t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):answers.answerWon(p.issues,t)||h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
+      h('article',{class:'journey-card','data-phase':t.state,'aria-label':'#'+t.n+' · '+t.title},h('div',{class:'journey-heading'},h('span',{class:'journey-state','data-state':t.state},icons.icon(t.state==='ask'?'circle-question-mark':'activity'),{ask:'Agent asks you',doing:'Agent is working',review:'In review',failed:'Failed',held:'Held'}[t.state]||api.plain(t.state))),row.archived?h('p',{class:'conversation-text'},t.question?.text||t.card||'No recorded question.'):t.state==='ask'?h('div',{class:'thread-card'},answers.answerSlot({...t,key:p.issues+'/'+t.n})):t.asked||answers.answerWon(p.issues,t)?[answers.answerAsked(t),answers.answerWon(p.issues,t)]:h('p',{role:'status'},'Task state: '+t.state+'. There is no open question.')),t.state==='ask'&&composer.body,conversations.worker(row.id,t,p),!row.archived&&answers.answerSteerComposer(p.issues,t),answers.answerNotices(p.issues,t.n)]],tools:composer.tools};
    },
    // an event with no owner conversation (setup, project open) keeps its record as its own thread
    message:function(row){
@@ -92,7 +92,7 @@ const {create}=execution.module('workspace',{
      row.archived=!!row.event?.archived||Object.hasOwn(local.archived||{},row.id);
      // #1773 A4: a row without a known state names only its project, never a bare unknown
      // #1819: an answer's expected state shows here in the same frame, marked unconfirmed until the board shows it
-     const state=t?.state||row.event?.state,unconfirmed=['sending','waiting'].includes(t?.sync?.phase)?' ⟳':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
+     const state=t?.state||row.event?.state,unconfirmed=t?.sync?.phase==='sending'?' · Sending':'';row.status=!state||state==='ask'&&!row.archived?'':api.plain(state)+unconfirmed;row.meta=(p?.name||row.project||'Board')+(row.status?' · '+row.status:'');
      row.marker=t?.state==='ask'&&!row.archived?'Needs reply':row.event&&!row.event.read&&!row.event.archived?'Unread':'';
     }
     return [...rows.values()];
@@ -193,10 +193,7 @@ const {create}=execution.module('workspace',{
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
-    // #1819: the shared pending store changed; Conversations and the list show it in the same frame
-    if(Array.isArray(s.sync)&&!s.projects){view.sync=s.sync;if(view.raw){snapshot.value=view.S=operationView.S=syncView.overlay(view.raw,view.sync);api.draw();}return;}
     if(!Array.isArray(s.projects))return;
-    if(Array.isArray(s.sync))view.sync=s.sync;view.raw=s;s=syncView.overlay(s,view.sync);
     const first=snapshot.value===null;snapshot.value=s;view.S=s;operationView.S=s;operations.focusReadback();operations.lifecycleReadback();
     answers.hydrate(s.workspace_local);state.hydrate({...s,navigation:s.workspace_navigation});
     if(first&&view.aiRoot===null)view.aiRoot=s.ai?.root||s.projects?.[0]?.root||null;

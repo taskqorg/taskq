@@ -113,6 +113,12 @@ const plain=x=>JSON.parse(JSON.stringify(x));
   const elsewhere={n:901,state:'doing',revision:9,answered:{by:'sam',text:'ship it'}};project.tasks=[elsewhere];
   assert(call('answerWon',board,elsewhere).includes('Answered by sam: ship it'));
   assert.equal(call('answerSteerComposer',board,elsewhere),'','no draft, no steer offer');
+  // #1918 A5: after an answer the conversation was rebuilt from the task state and lost the question card. The row's
+  // `asked` keeps it, read-only, above the answer line; a new question replaces both.
+  const asked={...elsewhere,asked:{parsed:true,text:'Problem: Ship now?\n1. Ship it\n2. Wait',problem:'Ship now?',choices:[{id:1,text:'Ship it',recommended:true},{id:2,text:'Wait'}]}};
+  const history=call('answerAsked',asked)+call('answerWon',board,asked);
+  assert(/Ship now\?.*<li value="1">Ship it ★<\/li><li value="2">Wait<\/li>.*Answered by sam: ship it/.test(history),history);
+  assert.equal(call('answerAsked',{...asked,state:'ask'}),'','an open question shows only its live card');
   call('save',board,{n:901},{draft:'wait'});
   assert(call('answerSteerComposer',board,elsewhere).includes('wait'),'a kept draft becomes steer');
   call('save',board,{n:901},{draft:''});

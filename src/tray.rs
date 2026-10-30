@@ -1427,9 +1427,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 if std::mem::take(&mut moved) {
                     settings.save(&install);
                 }
-                let mut st = state(&install, &settings, dark, None, &adding);
-                sync.observe(&st["projects"], Instant::now());
-                st["sync"]=sync.json();
+                let st = state(&install, &settings, dark, None, &adding, &mut sync);
                 seen_projects=st["projects"].clone();
                 // #1819: while any window is open the service polls the board every 15 s
                 let visible=|o:&Option<(Window,WebView)>|o.as_ref().is_some_and(|(w,_)|w.is_visible());
@@ -1506,14 +1504,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 // #1819: a detached conversation sees the answer it may show too
                 if receipt["answerReceipt"].is_object()||receipt["reportReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
             },
-            Event::UserEvent(Ev::Sync) => {
-                let script=format!("taskq.receive({})",json!({"sync":sync.json()}));
-                if let Some((_,wv))=&ui && !web.failed {web_eval(wv,&script,"tray.web.receive",&proxy,&mut web);}
-                for (window,calls) in [(&workspace,&mut workspace_web),(&settings_window,&mut settings_web),(&views_window,&mut views_web)] {
-                    if let (Some((_,wv)),Some(calls))=(window,calls) && !calls.failed {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}
-                }
-                for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&script,"tray.web.receive",&proxy,calls);}}
-            },
+            // #1918: a store change rebuilds the one snapshot at once: every window, the icon and notifications read it
+            Event::UserEvent(Ev::Sync) => {let _=proxy.send_event(Ev::Tick);},
             // a notification click opens the menu (or raises the pinned window) on that card (M14)
             Event::UserEvent(Ev::Note(id)) => {
                 let Ok(id) = serde_json::from_str::<Value>(&id) else { return };
@@ -1561,7 +1553,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web){
                         let owner=json!({"workspaceOwner":{"id":"main","detached":detached.keys().collect::<Vec<_>>()}});
                         web_eval(wv,&format!("taskq.receive({owner})"),"tray.web.receive",&proxy,calls);
-                        if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",state(&install,&settings,dark,None,&adding),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
+                        if action=="return" {web_eval(wv,&format!("taskq.receive({});taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync),json!({"open":{"page":"conversations"}})),"tray.web.receive",&proxy,calls);let select=json!({"workspaceOwner":{"id":"main","select":id,"detached":detached.keys().collect::<Vec<_>>()}});web_eval(wv,&format!("taskq.receive({select})"),"tray.web.receive",&proxy,calls);}
                         else {let r=json!({"conversationReceipt":{"id":input["id"],"state":"accepted","snapshot":crate::conversations::snapshot(&install)}});web_eval(wv,&format!("taskq.receive({r})"),"tray.web.receive",&proxy,calls);}
                     }
                     return;
@@ -1583,7 +1575,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     Some("ready") | Some("refresh") => {
                         let _=proxy.send_event(Ev::Sync);
                         calls.finish(0,"ok");
-                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
+                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
                         if surface=="main" && !workspace_open.is_null() && !workspace_open["page"].is_null(){web_eval(wv,&format!("taskq.receive({})",json!({"open":workspace_open.take()})),"tray.web.receive",&proxy,calls);}
                         let own=if surface=="main" {json!({"id":"main","detached":detached_ids})}else{json!({"id":surface,"conversation":surface,"detached":[]})};
                         web_eval(wv,&format!("taskq.receive({})",json!({"workspacePin":w.is_always_on_top(),"workspaceMaximized":w.is_maximized()})),"tray.web.receive",&proxy,calls);
@@ -1624,8 +1616,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let keys:Vec<String>=m["keys"].as_array().into_iter().flatten().filter_map(|v|v.as_str().map(String::from)).collect();
                         let mut receipt=crate::messages::act(&install,&ps,m["action"].as_str().unwrap_or(""),&keys);receipt["id"]=m["id"].clone();
                         web_eval(wv,&format!("taskq.receive({})",json!({"messageReceipt":receipt})),"tray.web.receive",&proxy,calls);
-                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
-                        push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));
+                        web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
+                        push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));
                     }
                     Some("workspace-set") => {
                         settings.set(&json!({"workspace_navigation":m["navigation"]}));
@@ -1651,7 +1643,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         let result=ai(&install,a,&m);
                         let receipt=if a=="ai-send" {json!({"aiReceipt":{"id":m["id"],"state":if result.is_ok(){"accepted"}else{"unknown"},"reason":result.err().unwrap_or_else(||"Request saved; native launch is separate".into())}})}else{json!({"workspaceLocalError":result.err()})};
                         web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);
-                        if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
+                        if a=="ai-send" {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);}
                     }
                     // Workspace reviews use the same queues, native picker and receipt adapters as the tray.
                     Some(a) if workspace_operation(a) => {let _=proxy.send_event(Ev::Ipc(message));}
@@ -1670,7 +1662,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 match m["a"].as_str().unwrap_or("") {
                     "ready" => {
                         calls.finish(0,"ok");
-                        web_eval(swv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
+                        web_eval(swv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
                         web_eval(swv,&format!("taskq.receive({})",chrome(sw)),"tray.web.receive",&proxy,calls);
                         if !settings_open.is_null() {web_eval(swv,&format!("taskq.receive({})",json!({"settingsOpen":settings_open.take()})),"tray.web.receive",&proxy,calls);}
                     }
@@ -1699,7 +1691,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 match m["a"].as_str().unwrap_or("") {
                     "ready" => {
                         calls.finish(0,"ok");
-                        web_eval(vwv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);
+                        web_eval(vwv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);
                         if settings.navigation["dashboard"].is_object() {web_eval(vwv,&format!("taskq.receive({})",json!({"dashboard":settings.navigation["dashboard"],"initial":true})),"tray.web.receive",&proxy,calls);}
                     }
                     "hide" => vw.set_visible(false),
@@ -1800,7 +1792,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             let _ = proxy.send_event(Ev::Shot);
                             return;
                         }
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                         // R22: Settings opens its own window; a snapshot keeps it in the menu
                         push(&mut web,&ui,&json!({"settingsWindow":true,"viewsWindow":true}));
                     }
@@ -1836,7 +1828,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         settings.pin.size_anchor = if let Some(value)=m["value"].as_str().filter(|v| ["auto","top","bottom","fixed"].contains(v)) {value.into()} else {return};
                         if settings.pin.size_anchor == "fixed" { let size=w.inner_size().to_logical::<f64>(w.scale_factor()); settings.pin.size=Some((size.width,size.height)); }
                         settings.save(&install);
-                        reply!(&state(&install,&settings,dark,None,&adding));
+                        reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
                     }
                     "resize-end" => { settings.save(&install); }
                     "hide" => w.set_visible(false),
@@ -1844,7 +1836,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         settings.pin.top = !settings.pin.top;
                         w.set_always_on_top(settings.pin.top);
                         settings.save(&install);
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                     }
                     "pin" | "drag" => {
                         settings.pin.pinned = m["a"]=="drag" || !settings.pin.pinned;
@@ -1860,7 +1852,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         }
                         settings.save(&install);
                         w.set_focus();
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                         if m["a"]=="drag" { let _=w.drag_window(); }
                     }
                     "completed" => {
@@ -1885,7 +1877,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             settings.save(&install);
                             notes(&install, &mut settings, &Value::Null, &mut asked, &mut bursts);
                         }
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                     }
                     "notify-test" if snapshot.is_none() => {
                         if let Some(k) = m["kind"].as_str().filter(|k| notify::KINDS.contains(k)) {
@@ -1896,7 +1888,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "set" => {
                         if let Err(error)=appearance_input(&m) {
                             settings.opacity_error=Some(error);
-                            reply!(&state(&install,&settings,dark,None,&adding));return;
+                            reply!(&state(&install,&settings,dark,None,&adding,&mut sync));return;
                         }
                         let appearance=["opacity","opacity_mode","background_opacity"].iter().any(|key|m.get(*key).is_some());
                         let previous=settings.clone();
@@ -1918,7 +1910,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             push(&mut web, &ui, &json!({"viewStateError": if saved { Value::Null } else { json!("tray.json: save failed; view state is not persisted") }}));
                             return;
                         }
-                let st = state(&install, &settings, dark, None, &adding);
+                let st = state(&install, &settings, dark, None, &adding, &mut sync);
                         refresh_icon(&tray, &st, &settings, dark, &mut icon_sig, ui.as_ref().map(|(w,_)|w));
                         reply!(&st);
                     }
@@ -1938,36 +1930,36 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         add_generation=add_generation.wrapping_add(1);
                         let generation=add_generation;
                         adding = json!({"state": "picking", "generation":generation});
-                        reply!(&state(&install, &settings, dark, None, &adding));
-                        if let Err(error)=add_actions.submit(generation,None) {adding=json!({"state":"add failed","reason":error});reply!(&state(&install,&settings,dark,None,&adding));}
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
+                        if let Err(error)=add_actions.submit(generation,None) {adding=json!({"state":"add failed","reason":error});reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
                     }
                     "agentq-setup" | "agentq-dismiss" if snapshot.is_none() => {
                         let error=crate::agentq::action(&install,m["a"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or(""),m["runtime"].as_str().unwrap_or("")).err();
                         reply!(&json!({"agentqError":error}));
-                        reply!(&state(&install,&settings,dark,None,&adding));
+                        reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
                     }
-                    "agentq-check" => {reply!(&state(&install,&settings,dark,None,&adding));}
+                    "agentq-check" => {reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
                     "add-cancel" if adding["state"]=="picking" => {
                         add_generation=add_generation.wrapping_add(1);
                         adding = json!({"state":"picking dismissed","generation":add_generation});
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                     }
                     "add-cancel" if adding["state"]=="installing" => {
                         add_generation=add_generation.wrapping_add(1);
                         adding = json!({"state":"installing dismissed","generation":add_generation});
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                     }
-                    "add-cancel" => {adding=Value::Null;reply!(&state(&install,&settings,dark,None,&adding));}
+                    "add-cancel" => {adding=Value::Null;reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
                     "add-install" if m["generation"].is_u64() && m["generation"]==adding["generation"] && adding["kind"] == "taskq" && adding["state"] == "picked" => {
                         adding["state"] = json!("installing");
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                         let generation=adding["generation"].as_u64().unwrap_or(0);
-                        if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);reply!(&state(&install,&settings,dark,None,&adding));}
+                        if let Err(error)=add_actions.submit(generation,Some(adding.clone())) {adding["state"]=json!("install failed");adding["reason"]=json!(error);reply!(&state(&install,&settings,dark,None,&adding,&mut sync));}
                     }
                     "add-setup" if m["generation"].is_u64() && m["generation"]==adding["generation"] && matches!(adding["kind"].as_str(), Some("new" | "plain")) => {
                         if let Err(reason) = crate::setup::submit(&install, crate::runtime::OWNER, None, &[adding["path"].as_str().unwrap_or_default().to_string()]) {reply!(&json!({"aiError":reason}));}
                         adding = Value::Null;
-                        reply!(&state(&install, &settings, dark, None, &adding));
+                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
                     }
                     "add-install" | "add-setup" => reply!(&json!({"aiError":"Setup selection changed or was already submitted; read the current selection before confirming."})),
                     a => {
@@ -1988,10 +1980,10 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 }
             }
             Event::UserEvent(Ev::Added(generation,v)) => {
-                if matches!(adding["state"].as_str(),Some("picking dismissed"|"installing dismissed"))&&add_generation==generation.wrapping_add(1) {adding=Value::Null;push(&mut web,&ui,&state(&install,&settings,dark,None,&adding));return;}
+                if matches!(adding["state"].as_str(),Some("picking dismissed"|"installing dismissed"))&&add_generation==generation.wrapping_add(1) {adding=Value::Null;push(&mut web,&ui,&state(&install,&settings,dark,None,&adding,&mut sync));return;}
                 if !apply_added(&mut adding,add_generation,generation,v) {return;}
-                push(&mut web,&ui, &state(&install, &settings, dark, None, &adding));
-                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding)),"tray.web.receive",&proxy,calls);}
+                push(&mut web,&ui, &state(&install, &settings, dark, None, &adding, &mut sync));
+                if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({})",state(&install,&settings,dark,None,&adding,&mut sync)),"tray.web.receive",&proxy,calls);}
                 if !adding.is_null() && let Some((w,_))=&workspace {
                     w.set_visible(true);
                     w.set_focus();
@@ -2057,7 +2049,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                         if let Err(error)=window_opacity(w,s.native_opacity()) {capture_errors.push(error);}
                     }
                 }
-                let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null);
+                let st=state(&install, &s, theme == "dark", Some((theme, &page)), &Value::Null, &mut crate::pending::Pending::default());
                 // the Conversations and question fixtures merge invented tasks into the real pushed state (palette, font, theme)
                 let merged=conversation_shots||ANSWERS.iter().any(|(_, s)| *s==script)||REPORT_SHOTS.iter().any(|(_,s)|*s==script);
                 if merged {if let Some((_, wv))=&ui {web_eval(wv,&format!("{script}({st})"),"tray.web.fixture",&proxy,&mut web);}}
@@ -2196,8 +2188,11 @@ fn shot_name(install: &Path, routes: &[String], step: usize) -> String {
     })
 }
 
-fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value) -> Value {
+fn state(install: &Path, s: &Settings, dark: bool, snap: Option<(&str, &str)>, add: &Value, sync: &mut crate::pending::Pending) -> Value {
     let mut ps: Vec<Value> = roots(install).iter().map(|r| project(install, r)).collect();
+    // #1918 one channel: the pending store settles on the board's rows, then applies to them before anything below reads them
+    sync.observe(&ps, Instant::now());
+    sync.apply(&mut ps);
     // #1592: the page renders this model; it keeps no counts, order, labels or age of its own
     let observed=now();
     let display = crate::display::model(&mut ps, observed);
@@ -3750,14 +3745,71 @@ mod tests {
         let s = Settings::load(&install);
         assert!(s.view == "icon" && s.font == 16, "defaults shown");
         assert_eq!(fs::read_to_string(install.join("tray.json")).unwrap(), "{\"view\": \"fu", "a read never resets it");
-        let reason = state(&install, &s, false, None, &Value::Null)["settings_error"].clone();
+        let reason = state(&install, &s, false, None, &Value::Null, &mut crate::pending::Pending::default())["settings_error"].clone();
         assert!(reason.as_str().unwrap().starts_with("tray.json: corrupt"), "the popover names the reason: {reason}");
         assert!(HTML.contains("Settings unknown:"));
         assert!(s.save(&install));
-        assert_eq!(state(&install, &s, false, None, &Value::Null)["settings_error"], Value::Null, "a save clears it");
+        assert_eq!(state(&install, &s, false, None, &Value::Null, &mut crate::pending::Pending::default())["settings_error"], Value::Null, "a save clears it");
         assert_eq!(fs::read_to_string(install.join("tray.json.corrupt")).unwrap(), "{\"view\": \"fu", "a save keeps a copy");
         assert_eq!(Settings::load(&install).font, 16);
         fs::remove_dir_all(install).unwrap();
+    }
+
+    // Chain: owner answer -> accepted op-id readback -> stale status.json refresh -> every tray surface. Risk (#1918):
+    // the list, dot, badge, icon, notification or conversation reads a stale pre-answer snapshot and shows the
+    // question open again after the board accepted the answer.
+    #[test]
+    fn an_accepted_answer_stays_closed_on_every_surface_across_a_stale_refresh() {
+        let base = std::env::temp_dir().join(format!("taskq-tray-one-channel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let (install, root) = (base.join("install"), base.join("project"));
+        fs::create_dir_all(&install).unwrap();
+        fs::create_dir_all(crate::dot(&root)).unwrap();
+        fs::write(install.join("projects"), format!("{}\n", root.display())).unwrap();
+        let r = root.to_str().unwrap();
+        let card = "Problem: Pick one\n1. Ship\n2. Wait";
+        let status = |state: &str, revision: u64, ops: &[&str]| {
+            let mut t = json!({"n": 7, "title": "T", "state": state, "revision": revision, "ops": ops});
+            if state == "ask" { t["card"] = json!(card); t["question"] = crate::snapshot::question(card); }
+            let s = json!({"complete": true, "issues": "https://github.com/o/r/issues", "observed": now(), "tasks_age_seconds": 0, "tasks": [t]});
+            fs::write(crate::dot(&root).join("status.json"), s.to_string()).unwrap();
+        };
+        // the ask was notified once, before the answer
+        fs::write(crate::dot(&root).join("events"), format!("since 1\n{} #7 ask 1\n", now() - 5)).unwrap();
+        status("ask", 30, &["ask-op"]);
+        let s = Settings::load(&install);
+        let mut sync = crate::pending::Pending::default();
+        let (mut n, mut bursts) = (json!({"host": {"ask": "banner"}}), notify::Bursts::default());
+        let before = state(&install, &s, false, None, &Value::Null, &mut sync);
+        notify::due(&mut n, before["projects"].as_array().unwrap(), now(), &mut bursts);
+        let ask = |st: &Value| {
+            let ps = st["projects"].as_array().unwrap();
+            let t = &ps[0]["tasks"][0];
+            let dot = ps[0]["counts"].as_array().unwrap().iter().find(|c| c["state"] == "ask").unwrap()["n"].clone();
+            let badge = st["messages"]["entries"].as_array().unwrap().iter().any(|e| e["kind"] == "question" && e["pending"] == true);
+            (t["state"].clone(), dot, badge, summary_at(ps, (0, 1), now()).counts[1])
+        };
+        assert_eq!(ask(&before), (json!("ask"), json!(1), true, 1), "the question is open before the answer");
+
+        let request = json!({"root": r, "op": {"id": "tray.1", "task": 7, "revision": 30, "choice": 1}});
+        sync.begin(&request, &before["projects"]);
+        assert!(sync.receipt(&json!({"answerReceipt": {"root": r, "id": "tray.1", "state": "accepted"}, "sync": {"state": "doing", "revision": 25}})));
+        // the service has not read the board again: status.json still holds the question, twice
+        for _ in 0..2 {
+            status("ask", 30, &["ask-op"]);
+            let st = state(&install, &s, false, None, &Value::Null, &mut sync);
+            assert_eq!(ask(&st), (json!("doing"), json!(0), false, 0), "list, dot, badge and icon keep the readback");
+            assert!(notify::due(&mut n, st["projects"].as_array().unwrap(), now(), &mut bursts).is_empty(), "no notification asks again");
+            let t = &st["projects"][0]["tasks"][0];
+            assert_eq!((t["asked"]["text"].as_str(), t["answered"].clone(), t["card"].clone()), (Some(card), json!({"by": "you", "text": "Ship"}), Value::Null),
+                "the conversation keeps the question, then the answer");
+        }
+        // the board's readback carries the op id; a lagging read after it still never reopens the question
+        status("doing", 25, &["tray.1", "ask-op"]);
+        assert_eq!(ask(&state(&install, &s, false, None, &Value::Null, &mut sync)).0, json!("doing"));
+        status("ask", 30, &["ask-op"]);
+        assert_eq!(ask(&state(&install, &s, false, None, &Value::Null, &mut sync)), (json!("doing"), json!(0), false, 0));
+        fs::remove_dir_all(base).unwrap();
     }
 
     // Chain: § 4 tray counts across projects. Risk: double counting or unknown shown as known.
@@ -3837,7 +3889,7 @@ mod tests {
             settings.set(&json!({"opacity":value}));assert_eq!(settings.opacity,95,"refuse invalid opacity");
         }
         assert!(settings.save(&install));
-        assert_eq!(state(&install,&settings,false,None,&Value::Null)["opacity"],95,"native readback reaches every menu route");
+        assert_eq!(state(&install,&settings,false,None,&Value::Null,&mut crate::pending::Pending::default())["opacity"],95,"native readback reaches every menu route");
         let saved:Value=serde_json::from_str(&fs::read_to_string(install.join("tray.json")).unwrap()).unwrap();
         assert_eq!(saved["future"]["keep"],true);
         fs::remove_dir_all(install).unwrap();
@@ -3859,7 +3911,7 @@ mod tests {
         for v in [json!({"opacity_mode":null}),json!({"opacity_mode":"other"}),json!({"background_opacity":-1}),json!({"background_opacity":101}),json!({"background_opacity":0.5}),json!({"opacity":59})] {
             assert!(appearance_input(&v).is_err(),"reject {v} before native application");
         }
-        let st=state(&install,&s,false,None,&Value::Null);
+        let st=state(&install,&s,false,None,&Value::Null,&mut crate::pending::Pending::default());
         assert_eq!((st["opacity_mode"].as_str(),st["background_opacity"].as_u64()),(Some("background"),Some(100)));
         assert!(st.get("backing_strength").is_none(),"retired backing never reaches the renderer");
         s.set(&json!({"opacity_mode":"whole"}));assert_eq!(s.native_opacity(),60,"switch restores the independent whole-window value");
