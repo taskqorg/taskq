@@ -6,6 +6,7 @@ mod macos_tcc_evidence;
 mod resource_policy_contract;
 mod service_log;
 mod telemetry_process;
+mod version;
 
 // #1566: an unbounded `output()` let one stuck Windows child run the whole gate into its 900 s
 // budget with nothing captured. Output goes to files, so only the child's own exit ends the wait,

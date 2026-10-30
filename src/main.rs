@@ -101,7 +101,7 @@ const USAGE: &str = "taskq agents
  taskq service permissions [--runtime R --mode restricted|workspace|full|none [--scope host|project]]
  taskq service resources [--grant ID --actor ID --hours N [--project P].. [--runtime R].. [--host-policy] [--project-limits] | --revoke ID]
  taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. | --revoke ID] [--json]
- taskq tray [--open | --snapshot DIR [--route R,..]] | taskq selftest
+ taskq tray [--open | --snapshot DIR [--route R,..]] | taskq selftest | taskq --version
 Writes to a task take [--op-id ID] [--revision R] [--json] (taskq.md section 5).
 Text templates and limits: taskq.md sections 1, 2, 5, 7.";
 

@@ -20,6 +20,8 @@ fn main() {
         if let Err(e) = platform::sign_local(paths) { let _ = writeln!(std::io::stderr(), "Error: signing: {e}"); std::process::exit(1) }
         return;
     }
+    // § 5 `taskq --version` (#1900): before install lookup, telemetry and launcher, so no board, network, service or install access.
+    if std::env::args().skip(1).eq(["--version"]) { println!("{}", platform::VERSION); return; }
     let install = platform::default_install();
     let args=Args::parse(&std::env::args().skip(1).collect::<Vec<_>>());
     let maintenance=args.as_ref().is_ok_and(|a|a.pos==["profile","migrate"]);

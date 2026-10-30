@@ -194,7 +194,7 @@ Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
 | `taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. \| --revoke ID] [--json]` | [PM authority/receipts](docs/design/pm-requests.md); owner-only, off by default |
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail][prof] |
 | `taskq agents` | read-only login probe per startable runtime: [runtime login](docs/design/capacity.md#runtime-login) |
-| `taskq selftest` | load config, fold built-in `tests/golden`, read the board; no writes |
+| `taskq selftest` / `taskq --version` | load config, fold built-in `tests/golden`, read the board; no writes / [binary version][hsd] |
 - Task writes: `#N <state>`; close adds one publication link/SHA line.
 - Errors/refusals: `Error: <problem>` then `Next: <action>`; ≤ 2 lines, ≤ 160 characters each; a compact one links its full diagnostic in `.taskq/cli-errors.log`, else keeps raw output (R12).
 - Other acknowledgements: action, project/version; one line ≤ 160 characters. Capacity writes add `Receipt: <id>`. Batch: one outcome per item.
