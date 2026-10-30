@@ -42,7 +42,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await shot('settings');
    // R16/R17: one line per host, Claude and Codex apart; stale never 0; this host's expansion holds units and age
    await go('hosts');
-   const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>e.textContent));
+   const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>e.innerText));
    assert.deepEqual(lines,['fra · runs unknown · 5m old','mac · Claude 1 · Codex 1 · Codex expired','win · Claude 0 · Codex 1']);
    await p.locator('.host-line > summary',{hasText:'mac'}).click();
    assert.equal(await p.locator('.resource-meter meter').count(),2);

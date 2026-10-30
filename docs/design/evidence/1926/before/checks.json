@@ -1,0 +1,13 @@
+{
+  "failures": [
+    "opaque counter background at top",
+    "sticky row fully visible at middle",
+    "opaque counter background at middle",
+    "sticky row fully visible at bottom",
+    "opaque counter background at bottom",
+    "eight states share centered target-sized slots and identity edge",
+    "project heading rhythm"
+  ],
+  "matrix": [],
+  "errors": []
+}

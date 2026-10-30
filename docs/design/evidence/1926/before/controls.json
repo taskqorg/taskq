@@ -1,0 +1,1008 @@
+{
+  "settings": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "stop"
+      },
+      "label": "Emergency stopDrain or Full stop",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "about"
+      },
+      "label": "About and updatesvfixture",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "agents"
+      },
+      "label": "Agents and accessCodex expired",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "appearance"
+      },
+      "label": "Appearance16 px · Icon · growth Auto",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "cadence"
+      },
+      "label": "Activity historyDay",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "delivery"
+      },
+      "label": "Deliveryauto-merge (2)",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "hosts"
+      },
+      "label": "Hosts and resourcesfixture · runs unknown · Codex expired",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "notifications"
+      },
+      "label": "NotificationsOS blocked",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "projects"
+      },
+      "label": "Projects2 registered",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "recovery"
+      },
+      "label": "Recoveryno hold",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "services"
+      },
+      "label": "Services and supporthost service running",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "route": "work"
+      },
+      "label": "Work modeUnknown: all 2 projects · Intake: 2 unknown · capacity unavailable",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "appearance": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "pin"
+      },
+      "label": "Keep menu open",
+      "title": "Keep menu open",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "size-anchor",
+        "value": "auto"
+      },
+      "label": "Auto",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "size-anchor",
+        "value": "bottom"
+      },
+      "label": "Up",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "size-anchor",
+        "value": "fixed"
+      },
+      "label": "Fixed",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "size-anchor",
+        "value": "top"
+      },
+      "label": "Down",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "top"
+      },
+      "label": "Menu always on top",
+      "title": "Menu always on top",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "font",
+        "v": "14"
+      },
+      "label": "14",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "font",
+        "v": "16"
+      },
+      "label": "16",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "font",
+        "v": "18"
+      },
+      "label": "18",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "font",
+        "v": "20"
+      },
+      "label": "20",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "opacity_mode",
+        "v": "background"
+      },
+      "label": "Background only",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "opacity_mode",
+        "v": "whole"
+      },
+      "label": "Whole window",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "opacity",
+        "v": "100"
+      },
+      "label": "Off",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "view",
+        "v": "full"
+      },
+      "label": "Summary",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "view",
+        "v": "icon"
+      },
+      "label": "Icon",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "INPUT",
+      "data": {
+        "opacity": "background_opacity"
+      },
+      "label": "",
+      "title": "",
+      "href": null,
+      "disabled": true,
+      "value": "37"
+    },
+    {
+      "tag": "INPUT",
+      "data": {
+        "opacity": "opacity"
+      },
+      "label": "",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": "90"
+    }
+  ],
+  "notifications": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify-os"
+      },
+      "label": "Open OS setting ↗",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify-test",
+        "kind": "ask"
+      },
+      "label": "Send test",
+      "title": "",
+      "href": null,
+      "disabled": true,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify-test",
+        "kind": "close"
+      },
+      "label": "Send test",
+      "title": "",
+      "href": null,
+      "disabled": true,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify-test",
+        "kind": "failed"
+      },
+      "label": "Send test",
+      "title": "",
+      "href": null,
+      "disabled": true,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify-test",
+        "kind": "gone"
+      },
+      "label": "Send test",
+      "title": "",
+      "href": null,
+      "disabled": true,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "ask",
+        "v": "banner"
+      },
+      "label": "Banner",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "ask",
+        "v": "off"
+      },
+      "label": "Off",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "ask",
+        "v": "silent"
+      },
+      "label": "Silent",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "ask",
+        "v": "sound"
+      },
+      "label": "Banner with sound",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "close",
+        "v": "banner"
+      },
+      "label": "Banner",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "close",
+        "v": "off"
+      },
+      "label": "Off",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "close",
+        "v": "silent"
+      },
+      "label": "Silent",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "close",
+        "v": "sound"
+      },
+      "label": "Banner with sound",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "failed",
+        "v": "banner"
+      },
+      "label": "Banner",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "failed",
+        "v": "off"
+      },
+      "label": "Off",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "failed",
+        "v": "silent"
+      },
+      "label": "Silent",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "failed",
+        "v": "sound"
+      },
+      "label": "Banner with sound",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "gone",
+        "v": "banner"
+      },
+      "label": "Banner",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "gone",
+        "v": "off"
+      },
+      "label": "Off",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "gone",
+        "v": "silent"
+      },
+      "label": "Silent",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "notify",
+        "kind": "gone",
+        "v": "sound"
+      },
+      "label": "Banner with sound",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "cadence": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "historyBin": "0/1000"
+      },
+      "label": "[01/01/1970, 12:00:00 AM UTC, 01/01/1970, 12:16:40 AM UTC) · closed 1, failed 2, ask 3, blocked 4 · ongoing",
+      "title": "[01/01/1970, 12:00:00 AM UTC, 01/01/1970, 12:16:40 AM UTC) · closed 1, failed 2, ask 3, blocked 4 · ongoing",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "period",
+        "v": "1d"
+      },
+      "label": "Day",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "period",
+        "v": "1h"
+      },
+      "label": "Hour",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "period",
+        "v": "1mo"
+      },
+      "label": "30 days",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "period",
+        "v": "1w"
+      },
+      "label": "7 days",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "period",
+        "v": "5m"
+      },
+      "label": "5 min",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "set": "period",
+        "v": "custom"
+      },
+      "label": "Custom",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "hosts": [],
+  "work": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "admission"
+      },
+      "label": "Review admission in workspace…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "agents": [],
+  "projects": [
+    {
+      "tag": "A",
+      "data": {
+        "url": "https://example.org/org/alpha/issues"
+      },
+      "label": "Open Alpha Board",
+      "title": "Open Alpha Board",
+      "href": "https://example.org/org/alpha/issues",
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "A",
+      "data": {
+        "url": "https://gitlab.example.org/org/beta/-/issues"
+      },
+      "label": "Open Beta Board",
+      "title": "Open Beta Board",
+      "href": "https://gitlab.example.org/org/beta/-/issues",
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "all-tasks"
+      },
+      "label": "All tasks: 7 open",
+      "title": "All projects · open tasks",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "setup"
+      },
+      "label": "Add project in workspace…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "project",
+        "project": "/fixture/alpha"
+      },
+      "label": "Alpha",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "project",
+        "project": "/fixture/beta"
+      },
+      "label": "Beta",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "ask"
+      },
+      "label": "All projects · Ask: 1",
+      "title": "All projects · Ask: 1",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "doing"
+      },
+      "label": "All projects · Doing: 1",
+      "title": "All projects · Doing: 1",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "failed"
+      },
+      "label": "All projects · Failed: 0",
+      "title": "All projects · Failed: 0",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "held"
+      },
+      "label": "All projects · Held: 1",
+      "title": "All projects · Held: 1",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "later"
+      },
+      "label": "All projects · Later: 1",
+      "title": "All projects · Later: 1",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "ready"
+      },
+      "label": "All projects · Ready: 3",
+      "title": "All projects · Ready: 3",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "review"
+      },
+      "label": "All projects · Review: 0",
+      "title": "All projects · Review: 0",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "tqp": "tasks",
+        "project": "",
+        "state": "waiting"
+      },
+      "label": "All projects · Blocked: 0",
+      "title": "All projects · Blocked: 0",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "delivery": [
+    {
+      "tag": "A",
+      "data": {
+        "url": "https://example.org/org/alpha/issues"
+      },
+      "label": "Open Board",
+      "title": "",
+      "href": "https://example.org/org/alpha/issues",
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "A",
+      "data": {
+        "url": "https://gitlab.example.org/org/beta/-/issues"
+      },
+      "label": "Open Board",
+      "title": "",
+      "href": "https://gitlab.example.org/org/beta/-/issues",
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "services": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "folder",
+        "root": "/fixture/alpha"
+      },
+      "label": "Open folder",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "folder",
+        "root": "/fixture/beta"
+      },
+      "label": "Open folder",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "service",
+        "root": "/fixture/alpha"
+      },
+      "label": "Review service operations…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "service",
+        "root": "/fixture/beta"
+      },
+      "label": "Review service operations…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    },
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "service"
+      },
+      "label": "Host maintenance in workspace…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "recovery": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "recovery"
+      },
+      "label": "Review recovery…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ],
+  "about": [
+    {
+      "tag": "BUTTON",
+      "data": {
+        "a": "workspace",
+        "page": "operations",
+        "operation": "update"
+      },
+      "label": "Review updates…",
+      "title": "",
+      "href": null,
+      "disabled": false,
+      "value": null
+    }
+  ]
+}
