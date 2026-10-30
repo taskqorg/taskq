@@ -2,6 +2,18 @@
 
 This candidate connects an originating owner chat to its held brief, assignment, worker question, answer, reviewer and result. R1/R13: the owner's selected board-held reference is on #1929; `add --conversation ID --op-id ID` records it on the first accepted `hold`. A create claim binds that reference. No task state, transcript or execution moves to a new database, scheduler, gateway or writer.
 
+## Merge-queue contract-size correction
+
+[Merge-group run 41105212774](https://github.com/taskqorg/taskq/actions/runs/41105212774) rejected merge result `c11dbc1c5c614a931929321fb5e5aa2084cec50a`: `core::tests::every_table_row_has_a_golden_trace` failed with `taskq.md over 60 KiB`. Linux passed 666 other unit checks; macOS and Windows were cancelled, not qualified. The exact merged contract had 299 lines and 61,444 bytes, four above the unchanged 60 KiB limit.
+
+The same existing test reproduced that failure locally using the exact merge-result contract. R1 now reuses `[DashQ][dq]` instead of repeating the enrollment URL. The existing reference points to the same document's `Contract detail`; no rule meaning, limit, assertion or runtime code changes. The merged contract is 61,421 bytes and 299 lines, and the same test passes. The branch contract is 61,415 bytes and 297 lines. The approved R1 and §5 behavior remains intact.
+
+This correction continues the existing PR without another rebase: the board requeued a failed publication, not `main-moved` (§7.4). The earlier acceptance review and browser observations below remain evidence of unchanged implementation, with their stated native limits. New merge-result CI is required before publication (R12/§7).
+
+The final local `python3 scripts/check.py --base 0426dee15143f745bfd0df313f183750ab25c386` passed the rule gate, web build, all 738 unit checks (including the unchanged contract/golden-trace guard) and 21 integration checks. It stopped at `telemetry_process::resume_records_its_result_without_releasing_the_host_hold` with `sandbox-exec: sandbox_apply: Operation not permitted`: **sandbox-blocked**, not PASS. Elapsed: 104.226 s; no full retry. The remaining selected steps passed separately: isolated offline selftest, all 30 Node component files and shot/release fixtures in 62.031 s; five browser instruments in 58.377 s (`conversations-declutter`, `conversations-flow`, `conversations-render`, `dialogue`, `pm-composer`).
+
+Fresh #1742 observations retain 10,000 records per provider, mounted maxima 662/643 and anchors within 2 CSS px. Claude/Codex render p95 was 59/46 ms, maximum 344/186 ms; wheel-frame p95 was 67/67 ms. Long tasks numbered 9/2, maximum 344/185 ms. These are headless measurements, not native smoothness acceptance. Runtime source, tests, assertions and committed images are unchanged in this correction. Native Mac/Windows, disposable-session and same-prefix rewrite limits below remain unqualified.
+
 ## Main-moved correction
 
 The service requeued PR #1961 as `main-moved` after its accepted review. This attempt rebased the same three commits onto `0426dee15143f745bfd0df313f183750ab25c386` (§7.4). The only textual conflict was in `src/workspace.js`: the resolution retains both the main Results reader for a selected closed question and this task's originating-chat cards/shared answer composer. `git range-diff` shows no change to the reply-recovery and approved-command commits.
