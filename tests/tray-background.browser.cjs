@@ -35,7 +35,7 @@ function inspect(){
  for(const e of [root,...root.querySelectorAll('*')]){
   if(!visible(e)||e.closest('button,.counter,.badge,svg,img'))continue;
   const c=getComputedStyle(e),a=rgba(c.backgroundColor)[3];
-  if(e.matches('.filter-header')){if(a!==1)fills.push({element:'task filter background must stay opaque',alpha:a});}
+  if(e.matches('.filter-header,.dashboard-status>summary')){if(a!==1)fills.push({element:'host/filter background must stay opaque',alpha:a});}
   else if(a>alpha+1/255)fills.push({element:e.outerHTML.slice(0,240),alpha:a});
  }
  return {failures,opacity,fills,minimum:Math.min(...samples),samples:samples.length};
@@ -63,6 +63,7 @@ function inspect(){
   }
   await page.evaluate(s=>taskq.receive(s),{...s,page:'home'});
   await page.locator('.filter-header').evaluate(e=>e.style.background='transparent');assert((await page.evaluate(inspect)).fills.length>0,'fading the task filter background must fail');await page.locator('.filter-header').evaluate(e=>e.style.removeProperty('background'));
+  await page.locator('.dashboard-status>summary').evaluate(e=>e.style.background='transparent');assert((await page.evaluate(inspect)).fills.length>0,'fading the host strip background must fail');await page.locator('.dashboard-status>summary').evaluate(e=>e.style.removeProperty('background'));
   await page.locator('[data-a=view-editor]').click();
   assert.deepEqual((await page.evaluate(inspect)).fills,[],'floating fills clear at zero');
   assert.deepEqual((await page.evaluate(inspect)).opacity,[],'floating controls retain full alpha');
