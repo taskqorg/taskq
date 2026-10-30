@@ -602,6 +602,7 @@ impl Kind {
         let token = (self.token)(tool, host)?;
         let mut api = (self.api)(host, repo, &token);
         api.credentials.get_mut().pause = Some(crate::requests::pause_file(&tool.install, &api.root, &token));
+        api.credentials.get_mut().user = Some(crate::requests::user_file(&tool.install, &api.root, &token));
         if self.reload_token {
             let (tool, host, lookup) = (tool.clone(), host.to_string(), self.token);
             api.token_source = Some((tool.install.clone(), Box::new(move || lookup(&tool, &host))));
