@@ -1,4 +1,4 @@
-// M1.2 / #1876 A2–A3: all fills fade, foreground stays opaque, modes and windows stay independent.
+// M1.2 / #1926: the task filter stays opaque; other fills fade, foreground and mode/window isolation stay protected.
 const assert=require('node:assert/strict'),fs=require('node:fs'),{chromium}=require('playwright');
 const out=process.env.TASKQ_BACKGROUND_SHOTS;
 const html=fs.readFileSync('build/web/tray.html','utf8');
@@ -35,7 +35,8 @@ function inspect(){
  for(const e of [root,...root.querySelectorAll('*')]){
   if(!visible(e)||e.closest('button,.counter,.badge,svg,img'))continue;
   const c=getComputedStyle(e),a=rgba(c.backgroundColor)[3];
-  if(a>alpha+1/255)fills.push({element:e.outerHTML.slice(0,240),alpha:a});
+  if(e.matches('.filter-header')){if(a!==1)fills.push({element:'task filter background must stay opaque',alpha:a});}
+  else if(a>alpha+1/255)fills.push({element:e.outerHTML.slice(0,240),alpha:a});
  }
  return {failures,opacity,fills,minimum:Math.min(...samples),samples:samples.length};
 }
@@ -58,9 +59,11 @@ function inspect(){
   for(const background_opacity of [0,50])for(const route of ['home','appearance','settings','agents','notifications','services','about','projects','attention']){
    await page.evaluate(s=>taskq.receive(s),{...s,page:route,background_opacity});
    if(route==='home')await page.locator('.task-row .tqp-task-title>a').first().hover();
-   const result=await page.evaluate(inspect);assert.deepEqual(result.opacity,[],route+' full foreground alpha');assert.deepEqual(result.fills,[],route+' all fills follow background opacity');
+   const result=await page.evaluate(inspect);assert.deepEqual(result.opacity,[],route+' full foreground alpha');assert.deepEqual(result.fills,[],route+' fills follow M1.2 including the opaque task-filter exception');
   }
-  await page.evaluate(s=>taskq.receive(s),{...s,page:'home'});await page.locator('[data-a=view-editor]').click();
+  await page.evaluate(s=>taskq.receive(s),{...s,page:'home'});
+  await page.locator('.filter-header').evaluate(e=>e.style.background='transparent');assert((await page.evaluate(inspect)).fills.length>0,'fading the task filter background must fail');await page.locator('.filter-header').evaluate(e=>e.style.removeProperty('background'));
+  await page.locator('[data-a=view-editor]').click();
   assert.deepEqual((await page.evaluate(inspect)).fills,[],'floating fills clear at zero');
   assert.deepEqual((await page.evaluate(inspect)).opacity,[],'floating controls retain full alpha');
   await page.locator('#taskq-popover [data-a=popup-close]').first().click();
