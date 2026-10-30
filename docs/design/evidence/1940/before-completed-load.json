@@ -1,4 +1,4 @@
-﻿{
+{
     "qualification":  "Windows installed v4.6.47; read-only board history; source revision unknown",
     "command":  "taskq status --closed --json",
     "wall_ms":  22557.2923,

@@ -1,0 +1,50 @@
+[
+    {
+        "source":  "49940ae2c453d8be4631038552a4e8eb5764e028",
+        "route":  "reports",
+        "qualification":  "Windows WebView2; invented receipts; isolated installation; not deployed",
+        "exit":  0,
+        "elapsed_ms":  32337.176000000003,
+        "binary_sha256":  "b2b43d5eaec36929261ecd853a14f34cff552377586bf57c751fce5083e53b47",
+        "images":  [
+                       "popover-dark-reports-16.png",
+                       "popover-light-reports-16.png"
+                   ]
+    },
+    {
+        "source":  "49940ae2c453d8be4631038552a4e8eb5764e028",
+        "route":  "reports-conversations",
+        "qualification":  "Windows WebView2; invented receipts; isolated installation; not deployed",
+        "exit":  0,
+        "elapsed_ms":  6031.9162000000006,
+        "binary_sha256":  "b2b43d5eaec36929261ecd853a14f34cff552377586bf57c751fce5083e53b47",
+        "images":  [
+                       "popover-dark-reports-conversations-16.png",
+                       "popover-light-reports-conversations-16.png"
+                   ]
+    },
+    {
+        "source":  "49940ae2c453d8be4631038552a4e8eb5764e028",
+        "route":  "results",
+        "qualification":  "Windows WebView2; invented receipts; isolated installation; not deployed",
+        "exit":  0,
+        "elapsed_ms":  6234.6687,
+        "binary_sha256":  "b2b43d5eaec36929261ecd853a14f34cff552377586bf57c751fce5083e53b47",
+        "images":  [
+                       "popover-dark-results-16.png",
+                       "popover-light-results-16.png"
+                   ]
+    },
+    {
+        "source":  "49940ae2c453d8be4631038552a4e8eb5764e028",
+        "route":  "results-conversations",
+        "qualification":  "Windows WebView2; invented receipts; isolated installation; not deployed",
+        "exit":  0,
+        "elapsed_ms":  7264.6899,
+        "binary_sha256":  "b2b43d5eaec36929261ecd853a14f34cff552377586bf57c751fce5083e53b47",
+        "images":  [
+                       "popover-dark-results-conversations-16.png",
+                       "popover-light-results-conversations-16.png"
+                   ]
+    }
+]

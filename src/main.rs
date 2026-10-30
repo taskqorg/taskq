@@ -1478,7 +1478,14 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
         let wait = if reduced {1} else {poll_wait(cfg.poll, error.is_none(), !s.idle(), poked, s.snapshot.as_ref())};
         // every 30 s, also between board polls: a gate sample (when enabled) and a fresh capacity in status.json (§ 4)
         let mut tick = || {
+            let results_ready=reports.received();
+            if results_ready {
+                status["reports"]=reports.tick(&cfg.root,cfg.poll,cfg.ttl,false);
+                status["tasks_age_seconds"]=json!(s.tasks_read.map(|t|t.elapsed().as_secs()));
+                status["at"]=json!(SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0,|d|d.as_secs()));
+            }
             if sampled.is_some_and(|t| t.elapsed().as_secs() < 30) {
+                if results_ready {publish_status(&tool,&cfg.root,&status,host.as_ref());}
                 return;
             }
             sampled = Some(Instant::now());

@@ -12,7 +12,7 @@ An ordinary card shows Changed, Checks and Open verbatim from the accepted hand-
 
 Trusted, unedited `taskq: result-read <sha>` and `taskq: result-accept <sha>` comments record ordinary result attention. These are metadata, ignored by the lifecycle fold. Reports retain their existing markers and decision rules. A source result SHA is the identity; tasks without a recorded result use `close-<comment id>` (or their trusted issue number when no close entry exists) and explicitly label their missing hand-in unknown. Unknown collection never means zero results.
 
-The service reconstructs the projection from closed board tasks, including summary and immutable report content. It refreshes updated closed tasks incrementally and invalidates on close events. Restart hydrates only the disposable projection, then verifies it against the board; stale data stays visible with its reason. Every view uses this projection, including the legacy Completed list. This removes a separate history read before the operator can assess a result.
+The service reconstructs the projection from closed board tasks, including summary and immutable report content. It refreshes updated closed tasks incrementally and invalidates on close events. The existing local sleep tick publishes completed collection without forcing another board pass. Restart hydrates only the disposable projection, then verifies it against the board; stale data stays visible with its reason. Every view uses this projection, including the legacy Completed list. This removes a separate history read before the operator can assess a result.
 
 ## Contract detail
 

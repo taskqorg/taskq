@@ -1,17 +1,22 @@
-# #1940 Reports checkpoint
+# #1940 Results evidence
 
-The owner widened #1940 to one Results flow for completed tasks and reports. Results implementation remains incomplete; the task's ask resolves Reopen before changing the closed-task model (R13/§2). These artifacts preserve the completed Reports investigation and implementation.
+Results includes completed tasks and reports. [The owner decision](https://github.com/taskqorg/taskq/issues/1940#issuecomment-6526379730) defines Reopen as a linked held successor carrying the reason; the original stays closed. R13 and the Results specification record that flow. §2 and §7 publication remain unchanged.
 
 ## Baseline
 
 - Installed Windows v4.6.47: `taskq reports --json` took 70,540 ms for 9 reports. [Per-call observations](before-calls.json): 3,680.083 ms discovery, 95 comment-list calls totalling 66,493.939 ms. The supplied Mac observation was 65 s for 9 reports; not rerun here.
+- Installed Windows `taskq status --closed --json` took [22,557 ms for ten completed tasks](before-completed-load.json). Per-call attribution for this second command was not recovered; its wall time is observed.
 - [Before native identity](before-native.json): installed executable SHA-256 recorded. The exact installed source revision was not independently verified.
-- [Before menu](before-windows-menu/popover-dark-reports-16.png) and [before Conversations](before-windows-conversations/popover-light-reports-conversations-16.png). Each route also retains its other theme. Invented report data; actual Windows WebView2 renderer, 16 px.
+- Invented report data; Windows WebView2 renderer, 16 px. The review set below links one image per distinct comparison.
 
-## Reports implementation
+## Review set
 
-- [After menu](after-windows-menu/popover-dark-reports-16.png) and [after Conversations](after-windows-conversations/popover-light-reports-conversations-16.png). The card exposes Question, Recommendation and Proposed tasks before findings; Full report and Make tasks/Later/Drop are direct controls. Both themes are retained: an eight-screen before/after review set across two routes.
-- [After native identity](after-native.json): source `baf107d0`, binary SHA-256, route, exit status and capture time. Conversations fixtures scroll to the action area on both versions. Later changes add explicit timing capture; these pictures do not qualify that telemetry change.
+- Reports before: [menu](before-windows-menu/popover-dark-reports-16.png), [Conversations](before-windows-conversations/popover-dark-reports-conversations-16.png). Windows WebView2, installed executable.
+- Reports after: [menu](final-windows-reports/popover-dark-reports-16.png), [Conversations](final-windows-reports-conversations/popover-dark-reports-conversations-16.png). Question, Recommendation and Proposed tasks precede the full report; Make/Later/Drop remain direct actions.
+- Completed tasks before: [menu](results/before-windows-tray-dark.png), [Conversations](results/before-windows-workspace-dark.png). Windows Chromium rendering HTML extracted from the installed executable: Completed offered a board/PR link, and Conversations had no completion row. This is not a native before capture.
+- Completed tasks after: [menu](final-windows-results/popover-dark-results-16.png), [Conversations](final-windows-results-conversations/popover-dark-results-conversations-16.png). Windows WebView2. Changed, Checks, Open, PR and Accept/Follow-up/Reopen share the result card.
+
+These eight screens cover distinct before/after decisions across two result kinds and two surfaces. Light-theme captures are diagnostic artifacts outside this review set; the automated matrices cover theme, width and text-size variants. [Final native identity](final-native.json) names the exact source, binary SHA-256, routes and outcomes. Previous [Reports checkpoint captures](after-native.json) remain historical evidence.
 - Native effects use invented receipts. No real report was acknowledged or decided, no task was created and no host was installed or restarted. Cargo supplies the GNU debug loader paths; a bare debug invocation returned `0xC0000135`.
 - macOS native and PilotQ-side delivery: **Not tested**. This Windows attempt has no macOS surface; the available PilotQ boundary is the JSON CLI, not a verified PilotQ walkthrough.
 
@@ -25,8 +30,12 @@ The owner widened #1940 to one Results flow for completed tasks and reports. Res
 | A6 partial creation | Stale collection erased a Make reservation | Error receipts survive redraw; newer collected comment revisions supersede old overlays |
 | A5 freshness | Same-second updates could be reused indefinitely | Board-time settled-read regression plus close-event scheduling |
 | A5 telemetry | [Initial isolated export](telemetry-before.json) had no named cache timings | Explicit action capture; real CLI and component checks now require committed named timings |
+| A5 paging/restart | A post-list cursor could skip a concurrent update; restarting without retained entries could drop a failed row | Pre-list watermark and deterministic paging-window trace; hydrated-row failure check |
+| Completed evidence | A wrong-attempt close could replace the displayed verdict | Accepted transition selects the close; wrong-attempt verdict/merge regression |
+| Reopen recovery | Renaming the source changed its immutable create payload; late receipts could erase another result's draft | Stable successor title and rename replay; source/SHA-scoped receipt and draft checks |
+| Background board budget | Unified gate: deferred handover listed 6 times where the unchanged assertion permits at most 4 | Collection completion now uses the existing local sleep tick to publish status, without poking another board pass |
 
-`cargo test --locked --bin taskq reports::tests`: 11 pass. `cargo test --locked --test integration reports_cli`: passes, including committed timings. Reports component/receipt tests pass. The 16-cell browser instrument covers Menu/Conversations, dark/light, 350/940 px, 16/20 px. Its redundant intermediate visibility wait was replaced by a mounted-row barrier; the subsequent real click still requires visible, stable controls, and geometry checks remain.
+`cargo test --locked --bin taskq reports::tests`: 14 pass. `cargo test --locked --test integration reports_cli`: passes, including the `results` alias and committed timings without board credentials. Component checks retain SHA-bound receipts and protect late successor responses from clearing another result's draft. Each browser instrument covers Menu/Conversations, dark/light, 350/940 px and 16/20 px: 16 cells. Results also covers a selected question becoming a completion, and populated/empty unknown Completed history. The report instrument's mounted-row barrier retains a real visible/stable click and geometry checks.
 
 Full gate attempts did not pass (R12). The first passed Rust/integration/selftest and failed stale generated web hashes after a separator correction; the next passed those and Node checks, then timed out at the intermediate browser visibility wait. A focused browser rerun passed. The final `python scripts/check.py --base 04e43344db6dafcd94c46e06ecd13d908ebcefa2` ended after 447.797 s: 701 Rust tests passed, 5 failed, 39 were ignored; later gate phases did not run. Failures:
 
@@ -36,6 +45,10 @@ Full gate attempts did not pass (R12). The first passed Rust/integration/selftes
 - `telemetry::tests::older_tray_writer_hands_over_to_new_host`
 - `tray::tests::tray_collector_recovers_after_failed_election`
 
-Their causes are unverified; earlier successful runs are not a substitute for this failed candidate gate. No PR, deployment or Results completion is claimed. Work stays on `taskq-1940` pending the Reopen decision and remaining verification.
+All five failures concerned elapsed waits or child readiness. The failed run also recorded unrelated tests beyond 60 seconds. Host contention is a hypothesis, not a proved cause. The checker now defaults to four Rust harness threads on Windows, with explicit overrides preserved; all cases, internal concurrency, ownership/byte/receipt assertions, deadlines and the 900-second gate budget remain. It also restores the documented Playwright dependency after `npm ci` when local browser instruments are selected. The final full-gate outcome is recorded below; earlier successful runs do not substitute for it.
 
-`measure.py` recreates nine invented collected reports in an isolated installation and requires committed list/open timings. The earlier [cached read observation](after-cached.json) predates explicit action timing capture; it is not final performance qualification. Production collection and the expanded completed-task flow remain unverified.
+`measure.py` recreates nine invented reports and ten completed tasks in an isolated installation and requires committed list/open timings. [Final cached reads](after-cached.json) distinguish operation time from wall time including Cargo/process startup. The earlier missing-timing export is preserved in `telemetry-before.json`. Production collection, macOS native behavior and PilotQ delivery remain unverified; no deployment or live board decision is claimed.
+
+## Final gate
+
+The first unified Results gate took 199.390 s: 708 passed, one failed, 39 ignored. All five earlier deadline failures passed. Its remaining failure was `host::tests::deferred_handover_lists_the_board_once_per_poll`: collector completion pokes forced extra board lists. The local publication-tick fix retains that test and its threshold. The final rerun is pending; no failed gate is counted as a pass. Native pictures and cache-operation timings name source `49940ae2`; this later fix changes collection publication scheduling, with the rendered UI unchanged.

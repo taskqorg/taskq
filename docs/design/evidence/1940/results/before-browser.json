@@ -1,0 +1,10 @@
+{
+  "qualification": "Windows Chromium instrument; installed HTML; invented data; native before for ordinary tasks Not tested",
+  "binary_sha256": "d7bfa27ebcee7ec66800d71c81779dda2de377a005133e83137a521c2cb71bee",
+  "source_revision": "unknown",
+  "playwright": "1.64.1",
+  "surfaces": [
+    "Completed menu",
+    "Conversations without completion entry"
+  ]
+}

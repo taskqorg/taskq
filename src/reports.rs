@@ -82,15 +82,20 @@ pub struct Collector {
     invalidated: bool,
 }
 impl Collector {
-    pub fn tick(&mut self,root:&Path,poll:u64,ttl:i64,enabled:bool)->Value {
-        if self.value.is_null() {self.value=cached(root);}
+    /// Drain completion from the existing local service tick, without waking a board pass.
+    pub fn received(&mut self)->bool {
         if let Some(rx)=&self.pending {
             match rx.try_recv() {
-                Ok(cache)=>{self.value=cache.value.clone();self.cache=Some(cache);self.pending=None;},
-                Err(std::sync::mpsc::TryRecvError::Disconnected)=>{self.pending=None;self.value["complete"]=json!(false);self.value["reason"]=json!("report collector stopped before readback");},
+                Ok(cache)=>{self.value=cache.value.clone();self.cache=Some(cache);self.pending=None;return true;},
+                Err(std::sync::mpsc::TryRecvError::Disconnected)=>{self.pending=None;self.value["complete"]=json!(false);self.value["reason"]=json!("report collector stopped before readback");return true;},
                 Err(_)=>{}
             }
         }
+        false
+    }
+    pub fn tick(&mut self,root:&Path,poll:u64,ttl:i64,enabled:bool)->Value {
+        if self.value.is_null() {self.value=cached(root);}
+        self.received();
         let closes=std::fs::read_to_string(crate::dot(root).join("events")).unwrap_or_default().lines().filter(|l|l.contains(" close ")).collect::<Vec<_>>().join("\n");
         if closes!=self.closes {self.closes=closes;self.invalidated=true;}
         if enabled && self.pending.is_none() && (self.invalidated || self.started.is_none_or(|t|t.elapsed().as_secs()>=poll.max(1))) {
@@ -99,7 +104,7 @@ impl Collector {
             match std::thread::Builder::new().name("reports".into()).spawn(move || {
                 let result=crate::load(&root).and_then(|(cfg,raw)|cfg.board.open(&cfg.web_host,&cfg.repo,raw["label_schema"].as_str(),&crate::platform::tool(&cfg.install)));
                 match result {Ok(board)=>cache.collect(board.as_ref()),Err(reason)=>{cache.value["complete"]=json!(false);cache.value["reason"]=json!(reason);}}
-                let _=tx.send(cache);let _=crate::poke(&root);
+                let _=tx.send(cache);
             }) {
                 Ok(_)=>self.pending=Some(rx),
                 Err(e)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(format!("report collector unavailable: {e}"));}
@@ -540,7 +545,8 @@ mod tests {
         // No project config: the read-only worker must return unknown, never create or launch anything.
         let failed=collector.pending.take().unwrap().recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(failed.value["complete"],false);assert!(failed.value["reason"].is_string());
-        // The background wake can land after send; retain this small fixture for the OS temp sweep.
+        assert!(!crate::dot(&root).join("poke").exists(),"completion must not force a new board read");
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test] fn cache_fresh_stale_missing_and_corrupt_are_distinct() {
