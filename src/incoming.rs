@@ -56,6 +56,9 @@ pub struct History {
     seen: BTreeMap<u64, (i64, Option<(u64, i64)>)>,
     // Issue update, current task eligibility, last event read (0: unvisited); all rebuildable observations.
     pending: BTreeMap<u64, (i64, bool, i64)>,
+    // Issue update and reason of a complete history read that failed; read again only after the issue updates.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    failed: BTreeMap<u64, (i64, String)>,
     listed: Option<i64>,
     through: Option<i64>,
     start: Option<i64>,
@@ -68,7 +71,8 @@ impl History {
         if let Ok(h)=serde_json::from_value::<Self>(v["cache"].clone()) {
             if h.json(board)==*v && h.listed.is_some_and(|t|h.through.is_none_or(|end|end<=t))
                 && h.seen.iter().all(|(n,(t,_))|*n>0 && *t>0)
-                && h.pending.iter().all(|(n,(t,_,tried))|*n>0 && *t>0 && *tried>=0) {return h;}
+                && h.pending.iter().all(|(n,(t,_,tried))|*n>0 && *t>0 && *tried>=0)
+                && h.failed.iter().all(|(n,(t,_))|*n>0 && *t>0) {return h;}
         }
         // Older projections retain verified arrivals and coverage, but lack negative observations or a scan cursor.
         let mut h=Self {start:v["start"].as_i64(),through:v["end"].as_i64(),
@@ -93,6 +97,8 @@ impl History {
                 // A settled earliest admission is immutable; comments and later label changes cannot create another.
                 if event.is_some() || *updated==issue.updated {*updated=issue.updated;continue;}
             }
+            if self.failed.get(&issue.number).is_some_and(|(updated,_)|*updated==issue.updated) {continue;}
+            self.failed.remove(&issue.number);
             let pending=self.pending.entry(issue.number).or_insert((issue.updated,crate::service::is_task(issue),0));
             pending.0=issue.updated;
             pending.1=crate::service::is_task(issue);
@@ -100,6 +106,7 @@ impl History {
         self.listed=Some(now);
         self.seen.retain(|_, (updated, event)| *updated>=floor || event.is_some_and(|(_, at)| at>=floor));
         self.pending.retain(|_, (updated,_,_)|*updated>=floor);
+        self.failed.retain(|_, (updated,_)|*updated>=floor);
         let mut pending:Vec<_>=self.pending.iter().filter(|(_, (updated,_,_))|now>=*updated+30).map(|(n,(_,_,tried))|(*tried,*n)).collect();
         pending.sort_unstable();
         let mut missing=vec![];
@@ -108,14 +115,17 @@ impl History {
             *tried=now;
             match admission(board,n,*task).and_then(|event| if event.is_some_and(|(_, at)| at > now) {Err("first-admission time is in the future".into())} else {Ok(event)}) {
                 Ok(event)=>{self.seen.insert(n,(*updated,event));self.pending.remove(&n);},
+                Err(e) if SETTLED.contains(&e.as_str())=>{self.failed.insert(n,(*updated,e));self.pending.remove(&n);},
                 Err(e)=>missing.push(format!("#{n}: {e}")),
             }
         }
+        // A failed source keeps coverage incomplete until its issue updates or leaves the month.
+        missing.extend(self.failed.iter().map(|(n,(_,e))|format!("#{n}: {e}")));
         // An unresolved source must be retried, including after its issue leaves the update overlap.
-        if self.pending.is_empty() {
+        if self.pending.is_empty() && self.failed.is_empty() {
             self.start = Some(self.start.unwrap_or(floor).max(floor));
             self.through = Some(now);
-        } else {
+        } else if !self.pending.is_empty() {
             missing.push(format!("{} admission sources pending",self.pending.len()));
         }
         self.missing = missing;
@@ -137,6 +147,9 @@ pub fn valid(v: &Value, board: &str) -> bool {
         }))
         && (v["start"].is_null() && v["end"].is_null() || v["start"].as_i64().zip(v["end"].as_i64()).is_some_and(|(a,b)|a<=b))
 }
+
+/// Malformed records a complete history read gives again until its issue updates (§ 4 Admission history); other failures retry.
+const SETTLED: [&str; 3] = ["admission ID unavailable", "admission time unavailable", "invalid first-admission provenance"];
 
 fn admission(board: &dyn Board, n: u64, task: bool) -> Result<Option<(u64, i64)>, String> {
     let event = board.first_admission(n)?;
@@ -203,6 +216,39 @@ mod tests {
         h.refresh(board.as_ref(),now+200);
         assert_eq!(reads.borrow().len(),1,"a settled restart reads no event histories");
         assert!(h.missing.is_empty());
+    }
+
+    // #1960 defect: a source whose complete history could not be used was read again on every pass, growing failed reads.
+    // Chain: §4 Admission history. Risk kept: a settled source proves zero, or a transient failure stops retrying.
+    #[test]
+    fn permanent_source_failure_settles_until_update_and_transient_retries() {
+        let board=Fake::default();
+        board.state.borrow_mut().clock=99;
+        let bad=board.create("bad","",&["taskq".into()]).unwrap();
+        let flaky=board.create("flaky","",&["taskq".into()]).unwrap();
+        board.state.borrow_mut().admissions.insert(bad,Ok(Some((0,100))));
+        board.state.borrow_mut().admissions.insert(flaky,Err("HTTP 502".into()));
+        let mut h=History::default();
+        h.refresh(&board,200);
+        assert!(h.failed.contains_key(&bad));assert!(!h.pending.contains_key(&bad));
+        assert!(h.pending.contains_key(&flaky));
+        // A good answer is not read until the issue updates, and a restart keeps the settled state.
+        board.state.borrow_mut().admissions.insert(bad,Ok(Some((71,100))));
+        h=History::seed(&h.json(&board.url(0)),&board.url(0));
+        for now in [300,400] {
+            h.refresh(&board,now);
+            assert_eq!(h.pending[&flaky].2,now,"a transient failure retries every pass");
+            assert!(h.missing.iter().any(|s|s==&format!("#{bad}: invalid first-admission provenance")),"{:?}",h.missing);
+            assert!(h.through.is_none(),"a failed source never proves zero");
+        }
+        assert!(h.json(&board.url(0))["events"].as_array().unwrap().is_empty());
+        board.state.borrow_mut().admissions.insert(flaky,Ok(Some((72,100))));
+        board.state.borrow_mut().clock=449;
+        board.comment(bad,"edit").unwrap();
+        h.refresh(&board,500);
+        assert!(h.failed.is_empty()&&h.pending.is_empty()&&h.missing.is_empty(),"{:?}",h.missing);
+        assert_eq!(h.through,Some(500));
+        assert_eq!(h.json(&board.url(0))["events"].as_array().unwrap().len(),2);
     }
 
     // UX30-21: a stalled history API cannot delay the service heartbeat or admission.

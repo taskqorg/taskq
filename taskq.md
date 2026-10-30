@@ -49,7 +49,7 @@ Stop workers/reviewers only after close/parking/replacement, except owner-confir
 ### R12. Unverified means unknown
 Follow [shared verification][sq-verify]. Gate `python3 scripts/check.py` ([selection](docs/testing.md)): PRs Linux; `merge_group` affected-OS matrix, the merge gate; main push none. Release needs exact-source CI and staged offline selftest. [Live acceptance](docs/runtime-qualification.md) reruns for changed runtime paths, permissions or clients. Prototypes are instruments; [UI acceptance][uia] owns browser/screenshot/native scope. A state marked `⟳` ([menu] M8) is expected, unconfirmed.
 ### R13. Spec first
-Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and its [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps stay in [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); the [implementation brief](docs/design/implementation-brief.md) maps the accepted product to code. Security: [SECURITY.md](SECURITY.md) (private GitHub reporting, 7 calendar days); [baseline](https://github.com/taskqorg/specq/blob/main/engineering/security.md).
+Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and its [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps stay in [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); the [implementation brief](docs/design/implementation-brief.md) maps the accepted product to code. [Security](SECURITY.md).
 Rule IDs, the rule-change gate and coverage: [rule IDs](docs/design/rule-ids.md#contract-detail).
 ## Product
 Looks/sound: one line each (R13).
@@ -164,6 +164,8 @@ Service/tray text: R7/R6; menu labels ≤ 32 characters, lines ≤ 160.
 Coreq always records actions; owned methods: bounded opt-in detail. UI/board/agent work; local store, optional sync. Follow [shared profiling](https://github.com/taskqorg/specq/blob/main/engineering/profiling.md); [detail][prof] owns coverage and qualification. R8/R13: ended executions need terminal proof; repair needs native termination or exact execution release; hostless repair needs proven ownership. Profiling never controls recovery/admission. Selftest reads board fresh; nonlive unresolved attempts past ttl warn once, never fail; fresh children, never task rows, exclude live work. Owner waits keep evidence; reopened build/review needs new terminal. Instrumentation/receipts never fail or block operations; selftest fails on unavailable, empty or unflushed capture. [R8 limits][tel]. [Stage tokens](docs/design/profiling.md#stage-tokens) per `model`.
 ### Host link
 Remote worker panels, E2E: [detail](docs/design/host-link.md#contract-detail).
+### Admission history
+[I3](docs/design/icon-summary.md#first-admission-source-and-compatibility): deleted-label events admit nothing; malformed records wait for an issue update.
 ## 5. Commands
 | Command | Does |
 |---|---|

@@ -767,8 +767,8 @@ fn raw_path<'a>(root: &str, base: &str, url: &'a str) -> Option<(&'a str, &'a st
 }
 
 /// Complete paginated board history, never issue creation or current queue size.
+/// A deleted label's event has no label (§ 4 Admission history): it admits nothing.
 fn first_admission(events: &[Value]) -> Result<Option<(u64, i64)>> {
-    if events.iter().any(|v| v["event"] == "labeled" && !v["label"]["name"].is_string()) {return Err("label history incomplete".into());}
     events.iter().filter(|v| v["event"] == "labeled" && v["label"]["name"] == "taskq")
         .map(|v| Ok((v["id"].as_u64().filter(|id| *id > 0).ok_or("admission ID unavailable")?,
             iso(&s(v, "created_at")).filter(|at| *at > 0).ok_or("admission time unavailable")?)))
@@ -785,6 +785,17 @@ mod admission_tests {
         events[1]["created_at"] = Value::Null;
         assert!(first_admission(events.as_array().unwrap()).is_err());
         assert_eq!(first_admission(&[]).unwrap(), None);
+    }
+
+    // #1960 defect: a deleted label's events (label null) failed the source on every pass.
+    // Chain: §4 Admission history. Risk kept: a deleted label invents or hides a `taskq` admission.
+    #[test]
+    fn deleted_label_events_admit_nothing() {
+        let deleted = json!([{"id":5,"event":"labeled","label":null,"created_at":"2026-10-05T10:00:00Z"},{"id":6,"event":"unlabeled","label":null,"created_at":"2026-10-05T11:00:00Z"}]);
+        assert_eq!(first_admission(deleted.as_array().unwrap()).unwrap(), None);
+        let mut events = deleted.as_array().unwrap().clone();
+        events.push(json!({"id":7,"event":"labeled","label":{"name":"taskq"},"created_at":"2026-10-06T10:00:00Z"}));
+        assert_eq!(first_admission(&events).unwrap(), Some((7, iso("2026-10-06T10:00:00Z").unwrap())));
     }
 }
 
