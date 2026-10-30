@@ -163,7 +163,7 @@
 .composer-help{position:relative;flex:none}.composer-help>summary{display:flex;align-items:center;justify-content:center;list-style:none;color:var(--muted)}.composer-help>summary::-webkit-details-marker,.composer-help>summary::after{display:none}
 .composer-help>p{position:absolute;bottom:100%;right:0;z-index:12;margin:0;background:var(--raised);border:1px solid var(--edge);border-radius:8px;padding:8px;width:min(320px,calc(100vw - 24px))}
 /* CS1–CS6 (#1808): shared grouped sidebar, inline view actions, full-width wrapping titles. */
-.conversation-group-head{display:flex;align-items:center;gap:4px;width:100%;min-height:32px;padding:6px 8px;margin-top:4px;border:0;border-radius:0;text-align:left;font:inherit;font-weight:600}
+.conversation-group-head{display:flex;align-items:center;gap:4px;width:100%;min-height:32px;padding:4px 8px;margin-top:max(16px,1em);margin-bottom:4px;border:0;border-radius:0;text-align:left;font:inherit;font-weight:600}
 .conversation-group-head>span:not(.ui-icon){flex:1;min-width:0;overflow-wrap:anywhere}.conversation-group-head small{font-weight:400;color:var(--muted)}
 .conversation-group-head[aria-expanded=false]>.ui-icon{transform:rotate(-90deg)}
 .conversation-item{display:flex;align-items:flex-start;min-width:0}.conversation-item:has(.conversation-row[aria-current=page]){background:var(--raised)}.conversation-item>.conversation-row{flex:1;min-width:0;width:auto;padding:6px 7px}

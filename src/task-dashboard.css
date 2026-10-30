@@ -1,6 +1,6 @@
 /* #1573 conversation-walkthrough: task-dominant dashboard, shared tokens and anchored controls. */
 /* #1659 R06/R41: dividers are Text 8% over Surface; the popover is opaque and raised with its own edge and shadow. */
-.menu{--divider:color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,var(--surface));--popover:light-dark(#ffffff,#323b45);--popover-edge:#8996a2}
+.menu{--heading-space:max(16px,1em);--heading-gap:4px;--divider:color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,var(--surface));--popover:light-dark(#ffffff,#323b45);--popover-edge:#8996a2}
 .ui-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:1em;height:1em;vertical-align:-.12em}
 .ui-icon svg{width:100%;height:100%}.ui-icon svg:not([fill]),.compact-action svg:not([fill]){fill:currentColor}
 .menu:not(.workspace) .head{gap:3px}
@@ -18,10 +18,10 @@
 .viewbar button{border:0;padding:3px 6px;font-size:.85em;white-space:nowrap;flex:none}.view-picks>button:first-child{font-weight:600;background:light-dark(#e9edf1,#37424c)}
 .viewbar>[data-a=search-open]{flex:none;border:0;color:var(--muted)}.task-search>[data-a=search-clear]{border:0;flex:none}.task-search input::-webkit-search-cancel-button{-webkit-appearance:none}
 .task-search{display:flex;align-items:center;gap:6px;border-bottom:1px solid var(--divider);padding:2px 4px}.task-search input{flex:1;width:100%;min-width:0;border:0;background:transparent;font:inherit;font-size:.85em;color:inherit;padding:3px 0}.task-search .meta{font-variant-numeric:tabular-nums}
-.filter-header{padding-block:4px}.filter-header .tqp-counts{gap:3px}
+.filter-header{position:sticky;top:calc(-1 * var(--outer));z-index:5;padding:4px 0;background:var(--surface);box-shadow:8px 0 var(--surface),-8px 0 var(--surface)}.filter-header.pinned{box-shadow:8px 0 var(--surface),-8px 0 var(--surface),0 1px 0 var(--divider)}.filter-header .tqp-counts{gap:3px}
 .project-group{display:flex;align-items:center;gap:5px;padding-top:6px;color:var(--muted);font-size:.85em}.project-group button{border:0;display:flex;align-items:center;gap:5px;text-align:left;overflow-wrap:anywhere}.project-group a{margin-left:auto}.project-group .ui-icon{width:14px;height:14px}
 .menu .task-row{display:block;border-bottom:1px solid var(--divider)}.task-row .tqp-task{padding:4px 2px 5px}.task-row .tqp-task-head{display:flex;align-items:center;flex-wrap:wrap;gap:0 5px}
-.task-row .task-identity{display:inline-flex;align-items:center;gap:4px;padding:2px;font-size:.85em;font-weight:500;white-space:normal}.task-row .task-when{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-size:.85em;white-space:nowrap}.task-row .task-stage,.tqp-mark{display:inline-flex}
+.task-row .task-identity{display:inline-flex;align-items:center;gap:4px;padding:2px;font-size:.85em;font-weight:500;white-space:normal}.task-row .task-when{display:inline-flex;align-items:center;gap:5px;margin-left:auto;font-size:.85em;white-space:nowrap}.task-row .task-stage{display:inline-flex;align-items:center;justify-content:center;flex:0 0 var(--target);width:var(--target);height:var(--target)}.tqp-mark{display:inline-flex}
 .task-row .tqp-task-title>a{display:block;min-height:var(--target);padding:2px 0;font-size:1em;line-height:1.4;width:100%;text-align:left}.task-row .tqp-task-title>a:hover{text-decoration:underline;text-underline-offset:3px}
 .status-footer{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:2px 8px;border-top:1px solid var(--edge);font-size:max(12px,.8em);color:var(--muted);padding:0 0 0 8px;min-height:32px}.status-footer>span{overflow-wrap:anywhere}.status-footer>span:first-child{margin-left:auto}.menu .status-footer .grip{margin-left:auto;width:32px;height:32px;min-height:32px;background-color:transparent;border:0;border-radius:0}
 .anchored-popover{position:fixed;inset:auto;margin:0;width:320px;padding:8px;background:var(--popover);color:inherit;border:1px solid var(--popover-edge);border-radius:9px;box-shadow:0 8px 24px #0000004d,0 1px 3px #00000026;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;font:inherit;font-size:var(--size,16px);z-index:30;overflow-wrap:anywhere}
@@ -32,11 +32,11 @@
 .view-naming{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}.view-naming input{flex:1;min-width:80px}.view-naming button{flex:none}
 .saved-view{display:flex;gap:4px}.saved-view>button:first-child{flex:1;min-width:0;text-align:left;border:0;overflow-wrap:anywhere}.saved-view>button:not(:first-child){flex:none;padding:4px;width:32px}:is(.anchored-popover,.view-window) label{display:block;font-size:.85em;margin-block:6px}:is(.anchored-popover,.view-window) input{font:inherit;display:block;width:100%;background:transparent;color:inherit;border:1px solid var(--edge);padding:5px}
 .detail-title{display:block!important;text-align:left!important;font-weight:600}.task-card-text{white-space:pre-wrap;font-size:.85em;user-select:text}.task-steps{font-size:.85em;margin:4px;padding-left:24px}.row-actions{display:flex;gap:4px;flex-wrap:wrap}.row-actions .task-controls,.row-actions>span{display:contents}.row-actions .compact-action{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;min-height:32px;padding:7px;border:0;border-radius:6px;color:var(--muted);background:transparent}.row-actions .compact-action:hover{color:inherit;background:var(--raised)}
-.task-row .question-shortcut{border:0;border-radius:6px;background:color-mix(in srgb,var(--muted) 18%,transparent);color:var(--ask);width:32px;height:32px;min-height:32px;display:inline-flex;align-items:center;justify-content:center;padding:7px;margin:-6px 0}.question-cue{overflow-wrap:anywhere;line-height:1.4}.question-task-details{padding:8px 10px;margin:2px 0 6px;border-left:3px solid var(--ask);border-radius:6px;background:light-dark(#eff2f5,#303a43)}.question-task-details:focus{outline:none}.question-task-details .popover-heading>strong,.question-task-details .row-actions [data-a=workspace]{color:var(--ask)}.question-task-details .popover-heading strong{min-width:0}.question-task-details .task-more dd{overflow-wrap:anywhere}
+.task-row .question-shortcut{border:0;border-radius:6px;background:transparent;color:var(--ask);width:32px;height:32px;min-height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;margin:0}.question-cue{overflow-wrap:anywhere;line-height:1.4}.question-task-details{padding:8px 10px;margin:2px 0 6px;border-left:3px solid var(--ask);border-radius:6px;background:light-dark(#eff2f5,#303a43)}.question-task-details:focus{outline:none}.question-task-details .popover-heading>strong,.question-task-details .row-actions [data-a=workspace]{color:var(--ask)}.question-task-details .popover-heading strong{min-width:0}.question-task-details .task-more dd{overflow-wrap:anywhere}
 @media(pointer:coarse){.task-row .question-shortcut{min-height:44px;min-width:44px}}
-.settings-section{padding-block:4px}.settings-section+.settings-section{border-top:1px solid var(--divider)}
+.settings-section{padding:0;border:0}
 /* #1661 R28: a Settings widget is one line, its live summary trails and wraps whole words */
-.menu .settings-widget{align-items:center}.settings-widget>span:not(.ui-icon):not(.meta){flex:none}.settings-widget>.meta{margin-left:auto;text-align:right;min-width:0;overflow-wrap:break-word}
+.menu .settings-widget{display:grid;grid-template-columns:var(--target) minmax(0,1fr);gap:0 4px;align-items:start;padding:3px 0}.settings-widget>.ui-icon{grid-column:1;grid-row:1/3;justify-self:center;align-self:start;margin-top:7px}.settings-widget>span:not(.ui-icon):not(.meta){grid-column:2;min-width:0;padding-top:3px;line-height:1.35}.settings-widget>.meta{grid-column:2;margin:0;text-align:left;min-width:0;overflow-wrap:anywhere;line-height:1.35;padding-bottom:4px}
 .host-line>summary .alert{color:var(--failed)}
 /* #1661 R30: a summary with mixed text keeps its words in reading order and wraps whole, never a one-letter column */
 .menu summary.line{display:block}
@@ -71,8 +71,9 @@
 .view-window .options{padding:0;gap:4px}.view-window button{padding:4px;overflow-wrap:anywhere}.view-window .saved-view .ui-icon{width:16px;height:16px}
 .filter-header>.state-filters,.filter-header>.state-filters>.tqp-counts{display:contents}.filter-header{display:flex;flex-wrap:wrap;align-items:center;gap:3px}
 .held-shortcut{display:inline-flex;align-items:center;margin-left:2px}.held-shortcut button{display:inline-flex;align-items:center;justify-content:center;width:32px;min-width:32px;height:32px;min-height:32px;padding:7px;border:0;border-radius:6px;background:var(--work);color:light-dark(#fafbfc,#20332a)}.held-shortcut button>span:not(.ui-icon){display:none}.held-shortcut .ui-icon{width:16px;height:16px}
-/* M2 / #1805: accepted compact band A, with independent collapse/name/actions and wrapping counts. */
-.project-group.project-shortcuts{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:4px;min-width:0;margin-top:6px;padding:3px 4px;border-radius:5px;background:light-dark(#e9edf1,#37424c);color:inherit;font-size:1em}
+/* M2 / UX30-03: neutral rail; preserve independent collapse/name/actions and wrapping counts. */
+.project-group.project-shortcuts{display:grid;grid-template-columns:var(--target) minmax(0,1fr) auto;align-items:center;gap:4px;min-width:0;position:relative;margin-top:var(--heading-space);margin-bottom:var(--heading-gap);padding:2px 4px 2px 0;border-radius:0;background:transparent;color:inherit;font-size:1em}
+.project-group.project-shortcuts::before{content:"";position:absolute;inset-inline-start:0;top:8px;bottom:8px;width:2px;min-height:16px;border-radius:2px;background:var(--muted)}
 .project-heading{display:flex;flex-wrap:wrap;align-items:center;gap:0 8px;min-width:0}.project-heading h2{min-width:0;margin:0;font-size:1em}.project-shortcuts .project-overview{min-width:0;min-height:32px;padding:2px 0;font-weight:600;line-height:1.35;background:transparent;color:inherit}
 .project-counts{display:inline-flex;flex-wrap:wrap;gap:0 4px;color:var(--muted);font-size:max(12px,.85em);font-variant-numeric:tabular-nums}.project-counts span{white-space:nowrap}.project-actions{display:flex;align-self:start}.project-collapse{align-self:start}.project-collapse[aria-expanded=false] .ui-icon{transform:rotate(-90deg)}
 .project-shortcuts .compact-action{flex:none;display:inline-flex;align-items:center;justify-content:center;width:32px;min-height:32px;padding:6px;border:0;background:transparent}.project-shortcuts a.project-board{margin-left:0}.project-shortcuts .ui-icon{width:16px;height:16px}
@@ -83,7 +84,7 @@
 /* M1.2: alpha belongs to painted layers; the native window and foreground stay opaque. */
 .menu.background-only{background:color-mix(in srgb,var(--surface) var(--background-alpha),transparent);--background-fill:color-mix(in srgb,var(--surface) var(--background-alpha),transparent);--divider:color-mix(in srgb,color-mix(in srgb,light-dark(#243039,#eef2f5) 8%,transparent) var(--background-alpha),transparent)}
 .background-only .content-body{background:transparent}
-.background-only :is(.head,.status-footer,.anchored-popover,.toast,.overflow-actions,.question-task-details,.project-group.project-shortcuts){background:var(--background-fill)}
+.background-only :is(.head,.status-footer,.anchored-popover,.toast,.overflow-actions,.question-task-details){background:var(--background-fill)}
 .background-only :is(.anchored-popover,.toast){box-shadow:0 8px 24px color-mix(in srgb,#0000004d var(--background-alpha),transparent),0 1px 3px color-mix(in srgb,#00000026 var(--background-alpha),transparent);border-color:var(--divider)}
 .background-only .question-task-details{border-color:var(--divider)}
 .background-only :is(.head,.status-footer,.window-controls){border-color:color-mix(in srgb,var(--edge) var(--background-alpha),transparent)}
@@ -99,3 +100,24 @@
 .background-only input[type=range]::-webkit-slider-runnable-track{height:2px;background:var(--muted)}
 .background-only input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;margin-top:-6px;border:1px solid var(--work);border-radius:50%;background:var(--work)}
 .background-only input[type=range]:disabled::-webkit-slider-thumb{border-color:var(--muted);background:var(--muted)}
+
+/* UX30-02/05: one heading rhythm and disclosure geometry, without the old duplicate group inset. */
+.section-heading{display:flex;align-items:center;gap:4px;margin:0;padding:var(--heading-space) 0 var(--heading-gap);font-size:1em;font-weight:600;line-height:1.35;min-width:0;overflow-wrap:anywhere}
+.section-heading>.ui-icon{width:var(--target);height:16px;color:var(--muted)}
+.menu .settings-content .group{margin:0;padding:0;border:0}
+.menu .settings-disclosure{display:grid;grid-template-columns:16px minmax(0,1fr) 1em;gap:8px;align-items:center;padding:6px 4px;line-height:1.4;font-weight:500;overflow-wrap:anywhere}
+.settings-disclosure>.ui-icon{margin:0!important;width:16px;height:16px;grid-column:1;grid-row:1}
+.settings-disclosure>.disclosure-label{min-width:0;grid-column:2;grid-row:1}
+.settings-disclosure .meta{white-space:normal;overflow:visible}
+.menu .settings-disclosure:after{grid-column:3;grid-row:1;align-self:center;float:none;padding:0;width:1em;height:1em;line-height:1;text-align:center}
+.menu .settings-content details.group{margin-top:var(--heading-space);margin-bottom:var(--heading-gap)}
+.menu .settings-content .section-heading+details.group{margin-top:0}
+.menu .settings-content .body,.menu .settings-content .options{margin:0}
+.menu .settings-content .opacity-setting{margin:0}
+.menu .task-row .task-stage>.question-shortcut{width:100%;height:100%;min-height:var(--target);background:transparent}
+@media(pointer:coarse){.settings-widget>.ui-icon{margin-top:13px}}
+
+.menu .group:has(>.section-heading){margin:0;padding:0;border:0}.task-group-heading>span:first-child{flex:1}
+
+.menu .settings-widget.short-value{grid-template-columns:var(--target) minmax(0,1fr) auto;align-items:center}
+.settings-widget.short-value>.ui-icon{grid-row:1;margin:0;align-self:center}.settings-widget.short-value>.meta{grid-column:3;padding:0;text-align:right;max-width:16ch}.settings-widget.short-value>span:not(.ui-icon):not(.meta){padding:0}

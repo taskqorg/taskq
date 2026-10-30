@@ -70,6 +70,7 @@ s.conversations.items.push({...draft('native-b','alpha',null),sent:{text:'Start'
  for(const width of [1100,500])for(const font of [16,20])for(const theme of ['dark','light']){
   await page.setViewportSize({width,height:850});await page.evaluate(({s,font,theme})=>taskq.receive({...s,font,theme}),{s,font,theme});
   if(!await page.locator('.conversation-list').isVisible())await page.locator('[data-c=list]').click();
+  assert(await page.locator('.conversation-group-head').evaluateAll(es=>es.every(e=>{const s=getComputedStyle(e);return parseFloat(s.marginTop)>=Math.max(16,parseFloat(s.fontSize))&&parseFloat(s.marginBottom)===4;})),'UX30-02: sidebar uses the shared heading rhythm');
   assert(await page.locator('.conversation-list').isVisible());assert(await page.locator('.conversation-list').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
   await page.locator('[data-c=select][data-id=owner-b]').focus();await page.keyboard.press('Tab');assert.equal(await page.evaluate(()=>document.activeElement.dataset.c),'row-pin','Tab reaches Inline Pin');
  }

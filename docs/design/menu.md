@@ -20,7 +20,7 @@ The app icon reuses the tray renderer and its existing state logic, including th
 
 - M1.1 Whole-window opacity: Appearance offers Off (100%) and a labelled 60–100% opacity slider in 1% steps. Apply immediately to the menu, including its custom chrome and popovers, on every route; persist in local `tray.json`. Translucent text follows the [contrast palette](visual-style.md#translucent-menu-text). Settings, View, Conversations and the tray icon keep their existing opacity. Native or save failures are explicit; a failed application retains the prior value.
 
-- M1.2 Background-only transparency: Appearance offers Whole window (M1.1) and Background only, default Whole window. Save each mode's independent values in `tray.json`. Background opacity is 0–100%, default 100%, in 1% steps. Retire readability backing; legacy `backing_strength` values load without error and have no effect. Background mode restores native alpha to 100%; all menu, block, card, chrome, footer and popover fills, decorative borders and dividers follow background opacity, with no backing floor; text, icons, buttons and badges retain full opacity, including unavailable controls. Keep separate windows and the tray icon unchanged. Application failures restore the prior mode and native alpha; save failures remain explicit. At 0%, only the desktop remains behind foreground content. Enable only the active mode’s slider; explain the inactive slider with a short mode-selection hint. [Fill treatment](visual-style.md#background-only-fills).
+- M1.2 Background-only transparency: Appearance offers Whole window (M1.1) and Background only, default Whole window. Save each mode's independent values in `tray.json`. Background opacity is 0–100%, default 100%, in 1% steps. Retire readability backing; legacy `backing_strength` values load without error and have no effect. Background mode restores native alpha to 100%; all menu, block, card, chrome, footer and popover fills, decorative borders and dividers follow background opacity, with no backing floor, except the M3 sticky task-counter row, whose fill stays opaque; text, icons, buttons and badges retain full opacity, including unavailable controls. Keep separate windows and the tray icon unchanged. Application failures restore the prior mode and native alpha; save failures remain explicit. At 0%, only the desktop remains behind foreground content. Enable only the active mode’s slider; explain the inactive slider with a short mode-selection hint. [Fill treatment](visual-style.md#background-only-fills).
 
 ## M2 Scope and projects
 
@@ -28,9 +28,9 @@ Project heading shortcuts retain direct project-overview navigation on the name;
 
 ### Project group headers
 
-The [UI30 target](ui-polish.md) retains the accepted band, collapse, shown/total counts and direct targets. Project, Settings and conversation section headings share max(16px, 1em) above and 4px below, without stacking old padding/dividers; task-row spacing stays unchanged. These target refinements require separate implementation and native proof (R12).
+The [UI30 target](ui-polish.md) uses a quiet neutral rail and retains collapse, shown/total counts and direct targets. Project, Settings and conversation section headings share max(16px, 1em) above and 4px below, without stacking old padding/dividers; task-row spacing stays unchanged. These target refinements require separate implementation and native proof (R12).
 
-Use the accepted [compact band A](evidence/1805/variant-a.png), with the [editable reference and evidence](evidence/1805/README.md). A neutral tinted band and bold project name distinguish groups from task rows. Order: separate collapse arrow on the left, name and counts, then adjacent Board/Folder targets on the right. Counts share the name line when space allows, otherwise wrap beneath it. Long names wrap without clipping or separating the actions. Preserve existing palette, icons and task-row geometry.
+Use a short neutral left rail and bold project name to distinguish groups from task rows. Retain the geometry and independent targets from [compact band A](evidence/1805/README.md), replacing its tinted fill with the rail. Order: separate collapse arrow on the left, name and counts, then adjacent Board/Folder targets on the right. Counts share the name line when space allows, otherwise wrap beneath it. Long names wrap without clipping or separating the actions. Preserve existing palette, icons and task-row geometry.
 
 - Show both values explicitly: `2 shown · 4 total`, also `2 shown · 2 total`. Shown counts deduplicated open tasks matching the current project, state and search filters before collapse; total counts all deduplicated open tasks in that project before those filters. Matching globally pinned tasks count once; a matching pin remains in the separate Pinned section.
 - Missing, stale or partial project data shows `?` for unproved values, with the reason in the count's tooltip and accessible name; never zero. Known groups with no matching tasks stay omitted. Keep existing partial/unavailable notices.
@@ -49,6 +49,9 @@ Compact rows (taskq.md Product): empty search is an icon and an active query sta
 Counter scope, all states and Held drafts with Start: [K-A1–K-A6](task-counters.md). Aggregate strip sits immediately above Projects; project strips use the same order.
 
 ## M3 Navigation and tasks
+
+The complete task-counter filter row scrolls to the top of the existing content viewport and sticks there while tasks scroll beneath it. Keep every chip, its order, exact counts, names and actions. Use an opaque menu-surface fill, also in M1.2 background mode, with a hairline divider when pinned. Whole-window opacity remains unchanged. No new scroll owner.
+
 
 M3.2 Owner rule (2026-10-25, #1709): no horizontal scrolling anywhere in the menu, View window or Settings. Rows wrap; view picks and state counters keep each chip's icon and count fully visible, without an edge mask or clipping. The #1701 header height budget yields to wrapping.
 
