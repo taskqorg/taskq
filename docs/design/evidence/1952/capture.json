@@ -1,0 +1,27 @@
+{
+  "before": "82fb5dc76b4a7db4dec83dea92d7b00bcb2e5ac9",
+  "after": "f4207e2c4d0e93b1007f7f62a7d88f92fd20401f",
+  "browser": "156.0.8078.4",
+  "node": "v24.5.0",
+  "platform": "win32",
+  "viewport": {
+    "width": 320,
+    "height": 760
+  },
+  "font": "Segoe UI 16px",
+  "scale": 1,
+  "bundle_sha256": {
+    "before": "8a231fc4e065ccee522f52077f80ffb22c8c8d58b4bfaa3fc4cd0c58b4e5a493",
+    "after": "37ba1f0364b698c0883c49a176160525f614854d0de8cb1f11ae606c698fcfae"
+  },
+  "cases": [
+    "light · 2 questions · expanded",
+    "light · 2 questions · collapsed",
+    "light · no questions · expanded",
+    "light · no questions · collapsed",
+    "dark · 2 questions · expanded",
+    "dark · 2 questions · collapsed",
+    "dark · no questions · expanded",
+    "dark · no questions · collapsed"
+  ]
+}
