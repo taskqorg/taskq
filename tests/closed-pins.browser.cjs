@@ -23,7 +23,7 @@ const state={platform:'macos',font:16,theme:'dark',host:'fixture',now:200000,ver
  await row(1).getByRole('button',{name:/Open transcript/}).click();
  const transcript=(await requests()).find(m=>m.transcript);assert(transcript,'transcript uses a read, never native-session open');
  await p.evaluate(m=>taskq.receive({completed:{root:m.root,id:m.id,tasks:[],transcript:{items:[{role:'assistant',text:'Finished work, retained native transcript.'}],start:0,end:90,size:90}}}),transcript);
- assert.match(await p.locator('#taskq-popover').innerText(),/Finished work/);assert.equal(await p.locator('#taskq-popover textarea,#taskq-popover [data-a=workspace]').count(),0);
+ assert.match(await p.locator('.task-transcript-page').innerText(),/Finished work/);assert.equal(await p.locator('.task-transcript-page textarea,.task-transcript-page [data-a=workspace]').count(),0);
  assert.equal(await row(1).count(),0,'A3: explicit transcript open removes closed pin');
  if(out)await p.screenshot({path:out+'/02-read-only-transcript.png'});
  await p.keyboard.press('Escape');

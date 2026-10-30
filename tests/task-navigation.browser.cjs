@@ -42,7 +42,7 @@ const snapshot={...require('./fixtures/display-model.json'),platform:'macos',fon
       const m=await page.evaluate(()=>sent.filter(m=>m.a==='answer').at(-1));
       assert.equal(m.board,board);assert.equal(m.root,root);assert.deepEqual(m.op,{id:'tray.'+action+'.'+t.n+'.'+t.revision,task:t.n,revision:t.revision,action});
       await page.evaluate(m=>taskq.receive({answerReceipt:{root:m.root,id:m.op.id,state:'rejected',reason:'Invented refusal; no board write'}}),m);
-      for(const b of await page.locator('[data-a=answer-dismiss]').all())await b.click();
+      const dismiss=page.locator('[data-a=answer-dismiss]');if(await dismiss.count())await dismiss.first().click();
      }
     }
     assert.deepEqual(await panel.evaluate(e=>[e,...e.querySelectorAll('*')].filter(n=>['auto','scroll'].includes(getComputedStyle(n).overflowY)&&n.scrollHeight>n.clientHeight).map(n=>n.className)),[],'no nested scroll authority');
@@ -54,7 +54,7 @@ const snapshot={...require('./fixtures/display-model.json'),platform:'macos',fon
    assert.equal(await page.evaluate(()=>sent.filter(m=>['conversation-change','message-action','ai-send'].includes(m.a)).length),0,'opening and reading never sends or marks read');
    await page.close();
   }
-  console.log('PASS #1928 128 inline cells, eight-state payload parity, forge/runtime/question routing, focus and outside-click retention');
+  console.log('PASS #1928 64 inline cells, eight-state payload parity, forge/runtime/question routing, focus and outside-click retention');
   // Real wheel input over text, controls and both panel edges must always move the primary list.
   for(const t of tasks){
    const middle={...t,card:'Missing context. '.repeat(120),blocked:Array.from({length:4},(_,i)=>({ref:'#'+(90+i),url:board+'/'+(90+i),reason:'Recorded blocker context'}))};

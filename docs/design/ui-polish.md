@@ -16,6 +16,8 @@ Current taskq.md and explicit owner decisions override historical snapshots. Cur
 
 The #1928 owner note distinguishes an approved queued review as `merge queue · CI`. Use the existing queue receipt and publication detail, including CI progress when known; otherwise show progress as unknown. Keep canonical `state: review`, counters, ordering and service polling unchanged. Native session and read-only progress are separate adapter-supplied targets; older adapters' recorded `session_url` remains compatible without synthesizing a URL.
 
+[Implementation evidence for #1928](evidence/1928/README.md) records source/browser results and the remaining native and sandbox qualification gaps.
+
 ## Requirement destinations
 
 Every row is required. The named check is an existing entry to extend, not an assertion that the target already passes. Integrated functional/interaction/visual and native results are **Not tested** until evidence is attached. Scenario definitions are below. No feature removal is approved.
