@@ -599,7 +599,7 @@ project:function(p){
 filteredTasks:function(p){if(p&&!view.dashboard){view.dashboard=require('./task-views.js').normalize(null,{taskFilter:view.taskFilter});require('./task-views.js').current(view.dashboard).working.projects=[require('./task-views.js').identity(p)];}return dashboard.list();},
 heading:function(label,mark){return h('h2',{class:'section-heading'},icon(mark),label);},
 disclosure:function(mark,children){return h('summary',{class:'settings-disclosure'},icon(mark),h('span',{class:'disclosure-label'},children));},
-stickyFilters:function(){const row=menu.querySelector('.filter-header'),content=row?.closest('.content');if(row&&content){row.classList.toggle('pinned',content.scrollTop>0&&row.getBoundingClientRect().top<=content.getBoundingClientRect().top+1);content.style.scrollPaddingTop=row.getBoundingClientRect().height+'px';}},
+stickyFilters:function(){const content=menu.querySelector('.content'),row=content?.querySelector('.filter-header');if(content)content.style.scrollPaddingTop=row?row.getBoundingClientRect().height+'px':'';if(row)row.classList.toggle('pinned',content.scrollTop>0&&row.getBoundingClientRect().top<=content.getBoundingClientRect().top+1);},
 settings:function(){
   const S=view.S,ps=S.projects,A=S.agents,line=api.runningAgents(true),st=S.notify?.status,svc=S.service?.state,up=ps.find(p=>p.update&&p.update!==p.version);
   const growth={auto:'Auto',top:'Down',bottom:'Up',fixed:'Fixed'}[S.size_anchor||'auto']||'Auto';

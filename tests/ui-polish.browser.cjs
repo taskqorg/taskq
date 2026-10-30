@@ -2,7 +2,7 @@
 // Invented observations; intercepted IPC cannot qualify native rendering, board writes or OS folder opening.
 'use strict';
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
-const {display}=require('./fixtures/display-model.json'),views=require('../src/task-views.js');
+const {display}=require('./fixtures/display-model.json');
 const before=process.env.POLISH_BEFORE,out=process.env.POLISH_EVIDENCE,baseline=process.env.POLISH_BASELINE==='1';
 const routes=['settings','appearance','notifications','cadence','hosts','work','agents','projects','delivery','services','recovery','about'];
 const tasks=display.states.flatMap(({id},i)=>Array.from({length:3},(_,j)=>({n:100+i*3+j,state:id,title:'Keep all controls and the complete task title '+(i*3+j),revision:900+i*3+j,age:'4m',since:900,controls:id==='held'?['start']:['stop','later']})));
@@ -48,6 +48,7 @@ const html=fs.readFileSync(baseline?before+'/tray.html':'build/web/tray.html','u
    await scroll.evaluate(e=>e.scrollTop=0);await p.waitForFunction(()=>!document.querySelector('.filter-header').classList.contains('pinned'));await p.close();
   }
 
+  p=await open();await p.locator('[data-route=settings]').click();assert.equal(await p.locator('.content').evaluate(e=>e.style.scrollPaddingTop),'','Home counter clearance cannot leak into Settings');await p.locator('[data-a=back]').click();assert(await p.locator('.content').evaluate(e=>parseFloat(e.style.scrollPaddingTop)>0),'Back restores counter clearance');await p.close();
   // Matrix checks descendants as well as the root: overflow clipping must not masquerade as fit.
   for(const platform of ['macos','windows'])for(const theme of ['dark','light'])for(const font of [14,16,18,20])for(const width of [320,360]){
    const s={...state,platform,theme,font,projects:[{...project,name:'Infrastructure_'+('long_identifier_'.repeat(4)),tasks:tasks.map(t=>({...t,title:'Unbroken_'+('long_identifier_'.repeat(6))}))}]};

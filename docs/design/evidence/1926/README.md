@@ -4,7 +4,7 @@ Implement UX30-01..05 in the production components. The owner selected option 1 
 
 ## Candidate and boundary
 
-Before: `be3c20f3337d8db3e2c7bb555bbae777247c2bb2`. Production UI changes: `331cfe90cd6da17b6421d8f1cd4a9e2470e07495`; the final task branch adds this evidence and a visible-text test correction. Rebase onto origin/main completed before the first push. Screens use the built `tray.html`, with intercepted IPC and invented observations from `tests/ui-polish.browser.cjs`. No projection adapter, live task operation, service change, native grant or saved user view was used.
+Before: `be3c20f3337d8db3e2c7bb555bbae777247c2bb2`. Production UI changes: `331cfe90cd6da17b6421d8f1cd4a9e2470e07495`; the final task branch also clears counter scroll-padding when leaving Home, keeps the contract within R8, and adds this evidence and a visible-text test correction. Rebase onto origin/main completed before the first push. Screens use the built `tray.html`, with intercepted IPC and invented observations from `tests/ui-polish.browser.cjs`. No projection adapter, live task operation, service change, native grant or saved user view was used.
 
 Reference: the verified Oct 30 ZIP (`e397147ee8fe6d6867af8ecfe604141e9921b0ce6c46e2f059a03851e9b3342d`), its README, plan, acceptance, issue map and rendered live-polish index. Apply its scoped deltas; keep current main behavior. Deliberate difference: both opacity regulators and their disabled states stay present, as A5/A6 require. No inactive saved value is hidden or removed.
 
@@ -37,6 +37,10 @@ Inspected all ten at natural size against the reference. The matrix checks conta
 | A5 / UX30-05 | Pass: 12-route control parity and geometry; existing Settings suite retains sign-in/access/versions/units/freshness and explicit operation review | Native settings persistence not exercised |
 | A6 | Pass: unchanged views, filters, global pins, Completed, notifications, Reports and action/disabled identities; existing dashboard and Settings regressions retained | Live effects not exercised |
 | A7 and sticky note | Pass: before/after evidence, 416 cells, real wheel and keyboard checks in whole/background modes; project matrix adds 48 cells and touch targets | Native macOS/Windows integrated qualification belongs to #1932/#1933; merge-result CI pending |
+
+A targeted route probe also reproduced leaked counter scroll-padding in Settings (`40px` at a wide viewport). The final controller clears it on departure and restores it on Back; the UI polish chain passes both transitions.
+
+The first canonical gate failed after 150.624s: the new Product wording exceeded R8 (61,510 bytes). Only that amended line was shortened; the contract is now 61,438 bytes against 61,440. `cargo test --locked --bin taskq core::tests::every_table_row_has_a_golden_trace` passes with its size/trace assertions unchanged. The full gate is repeated because the candidate and the failed evidence changed.
 
 The Settings host-label test now reads `innerText` rather than SVG indentation in `textContent`. Expected host names, exact runtime counts and stale/expired facts are unchanged. The new chain protects sticky scrolling and alignment, rather than asserting source strings. The sidebar check adds the accepted rhythm while keeping its existing grouping, search, archive, focus and draft guards.
 
