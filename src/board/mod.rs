@@ -212,6 +212,61 @@ pub fn issue_write(board: &dyn Board, n: u64, write: IssueWrite, op_id: Option<&
     }
 }
 
+// ---------- create claim issue (§ 1 `taskq claim-issue`) ----------
+
+/// The title `taskq claim-issue` creates, and finds again after a lost create reply.
+pub const CLAIM_TITLE: &str = "taskq create claims";
+const CLAIM_BODY: &str = "TaskQ create claims (taskq.md § 1): `taskq add --op-id` and `taskq finding` comment here before they create an issue.\n\nKeep this issue. Never edit or delete its comments.";
+
+/// § 1: why issue `i` cannot hold create claims, `None` when it can.
+pub fn claim_issue_refusal(i: &Issue) -> Option<&'static str> {
+    if !i.trusted { Some("its author is not trusted") }
+    else if crate::service::is_task(i) || crate::service::is_held(i) { Some("it is a task") }
+    else if i.labels.iter().any(|l| l == crate::service::HOST_LABEL) { Some("it is a host heartbeat") }
+    else { None }
+}
+
+/// § 1 `taskq claim-issue [N]`: reuse the configured claim issue, adopt `N`, find the one created earlier by title,
+/// or create one; every result is read back. Receipt `{issue, url, source, outcome, reason, next}`: `source` is
+/// `configured`, `adopted`, `found` or `created`; `outcome` is `accepted`, `rejected` (nothing written) or `unknown`.
+pub fn claim_issue(board: &dyn Board, configured: Option<u64>, adopt: Option<u64>) -> Value {
+    let receipt = |outcome: &str, n: Option<u64>, source: &str, reason: &str, next: &str|
+        json!({"issue": n, "url": n.map(|n| board.url(n)), "source": source, "outcome": outcome, "reason": reason, "next": next});
+    let check = |n: u64, source: &str| match board.issue(n) {
+        Err(e) => receipt("rejected", Some(n), source, &e, "Retry taskq claim-issue."),
+        Ok(i) => match claim_issue_refusal(&i) {
+            Some(why) => receipt("rejected", Some(n), source, &format!("#{n} cannot hold create claims: {why}"), "Pass an issue by a trusted author that is not a task, or omit N."),
+            None => receipt("accepted", Some(n), source, "", ""),
+        },
+    };
+    match (configured, adopt) {
+        (Some(c), Some(a)) if c != a => receipt("rejected", Some(c), "configured", &format!("create_claim_issue is already #{c}; another issue would orphan its claims"),
+            &format!("Keep #{c}: run taskq claim-issue without N.")),
+        (Some(c), _) => check(c, "configured"),
+        (None, Some(a)) => check(a, "adopted"),
+        (None, None) => {
+            let found = match board.issues(Some(0)) {
+                Err(e) => return receipt("rejected", None, "found", &e, "Retry taskq claim-issue."),
+                Ok(list) => list.into_iter().filter(|i| i.title == CLAIM_TITLE && claim_issue_refusal(i).is_none()).map(|i| i.number).collect::<Vec<_>>(),
+            };
+            if found.len() > 1 {
+                let list = found.iter().map(|n| format!("#{n}")).collect::<Vec<_>>().join(", ");
+                return receipt("rejected", None, "found", &format!("several claim issues: {list}"), "Pick one: taskq claim-issue N.");
+            }
+            if let Some(&n) = found.first() { return check(n, "found"); }
+            let retry = "Retry taskq claim-issue: it finds the created issue by its title.";
+            match board.create(CLAIM_TITLE, CLAIM_BODY, &[]) {
+                Err(e) => receipt("unknown", None, "created", &e, retry),
+                Ok(n) => match board.issue(n) {
+                    Ok(i) if i.title == CLAIM_TITLE && claim_issue_refusal(&i).is_none() => receipt("accepted", Some(n), "created", "", ""),
+                    Ok(_) => receipt("unknown", Some(n), "created", &format!("#{n} not read back as a claim issue"), retry),
+                    Err(e) => receipt("unknown", Some(n), "created", &e, retry),
+                },
+            }
+        }
+    }
+}
+
 /// § 4 Profiling board operations: each call of the inner board is one `taskq-board` record; cached clock, user
 /// and label-schema reads are not operations and pass through; `ensure_labels` is a `label` operation.
 struct Profiled(Box<dyn Board>);
@@ -1240,6 +1295,66 @@ mod tests {
                 assert_eq!(issue_write(b.as_ref(), 7, w, None)["outcome"], "rejected");
             }
             assert_eq!(state.borrow().2, 2, "refusals write nothing");
+        }
+    }
+
+    // Chain: § 1 create claim, `taskq claim-issue` (#1907) -> GitHub/GitLab adapters. Defect: no command set up a board's
+    // claim issue; the PM created and configured it by hand. Risk: a rerun creates a second claim issue, or a foreign,
+    // task or host issue holds create claims.
+    #[test]
+    fn claim_issue_creates_once_reuses_and_refuses_foreign_task_or_host_on_both_boards() {
+        use std::{cell::RefCell, rc::Rc};
+        for kind in BOARDS {
+            // (number, title, labels, trusted author), creates
+            let seed = vec![(1u64, "Outside bug", vec![], false), (2, CLAIM_TITLE, vec!["taskq".to_string()], true),
+                (3, "host mac", vec!["taskq-host".to_string()], true), (4, "Board notes", vec![], true)];
+            let state = Rc::new(RefCell::new((seed, 0usize)));
+            let st = state.clone();
+            let gl = kind.name == "gitlab";
+            let b = http(kind, Some(false), Box::new(move |method, url, body| {
+                let mut st = st.borrow_mut();
+                let issue = |(n, title, labels, trusted): &(u64, &str, Vec<String>, bool)| json!({"number": n, "iid": n, "title": title,
+                    "body": "", "description": "", "state": if gl { "opened" } else { "open" }, "labels": labels,
+                    "author_association": if *trusted { "OWNER" } else { "NONE" }, "author": {"id": if *trusted { 1 } else { 2 }}});
+                let path = url.split('?').next().unwrap();
+                let v = match (method, path.rsplit_once("/issues").map(|x| x.1)) {
+                    _ if url.contains("/members/all/") => json!({"access_level": if url.ends_with("/1") { 30 } else { 10 }}),
+                    ("GET", Some("")) => json!(st.0.iter().map(issue).collect::<Vec<_>>()),
+                    ("GET", Some(n)) => { let n: u64 = n[1..].parse().unwrap(); issue(st.0.iter().find(|i| i.0 == n).unwrap()) }
+                    ("POST", Some("")) => {
+                        let body = body.unwrap();
+                        assert_eq!(body["title"], CLAIM_TITLE);
+                        let n = st.0.len() as u64 + 1;
+                        st.0.push((n, CLAIM_TITLE, vec![], true));
+                        st.1 += 1;
+                        json!({"number": n, "iid": n})
+                    }
+                    _ => panic!("{} unexpected {method} {url}", kind.name),
+                };
+                Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: "read" })
+            }));
+            let b = b.as_ref();
+            let r = claim_issue(b, None, None);
+            assert_eq!((r["outcome"].as_str(), r["source"].as_str(), r["issue"].as_u64()), (Some("accepted"), Some("created"), Some(5)), "{}: {r}", kind.name);
+            assert_eq!(r["url"], b.url(5));
+            let r = claim_issue(b, None, None);
+            assert_eq!((r["outcome"].as_str(), r["source"].as_str(), r["issue"].as_u64()), (Some("accepted"), Some("found"), Some(5)), "lost key: {r}");
+            for adopt in [None, Some(5)] {
+                assert_eq!(claim_issue(b, Some(5), adopt)["source"], "configured");
+                assert_eq!(claim_issue(b, Some(5), adopt)["outcome"], "accepted");
+            }
+            assert_eq!(claim_issue(b, Some(5), Some(4))["outcome"], "rejected", "a configured issue is never replaced");
+            for (n, why) in [(1, "not trusted"), (2, "a task"), (3, "host heartbeat")] {
+                let r = claim_issue(b, None, Some(n));
+                assert_eq!(r["outcome"], "rejected", "{r}");
+                assert!(r["reason"].as_str().unwrap().contains(why), "{r}");
+            }
+            let r = claim_issue(b, None, Some(4));
+            assert_eq!((r["outcome"].as_str(), r["source"].as_str()), (Some("accepted"), Some("adopted")));
+            state.borrow_mut().0.push((6, CLAIM_TITLE, vec![], true));
+            let r = claim_issue(b, None, None);
+            assert_eq!((r["outcome"].as_str(), r["reason"].as_str()), (Some("rejected"), Some("several claim issues: #5, #6")), "{r}");
+            assert_eq!(state.borrow().1, 1, "{}: one create in all", kind.name);
         }
     }
 
