@@ -35,8 +35,15 @@ pub struct GitHub {
     pub(super) api: Api,
     /// `main` branch rules, read once per credential (#1359), a plan refusal too (#1935). ponytail: same-token rules changes need a service restart.
     rules: std::cell::RefCell<Option<(u64, Result<Value>)>>,
-    /// The last open-issue list and when it was read: reused while the newest-updated probe answers 304 (#1819).
-    open: std::cell::RefCell<Option<(std::time::Instant, Vec<Issue>)>>,
+    /// The last open-issue list, reused while the changed-since probe finds nothing new (#1819, #1968).
+    open: std::cell::RefCell<Option<Open>>,
+}
+
+struct Open {
+    at: std::time::Instant,
+    list: Vec<Issue>,
+    /// `updated` of every issue the list accounts for, closed ones the relisting probe saw too; its maximum is the probe's `since`.
+    known: std::collections::HashMap<u64, i64>,
 }
 
 /// The longest an open-issue list is reused over unchanged probes; a deleted issue does not bump `updated_at`.
@@ -70,16 +77,37 @@ const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String
     nodes { number title body updatedAt createdAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
 
 impl GitHub {
-    /// Every board change bumps some issue's `updated_at`: a 304 on the newest-updated issue keeps the last list (#1819).
+    /// Every board change bumps some issue's `updated_at`; one `since` query of the newest known update finds them,
+    /// a 304 when nothing changed (#1819). Heartbeat writes and pull requests alone patch the list instead of relisting
+    /// it (#1968): three hosts beating every minute would otherwise relist on every pass.
     fn open_unchanged(&self) -> Result<Vec<Issue>> {
-        let probe = self.api.call("GET", "/issues?state=all&sort=updated&direction=desc&per_page=1", None).map(|_| self.api.unchanged.get());
-        if probe.as_ref().is_ok_and(|same| *same) {
-            if let Some((_, list)) = self.open.borrow().as_ref().filter(|(at, _)| at.elapsed() < OPEN_REUSE) { return Ok(list.clone()); }
+        let cached = self.open.borrow_mut().take().filter(|o| o.at.elapsed() < OPEN_REUSE);
+        let mut seen = vec![];
+        if let Some(mut o) = cached {
+            let since = o.known.values().max().copied().unwrap_or(0);
+            let url = format!("/issues?state=all&sort=updated&direction=desc&per_page=100&since={}", stamp(since));
+            if let Ok(Value::Array(rows)) = self.api.call("GET", &url, None).and_then(|r| r.json()) {
+                let issues: Vec<Issue> = rows.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect();
+                if rows.len() < 100 && issues.iter().all(|i| crate::service::is_host(i) || o.known.get(&i.number) == Some(&i.updated)) {
+                    for h in issues.into_iter().filter(crate::service::is_host) {
+                        match o.list.iter().position(|i| i.number == h.number) {
+                            Some(at) if h.open => o.list[at] = h,
+                            Some(at) => { o.list.remove(at); }
+                            None if h.open => o.list.push(h),
+                            None => {}
+                        }
+                    }
+                    let list = o.list.clone();
+                    *self.open.borrow_mut() = Some(o);
+                    return Ok(list);
+                }
+                seen = issues;
+            }
         }
-        // a failed probe or list keeps nothing: the next pass reads in full
-        *self.open.borrow_mut() = None;
+        // a failed list keeps nothing: the next pass reads in full
         let list = self.open_issues()?;
-        if probe.is_ok() { *self.open.borrow_mut() = Some((std::time::Instant::now(), list.clone())); }
+        let known = seen.iter().chain(&list).map(|i| (i.number, i.updated)).collect();
+        *self.open.borrow_mut() = Some(Open { at: std::time::Instant::now(), list: list.clone(), known });
         Ok(list)
     }
 

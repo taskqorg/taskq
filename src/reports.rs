@@ -34,7 +34,7 @@ impl Cache {
             for (i,closed) in issues {
                 let old=self.entries.get(&i.number);
                 // Board timestamps have second precision. A read in that same second needs one settled re-read.
-                let reusable=i.updated>0 && old.is_some_and(|(at,proof,row)|*at==i.updated && *proof>i.updated && row.as_ref().is_none_or(|r|r["kind"]=="task"||r["reason"].is_null()));
+                let reusable=i.updated>0 && old.is_some_and(|(at,proof,row)|*at==i.updated && *proof>i.updated && row.as_ref().is_none_or(|r|r["kind"]=="task"||r["reason"].is_null()||r["missing"]==true));
                 let row=if reusable {
                     old.unwrap().2.clone()
                 } else {
@@ -45,8 +45,8 @@ impl Cache {
                 };
                 let row=row.map(|mut row| {
                     if row["visible"]==true && row["kind"]=="report" {
-                        let source=old.and_then(|(_,_,r)|r.as_ref()).filter(|r|r["sha"]==row["sha"] && r["body"].is_string());
-                        let content=match source {Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
+                        let source=old.and_then(|(_,_,r)|r.as_ref()).filter(|r|r["sha"]==row["sha"] && (r["body"].is_string()||r["missing"]==true));
+                        let content=match source {Some(r) if r["missing"]==true=>Err(r["reason"].as_str().unwrap_or_default().to_string()),Some(r)=>Ok((r["body"].clone(),r["tasks"].clone())),None=>{
                             coreq::telemetry::capture::operation("reports.collect.source",|| -> Res<(Value,Value)> {
                                 let body=b.source(&format!("docs/research/{}.md",i.number),row["sha"].as_str().ok_or("report SHA missing")?)?.replace("\r\n","\n");
                                 let tasks=proposals(&body)?;
@@ -54,10 +54,13 @@ impl Cache {
                                 Ok((json!(body),json!(tasks)))
                             },|_|"report-source")
                         }};
-                        match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(reason)=>row["reason"]=json!(reason)}
+                        match content {Ok((body,tasks))=>{row["body"]=body;row["tasks"]=tasks;},Err(reason)=>{
+                            // #1968: a 404 at an immutable SHA never heals; settle it instead of re-reading every pass.
+                            if reason.contains("HTTP 404") {row["missing"]=json!(true);}
+                            row["reason"]=json!(reason)}}
                     }row
                 });
-                if let Some(reason)=row.as_ref().filter(|r|r["kind"]=="report").and_then(|r|r["reason"].as_str()) {errors.push(format!("#{}: {reason}",i.number));}
+                if let Some(reason)=row.as_ref().filter(|r|r["kind"]=="report"&&r["missing"]!=true).and_then(|r|r["reason"].as_str()) {errors.push(format!("#{}: {reason}",i.number));}
                 next.insert(i.number,(i.updated,if reusable{old.unwrap().1}else{verified},row));
             }
             self.entries=next;
@@ -541,6 +544,19 @@ mod tests {
         cache.collect(&b);assert_eq!(b.state.borrow().comment_reads,reads,"settled unchanged projections reuse comments");
         b.raw(n,&format!("taskq: report-drop {sha}"),true,false);cache.collect(&b);
         assert!(cache.value["reports"].as_array().unwrap().is_empty());
+    }
+
+    // #1968 A4: a source missing at its result SHA is settled; it must not block the cursor or repeat reads.
+    #[test] fn missing_report_source_settles_without_repeating_reads() {
+        let (b,_,n,_)=board();let source=b.state.borrow_mut().report_sources.pop().unwrap();
+        let mut cache=Cache::default();cache.collect(&b);
+        assert_eq!(cache.value["complete"],true);assert!(cache.verified.is_some(),"a settled 404 advances the cursor");
+        assert!(cache.value["reports"][0]["reason"].as_str().unwrap().contains("HTTP 404"));
+        b.advance(2);cache.collect(&b);let reads=b.state.borrow().comment_reads;
+        // A source read would now succeed; staying settled proves no pass fetches it again.
+        b.state.borrow_mut().report_sources.push(source);b.advance(2);cache.collect(&b);
+        assert_eq!(b.state.borrow().comment_reads,reads,"settled rows reuse comments");
+        assert_eq!(cache.value["reports"][0]["n"],n);assert!(cache.value["reports"][0]["body"].is_null());
     }
 
     #[test] fn close_event_invalidates_collection_before_the_next_due_pass() {
