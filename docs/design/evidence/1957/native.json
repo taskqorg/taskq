@@ -1,0 +1,140 @@
+{
+  "captures": [
+    {
+      "source": "be3c20f3337d8db3e2c7bb555bbae777247c2bb2 + harness-baseline.diff",
+      "binary_sha256": "ec6f99f45fffbad4ece6af2df4e47f7a1016230d5c4aefb396d9b75b00d7532b",
+      "route": "reports",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2827,
+      "review_image": "before-reports.png",
+      "images": [
+        "popover-dark-reports-16.png",
+        "popover-light-reports-16.png"
+      ]
+    },
+    {
+      "source": "be3c20f3337d8db3e2c7bb555bbae777247c2bb2 + harness-baseline.diff",
+      "binary_sha256": "ec6f99f45fffbad4ece6af2df4e47f7a1016230d5c4aefb396d9b75b00d7532b",
+      "route": "reports-conversations",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2627,
+      "review_image": "before-reports-conversations.png",
+      "images": [
+        "popover-dark-reports-conversations-16.png",
+        "popover-light-reports-conversations-16.png"
+      ]
+    },
+    {
+      "source": "be3c20f3337d8db3e2c7bb555bbae777247c2bb2 + harness-baseline.diff",
+      "binary_sha256": "ec6f99f45fffbad4ece6af2df4e47f7a1016230d5c4aefb396d9b75b00d7532b",
+      "route": "results",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2636,
+      "review_image": "before-results.png",
+      "images": [
+        "popover-dark-results-16.png",
+        "popover-light-results-16.png"
+      ]
+    },
+    {
+      "source": "be3c20f3337d8db3e2c7bb555bbae777247c2bb2 + harness-baseline.diff",
+      "binary_sha256": "ec6f99f45fffbad4ece6af2df4e47f7a1016230d5c4aefb396d9b75b00d7532b",
+      "route": "results-conversations",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2760,
+      "review_image": "before-results-conversations.png",
+      "images": [
+        "popover-dark-results-conversations-16.png",
+        "popover-light-results-conversations-16.png"
+      ]
+    },
+    {
+      "source": "1e9912569f9b7374ae119bd8da0534064619b3d2",
+      "binary_sha256": "e9c52d0864aa70e507b609a46a5ebbd52795ed6a977713d35209b22f0f47222b",
+      "route": "reports",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2647,
+      "review_image": "after-reports.png",
+      "images": [
+        "popover-dark-reports-16.png",
+        "popover-light-reports-16.png"
+      ]
+    },
+    {
+      "source": "1e9912569f9b7374ae119bd8da0534064619b3d2",
+      "binary_sha256": "e9c52d0864aa70e507b609a46a5ebbd52795ed6a977713d35209b22f0f47222b",
+      "route": "reports-conversations",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2689,
+      "review_image": "after-reports-conversations.png",
+      "images": [
+        "popover-dark-reports-conversations-16.png",
+        "popover-light-reports-conversations-16.png"
+      ]
+    },
+    {
+      "source": "1e9912569f9b7374ae119bd8da0534064619b3d2",
+      "binary_sha256": "e9c52d0864aa70e507b609a46a5ebbd52795ed6a977713d35209b22f0f47222b",
+      "route": "results",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2737,
+      "review_image": "after-results.png",
+      "images": [
+        "popover-dark-results-16.png",
+        "popover-light-results-16.png"
+      ]
+    },
+    {
+      "source": "1e9912569f9b7374ae119bd8da0534064619b3d2",
+      "binary_sha256": "e9c52d0864aa70e507b609a46a5ebbd52795ed6a977713d35209b22f0f47222b",
+      "route": "results-conversations",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 2737,
+      "review_image": "after-results-conversations.png",
+      "images": [
+        "popover-dark-results-conversations-16.png",
+        "popover-light-results-conversations-16.png"
+      ]
+    },
+    {
+      "source": "1e9912569f9b7374ae119bd8da0534064619b3d2 + harness-walk.diff",
+      "binary_sha256": "ab4188e81c0ae0eb1505ca6e3e0ae07695548109ccfe345643bc04c4b6a103da",
+      "route": "walk",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 10227,
+      "review_image": "walk-menu.png",
+      "images": [
+        "popover-dark-walk-16.png",
+        "popover-light-walk-16.png"
+      ]
+    },
+    {
+      "source": "1e9912569f9b7374ae119bd8da0534064619b3d2 + harness-walk.diff",
+      "binary_sha256": "ab4188e81c0ae0eb1505ca6e3e0ae07695548109ccfe345643bc04c4b6a103da",
+      "route": "walk-conversations",
+      "qualification": "macOS 27.0.1 (26A434) arm64 WKWebView (WebKit 22625.1.29.11.28); TaskQ Local Signing; invented receipts; isolated installation; not deployed",
+      "exit": 0,
+      "elapsed_ms": 9648,
+      "review_image": "walk-conversations.png",
+      "images": [
+        "popover-dark-walk-conversations-16.png",
+        "popover-light-walk-conversations-16.png"
+      ]
+    }
+  ],
+  "fixtures": {
+    "tests/fixtures/reports-shots.js (PR #1956)": "7545304469fbb027bbf9e0f18188c8795694bedc0cb611bb0c6b5a4b13070f53",
+    "results-before-1957.js": "97f08963398f12027b3043b873f698255b7806ba1335ee5de3d3b68b20d6818b",
+    "results-walk-1957.js": "4ab039f723d5f12b9bba2dce3e8b94abf8d220d44f5e873686610e25177a703d"
+  },
+  "install": "docs/shots/fixture.sh in a temporary TASKQ_INSTALL; no board token; production service untouched"
+}
