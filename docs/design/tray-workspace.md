@@ -49,6 +49,16 @@ Approved: the owner selected Inline actions in [the stage 1 answer](https://gith
 
 Taskq.md § Product adopts these details (R13). Implementation covers all three thread sources, durable local metadata, authoritative activity timestamps and row actions. Native Mac/Windows acceptance is the release batch under §7.8, as [answered on #1808](https://github.com/taskqorg/taskq/issues/1808#issuecomment-6490079689); a browser mock does not qualify either host (R12).
 
+## Reports and finished work candidate (#1977)
+
+The owner-requested merged destination follows [RC1–RC7](reports.md#conversations-design-checkpoint-1977). The [design review](reports-conversations.md) contains the operator-path comparison, preservation ledger, six-screen reference and qualification gaps. This extends the existing sidebar rather than replacing CS1–CS6; changed geometry still awaits approval.
+
+Keep All / Needs reply / Needs decision / Finished filters directly above the grouped list, with one search field. Pin/project/Other membership, row actions, collapse and source timestamps retain CS1–CS6. All includes active conversations, questions and collected finished work. Attention labels distinguish Needs reply, Needs decision, Unread result, Accepted and Dropped; reading alone never displays Decided. Archive is a separate local view, not the Finished filter. Failed or incomplete collections keep cached rows and an unknown reason.
+
+Selecting a result opens it once in the existing reading pane, preserving the sidebar and the previous draft. One board/task identity spans its history, result and decision receipts; the originating PM thread retains the linked outcome without a second standalone result row unless that task was independently opened. Full report expands in the same reading region. On narrow windows, List returns to the same filtered list and selection; choosing a row returns to its reading pane. Legacy Results links and notification clicks open this context directly. Menu Notifications remains a notice/deep-link surface, with no result decision controls (TW2). History and Work sessions remain reachable.
+
+The build must preserve closed-history paging, seen markers, partial draft receipts, local archive/restore, source-numbered answers, per-thread drafts, Watch, attachment limits and execution boundaries. No result/read/archive action may reopen a closed source, release execution or start a held draft. Native screenshots against approved references remain separate evidence (A6, R12); no service update or live installation is authorized by these mockups.
+
 Acceptance: each implementing task repeats its affected flow against TW1–TW8 and
 the [interaction table](evidence/1443/owner-plan.md#interaction-differences-to-remove);
 the last one reviews the combined tray and workspace against all seven points.

@@ -1,0 +1,515 @@
+{
+  "scope": "Design instrument only; invented data, real shared answer-card renderer; no board/native/installed-app proof",
+  "baseline": "554552daf48d5b413918d54a8a6d0f88efba4020",
+  "browser": "156.0.8078.4",
+  "platform": "win32",
+  "font": "system-ui (Windows Segoe UI), 16/20 CSS px",
+  "scale": 1,
+  "cells": [
+    {
+      "scene": "question",
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 1280,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 1280,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 1280,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "question",
+      "width": 1280,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 1280,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 1280,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 1280,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "report",
+      "width": 1280,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 1280,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 1280,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 1280,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "finished",
+      "width": 1280,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 1280,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 1280,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 1280,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "empty",
+      "width": 1280,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 1280,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 1280,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 1280,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "many",
+      "width": 1280,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 350,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 350,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 350,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 350,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 620,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 620,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 620,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 620,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 1280,
+      "font": 16,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 1280,
+      "font": 16,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 1280,
+      "font": 20,
+      "theme": "dark",
+      "result": "Pass: prototype geometry only"
+    },
+    {
+      "scene": "unknown",
+      "width": 1280,
+      "font": 20,
+      "theme": "light",
+      "result": "Pass: prototype geometry only"
+    }
+  ],
+  "errors": []
+}
