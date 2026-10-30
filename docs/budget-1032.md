@@ -103,6 +103,36 @@ about 3550 core/h after.
   owner's choice. Follow-up: [#1084](https://github.com/taskqorg/taskq/issues/1084)
   counts them per host and source and cuts each above 10 %.
 
+## Three hosts, 2026-10-30 (#1968)
+
+The 18:08-18:13Z pause was the **core** bucket, not GraphQL: Mac logged
+`board budget low: 988/5000 core` and `rate limit: board requests paused until
+2026-10-30T18:13:33Z`; Windows paused again until 18:51:17Z. `gh api rate_limit`
+at 18:36Z read core 4142 used, GraphQL 156. Service hourly lines (requests sent,
+free 304s included; Mac and pds18 also serve GitLab boards):
+
+| Host | requests/h | GET issues | POST graphql | GET issues/N/comments | PATCH issues/N |
+|---|---:|---:|---:|---:|---:|
+| Mac 10:51Z | 4454 | 2684 | 601 | 48 | 279 |
+| Windows 18:10Z | 3869 | 1617 | 790 | 572 | 285 |
+| pds18 17:52Z | 787 | 213 | 186 | 105 | 121 |
+
+Worker `gh` calls: no `taskq-requests` source lines in the Mac install log, so
+unknown per host; the core use GitHub reports above the three services' counts
+is their bound.
+
+Measured cause: the Reports collector (§ 7). Seven research results name a
+`docs/research/N.md` absent at the result SHA (`/contents` HTTP 404). Each 404
+counted as a collection failure, so the cursor never advanced: every poll on
+each host serving the taskq board re-paged all closed tasks 10 per page, re-read
+the failing rows' comments and re-fetched the 404s. Mac telemetry for one hour:
+809 `reports.collect.list`, 3612 `reports.collect.comments`, 726
+`reports.collect.source`; 370 of 372 `read http4xx` came from the source fetch.
+The heartbeat hypothesis holds for GraphQL only: about 1600 points/h on three
+hosts, under the 2500 target, because a beat on any host made the others relist.
+Fix: a 404 at a result SHA is settled; a heartbeat or pull-request change patches
+the kept list.
+
 ## Counting format
 
 Moved from taskq.md § 4 Log and board budget, which keeps the rules.
@@ -121,4 +151,4 @@ Moved from taskq.md § 4 Log and board budget, which keeps the rules.
 
 Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bound. `taskq.md` keeps the decision and links here; this text keeps the same authority (R8, R13).
 
-- Log and board budget (#1009): each service log line is `<UTC time> <text>` (ISO 8601, local clock); a multi-line message (HTTP error body, panic) folds into it. Service threads share one counter and pause per API host and credential; CLI and worker processes count separately. A rate-limit reply pauses all calls sharing that budget until the reset, at most 1 h, in every process of the install: the process that got it writes the reset (Unix seconds, its own clock) to `<install>/requests-paused-<key>` (`<key>`: 16 hex of SHA-256 of API root and credential), and each process reads that file before a request and adopts a future reset; calls fail at once naming the reset, the service logs one paused and one resumed line and resumes without a restart (operation names and header rules: [counting format](budget-1032.md#counting-format)). `status.json` `requests` holds the counts, the last `remaining`/`limit` and `paused_until`; the log gets `requests 1h: ..` hourly; `service status`/`list` print `Board requests: <n>/h; ..` (else unknown with reason) and the pause. #988 profiling times operations; this counts requests. CLI processes and workers count alone and pause with the install; coreq update and incident requests are not counted. Sources (#1084): a CLI process with board requests at exit, and the service hourly, append one `taskq-requests {at_ms, source, ops}` line to `<install>/taskq.log` (profile lock and bound). Board access budget (#1011): one board user's 5000 requests/h serve every host, project, service, CLI, worker, PM and DashQ. A service pass costs one open-issue list (github.com: GraphQL, labels only, skipped when a conditional probe of the newest updated issue returns 304; #1819); every process repeats a GET with `If-None-Match` and its last `ETag` and reuses that body on 304, which GitHub does not count; it re-reads comments only of issues whose `updated_at` moved, writes the heartbeat only on change or past `min(60 s, ttl / 3)`, reuses that issue for leases, verifies each label once per process and reads dependencies only for a would-be `ready` task (§ 1). Agent CI waits: § 7 rule 7. Budget alarm: at `remaining` <= 20 % of `limit` the service logs `board budget low` once per reset, and `service status`/`list` and R6 line 1 show `Board budget low: <remaining>/<limit> <resource> until <reset> (<host>); top here: <op> <n>`.
+- Log and board budget (#1009): each service log line is `<UTC time> <text>` (ISO 8601, local clock); a multi-line message (HTTP error body, panic) folds into it. Service threads share one counter and pause per API host and credential; CLI and worker processes count separately. A rate-limit reply pauses all calls sharing that budget until the reset, at most 1 h, in every process of the install: the process that got it writes the reset (Unix seconds, its own clock) to `<install>/requests-paused-<key>` (`<key>`: 16 hex of SHA-256 of API root and credential), and each process reads that file before a request and adopts a future reset; calls fail at once naming the reset, the service logs one paused and one resumed line and resumes without a restart (operation names and header rules: [counting format](budget-1032.md#counting-format)). `status.json` `requests` holds the counts, the last `remaining`/`limit` and `paused_until`; the log gets `requests 1h: ..` hourly; `service status`/`list` print `Board requests: <n>/h; ..` (else unknown with reason) and the pause. #988 profiling times operations; this counts requests. CLI processes and workers count alone and pause with the install; coreq update and incident requests are not counted. Sources (#1084): a CLI process with board requests at exit, and the service hourly, append one `taskq-requests {at_ms, source, ops}` line to `<install>/taskq.log` (profile lock and bound). Board access budget (#1011): one board user's 5000 requests/h serve every host, project, service, CLI, worker, PM and DashQ. A service pass costs one open-issue list (github.com: GraphQL, labels only, skipped while a conditional probe of the issues updated since the newest known update returns 304 or only heartbeat and pull-request changes, which patch the kept list; full list at least every 5 min; #1819, #1968); every process repeats a GET with `If-None-Match` and its last `ETag` and reuses that body on 304, which GitHub does not count; it re-reads comments only of issues whose `updated_at` moved, writes the heartbeat only on change or past `min(60 s, ttl / 3)`, reuses that issue for leases, verifies each label once per process and reads dependencies only for a would-be `ready` task (§ 1). Reports collection (§ 7) settles a report source missing (HTTP 404) at its result SHA: it is never fetched again and does not hold back the collection cursor (#1968). Agent CI waits: § 7 rule 7. Budget alarm: at `remaining` <= 20 % of `limit` the service logs `board budget low` once per reset, and `service status`/`list` and R6 line 1 show `Board budget low: <remaining>/<limit> <resource> until <reset> (<host>); top here: <op> <n>`.

@@ -1011,7 +1011,7 @@ impl Board for Fake {
             .map(|i|(i.clone(),st.report_closed.get(&i.number).copied().unwrap_or(i.updated))).collect())
     }
     fn source(&self,path:&str,sha:&str)->Result<String> {
-        self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or("report source unavailable".into())
+        self.state.borrow().report_sources.iter().find(|(p,s,_)|p==path&&s==sha).map(|(_,_,b)|b.clone()).ok_or("report source unavailable: HTTP 404".into())
     }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
         let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
@@ -2573,14 +2573,16 @@ exit 0
         let flag = limited.clone();
         let probes = std::rc::Rc::new(RefCell::new(0));
         let probed = probes.clone();
+        // the changed-since probe: a set reply is a 200 with that body, an unset one 304 Not Modified
+        let changes = std::rc::Rc::new(RefCell::new(Some("[]".to_string())));
+        let changed = changes.clone();
         let h = http(kind, Some(true), Box::new(move |method, url, body| {
             if method == "GET" {
-                // the newest-updated probe: its first reply carries the ETag, every later one is 304 Not Modified
-                assert_eq!(url, "https://api.github.com/repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=1");
+                assert!(url.starts_with("https://api.github.com/repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-10-14T04:"), "{url}");
                 *probed.borrow_mut() += 1;
-                let first = *probed.borrow() == 1;
-                return Ok(Reply { status: if first { 200 } else { 304 }, headers: vec![("ETag".into(), "\"e1\"".into())],
-                    body: if first { "[]".into() } else { String::new() }, operation: "read" });
+                let reply = changed.borrow_mut().take();
+                return Ok(Reply { status: if reply.is_some() { 200 } else { 304 }, headers: vec![("ETag".into(), "\"e1\"".into())],
+                    body: reply.unwrap_or_default(), operation: "read" });
             }
             assert_eq!((method, url), ("POST", "https://api.github.com/graphql"));
             let body = body.unwrap();
@@ -2604,16 +2606,30 @@ exit 0
         assert_eq!((list[0].labels.clone(), list[0].assignees.clone(), list[0].updated, list[0].created), (vec!["q-ready".to_string()], vec![], iso("2026-10-14T04:27:00Z").unwrap(), iso("2026-10-14T04:20:00Z").unwrap()));
         let b = h.requests();
         assert_eq!((b.ops.get("POST graphql"), b.resource.clone(), b.remaining), (Some(&2), Some("graphql".into()), Some(4990)));
+        assert_eq!(h.issues(None).unwrap(), list, "an empty probe keeps the last list");
         assert_eq!(h.issues(None).unwrap(), list, "a 304 probe keeps the last list");
         assert_eq!((h.requests().ops.get("POST graphql"), *probes.borrow()), (Some(&2), 2));
+        // #1968 A3: another host's heartbeat write and a pull request update patch the list without a relist
+        let beat = json!({"number": 7, "title": "taskq host win", "body": "beat", "state": "open", "updated_at": "2026-10-14T04:29:00Z",
+            "author_association": "OWNER", "labels": [{"name": "taskq-host"}]});
+        let pull = json!({"number": 8, "title": "PR", "state": "open", "updated_at": "2026-10-14T04:29:30Z", "pull_request": {}, "labels": []});
+        *changes.borrow_mut() = Some(json!([pull, beat]).to_string());
+        let beaten = h.issues(None).unwrap();
+        assert_eq!((beaten.len(), beaten[2].number, beaten[2].body.as_str()), (3, 7, "beat"));
+        assert_eq!(h.issues(None).unwrap(), beaten, "a 304 keeps the patched list");
+        assert_eq!(h.requests().ops.get("POST graphql"), Some(&2), "a heartbeat write alone never relists");
+        // a task change relists
+        *changes.borrow_mut() = Some(json!([{"number": 5, "title": "t", "state": "open", "updated_at": "2026-10-14T04:30:00Z", "labels": []}]).to_string());
+        h.issues(None).unwrap();
+        assert_eq!(h.requests().ops.get("POST graphql"), Some(&4), "a task change relists");
         h.forget();
         assert_eq!(h.issues(None).unwrap(), list);
-        assert_eq!(h.requests().ops.get("POST graphql"), Some(&4), "a forgotten list is read in full");
+        assert_eq!(h.requests().ops.get("POST graphql"), Some(&6), "a forgotten list is read in full");
         h.forget();
         *limited.borrow_mut() = true;
         assert!(h.issues(None).unwrap_err().contains("HTTP 403 rate limit: board requests paused until"));
         assert!(h.issues(None).unwrap_err().contains("paused"));
-        assert_eq!(h.requests().total(), 9, "nothing is sent while paused");
+        assert_eq!(h.requests().total(), 12, "nothing is sent while paused");
     }
 
     // Chain: § 4 budget (#1819). Risk: a repeated GET is counted by GitHub, or a 304 loses the body.
