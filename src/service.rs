@@ -401,6 +401,9 @@ pub struct Service<'a> {
     held: Vec<Launch>,
     /// Attempts without a child that keep their lease: held claims and resumes (§ 3, § 4 heartbeat).
     pending: BTreeSet<(u64, u64)>,
+    /// Spawns this process posted whose readback lacked them: no new claim of the task until one shows (#1903).
+    /// ponytail: an entry clears at the next claim of its task, so closed tasks keep theirs until restart.
+    unseen: HashMap<u64, u64>,
     /// Wall seconds for the host authority, set by the loop.
     pub wall: i64,
     /// Auto reservations the host granted, not yet a child; refused requests of this pass and their reason (§ 3).
@@ -676,7 +679,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -2108,12 +2111,18 @@ impl<'a> Service<'a> {
     fn claim_inner(&mut self, v: &View, role: &str, rt: &str) -> Result<Option<(Launch, Vec<core::Entry>)>, String> {
         let n = v.issue.number;
         let before = self.seen_log(v)?;
+        // #1903: a spawn the readback missed stays unknown; claiming again would post a spawn every pass
+        if let Some(&id) = self.unseen.get(&n) {
+            if !before.iter().any(|e| e.id == id) { return Ok(None); }
+            self.unseen.remove(&n);
+        }
         if core::executions(n, &before).iter().any(|x| x.release.is_none()) { return Ok(None); }
         let session = crate::runtime::new_session(rt);
         let id = self.post(n, core::entry("spawn", &[role, &format!("{rt}:{session}"), &self.cfg.me], None, ""))?;
         let comments = self.board.comments(n)?;
         let seen = comments.iter().any(|c| c.id == id);
         if !seen {
+            self.unseen.insert(n, id);
             crate::incident::detect("adapter.read_after_write", concat!("src/service.rs:", line!()), rt, &[], &["spawn:missing"]);
         }
         let log = crate::board::reply::log(n, &comments)?;
@@ -4724,6 +4733,23 @@ Open: none")).unwrap();
         assert_eq!((t.state, t.retries), (State::Ask, 2));
         assert!(card.contains("confirmed NoStart") && card.contains("Problem: retry limit 2 reached by this gone"), "{card}");
         assert_eq!(core::options(&card).len(), 2);
+    }
+
+    // Chain: #1903 claim readback keeps missing the spawn (cs#528). Risk: the service posts a new spawn on every pass.
+    #[test]
+    fn a_spawn_the_readback_misses_is_not_reposted_each_pass() {
+        let c = cfg("mac");
+        let b = Fake::default();
+        let n = b.create("T", "", &[TASK_LABEL.into()]).unwrap();
+        let mut s = service(&b, &c, Rc::new(RefCell::new(vec![])));
+        let spawns = || b.comments(n).unwrap().iter().filter(|c| c.body.starts_with("taskq: spawn")).count();
+        b.state.borrow_mut().hide_latest_comment = true;
+        for _ in 0..3 { s.pass().unwrap(); }
+        b.state.borrow_mut().hide_latest_comment = false;
+        assert_eq!(spawns(), 1, "{:?}", s.log);
+        // once the readback shows it, the spawn is the attempt
+        s.pass().unwrap();
+        assert_eq!((spawns(), task(&b, n).state), (1, State::Doing));
     }
 
     // Chain: #1879 (pilotq#133) claim readback lacks the won spawn -> no start, child or attempt log -> named wait for one

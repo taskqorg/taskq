@@ -614,10 +614,14 @@ impl Api {
         self.credentials.borrow().budget.borrow_mut().paused(now)
     }
 
+    /// absolute URLs come from pagination headers: the token goes only to the configured API
+    fn absolute(&self, url: &str) -> String {
+        if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) }
+    }
+
     /// One request counted under `op`. While the board budget is exhausted nothing is sent (§ 4).
     fn send(&self, method: &str, url: &str, body: Option<Value>, op: &str) -> Result<Reply> {
-        // absolute URLs come from pagination headers: the token goes only to the configured API
-        let url = if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) };
+        let url = self.absolute(url);
         if !url.starts_with(&format!("{}/", self.root)) {
             return Err(format!("refused: {url} is outside the board API"));
         }
@@ -713,10 +717,19 @@ impl Api {
         let mut out = vec![];
         let op = self.op("GET", url);
         let mut next = Some(url.to_string());
+        let page = |r: &Reply| -> Result<Vec<Value>> { Ok(r.json()?.as_array().ok_or("invalid board list: expected array")?.clone()) };
         while let Some(u) = next {
             // later pages count under their first page's operation
-            let r = self.send("GET", &u, None, &op)?;
-            out.extend(r.json()?.as_array().ok_or("invalid board list: expected array")?.iter().cloned());
+            let mut r = self.send("GET", &u, None, &op)?;
+            let mut items = page(&r)?;
+            // #1903: a 304 replays the cached reply's Link; a full last page may have grown a next page since
+            let size = u.split(['?', '&']).find_map(|p| p.strip_prefix("per_page=")?.parse::<usize>().ok());
+            if self.unchanged.get() && r.next().is_none() && size == Some(items.len()) {
+                self.etags.borrow_mut().remove(&self.absolute(&u));
+                r = self.send("GET", &u, None, &op)?;
+                items = page(&r)?;
+            }
+            out.extend(items);
             next = r.next();
         }
         Ok(out)
@@ -2313,6 +2326,41 @@ exit 0
         assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[1]".to_string(), true));
         assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[2]".to_string(), false));
         assert!(api.etags.borrow().is_empty(), "a reply without ETag drops the cached one");
+    }
+
+    // Chain: #1903 claim readback on an issue past 100 notes. Risk: a 304 on page 1 replays the Link cached while the
+    // issue had one page, so `all` never reads page 2 and a new spawn note is never seen.
+    #[test]
+    fn unchanged_full_page_rereads_for_a_new_next_page() {
+        use std::cell::Cell;
+        let mut api = (BOARDS[0].api)("github.com", "o/r", "test");
+        // (notes on the issue, page-1 replies still answered 304, requests sent)
+        let state = std::rc::Rc::new((Cell::new(2u64), Cell::new(0u32), Cell::new(0u32)));
+        let st = state.clone();
+        api.transport = Some(Box::new(move |_, url, _| {
+            st.2.set(st.2.get() + 1);
+            let n = st.0.get();
+            if url.contains("&page=2") {
+                return Ok(Reply { status: 200, headers: vec![], body: json!((3..=n).collect::<Vec<_>>()).to_string(), operation: "read" });
+            }
+            if st.1.get() > 0 {
+                st.1.set(st.1.get() - 1);
+                return Ok(Reply { status: 304, headers: vec![], body: String::new(), operation: "read" });
+            }
+            let mut headers = vec![("ETag".to_string(), "W/\"p1\"".to_string())];
+            if n > 2 { headers.push(("Link".into(), "<https://api.github.com/repos/o/r/x?per_page=2&page=2>; rel=\"next\"".into())); }
+            Ok(Reply { status: 200, headers, body: "[1,2]".into(), operation: "read" })
+        }));
+        assert_eq!(api.all("/x?per_page=2").unwrap().len(), 2);
+        // a third note lands on page 2; page 1's body and ETag stay the same, so the server answers 304
+        state.0.set(3);
+        state.1.set(1);
+        assert_eq!(api.all("/x?per_page=2").unwrap(), vec![json!(1), json!(2), json!(3)], "the new note on page 2 is read");
+        // the reread cached page 1 with its next Link: a later 304 reaches page 2 without another reread
+        state.1.set(1);
+        state.2.set(0);
+        assert_eq!(api.all("/x?per_page=2").unwrap().len(), 3);
+        assert_eq!(state.2.get(), 2, "page 1 (304) and page 2 only");
     }
 
     // Chain: § 2 state labels on both boards. Risk: a state change removes user labels.
