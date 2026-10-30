@@ -86,6 +86,7 @@ const USAGE: &str = "taskq agents
  taskq close N [M..] [--text VERDICT] | taskq approve N [--sha SHA]
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
+ taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
@@ -131,7 +132,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "reports" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "reports" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -3238,6 +3239,24 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             println!("{}", if log.is_empty() { "nothing to clean".into() } else { log.join("\n") });
             Ok(())
         }
+        "issue" => {
+            let n = a.num(1)?;
+            if a.flags.iter().any(|(k, v)| !["comment", "label", "op-id", "json"].contains(&k.as_str()) || v.len() != 1) {
+                return Err("issue: use --comment or --label, --op-id and --json once each".into());
+            }
+            let write = match (a.one("comment"), a.one("label")) {
+                (None, None) if op.id.is_none() => { println!("{}", board::issue_json(b, n)?); return Ok(()); }
+                (Some(t), None) => board::IssueWrite::Comment(t),
+                (None, Some(l)) => board::IssueWrite::Label(l),
+                _ => return Err("issue: pass one of --comment or --label to write".into()),
+            };
+            let r = board::issue_write(b, n, write, op.id.as_deref());
+            let ok = r["outcome"] == "accepted";
+            if json { println!("{r}"); }
+            else if ok { println!("#{n} {}", if r["label"].is_string() { format!("label {}", r["label"].as_str().unwrap_or("")) } else { format!("comment {}", r["comment"]) }); }
+            else { eprintln!("Error: #{n}: {}\nNext: {}", compact(r["reason"].as_str().unwrap_or(""), 153), compact(r["next"].as_str().unwrap_or(""), 154)); }
+            if ok { Ok(()) } else { Err(String::new()) }
+        }
         "inbox" => {
             if a.flags.contains_key("json") { println!("{}", inbox_json(b, root, &cfg.me, a.num(1)?)?); } else { println!("{}", inbox(b, root, a.num(1)?)?); }
             Ok(())
@@ -3655,6 +3674,7 @@ mod tests {
         let parse = |v: &[&str]| Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         assert_eq!(parse(&["add", "T", "--goal", "G", "--acceptance", "A", "B", "C"]).err().unwrap(), "unused positional arguments: B C");
         assert_eq!(parse(&["inbox", "1", "extra"]).err().unwrap(), "unused positional arguments: extra");
+        assert_eq!(parse(&["issue", "1", "extra"]).err().unwrap(), "unused positional arguments: extra");
         assert_eq!(parse(&["selftest", "extra"]).err().unwrap(), "unused positional arguments: extra");
         assert_eq!(parse(&["help", "extra"]).err().unwrap(), "unused positional arguments: extra");
         assert!(parse(&["help"]).is_ok());

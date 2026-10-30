@@ -138,6 +138,80 @@ pub fn entries(board: &dyn Board, n: u64) -> Result<Vec<Entry>> {
 
 pub mod reply;
 
+// ---------- direct issue access (§ 5 `taskq issue`) ----------
+
+/// § 5 `taskq issue N`: any issue of the configured board, task or not, with every comment.
+pub fn issue_json(board: &dyn Board, n: u64) -> Result<Value> {
+    let i = board.issue(n)?;
+    let comments: Vec<Value> = board.comments(n)?.into_iter()
+        .map(|c| json!({"id": c.id, "author": c.author, "created": stamp(c.created), "edited": c.edited, "trusted": c.trusted, "body": c.body})).collect();
+    Ok(json!({"number": n, "url": board.url(n), "title": i.title, "state": if i.open { "open" } else { "closed" }, "labels": i.labels, "body": i.body, "comments": comments}))
+}
+
+pub enum IssueWrite<'a> { Comment(&'a str), Label(&'a str) }
+
+/// § 5 `taskq issue N --comment|--label`: one write, read back. The receipt's `outcome` is `accepted`, `rejected`
+/// (nothing written) or `unknown` (written, no readback: retry the same op id).
+pub fn issue_write(board: &dyn Board, n: u64, write: IssueWrite, op_id: Option<&str>) -> Value {
+    let (key, value) = match write { IssueWrite::Comment(_) => ("comment", Value::Null), IssueWrite::Label(l) => ("label", json!(l)) };
+    let receipt = |outcome: &str, value: Value, reason: &str, next: &str| {
+        let mut r = json!({"issue": n, "url": board.url(n), "op_id": op_id, "outcome": outcome, "reason": reason, "next": next});
+        r[key] = value;
+        r
+    };
+    let retry = op_id.map_or(format!("Read taskq issue {n} before writing again."), |id| format!("Retry with --op-id {id}."));
+    match write {
+        IssueWrite::Comment(text) => {
+            let text = text.trim_end();
+            if text.trim().is_empty() { return receipt("rejected", value, "comment text is empty", "Pass --comment with text."); }
+            if text.trim_start().starts_with("taskq:") {
+                return receipt("rejected", value, "a `taskq:` first line is a log entry", "Use the task command (answer, steer, requeue, ...).");
+            }
+            let body = op_id.map_or(text.to_string(), |id| format!("{text}\nop-id: {id}"));
+            // the op id's comment: the first unedited trusted one ending in its line
+            let mine = |cs: &[Comment]| op_id.and_then(|id| cs.iter().find(|c| c.trusted && !c.edited && c.body.trim_end().lines().last() == Some(&format!("op-id: {id}"))).cloned());
+            if op_id.is_some() {
+                match board.comments(n).map(|cs| mine(&cs)) {
+                    Err(e) => return receipt("rejected", value, &e, &format!("Read taskq issue {n}, then retry.")),
+                    Ok(Some(c)) if c.body.trim_end() == body => return receipt("accepted", json!(c.id), "", ""),
+                    Ok(Some(c)) => return receipt("rejected", json!(c.id), &format!("op id already names comment {} with other text", c.id), "Use a new --op-id."),
+                    Ok(None) => {}
+                }
+            }
+            let sent = board.comment(n, &body);
+            let found = board.comments(n).map(|cs| match &sent {
+                Ok(id) => cs.into_iter().find(|c| c.id == *id && c.body.trim_end() == body),
+                Err(_) => mine(&cs).filter(|c| c.body.trim_end() == body),
+            });
+            match (sent, found) {
+                (_, Ok(Some(c))) => receipt("accepted", json!(c.id), "", ""),
+                (Err(e), _) | (Ok(_), Err(e)) => receipt("unknown", value, &e, &retry),
+                (Ok(id), Ok(None)) => receipt("unknown", json!(id), &format!("comment {id} not read back"), &retry),
+            }
+        }
+        IssueWrite::Label(label) => {
+            if label.trim().is_empty() || label.trim() != label || label.contains(',') {
+                return receipt("rejected", value, "label: one name without commas or edge spaces", "Pass --label NAME.");
+            }
+            if label == crate::service::TASK_LABEL || label == "taskq-host" || label.starts_with("q-") {
+                return receipt("rejected", value, &format!("label {label} is task state"), "Use the task command (start, requeue, ...).");
+            }
+            let present = || board.issue(n).map(|i| i.labels.iter().any(|l| l == label));
+            match present() {
+                Err(e) => return receipt("rejected", value, &e, &format!("Read taskq issue {n}, then retry.")),
+                Ok(true) => return receipt("accepted", value, "", ""),
+                Ok(false) => {}
+            }
+            let sent = board.labels(n, &[label.to_string()], &[]);
+            match (sent, present()) {
+                (_, Ok(true)) => receipt("accepted", value, "", ""),
+                (Err(e), _) | (_, Err(e)) => receipt("unknown", value, &e, &retry),
+                (Ok(()), Ok(false)) => receipt("unknown", value, &format!("label {label} not read back"), &retry),
+            }
+        }
+    }
+}
+
 /// § 4 Profiling board operations: each call of the inner board is one `taskq-board` record; cached clock, user
 /// and label-schema reads are not operations and pass through; `ensure_labels` is a `label` operation.
 struct Profiled(Box<dyn Board>);
@@ -1098,6 +1172,80 @@ mod tests {
         api.transport = Some(transport);
         *api.label_schema.borrow_mut() = schema;
         (kind.board)(api)
+    }
+
+    // Chain: § 5 `taskq issue` (#1892) -> GitHub/GitLab adapters. Defect: PilotQ owner actions on any issue refused,
+    // TaskQ had no read/comment/label command. Risk: a field is missing, a write is not read back, or a repeated op id
+    // posts a second comment or label.
+    #[test]
+    fn issue_command_reads_and_writes_once_per_op_id_on_both_boards() {
+        use std::{cell::RefCell, rc::Rc};
+        for kind in BOARDS {
+            let state = Rc::new(RefCell::new((vec!["bug".to_string()], vec![(1u64, "outside text".to_string())], 0usize)));
+            let st = state.clone();
+            let gl = kind.name == "gitlab";
+            let b = http(kind, Some(false), Box::new(move |method, url, body| {
+                let mut st = st.borrow_mut();
+                let note = |id: u64, body: &str| json!({"id": id, "body": body, "created_at": "2026-10-30T00:00:00Z", "updated_at": "2026-10-30T00:00:00Z",
+                    "author_association": "OWNER", "user": {"login": "owner"}, "author": {"id": 1, "username": "owner"}, "system": false});
+                let path = url.split('?').next().unwrap();
+                let v = match (method, path.rsplit_once("/issues/7").map(|x| x.1)) {
+                    _ if url.contains("/members/") => json!({"access_level": 30}),
+                    ("GET", Some("")) => json!({"number": 7, "iid": 7, "title": "Any issue", "body": "text", "description": "text", "state": if gl { "opened" } else { "open" },
+                        "labels": st.0, "author_association": "OWNER", "author": {"id": 1}}),
+                    ("GET", Some("/comments" | "/notes")) => json!(st.1.iter().map(|(id, b)| note(*id, b)).collect::<Vec<_>>()),
+                    ("POST", Some("/comments" | "/notes")) => {
+                        st.2 += 1;
+                        let id = 100 + st.2 as u64;
+                        st.1.push((id, body.unwrap()["body"].as_str().unwrap().into()));
+                        json!({"id": id})
+                    }
+                    ("POST", Some("/labels")) => { st.0.extend(names(&body.unwrap()["labels"], "name")); st.2 += 1; json!([]) }
+                    ("PUT", Some("")) => { st.0.extend(body.unwrap()["add_labels"].as_str().unwrap().split(',').map(String::from)); st.2 += 1; json!({}) }
+                    _ => panic!("{} unexpected {method} {url}", kind.name),
+                };
+                Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: "read" })
+            }));
+            let read = issue_json(b.as_ref(), 7).unwrap();
+            assert_eq!(read["url"], b.url(7));
+            assert!(read["url"].as_str().unwrap().starts_with(if gl { "https://gitlab.example/o/r/" } else { "https://github.com/o/r/" }), "{read}");
+            assert_eq!((read["title"].as_str(), read["state"].as_str(), read["body"].as_str()), (Some("Any issue"), Some("open"), Some("text")));
+            assert_eq!(read["labels"], json!(["bug"]));
+            assert_eq!(read["comments"][0]["body"], "outside text");
+            assert_eq!(read["comments"][0]["author"], "owner");
+            for _ in 0..2 {
+                let r = issue_write(b.as_ref(), 7, IssueWrite::Comment("hello"), Some("pilot.1"));
+                assert_eq!((r["outcome"].as_str(), r["comment"].as_u64(), r["op_id"].as_str()), (Some("accepted"), Some(101), Some("pilot.1")), "{r}");
+                let r = issue_write(b.as_ref(), 7, IssueWrite::Label("infra"), Some("pilot.2"));
+                assert_eq!((r["outcome"].as_str(), r["label"].as_str()), (Some("accepted"), Some("infra")), "{r}");
+            }
+            assert_eq!(state.borrow().2, 2, "{}: one comment and one label write", kind.name);
+            assert_eq!(state.borrow().1[1].1, "hello\nop-id: pilot.1");
+            let r = issue_write(b.as_ref(), 7, IssueWrite::Comment("other"), Some("pilot.1"));
+            assert_eq!((r["outcome"].as_str(), r["comment"].as_u64()), (Some("rejected"), Some(101)));
+            for w in [IssueWrite::Comment("taskq: close"), IssueWrite::Comment(" "), IssueWrite::Label("q-ready"), IssueWrite::Label("taskq"), IssueWrite::Label("a,b")] {
+                assert_eq!(issue_write(b.as_ref(), 7, w, None)["outcome"], "rejected");
+            }
+            assert_eq!(state.borrow().2, 2, "refusals write nothing");
+        }
+    }
+
+    // #1892 A3: a comment whose response was lost is found by its op id on retry, never posted twice.
+    #[test]
+    fn issue_comment_lost_response_replays_by_op_id() {
+        let b = Fake::default();
+        b.create("t", "", &[]).unwrap();
+        b.state.borrow_mut().lose_comment_response = true;
+        let first = issue_write(&b, 1, IssueWrite::Comment("note"), Some("x"));
+        assert_eq!(first["outcome"], "accepted", "readback finds the committed comment: {first}");
+        let again = issue_write(&b, 1, IssueWrite::Comment("note"), Some("x"));
+        assert_eq!(again["comment"], first["comment"]);
+        assert_eq!(b.comments(1).unwrap().len(), 1);
+        b.state.borrow_mut().fail_comments = 1;
+        let failed = issue_write(&b, 1, IssueWrite::Comment("next"), Some("y"));
+        assert_eq!((failed["outcome"].as_str(), failed["next"].as_str()), (Some("unknown"), Some("Retry with --op-id y.")));
+        assert_eq!(issue_write(&b, 1, IssueWrite::Comment("next"), Some("y"))["outcome"], "accepted");
+        assert_eq!(b.comments(1).unwrap().len(), 2);
     }
 
     // #1829 A1/A3: exact GitHub/GitLab issue reads retain closure time independently of later edits.
