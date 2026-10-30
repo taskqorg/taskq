@@ -1,0 +1,202 @@
+warning: unreachable expression
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\host_control.rs:453:5
+    |
+450 |         return  ::coreq::telemetry::capture::returned_method_result(&__coreq_telemetry_scope_38220,retire_command(install,id,"complete-stop",& ::coreq::telemetry::capture::returned_method_result(&__coreq_telemetry_scope_38220,pending.context())?));
+    |         ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- any code following this expression is unreachable
+...
+453 |     Ok(())
+    |     ^^^^^^ unreachable expression
+    |
+    = note: `#[warn(unreachable_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\board\mod.rs:424:13
+    |
+424 |         let mut options=std::fs::DirBuilder::new();
+    |             ----^^^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\reply_files.rs:29:9
+   |
+29 |     let mut builder=fs::DirBuilder::new();
+   |         ----^^^^^^^
+   |         |
+   |         help: remove this `mut`
+
+warning: unused variable: `t`
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\runtime\owner.rs:266:17
+    |
+266 |     if let Some(t) = &text {
+    |                 ^ help: if this is intentional, prefix it with an underscore: `_t`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\tray.rs:490:9
+    |
+490 |     let mut options = fs::DirBuilder::new();
+    |         ----^^^^^^^
+    |         |
+    |         help: remove this `mut`
+
+warning: unused variable: `window`
+    --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\tray.rs:2069:27
+     |
+2069 |                 let Some((window, wv)) = &ui else { return };
+     |                           ^^^^^^ help: if this is intentional, prefix it with an underscore: `_window`
+
+warning: variable does not need to be mutable
+    --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented/main.rs:1360:13
+     |
+1360 |         let mut dev = Value::Null;
+     |             ----^^^
+     |             |
+     |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented/main.rs:1208:9
+     |
+1208 |     let mut dev_ci: Option<(String, Instant)> = None;
+     |         ----^^^^^^
+     |         |
+     |         help: remove this `mut`
+
+warning: unused variable: `dev_ci`
+    --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented/main.rs:1208:9
+     |
+1208 |     let mut dev_ci: Option<(String, Instant)> = None;
+     |         ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dev_ci`
+
+warning: method `merge_ci_green` is never used
+  --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\board\mod.rs:93:8
+   |
+42 | pub trait Board {
+   |           ----- method in this trait
+...
+93 |     fn merge_ci_green(&self, sha: &str) -> Result<()> {let __coreq_telemetry_scope_5094=::tracing::trace_span!(target: "coreq::metho...
+   |        ^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `delivered` is never used
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\core.rs:309:8
+    |
+309 | pub fn delivered(n: u64, entries: &[Entry], attempt: u64) -> Option<u64> {let __coreq_telemetry_scope_13338=::tracing::trace_span!(...
+    |        ^^^^^^^^^
+
+warning: function `dev_next` is never used
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\platform.rs:572:8
+    |
+572 | pub fn dev_next(channel:&str,main:Option<&str>,installed:Option<&str>,started:Option<&str>,building:bool,ci:&mut dyn FnMut(&str)->R...
+    |        ^^^^^^^^
+
+warning: function `dev_enabled` is never used
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\platform.rs:579:8
+    |
+579 | pub fn dev_enabled(repo:&str,install:&Path)->bool {let __coreq_telemetry_scope_32200=::tracing::trace_span!(target: "coreq::method"...
+    |        ^^^^^^^^^^^
+
+warning: field `0` is never read
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\resources.rs:148:24
+    |
+148 | pub(crate) struct Held(coreq::file_lock::Lock, PathBuf);
+    |                   ---- ^^^^^^^^^^^^^^^^^^^^^^
+    |                   |
+    |                   field in this struct
+    |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+148 - pub(crate) struct Held(coreq::file_lock::Lock, PathBuf);
+148 + pub(crate) struct Held((), PathBuf);
+    |
+
+warning: function `user_bin_path` is never used
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\runtime.rs:503:8
+    |
+503 | pub fn user_bin_path(path: &std::ffi::OsStr, home: Option<&std::ffi::OsStr>) -> Option<std::ffi::OsString> {let __coreq_telemetry_s...
+    |        ^^^^^^^^^^^^^
+
+warning: constant `CONTROLS_VERSION` is never used
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\snapshot.rs:553:11
+    |
+553 | pub const CONTROLS_VERSION: &str = "taskq.task-controls/1";
+    |           ^^^^^^^^^^^^^^^^
+
+warning: unused `std::result::Result` that must be used
+    --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\tray.rs:1846:73
+     |
+1846 |                         { use tao::platform::windows::WindowExtWindows; w.set_skip_taskbar(!settings.pin.pinned); }
+     |                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: this `Result` may be an `Err` variant, which should be handled
+     = note: `#[warn(unused_must_use)]` (part of `#[warn(unused)]`) on by default
+help: use `let _ = ...` to ignore the resulting value
+     |
+1846 |                         { use tao::platform::windows::WindowExtWindows; let _ = w.set_skip_taskbar(!settings.pin.pinned); }
+     |                                                                         +++++++
+
+warning: `GetCurrentProcess` redeclared with a different signature
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\windows_sandbox\security.rs:25:5
+    |
+ 25 |     fn GetCurrentProcess() -> Handle;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this signature doesn't match the previous declaration
+    |
+   ::: C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\platform.rs:210:30
+    |
+210 |     unsafe extern "system" { fn GetCurrentProcess() -> isize; fn TerminateProcess(process: isize, code: u32) -> i32; }
+    |                              -------------------------------- `GetCurrentProcess` previously declared here
+    |
+    = note: expected `unsafe extern "system" fn() -> isize`
+               found `unsafe extern "system" fn() -> *mut c_void`
+    = note: `#[warn(clashing_extern_declarations)]` on by default
+
+warning: `GetCurrentProcess` redeclared with a different signature
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\windows_sandbox.rs:72:30
+    |
+ 72 |     unsafe extern "system" { fn GetCurrentProcess() -> *mut c_void; fn CloseHandle(handle: *mut c_void) -> i32; }
+    |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this signature doesn't match the previous declaration
+    |
+   ::: C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\platform.rs:210:30
+    |
+210 |     unsafe extern "system" { fn GetCurrentProcess() -> isize; fn TerminateProcess(process: isize, code: u32) -> i32; }
+    |                              -------------------------------- `GetCurrentProcess` previously declared here
+    |
+    = note: expected `unsafe extern "system" fn() -> isize`
+               found `unsafe extern "system" fn() -> *mut c_void`
+
+warning: `GetCurrentProcess` redeclared with a different signature
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\runtime\app_control\windows_pipe.rs:6:5
+    |
+  6 |     fn GetCurrentProcess()->Handle;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this signature doesn't match the previous declaration
+    |
+   ::: C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\platform.rs:210:30
+    |
+210 |     unsafe extern "system" { fn GetCurrentProcess() -> isize; fn TerminateProcess(process: isize, code: u32) -> i32; }
+    |                              -------------------------------- `GetCurrentProcess` previously declared here
+    |
+    = note: expected `unsafe extern "system" fn() -> isize`
+               found `unsafe extern "system" fn() -> *mut c_void`
+
+warning: `GetCurrentProcess` redeclared with a different signature
+   --> C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\runtime\windows_process.rs:7:5
+    |
+  7 |     fn GetCurrentProcess()->Handle;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ this signature doesn't match the previous declaration
+    |
+   ::: C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\target\debug\build\taskq-e34df53fe9930932\out/instrumented\platform.rs:210:30
+    |
+210 |     unsafe extern "system" { fn GetCurrentProcess() -> isize; fn TerminateProcess(process: isize, code: u32) -> i32; }
+    |                              -------------------------------- `GetCurrentProcess` previously declared here
+    |
+    = note: expected `unsafe extern "system" fn() -> isize`
+               found `unsafe extern "system" fn() -> *mut c_void`
+
+warning: `taskq` (bin "taskq") generated 21 warnings (run `cargo fix --bin "taskq" -p taskq` to apply 8 suggestions)
+    Finished `dev` profile [unoptimized] target(s) in 0.29s
+     Running `target\debug\taskq.exe tray --snapshot C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\docs\design\evidence\1940\after-windows-menu --route reports`
+snapshots in C:\Users\alexk\Documents\Codex\tools\taskq\.worktrees\taskq-1940\docs\design\evidence\1940\after-windows-menu

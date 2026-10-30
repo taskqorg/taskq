@@ -1,5 +1,13 @@
 # Research reports
 
+## Results expansion target
+
+Owner steer on #1940 widens this surface to Results: reports are one kind of completed result. This target is not yet implemented. A finished task must appear once, with a SHA-bound seen state, in menu attention and Conversations; already seen results add no new attention. Background-collected summary, checks, open items, PR and evidence must support instant list, open and next/previous navigation. Ordinary task reactions are Accept, Follow-up and Reopen; report reactions retain Make tasks, Later and Drop.
+
+The shared use case is: work finishes; the service collects the result; the operator notices it where they already work, reads the cached decision card and chooses the appropriate reaction. Accept acknowledges a delivered result; Follow-up proposes new work; Reopen requests more work on the original outcome. A read or acknowledgement is not permission to start work. Missing or stale data remains unknown.
+
+Reopen needs an owner decision before lifecycle implementation: §2 currently permits owner `requeue` only from open states. Resume the original closed issue with an explicitly specified transition and compatibility plan, or create a linked held successor while preserving the original closure. The task's ask records the choice; no closed-task transition is changed by this target.
+
 ## Contract detail
 
 Taskq.md §7 owns this lifecycle (R13). Finished research and proposals deliver a report by PR and pass review before closing. An owner decision is required before close only when another task waits on that decision. Reports are closed tasks, never queue states: admission, focus, capacity and Held/Blocked/Ask counts ignore them (R1, R6).
