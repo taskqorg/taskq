@@ -173,6 +173,40 @@ pub struct Row {
     pub publication: Option<PublicationWait>,
     /// R6 `stage k/n` (§ 2 Stages): first open stage and Acceptance item count; `None` before any recorded stage.
     pub stage: Option<(usize, usize)>,
+    /// § 4 Churn (#1905): set only while the task is flagged.
+    pub churn: Option<Churn>,
+}
+
+/// § 4 Churn counts of one task's board notes: all notes, `spawn` and `accepted` entries.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Churn { pub notes: u64, pub spawns: u64, pub accepted: u64 }
+
+/// § 4 Churn: over `CHURN_NOTES` notes, or more than `CHURN_SPAWNS` spawns in the last hour lacking their `accepted`.
+pub const CHURN_NOTES: u64 = 100;
+pub const CHURN_SPAWNS: usize = 5;
+
+/// § 4 Churn of one task from the comments already read at board time `now`; `None`: not flagged.
+pub(crate) fn churn(comments: &[board::Comment], now: i64) -> Option<Churn> {
+    let entry = |c: &&board::Comment| c.trusted && !c.edited;
+    let kind = |c: &board::Comment, k: &str| c.body.lines().next().is_some_and(|l| l.starts_with(&format!("taskq: {k} ")));
+    let accepted: Vec<&str> = comments.iter().filter(entry).filter(|c| kind(c, "accepted"))
+        .filter_map(|c| c.body.split_whitespace().nth(2)).collect();
+    let spawns: Vec<&board::Comment> = comments.iter().filter(entry).filter(|c| kind(c, "spawn")).collect();
+    let unaccepted = spawns.iter().filter(|c| now - c.created <= 3600 && !accepted.contains(&c.id.to_string().as_str())).count();
+    let c = Churn { notes: comments.len() as u64, spawns: spawns.len() as u64, accepted: accepted.len() as u64 };
+    (c.notes > CHURN_NOTES || unaccepted > CHURN_SPAWNS).then_some(c)
+}
+
+impl Churn {
+    pub fn line(n: u64, c: &Value) -> String {
+        format!("#{n} churn: notes {} · spawns {} · accepted {}", c["notes"], c["spawns"], c["accepted"])
+    }
+}
+
+/// § 4 Churn lines of a `status.json` task list, one per flagged task.
+pub fn churn_lines(status: &Value) -> Vec<String> {
+    status["tasks"].as_array().into_iter().flatten().filter(|t| t["churn"].is_object())
+        .map(|t| Churn::line(t["n"].as_u64().unwrap_or(0), &t["churn"])).collect()
 }
 
 /// #1820 (pilotq #106): why a publication waits, from this host's last service pass; never inferred from silence.
@@ -346,6 +380,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         stuck: stuck(v.issue.number, &v.projection.task, &v.blockers,
             v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),
             hosts, observed, cfg.ttl),
+        churn: churn(&v.comments, observed),
         created: Some(v.issue.created).filter(|t| *t > 0),
         steps: stage_history(v),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
@@ -491,6 +526,7 @@ impl Row {
         row["steps"] = json!(self.steps);
         row["stuck"] = json!(self.stuck.is_some());
         if let Some(a) = self.stuck { row["age_s"] = json!(a); }
+        if let Some(c) = self.churn { row["churn"] = json!({"notes": c.notes, "spawns": c.spawns, "accepted": c.accepted}); }
         if let Some(a) = &self.admission { row["admission"] = a.json(); }
         if let Some(a) = &self.answered { row["answered"] = json!(a); }
         if let Some(p) = &self.publication { row["publication"] = json!({"reason": p.reason, "since": p.since, "age_s": p.age_s}); }
@@ -755,7 +791,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None, stage: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None, stage: None, churn: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -779,7 +815,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None, stage: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, publication: None, stage: None, churn: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -826,7 +862,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, publication: None, stage: None };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, publication: None, stage: None, churn: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");

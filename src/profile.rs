@@ -9,7 +9,7 @@ use std::sync::{OnceLock, atomic::{AtomicU64, Ordering}};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::telemetry::Sample;
 
-pub const OPS: [&str; 7] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy"];
+pub const OPS: [&str; 8] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn"];
 #[cfg(test)] const PREFIX: &str = "taskq-profile ";
 const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
 static LOG: OnceLock<PathBuf> = OnceLock::new();
@@ -916,8 +916,11 @@ fn health(install:&Path)->String {
         let tidy=crate::data::json(&crate::dot(&root).join("tidy.json")).ok().flatten().unwrap_or_default();
         out+=&crate::tidy::health_line(&name,&tidy,now);
         out.push('\n');
-        out+=&status_line(&name,&crate::data::json(&crate::dot(&root).join("status.json")),now);
+        let status=crate::data::json(&crate::dot(&root).join("status.json"));
+        out+=&status_line(&name,&status,now);
         out.push('\n');
+        // § 4 Churn: one line per flagged task of this root
+        for l in status.ok().flatten().map(|s|crate::snapshot::churn_lines(&s)).unwrap_or_default() {out+=&format!("{name}: {l}\n");}
     }
     out
 }
@@ -1165,6 +1168,11 @@ pub(crate) mod tests {
         assert_eq!(line(now-121),"frozen: status 2m old · refresh 60s · stale");
         assert_eq!(line(now-1500),"frozen: status 25m old · refresh 60s · stale");
         assert!(health(&dir).contains("frozen: status 25m old · refresh 60s · stale"));
+        // § 4 Churn (#1905): a flagged row prints its counts; an unflagged one prints nothing
+        fs::write(root.join(".taskq/status.json"),serde_json::json!({"at":now,"tasks":[{"n":7,"churn":{"notes":144,"spawns":64,"accepted":17}},{"n":8}]}).to_string()).unwrap();
+        let h=health(&dir);
+        assert!(h.contains("frozen: #7 churn: notes 144 · spawns 64 · accepted 17\n"),"{h}");
+        assert!(!h.contains("#8 churn"),"{h}");
         assert_eq!(status_line("old",&Ok(Some(serde_json::json!({"at":now-200}))),now),"old: status 3m old · refresh 60s · stale","pre-#1766 status: § 9 default poll");
         fs::remove_file(root.join(".taskq/status.json")).unwrap();
         assert!(health(&dir).contains("frozen: status unknown (status.json missing)"));
