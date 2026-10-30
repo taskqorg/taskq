@@ -62,6 +62,11 @@ Run Cargo GUI invocations sequentially. The first `cargo run --locked -- --versi
 | TCC | No denial/prompt observed; no grant was requested or changed |
 | Read-only process probe | `ps`: `operation not permitted`; not used as proof of process exit or UI failure |
 | Task filing/readback | #1991/#1992 open, `q-held`, no `taskq` label; no start or PM message |
+| `python3 scripts/check.py --base 554552daf48d5b413918d54a8a6d0f88efba4020` | **sandbox-blocked**, not PASS; 78.890s / 900s, no retry. At evidence candidate `43d54c56db1146e9850ef72ae679997174de664b`, selector chose full; rule gate found no changed rule/assertion. Unit driver reported 749 passed/35 ignored; integration 21 passed/1 blocked/1 ignored. |
+| Blocked integration | `telemetry_process::resume_records_its_result_without_releasing_the_host_hold`, `tests/telemetry_process.rs:189`: `sandbox-exec: sandbox_apply: Operation not permitted` |
+| Unreached canonical stages | Offline selftest, later process/component/release stages were not reached; not recorded as passes. The unit log also reports the nested seatbelt fixture sandbox-blocked. No sandbox or guard was weakened. |
+
+The final follow-up commit adds this gate observation only. Application sources, tests, dependencies, candidate native images and environment are unchanged; the full gate is not repeated for an evidence-only update (§7.4, R12).
 
 The reader timing includes fixture generation and page reads together. It is not separate cold/warm I/O, native input p95, frame time, UI long-task cost or DOM/cache usage. Those measurements and the complete hostile fixture list remain Not tested. Q-A6 thresholds remain proposals, not newly adopted performance promises.
 
