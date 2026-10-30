@@ -162,10 +162,10 @@ const fx=JSON.parse(fs.readFileSync('tests/fixtures/answer-card.json','utf8'));
       if(process.env.TASKQ_EVIDENCE_1662&&font===16)await page.screenshot({path:process.env.TASKQ_EVIDENCE_1662+'/owner-action-'+theme+'.png'});
       // A long kept answer can steer the working agent after another client answered first.
       await page.evaluate(r=>taskq.receive({answerReceipt:r}),{root,id:action.id,state:'stale',answered:{by:'other client',text:'Continue'}});
-      state.projects[0].tasks=[{...own,state:'doing',revision:2,answered:{by:'other client',text:'Continue'}}];
+      state.projects[0].tasks=[{...own,state:'doing',role:'worker',attempt:2,executions:[{attempt:2,state:'running'}],revision:2,answered:{by:'other client',text:'Continue'}}];
       await page.evaluate(s=>taskq.receive(s),state);
       const steer=page.locator('[data-c-field=steer]');
-      await steer.fill(long);await page.getByRole('button',{name:'Steer',exact:true}).click();
+      await steer.fill(long);await page.locator('[data-a=answer-steer]').click();
       await page.waitForFunction(()=>messages.filter(m=>m.a==='answer').length===9);
       const steering=await page.evaluate(()=>messages.filter(m=>m.a==='answer').at(-1).op);
       assert.equal(steering.action,'steer');assert.equal(steering.text,long);
