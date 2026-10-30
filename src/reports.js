@@ -50,7 +50,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    if(r.reason){
     if(r.report?.n===op.n&&r.report.sha===op.sha)remember(op,r.report);
     const made=Array.isArray(r.receipts)?r.receipts:[],uncertain=r.receipt?.task;
-    notice=r.reason+(made.length?' ? Created held drafts: '+made.map(n=>'#'+n).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' ? Unverified draft: #'+uncertain:'');
+    notice=r.reason+(made.length?' · Created held drafts: '+made.map(n=>'#'+n).join(', '):'')+(uncertain>0&&!made.includes(uncertain)?' · Unverified draft: #'+uncertain:'');
     draw();return true;
    }
    if(r.report?.n===op.n&&r.report.sha===op.sha){
@@ -71,25 +71,25 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    else if(['make','later','drop'].includes(action))api.act(action);
    return true;
   },
-  attention(){return api.unread().map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},'Report ? '+(projects.find(p=>p.root===r.root)?.name||'Project')+' ? #'+r.n+' ? Needs decision'),h('span',null,r.title)));},
+  attention(){return api.unread().map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},'Report · '+(projects.find(p=>p.root===r.root)?.name||'Project')+' · #'+r.n+' · Needs decision'),h('span',null,r.title)));},
   threads(){return api.rows().map(r=>({id:'report:'+key(r.root,r.n),root:r.root,report:r.n,title:r.title,updated:r.closed*1000,status:'Report',marker:r.read?'':'Needs decision'}));},
   section(ps){
    api.sync(ps);const loaded=api.count()!==null,rows=api.rows(),busy=selected&&[...pending.values()].some(p=>p.root===selected.root&&p.n===selected.n&&p.action!=='read'),project=root=>projects.find(p=>p.root===root)?.name||'Project unavailable';
    return h('section',{class:'reports-section group','aria-label':'Reports',key:'reports'},
-    h('button',{class:'project',type:'button','data-report':'toggle','aria-expanded':String(expanded)},'Reports ? '+(loaded?rows.length:'unknown'),api.unread().length?' ? '+api.unread().length+' new':''),
+    h('button',{class:'project',type:'button','data-report':'toggle','aria-expanded':String(expanded)},'Reports · '+(loaded?rows.length:'unknown'),api.unread().length?' · '+api.unread().length+' new':''),
     expanded&&h('div',{class:'reports-content body'},
      selected&&h('button',{'data-report':'back'},'All reports'),
      notice&&h('p',{role:'status'},notice),
      projects.map(p=>pages.get(p.root)?.reason&&h('p',{role:'status',key:p.root},p.name+': '+pages.get(p.root).reason)),
-     selected?h('article',{class:'report-card','aria-label':'Research report'},h('h2',null,selected.title),h('p',{class:'meta'},project(selected.root)+' ? ',h('a',{href:selected.url,'data-url':selected.url},'#'+selected.n),' ? '+(selected.read?'Read':'Unread')),
+     selected?h('article',{class:'report-card','aria-label':'Research report'},h('h2',null,selected.title),h('p',{class:'meta'},project(selected.root)+' · ',h('a',{href:selected.url,'data-url':selected.url},'#'+selected.n),' · '+(selected.read?'Read':'Unread')),
       selected.reason&&h('p',{role:'status'},'Report unknown: '+selected.reason),
       selected.body?[h('h3',null,'Question'),body(summary(selected.body,'Question')),h('h3',null,'Recommendation'),body(summary(selected.body,'Recommendation'))]:h('p',null,'Report content unknown; waiting for background collection.'),
-      selected.tasks&&h('div',null,h('h3',null,'Proposed tasks'),selected.tasks.length?selected.tasks.map((t,i)=>h('details',{key:i},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)),h('p',{class:'meta'},[t.type,t.runtime,t.priority&&'Priority '+t.priority].filter(Boolean).join(' ? ')))):h('p',null,'No follow-up tasks proposed.')),
+      selected.tasks&&h('div',null,h('h3',null,'Proposed tasks'),selected.tasks.length?selected.tasks.map((t,i)=>h('details',{key:i},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)),h('p',{class:'meta'},[t.type,t.runtime,t.priority&&'Priority '+t.priority].filter(Boolean).join(' · ')))):h('p',null,'No follow-up tasks proposed.')),
       h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),
       selected.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry to reconcile the held drafts.'),
       h('div',{class:'options'},['make','later','drop'].map(action=>h('button',{'data-report':action,disabled:!!busy||!selected.body||action==='make'&&!selected.tasks?.length||action==='drop'&&selected.pending_decision==='make'},{make:selected.pending_decision==='make'?'Retry Make tasks':'Make tasks',later:'Later',drop:'Drop'}[action]))),
       selected.body&&h('div',null,h('button',{'data-report':'full','aria-expanded':String(full)},full?'Hide full report':'Full report'),full&&h('div',{class:'report-body'},body(selected.body)))):
-     [rows.length?rows.map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},project(r.root)+' ? #'+r.n+' ? '+(r.read?'Read':'Unread')),h('span',null,r.title))):loaded&&h('p',null,'No reports waiting for a decision.')]));
+     [rows.length?rows.map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},project(r.root)+' · #'+r.n+' · '+(r.read?'Read':'Unread')),h('span',null,r.title))):loaded&&h('p',null,'No reports waiting for a decision.')]));
   }
  });return api;
 },
