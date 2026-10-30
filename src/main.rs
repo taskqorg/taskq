@@ -2817,6 +2817,12 @@ fn run(argv: &[String]) -> Res<()> {
                 println!("{}", profile::selftest(&c.cfg.install, &c.cfg.repo, &live, c.cfg.ttl.max(0) as u64)?);
                 let open = views.len();
                 println!("board: {} as {} on {}", c.cfg.repo, c.board.me()?, c.cfg.web_host);
+                // #1935: a preset the repository's plan cannot finish, with the owner's fixes
+                println!("delivery: {} r{}: {}", c.cfg.delivery, c.cfg.delivery_revision, match c.board.delivery_gap(&c.cfg.publish) {
+                    Ok(None) => "no plan mismatch found".into(),
+                    Ok(Some(gap)) => format!("MISMATCH {gap}; fix: make the repository public (merge queue), upgrade the plan, set delivery.preset direct, or merge each PR by hand"),
+                    Err(e) => format!("unknown ({e})"),
+                });
                 println!("open issues: {open}");
                 println!("host: {}", c.cfg.me);
                 println!("root: `{}`", root.display());
