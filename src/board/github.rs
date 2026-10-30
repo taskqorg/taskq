@@ -648,7 +648,7 @@ impl Board for GitHub {
         Ok(closed)
     }
 
-    fn resume_publication(&self, n: u64, sha: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
+    fn resume_publication(&self, n: u64, sha: &str, _mode: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
         outcome(self.try_publish(n, sha, "pr", title, task_line, Some(root), enqueued))
     }
 
