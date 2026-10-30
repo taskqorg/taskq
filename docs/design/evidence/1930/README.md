@@ -29,9 +29,13 @@ Commands:
 - `cargo test --locked --bin taskq conversation_1930_observed_native_times_survive_pages_and_gaps`: Pass.
 - `cargo test --locked --bin taskq a_read_crosses_the_fake_relay_sealed_and_fenced`: Pass; remote timestamp bytes retained across the existing encrypted request/reply path, attempt/cursor fence and no retained history.
 - `node tests/dialogue.browser.cjs`, `node tests/conversations-flow.browser.cjs`, `node tests/worker-panel.browser.cjs`, `node tests/conversations-sidebar.browser.cjs`, `node tests/worker-steps.test.cjs`: Pass.
-- First canonical gate after the single rebase: Fail at 148.032 s, 748 unit tests passed; `status_json_matches_the_golden_fixture` still expected issue-creation times for two rows without comments. A4 changes only those two `updated` values to null; the remaining status/schema/lifecycle fixture is unchanged. Repeat canonical gate: pending below.
+- First canonical gate after the single rebase: Fail at 148.032 s, 748 unit tests passed; `status_json_matches_the_golden_fixture` still expected issue-creation times for two rows without comments. A4 changes only those two `updated` values to null; the remaining status/schema/lifecycle fixture is unchanged. Repeat canonical gate on `5e8702f54539060e7d5083a2b602dbb11183f86d`: sandbox-blocked at 53.640 s. All 749 unit tests passed (35 ignored); integration had 21 passed, 1 ignored and one host test denied by `sandbox-exec: sandbox_apply: Operation not permitted`. This is not a full gate Pass. No sandbox bypass or rule weakening was attempted.
 
 The browser instrument uses the production `build/web/workspace.html`, Playwright 1.64.1, Chromium 156.0.8078.4 and WebKit 27.2 on macOS arm64. Temporary browser installation stays outside product state. This is neither an installed TaskQ WebKit view nor Windows WebView2 evidence.
+
+The stopped gate's remaining Node component/artifact checks were run separately. `tests/task-workspace.test.cjs` first caught the new renderer missing from the published bundle's source list; its documented `--write` command adds only `src/relative-time.js`, with no committed source hashes. The source-list, embedded-artifact, release and Node component checks then passed. Changed browser instruments were run against the regenerated production bundle. These results do not turn the sandbox-blocked canonical gate into Pass.
+
+Offline selftest in a temporary installation passed 113 golden traces and the ask/result/close format checks, and committed 8 capture observations. Board and native tool probing were deliberately offline/unknown; the running host store was not used. Native integration denial remains for merge-result CI under R12 / §7.4.
 
 ## Source provenance and gaps
 
