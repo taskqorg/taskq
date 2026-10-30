@@ -25,7 +25,7 @@ The package includes the remote PM scenario (UC-17), not only the desktop menu. 
 
 ## Current package
 
-[Reports in Conversations](reports-conversations.md): #1977 design checkpoint; merged sidebar, decision cards, five operator paths and six mockup screens. Geometry approval and build/native qualification remain open.
+[Reports in Conversations](reports-conversations.md): #1977 design checkpoint; merged sidebar, decision cards, five operator paths and six mockup screens. Approved design; implementation evidence and native qualification gaps are recorded in its review ledger.
 
 [Decision register](decision-register.md): remaining choices, numbered alternatives and recommended defaults. [Scenario review](scenario-review.md): complete supplied-case coverage, current evidence and implementation gates.
 

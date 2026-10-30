@@ -54,7 +54,7 @@ Apply shared [engineering](https://github.com/taskqorg/specq/tree/main/engineeri
 Home: current work, unresolved questions. Bell: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
 ## Product
 Looks/sound: one line each (R13).
-- Reports and finished tasks belong in Conversations, with shared answer-card decisions; [merged design checkpoint](docs/design/reports.md#conversations-design-checkpoint-1977) awaits visual approval before build. Existing [Results](docs/design/reports.md#contract-detail) behavior stays in force until then (R8/R12/R13).
+- Reports and finished tasks live in Conversations, with [shared decision cards and sidebar filters](docs/design/reports.md#conversations-design-checkpoint-1977); Accept acknowledges, Make tasks creates held drafts. Native qualification remains separate (R8/R12/R13).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
 - UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts, event stack A; no Custom. Native proof pending (R12).

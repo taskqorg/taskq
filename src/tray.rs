@@ -1617,7 +1617,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if calls.failed {return;}
                 match m["a"].as_str() {
-                    Some("reports")=>{if let Err(reason)=report_actions.submit(&m) {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
+                    Some("reports")=>{let result=if m["local"].is_object(){answer_local(&install,m["local_key"].as_str().unwrap_or(""),&m["local"])}else{Ok(())}.and_then(|_|{let mut request=m.clone();request.as_object_mut().map(|v|{v.remove("local");v.remove("local_key");});report_actions.submit(&request)});if let Err(reason)=result {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
                     Some("sync-retry") => {
                         if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
                     }
@@ -1781,7 +1781,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "workspace" if snapshot.is_none() => {
                         workspace_open=m["open"].clone();
                         // #1699: the header entry (it names a thread) opens the main workspace, never a detached conversation
-                        if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
+                        if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() && workspace_open["task"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ Workspace").with_decorations(false).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {
