@@ -34,31 +34,31 @@ Apply [F3](https://github.com/taskqorg/specq/blob/main/design/implementation-fid
 | Menu task list | window header row, version/resize footer | one shared scroll: host summary, global pins first, filters, task rows or Completed; no separately scrolling subpanels (P-W1) |
 | Project / filtered tasks | Back, project/Board, current filter | task rows; all required states reachable |
 | Settings detail | Back/title, contextual commit/cancel where present | settings groups, validation and detailed effects |
-| AI conversation | window controls, context, composer | transcript; conversation list independent when side by side |
-| Narrow AI | window controls and Back; composer in conversation view | full-width list OR conversation, not compressed columns |
+| AI conversation | window controls, reachable Send/tools | one thread reader: status, questions, transcript and growing draft; list independent when side by side |
+| Narrow AI | window controls, Back, reachable Send | full-width list OR shared thread reader, not compressed columns |
 | Change review | target context, Cancel/Confirm | long diff/evidence; buttons never cover last row |
 
 - No-scroll means no reserved scrollbar strip unless native stable gutter is necessary to prevent wrapping oscillation; never use a visible fake track.
 - Refresh keeps the focused task by identity. If it disappears, focus the nearest surviving item and announce the change.
 - Test wheel/trackpad, thumb drag, PageUp/Down, Home/End, Tab and Shift+Tab. Last row and final action remain fully reachable.
-- AI: growing input remeasures to its approved cap, then input scrolls. Closing a window preserves request identity.
+- AI: input grows naturally in the shared reading viewport, without manual resize or inner text scrolling. Short input stays at the bottom; Send remains reachable. Closing preserves request identity and draft/files (D4, UI30-13/14).
 
 ## R-UI4 Cadence data
 
 - Follow [approved decisions](../reviews/visual-decisions.md) and [I1–I6](icon-summary.md). Current task counters remain separate from event counts.
 - All four surfaces share the selected period (default 24 hours). Exactly six equal source bins for every period, oldest left; presets use epoch-aligned whole bins of period / 6, newest containing now. Exact custom [start,end) bounds stay fixed.
 - Deduplicate by board, event identity and kind before binning. Preserve closed, failed, ask and blocked counts and missing-source information.
-- Closed alone determines height: 9 pt × closed / peak at the 22 pt reference. Peak includes only bins with complete source coverage, including observed counts in an ongoing bin. Peak zero is safe.
+- The UI30 target uses stack A from I3/I4: Closed, New, Ask, Failed, one shared quantitative scale. First-admission provenance and missing-series coverage follow I3; retries are not arrivals. Current source remains closed-only until #1931 implements and qualifies this target.
 - Incomplete coverage never becomes zero or enters the peak. Detail retains observed lower bounds and missing sources. Collection start alone cannot prove uninterrupted coverage.
 
 <a id="r-ui5-cadence-raster"></a>
 
 ## R-UI5 Canonical SVG
 
-- One Rust function supplies Summary and its chart group to menu bar, running Dock, picker and History; no per-surface reconstruction, rebinning, heat opacity or stacks.
+- One Rust function supplies Summary and its chart group to menu bar, running Dock, picker and History; no per-surface reconstruction, rebinning or heat opacity; event stack A is shared.
 - Reference geometry, palette A and state marks are [I1–I4](icon-summary.md). Rasterize once at the native target size/backing scale; snap shared straight fill boundaries, never resize an intermediate bitmap.
 - Picker embeds the vector at 18 CSS px. History projects the same chart group (reference x × 16, y × 8 at the 320 px plot), omitting current counters; responsive sizing never changes bins or normalized heights.
-- History exposes six keyboard/click-selectable bins. Keep selection by [start,end) across refresh; it changes no scope, period, admission or task state. Detail shows interval, timezone, all four exact or explicitly incomplete counts, ongoing time and missing coverage. Legend totals carry completeness qualifiers.
+- History exposes six keyboard/click-selectable bins. Keep selection by [start,end) across refresh; it changes no scope, period, admission or task state. Detail shows interval, timezone, exact or explicitly incomplete Closed/New/Ask/Failed and retained Blocked counts, ongoing time and missing coverage. Legend totals carry completeness qualifiers.
 - Native font/DPR, zero/unknown/ongoing/failed cues, pause and overflow need bounded owner review under R12. Source checks are not native acceptance.
 
 ## R-UI6 Feature parity and improvements

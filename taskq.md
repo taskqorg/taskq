@@ -55,7 +55,7 @@ Rule IDs, the rule-change gate and coverage: [rule IDs](docs/design/rule-ids.md#
 Looks/sound: one line each (R13).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 in #1463–#1467, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
-- UI: Preact/Signals/Wouter O1–O3 [palette A; exact counts; no Custom; History-only Ask](docs/design/icon-summary.md).
+- UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts, event stack A; no Custom. Native proof pending (R12).
 - Conversations: reading first; [Details and sidebar](docs/design/tray-workspace.md#conversations-sidebar-1808).
 - Closed pins: unpin after first open or 24 h; [P-W1](docs/design/menu-product.md#windows-and-task-pins).
 - Menu/View/Settings wrap, no horizontal scroll; compact rows; growing input ([menu]). Group headers follow M2.

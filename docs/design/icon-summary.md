@@ -1,6 +1,6 @@
 # Square summary icon
 
-The [owner-approved design](../reviews/visual-decisions.md) supersedes the former quadrant histogram. [Contract](../../taskq.md#product) · [M1](menu.md#m1-appearance) · [R-UI4/R-UI5](rendering-contract.md#r-ui4-cadence-data).
+The [UI30 target](ui-polish.md) selects event stack A over the earlier closed-only encoding. It awaits implementation and native qualification; current source still uses the earlier encoding. [Contract](../../taskq.md#product) · [M1](menu.md#m1-appearance) · [R-UI4/R-UI5](rendering-contract.md#r-ui4-cadence-data).
 
 ## I1 Composition
 
@@ -14,24 +14,30 @@ System sans serif, weight 500, nominal 9 pt, baseline y = 9. Show 1–99 exactly
 
 ## I3 Geometry
 
-Exactly six separated columns, oldest left. For i = 0…5: x = 1 + 3.5i, width 2.5, gap 1, baseline y = 20.5, maximum height 9 (logical points). Height = 9 × closed / peak, where peak is the maximum closed count over complete-coverage bins, ongoing included. Unknown bins never set peak; peak zero is safe. Failed, ask and blocked never change height.
+Exactly six separated columns, oldest left. For i = 0…5: x = 1 + 3.5i, width 2.5, gap 1, baseline y = 20.5, maximum height 9 (logical points). Stack, bottom to top: Closed, New, Ask, Failed. Height = 9 × the sum of the shown event counts / peak, where peak is the maximum corresponding sum over complete-coverage bins, ongoing included. These are events, not unique tasks or present queue size. Blocked event counts remain in exact History detail.
+
+New means first admission of a task into the work queue; held drafts count only when first admitted. Retries, resumes, requeues and runtime changes do not create another New event. Preserve board/task identity and durable provenance; current queue size or issue creation time cannot substitute for this event. Legacy ranges without incoming history keep New unknown.
+
+If a series was not collected anywhere in the range, retain the other known event series, label the missing series explicitly and hatch the known stacks as incomplete. Scale only the available kinds over bins complete for those kinds. Do not replace unavailable New with zero or hide known completions/questions. A per-interval collection gap uses an unknown slot and retains known lower bounds in detail; it does not set peak. Peak zero is safe. Never impose a minimum colored height that exaggerates rare events.
 
 ## I4 Marks and palette
 
-- Known zero: neutral tick at y = 20, height 0.5, column width.
-- Unknown/incomplete source: neutral mid dash at y = 15.5, height 0.75; no guessed green bar.
-- Bin containing now: separate neutral underline at y = 21, height 0.5; no underline in a completed historical range.
-- Known failed > 0: fixed red cap at y = 10.5, height 0.75, independent of green height.
-- Activity history alone reveals a fixed Ask cap at y = 12, height 0.75, column width, in the Ask color when observed Ask > 0 (including incomplete bins). It remains hidden in menu-bar, Dock and picker icons. No blocked marks.
+- Known zero: empty chart space; no minimum-height bar or baseline tick. Preserve the compact-Q fallback when current counters and all known history are empty.
+- Unknown/incomplete source: explicit hatching and source/series explanation; never a guessed zero. Retain known event segments when a whole series is unavailable.
+- Bin containing now: position and exact interval/unfinished status in expanded History; no separate underline in the small icon.
+- Failed and Ask contribute their quantitative red/amber stack segments on all surfaces; no detached caps or History-only Ask encoding. Exact Blocked counts remain in History detail, without a new small-icon series.
 - Palette A light/dark: closed/work `#087F5B` / `#38E8A0`; ask `#995200` / `#FFC247`; failed `#C92641` / `#FF6378`; neutral `#536171` / `#B9C6D8`. One source supplies counters, graph and menu CSS. Board label API colors stay separate.
+- New event accent: blue `#1F65C5` / `#6EA8FF`; it means incoming events, not the present Ready/Blocked counter.
 - Paused: existing gray composition and centered compact Q/pause identity. Partial pause does not gray everything.
 
 ## I5 Raster and acceptance
 
-Reference geometry scales to the actual menu-bar height, then its backing scale; slot width follows I2. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins. Its CSS reveals the canonical SVG’s hidden Ask marks without changing Closed geometry or peak; failed, unknown, zero-Closed and ongoing marks remain distinct.
+Reference geometry scales to the actual menu-bar height, then its backing scale; slot width follows I2. Dock renders at 256 px. Picker uses the vector at 18 CSS px. History projects only the canonical chart group to 320 × 88 logical px at base menu width, x × 16 and y × 8; layout adapts with width/font, never bins. The target projects the same event stack and coverage on every surface; History adds exact interval, ongoing and source details, rather than revealing a different Ask encoding.
 
-Use the frozen day/hour fixtures linked from the approved review, plus explicitly synthetic zero-peak, failed and unknown cases. Checks retain bin identities, exact counts, heights, colors and marks at every viewport. Inspect at most ten native screens for owner acceptance: font/DPR, separated columns, counter bounds, zero vs unknown, ongoing/failed, pause and overflow. Static references and source CI are not native acceptance.
+Use the frozen day/hour fixtures with unavailable New and retained known series, plus synthetic four-kind, zero-peak, failed and unknown cases. Checks retain bin identities, exact counts, heights, colors and marks at every viewport. Inspect at most ten native screens for owner acceptance: font/DPR, separated columns, counter bounds, zero vs unknown, ongoing/failed, pause and overflow. Static references and source CI are not native acceptance.
 
 ## I6 Cross-platform rendering
 
 Share vector geometry, data and palette; calibrate SF/Segoe ink and actual OS slot/DPI separately. Preserve Windows availability until native qualification. No repeated PNG resizing, width rebinning or dropped bins. Native/runtime gaps remain unknown under R12.
+
+Counter order remains Work / Ask / Ready+Blocked, oldest-left/newest-right. Keep I1/I2 exact 1–99 and 99+, hidden-zero space reclamation and native slot widening from #1789. The older snapshot’s fixed square and 9+/+ wording are not adopted.

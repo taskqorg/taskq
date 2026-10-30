@@ -2,6 +2,10 @@
 
 This is working context, not a blanket product approval or implementation plan. Explicit selections are linked below; other proposals remain exploratory. The final owner request authorizes one PM handoff task and PM creation of implementation tasks; it does not start implementation or application rollout.
 
+## Current integration handoff
+
+[UI30 reconciliation](ui-polish.md) continues the owner's start order on #1924. #1738 is completed; the earlier held-only references below describe their original rounds. Preserve #1817/#1818/#1829/#1789 and #1918 ownership. The coordinator delivers specifications, preservation and proof maps; linked tasks own implementation and native qualification. No application or service action is authorized here.
+
 ## Current New chat and task-activity flow correction
 
 ### Project heading shortcuts
