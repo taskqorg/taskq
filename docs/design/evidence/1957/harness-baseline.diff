@@ -1,0 +1,22 @@
+--- a/src/tray.rs (be3c20f3)	2026-10-30 23:44:00
++++ b/src/tray.rs (harness)	2026-10-30 23:43:59
+@@ -1137,7 +1137,7 @@
+     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
+     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
+     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
+-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations");
++    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations");
+     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
+     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
+     let mut settings = Settings::load(&install);
+@@ -2140,7 +2140,9 @@
+ // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
+ const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
+ const ROUTES: [&str; 25] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
+-const REPORT_SHOTS:[(&str,&str);2]=[
++const REPORT_SHOTS:[(&str,&str);4]=[
++    ("results",concat!(include_str!("../tests/fixtures/results-before-1957.js"),"taskqCompletedBefore.bind(null,'menu')")),
++    ("results-conversations",concat!(include_str!("../tests/fixtures/results-before-1957.js"),"taskqCompletedBefore.bind(null,'conversations')")),
+     ("reports",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'menu')")),
+     ("reports-conversations",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'conversations')")),
+ ];

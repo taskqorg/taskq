@@ -1,0 +1,31 @@
+--- cand/src/tray.rs	2026-10-30 23:40:24
++++ walk/src/tray.rs	2026-10-30 23:52:05
+@@ -1172,7 +1172,7 @@
+     let views_shots=snapshot.is_some() && routes.iter().any(|r|r=="views");
+     if views_shots && routes.len()>1 {return Err("route views renders the View window alone; run it without other routes".into());}
+     // #1699 A8: Conversations is the workspace surface, so its snapshot renders the workspace page alone at that window's size
+-    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations");
++    let conversation_shots=snapshot.is_some() && routes.iter().any(|r|r=="conversations"||r=="reports-conversations"||r=="results-conversations"||r=="walk-conversations");
+     if conversation_shots && routes.len()>1 {return Err("route conversations renders the workspace alone; run it without other routes".into());}
+     if snapshot.is_some()&&routes.iter().any(|r|r=="reports")&&routes.len()>1 {return Err("route reports renders its menu cases alone".into());}
+     let mut settings = Settings::load(&install);
+@@ -2094,7 +2094,7 @@
+                 }
+                 let p = proxy.clone();
+                 std::thread::spawn(move || {
+-                    std::thread::sleep(Duration::from_millis(800));
++                    std::thread::sleep(Duration::from_millis(4000));
+                     let _ = p.send_event(Ev::Shot2);
+                 });
+             }
+@@ -2175,7 +2175,9 @@
+ // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
+ const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
+ const ROUTES: [&str; 25] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
+-const REPORT_SHOTS:[(&str,&str);4]=[
++const REPORT_SHOTS:[(&str,&str);6]=[
++    ("walk",concat!(include_str!("../tests/fixtures/results-walk-1957.js"),"taskqResultsWalk.bind(null,'menu')")),
++    ("walk-conversations",concat!(include_str!("../tests/fixtures/results-walk-1957.js"),"taskqResultsWalk.bind(null,'conversations')")),
+     ("reports",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'menu')")),
+     ("reports-conversations",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'conversations')")),
+     ("results",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqResultShot.bind(null,'menu')")),

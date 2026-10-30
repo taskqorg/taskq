@@ -1,0 +1,173 @@
+{
+  "qualification": "macOS 27.0.1 arm64 isolated CLI; release binary; 9 invented reports and 10 completed tasks; no board token; not deployed",
+  "binary_sha256": "e9c52d0864aa70e507b609a46a5ebbd52795ed6a977713d35209b22f0f47222b",
+  "commands": [
+    {
+      "command": "taskq reports --json",
+      "collected": 9,
+      "wall_ms": 43.177,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq reports 1 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --action open --json",
+      "collected": 9,
+      "wall_ms": 40.533,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq results --json",
+      "collected": 19,
+      "wall_ms": 27.108,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq results 101 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --json",
+      "collected": 19,
+      "wall_ms": 43.285,
+      "outcome": "ok"
+    },
+    {
+      "command": "taskq results 102 --sha aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa --json",
+      "collected": 19,
+      "wall_ms": 25.04,
+      "outcome": "ok"
+    }
+  ],
+  "unknown": [
+    {
+      "case": "missing status.json",
+      "command": "taskq reports --json",
+      "complete": false,
+      "reason": "Reports not collected yet",
+      "wall_ms": 25.084
+    },
+    {
+      "case": "missing status.json",
+      "command": "taskq results --json",
+      "complete": false,
+      "reason": "Reports not collected yet",
+      "wall_ms": 25.675
+    },
+    {
+      "case": "stale collection",
+      "command": "taskq reports --json",
+      "complete": false,
+      "reason": "Report collection is stale; waiting for the service",
+      "wall_ms": 32.624
+    },
+    {
+      "case": "stale collection",
+      "command": "taskq results --json",
+      "complete": false,
+      "reason": "Report collection is stale; waiting for the service",
+      "wall_ms": 30.878
+    },
+    {
+      "case": "service error",
+      "command": "taskq reports --json",
+      "complete": false,
+      "reason": "Board unavailable; collection unknown",
+      "wall_ms": 38.431
+    },
+    {
+      "case": "service error",
+      "command": "taskq results --json",
+      "complete": false,
+      "reason": "Board unavailable; collection unknown",
+      "wall_ms": 42.798
+    },
+    {
+      "case": "invalid collection",
+      "command": "taskq reports --json",
+      "complete": false,
+      "reason": "Report collection invalid; waiting for the service",
+      "wall_ms": 24.087
+    },
+    {
+      "case": "invalid collection",
+      "command": "taskq results --json",
+      "complete": false,
+      "reason": "Report collection invalid; waiting for the service",
+      "wall_ms": 33.317
+    }
+  ],
+  "cached_operations": [
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 26.022,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.open.cached",
+      "duration_ms": 22.776,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 10.714,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.open.cached",
+      "duration_ms": 25.953,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.open.cached",
+      "duration_ms": 7.082,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 8.54,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 9.449,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 15.796,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 14.687,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 21.025,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 25.823,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 6.232,
+      "outcome": "ok"
+    },
+    {
+      "operation": "taskq.operation.reports.list.cached",
+      "duration_ms": 10.524,
+      "outcome": "ok"
+    }
+  ],
+  "operations": [
+    "taskq.application",
+    "taskq.operation.host.identity",
+    "taskq.operation.reports.list.cached",
+    "taskq.operation.reports.open.cached",
+    "taskq.operation.telemetry.checkpoint",
+    "taskq.operation.telemetry.election",
+    "taskq.operation.telemetry.open",
+    "taskq.run"
+  ],
+  "board_operations": [],
+  "source_unchanged": true
+}
