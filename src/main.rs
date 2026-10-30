@@ -2924,6 +2924,8 @@ fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &
     let hash: String = ring::digest::digest(&ring::digest::SHA256, request.as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
     let header = format!("taskq: create-claim {id}");
     let claim = format!("{header}\nrequest-sha256: {hash}");
+    // GitLab keeps a title and description without surrounding whitespace, dropping the newline that ends `add` bodies (#1914)
+    let same = |stored: &str, sent: &str| stored.trim() == sent.trim();
     let first = || -> Res<Option<board::Comment>> {
         Ok(b.comments(claim_issue)?.into_iter().filter(|c| c.trusted && !c.edited && c.body.lines().next() == Some(header.as_str())).min_by_key(|c| c.id))
     };
@@ -2934,7 +2936,7 @@ fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &
             return Err(unknown(0, "create claim exists; issue absent or duplicated, no further POST allowed".into()));
         }
         let i = b.issue(matches[0].number).map_err(read)?;
-        if !i.trusted || i.title != title || i.body != body {
+        if !i.trusted || !same(&i.title, title) || !same(&i.body, body) {
             return Err(unknown(i.number, "created issue conflicts with the immutable request".into()));
         }
         let log = entries(b, i.number).map_err(read)?;
@@ -2963,7 +2965,7 @@ fn claimed_create(b: &dyn Board, raw: &Value, title: &str, body: &str, labels: &
     }
     let n = b.create(title, body, labels).map_err(read)?;
     let issue = b.issue(n).map_err(|e| unknown(n, e))?;
-    if !issue.trusted || issue.title != title || issue.body != body || issue.labels.len() != labels.len() || labels.iter().any(|l| !issue.labels.contains(l)) {
+    if !issue.trusted || !same(&issue.title, title) || !same(&issue.body, body) || issue.labels.len() != labels.len() || labels.iter().any(|l| !issue.labels.contains(l)) {
         return Err(unknown(n, "create readback does not match the request".into()));
     }
     Ok(n)
