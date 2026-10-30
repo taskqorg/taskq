@@ -87,6 +87,7 @@ const USAGE: &str = "taskq agents
  taskq recipe NAME --run ID [--goal G] [--start]
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
+ taskq claim-issue [N] [--json]
  taskq reports [N] [--action open|read|later|drop|make] [--sha SHA] [--page N|--before TIME:N] --json
  taskq profile [guide|export|tasks|board|actions|health|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
@@ -132,7 +133,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
-            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "reports" | "enroll" | "connection") => 2,
+            Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "enroll" | "connection") => 2,
             _ => 1,
         };
         if a.pos.len() > used {
@@ -2843,10 +2844,39 @@ fn create_claim_issue(b: &dyn Board, raw: &Value, op: &Op) -> Result<u64, Receip
     let claim_issue = raw["create_claim_issue"].as_u64().filter(|n| *n > 0)
         .ok_or_else(|| Receipt::rejected(0, op, "configure create_claim_issue before idempotent create"))?;
     let issue = b.issue(claim_issue).map_err(read)?;
-    if !issue.trusted || service::is_task(&issue) || service::is_held(&issue) || issue.labels.iter().any(|l| l == "taskq-host") {
+    if board::claim_issue_refusal(&issue).is_some() {
         return Err(Receipt::rejected(0, op, "create_claim_issue must be trusted and outside the queue/hosts"));
     }
     Ok(claim_issue)
+}
+
+/// § 1 `taskq claim-issue [N]`: settle the board's claim issue, then write `create_claim_issue` to taskq.json
+/// and read it back. An existing key is never replaced; the receipt adds `key` to the board receipt.
+fn claim_issue_setup(b: &dyn Board, root: &Path, adopt: Option<u64>) -> Res<Value> {
+    let path = root.join("taskq.json");
+    let read = || -> Res<Value> {
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).map_err(|e| format!("taskq.json unknown: {e}"))?).map_err(|e| format!("taskq.json unknown: {e}"))?;
+        if v.is_object() { Ok(v) } else { Err("taskq.json unknown: not an object".into()) }
+    };
+    let mut v = read()?;
+    let configured = match &v["create_claim_issue"] {
+        Value::Null => None,
+        k => Some(k.as_u64().filter(|n| *n > 0).ok_or("create_claim_issue in taskq.json is not an issue number")?),
+    };
+    let mut r = board::claim_issue(b, configured, adopt);
+    r["key"] = json!("create_claim_issue");
+    let Some(n) = r["issue"].as_u64().filter(|_| r["outcome"] == "accepted" && configured.is_none()) else { return Ok(r) };
+    v["create_claim_issue"] = json!(n);
+    let written = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())
+        .and_then(|text| platform::write_atomic(&path, &(text + "\n")))
+        .and_then(|_| read())
+        .and_then(|v| if v["create_claim_issue"].as_u64() == Some(n) { Ok(()) } else { Err("taskq.json read back without the new create_claim_issue".into()) });
+    if let Err(e) = written {
+        r["outcome"] = json!("unknown");
+        r["reason"] = json!(e);
+        r["next"] = json!("Retry the same taskq claim-issue: it reuses the issue and rewrites the key.");
+    }
+    Ok(r)
 }
 
 /// §1 create claim: only the invocation that reads back its winning claim may POST an issue.
@@ -3257,6 +3287,17 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             if json { println!("{r}"); }
             else if ok { println!("#{n} {}", if r["label"].is_string() { format!("label {}", r["label"].as_str().unwrap_or("")) } else { format!("comment {}", r["comment"]) }); }
             else { eprintln!("Error: #{n}: {}\nNext: {}", compact(r["reason"].as_str().unwrap_or(""), 153), compact(r["next"].as_str().unwrap_or(""), 154)); }
+            if ok { Ok(()) } else { Err(String::new()) }
+        }
+        "claim-issue" => {
+            if a.flags.iter().any(|(k, v)| k != "json" || v.len() != 1) { return Err("claim-issue: only --json, once".into()); }
+            if std::env::var_os("TASKQ_ATTEMPT").is_some() { return Err("a worker cannot change create_claim_issue".into()); }
+            let adopt = if a.pos.len() > 1 { Some(a.num(1)?) } else { None };
+            let r = claim_issue_setup(b, root, adopt)?;
+            let ok = r["outcome"] == "accepted";
+            if json { println!("{r}"); }
+            else if ok { println!("#{} create_claim_issue {} ({})", r["issue"], r["url"].as_str().unwrap_or(""), r["source"].as_str().unwrap_or("")); }
+            else { eprintln!("Error: {}\nNext: {}", compact(r["reason"].as_str().unwrap_or(""), 153), compact(r["next"].as_str().unwrap_or(""), 154)); }
             if ok { Ok(()) } else { Err(String::new()) }
         }
         "inbox" => {
@@ -3886,6 +3927,32 @@ mod tests {
         assert_eq!((created.outcome, created.task), ("accepted", n));
         assert_eq!(started.unwrap().outcome, "rejected");
         assert_eq!(b.issues(Some(0)).unwrap().len(), 3, "rejected start keeps its existing issue");
+    }
+
+    // Chain: § 1 `taskq claim-issue` (#1907) -> taskq.json. Defect: the PM wrote create_claim_issue by hand on a new board.
+    // Risk: the key is not read back, other keys are lost, an existing key is replaced, or a rerun creates again.
+    #[test]
+    fn claim_issue_setup_writes_key_once_and_keeps_config() {
+        let root = std::env::temp_dir().join(format!("taskq-claim-issue-{}", runtime::uuid()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("taskq.json");
+        fs::write(&path, "{\n  \"repo\": \"o/r\",\n  \"limits\": {\"claude\": 2}\n}\n").unwrap();
+        let b = Fake::default();
+        let r = claim_issue_setup(&b, &root, None).unwrap();
+        assert_eq!((r["outcome"].as_str(), r["source"].as_str(), r["issue"].as_u64(), r["key"].as_str()),
+            (Some("accepted"), Some("created"), Some(1), Some("create_claim_issue")), "{r}");
+        assert_eq!(r["url"], b.url(1));
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v.as_object().unwrap().keys().collect::<Vec<_>>(), ["repo", "limits", "create_claim_issue"]);
+        assert_eq!(v, json!({"repo": "o/r", "limits": {"claude": 2}, "create_claim_issue": 1}));
+        assert_eq!(claim_issue_setup(&b, &root, None).unwrap()["source"], "configured");
+        b.create("Other", "", &[]).unwrap();
+        assert_eq!(claim_issue_setup(&b, &root, Some(2)).unwrap()["outcome"], "rejected");
+        assert_eq!(b.issues(Some(0)).unwrap().len(), 2, "reruns create no claim issue");
+        assert_eq!(serde_json::from_str::<Value>(&fs::read_to_string(&path).unwrap()).unwrap()["create_claim_issue"], 1);
+        fs::write(&path, r#"{"create_claim_issue": "x"}"#).unwrap();
+        assert!(claim_issue_setup(&b, &root, None).is_err(), "a malformed key is not replaced");
+        fs::remove_dir_all(&root).ok();
     }
 
     // Chain: §1 claimed create -> readback/retry. Risk: duplicate issues after a race, restart or lost response.
