@@ -108,7 +108,7 @@ pub fn act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<V
     owner_act(b,root,raw,n,sha,action)
 }
 
-fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
+pub(crate) fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res<Value> {
     if !["open","read","later","drop","make"].contains(&action) {return Err("report action must be open, read, later, drop or make".into());}
     let prior=current(b,n,sha)?;
     if prior["visible"]==false {return Ok(json!({"report":prior}));}
@@ -125,6 +125,15 @@ fn owner_act(b:&dyn Board,root:&Path,raw:&Value,n:u64,sha:&str,action:&str)->Res
         return Ok(json!({"report":row}));
     }
     if tasks.is_empty() {return Err("report proposes no follow-up tasks".into());}
+    // #1945: a board set up without the key (cyprusbz#540) refused every Make; the owner's Make settles it like claim-issue
+    let settled;
+    let raw=if raw["create_claim_issue"].is_null() {
+        let r=crate::claim_issue_setup(b,root,None).unwrap_or_else(|e|json!({"outcome":"rejected","reason":e,"key":"create_claim_issue"}));
+        if r["outcome"]!="accepted" {
+            return Ok(json!({"report":prior,"reason":format!("create_claim_issue: {}",r["reason"].as_str().unwrap_or("unknown")),"receipt":r}));
+        }
+        let mut v=raw.clone();v["create_claim_issue"]=r["issue"].clone();settled=v;&settled
+    } else {raw};
     if let Err(receipt)=crate::create_claim_issue(b,raw,&crate::Op::default()) {
         return Ok(json!({"report":prior,"reason":receipt.reason,"receipt":receipt}));
     }
@@ -237,7 +246,9 @@ mod tests {
     #[test] fn rejected_creation_configuration_never_reserves_the_report() {
         for invalid in [json!({}),json!({"create_claim_issue":2})] {
             let (b,_,n,sha)=board();let count=b.comments(n).unwrap().len();
-            let result=owner_act(&b,Path::new("."),&invalid,n,&sha,"make").unwrap();
+            // a root without taskq.json: the missing key cannot be settled and written back
+            let root=std::env::temp_dir().join(format!("taskq-reports-{}",crate::runtime::uuid()));
+            let result=owner_act(&b,&root,&invalid,n,&sha,"make").unwrap();
             assert_eq!(result["receipt"]["outcome"],"rejected");
             assert_eq!(b.comments(n).unwrap().len(),count,"known refusal writes no make-intent");
             assert_eq!(owner_act(&b,Path::new("."),&invalid,n,&sha,"drop").unwrap()["report"]["decision"],"drop");
