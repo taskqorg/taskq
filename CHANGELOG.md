@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.44
+
+Issues: `taskq issue N` reads any board issue on GitHub or GitLab as JSON; `--comment` and `--label` add one comment or label with readback, once per `--op-id`, so clients such as PilotQ read and write issues through the CLI (#1892). No board change.
+
 ## v4.6.43
 
 Capacity: a `taskq.json` runtime limit above the host ceiling now clamps to the ceiling instead of holding every launch on that host; a host 0 stays disabled (#1890). No board change.
