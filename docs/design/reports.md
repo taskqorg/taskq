@@ -2,7 +2,7 @@
 
 ## Operator flow
 
-Reports are one kind of completed result. A finished trusted task appears once, with a SHA-bound seen state, in menu attention and Conversations; already seen results add no new attention. Background-collected summary, checks, open items, PR and evidence support local list, open and next/previous navigation. Ordinary task reactions are Accept, Follow-up and Reopen; report reactions retain Make tasks, Later and Drop.
+Reports are one kind of completed result. A finished trusted task appears once, with a SHA-bound seen state, in the tray Notifications panel and Conversations; already seen results add no new attention. Background-collected summary, checks, open items, PR and evidence support local list, open and next/previous navigation. Ordinary task reactions are Accept, Follow-up and Reopen; report reactions retain Make tasks, Later and Drop.
 
 The shared use case is: work finishes; the service collects the result; the operator notices it where they already work, reads the cached decision card and chooses the appropriate reaction. Accept acknowledges a delivered result; Follow-up proposes new work; Reopen requests more work on the original outcome. A read or acknowledgement is not permission to start work. Missing or stale data remains unknown.
 
@@ -26,7 +26,7 @@ Menu, Conversations and CLI read this collected projection without board calls o
 
 The operator flow has four steps, each with one purpose:
 
-1. Notice: unread reports appear in menu Attention and the Conversations thread list, and join its new-item badge like unread questions. This brings the decision to the operator's existing workplace. Queue and admission counts still exclude reports.
+1. Notice: unread reports appear in the tray Notifications panel and the Conversations thread list; the bell counts result notifications, while the Conversations header badge counts only messages/questions. This brings the decision to the operator's existing workplace. Queue and admission counts still exclude reports.
 2. Understand: one click opens the collected card with Question, Recommendation and Proposed tasks first, as readable text and task titles. This exposes the decision without requiring a long document read. Full report expands in one action.
 3. Decide: Make tasks, Later and Drop are direct buttons, without an intermediate confirmation or PM relay. Make tasks creates only the displayed held drafts; Later records read and keeps the report; Drop dismisses it. Read acknowledgement is asynchronous after successful local display, so a board write never delays reading. Its failure remains visible and unread stays unconfirmed.
 4. Return: Back restores Conversations and its draft. Successful decisions update the current view from their readback and wake background collection; failures retain the card and receipts for reconciliation.

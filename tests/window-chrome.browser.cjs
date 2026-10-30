@@ -33,7 +33,7 @@ const html=fs.readFileSync('build/web/tray.html','utf8'),settingsHtml=html.repla
   await titlePage.close();
   for(const width of [320,360,800]){
    const p=await open(width);const home=await row(p);
-   assert.deepEqual(home.map(r=>r[0]),['Home','Conversations · 3 new','Settings','Keep menu open','Always on top','Close menu'],'one Conversations entry, distinct window names, Close last');
+   assert.deepEqual(home.map(r=>r[0]),['Home','Notifications · 0 loaded unread · history incomplete','Conversations · 3 new','Settings','Keep menu open','Always on top','Close menu'],'one Conversations entry, distinct window names, Close last');
    assert.equal(new Set(home.map(r=>r[1])).size,1,'frequent actions share the first row at '+width);
    assert.equal(await p.locator('.head [data-a=workspace]').count(),1);assert.equal(await p.locator('.head .badge').textContent(),'3');
    await readable(p,'without a palette at '+width+' '+theme);

@@ -15,11 +15,11 @@ const report={...row,read:false,body:'# Question\n\nHow should interrupted reque
    else {reportRow={...reportRow,read:true,decision:m.action==='make'?'made':m.action==='drop'?'drop':m.action==='later'?'later':reportRow.decision,visible:!['make','drop'].includes(m.action),tasks_made:m.action==='make'?[21]:[]};value={report:m.action==='open'?{...reportData,...reportRow}:reportRow};}
    queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,...value}}));}};taskq.receive(state);},{state,row,report});
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports').length),0,'pushed reports need no list request');
-  if(surface==='workspace'){if(await page.locator('[data-c=list]').isVisible())await page.locator('[data-c=list]').click();assert((await page.locator('.conversation-rows').innerText()).includes('Needs decision'));}else assert((await page.locator('[data-a=workspace][data-page=conversations]').getAttribute('aria-label')).includes('1 new'));
-  await page.locator('[data-report=toggle]').click();await page.locator('.reports-section .report-row').waitFor({state:'attached',timeout:5000}).catch(async e=>{console.error({surface,theme,width,font,errors,text:await page.locator('.reports-section').innerText(),sent:await page.evaluate(()=>sent.filter(m=>m.a==='reports'))});throw e;});
-  assert((await page.locator('.reports-section .report-row').innerText()).includes('Unread'));
+  if(surface==='workspace'){if(await page.locator('[data-c=list]').isVisible())await page.locator('[data-c=list]').click();assert((await page.locator('.conversation-rows').innerText()).includes('Needs decision'));}else {assert((await page.locator('[data-a=workspace][data-page=conversations]').getAttribute('aria-label')).includes('0 new'));await page.locator('[data-route=notifications]').click();}
+  if(surface==='workspace')await page.locator('[data-report=toggle]').click();await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').waitFor({state:'attached',timeout:5000}).catch(async e=>{console.error({surface,theme,width,font,errors,text:await page.locator('.reports-section').innerText(),sent:await page.evaluate(()=>sent.filter(m=>m.a==='reports'))});throw e;});
+  assert((await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').innerText()).includes('Unread'));
   if(out&&surface==='tray'&&theme==='dark'&&width===350&&font===16){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'menu-unread.png')});}
-  await page.locator('.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
+  await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
   assert.equal(await page.locator('[data-report=make]').isEnabled(),true);await page.waitForFunction(()=>document.querySelector('.report-card').innerText.includes('Read'));assert(!await page.evaluate(()=>sent.some(m=>m.a==='reports'&&['list','open'].includes(m.action))),'navigation makes no board read');
   assert.equal(await page.locator('.report-body').count(),0,'findings stay behind Full report');
   assert((await page.locator('.report-card').innerText()).indexOf('Recommendation')<(await page.locator('.report-card').innerText()).indexOf('Proposed tasks'));
@@ -33,15 +33,15 @@ const report={...row,read:false,body:'# Question\n\nHow should interrupted reque
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&[...document.querySelectorAll('.reports-section button')].every(e=>e.scrollWidth<=e.clientWidth+1)),'Reports must wrap at '+surface+'/'+width+'/'+font);
   if(out&&surface==='workspace'&&theme==='light'&&width===940&&font===16)await page.screenshot({path:path.join(out,'conversations-report.png')});
   await page.locator('[data-report=later]').click();await page.getByText('Kept in Reports for later.',{exact:true}).waitFor();
-  await page.locator('[data-report=back]').click();assert((await page.locator('.reports-section .report-row').innerText()).includes('Read'));
-  await page.locator('.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
+  await page.locator('[data-report=back]').click();assert((await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').innerText()).includes('Read'));
+  await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
   await page.evaluate(()=>failReportAction=true);await page.locator('[data-report=make]').click();await page.getByText('Board unavailable; decision unknown',{exact:true}).waitFor();
   assert.equal(await page.locator('.report-card').count(),1,'unknown creation retains the report');
   if(out&&surface==='tray'&&theme==='light'&&width===350&&font===20)await page.screenshot({path:path.join(out,'make-unknown.png')});
   await page.evaluate(()=>failReportAction=false);await page.locator('[data-report=make]').click();await page.getByText('Created held drafts: #21',{exact:true}).waitFor();
   assert.equal(await page.locator('.reports-section .report-row').count(),0);
-  await page.evaluate(({state,report})=>{reportRow={...report,n:13};taskq.receive({...state,projects:[{...state.projects[0],reports:{complete:true,observed:201,reports:[reportRow]}}]});},{state,report});await page.locator('.reports-section .report-row').waitFor();
-  await page.locator('.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();await page.locator('[data-report=drop]').click();await page.getByText('Report dropped.',{exact:true}).waitFor();assert.equal(await page.locator('.reports-section .report-row').count(),0);
+  await page.evaluate(({state,report})=>{reportRow={...report,n:13};taskq.receive({...state,projects:[{...state.projects[0],reports:{complete:true,observed:201,reports:[reportRow]}}]});},{state,report});await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').waitFor();
+  await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();await page.locator('[data-report=drop]').click();await page.getByText('Report dropped.',{exact:true}).waitFor();assert.equal(await page.locator('.reports-section .report-row').count(),0);
   if(surface==='workspace'){await page.locator('[data-report=toggle]').click();assert(await page.locator('.conversations').isVisible(),'closing Reports restores Conversations');}
   assert.deepEqual(errors,[]);cells++;await page.close();
  }

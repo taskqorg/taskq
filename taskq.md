@@ -49,8 +49,9 @@ Stop workers/reviewers only after close/parking/replacement, except owner-confir
 ### R12. Unverified means unknown
 Follow [shared verification][sq-verify]. Gate `python3 scripts/check.py` ([selection](docs/testing.md)): PRs Linux; `merge_group` affected-OS matrix, the merge gate; main push none. Release needs exact-source CI and staged offline selftest. [Live acceptance](docs/runtime-qualification.md) reruns for changed runtime paths, permissions or clients. Prototypes are instruments; [UI acceptance][uia] owns browser/screenshot/native scope. A state marked `⟳` ([menu] M8) is expected, unconfirmed.
 ### R13. Spec first
-Inherit [specq engineering rules](https://github.com/taskqorg/specq/tree/main/engineering) and [rule improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md#improve-shared-rules). TaskQ overrides shared rules (§8); conflicting tasks use `ask` with options. Shared rules: upstream; TaskQ scenarios/gaps: [use cases](docs/use-cases/README.md). Design follows [shared workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md); [implementation brief](docs/design/implementation-brief.md) maps accepted product to code. [Security](SECURITY.md).
-Rule IDs, rule-change gate, coverage: [detail](docs/design/rule-ids.md#contract-detail).
+Apply shared [engineering](https://github.com/taskqorg/specq/tree/main/engineering) and [improvements](https://github.com/taskqorg/specq/blob/main/engineering/spec-first.md). TaskQ overrides them (§8); conflicts: `ask` with options. Shared rules: upstream; TaskQ [cases/gaps](docs/use-cases/README.md). Follow [design](https://github.com/taskqorg/specq/blob/main/design/workflow.md); implement accepted product via [brief](docs/design/implementation-brief.md). [Security](SECURITY.md).
+[IDs/gate/coverage](docs/design/rule-ids.md).
+Home: current work, unresolved questions. Bell: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
 ## Product
 Looks/sound: one line each (R13).
 - [Results](docs/design/reports.md).

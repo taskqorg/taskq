@@ -1907,6 +1907,14 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             open(u);
                         }
                     }
+                    "notification-state" => {
+                        let previous=settings.notify.clone();
+                        let reason=if !notify::inbox_set(&mut settings.notify,&m) {Some("Notification update rejected: invalid event identities")}
+                            else if !settings.save(&install) {settings.notify=previous;Some("Notification state was not saved; previous state retained")}
+                            else {None};
+                        reply!(&state(&install,&settings,dark,None,&adding,&mut sync));
+                        reply!(&json!({"notificationReceipt":{"reason":reason}}));
+                    }
                     "notify" => {
                         if notify::set(&mut settings.notify, &m) {
                             settings.save(&install);
@@ -2174,8 +2182,12 @@ const CONVERSATIONS: [(&str, &str); 4] = [
 ];
 // M1.1: explicit native-alpha cases; a webview snapshot alone cannot capture window alpha.
 const OPACITY_SHOTS:[(&str,&str,u64);5]=[("/* opacity: off */","whole",100),("/* opacity: contrast */","whole",90),("/* opacity: minimum */","whole",60),("/* background: clear */","background",0),("/* background: half */","background",50)];
-const ROUTES: [&str; 25] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
-const REPORT_SHOTS:[(&str,&str);4]=[
+const ROUTES: [&str; 26] = ["home", "actions", "scroll", "answers", "project", "projects", "attention", "settings", "appearance", "cadence", "notifications", "notification-settings", "agents", "services", "about", "hosts", "delivery", "stop", "recovery", "agentq-shown", "agentq-setting-up", "agentq-running", "agentq-unknown", "views", "conversations", "opacity"];
+const REPORT_SHOTS:[(&str,&str);8]=[
+    ("notifications-home",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'home')")),
+    ("notifications-panel",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'panel')")),
+    ("notifications-expanded",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'expanded')")),
+    ("notifications-result",concat!(include_str!("../tests/fixtures/notifications-shots.js"),"taskqNotificationsShot.bind(null,'result')")),
     ("reports",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'menu')")),
     ("reports-conversations",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqReportShot.bind(null,'conversations')")),
     ("results",concat!(include_str!("../tests/fixtures/reports-shots.js"),"taskqResultShot.bind(null,'menu')")),
@@ -2270,7 +2282,7 @@ fn notify_state(n: &Value, ps: &[Value]) -> Value {
     let projects: serde_json::Map<String, Value> = ps.iter().filter_map(|p| p["root"].as_str()).map(|r| {
         (r.to_string(), notify::KINDS.iter().map(|k| (k.to_string(), json!([n["projects"][r][k].as_str().filter(|v| notify::MODES.contains(v)), notify::mode(n, r, k)]))).collect())
     }).collect();
-    json!({"status": notify::status(), "failure": notify::failure(), "host": host, "projects": projects})
+    json!({"status": notify::status(), "failure": notify::failure(), "inbox": n["inbox"], "host": host, "projects": projects})
 }
 
 /// One tick of notifications (M14): the first banner setting asks the OS once; new events move the cursor, which is
@@ -4034,11 +4046,15 @@ mod tests {
         // M14: modes and cursors survive a restart as saved, unknown values included
         let mut s = r;
         s.notify = json!({"kinds": {"ask": "loud"}, "cursor": {"/p": "100 #7 ask 5"}});
+        let event=json!(["https://example.org/issues","event",7,[100,"ask","5"]]).to_string();
+        assert!(notify::inbox_set(&mut s.notify,&json!({"action":"read","ids":[event]})));
         let st = json!({"projects": [{"root": "/p", "name": "p", "tasks": [], "events": [[100, "ask", "5", 7], [200, "failed", "6", 7]]}]});
         let mut asked = true;
         notes(&install, &mut s, &st, &mut asked, &mut notify::Bursts::new());
         let r = Settings::load(&install);
         assert_eq!((r.notify["cursor"]["/p"].as_str(), r.notify["kinds"]["ask"].as_str()), (Some("200 #7 failed 6"), Some("loud")), "cursor saved before any post");
+        assert_eq!(r.notify["inbox"][&event],"read","M14: event read state survives disk save and tray restart");
+        assert_eq!(notify_state(&r.notify,&[])["inbox"],r.notify["inbox"],"M14: every native renderer receives saved markers");
         let area = (0, 25, 1512, 900);
         assert!(on_screen((10, 30), area) && !on_screen((-1500, 300), area) && !on_screen((1512, 30), area));
         assert_eq!(clamp((1400, 0), (320, 400), area), (1192, 25), "kept under the menu bar and inside the right edge");

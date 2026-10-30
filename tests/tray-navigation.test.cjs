@@ -19,7 +19,7 @@ assert.equal(context.page,'project');assert.deepEqual(context.taskFilter,['revie
 // Render all five categories from the same snapshot, including empty and unknown states.
 context.S={platform:'windows',font:20,host:'mac',now:1000,version:'candidate',projects:[],agents:null,display:require('./fixtures/display-model.json').display};
 context.page='settings';let h=(context.routeBody());
-for(const route of ['appearance','cadence','notifications','hosts','agents','projects','delivery','services','about'])assert(h.includes('data-route="'+route+'"'));
+for(const route of ['appearance','cadence','notification-settings','hosts','agents','projects','delivery','services','about'])assert(h.includes('data-route="'+route+'"'));
 context.page='appearance';assert((context.routeBody()).includes('Text size · 20 px'));
 context.page='cadence';context.S.period='1d';context.S.history={bins:[],tz:'UTC',start:1,end:2,cap:1,since:null};assert((context.routeBody()).includes('hist'));
 context.page='agents';assert((context.routeBody()).includes('Unknown: no status.json'));
@@ -29,7 +29,7 @@ context.page='about';h=(context.routeBody());assert(h.includes('version unknown'
 // M14: OS denial reads Blocked with the OS setting and no test post; a project shows its override and effective mode
 const kinds={ask:'sound',close:'off',failed:'banner',gone:'banner'};
 context.S.notify={status:'blocked',host:kinds,projects:{'/p':{ask:[null,'sound'],close:['banner','banner'],failed:[null,'banner'],gone:[null,'banner']}}};
-context.page='notifications';h=(context.routeBody());
+context.page='notification-settings';h=(context.routeBody());
 assert(h.includes('Blocked by the OS'));assert(h.includes('data-a="notify-os"'));assert.equal((h.match(/notify-test[^>]*disabled/g)||[]).length,4);
 assert(h.includes('data-kind="ask" data-v="sound" aria-pressed="true"'));
 context.S.notify.status='allowed';h=(context.routeBody());assert(!h.includes('notify-os'));assert(!/notify-test[^>]*disabled/.test(h));

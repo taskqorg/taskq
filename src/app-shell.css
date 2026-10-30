@@ -47,9 +47,9 @@
 .workspace [data-form=request] .options{justify-content:flex-end}
 .workspace [data-a=request-send]{flex:none}
 /* R09: the Conversations count sits on its icon, so the icon keeps its place whatever the count. */
-.head .conversations-entry{position:relative}
+.head :is(.conversations-entry,.notifications-entry){position:relative}
 /* the count keeps its own fill and digits: the injected palette may be absent and --surface is a body token */
-.head .conversations-entry .badge{position:absolute;top:0;right:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--ask,light-dark(#995200,#FFC247));color:light-dark(#fafbfc,#252b32);font-size:10px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}
+.head :is(.conversations-entry,.notifications-entry) .badge{position:absolute;top:0;right:0;min-width:14px;height:14px;padding:0 3px;border-radius:7px;background:var(--ask,light-dark(#995200,#FFC247));color:light-dark(#fafbfc,#252b32);font-size:10px;font-weight:600;line-height:14px;text-align:center;pointer-events:none}
 /* R17/R28: units stay beside their meters; definitions and exact targets disclose below. */
 .resource-meters{display:grid;gap:4px;padding:4px}
 .resource-meter{display:grid;grid-template-columns:minmax(0,1fr) minmax(40px,1fr) auto;align-items:center;gap:6px;font-size:.85em}
@@ -62,3 +62,10 @@
 /* The workspace overflow belongs to the header, so its menu cannot extend left of a narrow window. */
 .menu.workspace .head{position:relative}.menu.workspace .shell-overflow{position:static}
 .menu.workspace .overflow-actions{inset-inline-end:var(--outer)}
+
+/* M14: a separate warning never corrupts the numeric unread badge. */
+.notifications-entry .notification-warning{position:absolute;bottom:-3px;right:-3px;background:var(--surface);border-radius:50%;line-height:1}
+.notification-warning .ui-icon{width:12px;height:12px}
+.notification-panel .notification-row{display:flex;flex-direction:column;align-items:stretch;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.notification-panel .notification-row.unread{border-inline-start:3px solid var(--work)}
+.notification-panel summary{overflow-wrap:anywhere}
