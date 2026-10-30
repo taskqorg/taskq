@@ -186,7 +186,14 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
                 Err(e) => Some(format!("unknown: {e}")),
                 Ok(i) if i.open => Some("open".into()),
                 Ok(i) => {
-                    let r = i.reason.filter(|r| r != "completed").map(|r| format!("unknown: closed {}", r.replace('_', " ")));
+                    let mut r = i.reason.filter(|r| r != "completed").map(|r| format!("unknown: closed {}", r.replace('_', " ")));
+                    // #1950: a close during a worker attempt is not done; its attempt host reopens it (§ 4 step 5)
+                    if r.is_none() && dep.repo.is_none() {
+                        match crate::board::entries(b, dep.n) {
+                            Err(e) => return Some(Blocker { url: b.url(dep.n), reason: format!("unknown: {e}"), dep }),
+                            Ok(log) => r = (core::fold(dep.n, &log, false).state == State::Doing).then(|| "unknown: closed during a worker attempt".into()),
+                        }
+                    }
                     if dep.repo.is_none() || r.is_none() {
                         done.insert(dep.clone(), r.clone());
                     }
@@ -197,6 +204,17 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
         let url = dep.repo.as_deref().map_or_else(|| b.url(dep.n), |r| b.foreign_url(r, dep.n));
         reason.map(|reason| Blocker { dep, url, reason })
     }).collect()
+}
+
+/// § 4 step 5 ask card of a task closed during a worker attempt (#1950); its answer resumes the attempt.
+fn closed_card(n: u64, at: &str) -> String {
+    [
+        format!("Done: reopened; the issue was closed at {at} during this worker attempt, with no result or review."),
+        "Problem: only the reviewer's close or a person ends a task (§ 1); a close during an attempt never counts as done.".to_string(),
+        "1. redo: finish and hand in a result for review ★".into(),
+        format!("2. later: park it; `taskq close {n}` then ends it unmerged"),
+        format!("To answer: `taskq answer {n}.K` or comment `K`; `later` needs the CLI form."),
+    ].join("\n")
 }
 
 /// `git -C dir <args>`: stdout, else the command and its error (#1856: a failed call never reads as empty).
@@ -445,6 +463,9 @@ pub struct Service<'a> {
     begun: HashMap<u64, (String, String, Option<(std::time::Instant, u64)>)>,
     /// This host's tasks seen moving into `ask`: since when, attempt, runtime (§ 4 Profiling stages).
     asked: HashMap<u64, (std::time::Instant, u64, String)>,
+    /// Tasks on the last open list, and those gone from it not yet read (§ 4 step 5, #1950).
+    listed: HashSet<u64>,
+    unlisted: BTreeSet<u64>,
     reduced_at: Option<u64>,
     recovery_after: Option<u64>,
 }
@@ -683,7 +704,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1177,6 +1198,44 @@ impl<'a> Service<'a> {
             crate::runtime::public_line(&failure, &self.cfg.root, 160))))
     }
 
+    /// § 4 step 5 (#1950): read each task gone from the open list once; a failed read or write retries next pass.
+    /// Returns whether one was reopened. `ponytail:` a close while the attempt's host runs no service is not seen;
+    /// § 1 still reads that dependency unknown, never done.
+    fn unlisted_tasks(&mut self) -> bool {
+        let mut reopened = false;
+        for n in std::mem::take(&mut self.unlisted) {
+            match self.unlisted_task(n) {
+                Ok(r) => reopened |= r,
+                Err(e) => {
+                    self.log.push(format!("#{n} gone from the open list, unread: {e}"));
+                    self.unlisted.insert(n);
+                }
+            }
+        }
+        reopened
+    }
+
+    /// Closed in `doing` on this host: reopen it, then one `ask` of that attempt with the close as evidence, so the
+    /// close never counts as done (desiign#50: a worker closed its own task). Closed otherwise: drop stale `q-*` labels.
+    fn unlisted_task(&mut self, n: u64) -> Result<bool, String> {
+        let issue = self.board.issue(n)?;
+        let t = core::fold(n, &crate::board::entries(self.board, n)?, false);
+        match t.attempt.filter(|_| t.state == State::Doing && host_of(&t) == Some(self.cfg.me.as_str())) {
+            Some(a) => {
+                if !issue.open { self.board.reopen(n)?; }
+                let at = issue.closed.map_or_else(|| "an unknown time".to_string(), crate::board::stamp);
+                self.post(n, core::entry("ask", &[], Some(a), &closed_card(n, &at)))?;
+                Ok(true)
+            }
+            None if !issue.open => {
+                let stale: Vec<String> = issue.labels.iter().filter(|l| l.starts_with("q-")).cloned().collect();
+                if !stale.is_empty() { self.board.labels(n, &[], &stale)?; }
+                Ok(false)
+            }
+            None => Ok(false),
+        }
+    }
+
     fn post(&mut self, n: u64, body: String) -> Result<u64, String> {
         self.log.push(format!("#{n} {}", body.lines().next().unwrap_or_default()));
         self.cache.remove(&n);
@@ -1319,6 +1378,14 @@ impl<'a> Service<'a> {
         let ttl = self.cfg.ttl;
         let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
         if self.release_before_boot(&views) { (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps)?; }
+        // § 4 step 5 (#1950): a task reopened here is listed again before its live attempt could read as gone below
+        let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
+        self.unlisted.extend(self.listed.difference(&open).copied());
+        self.listed = open;
+        if self.unlisted_tasks() {
+            (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps)?;
+            self.listed = views.iter().map(|v| v.issue.number).collect();
+        }
         let now = self.board.now()?;
         for x in views.iter().flat_map(|v| &v.projection.executions).filter(|x| x.host == me) {
             if let Some(hold) = x.usage_hold.filter(|(at, _)| now < *at) {
@@ -3030,6 +3097,43 @@ mod tests {
         b.state.borrow_mut().publish = String::new();
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Closed);
+    }
+
+    // Chain: § 7 rule 8 -> worker closes its own task -> § 1 dependency unknown -> § 4 step 5 reopen + one ask (#1950).
+    // Risk (desiign#50): issue text said "write done and close"; the worker commented done and closed the issue, so the
+    // close read as done, review was skipped and q-doing stayed on a closed issue.
+    #[test]
+    fn worker_close_during_attempt_reopens_with_one_ask() {
+        let (b, c) = (Fake::default(), cfg("mac"));
+        let n = b.create("Invented: write done and close", "When finished, write done and close this issue.", &[TASK_LABEL.into()]).unwrap();
+        let exit = Rc::new(RefCell::new(None));
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| Ok(Box::new(FakeProc(exit.clone())))));
+        s.focus = vec!["all".into()];
+        s.pass().unwrap();
+        let a = task(&b, n).attempt.unwrap();
+        let p = b.create("Invented: closed by hand", "", &[TASK_LABEL.into()]).unwrap();
+        s.pass().unwrap();
+        assert!(b.issue(n).unwrap().labels.contains(&"q-doing".to_string()) && b.issue(p).unwrap().labels.contains(&"q-ready".to_string()));
+        // the worker's hand-in by board writes: a plain comment and a close, labels untouched
+        b.raw(n, "done", true, false);
+        b.close(n).unwrap();
+        b.close(p).unwrap();
+        let dep = blockers(&b, &format!("Depends on #{n}"), None, &mut DepCache::new());
+        assert_eq!(dep.iter().map(|d| d.reason.as_str()).collect::<Vec<_>>(), ["unknown: closed during a worker attempt"], "a dependent never reads it done");
+        s.pass().unwrap();
+        let (issue, t) = (b.issue(n).unwrap(), task(&b, n));
+        assert!(issue.open && t.state == State::Ask && t.attempt == Some(a), "{t:?}");
+        assert!(t.card.as_deref().unwrap().contains("closed at") && t.card.as_deref().unwrap().contains("1. redo:"), "{:?}", t.card);
+        assert!(issue.labels.contains(&"q-ask".to_string()) && !issue.labels.contains(&"q-doing".to_string()), "{:?}", issue.labels);
+        assert_eq!(s.kids.len(), 1, "the live attempt is not stopped as gone");
+        let p_issue = b.issue(p).unwrap();
+        assert!(!p_issue.open && !p_issue.labels.iter().any(|l| l.starts_with("q-")), "a closed task keeps no lifecycle label: {:?}", p_issue.labels);
+        s.pass().unwrap();
+        let asks = b.comments(n).unwrap().iter().filter(|c| c.body.starts_with("taskq: ask")).count();
+        assert_eq!(asks, 1, "one ask per close");
+        b.comment(n, "taskq: answer 1").unwrap();
+        s.pass().unwrap();
+        assert_eq!(task(&b, n).state, State::Doing, "the answer resumes the attempt");
     }
 
     // Chain: section 7 publication -> superseded by merged PRs -> ask with close -> `answer N.3` closes, no merge (#1779, pilotq#84).

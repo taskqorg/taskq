@@ -335,6 +335,10 @@ impl Board for GitLab {
         self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "state_event": "close" }))).map(|_| ())
     }
 
+    fn reopen(&self, n: u64) -> Result<()> {
+        self.api.call("PUT", &format!("/issues/{n}"), Some(json!({ "state_event": "reopen" }))).map(|_| ())
+    }
+
     fn now(&self) -> Result<i64> {
         self.api.now(KIND.user_key)
     }
