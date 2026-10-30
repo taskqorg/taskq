@@ -3,6 +3,14 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.42
+
+Workers: a task can carry stages, one per Acceptance item; `later N --stage A<k>` records finished stages in the later text, the next attempt continues at the first open one, and status shows `stage k/n` (#1883). `taskq inbox N --json` lists every accepted answer with writer, board time and question revision, so clients such as PilotQ read answers through the CLI (#1887). No board change: 4.6.41 hosts read the `Stages:` line as plain later text.
+
+Service: a spawn whose start was never reached is released as no-start (#1882), and a requeued or parked lost spawn is released by its host even when that host is retired (#1888). A label fix counts as a revert only after a later board write, so stale reads no longer file `label_loop` (#1874). `tidy` removes clean closed-task worktrees that contain submodules (#1877). No board change.
+
+Menu and tray: task state icons sit at the left edge of task rows (#1884); the tray allows 60% opacity and clear background fills (#1878). No board change.
+
 ## v4.6.41
 
 Host link: Conversations shows live worker panels for workers on other hosts over an E2E-encrypted, pull-only DashQ relay; heartbeats carry a `link` key line and a peer reads only the listening project's board; `taskq.json` `link_hosts` narrows peers (#1868). Conversations follows the local worker's native transcript live (#1860, #1830), labels TaskQ, owner and worker turns by their real author (#1839) and shows readable Codex tool lines with wider credential masking (#1837). No board change.
