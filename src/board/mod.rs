@@ -1169,6 +1169,12 @@ impl Board for Fake {
         if state.fail_task_prs { Err("PR state unknown".into()) } else { Ok(vec![]) }
     }
 
+    fn resume_publication(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: &std::path::Path, enqueued: bool) -> Publish {
+        if self.state.borrow().publisher.is_none() { return self.publish(n, sha, mode, title, task_line); }
+        self.state.borrow_mut().publications += 1;
+        let state = self.state.borrow();
+        state.publisher.as_ref().unwrap().resume_publication(n, sha, mode, title, task_line, root, enqueued)
+    }
     fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> Publish {
         self.state.borrow_mut().publications += 1;
         if let Some(p) = &self.state.borrow().publisher { return p.publish(n, sha, mode, title, task_line); }

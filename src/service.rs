@@ -1747,19 +1747,22 @@ impl<'a> Service<'a> {
             let began = std::time::Instant::now();
             let r = crate::dispatch::resume_publication(self.board, &self.cfg, &v.issue, &v.projection.task, &v.log);
             if r.ok() { self.publication_waits.remove(&n); continue; }
-            log!("#{n} publication: {}", r.reason);
+            let published = v.comments.iter().rposition(|c| c.trusted && c.body.lines().next().and_then(|h| h.trim().strip_prefix("taskq:"))
+                .and_then(|h| h.split_whitespace().next()) == Some("publish"));
             // #1820 A2 (pilotq #106): a wait the pass cannot end is shown with its reason and age, never only logged
+            // #1942: logged when the reason changes, not every pass
             if self.publication_waits.get(&n) != Some(&r.reason) {
+                log!("#{n} publication: {}", r.reason);
                 let (a, rt) = v.projection.executions.last().map_or((0, "other"), |x| (x.attempt, x.runtime.as_str()));
                 crate::profile::stage("checks", n, a, rt, Some(began.elapsed()), "retried", crate::profile::class(&r.reason), crate::profile::Usage::NoModel);
-                // #1935: a wait only a person ends gets one plain board comment, never a log entry; the board keeps it across restarts (R1)
-                if r.reason.contains(crate::board::MANUAL_MERGE) && !v.comments.iter().any(|c| c.trusted && c.body.starts_with(MANUAL_MERGE_NOTE)) {
+                // #1935: a wait only a person ends gets one plain board comment per PR head (the `publish` entry before it),
+                // never a log entry; the board keeps it across restarts (R1)
+                if r.reason.contains(crate::board::MANUAL_MERGE) && !v.comments[published.map_or(0, |i| i + 1)..].iter().any(|c| c.trusted && c.body.starts_with(MANUAL_MERGE_NOTE)) {
                     if let Err(e) = self.board.comment(n, &format!("{MANUAL_MERGE_NOTE}: {}", r.reason)) { log!("#{n} manual-merge note unknown: {e}"); }
                 }
                 self.publication_waits.insert(n, r.reason.clone());
             }
-            let since = v.comments.iter().rev().find(|c| c.trusted && c.body.lines().next().and_then(|h| h.trim().strip_prefix("taskq:"))
-                .and_then(|h| h.split_whitespace().next()) == Some("publish")).map(|c| c.created);
+            let since = published.map(|i| v.comments[i].created);
             waiting.insert(n, crate::snapshot::PublicationWait { reason: r.reason, since, age_s: since.map(|t| now - t) });
         }
         self.publication_waits.retain(|n, _| views.iter().any(|v| v.issue.number == *n && v.projection.task.publication.is_some()));
@@ -3071,6 +3074,56 @@ mod tests {
         s.publication_waits.clear();
         s.pass().unwrap();
         assert_eq!(b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count(), 1, "a restart reads the board note back (R1)");
+        // #1942: a new PR head (a later `publish` entry) gets its own note
+        b.state.borrow_mut().publish = "queue-conflict".into();
+        s.pass().unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&"b".repeat(40)], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        b.state.borrow_mut().publish = "manual-merge".into();
+        for _ in 0..2 { s.pass().unwrap(); }
+        assert_eq!(b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count(), 2, "one note per PR head");
+    }
+
+    // Chain: § 7 Result and close verdicts -> `publish` under `pr` -> manual-merge wait -> preset switched to `direct`
+    // -> next service pass fast-forwards main to the PR head -> one close (#1942). Defect (desiign #31, #39, #44): PRs
+    // published before a switch to `direct` stayed in review forever, `needs a manual merge` logged every pass.
+    // Retained: a pending publication takes the current preset with its exact-SHA CI; the wait is noted once.
+    #[test]
+    fn a_pr_published_before_a_switch_to_direct_is_delivered_directly() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented preset switch", "", &["taskq".into()]).unwrap();
+        let sha = "a".repeat(40);
+        // main fast-forwards
+        let forwards = Rc::new(RefCell::new(0));
+        let (f, head) = (forwards.clone(), sha.clone());
+        b.state.borrow_mut().publisher = Some(crate::board::replying(&crate::board::github::KIND, move |method, url| {
+            Ok(if url.contains("/compare/main...") { json!({"status": if *f.borrow() == 0 { "ahead" } else { "identical" }}) }
+                else if url.ends_with("/rules/branches/main") { return Err("HTTP 403: Upgrade to GitHub Pro or make this repository public to enable this feature.".into()) }
+                else if url.contains("/pulls?head=o:taskq-1&base=main&state=open") { json!([{"number": 37, "head": {"sha": head}, "html_url": "https://github.com/o/r/pull/37"}]) }
+                else if url.contains("/check-runs") { json!({"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success"}]}) }
+                else if url.ends_with("/status") { json!({"total_count": 0}) }
+                else if url.ends_with("/git/ref/heads/taskq-1") { json!({"object": {"sha": head}}) }
+                else if method == "PATCH" && url.ends_with("/git/refs/heads/main") { *f.borrow_mut() += 1; json!({"object": {"sha": head}}) }
+                else { panic!("unexpected {method} {url}") })
+        }));
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &[&sha], Some(a), "candidate")).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        b.comment(n, &core::entry("publish", &[], Some(r), "Changed: x\nChecks: A1 ok\nOpen: none")).unwrap();
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        for _ in 0..3 { s.pass().unwrap(); }
+        let notes = |b: &Fake| b.comments(n).unwrap().iter().filter(|e| e.body.starts_with(MANUAL_MERGE_NOTE)).count();
+        assert_eq!((task(&b, n).state, notes(&b), *forwards.borrow()), (State::Review, 1, 0), "the `pr` wait is noted once");
+        (s.cfg.publish, s.cfg.delivery, s.cfg.delivery_revision) = ("direct".into(), "direct".into(), 3);
+        s.pass().unwrap();
+        let log = b.comments(n).unwrap();
+        let closes: Vec<_> = log.iter().filter(|e| e.body.starts_with("taskq: close")).collect();
+        assert_eq!((task(&b, n).state, closes.len(), *forwards.borrow(), notes(&b)), (State::Closed, 1, 1, 1));
+        assert!(closes[0].body.contains(&format!("delivery direct r3: main fast-forwarded to {sha}")), "{}", closes[0].body);
+        s.pass().unwrap();
+        assert_eq!((b.comments(n).unwrap().len(), *forwards.borrow()), (log.len(), 1), "closed once");
     }
 
     // Chain: section 7 publication -> blocked outcome -> ask in one pass -> answer -> retry -> close (#1413).
