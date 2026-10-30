@@ -37,7 +37,21 @@ const fx=require('./fixtures/task-workspace.json'),out=process.env.TASKQ_NOTIFIC
   await page.evaluate(()=>{const s=notificationFixture,p=s.projects[0];p.events=Array.from({length:105},(_,i)=>[s.now+i,'gone','bulk-'+i,21]);p.reports.reports=[];s.notify.inbox={};taskq.receive({...s,page:'home'});});
   assert.equal(await page.locator('.notifications-entry .badge').textContent(),'99+');assert.equal(await page.locator('.notifications-entry').getAttribute('aria-label'),'Notifications · 105 unread');
   await page.evaluate(()=>{notificationFixture.projects[0].reports.complete=false;taskq.receive({...notificationFixture,page:undefined});});assert.equal(await page.locator('.notifications-entry .badge').textContent(),'99+');assert.match(await page.locator('.notifications-entry').getAttribute('aria-label'),/105 loaded unread · history incomplete/);assert(!await page.locator('.notifications-entry').innerText().then(t=>t.includes('?')));
+  // #1994 A3: the warning fits its accessible target; the native gate still catches clipped labels.
+  const bellFits=async()=>{for(const platform of ['windows','macos'])for(const route of ['home','settings']){
+   await page.evaluate(({platform,route})=>taskq.receive({...notificationFixture,platform,page:route}),{platform,route});
+   const box=await page.locator('.notifications-entry').evaluate(e=>{const b=e.getBoundingClientRect(),w=e.querySelector('.notification-warning').getBoundingClientRect();return {width:b.width,height:b.height,fits:w.left>=b.left&&w.top>=b.top&&w.right<=b.right&&w.bottom<=b.bottom};});
+   assert(box.width>=32&&box.height>=32,'Bell retains its accessible target');assert(box.fits,'Incomplete-history warning fits inside the bell target');
+   await page.evaluate(()=>taskq.measure('bell-fit'));
+   assert.deepEqual(await page.evaluate(()=>notificationSent.filter(m=>m.a==='overflow'&&m.shot.startsWith('bell-fit'))),[],'Warning must pass the native overflow gate');
+  }};
+  await bellFits();
+  await page.evaluate(()=>{notificationFixture.projects[0].events=[];notificationFixture.notify.inbox={};taskq.receive({...notificationFixture,page:'home'});});
+  assert.equal(await page.locator('.notifications-entry').getAttribute('aria-label'),'Notifications · 0 loaded unread · history incomplete');
+  assert.equal(await page.locator('.notifications-entry .badge').count(),0);assert.equal(await page.locator('.notification-warning').count(),1);await bellFits();
+  await page.evaluate(()=>{const b=document.createElement('button');b.textContent='Genuinely clipped label';b.style.cssText='width:32px;white-space:nowrap';document.querySelector('.content-body').append(b);taskq.measure('clipped-label');});
+  assert(await page.evaluate(()=>notificationSent.some(m=>m.a==='overflow'&&m.shot==='clipped-label button Genuinely clipped label'&&m.x>1)),'Native gate still rejects genuinely clipped button labels');
   assert.deepEqual(errors,[]);cells++;await page.close();
  }
- console.log('PASS M-A24/M-A25/M-A26: '+cells+' Chromium cells, dark/light × 16/20px at 320px; Home, exact targets, group, failures, race, clear, question retention, 99+, partial history');
+  console.log('PASS M-A24/M-A25/M-A26, #1994/#1992: '+cells+' Chromium theme/font cells, dark/light × 16/20px at 320px; Windows/macOS Home/Settings warning fit, clipped-label gate, exact counts, group, failures, race, clear and question retention');
 }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

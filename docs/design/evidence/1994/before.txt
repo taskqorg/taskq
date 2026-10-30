@@ -1,0 +1,57 @@
+Source: 554552daf48d5b413918d54a8a6d0f88efba4020
+Binary SHA-256: 6112ec8f3c230d963150608764e85ebde98e67aac8d22d36ecc2d9f57b54d8f5
+Fixture: docs/design/tray-fixture.sh, EXTRA=0
+Windows TextScaleFactor: 140
+Snapshot exit: 1
+Native PNGs: 50
+First native diagnostic: horizontal overflow: popover-dark-home-16.png button 6 by 3 px
+popover-dark-home-16.png button 6 by 3 px
+popover-dark-home-20.png button 6 by 3 px
+popover-dark-project-16.png button 6 by 3 px
+popover-dark-projects-16.png button 6 by 3 px
+popover-dark-projects-20.png button 6 by 3 px
+popover-dark-settings-16.png button 6 by 3 px
+popover-dark-settings-20.png button 6 by 3 px
+popover-dark-appearance-16.png button 6 by 3 px
+popover-dark-appearance-20.png button 6 by 3 px
+popover-dark-cadence-16.png button 6 by 3 px
+popover-dark-cadence-20.png button 6 by 3 px
+popover-dark-notification-settings-16.png button 6 by 3 px
+popover-dark-notification-settings-20.png button 6 by 3 px
+popover-dark-agents-16.png button 6 by 3 px
+popover-dark-agents-20.png button 6 by 3 px
+popover-dark-services-16.png button 6 by 3 px
+popover-dark-services-20.png button 6 by 3 px
+popover-dark-about-16.png button 6 by 3 px
+popover-dark-about-20.png button 6 by 3 px
+popover-dark-hosts-16.png button 6 by 3 px
+popover-dark-hosts-20.png button 6 by 3 px
+popover-dark-delivery-16.png button 6 by 3 px
+popover-dark-delivery-20.png button 6 by 3 px
+popover-dark-recovery-16.png button 6 by 3 px
+popover-dark-recovery-20.png button 6 by 3 px
+popover-light-home-16.png button 6 by 3 px
+popover-light-home-20.png button 6 by 3 px
+popover-light-project-16.png button 6 by 3 px
+popover-light-projects-16.png button 6 by 3 px
+popover-light-projects-20.png button 6 by 3 px
+popover-light-settings-16.png button 6 by 3 px
+popover-light-settings-20.png button 6 by 3 px
+popover-light-appearance-16.png button 6 by 3 px
+popover-light-appearance-20.png button 6 by 3 px
+popover-light-cadence-16.png button 6 by 3 px
+popover-light-cadence-20.png button 6 by 3 px
+popover-light-notification-settings-16.png button 6 by 3 px
+popover-light-notification-settings-20.png button 6 by 3 px
+popover-light-agents-16.png button 6 by 3 px
+popover-light-agents-20.png button 6 by 3 px
+popover-light-services-16.png button 6 by 3 px
+popover-light-services-20.png button 6 by 3 px
+popover-light-about-16.png button 6 by 3 px
+popover-light-about-20.png button 6 by 3 px
+popover-light-hosts-16.png button 6 by 3 px
+popover-light-hosts-20.png button 6 by 3 px
+popover-light-delivery-16.png button 6 by 3 px
+popover-light-delivery-20.png button 6 by 3 px
+popover-light-recovery-16.png button 6 by 3 px
+popover-light-recovery-20.png button 6 by 3 px
