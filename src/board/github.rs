@@ -506,6 +506,23 @@ impl Board for GitHub {
             r => r.map(|_| None),
         }
     }
+    /// The `try_publish` PR route: a merge queue, or a private repository with strict main protection.
+    fn pr_route(&self) -> crate::check::Probe {
+        use crate::check::Probe;
+        let rules = match self.main_rules() {
+            Err(e) if plan_gap(&e) => return Probe::Gap(format!("{PLAN} (HTTP 403); each PR {}", super::MANUAL_MERGE)),
+            Err(e) => return Probe::Unknown(e),
+            Ok(v) => v,
+        };
+        if rules.as_array().is_some_and(|r| r.iter().any(|r| r["type"] == "merge_queue")) { return Probe::Ok; }
+        match self.api.call("GET", "", None).and_then(|r| r.json()).map(|v| v["private"].as_bool()) {
+            Ok(Some(false)) => Probe::Gap("main of this public repository has no merge queue".into()),
+            Ok(Some(true)) if self.strict_main() => Probe::Ok,
+            Ok(Some(true)) => Probe::Gap("this private repository has no merge queue and no strict main protection".into()),
+            Ok(None) => Probe::Unknown("repository visibility unknown".into()),
+            Err(e) => Probe::Unknown(e),
+        }
+    }
     fn canonical_labels(&self) -> Result<bool> {
         self.api.canonical_labels()
     }
