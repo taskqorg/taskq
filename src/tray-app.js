@@ -435,6 +435,7 @@ runningAgents:function(compact=false){
         // #1775 R16: a fresh ended or waiting execution is known and not running; only an unknown or stale one marks its host ?
         if(fresh&&['ended','waiting'].includes(x.state))continue;
         if(!fresh||x.live!==true||x.state!=='running'||!['worker','reviewer'].includes(x.role)||typeof x.runtime!=='string'||!x.runtime||!Number.isSafeInteger(x.id)||x.id<=0){h.reasons.add('run state unknown; see service log');continue;}
+        if(!h.counts.has(x.runtime))h.counts.set(x.runtime,{worker:0,reviewer:0});
         const identity=JSON.stringify([t.key,x.id]),prior=seen.get(identity);
         if(prior){if(prior.host!==x.host||prior.runtime!==x.runtime||prior.role!==x.role){h.reasons.add('conflicting execution observations');hosts.get(prior.host).reasons.add('conflicting execution observations');}continue;}
         seen.set(identity,x);
@@ -465,12 +466,24 @@ runningAgents:function(compact=false){
   }else facts.push('Capacity unknown');
   const alerts=(view.S.agents?.rows||[]).filter(r=>signAlert.includes(r.state)&&r.state!=='check-failed');
   const totals=host=>{const t=new Map([['Claude',0],['Codex',0]]);for(const [rt,c] of host.counts)t.set(family(rt),(t.get(family(rt))||0)+c.worker+c.reviewer);return t;};
+  const known=host=>host.live&&!host.reasons.has('conflicting execution observations');
+  const sum=counts=>[...counts.values()].reduce((n,x)=>n+x,0);
+  const value=(n,known,partial)=>!known?'?':partial?n+'+?':String(n);
+  const mark=rt=>rt==='Codex'?'openai':rt==='Claude'?'claude':'bot';
+  const runtime=(rt,n,known,partial)=>{const shown=value(n,known,partial),label=rt+': '+(shown==='?'?'unknown':partial?'at least '+n+'; additional agents unknown':n);
+    return h('span',{class:'host-runtime','data-runtime':rt,title:label,'aria-label':label},icon(mark(rt)),!['Codex','Claude'].includes(rt)&&h('span',null,rt),h('span',{class:'host-number'},shown));};
   const out=[],sorted=[...hosts.values()].sort((a,b)=>a.name.localeCompare(b.name));
+  const numberWidth=Math.max(3,...sorted.flatMap(host=>{const t=totals(host);return [sum(t),...t.values()].map(n=>value(n,known(host),host.reasons.size>0).length);}))+'ch';
   for(const host of sorted){
-    const unknown=!host.live,here=host.name===view.S.host,age=host.age!==null&&host.age>=0?' · '+host.age_text+' old':'',why=[...host.reasons].join('; ');
+    const unknown=!known(host),here=host.name===view.S.host,age=host.age!==null&&host.age>=0&&host.age_text?' · '+host.age_text+' old':' · age unknown',why=[...host.reasons].join('; '),t=totals(host),partial=host.reasons.size>0,total=value(sum(t),!unknown,partial),warnings=here?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
     const runtimes=[...host.counts].sort(([a],[b])=>a.localeCompare(b));
-    out.push(h('details',{class:'host-line','data-view-key':'host:'+host.name,key:'host:'+host.name},api.disclosure('network',[h('strong',null,host.name),unknown?' · runs unknown'+age:' · '+[...totals(host)].map(([k,n])=>k+' '+n).join(' · ')+(why?' · partial':''),here&&alerts.length>0&&h('span',{class:'alert'},' · '+alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()).join(' · '))]),
-      unknown?h('div',{class:'body meta'},'Unknown'+age+': '+(why||'host observation missing or stale')):why&&h('div',{class:'body meta'},'Partial: '+why),!unknown&&(runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},'No running agents')),
+    out.push(h('details',{class:'host-line','data-view-key':'host:'+host.name,key:'host:'+host.name},
+      h('summary',{class:'host-breakdown',title:'Heartbeat'+age},h('strong',{class:'host-name'},host.name),
+        h('span',{class:'host-runtime-split'},['Codex','Claude',...[...t.keys()].filter(rt=>!['Codex','Claude'].includes(rt))].map(rt=>runtime(rt,t.get(rt)||0,!unknown,partial))),
+        h('span',{class:'host-row-total','aria-label':'Total running agents: '+total},h('span',{class:'host-number'},total)),
+        (unknown||partial||warnings.length>0)&&h('span',{class:'host-observation'},unknown?'Status unknown'+age:partial?'Partial observation'+age:'',warnings.length>0&&h('span',{class:'host-warning'},'Sign-in: '+warnings.join(' · ')))),
+      h('div',{class:'body meta'},'Heartbeat'+age),unknown?h('div',{class:'body meta'},'Unknown: '+(why||'host observation missing or stale')):why&&h('div',{class:'body meta'},'Partial: '+why),
+      !unknown&&(runtimes.length?h('div',{class:'body'},runtimes.map(([rt,c])=>h('div',null,rt+': '+c.worker+' worker'+(c.worker===1?'':'s')+' · '+c.reviewer+' reviewer'+(c.reviewer===1?'':'s')))):h('div',{class:'body meta'},'No running agents')),
       here&&api.resourceMeters(latest),h('details',{'data-view-key':'host-facts:'+host.name},api.disclosure('sliders-horizontal','Resource details'),(here?facts:['CPU and memory: not collected for remote hosts','Slots and reservations: unknown for remote hosts']).map(t=>h('div',{class:'body meta'},t)))));
   }
   // #1729 menu.md Running agents: the strip holds heartbeat hosts and this host; a host seen only in an execution stays in details.
@@ -479,15 +492,15 @@ runningAgents:function(compact=false){
   const short=new Map(names.map(n=>{let k=3;while(k<n.length&&names.some(o=>o!==n&&o.slice(0,k)===n.slice(0,k)))k++;return [n,n.slice(0,k)];}));
   const warn=host=>host.name===view.S.host?alerts.map(r=>family(r.runtime)+' '+signState[r.state].toLowerCase()):[];
   const text=host=>{const age=host.age!==null&&host.age>=0?host.age_text:'',busy=[...totals(host)].filter(([,n])=>n>0);
-   return [host.name,...(!host.live?['runs unknown',...(age?[age+' old']:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):['idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
-  // #1701 S09/#1729 A2/#1775 A3: one chip per strip host under its short label, nonzero runtime marks with numbers; a partial
-  // host keeps its counts and adds ?; the text label stays for Settings and AX.
-  const chip=host=>{const unknown=!host.live,t=totals(host),age=host.age!==null&&host.age>=0?host.age_text:'',label=text(host),w=warn(host);
-   return h('span',{class:'host-chip'+(unknown?' unknown':''),role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),
-    unknown?h('span',{class:'meta'},age?'? '+age:'?'):[...[['claude','Claude'],['openai','Codex']].filter(([,k])=>t.get(k)>0).map(([mark,k])=>h('span',{class:'host-count',key:k},icon(mark),String(t.get(k)))),host.reasons.size>0&&h('span',{class:'meta',key:'?'},'?')],
-    w.length>0&&h('span',{class:'alert'},w.join(' · ')));};
-  if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:'',strip:h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Host unknown'))};
-  return h('section',{class:'group running-agents','aria-label':'Running agents'},h('div',{class:'row'},'Running agents'),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
+   return [host.name,...(!known(host)?['runs unknown',...(age?[age+' old']:[]),...(host.reasons.size?[[...host.reasons].join('; ')]:[])]:[...(busy.length?busy.map(([k,n])=>k+' '+n):['idle']),...(host.reasons.size?['partial: '+[...host.reasons].join('; ')]:[])]),...warn(host)].join(' · ');};
+  // UX30-06: host totals precede runtime totals; only nonconflicting fresh hosts establish a minimum.
+  const overall=new Map([['Codex',0],['Claude',0]]);let anyKnown=false,uncertain=partial||!sorted.length;
+  for(const host of sorted){const t=totals(host);for(const rt of t.keys())if(!overall.has(rt))overall.set(rt,0);uncertain ||= !known(host)||host.reasons.size>0;if(!known(host))continue;anyKnown=true;for(const [rt,n] of t)overall.set(rt,overall.get(rt)+n);}
+  const chip=host=>{const shown=value(sum(totals(host)),known(host),host.reasons.size>0),label=text(host)+' · Total running agents: '+shown,w=warn(host);
+    return h('span',{class:'host-chip'+(!known(host)?' unknown':''),'data-host':host.name,role:'img','aria-label':label,title:label,key:host.name},h('strong',null,short.get(host.name)),h('span',{class:'host-number'},shown),
+      !known(host)&&host.age_text&&h('span',{class:'meta'},host.age_text),w.length>0&&h('span',{class:'host-warning',title:'Sign-in: '+w.join(' · '),'aria-label':'Sign-in: '+w.join(' · ')},icon('circle-alert')));};
+  if(compact)return {label:strip.map(text).join('; ')||'Host unknown',meta:'',strip:h('span',{class:'host-overview'},h('span',{class:'host-strip'},strip.length?strip.map(chip):h('span',{class:'host-chip unknown'},'Hosts ?')),h('span',{class:'host-runtime-totals','aria-label':'All observed hosts · running agents'},[...overall].map(([rt,n])=>runtime(rt,n,anyKnown,uncertain))))};
+  return h('section',{class:'group running-agents',style:{'--host-number-width':numberWidth},'aria-label':'Running agents'},h('div',{class:'host-grid-head','aria-label':'Host, Codex, Claude, Total running agents'},h('span',null,'Host'),['Codex','Claude','Total'].map(rt=>h('span',{title:rt,'aria-label':rt,role:'img'},icon(mark(rt))))),out,h('div',{class:'body meta'},'Registered project boards · '+(partial||all.some(c=>c.n===null)?'Tasks unknown':'Tasks: '+all.filter(c=>['doing','review'].includes(c.state)).map(c=>c.name+' '+c.n).join(' · '))),
     h('details',{'data-view-key':'run-definitions'},api.disclosure('info','Count definitions'),h('div',{class:'body meta'},'Running processes, occupied slots, reservations and board tasks are counted apart. Reservations include pending or unconfirmed work; occupied slots can include other projects.')));
 },
 home:function(){

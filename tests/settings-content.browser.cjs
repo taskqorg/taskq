@@ -42,8 +42,9 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await shot('settings');
    // R16/R17: one line per host, Claude and Codex apart; stale never 0; this host's expansion holds units and age
    await go('hosts');
-   const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>e.innerText));
-   assert.deepEqual(lines,['fra · runs unknown · 5m old','mac · Claude 1 · Codex 1 · Codex expired','win · Claude 0 · Codex 1']);
+   const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>[e.querySelector('.host-name').textContent,...e.querySelectorAll('.host-number')].map(x=>typeof x==='string'?x:x.textContent)));
+   assert.deepEqual(lines,[['fra','?','?','?'],['mac','1','1','2'],['win','1','0','1']],'UX30-06: comparable per-host runtime/total counts, stale never zero');
+   assert.match(await p.locator('.host-line > summary',{hasText:'mac'}).innerText(),/Sign-in: Codex expired/,'A5: sign-in warning stays separate and visible in the first host expansion');
    await p.locator('.host-line > summary',{hasText:'mac'}).click();
    assert.equal(await p.locator('.resource-meter meter').count(),2);
    assert.match(await p.locator('.resource-meters').innerText(),/CPU busy.*42%[\s\S]*Memory available.*62%/s);
