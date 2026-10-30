@@ -13,14 +13,14 @@ Every comparison starts with an unrelated report already open in Conversations, 
 | Job and endpoint | Current path | Current switches / clicks | Proposed path | Proposed switches / clicks |
 |---|---|---:|---|---:|
 | Answer another task question; receipt shown | All results → question row → choice | 1 / 3 | Question row → same choice | 0 / 2 |
-| Accept another finished result; acknowledgement shown | All results → result row → Accept | 1 / 3 | Result row → 1 Accept | 0 / 2 |
+| Accept another report; acknowledgement shown | Unavailable: report choices are Make tasks, Later and Drop | Unavailable | Report row → 1 Accept | 0 / 2 |
 | Reopen or follow up another finished task; held-draft receipt shown | All results → result row → Reopen/Follow-up → type reason → Create held draft | 1 / 4 | Result row → Other actions → Reopen/Follow up → type reason → Send | 0 / 4 |
 | Read another finished task's Changed/Checks/Open | All results → result row | 1 / 2 | Result row | 0 / 1 |
 | Switch project to a question; content shown | All results → other project's row | 1 / 2 | Other project's row | 0 / 1 |
 
-None is worse; four paths remove one click and all five remove a section switch in this starting condition. Both correction paths require the same one-line reason. The proposal trades the current direct correction button for Other actions, paying one click back to keep the primary card small and preserve the four-choice limit. A collapsed target project adds one disclosure click to both paths. At narrow width, List adds one click to the proposal; correction is then one click longer than this wide baseline. Native narrow paths must be measured separately, not included in the “none worse” wide comparison. Scroll distance is not measured; long reports and 20 px type remain layout/qualification cases.
+Of the four currently supported paths, none is worse: three remove one click, correction ties, and all four remove a section switch in this starting condition. Report Accept is a new two-click path with no equivalent current action. Both correction paths require the same one-line reason. The proposal trades the current direct correction button for Other actions, paying one click back to keep the primary card small and preserve the four-choice limit. A collapsed target project adds one disclosure click to both supported paths. At narrow width, List replaces the return click and Other actions starts expanded to avoid an extra correction click; native narrow paths still need qualification. Scroll distance is not measured; long reports and 20 px type remain layout/qualification cases.
 
-Report acceptance is new: the current report-only card has Make tasks, Later and Drop, with no Accept action. The comparable existing Accept above is the ordinary finished-result acknowledgement. The proposed report Accept acknowledges only; Make tasks remains an explicit separate decision. No invented current report-accept path is counted.
+The proposed report Accept acknowledges only; Make tasks remains an explicit separate decision. Ordinary finished results already have an Accept acknowledgement, but substituting that path would not measure the requested report job. The owner checkpoint must confirm the acknowledgement meaning and this unavailable-baseline qualification for A3.
 
 ## Preservation and build ledger
 
@@ -68,7 +68,7 @@ node docs/design/exploration/reports-conversations.check.cjs
 |---|---|---|
 | A1 | Root Product amended first; Conversations/RC1–RC7 define destination, grouping, filters and independent read/decision state | Design package ready for review |
 | A2 | Real shared renderer in prototype; all five reactions and held-proposal decision specified with choice/confirmation/Next rules | Design package ready for review; adapter not built |
-| A3 | Source-derived wide paths above: 0 worse, 4 fewer clicks, 5 fewer section switches | Pass within stated starting condition; native/narrow timing not tested |
+| A3 | Four supported source-derived wide paths: 0 worse, 3 fewer clicks; report Accept is currently unavailable | Comparable paths pass; owner confirmation of new-action baseline pending; native/narrow timing not tested |
 | A4 | Six distinct reference screens and editable fixture; 72 layout cases | Pass as mockup evidence; owner geometry approval pending |
 | A5 | No production code or installed app changed | Not tested / not built |
 | A6 | No approved-reference native Windows/macOS comparison or production decision/grouping tests | Not tested |
