@@ -1,5 +1,5 @@
 #!/bin/sh
-# Refresh the README screenshots: build HEAD, render docs/shots/fixture.sh with `taskq tray --snapshot`,
+# Refresh the README screenshots: build the current UI and render its isolated showcase fixtures,
 # copy the dark images here and write manifest.json (shape of docs/design/evidence/4.1.9/manifest.json).
 set -eu
 cd "$(dirname "$0")/../.."
@@ -9,20 +9,23 @@ git diff --quiet HEAD -- $ui || { echo "update.sh: commit UI source changes firs
 cargo build --release --locked
 bin=${CARGO_TARGET_DIR:-target}/release/taskq
 case $(uname -s) in
-  MINGW*|MSYS*) bin=$bin.exe; os=Windows; renderer='WebView2 snapshot' ;;
-  *) os="macOS $(sw_vers -productVersion)"; renderer='WKWebView snapshot' ;;
+  MINGW*|MSYS*) bin=$bin.exe; os=Windows; renderer='WebView2 snapshot'; capture() { "$bin" "$@"; } ;;
+  *) os="macOS $(sw_vers -productVersion)"; renderer='WKWebView snapshot'; capture() { scripts/macos-runner.sh "$bin" "$@"; } ;;
 esac
 version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
 tmp=$(mktemp -d)
 tmp=$(cd "$tmp" && (pwd -W 2>/dev/null || pwd -P))
 trap 'rm -rf "$tmp"' EXIT
 TASKQ_VERSION=$version docs/shots/fixture.sh "$tmp"
-# The compact billing queue fits with all lower controls visible.
-printf '%s\n' "$tmp/billing-api" "$tmp/storefront" > "$tmp/install/projects"
+# Keep the storefront scenario consistent across all three examples.
+printf '%s\n' "$tmp/storefront" "$tmp/billing-api" > "$tmp/install/projects"
 # only the routes the README shows (taskq.md R12)
-TASKQ_INSTALL=$tmp/install cargo run --release --locked -- tray --snapshot "$tmp/shots" --route project,icon
+TASKQ_INSTALL=$tmp/install capture tray --snapshot "$tmp/shots" --route project,icon
+TASKQ_INSTALL=$tmp/install capture tray --snapshot "$tmp/conversations" --route conversations
 rm -f docs/shots/*.png
 cp "$tmp/shots/popover-dark-project-16.png" docs/shots/
+cp "$tmp/conversations/popover-dark-conversations-owner-18.png" docs/shots/
+cp "$tmp/conversations/popover-dark-conversations-question-18.png" docs/shots/
 # Menu-bar size and scale differ between the owner's Mac and CI; keep the README link stable.
 cp "$tmp"/shots/icon-summary-run-dark-*.png docs/shots/icon-summary-run-dark.png
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
@@ -33,8 +36,11 @@ sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else shasu
   sep=''
   for f in $ui; do printf '%s    "%s": "%s"' "$sep" "$f" "$(git rev-parse "HEAD:$f")"; sep=',
 '; done
-  printf '\n  },\n'
-  printf '  "capture": "Isolated TASKQ_INSTALL using docs/shots/fixture.sh; dark images only.",\n  "images": [\n'
+  printf '\n  },\n  "captureInputs": {\n'
+  printf '    "docs/shots/fixture.sh": "%s",\n' "$(sha docs/shots/fixture.sh)"
+  printf '    "tests/fixtures/conversation-shots.js": "%s",\n' "$(sha tests/fixtures/conversation-shots.js)"
+  printf '    "docs/shots/update.sh": "%s"\n  },\n' "$(sha docs/shots/update.sh)"
+  printf '  "capture": "Isolated TASKQ_INSTALL; queue and Conversations showcase fixtures; dark images only.",\n  "images": [\n'
   printf '    {\n      "file": "../header.webp",\n      "sha256": "%s"\n    }' "$(sha docs/header.webp)"
   sep=',
 '

@@ -1,0 +1,126 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base href="../../../../"><title>TaskQ README — before</title><style>body{margin:0;background:#fff;color:#1f2328;font:16px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}article{padding:24px;max-width:900px;margin:auto;overflow-wrap:break-word}img{max-width:100%;height:auto}img[height]{height:34px;width:auto}pre{padding:16px;background:#f6f8fa;overflow:auto}blockquote{margin-left:0;padding:0 16px;color:#59636e;border-left:4px solid #d1d9e0}table{border-collapse:collapse}td,th{border:1px solid #d1d9e0;padding:6px 13px}a{color:#0969da}h3,h4{margin-top:24px}</style><article><p align="center">
+  <a target="_blank" rel="noopener noreferrer" href="docs/header.webp"><img src="docs/header.webp" alt="Relaxing while the agents work" width="720" style="max-width: 100%;"></a>
+  <br><em>Agents working.</em>
+</p>
+<pre lang="text" class="notranslate"><code class="notranslate">Install taskq from https://github.com/taskqorg/taskq and set it up for this project.
+</code></pre>
+<p>Paste into Claude or Codex; the agent confirms setup changes, installs taskq, connects the board and becomes the manager.<br>
+For a new project:</p>
+<pre lang="text" class="notranslate"><code class="notranslate">Install taskq from https://github.com/taskqorg/taskq and create project &lt;name&gt; from &lt;idea or folder&gt;.
+</code></pre>
+<p>Your repository board is the task list; your usual AI apps do the work.</p>
+<h3>What you get</h3>
+<ul>
+<li>Tasks are issues on GitHub or GitLab.</li>
+<li>The service runs Claude or Codex workers within each computer's configured limits: tasks labelled <code class="notranslate">run-codex</code> (design, UI, visual and image work) on Codex, everything else and every review on Claude.</li>
+<li>A worker's question waits for your answer.</li>
+<li>A reviewer checks the result; accepted work publishes through the configured branch or PR route.</li>
+<li>The tray menu shows questions, admission controls and a day's history.</li>
+<li>Several computers share one board.</li>
+</ul>
+<h3>See the queue</h3>
+<p>Synthetic project data captured with the macOS v4.6.23 renderer. These examples show the interface, not a live project's progress or a completed agent run. Open an image for its original size.</p>
+<p><strong>Tasks and their current states.</strong></p>
+<p><a href="docs/shots/evidence/readme-2026-10-30/before-project.png"><img src="docs/shots/evidence/readme-2026-10-30/before-project.png" alt="Billing task list with work, review and ready states" width="320" style="max-width: 100%;"></a></p>
+<h3>From any agent chat</h3>
+<p>The tray and the CLI are not the only way in. Any agent session that has taskq available, not only Claude or Codex, runs the same commands from its chat, so you ask in words and the agent runs them. The outputs below are real; the conversation lines are condensed.</p>
+<p><strong>Board state and a worker question.</strong> In a project manager chat:</p>
+<blockquote>
+<p><strong>Owner:</strong> What is on the board?</p>
+<p><strong>Manager:</strong> runs <code class="notranslate">taskq status</code>:</p>
+<pre lang="text" class="notranslate"><code class="notranslate">In work 3 · Waiting for answer 0 · Ready 0
+
+| Task | State | Runtime | Session |
+|---|---|---|---|
+| #1156 Runner injects the contract, the specq core and an index; r… | doing | claude | win: Remote Control unknown |
+| #1185 Standalone telemetry: local store, analysis guide and comma… | review | codex | win: starting |
+| #1189 README: taskq from any agent chat, board-status and telemet… | doing | claude | mac |
+
+Hosts: hermes-fra1 v4.2.0 77s focus off, win v4.2.0 118s, mac v4.2.0 2m
+</code></pre>
+<p><strong>Manager:</strong> #1048 asks:</p>
+<pre lang="text" class="notranslate"><code class="notranslate">Problem: A1 needs native Windows click and OS-denial evidence; desktop control is unavailable in this worker session.
+1. Continue in a Windows worker with native desktop control; keep A1 unchanged. ★
+2. Authorize implementation and API checks here, with owner-run click and denial acceptance before closure.
+</code></pre>
+<p><strong>Owner:</strong> 2. Implement now with API and unit checks; native click evidence moves to the Windows qualification task.</p>
+<p><strong>Manager:</strong> runs <code class="notranslate">taskq answer 1048 --text "2. Implement now with API and unit checks, ..."</code>; the worker resumes and hands in a result 23 minutes later.</p>
+</blockquote>
+<p><strong>Telemetry on request.</strong> In the agent console, <code class="notranslate">taskq profile</code> reads this host's retained log, no board calls:</p>
+<blockquote>
+<p><strong>Owner:</strong> Where did tasks wait longest in the last day?</p>
+<p><strong>Agent:</strong> runs <code class="notranslate">taskq profile tasks --since 24h</code>:</p>
+<pre lang="text" class="notranslate"><code class="notranslate">States by p95
+
+| State | Runtime | Host | Count | p50/p95/max s |
+|---|---|---|---:|---|
+| later | none | none | 6 | 2473.000/10771.000/10771.000 |
+| doing | claude | mac | 3 | 449.000/924.000/924.000 |
+| review | codex | mac | 4 | 277.000/336.000/336.000 |
+| review | claude | mac | 1 | 236.000/236.000/236.000 |
+| doing | codex | mac | 1 | 205.000/205.000/205.000 |
+</code></pre>
+<p><strong>Agent:</strong> Parked tasks waited longest; active work stayed under 16 minutes at p95.</p>
+</blockquote>
+<p><code class="notranslate">taskq profile export</code> prints the raw records as JSON lines for your own analysis; <code class="notranslate">taskq profile board</code> reports board calls. Missing data reads unknown, never zero.</p>
+<h3>From request to reviewed work</h3>
+<p>Illustrative dialogue, not recorded sessions. The three scenes follow one storefront change; task numbers and outcomes are examples. Start with an installed project, an accessible board and a manager that has loaded the project rules.</p>
+<h4>1. Agree the work before starting</h4>
+<p>Customers lose their cart when they sign in. The owner also wants them returned to the page they came from.</p>
+<blockquote>
+<p><strong>Owner:</strong> Fix sign-in so customers can continue shopping. Plan the work first.</p>
+<p><strong>Manager:</strong> Should this include merging a guest cart into an existing account cart, or just returning to the right page? That changes the acceptance checks.</p>
+<p><strong>Owner:</strong> Both. Keep them as separate tasks. Show me the checks before starting.</p>
+<p><strong>Manager:</strong> I suggest #41 for cart preservation and #43 for the return page. Check both fresh and existing account carts, and reject external redirect destinations. The tasks can run independently.</p>
+<p><strong>Owner:</strong> Agreed. File them held, then start those two.</p>
+</blockquote>
+<p>The manager creates the agreed issues, reads them back and starts them. Eligible workers run within the host's limits. The observable result is two linked issues with acceptance checks and their actual queue states; filing them alone does not prove work started.</p>
+<p>Sources: <a href="docs/use-cases/README.md#uc-02-manage-a-project-through-an-agent">UC-02</a>, <a href="docs/use-cases/README.md#uc-03-move-from-idea-to-implementation">UC-03</a>, <a href="docs/use-cases/README.md#uc-07-turn-a-large-plan-into-dependent-and-parallel-tasks">UC-07</a>.</p>
+<h4>2. Resolve a question without guessing</h4>
+<p>The cart worker finds that the same product can exist in both carts. Task #41 waits for an owner decision.</p>
+<blockquote>
+<p><strong>Owner:</strong> What is blocking the cart fix?</p>
+<p><strong>Manager:</strong> #41 needs a quantity rule: 1. Keep the larger quantity, or 2. Add the quantities. The worker recommends 1 to avoid accidental duplicates.</p>
+<p><strong>Owner:</strong> Keep the larger quantity. Does that also cover a product that is now out of stock?</p>
+<p><strong>Manager:</strong> No. That needs a separate acceptance condition; the current choice only settles duplicate quantities.</p>
+<p><strong>Owner:</strong> Answer #41 with 1. Also tell the worker to retain unavailable items with a warning, without allowing checkout for them.</p>
+</blockquote>
+<p>The manager reads the current question, posts the selected answer and sends the additional instruction to #41. Readback must show both before reporting success. The service resumes the same attempt when it can. If the question changed, the manager refreshes it instead of answering an old card.</p>
+<p>Source: <a href="docs/use-cases/README.md#uc-09-answer-without-leaving-the-task">UC-09</a>. This example uses the manager and board; it does not promise every proposed inline conversation control.</p>
+<h4>3. Accept evidence, then deliver</h4>
+<p>The redirect worker submits #43 with a candidate commit, checks and a PR. Creating the PR has not delivered the fix to users.</p>
+<blockquote>
+<p><strong>Owner:</strong> Is the redirect fix ready?</p>
+<p><strong>Manager:</strong> The result has passing checks, but the browser evidence does not cover an expired session. Accept this scope or send it back for that case?</p>
+<p><strong>Owner:</strong> Send it back. Expired sessions must return safely too.</p>
+<p><strong>Manager:</strong> The reviewer returned #43 with that missing check. The replacement result now includes it; the reviewer must check the new commit and its CI.</p>
+<p><strong>Owner:</strong> Once that exact candidate passes review, publish the PR through our agreed route.</p>
+</blockquote>
+<p>The reviewer checks the replacement against acceptance and the configured publication requirements. Only successful publication readback establishes that the branch or PR was published. Deployment to a running storefront needs its own evidence; closing a TaskQ task does not prove it.</p>
+<p>Source: <a href="docs/use-cases/README.md#uc-14-review-evidence-and-deliver">UC-14</a>. The manager relays evidence and owner decisions; it does not replace the reviewer.</p>
+<h3>Let the other agent do it</h3>
+<p align="center">
+  <a target="_blank" rel="noopener noreferrer" href="docs/shots/let-the-other-agent-do-it.webp"><img src="docs/shots/let-the-other-agent-do-it.webp" alt="One agent refuses the task and another runtime takes it" width="720" style="max-width: 100%;"></a>
+</p>
+<p>A task is not tied to the agent or computer that started it. Real board log of #976; the conversation lines are condensed.</p>
+<blockquote>
+<p><strong>Manager:</strong> The Codex worker on #976 asks again; its sandbox cannot capture the tray:</p>
+<pre lang="text" class="notranslate"><code class="notranslate">Problem: A2/A3 remain untestable here: native capture again times out with XPC errors and zero images; host memory probe fails.
+1. Continue PR #982 on a macOS worker with working WKWebView capture and host probes; retain all acceptance gates. ★
+2. Keep PR #982 as draft and defer this slice until the required macOS verification environment is available.
+</code></pre>
+<p><strong>Owner:</strong> 1. Give it to Claude on the Mac.</p>
+<p><strong>Manager:</strong> moves the label <code class="notranslate">run-codex</code> to <code class="notranslate">run-claude</code>, adds <code class="notranslate">host-mac</code> and runs <code class="notranslate">taskq answer 976.1</code>.</p>
+</blockquote>
+<p>The Codex attempt hands the task back with <code class="notranslate">taskq requeue</code>; the board shows the new worker continuing the same PR:</p>
+<pre lang="text" class="notranslate"><code class="notranslate">taskq: spawn worker claude:3c0621ed-… mac
+taskq: result 0c13cad0c5422cbdb42b3f0a0d504272e176b7bc attempt 6160200303
+Checks: taskq tray --snapshot macOS light+dark -- 40 images per fixture, footer fit fixed
+taskq: close attempt 6160353477
+</code></pre>
+<p>Thirteen minutes from the switch to a result, four more to close. The same move sends a task to another host (<code class="notranslate">host-&lt;name&gt;</code>), to codex for design and image work (<code class="notranslate">run-codex</code>; everything else runs on claude) or back to the queue with new instructions (<code class="notranslate">taskq requeue N --text T</code>, <code class="notranslate">taskq later N</code>).</p>
+<p>Agents: install, setup, commands and development are in <strong><a href="taskq.md">taskq.md</a></strong>.</p>
+<p>Verify a downloaded release file: check it against the release's <code class="notranslate">SHA256SUMS</code> (<code class="notranslate">shasum -a 256 -c SHA256SUMS --ignore-missing</code>),<br>
+then trace it to the workflow run that built it with <code class="notranslate">gh attestation verify &lt;file&gt; --repo taskqorg/taskq</code>.</p>
+<p>License: <a href="LICENSE">MIT</a>.</p>
+<p>If taskq saves you time, <a href="https://alex.kirs.online/donate" rel="nofollow">buy me a coffee</a>.</p></article></html>

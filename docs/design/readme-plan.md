@@ -1,29 +1,26 @@
 # README page plan
 
-Help a visitor set up TaskQ and understand how a request becomes reviewed work.
-[Product](../../taskq.md#product) owns these decisions (R13). Follow specq [Core](https://github.com/taskqorg/specq/blob/main/caveman/rules/core.md) and [Documentation](https://github.com/taskqorg/specq/blob/main/caveman/rules/documentation.md); retain shipped-only claims and the 300-line contract limit.
+Help a visitor install TaskQ, describe work, follow progress and answer a worker.
+[Product](../../taskq.md#product) owns the page decisions (R13); use specq [Documentation](https://github.com/taskqorg/specq/blob/main/caveman/rules/documentation.md).
 
 ## Page contract
 
 1. Keep `docs/header.webp` and `Agents working.` at the top.
-2. Keep the exact existing-project setup phrase and new-project variant. Explain concrete setup approval.
-3. State that the repository board holds tasks and the host service runs workers; keep a short shipped-capability list.
-4. Show dark native task-list and full-exchange workspace snapshots individually, with captions and links to their originals. Do not shrink two tall panels into one row. Keep task content and lower controls visible; show unknown values per [unknown is never healthy](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy).
-5. Use three connected, explicitly illustrative conversations: planning (UC-02/03/07), a worker question (UC-09), and evidence/release review (UC-14). Each has initial context, owner request, meaningful clarification, decision, action and observable outcome. Link the source cases. Never call a proposed result an observed session or imply the whole source UC is shipped.
-6. Retain one contract link, release checksum and provenance instructions, MIT license and the final donate line.
+2. Lead with the exact existing-project setup phrase. Explain setup confirmation; put the new-project variant in a disclosure.
+3. Give one purpose sentence, then three visual examples: describe work in Conversations, follow the queue, answer a worker. Use one coherent storefront scenario, one image and one short caption per example.
+4. Put a few equivalent CLI commands in a disclosure. Keep one contract link, optional release checksum/provenance instructions, MIT and the final donate line.
+5. Omit long dialogues, telemetry tables, runtime-switch logs and the second illustration. Keep deeper behavior in the contract and [use cases](../use-cases/README.md).
 
 ## Scenario and evidence boundary
 
-Use a storefront sign-in journey throughout: agree the redirect and cart tasks, resolve what happens to an existing cart, then inspect redirect evidence before accepting publication. Example issue numbers and dialogue are invented and labelled. The manager relays decisions; the worker implements and the reviewer checks the exact candidate. Setup, admission and publication retain their own approval boundaries.
+The illustrative storefront change preserves a cart after sign-in. The owner drafts a request, the queue shows cart work and redirect review, then the cart worker asks how to merge duplicate quantities. The request screenshot shows a draft, not submitted work. The question screenshot preserves source choice numbers and recommendation. A screenshot does not prove tasks were created or an agent run completed.
 
-The earlier phrase checks in [readme-phrase-evidence.md](readme-phrase-evidence.md) are historical no-write interpretation checks. They neither verify these conversations nor prove a completed journey. In particular, do not resurrect `Review #12.` as an automatic acceptance command. Proposed UI and unavailable client capabilities are not advertised as shipped.
+Show shipped interface code, never design prototypes. Earlier [phrase evidence](readme-phrase-evidence.md) remains historical interpretation evidence. Do not advertise `Review #12.` as an automatic acceptance command. Setup, task admission and publication retain their approval boundaries.
 
 ## Images and acceptance
 
-Use `docs/shots/fixture.sh` and `docs/shots/update.sh` on macOS. The fixture is synthetic, with coherent task/question content; it does not access a real board or run a service. Keep unknown host observations explicit. The separate edge-case fixture remains unchanged.
+`docs/shots/update.sh` builds with `--locked` and runs the real `taskq tray --snapshot` renderer in an isolated installation. `docs/shots/fixture.sh` supplies the queue; `tests/fixtures/conversation-shots.js` supplies Conversations request/question captures. Both use invented data and perform no board or agent operations. Keep the separate edge-case fixture unchanged.
 
-The existing capture pipeline builds with `--locked`, runs `taskq tray --snapshot` in an isolated install, and records version, source commit, binary hash, environment, image hashes and UI source blob IDs in `docs/shots/manifest.json`. UI sources must be committed before capture. `docs/shots/check.sh` compares those blob IDs with HEAD; this survives squash merging. Retain the existing CI capture/staleness workflow. Windows capture remains unqualified. Keep the captured transparent summary icon in the manifest, but omit it from the page: its light glyphs disappear on a light README background; the task list already shows queue states.
+Keep three dark images individually readable, with links to their originals. The manifest records the version, source commit, binary hash, environment, UI source blob IDs, capture-input hashes and image hashes. UI sources must be committed before capture; capture-input hashes identify fixture/script changes independently. Preserve the summary icon in the manifest, but omit it from the page because its light glyphs disappear on light backgrounds. Windows capture remains unqualified.
 
-Open the rendered README at desktop and narrow widths. Inspect every image at its displayed size, including the header. Preserve before/after renders and inspection findings in repository evidence linked from the PR. Visual acceptance follows [test classes](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#test-classes). The reviewer checks A1–A8 per [shared review](https://github.com/taskqorg/specq/blob/main/engineering/agent-workflow.md#review) and opens the final page and images. The owner accepts the visual result before merge/publication.
-
-Checks: `docs/shots/check.sh`, `cargo test --locked`, `cargo run -- selftest`, and CI on the exact candidate SHA; missing evidence is [unknown](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#unknown-is-never-healthy). Preserve closed #923/#925 history; #1007 supersedes their rejected page presentation.
+Inspect the rendered README at desktop and narrow widths, including every image, setup disclosures and CLI examples. Preserve before/after renders and findings under `docs/shots/evidence/`. Source/image checks do not replace visual inspection or owner acceptance. Run `docs/shots/check.sh`, affected capture checks and the project-selected gate; report unavailable native or CI evidence explicitly.

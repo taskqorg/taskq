@@ -1,16 +1,15 @@
 // #1699 A8: native Conversations captures (`tray --snapshot --route conversations`) over the real pushed state with
 // invented projects, a task question, an unread notification and an owner draft; nothing reaches a board or session.
 function taskqConversationShot(step,state){
- const board='https://github.com/o/r/issues',q='1'.repeat(64),r='2'.repeat(64);
- const card='Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.';
- const row={n:841,title:'Keep the old API?',state:'ask',url:board+'/841',revision:4,card,question:{parsed:true,text:card,done:'compared both clients',problem:'Should the new admin API keep compatibility with existing clients?',evidence:[{label:'#12',url:'https://github.com/o/r/pull/12'}],
-  choices:[{id:1,text:'Keep compatibility',recommended:true,consequential:false},{id:2,text:'Remove the old API',recommended:false,consequential:false}],limits:{lines:4,chars:240}}};
- const s={...state,host:'fixture-host',projects:[{root:'fixture',name:'Fixture',issues:board,alive:true,complete:true,age:1,tasks_age_seconds:1,focus:[],labels:[],tasks:[row,{n:900,title:'Plain running task',state:'doing',revision:1}]}],
-  messages:{complete:true,reason:'',count:2,entries:[
-   {key:q,kind:'question',title:row.title,project:'Fixture',root:'fixture',board,task:row.n,revision:row.revision,state:'ask',pending:true,read:false,archived:false},
-   {key:r,kind:'request',title:'Setup request · launched',root:'fixture',host:'fixture-host',id:'native-live',state:'launched',pending:true,read:false,archived:false,request:{next:'Read replies in the native runtime.',url:'https://claude.ai/code/session_Invented123'}}]},
-  conversations:{complete:true,items:[{id:'owner-1',revision:1,title:'Owner plan',text:'Plan the next release: list the open review items first, then the hosts that still run 4.6.39.',root:'fixture',caret:[0,0],scroll:0,files:[],archived:false},
-   {id:'pm-1',revision:1,title:'Release planning',text:'',root:'fixture',caret:[0,0],scroll:0,files:[],archived:false,sent:{text:'Start',root:'fixture',runtime:'claude',files:[]},request:{id:'pm-1',state:'launched',kind:'launched',url:'https://claude.ai/code/session_Invented456',next:'Reply here'},dialogue:{state:'idle',watch:'no watch',turn:null}}],navigation:{selected:'owner-1',list:'recent'}},
+ const board='https://github.com/acme/storefront/issues',q='1'.repeat(64);
+ const card='Done: Cart merge reaches duplicate products.\nProblem: Which quantity should a duplicate product keep?\nEvidence: [#41](https://github.com/acme/storefront/issues/41)\n1. Keep the larger quantity ★\n2. Add the quantities\nTo answer: `taskq answer 41.K` or comment `K` or the option text.';
+ const row={n:41,title:'Keep the cart',state:'ask',url:board+'/41',revision:4,card,question:{parsed:true,text:card,done:'Cart merge reaches duplicate products.',problem:'Which quantity should a duplicate product keep?',evidence:[{label:'#41',url:'https://github.com/acme/storefront/issues/41'}],
+  choices:[{id:1,text:'Keep the larger quantity',recommended:true,consequential:false},{id:2,text:'Add the quantities',recommended:false,consequential:false}],limits:{lines:4,chars:240}}};
+ const s={...state,host:'example-mac',projects:[{root:'storefront',name:'storefront',issues:board,alive:true,complete:true,age:1,tasks_age_seconds:1,focus:[],labels:[],tasks:[row,{n:43,title:'Fix the login redirect',state:'doing',revision:1}]}],
+  messages:{complete:true,reason:'',count:1,entries:[
+   {key:q,kind:'question',title:row.title,project:'storefront',root:'storefront',board,task:row.n,revision:row.revision,state:'ask',pending:true,read:false,archived:false}]},
+  conversations:{complete:true,items:[{id:'owner-1',revision:1,title:'Keep carts after sign-in',text:'Keep the cart after sign-in and return shoppers to their previous page. Plan the work first; ask before starting tasks.',root:'storefront',caret:[0,0],scroll:0,files:[],archived:false},
+   {id:'pm-1',revision:1,title:'Release planning',text:'',root:'storefront',caret:[0,0],scroll:0,files:[],archived:false,sent:{text:'Start',root:'storefront',runtime:'claude',files:[]},request:{id:'pm-1',state:'launched',kind:'launched',url:'https://claude.ai/code/session_Invented456',next:'Reply here'},dialogue:{state:'idle',watch:'no watch',turn:null}}],navigation:{selected:'owner-1',list:'recent'}},
   ai:{...state.ai,draft:'',history:[],runtime:{available:true,name:'Claude Code',id:'claude'}},workspace_local:{}};
  delete s.page;
  // #1773 A6: the PM chat reads an invented transcript locally, so a snapshot never reaches a native session
@@ -27,7 +26,7 @@ function taskqConversationShot(step,state){
  setTimeout(()=>{
   // #1781: the badge screen shows the empty answer with its placeholder, even after an earlier screen typed a draft
   if(step==='badge'){const a=document.querySelector('[data-c-field=answer]');if(a&&a.value)type(a,'');}
-  if(step==='question'){const a=document.querySelector('[data-c-field=answer]');if(a)type(a,'Keep compatibility for one more release, then remove it.');}
+  if(step==='question'){const a=document.querySelector('[data-c-field=answer]');if(a)type(a,'Keep the larger quantity. Retain unavailable items with a warning.');}
   if(step==='chat'){document.querySelector('[data-c=select][data-id=pm-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t)type(t,'What should we check before implementation?');},300);}
   if(step==='owner'){document.querySelector('[data-c=select][data-id=owner-1]')?.click();setTimeout(()=>{const t=document.querySelector('[data-c-field=text]');if(t){t.focus();t.setSelectionRange(t.value.length,t.value.length);}},50);}
  },50);
