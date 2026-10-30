@@ -653,7 +653,7 @@ pub fn sweep(install: &Path, shim: &Path) {
         match version {Ok(version)=>keep.push(version),Err(_)=>unknown=true}
     }
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
@@ -1521,9 +1521,11 @@ mod tests {
         fs::write(install.join("windows-native/state/cap_sid"), "native control state").unwrap();
         fs::write(install.join("projects"), format!("{}\n", root.display())).unwrap();
         // H-A5: update keeps policy, interrupted writes, exact native recovery and the qualified rollback floor.
+        // #1897: the GitLab board token (§ 9) survives byte-identical, like the GitHub `token`.
         let protected=[("host.json","{\"limits\":{\"codex\":2},\"owner_field\":\"keep\"}"),
             ("host.json.pending","interrupted policy; preserve"),("service","123"),("service.lock",""),("poke","wake"),
-            ("restart","restart requested"),("update","update requested"),("projects.lock",""),("link-key","host link key; keep")];
+            ("restart","restart requested"),("update","update requested"),("projects.lock",""),("link-key","host link key; keep"),
+            ("gitlab-token","invented-gitlab-token\n")];
         for (name,text) in protected {fs::write(install.join(name),text).unwrap();}
         fs::create_dir_all(install.join("host-policy-migration")).unwrap();
         fs::write(install.join("host-policy-migration/original.json"),"original configuration").unwrap();
