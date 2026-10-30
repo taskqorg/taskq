@@ -114,7 +114,9 @@ fn emergency_state_survives_failed_wakeup_and_notifies_other_projects() {
 // Risk: a successful command is mistaken for admission, or a failed command disappears from history.
 #[test]
 fn resume_records_its_result_without_releasing_the_host_hold() {
-    let root=std::env::temp_dir().join(format!("qr-{}",std::process::id()));
+    // Seatbelt denies connecting to sockets inside the read-only store too; force CoreQ's external socket fallback.
+    let prefix=if cfg!(target_os="macos") {"readonly-analysis-".repeat(6)} else {"qr-".into()};
+    let root=std::env::temp_dir().join(format!("{prefix}{}",std::process::id()));
     fs::create_dir_all(root.join(".taskq")).unwrap();
     let install=root.join("i");fs::create_dir_all(&install).unwrap();
     fs::write(install.join("hold"),"owner-held fixture").unwrap();
