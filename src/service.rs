@@ -274,9 +274,10 @@ fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String>
 
 #[cfg(target_os = "linux")]
 fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
-    // ponytail: reflink only (btrfs, XFS); ext4 fails at the first file and skips rather than copying gigabytes.
-    crate::tools::run("seed.cp", crate::platform::command("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
-        .map(|_| ()).map_err(|e| format!("{e} (no reflink on this volume?)"))
+    // #2051: `auto` clones on btrfs and XFS and falls back to a plain copy where the volume has no reflink (ext4).
+    // ponytail: the plain copy runs inside the 300 s budget; a slower volume times out and skips.
+    crate::tools::run("seed.cp", crate::platform::command("cp").args(["-a", "--reflink=auto"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
+        .map(|_| ())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -468,6 +469,8 @@ pub struct Service<'a> {
     /// Runtimes whose last probe read `not logged in` (§ 5 `agents`, #1429): no claim, resume or reviewer until a
     /// probe reads them logged in again; unknown login admits as before.
     pub logged_out: BTreeSet<String>,
+    /// § 3 Runtime accounts: the active account of each listed runtime at the last pass (switch record).
+    pub accounts: BTreeMap<String, Option<String>>,
     pub gui_checked: Option<std::time::Instant>,
     pub gui_probe: Result<(), String>,
     /// #1803: the last gui probe read a stale grant (`platform::stale_grant`); the tray notifies once.
@@ -724,7 +727,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), accounts: BTreeMap::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1102,7 +1105,9 @@ impl<'a> Service<'a> {
         reasons.extend(self.refused_access.iter().map(|(rt, r)| ("access", format!("{rt}: {r}"))));
         reasons.extend(self.limited.keys().map(|rt| ("usage-limit", format!("{rt}: {}", self.limit_line(rt)))));
         reasons.extend(self.logged_out.iter().map(|rt| ("login", format!("{rt}: not logged in; {}", crate::runtime::relogin(rt)))));
-        let res = |r: &Res, state: &str| json!({"task": r.0, "attempt": r.1, "rt": r.2, "state": state});
+        let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
+        reasons.extend(accounts.policy.keys().filter(|rt| accounts.off(rt)).map(|rt| ("capability", format!("{rt}: every account disabled on this host"))));
+        let res =|r: &Res, state: &str| json!({"task": r.0, "attempt": r.1, "rt": r.2, "state": state});
         let reservations: Vec<Value> = self.kids.iter().map(|k| res(&(k.task, k.attempt, k.rt.clone()), "held"))
             .chain(self.reserved.iter().map(|r| res(r, "held"))).chain(self.requested.iter().map(|r| res(r, "requested"))).collect();
         let limits = self.cap.as_ref().map(|c| c.limits.clone()).unwrap_or_default();
@@ -1207,9 +1212,12 @@ impl<'a> Service<'a> {
             crate::runtime::usage_limit(&log).map(|reset| reset.filter(|r| *r > now).map_or((now + USAGE_PROBE, false), |r| (r, true)))
         }).flatten());
         if let (Some(hold), Some((rt, _))) = (hold, rt_of(t)) {
-            if local { self.limited.insert(rt.to_string(), hold); }
             let (at, reported) = hold;
-            let reason = format!("Usage limit: {rt} {} {}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
+            // § 3 Runtime accounts: the limit is the attempt account's; a spare enabled account takes the next start
+            let (next, hold) = if local { self.account_limit(n, t, a, rt, hold, now) } else { (None, hold) };
+            if local && next.is_none() { self.limited.insert(rt.to_string(), hold); }
+            let next = next.map(|l| format!("; next account {l}")).unwrap_or_default();
+            let reason = format!("Usage limit: {rt} {} {}{next}", if reported { "until" } else { "probe" }, crate::board::stamp(at));
             self.gone(n, t, a, &["usage-limit"], &reason)
         } else if let Some((bin, reason)) = local.then(|| rt_of(t).map(|(rt, _)| crate::runtime::of(rt)).filter(|r| r.codex)
             .and_then(|r| crate::runtime::auth_rejected(&crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a)).map(|e| (r.bin, e)))).flatten() {
@@ -1314,6 +1322,40 @@ impl<'a> Service<'a> {
         value
     }
 
+    /// § 3 Runtime accounts: records attempt `a`'s usage limit on the account its log names. Returns the spare account
+    /// the next start takes, else the hold: the earliest limit end of an enabled account when there are several.
+    fn account_limit(&mut self, n: u64, t: &Task, a: u64, rt: &str, hold: (i64, bool), now: i64) -> (Option<String>, (i64, bool)) {
+        if !crate::runtime::accounts::applies(rt) { return (None, hold); }
+        let log = crate::runtime::attempt_log(&self.cfg.root, t.role.as_deref().unwrap_or_default(), n, a);
+        let label = crate::runtime::accounts::of_log(&log);
+        let (end, reported) = hold;
+        let seen = if reported { now } else { end - USAGE_PROBE };
+        if let Err(e) = crate::runtime::accounts::record_limit(&self.cfg.install, rt, &label, seen, reported.then_some(end)) {
+            self.log.push(format!("account {rt} {label} limit not saved: {e}"));
+        }
+        let h = crate::runtime::accounts::Host::read(&self.cfg.install);
+        match h.spare(rt, now) {
+            Some(next) => (Some(next), hold),
+            None => (None, h.multi(rt).then(|| h.hold(rt, now)).flatten().unwrap_or(hold)),
+        }
+    }
+
+    /// § 3 Runtime accounts, every pass: holds of runtimes with several accounts follow the account record, and each
+    /// change of a runtime's active account goes to the service log and telemetry.
+    fn account_pass(&mut self, now: i64) {
+        let h = crate::runtime::accounts::Host::read(&self.cfg.install);
+        for rt in h.policy.keys().filter(|rt| h.multi(rt)) {
+            match (h.spare(rt, now), h.hold(rt, now)) {
+                (None, Some(hold)) => { self.limited.insert(rt.clone(), hold); }
+                _ => { self.limited.remove(rt); }
+            }
+        }
+        for s in crate::runtime::accounts::switches(&h, now, &mut self.accounts) {
+            self.log.push(s.line());
+            crate::profile::measure_counted("account.switch", || ((), s.counts(&self.cfg.me)));
+        }
+    }
+
     /// `until <time>` for a reported reset, else `probe <time>`, of a held runtime.
     fn limit_line(&self, rt: &str) -> String {
         self.limited.get(rt).map(|(at, reset)| format!("{} {}", if *reset { "until" } else { "probe" }, crate::board::stamp(*at))).unwrap_or_default()
@@ -1339,6 +1381,8 @@ impl<'a> Service<'a> {
         }
         lines.extend(self.limited.keys().map(|rt| format!("limit {rt} {}", self.limit_line(rt))));
         lines.extend(self.logged_out.iter().map(|rt| format!("login {rt} off")));
+        // § 3 Runtime accounts: labels and state only, never an email, path or token
+        lines.extend(crate::runtime::accounts::Host::read(&self.cfg.install).heartbeat(self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now())));
         lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
         // #1985: this host's billed requests of its last full hour, its share of the board user's quota
         lines.extend(self.host.as_ref().and_then(|h| h.lock().ok()?.last_hour.as_ref().map(crate::requests::billed)).map(|n| format!("requests {n}/h")));
@@ -1429,11 +1473,14 @@ impl<'a> Service<'a> {
             self.listed = views.iter().map(|v| v.issue.number).collect();
         }
         let now = self.board.now()?;
-        for x in views.iter().flat_map(|v| &v.projection.executions).filter(|x| x.host == me) {
+        let accounts = crate::runtime::accounts::Host::read(&self.cfg.install);
+        // § 3 Runtime accounts: a runtime with several accounts takes its hold from the account record (`account_pass`)
+        for x in views.iter().flat_map(|v| &v.projection.executions).filter(|x| x.host == me && !accounts.multi(&x.runtime)) {
             if let Some(hold) = x.usage_hold.filter(|(at, _)| now < *at) {
                 self.limited.entry(x.runtime.clone()).and_modify(|old| { if hold.0 > old.0 { *old = hold; } }).or_insert(hold);
             }
         }
+        self.account_pass(now);
         self.limited.retain(|_, (at, _)| now < *at);
         self.observe_ownership(&views)?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
@@ -2223,6 +2270,7 @@ impl<'a> Service<'a> {
         if let Some(r) = self.refused_access.get(rt) { return Err(("access", format!("{rt}: {r}"))); }
         if self.limited.contains_key(rt) { return Err(("usage-limit", format!("{rt}: {}", self.limit_line(rt)))); }
         if self.logged_out.contains(rt) { return Err(("login", format!("{rt}: not logged in"))); }
+        if crate::runtime::accounts::Host::read(&self.cfg.install).off(rt) { return Err(("capability", format!("{rt}: every account disabled on this host"))); }
         if gui && !self.full.contains(rt) { return Err(("capability", format!("needs-gui: {rt} has no effective Full grant"))); }
         let c = self.cap.as_ref().map_err(|_| ("unknown", crate::snapshot::ADMISSION_UNKNOWN[1].to_string()))?;
         // Auto: a runtime without a limit has no count ceiling (§ 9); Fixed: only listed runtimes
@@ -3177,7 +3225,7 @@ mod tests {
                 else if url.ends_with("/status") { json!({"total_count": 0}) }
                 else if url.ends_with("/git/ref/heads/taskq-1") { json!({"object": {"sha": head}}) }
                 else if method == "PATCH" && url.ends_with("/git/refs/heads/main") { *f.borrow_mut() += 1; json!({"object": {"sha": head}}) }
-                else { panic!("unexpected {method} {url}") })
+                else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") })
         }));
         let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
         b.comment(n, &core::entry("result", &[&sha], Some(a), "candidate")).unwrap();
@@ -3226,6 +3274,61 @@ mod tests {
         b.state.borrow_mut().publish = String::new();
         s.pass().unwrap();
         assert_eq!(task(&b, n).state, State::Closed);
+    }
+
+    // Chain: section 7 Publication routes, task PR in another repository (#2047) -> service pass enqueues it in that
+    // repository -> status row shows the merge queue stage -> merged with green merge_group CI -> one close naming it.
+    // Defect (#2009 dashq#240, #2010 pilotq#200, #2015 dashq#241): publication looped on the board repository's compare
+    // HTTP 404 with no stage shown. Retained: the foreign PR moves through the same stages and receipt as a local one.
+    #[test]
+    fn a_task_pr_in_another_repository_shows_its_stage_and_closes_after_its_merge() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented foreign PR", "", &["taskq".into()]).unwrap();
+        let (head, merge) = ("a".repeat(40), "b".repeat(40));
+        let text = "Changed: [o/x#240](https://github.com/o/x/pull/240)\nChecks: A1 ok\nOpen: none";
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        let result = core::entry("result", &[&head], Some(a), text);
+        b.comment(n, &result).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        let publish = core::entry("publish", &[], Some(r), text);
+        b.comment(n, &publish).unwrap();
+        // 0 open, 1 queued, 2 merged
+        let phase = Rc::new(std::cell::Cell::new(0));
+        let (p, h, m) = (phase.clone(), head.clone(), merge.clone());
+        b.state.borrow_mut().publish = "queue-foreign".into();
+        b.state.borrow_mut().publisher = Some(crate::board::replying_to(&crate::board::github::KIND, move |method, url, body| {
+            if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                return if rest.starts_with("/compare/") { Err(format!("GET {url}: HTTP 404 Not Found")) }
+                    else if rest.starts_with(&format!("/issues/{n}/comments")) {
+                        Ok(json!([result.clone(), publish.clone()].iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "author_association": "OWNER",
+                            "created_at": "2026-10-30T00:00:00Z", "updated_at": "2026-10-30T00:00:00Z", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+                    } else { panic!("board repository read {method} {url}") };
+            }
+            if url.ends_with("/graphql") {
+                let query = body.unwrap()["query"].as_str().unwrap().to_string();
+                if query.contains("enqueuePullRequest") { p.set(1); return Ok(json!({"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}})); }
+                let entry = if p.get() == 1 { json!({"id": "MQE_1"}) } else { Value::Null };
+                return Ok(json!({"data": {"node": {"headRefOid": h, "mergeable": "MERGEABLE", "merged": p.get() == 2, "mergeCommit": if p.get() == 2 { json!({"oid": m}) } else { Value::Null },
+                    "mergeQueueEntry": entry, "timelineItems": {"nodes": []}}}}));
+            }
+            let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {method} {url}"));
+            Ok(if rest.starts_with("/compare/") { json!({"status": if rest.ends_with(&m) { "identical" } else { "diverged" }}) }
+                else if rest == "/pulls/240" { json!({"number": 240, "node_id": "PR_240", "state": "open", "draft": false, "head": {"sha": h}, "merged_at": null}) }
+                else if rest == "/rules/branches/main" { json!([{"type": "merge_queue"}]) }
+                else if rest.starts_with("/actions/runs?") { json!({"workflow_runs": [{"head_sha": m, "event": "merge_group", "status": "completed", "conclusion": "success", "name": "ci", "check_suite_id": 5}]}) }
+                else if rest.contains("/check-runs") { json!({"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 5}}]}) }
+                else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                else { panic!("unexpected {method} {url}") })
+        }));
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        for _ in 0..3 { s.pass().unwrap(); }
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        assert_eq!((&row["state"], &row["enqueued"]), (&json!("review"), &json!("MQE_1")), "A2: the merge queue stage, as for a local PR: {row}");
+        phase.set(2);
+        s.pass().unwrap();
+        let closes: Vec<_> = b.comments(n).unwrap().into_iter().filter(|e| e.body.starts_with("taskq: close")).collect();
+        assert_eq!((task(&b, n).state, closes.len()), (State::Closed, 1));
+        assert!(closes[0].body.contains(&format!("merged #240 in o/x as {merge}; merge-result CI green")), "A1: {}", closes[0].body);
     }
 
     // Chain: § 7 rule 9 -> worker closes its own task -> § 1 dependency unknown -> § 4 step 5 reopen + one ask (#1950).
@@ -5578,6 +5681,77 @@ Open: none";
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    // Chain: §3 Runtime accounts (#2043 A4, A6): usage limit before work on the active account -> `usage-limit` with
+    // `next account` -> respawn on the next enabled account, retries kept -> every account limited -> the § 4 hold until
+    // the earliest end -> reset returns the first account -> all disabled admits nothing. Risk: a spare account waits
+    // behind a hold, a failover spends a retry, a switch leaves no log line, or a disabled list still starts work.
+    #[test]
+    fn usage_limit_fails_over_to_the_next_account_then_holds() {
+        let root = std::env::temp_dir().join(format!("taskq-account-failover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let install = root.join("install");
+        std::fs::create_dir_all(&install).unwrap();
+        let list = |a: bool, w: bool| std::fs::write(install.join(crate::runtime::accounts::FILE),
+            format!("{{\"claude\":[{{\"label\":\"default\",\"enabled\":{a}}},{{\"label\":\"work\",\"enabled\":{w}}}]}}")).unwrap();
+        list(true, true);
+        let b = Fake::default();
+        let mut c = Config { root: root.clone(), install: install.clone(), ..cfg("mac") };
+        c.limits = BTreeMap::from([("claude".to_string(), 1)]);
+        let reset = 1000;
+        let e: Exits = Default::default();
+        let (seen, r, inst) = (e.clone(), root.clone(), install.clone());
+        let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |l: &Launch| {
+            let flag = Rc::new(RefCell::new(None));
+            seen.borrow_mut().push((l.task, flag.clone()));
+            // the runtime adapter's start line (spawn_inner) before the native output: the account a new start takes
+            let account = crate::runtime::accounts::Host::read(&inst).pick("claude", 1).unwrap();
+            let limit = format!("{{\"type\":\"assistant\",\"apiError\":\"usage_limit_reached\",\"quotaLimits\":{{\"status\":\"rejected\",\"resetsAt\":{reset}}}}}\n");
+            let log = crate::runtime::log_path(&r, l);
+            std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+            std::fs::write(&log, format!("{{\"type\":\"taskq.account\",\"account\":\"{account}\"}}\n{limit}")).unwrap();
+            Ok(Box::new(FakeProc(flag)) as Box<dyn Proc>)
+        }));
+        s.focus = vec!["all".into()];
+        let n = b.create("A", "", &["taskq".into(), "run-claude".into()]).unwrap();
+        s.pass().unwrap();
+        assert_eq!(e.borrow().len(), 1);
+        *e.borrow()[0].1.borrow_mut() = Some(1);
+        s.pass().unwrap();
+        let gone = b.comments(n).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: usage-limit")).unwrap().body;
+        assert!(gone.contains("\nUsage limit: claude until 1970-01-01T00:16:40Z; next account work"), "{gone}");
+        assert!(s.limited.is_empty(), "a spare account holds nothing");
+        if e.borrow().len() < 2 { s.pass().unwrap(); }
+        assert_eq!((e.borrow().len(), task(&b, n).state, task(&b, n).retries), (2, State::Doing, 0), "respawn on the next account, retries kept");
+        let log = |i: u64| crate::runtime::attempt_log(&root, "worker", n, i);
+        let attempts: Vec<u64> = core::executions(n, &entries(&b, n).unwrap()).iter().map(|x| x.attempt).collect();
+        assert_eq!(crate::runtime::accounts::of_log(&log(*attempts.last().unwrap())), "work");
+        assert!(s.log.iter().any(|l| l == "account claude default -> work (limit)"), "{:?}", s.log);
+        assert!(s.heartbeat_body().contains("\naccount claude default on limited "), "{}", s.heartbeat_body());
+        assert!(s.heartbeat_body().contains("\naccount claude work on active\n"));
+
+        *e.borrow()[1].1.borrow_mut() = Some(1);
+        s.pass().unwrap();
+        let gone = b.comments(n).unwrap().into_iter().rfind(|c| c.body.starts_with("taskq: usage-limit")).unwrap().body;
+        assert!(gone.ends_with("Usage limit: claude until 1970-01-01T00:16:40Z") || gone.contains("until 1970-01-01T00:16:40Z\n"), "none left: {gone}");
+        assert!(!gone.contains("next account"), "{gone}");
+        assert_eq!(s.limited.get("claude"), Some(&(reset, true)), "every account limited: the usage-limit hold");
+        s.pass().unwrap();
+        assert_eq!((task(&b, n).state, e.borrow().len(), task(&b, n).retries), (State::Ready, 2, 0), "the hold keeps the task ready");
+        assert!(s.log.iter().any(|l| l == "account claude work -> none (limit)"), "{:?}", s.log);
+
+        b.state.borrow_mut().clock = reset;
+        s.pass().unwrap();
+        assert!(s.log.iter().any(|l| l == "account claude none -> default (reset)"), "{:?}", s.log);
+        assert_eq!(e.borrow().len(), 3, "the reset admits the work again");
+        assert!(s.limited.is_empty());
+
+        list(false, false);
+        let cap = s.capacity_json();
+        assert!(cap["reasons"].as_array().unwrap().iter().any(|r| r["code"] == "capability" && r["text"] == "claude: every account disabled on this host"), "{cap}");
+        assert!(s.admit_runtime("claude", false).is_err_and(|e| e.0 == "capability"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     // Chain: #1446 A1/A2 Codex exit with a rejected refresh token -> `usage-limit` release -> login off at once.
     // Risk: a dead login reads logged in, each admitted task burns its gone budget, or claude is held too.
     #[test]
@@ -6880,6 +7054,12 @@ Open: none";
         let copy = root.join(".worktrees/taskq-7/target/debug/deps/libx.rlib");
         assert!(root.join(".worktrees/taskq-7/.git").exists(), "{line}");
         if cfg!(target_os = "macos") { assert_eq!(line, "#7 seeded target/debug", "APFS temp dir clones"); }
+        // #2051: where the volume has no reflink (ext4, as on CI), the seed copies plainly instead of skipping.
+        if cfg!(target_os = "linux") {
+            let probe = std::process::Command::new("cp").arg("--reflink=always").arg(root.join("target/debug/deps/libx.rlib")).arg(base.join("probe")).output().unwrap();
+            eprintln!("reflink here: {}", if probe.status.success() { "supported" } else { "unsupported, plain-copy path" });
+            assert_eq!(line, "#7 seeded target/debug", "a volume without reflink still seeds");
+        }
         if line == "#7 seeded target/debug" {
             std::fs::write(&copy, "edited").unwrap();
             assert_eq!(std::fs::read_to_string(root.join("target/debug/deps/libx.rlib")).unwrap(), "warm", "the seed never writes into its source");

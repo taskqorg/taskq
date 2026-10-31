@@ -2,13 +2,13 @@
 
 Accepted product target. Extends UC-01/08/11/12/17 and taskq.md §6/§8; does not claim a new installer or filesystem sandbox is shipped. Reuse [worker permissions](worker-permissions.md), [remote manager](remote-manager.md) and shared bootstrap. No second project registry.
 
-## S1. Two installation entrances, one setup flow
+## S1. One-click install, alternative entrances, one setup flow
 
-Default: ask an agent to install TaskQ from the official repository and connect/create the named project. Keep this route prominent.
+Default: the one-click installer per OS of [taskq.md § 8 Install and signing](../../taskq.md#install-and-signing). The owner downloads and opens it; it needs no agent session, onboarding conversation or terminal step, and ends with `service check`. Keep this route prominent in README, release notes and app help.
 
-Alternative: the release documentation provides one copyable command per supported shell/platform, including macOS/Linux and Windows PowerShell. The owner runs it without starting an AI agent. It installs the verified supported release, registers the local launcher and opens interactive setup (native application on desktop; terminal flow on a headless server). The command must work from an arbitrary launch directory, including home, without adopting that directory as a project.
+Alternatives reach the same setup: asking an agent to install TaskQ from the official repository and connect/create the named project, or one copyable command per supported shell/platform, including macOS/Linux and Windows PowerShell. The agent route runs the same installer or command, never its own install steps. The command needs no AI agent. It installs the verified supported release, registers the local launcher and opens interactive setup (native application on desktop; terminal flow on a headless server). The command must work from an arbitrary launch directory, including home, without adopting that directory as a project.
 
-Both routes use the same setup implementation and review/readback semantics. Do not create a separate agent-only installer. Keep exact working commands in one release-owned source, then reference them from README, app help and agent bootstrap. Do not publish a guessed curl/PowerShell command before the distribution endpoint exists and is qualified. The actual installation command is a required implementation deliverable.
+All routes use the same setup implementation, signing step and review/readback semantics. Do not create a separate agent-only installer. Keep exact working commands in one release-owned source, then reference them from README, app help and agent bootstrap. Do not publish a guessed curl/PowerShell command before the distribution endpoint exists and is qualified. The actual installation command is a required implementation deliverable.
 
 Setup detects OS/architecture and available supported runtimes using executable lookup, known installation locations and bounded read-only version/auth probes. Reuse `taskq agents` capability inspection where possible. Never discover runtimes by recursively searching home or the disk. Report Ready / Installed, sign-in needed / Missing / Unknown without exposing credentials.
 
@@ -59,7 +59,7 @@ Extend backlog streams 1, 6, 9 and 11. First reconcile coreq's installer/service
 
 | ID | Required proof |
 |---|---|
-| S-A1 | Agent request and documented shell command reach the same setup and produce matching verified installation state |
+| S-A1 | One-click installer, agent request and documented shell command reach the same setup and produce matching verified installation state; the installer route needs no agent session or terminal step |
 | S-A2 | Fresh desktop/server without an AI runtime completes basic setup and displays actionable Missing/sign-in/Unknown states |
 | S-A3 | Launch installer from home or unrelated cwd; no implicit registration, home scan or worker launch occurs |
 | S-A4 | Choose/change Projects folder; new project uses it, existing roots/active work remain unchanged; siblings are not auto-discovered |

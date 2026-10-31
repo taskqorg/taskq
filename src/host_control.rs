@@ -211,7 +211,7 @@ fn scheduler_write(title:&str)->Res<()> {
 #[cfg(windows)]
 fn quote(value:&str)->String {format!("'{}'",value.replace('\'',"''"))}
 #[cfg(windows)]
-fn powershell(code:&str)->Command {
+pub(crate) fn powershell(code:&str)->Command {
     // GetInstances(0) omits hidden tasks; match the documented hidden-inclusive query by exact task path.
     let code=format!("function Get-TaskQInstances($service,$task) {{ $service.GetRunningTasks(1) | Where-Object {{ $_.Path -eq $task.Path }} }}\n{code}");
     let bytes:Vec<u8>=code.encode_utf16().flat_map(u16::to_le_bytes).collect();

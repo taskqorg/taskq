@@ -243,6 +243,8 @@ Host runtime detail for taskq.md sections 3, 4 and 9. Implementation and install
 
 - Data ([specq data](https://github.com/taskqorg/specq/blob/main/engineering/data.md#files)): telemetry uses [SQLite/WAL bounds and migration](standalone-telemetry.md#sqlite-implementation-and-transition), pruned each host/project pass under the profile lock. Text-log bounds live in `src/data.rs`; legacy `taskq.log` is checked each host pass (each project pass on legacy services), under `taskq-profile.lock`, and keeps its newest half past the collection threshold of 4 MiB − 512 bytes. A busy lock or failed read/write leaves collection unknown and retries next pass. Other files are pruned hourly: `<project>.log` past 4 MiB and `.taskq/cli-errors.log` past 256 KiB keep their newest half; attempt logs the newest 50 plus live attempts; `.taskq/inputs/*.txt` the newest 50 plus files locked by live Claude turns; `incidents/` the newest 50; `events` follows [taskq.md section 4](../../taskq.md#4-service). A corrupt local state file reads unknown, admits or adopts nothing and deletes no release ([menu](menu.md#contract-detail)).
 
+- Host doctor (#2048): stale releases and qualification leftovers are removed by one hourly host pass, specified in [Host doctor](#host-doctor).
+
 - Tray writer handover (R8, R12): after acquiring host ownership, a host with unavailable or incompatible telemetry IPC requests a fresh tray to exit through its heartbeat, then retries collection in a bounded window. No forced termination or store reset; unknown ownership keeps the error visible. A host still without a collector retries this capture each pass and logs one line per state change, so a tray heartbeat that turns fresh later hands over without a restart (#1336). The tray has no pass: its own thread retries a failed collector every 30 s and, after lost batches, logs one unknown line and one recovery line to `tray.log` (#1755).
 
 - Release artifacts (taskq.md § 8 rule 1): checksums and provenance follow [security](https://github.com/taskqorg/specq/blob/main/engineering/security.md#dependencies-and-releases): each binary and `SHA256SUMS` carry a build provenance attestation (`gh attestation verify <file> --repo taskqorg/taskq`); installers and update check checksums.
@@ -281,7 +283,7 @@ Linked from `taskq.md` [§ 4](../../taskq.md#4-service) and [§ 8](../../taskq.m
 
 ### Windows setup and macOS signing (§ 8 step 5)
 
-5. Windows setup runs outside MSIX; host rollback counts starts. macOS: every binary starts signed as a release; no `<install>` entry named Resources or Contents ([detail](worker-permissions.md#contract-detail)).
+5. Windows setup runs outside MSIX; host rollback counts starts. macOS: every binary starts signed as a release by the [signing step](../../taskq.md#install-and-signing); no `<install>` entry named Resources or Contents ([detail](worker-permissions.md#contract-detail)).
 
 ## Native stop and restart conditions
 
@@ -421,3 +423,14 @@ Contract detail for taskq.md sections 4, 5 and 8 (#1856, owner decision 2026-10-
 - Install, onboard and update: `service install`, `service onboard` and `taskq update` print each gap as `Tool: <name>: <found>; minimum ..` and `Next: <fix>; taskq selftest fails until then`; a service start (install, update, logon) logs the same lines. taskq never installs or updates a third-party tool (§ 8 Folders): the owner runs the step, and selftest stays failed until then.
 - Failed calls: a tool call that cannot start, times out or exits nonzero is logged or returned with its command and error (exit status and stderr), never read as an empty result; an expected nonzero answer, such as a signature that does not match, is the result itself. `tools::run` renders the command; a call whose arguments carry a brief names only the program.
 - OS components: launchctl, plutil, codesign, security, open, osascript, sandbox-exec (macOS); systemctl, systemd-run, the bwrap helper (Linux); PowerShell, tasklist, reg, WebView2 (Windows); and hostname ship with each supported OS and have no separate minimum. The Linux release needs the glibc of its build runner; the loader refuses an older one before selftest runs.
+
+## Host doctor
+
+Contract detail for taskq.md sections 4 and 8 (#2048). The host service runs one doctor pass 10 minutes after it takes host ownership and then hourly, on a background thread so a large backlog never delays a host tick; one pass runs at a time, only on an installed host.
+
+- Releases: `<install>/releases` keeps every release in use (current, previous, the running version and each registered project's published `version`) plus the two newest others by newest file time, and removes the rest on every channel, dev included. Staging leftovers (`*.tmp`) whose newest file is older than a day go too. An unreadable registry or project version makes ownership unknown: every release stays, as in update cleanup.
+- Temp: OS-temp folders named `taskq-*` or `coreq-*` (test, qualification and canary scratch) whose newest file is older than a day are removed, at most 2000 per pass; `taskq-windows` (live worker private temp), files and other folders stay.
+- Native objects: an object is a qualification object when its name carries `Qualification` or `Canary` together with `TaskQ`, `CoreQ`, `Codex` or `Claude` (any case). Windows removes such root-folder Scheduled Tasks that are not running and last ran over a day ago (never-run tasks have no known age and stay). Linux resets failed user units that are qualification objects or `taskq-*` transients and changed state over a day ago (`systemctl --user reset-failed`; unit files are not touched). macOS removes loaded launchd jobs that are qualification objects without a process (`launchctl remove`). The host's own unit never matches.
+- Never touched: releases in use, `<root>/.worktrees`, project folders, live worker private temp, files outside `<install>` and the OS temp dir, and anything younger than a day.
+- Telemetry: one `service.doctor` operation per pass with counts `releases`, `temp`, `native`, `removed`, `freed_bytes`, `kept`, `failed` and `unknown`, never paths. The host log gets one `doctor:` line when a pass removed something, failed a removal or found ownership unknown.
+- Runs: a qualification or canary run names its Scheduled Tasks, units and jobs with the marker above, keeps its scratch in an OS-temp `taskq-*` folder and removes all of them after the run ([runtime qualification](../runtime-qualification.md#cleanup-after-a-run)); the doctor removes what an interrupted run left.

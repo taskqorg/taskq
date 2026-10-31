@@ -831,6 +831,7 @@ pub fn run(install: &Path) -> Res<()> {
     let began = Instant::now();
     let mut hour = (Instant::now(), crate::requests::totals());
     let mut tray = None;
+    let mut doctor = crate::doctor::Doctor::default();
     let mut registry = Registry::default();
     let mut restart=crate::lifecycle::Monitor::default();
     if let Err(e)=crate::setup::recover(install) {crate::platform::log(&e);}
@@ -1068,6 +1069,8 @@ pub fn run(install: &Path) -> Res<()> {
         }
         drop(h);
         if crate::installed(install) {
+            // #2048: hourly host doctor, off the tick thread: stale releases and qualification leftovers.
+            if let Some(line)=doctor.tick(install) {crate::platform::log(&line);}
             crate::keep_tray(install, &mut tray);
             if began.elapsed().as_secs() >= timers.1 && shared.lock().is_ok_and(|h| h.publications_ready(&roots)) {
                 if let Err(e) = fs::write(install.join("releases").join(crate::platform::VERSION).join("healthy"), "") {

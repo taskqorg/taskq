@@ -7,6 +7,7 @@ use std::process::{Child, Command};
 
 #[cfg(any(target_os="macos",windows))]
 mod app_control;
+pub mod accounts;
 pub mod owner;
 
 #[cfg(windows)]
@@ -661,6 +662,10 @@ fn environment(env: &Env, l: &Launch, c: &mut Command) {
         .env("TASKQ_ROOT", env.root)
         .envs(env.board_env.iter().cloned());
     if let Some(jobs) = env.jobs { c.env("CARGO_BUILD_JOBS", jobs.to_string()); }
+    // § 3 Runtime accounts: the attempt log names the login home; `default` keeps the service's own.
+    if crate::runtime::accounts::applies(&l.rt) {
+        if let Some(home) = crate::runtime::accounts::log_home(&l.rt, &log_path(env.root, l)) { c.env(crate::runtime::accounts::var(&l.rt), home); }
+    }
 }
 
 const FORMATS: &str = "Put each `--text` field on its own line. The commands render and check the taskq.md templates and limits (§ 2 Ask card,\n\
@@ -1414,6 +1419,14 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
     if crate::admission::task_hold(env.install,env.root,l.task).is_some() {return Err(StartError::admission("host held before native launch"));}
     let log = log_path(env.root, l);
     rules_line(&log, phase, &text).map_err(|e| StartError::io(e, None))?;
+    // § 3 Runtime accounts: a new start takes the host's active account; a resume keeps its log's account.
+    if l.resume.is_none() && crate::runtime::accounts::applies(&l.rt) {
+        let account = crate::runtime::accounts::Host::read(env.install).pick(&l.rt, crate::runtime::accounts::now())
+            .ok_or_else(|| StartError::admission(&format!("{}: every account disabled on this host", l.rt)))?;
+        crate::runtime::accounts::mark(&log, &account).map_err(|e| StartError::io(e, None))?;
+        if account != crate::runtime::accounts::DEFAULT { log!("#{} attempt {} account {} {account}", l.task, l.attempt, l.rt); }
+    }
+    let home = crate::runtime::accounts::log_home(&l.rt, &log);
     if l.rt == "codex-app" {
         let (text, input_file, path) = app_input(env.root, &text, Some(l)).map_err(StartError::from)?;
         let binding=bind_input(&log,l,&path,&text,serde_json::json!({"thread":l.session}))?;
@@ -1426,7 +1439,7 @@ fn spawn_inner(env: &Env, l: &Launch) -> Result<Box<dyn Proc>, StartError> {
         }
         return Ok(Box::new(turn));
     }
-    if l.rt == "claude" && (l.resume.is_none() || claude_background(env.root, &l.session).map_err(StartError::from)?) {
+    if l.rt == "claude" && (l.resume.is_none() || claude_background(env.root, &l.session, home.as_deref()).map_err(StartError::from)?) {
         return ClaudeTurn::start(env, l, &log, &text, &access).map(|p| Box::new(p) as Box<dyn Proc>);
     }
     let pos = std::fs::metadata(&log).map_or(0, |m| m.len());
@@ -1482,14 +1495,18 @@ pub struct ClaudeTurn {
     launch_error: Option<String>,
 }
 
-pub(crate) fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, String> {
+pub(crate) fn claude_agents(root: &Path) -> Result<Vec<serde_json::Value>, String> { claude_agents_in(root, None) }
+
+/// Claude's native jobs in a § 3 runtime account's home (`None`: the service's own home).
+fn claude_agents_in(root: &Path, home: Option<&Path>) -> Result<Vec<serde_json::Value>, String> {
     let root = root.to_str().ok_or("Claude project path is not UTF-8")?;
-    let (ok, out) = probe("runtime.agents", &which("claude"), &["agents", "--json", "--all", "--cwd", root]).ok_or("Claude agents unavailable or timed out")?;
+    let (ok, out) = probe_in("runtime.agents", &which("claude"), &["agents", "--json", "--all", "--cwd", root], home.map(|h| ("CLAUDE_CONFIG_DIR", h)))
+        .ok_or("Claude agents unavailable or timed out")?;
     if !ok { return Err(format!("claude agents: {out}")); }
     serde_json::from_str(&out).map_err(|e| format!("claude agents: {e}"))
 }
 
-fn claude_home() -> Option<PathBuf> {
+pub(crate) fn claude_home() -> Option<PathBuf> {
     std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from).or_else(||
         std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(|h| PathBuf::from(h).join(".claude")))
 }
@@ -1505,8 +1522,9 @@ pub(crate) fn claude_failure(row: &serde_json::Value, root: &Path, id: &str, hom
     crate::profile::class(detail.as_deref().unwrap_or_default())
 }
 
+/// The session's transcript in the default home or a § 3 runtime account's home.
 fn claude_transcript(session: &str) -> Option<PathBuf> {
-    claude_transcript_in(&claude_home()?,session).ok()
+    crate::runtime::accounts::homes("claude").iter().find_map(|home| claude_transcript_in(home,session).ok())
 }
 
 pub(crate) fn claude_transcript_in(home:&Path,session:&str)->Result<PathBuf,String> {
@@ -1618,19 +1636,20 @@ fn claude_job_input(home:&Path,id:&str,session:&str,root:&Path,input:&str,budget
     Ok(value.intent.as_deref().is_some_and(|text|text.trim()==input))
 }
 
-fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>) -> Result<(), String> {
+fn claude_stop(root: &Path, id: &str, known: Option<&coreq::process::Identity>, home: Option<&Path>) -> Result<(), String> {
     if !native_job_id(id) {return Err("Claude native job identity unavailable; reconcile the original input before stopping".into());}
-    let rows = claude_agents(root)?;
+    let rows = claude_agents_in(root, home)?;
     let row = rows.iter().find(|v| v["id"] == id).ok_or("Claude stop identity unavailable")?;
     if let (Some(pid),Some(saved))=(claude_pid(row)?,known) {
         if pid!=saved.pid {return Err("Claude native process changed; preserve the execution for reconciliation".into());}
     }
     // An unknown outcome must not prevent requesting native cancellation of the known job.
     if matches!(claude_stopped(row, known),Ok(true)) { return Ok(()); }
-    let (ok, out) = probe("runtime.stop", &which("claude"), &["stop", id]).ok_or("Claude stop unavailable or timed out; state unknown")?;
+    let (ok, out) = probe_in("runtime.stop", &which("claude"), &["stop", id], home.map(|h| ("CLAUDE_CONFIG_DIR", h)))
+        .ok_or("Claude stop unavailable or timed out; state unknown")?;
     if !ok { return Err(format!("claude stop: {out}")); }
     // Native stop acknowledges the request first; the service owns later retries/readback.
-    let rows = claude_agents(root)?;
+    let rows = claude_agents_in(root, home)?;
     let row = rows.iter().find(|v| v["id"] == id).ok_or("stopped Claude session disappeared; state unknown")?;
     if claude_stopped(row, known)? { Ok(()) } else { Err("Claude stop still pending; do not launch another turn".into()) }
 }
@@ -1653,6 +1672,14 @@ fn claude_stopped(row: &serde_json::Value, known: Option<&coreq::process::Identi
 }
 
 impl ClaudeTurn {
+    /// The § 3 runtime account home the attempt log names; None: the service's own home.
+    fn account(&self) -> Option<PathBuf> { crate::runtime::accounts::log_home("claude", &self.log) }
+
+    /// The native home that holds this attempt's jobs and transcripts.
+    fn native_home(&self) -> Option<PathBuf> { self.account().or_else(claude_home) }
+
+    fn agents(&self) -> Result<Vec<serde_json::Value>, String> { claude_agents_in(&self.root, self.account().as_deref()) }
+
     fn recover_job(&mut self,rows:&[serde_json::Value],home:Option<&Path>)->Result<(),String> {
         if self.accepted || (!self.id.is_empty() && self.launch_error.is_none()) {return Ok(());}
         let home=home.ok_or("Claude native home unavailable; original submission remains unknown")?;
@@ -1690,7 +1717,7 @@ impl ClaudeTurn {
         let mut expected_id = None;
         let mut before = 0;
         if l.resume.is_some() {
-            let rows = claude_agents(&root)?;
+            let rows = claude_agents_in(&root, crate::runtime::accounts::log_home("claude", log).as_deref())?;
             let row = rows.iter().find(|v| v["sessionId"] == l.session).ok_or("Claude background session unavailable; no replacement")?;
             // The caller releases the previous execution before continuation; reject contradictory native liveness.
             if claude_pid(row)?.is_some() { return Err("Claude session is still running; no copy started".into()); }
@@ -1762,8 +1789,9 @@ impl ClaudeTurn {
 impl Proc for ClaudeTurn {
     fn checkpoint(&mut self,cfg:&crate::service::Config,l:&Launch,execution:u64)->Result<(),String> {
         self.recovery=Some(Recovery {install:cfg.install.clone(),root:cfg.root.clone(),task:l.task,attempt:l.attempt,execution});
-        let rows=claude_agents(&self.root)?;
-        self.recover_job(&rows,claude_home().as_deref())?;
+        let rows=self.agents()?;
+        let home=self.native_home();
+        self.recover_job(&rows,home.as_deref())?;
         let row=rows.iter().find(|v|v["id"]==self.id).ok_or("Claude checkpoint job unavailable; preserve original input")?;
         self.capture_identity(row)?;
         self.persist()
@@ -1775,8 +1803,9 @@ impl Proc for ClaudeTurn {
     }
     fn exited(&mut self) -> Result<Option<i32>, String> {
         if self.done { return Ok(Some(if self.failure.is_some() {-1} else {0})); }
-        let rows = claude_agents(&self.root)?;
-        self.recover_job(&rows,claude_home().as_deref())?;
+        let rows = self.agents()?;
+        let home=self.native_home();
+        self.recover_job(&rows,home.as_deref())?;
         let row = rows.iter().find(|v| v["id"] == self.id).ok_or("Claude session unavailable; state unknown")?;
         let observed=self.observe(row);
         if self.accepted {self.launch_error=None;}
@@ -1785,12 +1814,13 @@ impl Proc for ClaudeTurn {
     }
     fn exit_error(&self) -> Option<&'static str> { self.failure }
     fn kill(&mut self) -> Result<(), String> {
-        let rows=claude_agents(&self.root)?;
-        self.recover_job(&rows,claude_home().as_deref())?;
+        let rows=self.agents()?;
+        let home=self.native_home();
+        self.recover_job(&rows,home.as_deref())?;
         let row=rows.iter().find(|v|v["id"]==self.id).ok_or("Claude stop identity unavailable")?;
         self.capture_identity(row)?;
         if let Err(e)=self.persist() {log!("Claude recovery checkpoint failed before stop: {e}");}
-        claude_stop(&self.root, &self.id, self.native.as_ref())?;
+        claude_stop(&self.root, &self.id, self.native.as_ref(), self.account().as_deref())?;
         self.done = true;
         Ok(())
     }
@@ -1851,7 +1881,7 @@ impl ClaudeTurn {
             }
             if !claude_stopped(row, self.native.as_ref())? { return Err(format!("Claude job {state}; native process exit unconfirmed; inspect the original job")); }
             if self.history.ended {return self.complete();}
-            self.failure = Some(claude_failure(row, &self.root, &self.id, claude_home().as_deref()));
+            self.failure = Some(claude_failure(row, &self.root, &self.id, self.native_home().as_deref()));
             return Ok(Some(-1));
         }
         // On Windows a waking session briefly publishes a different UUID before restore.
@@ -1869,7 +1899,7 @@ impl ClaudeTurn {
         self.accepted=true;
         if row["status"]!="idle" && row["state"]!="done" && row["state"]!="blocked" {return Ok(None);}
         if !self.history.ended {return Ok(None);}
-        claude_stop(&self.root, &self.id, self.native.as_ref())?;
+        claude_stop(&self.root, &self.id, self.native.as_ref(), self.account().as_deref())?;
         self.complete()
     }
 }
@@ -1956,8 +1986,8 @@ pub fn claude_remote(session: &str) -> Option<String> {
     }
 }
 
-pub fn claude_background(root: &Path, session: &str) -> Result<bool, String> {
-    if claude_agents(root)?.iter().any(|v| v["sessionId"] == session) { return Ok(true); }
+pub fn claude_background(root: &Path, session: &str, home: Option<&Path>) -> Result<bool, String> {
+    if claude_agents_in(root, home)?.iter().any(|v| v["sessionId"] == session) { return Ok(true); }
     // A missing native job must not silently resume a background conversation in print mode.
     Ok(claude_transcript(session).and_then(|p| std::fs::read_to_string(p).ok()).is_some_and(|text|
         text.lines().filter_map(|s| serde_json::from_str::<serde_json::Value>(s).ok()).any(|v| v["sessionKind"] == "bg")))
@@ -1968,8 +1998,17 @@ pub fn claude_background(root: &Path, session: &str) -> Result<bool, String> {
 pub fn worker_transcript(rt: &str, session: &str) -> Result<(bool, PathBuf), String> {
     let a = of(rt);
     if a.name != rt { return Err(format!("runtime {rt:?} has no transcript adapter")); }
-    if a.codex { Ok((true, owner::codex_transcript_in(&codex_home().ok_or("transcript unknown: no Codex home")?, session)?)) }
-    else { Ok((false, claude_transcript_in(&claude_home().ok_or("transcript unknown: no Claude home")?, session)?)) }
+    // § 3 Runtime accounts: the default home first, then each account home; the first error stands when none has it
+    let rt = if a.codex { "codex" } else { "claude" };
+    let homes = crate::runtime::accounts::homes(rt);
+    let mut first = None;
+    for home in &homes {
+        match if a.codex { owner::codex_transcript_in(home, session) } else { claude_transcript_in(home, session) } {
+            Ok(p) => return Ok((a.codex, p)),
+            Err(e) => { first.get_or_insert(e); }
+        }
+    }
+    Err(first.unwrap_or_else(|| format!("transcript unknown: no {} home", if a.codex { "Codex" } else { "Claude" })))
 }
 
 pub(crate) const HANDSHAKE: &str = "taskq handshake: reply OK and do nothing else. The task follows in this thread.\n";
@@ -2121,21 +2160,21 @@ fn app_presence(text: &str, windows: bool) -> Result<bool, String> {
 }
 
 /// `$CODEX_HOME`, default `~/.codex`; a Windows service has no `HOME`.
-fn codex_home() -> Option<PathBuf> {
+pub(crate) fn codex_home() -> Option<PathBuf> {
     std::env::var_os("CODEX_HOME").map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| Path::new(&h).join(".codex")))
 }
 
-/// The thread's rollout file under `$CODEX_HOME/sessions` (default `~/.codex`; a Windows service has no `HOME`).
+/// The thread's rollout file under `$CODEX_HOME/sessions` (default `~/.codex`; a Windows service has no `HOME`), or
+/// under a § 3 runtime account's home.
 pub(crate) fn rollout(thread: &str) -> Option<PathBuf> {
-    let home = codex_home()?;
     fn find(dir: &Path, end: &str) -> Option<PathBuf> {
         std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
             let p = e.path();
             if p.is_dir() { find(&p, end) } else { p.file_name()?.to_str()?.ends_with(end).then_some(p) }
         })
     }
-    find(&home.join("sessions"), &format!("{thread}.jsonl"))
+    crate::runtime::accounts::homes("codex").iter().find_map(|home| find(&home.join("sessions"), &format!("{thread}.jsonl")))
 }
 
 /// Volatile cursor over the native append-only history; restart rebuilds it without replaying work.
@@ -2312,9 +2351,21 @@ pub(crate) fn probe(name: &'static str, bin: &Path, args: &[&str]) -> Option<(bo
 }
 
 fn probe_within(name: &'static str, bin: &Path, args: &[&str], budget: std::time::Duration) -> Option<(bool, String)> {
+    probe_env(name, bin, args, None, budget)
+}
+
+/// A probe in a § 3 runtime account's home: `(variable, home)` names it to the native CLI.
+pub(crate) fn probe_in(name: &'static str, bin: &Path, args: &[&str], home: Option<(&str, &Path)>) -> Option<(bool, String)> {
+    probe_env(name, bin, args, home, std::time::Duration::from_secs(10))
+}
+
+fn probe_env(name: &'static str, bin: &Path, args: &[&str], home: Option<(&str, &Path)>, budget: std::time::Duration) -> Option<(bool, String)> {
     let budget=observation_left(budget);
     if budget.is_zero() {return None;}
-    let out = match coreq::process::output(name, crate::platform::command(bin).args(args), budget) {
+    let mut c = crate::platform::command(bin);
+    c.args(args);
+    if let Some((var, home)) = home { c.env(var, home); }
+    let out = match coreq::process::output(name, &mut c, budget) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
         // #1856: the row reads unknown; the log keeps the command and why
         Err(e) => { crate::platform::log(&format!("{name}: `{} {}` failed: {e}", bin.display(), args.join(" "))); return None }
@@ -2325,6 +2376,22 @@ fn probe_within(name: &'static str, bin: &Path, args: &[&str], budget: std::time
 /// The first word of `--version` output that starts with a digit: `2.1.3 (Claude Code)`, `codex-cli 0.15.3`.
 fn version(out: &str) -> Option<String> {
     out.split_whitespace().find(|w| w.starts_with(|c: char| c.is_ascii_digit())).map(String::from)
+}
+
+/// The login email of a § 3 runtime account on this host; None when the native status names none (R12: unknown).
+pub(crate) fn account_email(rt: &str, label: &str) -> Option<String> {
+    let home = crate::runtime::accounts::home(rt, label);
+    if label != crate::runtime::accounts::DEFAULT && !home.as_deref().is_some_and(Path::is_dir) { return None; }
+    let bin = which(of(rt).bin);
+    let args: &[&str] = if rt == "claude" { &["auth", "status"] } else { &["login", "status"] };
+    let (_, out) = probe_in("runtime.account", &bin, args, home.as_deref().map(|h| (crate::runtime::accounts::var(rt), h)))?;
+    if rt == "claude" {
+        let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+        return v["email"].as_str().filter(|e| e.contains('@')).map(String::from);
+    }
+    // Codex status text: an email only when it prints one; never other words of the line
+    out.split_whitespace().map(|w| w.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '@' && c != '.' && c != '-' && c != '_' && c != '+'))
+        .find(|w| w.contains('@') && !w.starts_with('@') && !w.ends_with('@')).map(String::from)
 }
 
 /// Login state and account from `claude auth status` (JSON) or `codex login status` (text).

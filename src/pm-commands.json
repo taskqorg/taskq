@@ -18,7 +18,9 @@
     {"name": "reports", "use": "taskq reports [N] [--action make|later|drop] [--sha SHA] [--until UTC] --json", "purpose": "List or decide experiment reports: Make tasks, Later with a revisit date, or Drop; the PM decides technical outcomes, asks the owner product, scope or visual ones."},
     {"name": "focus", "use": "taskq service focus [all|off|<label..>] [--request TEXT]", "purpose": "Choose which tasks this host admits; no arguments prints focus and labels."},
     {"name": "profile watch", "use": "taskq profile watch [--since W]", "purpose": "PM telemetry pass of this install: stalls, new or growing action errors, board failures, cadence per board.", "procedure": "telemetry-watch"},
-    {"name": "retro", "use": "taskq retro", "purpose": "Open an owner session on use-case proposals from board history."}
+    {"name": "retro", "use": "taskq retro", "purpose": "Open an owner session on use-case proposals from board history."},
+    {"name": "accounts", "use": "taskq accounts [--json]", "purpose": "List the Codex and Claude login accounts of every host: label, enabled, active, last usage limit and reset; the email only on its own host, never a token."},
+    {"name": "accounts disable", "use": "taskq accounts enable|disable <runtime> <label> | taskq accounts move <runtime> <label> <position> | taskq accounts add <runtime> <label>", "purpose": "On this host, enable, disable or reorder a runtime account, or add one by device login; the next start obeys it, running workers keep their login."}
   ],
   "procedures": [
     {"id": "telemetry-watch", "trigger": "taskq телеметрия", "command": "taskq profile watch --since 1h", "doc": "https://github.com/taskqorg/taskq/blob/main/docs/design/profiling.md#pm-telemetry-watch"}

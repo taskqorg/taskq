@@ -647,6 +647,9 @@ pub struct Api {
     etags: RefCell<std::collections::HashMap<String, (String, Reply)>>,
     /// The last GET was answered 304 Not Modified.
     unchanged: std::cell::Cell<bool>,
+    /// While set, relative URLs resolve under this repository API instead of `base`: a task PR in another repository
+    /// of the same host and token (#2047).
+    scope: RefCell<Option<String>>,
     #[cfg(test)]
     transport: Option<Transport>,
 }
@@ -666,7 +669,7 @@ const ETAGS: usize = 256;
 impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
-        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None, user: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), #[cfg(test)] transport: None }
+        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None, user: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), scope: RefCell::new(None), #[cfg(test)] transport: None }
     }
 
     /// Missing credentials fail closed; replacement drops user/conditional caches and the old token's pause.
@@ -693,7 +696,21 @@ impl Api {
 
     /// The accounting key of `url`, relative to this board's API (§ 4).
     fn op(&self, method: &str, url: &str) -> String {
-        crate::requests::op(method, url.strip_prefix(&self.base).or_else(|| url.strip_prefix(&self.root)).unwrap_or(url))
+        let base = self.repo();
+        crate::requests::op(method, url.strip_prefix(&base).or_else(|| url.strip_prefix(&self.root)).unwrap_or(url))
+    }
+
+    /// The repository API relative URLs resolve under: `base`, or the scope of [`Api::scoped`].
+    fn repo(&self) -> String {
+        self.scope.borrow().clone().unwrap_or_else(|| self.base.clone())
+    }
+
+    /// Run `f` with relative URLs under the repository API `base` (same root, token and budget), then restore (#2047).
+    fn scoped<T>(&self, base: String, f: impl FnOnce() -> T) -> T {
+        let before = self.scope.replace(Some(base));
+        let out = f();
+        self.scope.replace(before);
+        out
     }
 
     /// The reset while this budget, or the install's pause file, holds requests (§ 4).
@@ -707,7 +724,7 @@ impl Api {
 
     /// absolute URLs come from pagination headers: the token goes only to the configured API
     fn absolute(&self, url: &str) -> String {
-        if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) }
+        if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.repo()) }
     }
 
     /// One request counted under `op`. While the board budget is exhausted nothing is sent (§ 4).
@@ -948,8 +965,14 @@ pub fn stamp(t: i64) -> String {
 /// A `kind` adapter whose HTTP requests `reply` answers (method, URL -> JSON body or error), for tests outside this module.
 #[cfg(test)]
 pub fn replying(kind: &Kind, reply: impl Fn(&str, &str) -> Result<Value> + 'static) -> Box<dyn Board> {
+    replying_to(kind, move |method, url, _| reply(method, url))
+}
+
+/// [`replying`] that also sees each request body (GraphQL queries).
+#[cfg(test)]
+pub fn replying_to(kind: &Kind, reply: impl Fn(&str, &str, Option<Value>) -> Result<Value> + 'static) -> Box<dyn Board> {
     let mut api = (kind.api)(if kind.name == "github" { "github.com" } else { "gitlab.example" }, "o/r", "test");
-    api.transport = Some(Box::new(move |method, url, _| reply(method, url).map(|v| Reply { status: 200, headers: vec![], body: v.to_string(), operation: operation(method) })));
+    api.transport = Some(Box::new(move |method, url, body| reply(method, url, body).map(|v| Reply { status: 200, headers: vec![], body: v.to_string(), operation: operation(method) })));
     (kind.board)(api)
 }
 
@@ -1678,7 +1701,7 @@ mod tests {
                 *reads.borrow_mut() += 1;
                 let yes = if *reads.borrow() == 1 { first_merged } else { second_merged.ok_or("HTTP 503")? };
                 json!({"merged": yes, "state": if yes { "merged" } else { "opened" }, "merge_commit_sha": merged})
-            } else { panic!("unexpected {method} {url}") };
+            } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         (h, calls)
@@ -1750,7 +1773,7 @@ mod tests {
                         json!([{"number": 6, "iid": 6, "head": {"sha": "d".repeat(40)}, "sha": "d".repeat(40), "merged_at": "x"},
                                {"number": 7, "iid": 7, "head": {"sha": "a".repeat(40)}, "sha": "a".repeat(40), "merged_at": "x", "merge_commit_sha": "b".repeat(40),
                                 "base": {"ref": base}, "target_branch": base}])
-                    } else { panic!("unexpected {method} {url}") };
+                    } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let Publish::Done(m) = h.publish(1, &"a".repeat(40), "pr", "title", "Task: fake") else { panic!("not reconciled") };
@@ -1781,7 +1804,7 @@ mod tests {
                 else if url.contains("state=closed") { json!([{"number": 7, "head": {"sha": "a".repeat(40)}, "merged_at": "x", "merge_commit_sha": "b".repeat(40), "base": {"ref": "main"}}]) }
                 else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
                 else if url.ends_with("/status") { json!({"total_count": 0}) }
-                else { panic!("unexpected {method} {url}") };
+                else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         for _ in 0..3 {
@@ -1811,7 +1834,7 @@ mod tests {
                     json!([{"number": 86, "head": {"sha": "d".repeat(40)}, "merged_at": "x"},
                            {"number": 87, "head": {"sha": "a".repeat(40)}, "merged_at": null},
                            {"number": 88, "head": {"sha": "e".repeat(40)}, "merged_at": "x"}])
-                } else { panic!("unexpected {method} {url}") };
+                } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         let sha = "a".repeat(40);
@@ -1850,7 +1873,7 @@ mod tests {
                     }
                     else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
                     else if url.ends_with("/status") { json!({"total_count": 0}) }
-                    else { panic!("unexpected {method} {url}") };
+                    else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let sha = "a".repeat(40);
@@ -1942,7 +1965,7 @@ mod tests {
                     else if url.contains("/actions/runs?") { assert!(url.contains(&merge)); runs.clone() }
                     else if url.contains("/check-runs") { assert!(url.contains(&merge)); checks.clone() }
                     else if url.ends_with("/status") { assert!(url.contains(&merge)); recorded("status-none") }
-                    else { panic!("unexpected {method} {url}") };
+                    else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race" | "head-moved" | "conflicting" | "enqueue-checks-running" | "enqueue-checks-failed");
@@ -2004,7 +2027,7 @@ mod tests {
                 else if url.contains("/actions/runs?") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); runs.clone() }
                 else if url.contains("/check-runs") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); recorded("checks-green") }
                 else if url.ends_with("/status") { recorded("status-none") }
-                else { panic!("unexpected {method} {url}") };
+                else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         // A rebase would need the task worktree; this host has none, so any rebase attempt fails the pass.
@@ -2019,6 +2042,203 @@ mod tests {
         let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, true);
         assert!(matches!(&got, Publish::Done(m) if m.contains(&format!("as {merge}; merge-result CI green"))), "{got:?}");
         assert_eq!(writes.borrow().len(), 1, "one enqueue, no rebase or push: {:?}", writes.borrow());
+    }
+
+    /// A GitHub board `o/r` whose task 1 result SHA lives in repository `o/x`: the board repository's compare is 404,
+    /// the trusted log links `o/x` PR 1590, and `foreign` answers every `o/x` read (#2047).
+    fn foreign_pr_board(foreign: impl Fn(&str, &str, Option<Value>) -> Value + 'static) -> Box<dyn Board> {
+        use crate::core::entry;
+        let head = recorded("pulls-open")[0]["head"]["sha"].as_str().unwrap().to_string();
+        let log = [
+            entry("result", &["1111111111111111111111111111111111111111"], Some(1), "Changed: older attempt [o/y#1](https://github.com/o/y/pull/1)"),
+            entry("requeue", &[], None, "worker again"),
+            entry("result", &[&head], Some(2), "Changed: [o/x#1590](https://github.com/o/x/pull/1590), board change https://github.com/o/r/pull/3."),
+            entry("publish", &[], None, "Changed: [o/x#1590](https://github.com/o/x/pull/1590)"),
+        ];
+        http(&github::KIND, None, Box::new(move |method, url, body| {
+            let reply = |status: u16, v: Value| Ok(Reply { status, headers: vec![], body: v.to_string(), operation: operation(method) });
+            if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                return if rest.starts_with("/compare/") { reply(404, json!({"message": "Not Found"})) }
+                    else if rest.starts_with("/pulls?") { reply(200, json!([])) }
+                    else if rest.starts_with("/issues/1/comments") {
+                        reply(200, json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                            "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+                    } else { panic!("board repository read {method} {url}") };
+            }
+            let v = foreign(method, url, body);
+            if v["status"] == 404 { reply(404, json!({"message": "Not Found"})) } else { reply(200, v) }
+        }))
+    }
+
+    // #2047 defect (#2009, #2010, #2015): a task PR in another repository looped on the board repository's
+    // `compare main...<sha>` HTTP 404; no stage, requeue refused. Chain: section 7 Publication routes, foreign PR ->
+    // that repository's merge queue, merge state and CI -> close. Risk kept: a foreign PR is read in the board
+    // repository, merges unqualified, or an unreadable PR retries silently.
+    #[test]
+    fn a_task_pr_in_another_repository_publishes_there_and_blocks_by_name() {
+        let state = std::rc::Rc::new(RefCell::new(recorded("queue-open")));
+        let head = recorded("pulls-open")[0]["head"]["sha"].as_str().unwrap().to_string();
+        state.borrow_mut()["data"]["node"]["headRefOid"] = head.clone().into();
+        state.borrow_mut()["data"]["node"]["mergeable"] = "MERGEABLE".into();
+        let runs = recorded("runs-green");
+        let merge = runs["workflow_runs"][0]["head_sha"].as_str().unwrap().to_string();
+        let (read, merged, sent) = (state.clone(), merge.clone(), head.clone());
+        let h = foreign_pr_board(move |method, url, body| {
+            if url.ends_with("/graphql") {
+                let body = body.unwrap();
+                let query = body["query"].as_str().unwrap();
+                return if query.contains("enqueuePullRequest") { assert_eq!(body["variables"]["sha"], sent); recorded("enqueue-admitted") }
+                    else if !query.contains("timelineItems") { recorded("readback-enqueued") }
+                    else { read.borrow().clone() };
+            }
+            let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {method} {url}"));
+            if rest.starts_with("/compare/") { json!({"status": "diverged"}) }
+            else if rest == "/pulls/1590" { recorded("pulls-open")[0].clone() }
+            else if rest == "/rules/branches/main" { recorded("rules-merge-queue") }
+            else if rest.starts_with("/actions/runs?") { assert!(rest.contains(&merged)); runs.clone() }
+            else if rest.contains("/check-runs") { recorded("checks-green") }
+            else if rest.ends_with("/status") { recorded("status-none") }
+            else { panic!("unexpected {method} {url}") }
+        });
+        let root = std::path::Path::new("missing-worktree");
+        let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, false);
+        assert!(matches!(got, Publish::Enqueued(_)), "A1/A2: enqueued in o/x, so status shows the merge queue stage: {got:?}");
+        let mut done = recorded("queue-merged");
+        done["data"]["node"]["headRefOid"] = head.clone().into();
+        done["data"]["node"]["mergeCommit"]["oid"] = merge.clone().into();
+        *state.borrow_mut() = done;
+        let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, true);
+        assert!(matches!(&got, Publish::Done(m) if m.starts_with(&format!("merged #1590 in o/x as {merge}; merge-result CI green"))), "A1: {got:?}");
+        assert!(matches!(h.resume_publication(1, &head, "direct", "title", "Task: invented", root, false), Publish::Blocked(e) if e.starts_with("o/x#1590: ")));
+
+        // A3: an unreadable PR is a named blocker at once, not a pending retry.
+        let h = foreign_pr_board(|method, url, _| match url.strip_prefix("https://api.github.com/repos/o/x") {
+            Some("/pulls/1590") => json!({"status": 404}),
+            _ => panic!("unexpected {method} {url}"),
+        });
+        let got = h.resume_publication(1, &head, "pr", "title", "Task: invented", root, false);
+        assert!(matches!(&got, Publish::Blocked(e) if e.starts_with("publication PR o/x#1590 unreachable: GET ")), "A3: {got:?}");
+        assert_eq!(got.outcome().0, "ask");
+        let mut closed = recorded("pulls-open")[0].clone();
+        closed["state"] = "closed".into();
+        let h = foreign_pr_board(move |method, url, _| match url.strip_prefix("https://api.github.com/repos/o/x") {
+            Some(r) if r.starts_with("/compare/") => json!({"status": "diverged"}),
+            Some("/pulls/1590") => closed.clone(),
+            Some("/rules/branches/main") => recorded("rules-merge-queue"),
+            _ => panic!("unexpected {method} {url}"),
+        });
+        assert!(matches!(h.publish(1, &head, "pr", "title", "Task: invented"), Publish::Blocked(e) if e.starts_with("o/x#1590: publication PR closed unmerged")));
+    }
+
+    // #2047 A3 defect: requeue of a task whose PR lives in another repository was refused as 'publication PR absent or
+    // ambiguous'. Chain: section 7 cancel dequeues -> the foreign PR's queue entry. Risk kept: an unreadable or merged
+    // foreign PR never claims cancellation.
+    #[test]
+    fn requeue_cancels_a_task_pr_in_another_repository() {
+        let head = recorded("pulls-open")[0]["head"]["sha"].as_str().unwrap().to_string();
+        for scenario in ["queued", "merged", "unreachable"] {
+            let removed = std::rc::Rc::new(RefCell::new(false));
+            let done = removed.clone();
+            let h = foreign_pr_board(move |method, url, body| {
+                if url.ends_with("/graphql") {
+                    return if body.unwrap()["query"].as_str().unwrap().contains("dequeuePullRequest") { *done.borrow_mut() = true; recorded("dequeue-done") }
+                        else { recorded(match scenario { "merged" => "cancel-merged", _ if *done.borrow() => "cancel-open", _ => "cancel-queued" }) };
+                }
+                match url.strip_prefix("https://api.github.com/repos/o/x") {
+                    Some("/pulls/1590") if scenario == "unreachable" => json!({"status": 404}),
+                    Some("/pulls/1590") => recorded("pulls-open")[0].clone(),
+                    _ => panic!("unexpected {method} {url}"),
+                }
+            });
+            let result = h.cancel_publication(1, &head);
+            assert_eq!(result.is_ok(), scenario == "queued", "{scenario}: {result:?}");
+            assert_eq!(*removed.borrow(), scenario == "queued", "{scenario}");
+            if let Err(e) = result { assert!(e.contains("o/x#1590"), "{scenario}: the blocker names the PR: {e}"); }
+        }
+    }
+
+    // #2061 defect (#2010 pilotq#200, #2015 dashq#241): a result naming its PR as `owner/name#P` compared in the board
+    // repository (HTTP 404 every pass), and a PR merged at a rebased head whose diff GitHub omitted a file patch of, or
+    // whose hunks a rebase reordered, asked the owner. Chain: publication (agent-behavior.md, publication.md) -> the
+    // named PR's repository only -> merged head carries the result's changes -> close with the merge commit.
+    // Retained: a mention that is not the task's PR is skipped; a merged head with other changes still asks the owner.
+    #[test]
+    fn a_task_pr_named_by_reference_publishes_in_its_repository_and_closes_its_rebased_merge() {
+        use crate::core::entry;
+        let (sha, head, merge, base) = ("a".repeat(40), "d".repeat(40), "b".repeat(40), "c".repeat(40));
+        let views = |patch: &str| json!({"filename": "docs/views.md", "status": "modified", "sha": "1".repeat(40), "patch": patch});
+        let blob = |b: &str| json!({"filename": "assets/app.js", "status": "modified", "sha": b.repeat(40)});
+        // the merged head: main inserted context next to the change and the diff moved the removed line after the added ones
+        let merged = json!({"files": [views("@@ -41,3 +41,4 @@ ## Views\n sibling row\n+row new\n+row two\n-row old\n context"), blob("e")]});
+        for case in ["same", "binary", "lines"] {
+            let result = json!({"files": [
+                views(if case == "lines" { "@@ -38,3 +38,4 @@\n before\n-row old\n+row new\n+row three\n after" } else { "@@ -38,3 +38,4 @@\n before\n-row old\n+  row new\n+row two\n after" }),
+                blob(if case == "binary" { "f" } else { "e" })]});
+            // the last named PR is read first: o/y#7 is only a mention
+            let log = [entry("result", &[&sha], Some(1), "Changed: delivered in taskq-style o/x#241, follows o/y#7.\nChecks: A1 ok\nOpen: none")];
+            let reads = std::rc::Rc::new(RefCell::new(vec![]));
+            let seen = reads.clone();
+            let h = {
+                let (sha, head, merge, base, merged) = (sha.clone(), head.clone(), merge.clone(), base.clone(), merged.clone());
+                http(&github::KIND, None, Box::new(move |method, url, _| {
+                    assert_eq!(method, "GET", "no publication write: {url}");
+                    seen.borrow_mut().push(url.to_string());
+                    let value = if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                        // A1: the board repository serves only the task log; any compare or PR read there panics
+                        assert!(rest.starts_with("/issues/1/comments"), "board repository read {url}");
+                        json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                            "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>())
+                    } else if url == "https://api.github.com/repos/o/y/pulls/7" {
+                        json!({"number": 7, "state": "open", "head": {"ref": "feature", "sha": "9".repeat(40)}})
+                    } else {
+                        let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {url}"));
+                        if rest == "/pulls/241" {
+                            json!({"number": 241, "state": "closed", "merged_at": "x", "merge_commit_sha": merge, "head": {"ref": "taskq-1", "sha": head}, "base": {"ref": "main"}})
+                        } else if rest == format!("/compare/main...{sha}") { json!({"status": "diverged"}) }
+                        else if rest == "/rules/branches/main" { json!([]) }
+                        else if rest == format!("/commits/{merge}") { json!({"parents": [{"sha": base}]}) }
+                        else if rest == format!("/compare/{base}...{head}") { merged.clone() }
+                        else if rest == format!("/compare/{base}...{sha}") { result.clone() }
+                        else if rest.contains("/check-runs") { assert!(rest.contains(&head)); json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
+                        else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                        else { panic!("unexpected {method} {url}") }
+                    };
+                    Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+                }))
+            };
+            let got = h.resume_publication(1, &sha, "pr", "title", "Task: invented", std::path::Path::new("missing-worktree"), false);
+            match case {
+                // A2: the rebased merge carries the reviewed changes; it closes with its merge commit, no ask
+                "same" => assert_eq!(got, Publish::Done(format!("merged #241 in o/x as {merge} (head ddddddd, the result's changes); exact-SHA CI green on {head}"))),
+                // A3: another blob or other changed lines keep the publication-blocked ask, named by the PR
+                _ => {
+                    assert!(matches!(&got, Publish::Superseded { reason, merged } if reason.starts_with("o/x#241: ") && merged == "#241 at ddddddd"), "{case}: {got:?}");
+                    assert_eq!(got.outcome().0, "ask", "{case}");
+                }
+            }
+            // A1: the mention o/y#7 is read once and skipped; every other read is in o/x
+            assert_eq!(reads.borrow().iter().filter(|u| u.contains("/repos/o/y/")).count(), 1, "{case}: {:?}", reads.borrow());
+        }
+    }
+
+    // #2061 A4 defect (#2010): the board repository's compare HTTP 404 was the only reason shown for a result the board
+    // repository does not hold. Chain: publication -> no task PR of another repository named -> one stable reason
+    // naming the repository compared, so the service logs it once. Retained: the publication waits, no ask.
+    #[test]
+    fn a_result_missing_from_the_board_repository_waits_with_one_reason_naming_it() {
+        let sha = "a".repeat(40);
+        let log = [crate::core::entry("result", &[&sha], Some(1), "Changed: x, see #12\nChecks: A1 ok\nOpen: none")];
+        let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+            let rest = url.strip_prefix("https://api.github.com/repos/o/r").unwrap_or_else(|| panic!("read outside o/r: {method} {url}"));
+            let reply = |status: u16, v: Value| Ok(Reply { status, headers: vec![], body: v.to_string(), operation: operation(method) });
+            if rest.starts_with("/compare/") { reply(404, json!({"message": "Not Found"})) }
+            else if rest.starts_with("/issues/1/comments") {
+                reply(200, json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                    "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+            } else { panic!("unexpected {method} {url}") }
+        }));
+        let want = Publish::Pending(format!("result {sha} not found in o/r (compare HTTP 404); the result names no task PR of another repository"));
+        for pass in 0..2 { assert_eq!(h.publish(1, &sha, "pr", "title", "Task: invented"), want, "pass {pass}"); }
     }
 
     // Chain: section 7 private fallback real Git fetch/rebase/leased push, or conflict/dirty preservation.
@@ -2078,7 +2298,7 @@ exit 0
                     else if url.ends_with("/git/ref/heads/taskq-1") {
                         let out = std::process::Command::new("git").arg("--git-dir").arg(&bare).args(["rev-parse", "refs/heads/taskq-1"]).output().unwrap();
                         json!({"object": {"sha": String::from_utf8(out.stdout).unwrap().trim()}})
-                    } else { panic!("unexpected {method} {url}") };
+                    } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let out = h.resume_publication(1, &sha, "pr", "title", "Task: invented", &root, false);
@@ -2390,7 +2610,7 @@ exit 0
                     }
                     else if url.ends_with("/pulls/7/merge") { assert_eq!(body.unwrap()["sha"], result); json!({"sha": merged}) }
                     else if url.ends_with("/pulls/7") { json!({"merged": true, "merge_commit_sha": merged}) }
-                    else { panic!("unexpected {method} {url}") };
+                    else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let out = h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false);
