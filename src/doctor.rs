@@ -219,21 +219,20 @@ fn windows_tasks(text: &str) -> Vec<Entry> {
 /// systemd user units: failed qualification or `taskq-*` units are reset; the service unit never matches.
 #[cfg(target_os = "linux")]
 fn native_clean(now: SystemTime) -> Result<(u64, u64), String> {
-    use std::process::Command;
-    let out = crate::platform::output("doctor.units", Command::new("systemctl").args(["--user", "list-units", "--all", "--state=failed",
+    let out = crate::platform::output("doctor.units", crate::platform::command("systemctl").args(["--user", "list-units", "--all", "--state=failed",
         "--plain", "--no-legend", "--no-pager"]), NATIVE_BUDGET)?;
     if !out.status.success() { return Err("user units unreadable".into()); }
     let failed: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.split_whitespace().next().map(String::from))
         .filter(|u| u != "taskq.service").collect();
     if failed.is_empty() { return Ok((0, 0)); }
-    let show = crate::platform::output("doctor.units.age", Command::new("systemctl").args(["--user", "show", "--property=Id",
+    let show = crate::platform::output("doctor.units.age", crate::platform::command("systemctl").args(["--user", "show", "--property=Id",
         "--property=StateChangeTimestampMonotonic", "--no-pager"]).args(&failed), NATIVE_BUDGET)?;
     let uptime = fs::read_to_string("/proc/uptime").ok().and_then(|t| t.split_whitespace().next()?.parse::<f64>().ok())
         .ok_or("uptime unknown")?;
     let names = removable(&linux_units(&String::from_utf8_lossy(&show.stdout), uptime, now), now, Some("taskq-"));
     let (mut removed, mut failures) = (0, 0);
     for unit in names.into_iter().filter(|u| u != "taskq.service") {
-        match crate::platform::output("doctor.units.reset", Command::new("systemctl").args(["--user", "reset-failed", &unit]), NATIVE_BUDGET) {
+        match crate::platform::output("doctor.units.reset", crate::platform::command("systemctl").args(["--user", "reset-failed", &unit]), NATIVE_BUDGET) {
             Ok(o) if o.status.success() => removed += 1,
             _ => failures += 1,
         }
@@ -259,12 +258,11 @@ fn linux_units(text: &str, uptime: f64, now: SystemTime) -> Vec<Entry> {
 /// last exit is taken as its end.
 #[cfg(target_os = "macos")]
 fn native_clean(_now: SystemTime) -> Result<(u64, u64), String> {
-    use std::process::Command;
-    let out = crate::platform::output("doctor.jobs", Command::new("launchctl").arg("list"), NATIVE_BUDGET)?;
+    let out = crate::platform::output("doctor.jobs", crate::platform::command("launchctl").arg("list"), NATIVE_BUDGET)?;
     if !out.status.success() { return Err("launchd jobs unreadable".into()); }
     let (mut removed, mut failures) = (0, 0);
     for label in mac_jobs(&String::from_utf8_lossy(&out.stdout)) {
-        match crate::platform::output("doctor.jobs.remove", Command::new("launchctl").args(["remove", &label]), NATIVE_BUDGET) {
+        match crate::platform::output("doctor.jobs.remove", crate::platform::command("launchctl").args(["remove", &label]), NATIVE_BUDGET) {
             Ok(o) if o.status.success() => removed += 1,
             _ => failures += 1,
         }

@@ -2598,7 +2598,7 @@ fn service(args: &Args) -> Res<()> {
                 Err(_)=>{},
             }
         }
-        #[cfg(windows)] runtime::windows_process::exit_with_launcher(&install.join(platform::tool(&install).exe_name()));
+        #[cfg(windows)] {let t=platform::tool(&install);runtime::windows_process::exit_with_launcher(&[install.join(t.gui_exe_name()),install.join(t.exe_name())]);}
         // #1856: a service start (install, update, logon) logs each host tool gap with its fix
         for l in tools::gaps(&install,None) {platform::log(&l);}
         return host::run(&install);
@@ -3687,8 +3687,10 @@ fn application() {
     let install = platform::default_install();
     let exe = std::env::current_exe().ok().and_then(|e| e.canonicalize().ok());
     let t = platform::tool(&install);
-    let launcher = install.join(t.exe_name()).canonicalize().ok();
-    if exe.is_some() && exe == launcher && t.current().is_some() {
+    // #2049 A1: Windows tasks start the GUI launcher `<install>/taskqw.exe`; it runs every command windowless.
+    let gui = exe.as_deref().and_then(Path::file_name).is_some_and(|f| f.eq_ignore_ascii_case(t.gui_exe_name()));
+    if exe.as_deref().is_some_and(|e| t.is_launcher(e)) && t.current().is_some() {
+        if gui { coreq::launcher::launch(&t, &args); }
         // #1566: CoreQ's Windows launcher ends a CLI call through `ExitProcess`, the TLS-teardown hang `platform::exit` avoids.
         // M15: the launcher is the Windows app. No arguments on its own console (Explorer, Start menu, taskbar pin) opens
         // TaskQ without a console window; the tray runs in this process, so its exe path, and the pins keyed by it,
