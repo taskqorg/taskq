@@ -97,7 +97,7 @@ impl Proc for Child {
         if self.exited()?.is_some() { return Ok(()); }
         // Windows: the child is `cmd.exe` running `codex.cmd`; node and `codex.exe` below it survive a plain kill (#933)
         #[cfg(windows)]
-        coreq::process::output("runtime.taskkill", Command::new("taskkill").args(["/F", "/T", "/PID", &Child::id(self).to_string()]), observation_left(std::time::Duration::from_secs(10))).map_err(|e| format!("process tree stop unconfirmed: {e}"))?;
+        coreq::process::output("runtime.taskkill", crate::platform::command("taskkill").args(["/F", "/T", "/PID", &Child::id(self).to_string()]), observation_left(std::time::Duration::from_secs(10))).map_err(|e| format!("process tree stop unconfirmed: {e}"))?;
         #[cfg(not(windows))]
         Child::kill(self).map_err(|e| format!("process stop unconfirmed: {e}"))?;
         Ok(())
@@ -578,17 +578,17 @@ pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &
     #[cfg(windows)]
     if access.windows { return crate::windows_sandbox::command(env); }
     if access.linux {
-        let mut c = Command::new("/usr/local/libexec/taskq-sandbox");
+        let mut c = crate::platform::command("/usr/local/libexec/taskq-sandbox");
         c.arg(env.root).arg(env.install).arg(&access.mode).arg(bin);
         return Ok(c);
     }
     Ok(match &access.profile {
         Some(p) => {
-            let mut c = Command::new("/usr/bin/sandbox-exec");
+            let mut c = crate::platform::command("/usr/bin/sandbox-exec");
             c.arg("-p").arg(p).arg(bin);
             c
         }
-        None => Command::new(bin),
+        None => crate::platform::command(bin),
     })
 }
 
@@ -600,7 +600,6 @@ pub(crate) fn cli(rt: &str, access: &crate::policy::Effective, env: &Env) -> Res
 
 pub fn command(env: &Env, l: &Launch, access: &crate::policy::Effective) -> Result<Command, String> {
     let mut c = cli(&l.rt, access, env)?;
-    crate::platform::quiet(&mut c);
     let codex = access.codex.as_deref().unwrap_or(env.codex);
     let mode = access.claude.as_deref().unwrap_or(env.permission_mode);
     let build = build_cache_for(&l.rt, access, env);
@@ -723,7 +722,7 @@ fn project_contract(root: &Path) -> Result<Option<PathBuf>, StartError> {
 fn base_contract(root: &Path) -> Result<Option<(String, Option<Vec<u8>>)>, StartError> {
     if !root.join(".git").try_exists().map_err(|e| refused("project contract", e))? { return Ok(None); }
     // #1856: each failed call is logged with its command and error, also where it means absent (no `origin/main`)
-    let git = |args: &[&str]| crate::tools::run("rules.contract", Command::new("git").arg("-C").arg(root)
+    let git = |args: &[&str]| crate::tools::run("rules.contract", crate::platform::command("git").arg("-C").arg(root)
         .args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(30))
         .map_err(|e| crate::platform::log(&format!("project contract: {e}"))).ok();
     // ponytail: a failed fetch keeps the last fetched commit; the header names it and the worker branches from the same ref
@@ -838,7 +837,7 @@ const CONTRACT: &str = include_str!("../taskq.md");
 const INDEX: &str = "\nIndex of other shared rules";
 
 fn rule_file(url: &str) -> Result<String, String> {
-    let out = match coreq::process::output("rules.download", Command::new("curl").args(["-q", "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", "10", "--max-filesize", "131072", "--write-out", "\n%{http_code}", url]), std::time::Duration::from_secs(15)) {
+    let out = match coreq::process::output("rules.download", crate::platform::command("curl").args(["-q", "--fail", "--silent", "--show-error", "--proto", "=https", "--max-time", "10", "--max-filesize", "131072", "--write-out", "\n%{http_code}", url]), std::time::Duration::from_secs(15)) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
         Err(e) => return Err(e.to_string()),
     };
@@ -1956,7 +1955,7 @@ pub fn session_id(root:&Path,rt:&str,id:&str,task:u64,attempt:u64,role:&str)->St
 /// The one opener (A2): a session link, web page or folder in this host's default app. `wait` bounds the opener's
 /// exit for callers that act on the open (Codex app queue); the tray only spawns it.
 pub fn open_link(arg: &str, wait: bool) -> Result<(), String> {
-    let mut c = Command::new(if cfg!(windows) { "explorer" } else { "open" });
+    let mut c = crate::platform::command(if cfg!(windows) { "explorer" } else { "open" });
     crate::platform::quiet(c.arg(arg));
     if !wait { return c.spawn().map(|_| ()).map_err(|e| e.to_string()); }
     match coreq::process::output("runtime.open-link", &mut c, std::time::Duration::from_secs(10)) {
@@ -2070,11 +2069,11 @@ fn codex_direct() -> Command {
     match js.filter(|js| bin.extension().is_some_and(|e| e.eq_ignore_ascii_case("cmd")) && js.is_file()) {
         Some(js) => {
             let node = bin.with_file_name("node.exe");
-            let mut c = Command::new(if node.is_file() { node } else { which("node") });
+            let mut c = crate::platform::command(if node.is_file() { node } else { which("node") });
             c.arg(js);
             c
         }
-        None => Command::new(bin),
+        None => crate::platform::command(bin),
     }
 }
 
@@ -2121,7 +2120,7 @@ impl Proc for AppTurn {
 /// The Codex app runs in this login session: macOS `lsappinfo`, Windows a `tasklist /APPS` row of its package.
 fn app_running() -> Result<bool, String> {
     coreq::telemetry::capture::operation("runtime.app-readback", || {
-    let mut c = if cfg!(windows) { Command::new("tasklist") } else { Command::new("lsappinfo") };
+    let mut c = if cfg!(windows) { crate::platform::command("tasklist") } else { crate::platform::command("lsappinfo") };
     if cfg!(windows) {
         c.args(["/APPS", "/FO", "CSV", "/NH"]);
     } else {
@@ -2363,7 +2362,7 @@ pub(crate) fn probe_in(name: &'static str, bin: &Path, args: &[&str], home: Opti
 fn probe_env(name: &'static str, bin: &Path, args: &[&str], home: Option<(&str, &Path)>, budget: std::time::Duration) -> Option<(bool, String)> {
     let budget=observation_left(budget);
     if budget.is_zero() {return None;}
-    let mut c = Command::new(bin);
+    let mut c = crate::platform::command(bin);
     c.args(args);
     if let Some((var, home)) = home { c.env(var, home); }
     let out = match coreq::process::output(name, &mut c, budget) {

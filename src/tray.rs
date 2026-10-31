@@ -376,7 +376,7 @@ fn answer_args(install: &Path, m: &Value) -> Result<Vec<String>, String> {
 }
 
 fn owner_command(root: &Path) -> Result<std::process::Command, String> {
-    let mut c = std::process::Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+    let mut c = crate::platform::command(std::env::current_exe().map_err(|e| e.to_string())?);
     c.current_dir(root).env("TASKQ_ROOT", root).env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE");
     Ok(c)
 }
@@ -2380,7 +2380,7 @@ fn capture_screen(window:&Window,path:&Path)->Result<(),String> {
         if !CGPreflightScreenCaptureAccess(){return Err("Screen Recording not allowed (TCC); no prompt requested".into());}
         objc2::msg_send![window.ns_window() as *mut objc2::runtime::AnyObject, windowNumber]
     };
-    crate::platform::output("tray.agentq-screencapture",std::process::Command::new("/usr/sbin/screencapture").args(["-x","-o","-l",&id.to_string()]).arg(path),Duration::from_secs(5)).map_err(|e|e.to_string())?;
+    crate::platform::output("tray.agentq-screencapture",crate::platform::command("/usr/sbin/screencapture").args(["-x","-o","-l",&id.to_string()]).arg(path),Duration::from_secs(5)).map_err(|e|e.to_string())?;
     if !fs::read(path).is_ok_and(|b|b.starts_with(b"\x89PNG\r\n\x1a\n")){return Err("screencapture wrote no PNG".into());} Ok(())
 }
 
@@ -2449,11 +2449,11 @@ fn refresh_app_icon(img: &Rgba, window: Option<&Window>) -> Result<(),String> {
 /// tray reopens its `TaskQ.app` through LaunchServices as Open does (M14); else this executable runs `tray --open`.
 fn relaunch(install: &Path) -> std::io::Result<()> {
     let exe = std::env::current_exe()?;
-    let mut c = std::process::Command::new(&exe);
+    let mut c = crate::platform::command(&exe);
     c.args(["tray", "--open"]);
     #[cfg(target_os = "macos")]
     if let Some(app) = exe.ancestors().nth(3).filter(|_| exe.ends_with("TaskQ.app/Contents/MacOS/taskq")) {
-        c = std::process::Command::new("open");
+        c = crate::platform::command("open");
         c.arg("-n").arg(app);
     }
     let err = fs::OpenOptions::new().create(true).append(true).open(install.join("tray.log")).map(std::process::Stdio::from).unwrap_or_else(|_| std::process::Stdio::null());
@@ -2461,7 +2461,7 @@ fn relaunch(install: &Path) -> std::io::Result<()> {
     // its own process group, as the service starts it: a later service stop leaves this tray alone
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut c, 0);
-    crate::platform::quiet(&mut c).spawn().map(drop)
+    c.spawn().map(drop)
 }
 
 fn workspace_operation(action:&str)->bool {
@@ -2642,12 +2642,12 @@ fn resources() -> crate::Res<Value> {
     fs::write(&file, if cfg!(windows) { BTOP_PS1 } else { BTOP_SH }).map_err(|e|e.to_string())?;
     // The terminal owns its human-driven lifetime. Submission does not claim that btop installed or appeared.
     let mut command=if cfg!(windows) {
-        let path=file.display().to_string().replace('\'',"''");let mut c=std::process::Command::new("powershell");
+        let path=file.display().to_string().replace('\'',"''");let mut c=crate::platform::command("powershell");
         c.args(["-NoProfile","-Command",&format!("$args=@('powershell','-NoProfile','-ExecutionPolicy','Bypass','-File','\"{path}\"'); Start-Process -FilePath 'conhost.exe' -ArgumentList $args -ErrorAction Stop")]);c
     } else {
         #[cfg(unix)]
         fs::set_permissions(&file, std::os::unix::fs::PermissionsExt::from_mode(0o755)).map_err(|e|e.to_string())?;
-        let mut c=std::process::Command::new("open");c.args(["-a", "Terminal"]).arg(&file);c
+        let mut c=crate::platform::command("open");c.args(["-a", "Terminal"]).arg(&file);c
     };
     let output=crate::platform::output("tray.resources.submit",&mut command,Duration::from_secs(30))?;
     if !output.status.success() {return Err(String::from_utf8_lossy(&output.stderr).lines().find(|line|!line.trim().is_empty()).unwrap_or("resource terminal submission failed").chars().take(160).collect());}
@@ -2657,16 +2657,16 @@ fn resources() -> crate::Res<Value> {
 /// The OS folder picker; None on cancel.
 fn pick() -> Result<Option<PathBuf>,String> {
     let mut c = if cfg!(windows) {
-        let mut c = std::process::Command::new("powershell");
+        let mut c = crate::platform::command("powershell");
         c.args(["-NoProfile", "-STA", "-Command", "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = 'Add project'; if ($d.ShowDialog() -eq 'OK') { [Console]::Out.Write($d.SelectedPath) }"]);
         c
     } else {
-        let mut c = std::process::Command::new("osascript");
+        let mut c = crate::platform::command("osascript");
         c.args(["-e", "activate", "-e", "POSIX path of (choose folder with prompt \"Add project\")"]);
         c
     };
     coreq::telemetry::capture::operation("tray.picker",|| {
-    let o = crate::platform::quiet(&mut c).output().map_err(|e|format!("folder picker did not start: {e}"))?;
+    let o = c.output().map_err(|e|format!("folder picker did not start: {e}"))?;
     pick_result(o)
     },|_|"picker-error")
 }
@@ -2686,7 +2686,7 @@ fn pick_result(o:std::process::Output)->Result<Option<PathBuf>,String> {
 /// prints it with its fix ([host tools](docs/design/host-service.md#host-tools)).
 fn selftest(dir: &Path) -> Result<(), String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
-    let o = crate::platform::output("tray.selftest",std::process::Command::new(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"),Duration::from_secs(30))?;
+    let o = crate::platform::output("tray.selftest",crate::platform::command(me).arg("selftest").current_dir(dir).env("TASKQ_ROOT", dir).env("TASKQ_SELFTEST_TOOLS","off"),Duration::from_secs(30))?;
     let text = String::from_utf8_lossy(&o.stderr).to_string() + &String::from_utf8_lossy(&o.stdout);
     if o.status.success() { Ok(()) } else { Err(text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("selftest failed").chars().take(160).collect()) }
 }
@@ -2709,7 +2709,7 @@ fn classify(dir: &Path, selftest: impl Fn(&Path) -> Result<(), String>) -> Value
 fn install_service(install: &Path, mut a: Value) -> Value {
     let dir = PathBuf::from(a["path"].as_str().unwrap_or(""));
     let r = std::env::current_exe().map_err(|e| e.to_string()).and_then(|me| {
-        let mut c = std::process::Command::new(me);
+        let mut c = crate::platform::command(me);
         c.args(["service", "install"]).current_dir(&dir).env("TASKQ_ROOT", &dir).stdin(std::process::Stdio::null());
         // a separate process group: launchctl must not take the tray with it
         #[cfg(unix)]
@@ -2778,7 +2778,7 @@ fn open(arg: &str) {
 fn is_dark(_w: &Window) -> bool {
     #[cfg(windows)]
     {
-        let mut c = std::process::Command::new("reg");
+        let mut c = crate::platform::command("reg");
         c.args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "/v", "SystemUsesLightTheme"]);
         // #1856: an unreadable setting is logged with its command and reads dark
         let out = crate::tools::run("tray.theme", &mut c, Duration::from_secs(10)).map(|o| String::from_utf8_lossy(&o).into_owned()).map_err(|e| crate::platform::log(&format!("tray theme: {e}"))).unwrap_or_default();

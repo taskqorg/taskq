@@ -202,6 +202,29 @@ pub fn own_console() -> bool {
     true
 }
 
+/// #2049: the one way taskq starts a child. On Windows it carries CREATE_NO_WINDOW, so a console tool (git, tasklist,
+/// codex, the launcher) opens no window of its own when the service or tray starts it; a later `creation_flags` keeps
+/// that bit. Output still reaches piped or null handles. `spawn_sites` keeps every start on this path.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let mut c = std::process::Command::new(program);
+    quiet(&mut c);
+    c
+}
+
+/// #2049: a child that shares this process's console, as the launcher's CLI pass-through does: a terminal keeps
+/// showing its output, so CREATE_NO_WINDOW is set only when there is no console to share (a windowless start).
+pub fn console_command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    let mut c = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" { fn GetConsoleWindow() -> *mut std::ffi::c_void; }
+        // SAFETY: no arguments; it only reads this process's console window handle.
+        if unsafe { GetConsoleWindow() }.is_null() { quiet(&mut c); }
+    }
+    c
+}
+
 /// Ends this process now: no other thread or destructor runs after the flush.
 #[cfg(windows)]
 pub fn terminate(code: i32) -> ! {
@@ -374,15 +397,15 @@ pub const SIGNING_IDENTITY: &str = "TaskQ Local Signing";
 #[cfg(target_os = "macos")]
 pub fn codesign(identity: &str, path: &Path, id: &str) -> Result<bool, String> {
     use std::process::Command;
-    let ids = coreq::process::output("signing.identity", Command::new("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30)).map_err(|e| format!("security: {e}"))?;
+    let ids = coreq::process::output("signing.identity", command("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30)).map_err(|e| format!("security: {e}"))?;
     let Some(sha1) = identity_hash(identity, &ids)? else { return Ok(false) };
     let run = |c: &mut Command| match coreq::process::output("signing.command", c, std::time::Duration::from_secs(30)) {
         Ok(_) => Ok(()),
         Err(coreq::process::Failure::Exit(o)) => Err(format!("{}: {}", path.display(), String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) => Err(format!("{}: {e}", path.display())),
     };
-    run(Command::new("codesign").args(["-f", "-s", &sha1, "-i", id]).arg(path))?;
-    run(Command::new("codesign").arg(format!("-R=identifier \"{id}\" and certificate leaf = H\"{sha1}\"")).args(["-v", "--strict"]).arg(path))?;
+    run(command("codesign").args(["-f", "-s", &sha1, "-i", id]).arg(path))?;
+    run(command("codesign").arg(format!("-R=identifier \"{id}\" and certificate leaf = H\"{sha1}\"")).args(["-v", "--strict"]).arg(path))?;
     Ok(true)
 }
 
@@ -538,7 +561,7 @@ fn channel_update(install:&Path,fetch:&dyn Fn(&str,&Path)->Result<(),String>)->R
                     let bytes=fs::read(tmp.join(&name)).map_err(|e|e.to_string())?;
                     coreq::update::verify(&fs::read(tmp.join("SHA256SUMS")).map_err(|e|e.to_string())?,&name,&bytes)?;
                     #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;fs::set_permissions(tmp.join(&name),fs::Permissions::from_mode(0o755)).map_err(|e|e.to_string())?;}
-                    let smoke=match coreq::process::output("release.selftest",std::process::Command::new(tmp.join(&name)).arg("selftest").env("TASKQ_INSTALL",install).env("TASKQ_SELFTEST_OFFLINE","1"),std::time::Duration::from_secs(30)) {
+                    let smoke=match coreq::process::output("release.selftest",command(tmp.join(&name)).arg("selftest").env("TASKQ_INSTALL",install).env("TASKQ_SELFTEST_OFFLINE","1"),std::time::Duration::from_secs(30)) {
                         Ok(out)|Err(coreq::process::Failure::Exit(out))=>out,
                         Err(e)=>return Err(format!("{ver} selftest failed: {e}")),
                     };
@@ -596,7 +619,7 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
     }
     let building=read("lock/pid").and_then(|p|p.parse().ok()).is_some_and(crate::runtime::alive);
     // #1856: a failed or empty read is logged with its command; `main` then reads unknown and nothing starts
-    let main=crate::tools::run("dev.main",std::process::Command::new("git").arg("-C").arg(root).args(["ls-remote","origin","refs/heads/main"]),std::time::Duration::from_secs(30))
+    let main=crate::tools::run("dev.main",command("git").arg("-C").arg(root).args(["ls-remote","origin","refs/heads/main"]),std::time::Duration::from_secs(30))
         .and_then(|o|String::from_utf8_lossy(&o).split_whitespace().next().map(String::from).filter(|s|s.len()==40&&s.bytes().all(|c|c.is_ascii_hexdigit()))
             .ok_or_else(||format!("`git ls-remote origin refs/heads/main` printed no main SHA: {:?}",String::from_utf8_lossy(&o).trim())))
         .map_err(|e|log!("dev install: {e}")).ok();
@@ -616,7 +639,7 @@ pub fn dev_tick(install:&Path,root:&Path,ci:&mut dyn FnMut(&str)->Result<(),Stri
 #[cfg(unix)]
 fn dev_spawn(root:&Path,sha:&str,dir:&Path)->Result<(),String> {
     use std::os::unix::process::CommandExt;
-    let st=std::process::Command::new("sh").arg("-c")
+    let st=command("sh").arg("-c")
         // `--refmap=`: fetch main's objects without updating origin/main, whose ref lock a concurrent fetch may hold (#1633)
         .arg(r#"(git -C "$1" fetch -q --refmap= --no-write-fetch-head origin main && git -C "$1" show "$2:scripts/dev-install.sh" >"$3/install.sh" && TASKQ_DEV_REPO="$1" exec sh "$3/install.sh" "$2" || echo "$2 failed" >"$3/result") >"$3/install.log" 2>&1 </dev/null &"#)
         .arg("sh").arg(root).arg(sha).arg(dir)
@@ -660,7 +683,7 @@ pub fn releases_in_use(install: &Path) -> Option<Vec<String>> {
 pub fn sweep(install: &Path, shim: &Path) {
     let keep = releases_in_use(install);
     let owned = |n: &str| {
-        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json"].contains(&n)
+        ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "taskqw.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off", "accounts.json", "accounts-state.json"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
             ||n==crate::host::INSTALL_PENDING||n.strip_suffix(".pending")==Some(crate::host::INSTALL_PENDING)
             || n.ends_with(".log") || n.ends_with(".tmp") || n.starts_with("tray") || (n.starts_with("TaskQ-") && n.ends_with(".xml"))
@@ -746,7 +769,7 @@ fn capture_png() -> Result<(), String> {
     let dir = std::env::temp_dir().join(format!("taskq-gui-{}", crate::runtime::uuid()));
     fs::DirBuilder::new().mode(0o700).create(&dir).map_err(|e| format!("GUI capture directory: {e}"))?;
     let png = dir.join("capture.png");
-    let ran = output("gui.capture", std::process::Command::new("/usr/sbin/screencapture")
+    let ran = output("gui.capture", command("/usr/sbin/screencapture")
         .args(["-x", "-t", "png"]).arg(&png), std::time::Duration::from_secs(5));
     let ok = fs::read(&png).is_ok_and(|b| b.starts_with(b"\x89PNG\r\n\x1a\n"));
     let cleaned = fs::remove_dir_all(&dir);
@@ -768,16 +791,15 @@ pub fn gui_probe() -> Result<(), String> {
 /// certificate leaf), so the TCC row still pins an older cdhash. An unreadable keychain or signature reads false.
 #[cfg(target_os = "macos")]
 pub fn stale_grant(install: &Path, probe: &Result<(), String>) -> bool {
-    use std::process::Command;
     if probe.as_ref().err().is_none_or(|e| e != NOT_ALLOWED) { return false; }
     // #1856: an unreadable keychain or a codesign that did not run is logged; a requirement mismatch is the answer
-    let sha1 = match output("signing.identity", Command::new("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30))
+    let sha1 = match output("signing.identity", command("security").args(["find-identity", "-p", "codesigning"]), std::time::Duration::from_secs(30))
         .and_then(|ids| identity_hash(SIGNING_IDENTITY, &ids)) {
         Ok(Some(sha1)) => sha1,
         Ok(None) => return false,
         Err(e) => { log(&format!("stale grant unknown: {e}")); return false }
     };
-    match coreq::process::output("signing.command", Command::new("codesign").arg(format!("-R=identifier \"org.taskq.taskq\" and certificate leaf = H\"{sha1}\""))
+    match coreq::process::output("signing.command", command("codesign").arg(format!("-R=identifier \"org.taskq.taskq\" and certificate leaf = H\"{sha1}\""))
         .args(["-v", "--strict"]).arg(install.join("taskq")), std::time::Duration::from_secs(30)) {
         Ok(_) => true,
         Err(coreq::process::Failure::Exit(_)) => false,
@@ -803,7 +825,7 @@ pub fn grants(install: &Path) -> BTreeMap<String, String> {
     }
     // ponytail: one `log show` over the last hour per probe (300 s); an App Data grant no worker touched within it reads unknown
     // #1856: an unreadable log is logged with its command; the grants then read as without it
-    let log = crate::tools::run("gui.tcc_log", std::process::Command::new("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
+    let log = crate::tools::run("gui.tcc_log", command("/usr/bin/log").args(["show", "--last", "1h", "--style", "compact", "--predicate",
         "subsystem == \"com.apple.TCC\" AND eventMessage CONTAINS \"Failed to match existing code requirement\""]), std::time::Duration::from_secs(30))
         .map_err(|e| crate::platform::log(&format!("gui grants: {e}"))).ok().map(|o| String::from_utf8_lossy(&o).into_owned());
     // SAFETY: no arguments; reads this process's TCC state without a prompt
@@ -1016,6 +1038,51 @@ pub fn utc_offset(_: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Lines of `text` before its `#[cfg(test)] mod … {`: test processes may start children their own way.
+    fn product(text: &str) -> Vec<&str> {
+        let lines: Vec<&str> = text.lines().collect();
+        let end = (0..lines.len()).find(|&i| lines[i].trim_start().starts_with("#[cfg(test)]") && {
+            let next = lines[i + 1..].iter().map(|l| l.trim()).find(|l| !l.starts_with("#[")).unwrap_or("");
+            next.trim_start_matches("pub(crate) ").starts_with("mod ") && next.ends_with('{')
+        }).unwrap_or(lines.len());
+        lines[..end].to_vec()
+    }
+
+    // Defect #2049 A2: tasklist, git, the launcher and codex started without CREATE_NO_WINDOW, so the windowless
+    // service flashed a console window per start. Every product start goes through `command` (or the pass-through's
+    // `console_command`); this enumerates the spawn sites and names any raw `Command::new` or a flag that drops the bit.
+    #[test]
+    fn spawn_sites() {
+        let (mut sites, mut raw) = (vec![], vec![]);
+        let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(dir) = dirs.pop() {
+            for entry in fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() { dirs.push(path); continue; }
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if !name.ends_with(".rs") || name.ends_with("_tests.rs") { continue; }
+                let text = fs::read_to_string(&path).unwrap();
+                let file = path.strip_prefix(env!("CARGO_MANIFEST_DIR")).unwrap().display().to_string();
+                for (i, line) in product(&text).iter().enumerate() {
+                    let at = format!("{file}:{}", i + 1);
+                    if line.contains("platform::command(") || line.contains("platform::console_command(") { sites.push(at.clone()); }
+                    let helper = name == "platform.rs" && line.trim() == "let mut c = std::process::Command::new(program);";
+                    if line.contains("Command::new(") && !helper { raw.push(format!("{at}: {}", line.trim())); }
+                    if let Some(flags) = line.split("creation_flags(0x").nth(1) {
+                        let hex: String = flags.chars().take_while(|c| c.is_ascii_hexdigit() || *c == '_').filter(|c| *c != '_').collect();
+                        if u32::from_str_radix(&hex, 16).map_or(true, |f| f & 0x0800_0000 == 0) { raw.push(format!("{at}: drops CREATE_NO_WINDOW: {}", line.trim())); }
+                    }
+                }
+            }
+        }
+        assert!(raw.is_empty(), "start these through platform::command:\n{}", raw.join("\n"));
+        // the scan found the starts: a moved src or a misread test boundary would pass with nothing checked
+        for site in ["src/runtime/owner.rs", "src/board/github.rs", "src/main.rs", "src/windows_sandbox.rs", "src/runtime.rs"] {
+            assert!(sites.iter().any(|s| s.replace('\\', "/").starts_with(site)), "no spawn site in {site}: {sites:?}");
+        }
+        assert!(sites.len() > 50, "{} spawn sites: {sites:?}", sites.len());
+    }
 
     // Defect #1803 A4: a gui probe that captured without an allowed preflight raised a Screen Recording prompt.
     #[test]
@@ -1280,7 +1347,15 @@ mod tests {
         let _=fs::remove_dir_all(&install);
         let t=tool(&install);
         let (dev,release)=(format!("{VERSION}-dev.1"),"0.9.0");
-        for v in [dev.as_str(),release] {fs::create_dir_all(t.release_exe(v).parent().unwrap()).unwrap();fs::write(t.release_exe(v),v).unwrap();}
+        // #2049 A1: a Windows update derives the GUI launcher from the release, so the fixture is a console PE image.
+        let image=|v:&str|-> Vec<u8> {
+            if !cfg!(windows) {return v.as_bytes().to_vec();}
+            let mut b=vec![0u8;0x40+24+240];
+            b[..2].copy_from_slice(b"MZ");b[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());b[0x40..0x44].copy_from_slice(b"PE\0\0");
+            b[0x40+20..0x40+22].copy_from_slice(&240u16.to_le_bytes());b[0x40+24..0x40+26].copy_from_slice(&0x20bu16.to_le_bytes());
+            b[0x40+24+68..0x40+24+70].copy_from_slice(&3u16.to_le_bytes());b.extend_from_slice(v.as_bytes());b
+        };
+        for v in [dev.as_str(),release] {fs::create_dir_all(t.release_exe(v).parent().unwrap()).unwrap();fs::write(t.release_exe(v),image(v)).unwrap();}
         write_atomic(&install.join("current"),&dev).unwrap();
         let latest=std::cell::RefCell::new(release.to_string());
         let fetch=|name:&str,to:&Path| -> Result<(),String> {
@@ -1306,7 +1381,8 @@ mod tests {
         assert_eq!(channel(&install).unwrap(),"live");
         assert_eq!(channel_update(&install,&fetch).unwrap().as_deref(),Some(release));
         assert_eq!((t.current().unwrap(),fs::read_to_string(install.join("previous")).unwrap()),(release.to_string(),dev.clone()));
-        assert_eq!(fs::read_to_string(install.join(t.exe_name())).unwrap(),release);
+        assert_eq!(fs::read(install.join(t.exe_name())).unwrap(),image(release));
+        if cfg!(windows) {assert!(install.join(t.gui_exe_name()).is_file(),"the update places the GUI launcher the Scheduled Tasks start");}
         fs::write(install.join("host.json"),r#"{"channel":"beta"}"#).unwrap();
         assert!(channel(&install).is_err());
         fs::remove_dir_all(&install).unwrap();
@@ -1518,7 +1594,8 @@ mod tests {
         fs::create_dir_all(root.join(".taskq")).unwrap();
         // a project service still on 4.0.5 with a live child: its release stays (A3)
         fs::write(root.join(".taskq/status.json"), r#"{"version": "4.0.5", "kids": [{"task": 1}]}"#).unwrap();
-        let files = ["current", "previous", "token", "taskq", "taskq.log", "taskq.log.tmp", "proj.log", "tray", "tray.json", "TaskQ-proj.xml", "worker-policy.json", "hold", "admission.json", "admission.lock", "update.lock", ".freshness.json", "current.json", "mac-scheduled-pass.py"];
+        // #2049 A1: the GUI launcher the Scheduled Tasks start stays; a renamed running one (`.old`) goes
+        let files = ["current", "previous", "token", "taskq", "taskqw.exe", "taskqw.exe.old", "taskq.log", "taskq.log.tmp", "proj.log", "tray", "tray.json", "TaskQ-proj.xml", "worker-policy.json", "hold", "admission.json", "admission.lock", "update.lock", ".freshness.json", "current.json", "mac-scheduled-pass.py"];
         for f in files {
             fs::write(install.join(f), "").unwrap();
         }
@@ -1561,7 +1638,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&native).unwrap(),recovery);
         assert_eq!(crate::kids_file(&install,&root).unwrap()[0].execution,43,"native execution identity survives update");
         assert_eq!(fs::read_to_string(install.join("rollback-floor")).unwrap(),"4.2.0");
-        let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resource-state", "resources", "taskq", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor", "link"];
+        let mut owned=vec!["TaskQ-proj.xml", "admission.json", "admission.lock", "capacity", "current", "hold", "previous", "proj.log", "projects", "releases", "resource-state", "resources", "taskq", "taskqw.exe", "taskq.log", "taskq.log.tmp", "token", "tray", "tray.json", "update.lock", "windows-native", "worker-policy.json", "native", "host-policy-migration", "rollback-floor", "link"];
         owned.extend(protected.iter().map(|(name,_)|*name));owned.sort();
         assert_eq!(ls(&install),owned);
         assert_eq!(crate::admission::hold(&install).as_deref(), Some("invented incident hold"), "update cleanup must never release an emergency hold");

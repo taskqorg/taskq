@@ -102,7 +102,7 @@ fn prepare(root: &Path, install: &Path, home: &Path, p: &mut Paths, bootstrap: &
     let protection = preparation::Preparation::begin(root, install, home, &p.state, &p.temp, &[bootstrap, &p.bin, &helper])?;
     let preflight = (|| {
     fs::write(p.state.join("config.toml"), config).map_err(|e| e.to_string())?;
-    let out = match coreq::process::output("sandbox.preflight", Command::new(&p.bin).args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--", "cmd.exe", "/d", "/c", "exit 0"])
+    let out = match coreq::process::output("sandbox.preflight", crate::platform::command(&p.bin).args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--", "cmd.exe", "/d", "/c", "exit 0"])
         .current_dir(root).env("CODEX_HOME", &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
         .env("TEMP", &p.temp).env("TMP", &p.temp), std::time::Duration::from_secs(30)) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
@@ -129,7 +129,7 @@ pub fn command(env: &crate::runtime::Env) -> Result<Command, String> {
     let root = checked(env.root)?; let install = checked(env.install)?; let home = home()?;
     let mut p = paths(&root, &install, &home)?;
     prepare(&root, &install, &home, &mut p, env.exe)?;
-    let mut c = Command::new(p.bin);
+    let mut c = crate::platform::command(p.bin);
     c.args(["-c", "windows.sandbox=unelevated", "sandbox", "-P", "taskq", "--include-managed-config", "--"])
         .arg(env.exe).arg(BOOT).arg(root).arg(install).arg(home)
         .env("CODEX_HOME", &p.state).env("TASKQ_WINDOWS_SANDBOX_HOME", &p.state)
@@ -169,7 +169,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         if !valid { return Err("Windows sandbox: unsupported bootstrap argument".into()); }
     }
     security::lower_restricted_process()?;
-    let status = Command::new(p.bin).args(["exec", "--add-dir"]).arg(home).args(&args[4..])
+    let status = crate::platform::command(p.bin).args(["exec", "--add-dir"]).arg(home).args(&args[4..])
         .env("CODEX_HOME", &args[2]).env("TASKQ_WINDOWS_SANDBOX_HOME", p.state)
         .current_dir(root).status().map_err(|e| e.to_string())?;
     crate::platform::exit(status.code().unwrap_or(1));

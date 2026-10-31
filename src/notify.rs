@@ -408,7 +408,7 @@ mod os {
     }
 
     pub fn open_settings() {
-        let _ = std::process::Command::new("open").arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension").spawn();
+        let _ = crate::platform::command("open").arg("x-apple.systempreferences:com.apple.Notifications-Settings.extension").spawn();
     }
 }
 
