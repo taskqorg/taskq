@@ -116,9 +116,11 @@ pub(super) fn encode(kind:&str,original:Value)->Res<Value> {
 /// The count key of request operation `<method> <path>` (§ 4, #1621): DashQ reads `:`-joined identifiers, so path
 /// segments join with `.`, an id segment `*` or a word over 20 bytes reads `ID` (a path stays within 64 bytes) and the
 /// API root `ROOT`. Older records spelled `*` as `:`; [`decoded`] still reads them.
+/// An unbilled `<op> 304` (#1985) appends segment `304`, which no operation path holds: numbers read `N`.
 fn count_key(method:&str,path:&str)->String {
-    if path.is_empty() {return format!("{method}:ROOT");}
-    format!("{method}:{}",path.split('/').map(|s|if s=="*"||s.len()>20 {"ID"} else {s}).collect::<Vec<_>>().join("."))
+    let (path,unbilled)=path.strip_suffix(" 304").map_or((path,""),|p|(p,".304"));
+    if path.is_empty() {return format!("{method}:ROOT{unbilled}");}
+    format!("{method}:{}{unbilled}",path.split('/').map(|s|if s=="*"||s.len()>20 {"ID"} else {s}).collect::<Vec<_>>().join("."))
 }
 
 pub(super) fn encoded_size(kind:&str,original:&Value)->Res<usize> {
@@ -143,8 +145,9 @@ fn decoded(value:&Value)->Res<Sample> {
         let mut ops=serde_json::Map::new();
         for (name,count) in value["counts"].as_object().ok_or("missing request counts")? {
             let (method,path)=name.split_once(':').ok_or("invalid request count code")?;
+            let (path,unbilled)=path.strip_suffix(".304").map_or((path,""),|p|(p," 304"));
             let path=if path=="ROOT" {String::new()} else {path.split('.').map(|s|if matches!(s,"ID"|":") {"*"} else {s}).collect::<Vec<_>>().join("/")};
-            ops.insert(format!("{method} {path}"),count.clone());
+            ops.insert(format!("{method} {path}{unbilled}"),count.clone());
         }
         original.insert("ops".into(),Value::Object(ops));
     }
@@ -296,6 +299,15 @@ mod tests {
             "counts":{"GET:compare.:":2,"GET:":3,"GET:commits.:.status":4,"GET:issues.N":5}});
         let back:Value=serde_json::from_str(line(&old).unwrap().split_once(' ').unwrap().1).unwrap();
         assert_eq!(back["ops"],json!({"GET compare/*":2,"GET ":3,"GET commits/*/status":4,"GET issues/N":5}));
+    }
+    // #1985: an unbilled `<op> 304` passes validation and reads back as itself.
+    #[test]
+    fn unbilled_304_ops_round_trip() {
+        let value=observation(r#"taskq-requests {"at_ms":1,"source":"cli status","ops":{"GET issues/N/comments 304":2,"GET issues/N/comments":3,"GET  304":1}}"#).unwrap();
+        for key in value["counts"].as_object().unwrap().keys() {assert!(dashq_key(key),"{key}");}
+        assert_eq!(value["counts"]["GET:issues.N.comments.304"],2);assert_eq!(value["counts"]["GET:ROOT.304"],1);
+        let back:Value=serde_json::from_str(line(&value).unwrap().split_once(' ').unwrap().1).unwrap();
+        assert_eq!(back["ops"],json!({"GET issues/N/comments 304":2,"GET issues/N/comments":3,"GET  304":1}));
     }
     #[test]
     fn unsupported_or_unsafe_source_metadata_is_refused() {
