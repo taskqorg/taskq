@@ -1,0 +1,38 @@
+{
+  "product_source": "73df356b19e841e3900c06878206bfdd73b7c41e",
+  "native_v1_binary_sha256": null,
+  "native_v2_binary_sha256": "bb042c0c2f56061be2a8d477f71f7b45bcf5c01527cc2322de5447e4c0dc10d3",
+  "files": {
+    "Cargo.lock": "c5c839324c084768593a3d6e814cd073b54522f2601d048c0ed9f427cc8a4e75",
+    "Cargo.toml": "c57979fb70c9969d4e8a3933b65b1d8902e466bac4c1ad9d6c0c2d3ec2567c5f",
+    "package-lock.json": "8385ed1a8822e1475a4656ce353ab9da64ad710d12b42b65aa4ff95e0e938a2b",
+    "src/transcript.rs": "240f8f5d02d954fa7b6bff89adfaf45834ff040291df570971a18e81976f8711",
+    "src/conversations.js": "6c25a354dea5b91c14b9d5c1d92c374b1cd2181abef55aee750801190518efe9",
+    "src/workspace.js": "049e3b53565cb0846f74e78172b99c297771e8f1db52b8e8f3170e0ddca4f7dd",
+    "build/web/workspace.html": "b6b19df50c87c5aa04d1e63cd1b17aa4ab34ed8d0125ab6c1f576f4e4175e73a"
+  },
+  "instrument_sources": {
+    "adverse.cjs.txt": "d711baa3c8e97cfd4826b2bb28f3c93f439362efb9fe009999a712dc28e3c0c5",
+    "complete.cjs.txt": "6737be2132deff6c324e809cc725964d4df5833d48d6829bafcaf7861a11d643",
+    "measure.cjs.txt": "af3241c3bc8c5cdf6552eab73b2bdde7643913edf465600291acca35d3542677",
+    "native-before-missing.rs.txt": "d77099ab187231a0088446bd3ea66f51a58d4588518407f61f84fc2a0f517285",
+    "native-instrument.rs.txt": "16774d69458bd0e9d0d769317ef8f494c0ea00c7c93d7d69343bf0cfeed91735",
+    "restart.cjs.txt": "1e7fb5159934869d855d36b601710f7d76e842e8b709fc2a4eee3aa984e21b2c"
+  },
+  "process_exit_codes": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "first_driver_limit": "The initial driver was edited during diagnosis; its runtime hash and initial native binary hash were not captured. Final controller sources are retained. Readiness, Quit, generation and path-check corrections are described in README.md.",
+  "redactions": [
+    "Loopback WebSocket session URLs omitted.",
+    "Native filesystem generations in navigation g fields are SHA-256 hashes."
+  ]
+}

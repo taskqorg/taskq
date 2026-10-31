@@ -1,0 +1,67 @@
+// Temporary #2023 measurement instrument: real workspace bundle and unchanged transcript adapter.
+// It has no service, board, provider launch, installation, or transcript write path.
+#[path = "../src/transcript.rs"] mod transcript;
+use serde_json::{json,Value};
+use std::{fs,path::PathBuf,time::Instant,io::Write};
+use tao::{event::{Event,WindowEvent},event_loop::{ControlFlow,EventLoopBuilder},window::WindowBuilder};
+use wry::{WebContext,WebViewBuilder};
+#[derive(Debug)] enum Ev { Ipc(String), Receipt(Value,Value) }
+fn main(){
+ let base=PathBuf::from(std::env::args().nth(1).expect("disposable evidence directory")).canonicalize().unwrap();
+ let manifest:Value=serde_json::from_slice(&fs::read(base.join("fixtures.json")).unwrap()).unwrap();
+ let mut state:Value=serde_json::from_slice(&fs::read(base.join("state.json")).unwrap()).unwrap();
+ if let Ok(bytes)=fs::read(base.join("navigation.json")){state["conversations"]["navigation"]=serde_json::from_slice(&bytes).unwrap();}
+ let event_loop=EventLoopBuilder::<Ev>::with_user_event().build();let proxy=event_loop.create_proxy();
+ let window=WindowBuilder::new().with_title("TaskQ #2023 disposable measurement").with_inner_size(tao::dpi::LogicalSize::new(940.,740.)).build(&event_loop).unwrap();
+ let mut context=WebContext::new(Some(base.join("webview")));
+ let mut log=fs::OpenOptions::new().create(true).append(true).open(base.join("adapter.jsonl")).unwrap();
+ let webview=WebViewBuilder::new_with_web_context(&mut context)
+  .with_html(include_str!(concat!(env!("CARGO_MANIFEST_DIR"),"/build/web/workspace.html")))
+  .with_ipc_handler(move |r|{let _=proxy.send_event(Ev::Ipc(r.into_body()));}).build(&window).unwrap();
+ let proxy=event_loop.create_proxy();
+ println!("{}",json!({"event":"window","scale":window.scale_factor(),"physical_size":[window.inner_size().width,window.inner_size().height],"monitor":window.current_monitor().map(|m|json!({"size":[m.size().width,m.size().height],"refresh_millihertz":null,"scale":m.scale_factor()}))}));
+ event_loop.run(move |event,_,flow|{*flow=ControlFlow::Wait;match event{
+  Event::WindowEvent{event:WindowEvent::CloseRequested,..}=>*flow=ControlFlow::Exit,
+  Event::UserEvent(Ev::Receipt(receipt,metric))=>{
+   writeln!(log,"{metric}").unwrap();log.flush().unwrap();
+   webview.evaluate_script(&format!("taskq.receive({})",json!({"dialogueReceipt":receipt}))).unwrap();
+  },
+  Event::UserEvent(Ev::Ipc(raw))=>{
+   let m:Value=serde_json::from_str(&raw).unwrap();match m["a"].as_str().unwrap_or(""){
+    "ready"=>{webview.evaluate_script(&format!("taskq.receive({state});taskq.receive({})",json!({"open":{"page":"conversations"}}))).unwrap();},
+    "conversation-dialogue"=>{
+     let key=m["conversation"].as_str().unwrap_or("");let fixture=manifest[key].clone();let base=base.clone();let proxy=proxy.clone();
+     std::thread::spawn(move||{
+      let started=Instant::now();let action=m["action"].as_str().unwrap_or("");
+      let result:Result<Value,String>=if action=="transcript"{
+       if let Some(file)=fixture["file"].as_str(){
+        let path=base.join(file).canonicalize().unwrap();assert!(path.starts_with(&base));
+        let page=if let Some(at)=m["after"].as_u64(){transcript::after(fixture["codex"]==true,&path,at)}else{transcript::before(fixture["codex"]==true,&path,m["before"].as_u64())};
+        page.map(|p|json!({"generation":p.generation,"items":p.items,"start":p.start,"end":p.end,"size":p.size}))
+       }else{Err("unregistered measurement fixture".into())}
+      }else if action=="status"{Ok(json!({"state":"idle","watch":"no watch","turn":null}))}
+      else{Ok(json!({"tasks":[],"more":false}))};
+      let elapsed=started.elapsed().as_secs_f64()*1000.;
+      let (value,reason)=match result{Ok(v)=>(v,Value::Null),Err(e)=>(Value::Null,json!(e))};
+      let metric=json!({"id":m["id"],"fixture":m["conversation"],"action":action,"before":m["before"],"after":m["after"],"duration_ms":elapsed,"items":value["items"].as_array().map(Vec::len),"start":value["start"],"end":value["end"],"size":value["size"],"reason":reason});
+      let receipt=json!({"id":m["id"],"conversation":m["conversation"],"action":action,"state":if reason.is_null(){"accepted"}else{"unknown"},"value":value,"reason":reason});
+      let _=proxy.send_event(Ev::Receipt(receipt,metric));
+     });
+    },
+    "conversation-navigation"=>{if m["navigation"].is_object(){fs::write(base.join("navigation.json"),m["navigation"].to_string()).unwrap();}},
+    "conversation-action"=>{
+     assert_eq!(m["action"],"save","measurement never sends a native turn");
+     if let Some(c)=state["conversations"]["items"].as_array_mut().unwrap().iter_mut().find(|c|c["id"]==m["conversation"]){
+      for(k,v)in m["draft"].as_object().unwrap(){c[k]=v.clone();}c["revision"]=json!(c["revision"].as_u64().unwrap()+1);
+     }
+     fs::write(base.join("state.json"),state.to_string()).unwrap();
+     webview.evaluate_script(&format!("taskq.receive({})",json!({"conversationReceipt":{"id":m["id"],"state":"accepted","snapshot":state["conversations"]}}))).unwrap();
+    },
+    "measurement-exit"=>*flow=ControlFlow::Exit,
+    // Built-in UI observations use the existing bridge; this short instrument does not start a collector.
+    "web-observation"|"conversation-activity"|"web-error"|"ready-workspace"=>{},
+    _=>{}
+   }
+  },_=>{}
+ }});
+}

@@ -1,0 +1,134 @@
+'use strict';
+// One-shot #2023 experiment; sources and mutations are confined to this disposable directory.
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),assert=require('node:assert/strict'),{spawn}=require('node:child_process');
+const root=process.cwd(),base=__dirname,port=19223,manifest={},items=[],originals={};
+const hash=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const stats=a=>{a=a.filter(Number.isFinite).sort((a,b)=>a-b);return {n:a.length,p50:a[Math.ceil(a.length*.5)-1]??null,p95:a[Math.ceil(a.length*.95)-1]??null,max:a.at(-1)??null};};
+assert.equal(stats([1,2,3,4,5]).p95,5);
+const record=(rt,n,text)=>rt==='codex'?{type:'response_item',payload:{type:'message',role:n%2?'assistant':'user',content:[{type:'output_text',text}]}}:{type:n%2?'assistant':'user',message:{content:text}};
+function make(rt,name){
+ const id=rt+'-'+name,file=id+'.jsonl',p=path.join(base,file),fd=fs.openSync(p,'w'),keys=[];let offset=0;
+ function write(v,visible){const b=Buffer.from(JSON.stringify(v)+'\n');if(visible)keys.push(offset+':0');fs.writeSync(fd,b);offset+=b.length;}
+ if(name==='100mib'){
+  const total=100*1024*1024;
+  for(let n=0;n<100;n++){
+   const visible=n%10===0||n===99;
+   let v=visible?record(rt,n,'Record '+n+' '+('long paragraph alpha beta gamma\n').repeat(9000)):{type:'progress'};
+   v.padding='';v.padding='x'.repeat(1024*1024-Buffer.byteLength(JSON.stringify(v)+'\n'));
+   write(v,visible);
+  }
+  assert.equal(offset,total);
+ }else if(name==='oversize'){
+  write(record(rt,0,'z'.repeat(17*1024*1024)),true);
+ }else{
+  const count=name==='10k'?10000:name==='hostile'?80:300;
+  for(let n=0;n<count;n++){
+   if(name==='10k'&&n%2500===1250)for(let k=0;k<12;k++)write({type:'progress',padding:'p'.repeat(200*1024)},false);
+   let text='Record '+n+' '+('alpha beta gamma delta ').repeat(n%97===50?220:1+n%27);
+   if(name==='hostile')text+='\n'+['literal <img src="https://invalid.example/no" onerror="window.hostileExecuted=true">','identifier_'+('q'.repeat(16384)),'עברית 中文 e\u0301 👩‍💻\t\u001b[31m red','```js\nthrow new Error("display only")\n```'][n%4];
+   write(record(rt,n,text),true);
+  }
+  if(name==='hostile'){fs.writeSync(fd,Buffer.from('malformed complete line\n'+JSON.stringify({type:'progress',padding:'ignored'})+'\n'+JSON.stringify(record(rt,999,'Partial record')).slice(0,-2)));}
+ }
+ fs.closeSync(fd);manifest[id]={file,codex:rt==='codex',expected:keys,bytes:fs.statSync(p).size,sha256:hash(p)};originals[file]=manifest[id].sha256;
+ items.push({id,revision:1,title:id,text:'',root:'fixture-alpha',caret:[0,0],scroll:0,files:[],archived:false,sent:{text:'Measurement only',root:'fixture-alpha',runtime:rt,files:[]},request:{id,state:'launched',kind:'launched',next:'Measurement only'},dialogue:{state:'idle',watch:'no watch',turn:null}});
+}
+if(require.main===module){
+for(const rt of ['claude','codex'])for(const name of ['normal','100mib','10k','hostile','oversize'])make(rt,name);
+fs.writeFileSync(path.join(base,'fixtures.json'),JSON.stringify(manifest));
+fs.writeFileSync(path.join(base,'state.json'),JSON.stringify({font:16,theme:'dark',host:'disposable-native-2023',version:'4.6.52 instrument',projects:[{root:'fixture-alpha',name:'Invented measurement',alive:true,complete:true,issues:'https://example.org/invented/issues',tasks:[]}],ai:{history:[],runtime:{id:'claude',name:'Claude Code',available:true}},messages:{complete:true,entries:[]},conversations:{complete:true,items,navigation:{selected:'claude-normal',list:'recent'}}}));
+}else Object.assign(manifest,JSON.parse(fs.readFileSync(path.join(base,'fixtures.json'),'utf8')));
+let seq=0,socket,pending=new Map(),child,pageSession,trace=[],traceDone=false;
+function cmd(method,params={},sessionId=pageSession){return new Promise((resolve,reject)=>{const id=++seq,t=setTimeout(()=>{pending.delete(id);reject(Error(method+' timeout'));},30000);pending.set(id,{resolve,reject,t});socket.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));});}
+async function ev(code){const r=await cmd('Runtime.evaluate',{expression:code,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
+async function until(code,ms=20000){const end=Date.now()+ms;while(Date.now()<end){if(await ev(code))return;await delay(40);}throw Error('condition timeout: '+code);}
+async function boot(){
+ const out=fs.openSync(path.join(base,'native-'+Date.now()+'.log'),'w');
+ const env={...process.env,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:'--remote-debugging-address=127.0.0.1 --remote-debugging-port='+port};
+ for(const k of Object.keys(env))if(/^(TASKQ_(TASK|ATTEMPT|ROLE|ROOT)|CODEX_THREAD_ID|CLAUDE_CODE_SESSION_ID|GH_TOKEN|GITHUB_TOKEN)$/.test(k))delete env[k];
+ const targetDir=path.resolve(root,'../../target/debug'),buildDir=path.join(targetDir,'build');
+ const loaders=fs.readdirSync(buildDir).map(d=>path.join(buildDir,d,'out/x64')).filter(d=>fs.existsSync(path.join(d,'WebView2Loader.dll')));
+ assert(loaders.length,'built native WebView2 loader required');env.PATH=[...loaders,path.join(targetDir,'deps'),env.PATH].join(path.delimiter);
+ child=spawn(path.join(targetDir,'examples/history-2023.exe'),[base],{cwd:root,env,windowsHide:true,stdio:['ignore',out,out]});child.once('exit',code=>fs.appendFileSync(path.join(base,'process-exits.txt'),code+'\n'));
+ const end=Date.now()+90000;let targets;
+ while(Date.now()<end){try{targets=await (await fetch('http://127.0.0.1:'+port+'/json/list')).json();if(targets.some(t=>t.type==='page'))break;}catch{}if(child.exitCode!==null)throw Error('native process exited '+child.exitCode);await delay(100);}
+ assert(targets?.some(t=>t.type==='page'),'no native WebView2 page');
+ const target=targets.find(t=>t.type==='page');socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise((resolve,reject)=>{socket.onopen=resolve;socket.onerror=reject;});
+ socket.onmessage=e=>{const r=JSON.parse(e.data),p=pending.get(r.id);if(r.method==='Tracing.dataCollected')trace.push(...r.params.value);if(r.method==='Tracing.tracingComplete')traceDone=true;if(p){clearTimeout(p.t);pending.delete(r.id);r.error?p.reject(Error(JSON.stringify(r.error))):p.resolve(r.result);}};
+ await until('!!window.taskq && !!document.querySelector(".conversation-reader")');
+ await ev(`(()=>{
+  window.measure={phase:'boot',frames:[],longtasks:[],renders:[],receipts:[],pending:new Set(),dom:[],events:[],last:null};
+  const h=measure,receive=taskq.receive;taskq.receive=function(s){const r=s.dialogueReceipt,start=performance.now();if(r)h.pending.delete(r.id);const result=receive(s);if(r&&r.action==='transcript'){h.receipts.push({phase:h.phase,state:r.state,n:r.value?.items?.length,reason:r.reason});h.renders.push({phase:h.phase,duration:performance.now()-start});}return result;};
+  const send=window.ipc.postMessage.bind(window.ipc);window.measureNativePost=send;
+  // The real Wry bridge remains the transport. Observe requests, without replacing adapter results.
+  const sink=window.chrome?.webview||window.webkit?.messageHandlers?.ipc||window.ipc,post=sink.postMessage.bind(sink);
+  try{sink.postMessage=t=>{const m=JSON.parse(t);if(m.a==='conversation-dialogue'&&m.action==='transcript')h.pending.add(m.id);return post(t);};}catch{}
+  new PerformanceObserver(l=>{for(const e of l.getEntries())h.longtasks.push({phase:h.phase,start:e.startTime,duration:e.duration});}).observe({entryTypes:['longtask']});
+  function frame(t){if(h.last!==null&&h.phase==='wheel')h.frames.push(t-h.last);h.last=t;requestAnimationFrame(frame);}requestAnimationFrame(frame);
+ })()`);
+ return {version:await (await fetch('http://127.0.0.1:'+port+'/json/version')).json(),screen:await ev('({ua:navigator.userAgent,dpr:devicePixelRatio,screen:[screen.width,screen.height,screen.availWidth,screen.availHeight],viewport:[innerWidth,innerHeight],font:getComputedStyle(document.body).font,visibility:document.visibilityState})')};
+}
+async function stop(){if(child?.exitCode!==null)return;const exited=new Promise((r,j)=>{child.once('exit',r);const timer=setTimeout(()=>j(Error('owned native instrument did not exit')),15000);timer.unref();});if(socket?.readyState===1)void ev('measureNativePost(JSON.stringify({a:"measurement-exit"}))').catch(()=>{});await exited;for(const r of pending.values()){clearTimeout(r.t);r.reject(Error('owned native instrument exited'));}pending.clear();socket?.close();}
+async function settle(){await until('!document.querySelector("[data-c=earlier][disabled]") && measure.pending.size===0');await ev('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');}
+async function choose(id){await ev('measure.phase="open";document.querySelector('+JSON.stringify('[data-c=select][data-id="'+id+'"]')+').click()');await until('document.querySelector(".dialogue-transcript")?.dataset.id==='+JSON.stringify(id)+' && (document.querySelectorAll(".dialogue-transcript [data-key]").length>0 || document.querySelector(".conversation-reader").innerText.includes("Transcript unknown:"))');await settle();}
+async function sample(){return ev(`(()=>{const e=document.querySelector('.conversation-reader'),nodes=[...document.querySelectorAll('.dialogue-transcript [data-key]')];return {keys:nodes.map(n=>n.dataset.key),top:e.scrollTop,height:e.scrollHeight,client:e.clientHeight,earlier:!!document.querySelector('[data-c=earlier]'),dom:document.querySelectorAll('*').length};})()`);}
+const anchor=()=>ev(`(()=>{const e=document.querySelector('.conversation-reader'),top=e.getBoundingClientRect().top,n=[...e.querySelectorAll('.dialogue-transcript [data-key]')].find(n=>n.getBoundingClientRect().bottom>top);return n?{key:n.dataset.key,y:n.getBoundingClientRect().top-top}:null;})()`);
+async function displacement(a){if(!a)return null;return ev(`(()=>{const e=document.querySelector('.conversation-reader'),n=[...e.querySelectorAll('[data-key]')].find(n=>n.dataset.key===${JSON.stringify(a.key)});return n?n.getBoundingClientRect().top-e.getBoundingClientRect().top-(${a.y}):null;})()`);}
+async function traverse(id){
+ const seen=new Set(),samples=[];let manual=0;const started=Date.now();
+ for(let k=0;k<800;k++){
+  const s=await sample();s.keys.forEach(k=>seen.add(k));samples.push({mounted:s.keys.length,dom:s.dom});
+  if(!s.earlier&&s.top<1)break;if(Date.now()-started>120000)throw Error(id+' traversal budget exhausted');
+  const first=s.keys[0];await ev('measure.phase="prepend";(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=0;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await settle();
+  const next=await sample();if(next.keys[0]===first&&next.earlier&&next.top<1){manual++;await ev('document.querySelector("[data-c=earlier]").click()');await settle();}
+ }
+ const s=await sample(),expected=manifest[id].expected,missing=expected.filter(k=>!seen.has(k));assert.equal(s.keys[0],expected[0],id+' first record');assert.equal(missing.length,0,id+' missing records');
+ return {samples,manual,seen:seen.size,missing:missing.length,earliest:s.keys[0],duration_ms:Date.now()-started,heap:await cmd('Runtime.getHeapUsage'),domCounters:await cmd('Memory.getDOMCounters')};
+}
+async function wheel(){
+ await ev('measure.phase="wheel";measure.frames=[];measure.last=null;');
+ const box=await ev('(()=>{const r=document.querySelector(".conversation-reader").getBoundingClientRect();return {x:r.x+r.width*.65,y:r.y+r.height*.4};})()');
+ const start=Date.now();let events=0;while(Date.now()-start<3000){await cmd('Input.dispatchMouseEvent',{type:'mouseWheel',x:box.x,y:box.y,deltaX:0,deltaY:events<25?-120:120});events++;await delay(40);}
+ await ev('measure.phase="after-wheel"');return {events,elapsed_ms:Date.now()-start,frames:await ev('measure.frames')};
+}
+async function inputs(){
+ const timings=[],selection=[];await ev('measure.phase="input";document.querySelector("[data-c-field=text]").focus({preventScroll:true})');
+ for(let i=0;i<40;i++){
+  await ev('measure.inputStart=performance.now();');await cmd('Input.insertText',{text:'x'});
+  timings.push(await ev('new Promise(r=>requestAnimationFrame(()=>r(performance.now()-measure.inputStart)))'));
+  await ev('measure.inputStart=performance.now()');await cmd('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37,modifiers:8});await cmd('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowLeft',code:'ArrowLeft',windowsVirtualKeyCode:37,modifiers:8});
+  selection.push(await ev('new Promise(r=>requestAnimationFrame(()=>r(performance.now()-measure.inputStart)))'));
+ }
+ return {input_ms:timings,selection_ms:selection,selectionRange:await ev('(()=>{const e=document.querySelector("[data-c-field=text]");return [e.selectionStart,e.selectionEnd,e.value.length];})()')};
+}
+async function run(){
+ const results={source:'73df356b19e841e3900c06878206bfdd73b7c41e',started:new Date().toISOString(),fixtures:manifest,host:{platform:os.platform(),release:os.release(),arch:os.arch(),cpu:os.cpus()[0].model,logical_cpus:os.cpus().length,ram_bytes:os.totalmem()},cases:[],limits:{budget_ms_per_traversal:120000,wheel_ms:3000,input_samples:40,physical_input:false,os_cache:'unknown; generated sources were just written; no system-cache flush'}};
+ fs.writeFileSync(path.join(base,'results.json'),JSON.stringify(results,null,2));results.native=await boot();
+ for(const rt of ['claude','codex'])for(const name of ['normal','100mib','10k','hostile','oversize']){
+  const id=rt+'-'+name,c={id};results.cases.push(c);console.log('START',id);
+  try{await choose(id);
+   if(name==='oversize'){await until('document.querySelector(".conversation-reader").innerText.includes("exceeds 16 MiB")');c.refusal=await ev('document.querySelector(".conversation-reader").innerText');c.outcome='refused explicitly';}
+   else{
+    c.initial=await sample();c.input=await inputs();c.wheel=await wheel();await settle();
+    c.traversal=await traverse(id);c.hostileScriptExecuted=await ev('!!window.hostileExecuted');assert(!c.hostileScriptExecuted);
+    // At the earliest record, a refresh at a new font size must retain its anchor.
+    const a=await anchor();await ev('[...document.querySelectorAll("*")].find(e=>e.style?.getPropertyValue("--size"))?.style.setProperty("--size","20px")');await settle();c.font_anchor_delta=await displacement(a);
+    await ev('[...document.querySelectorAll("*")].find(e=>e.style?.getPropertyValue("--size"))?.style.setProperty("--size","16px")');await settle();
+    c.final=await sample();c.outcome='measured';
+   }
+  }catch(e){c.outcome='incomplete';c.error=e.message;console.log('GAP',id,e.message);}
+  c.measures=await ev('({renders:measure.renders.splice(0),longtasks:measure.longtasks.splice(0),receipts:measure.receipts.splice(0)})').catch(()=>null);
+  fs.writeFileSync(path.join(base,'results.json'),JSON.stringify(results,null,2));console.log('END',id,c.outcome);
+ }
+ // Restart the instrument with its exact saved native-record anchor and draft metadata.
+ await choose('claude-normal');await ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=Math.max(0,e.scrollHeight*.4);e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await settle();
+ await until('!!document.querySelector("[data-c=latest]")');results.restart={before:await anchor(),navigation:JSON.parse(fs.readFileSync(path.join(base,'navigation.json'),'utf8'))};
+ await stop();results.restart.native=await boot();await settle();results.restart.after=await anchor();results.restart.delta=await displacement(results.restart.before);
+ await stop();
+ results.preservation=Object.fromEntries(Object.entries(originals).map(([file,before])=>[file,{sha256:hash(path.join(base,file)),unchanged:before===hash(path.join(base,file))}]));assert(Object.values(results.preservation).every(v=>v.unchanged));
+ results.finished=new Date().toISOString();fs.writeFileSync(path.join(base,'results.json'),JSON.stringify(results,null,2));
+ console.log('DONE',results.cases.map(c=>[c.id,c.outcome]));
+}
+if(require.main===module)run().catch(async e=>{console.error(e.stack);try{if(socket?.readyState===1)await stop();}catch(err){console.error('cleanup',err.message);}process.exitCode=1;});
+else module.exports={boot,stop,ev,cmd,until,settle,choose,sample,anchor,displacement,inputs,wheel,stats,record,manifest,hash,delay,trace,traceComplete:()=>traceDone};

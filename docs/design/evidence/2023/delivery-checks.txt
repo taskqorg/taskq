@@ -1,0 +1,5 @@
+Task #2023 delivery is documentation and text evidence only.
+Product source measured: 73df356b19e841e3900c06878206bfdd73b7c41e.
+Canonical command: python scripts/check.py --base 73df356b19e841e3900c06878206bfdd73b7c41e
+Gate outcome is recorded after the single rebased candidate run.
+Native measurement outcomes and limits are in README.md; no source CI substitutes for them (R12).

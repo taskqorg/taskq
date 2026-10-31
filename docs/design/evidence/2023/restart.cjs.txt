@@ -1,0 +1,12 @@
+'use strict';
+const fs=require('node:fs'),p=require('./measure.cjs'),path=require('node:path'),assert=require('node:assert/strict'),base=__dirname;
+const result={started:new Date().toISOString()};const save=()=>fs.writeFileSync(path.join(base,'restart.json'),JSON.stringify(result,null,2));
+(async()=>{
+ result.native=await p.boot();await p.choose('claude-normal');
+ await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=e.scrollHeight*.4;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+ result.before=await p.anchor();
+ const end=Date.now()+10000;while(Date.now()<end){const nav=JSON.parse(fs.readFileSync(path.join(base,'navigation.json'),'utf8'));if(nav.threads?.positions?.['claude-normal']?.at===Number(result.before.key.split(':')[0])){result.navigation=nav;break;}await p.delay(50);}assert(result.navigation,'native navigation readback');save();
+ await p.stop();result.stopped=true;save();result.restarted=await p.boot();await p.choose('claude-normal');result.after=await p.anchor();result.delta=await p.displacement(result.before);save();await p.stop();result.stopped_after_restart=true;
+ result.preservation=Object.fromEntries(Object.entries(p.manifest).filter(([id])=>!/(mutable|trace)$/.test(id)).map(([id,f])=>[id,{sha256:p.hash(path.join(base,f.file)),unchanged:p.hash(path.join(base,f.file))===f.sha256}]));assert(Object.values(result.preservation).every(v=>v.unchanged));assert.equal(result.after.key,result.before.key);assert(Math.abs(result.delta)<=2);
+ result.finished=new Date().toISOString();save();console.log('DONE',result.before.key,result.delta);
+})().catch(async e=>{result.error=e.message;save();console.error(e.stack);try{await p.stop();}catch{}process.exitCode=1;});

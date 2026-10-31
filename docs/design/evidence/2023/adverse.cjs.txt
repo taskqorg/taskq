@@ -1,0 +1,72 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),p=require('./measure.cjs'),base=__dirname;
+const results=process.argv.includes('--resume')?JSON.parse(fs.readFileSync(path.join(base,'adverse.json'),'utf8')):{cases:[],warm:[],traces:[],started:new Date().toISOString()};
+if(results.error){results.priorErrors=[...(results.priorErrors||[]),results.error];delete results.error;}
+const state=JSON.parse(fs.readFileSync(path.join(base,'state.json'),'utf8'));
+for(const rt of ['claude','codex']){
+ const id=rt+'-mutable',file=id+'.jsonl';if(!results.cases.some(c=>c.id===id&&c.missing))fs.copyFileSync(path.join(base,rt+'-normal.jsonl'),path.join(base,file));
+ p.manifest[id]={...p.manifest[rt+'-normal'],file};state.conversations.items=state.conversations.items.filter(c=>c.id!==id);state.conversations.items.push({...state.conversations.items.find(c=>c.id===rt+'-normal'),id,title:id,request:{id,state:'launched',kind:'launched',next:'Read only'}});
+}
+fs.writeFileSync(path.join(base,'fixtures.json'),JSON.stringify(p.manifest));fs.writeFileSync(path.join(base,'state.json'),JSON.stringify(state));
+async function mark(name){await p.ev('measure.phase='+JSON.stringify(name)+';performance.mark('+JSON.stringify('phase:'+name)+')');}
+async function run(){
+ results.native=await p.boot();
+ await p.ev(`(()=>{
+  measure.anchors=[];measure.raw=[];
+  const get=()=>{const e=document.querySelector('.conversation-reader'),top=e?.getBoundingClientRect().top,n=e&&[...e.querySelectorAll('[data-key]')].find(n=>n.getBoundingClientRect().bottom>top);return n?{key:n.dataset.key,y:n.getBoundingClientRect().top-top}:null;};
+  const receive=taskq.receive;taskq.receive=function(s){const r=s.dialogueReceipt,a=r?.action==='transcript'&&r.value?.items?.length?get():null,phase=measure.phase;
+   const v=receive(s);if(r){measure.raw.push(r);if(a&&phase.startsWith('anchor-'))requestAnimationFrame(()=>requestAnimationFrame(()=>{const e=document.querySelector('.conversation-reader'),n=[...e.querySelectorAll('[data-key]')].find(n=>n.dataset.key===a.key);measure.anchors.push({phase,key:a.key,delta:n?n.getBoundingClientRect().top-e.getBoundingClientRect().top-a.y:null});}));}return v;};
+ })()`);
+ await p.cmd('Tracing.start',{categories:'devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline',transferMode:'ReportEvents'});
+ for(const rt of ['claude','codex']){
+  if(results.cases.some(c=>c.id===rt+'-mutable'&&c.missing)){console.log('REUSE',rt,'completed adverse observations');continue;}
+  const id=rt+'-mutable',file=path.join(base,id+'.jsonl'),c={id};results.cases.push(c);console.log('START',id);
+  await p.choose(id);await mark('anchor-prepend-'+rt);
+  await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=0;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+  await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=Math.min(500,e.scrollHeight/3);e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+  const a=await p.anchor();await mark('anchor-append-'+rt);fs.appendFileSync(file,JSON.stringify(p.record(rt,300,'Fresh append retained by native reader'))+'\n');
+  await p.until('document.querySelector("[data-c=latest]")?.innerText.includes("New messages")');await p.settle();c.append_older_anchor_delta=await p.displacement(a);await p.delay(150);c.append_delayed_delta=await p.displacement(a);
+  await p.ev('document.querySelector("[data-c=latest]").click()');await p.settle();await mark('append-follow-'+rt);
+  fs.appendFileSync(file,Array.from({length:20},(_,n)=>JSON.stringify(p.record(rt,n,'Tail append '+n))).join('\n')+'\n');await p.until('document.querySelector(".dialogue-transcript").innerText.includes("Tail append 19")');await p.settle();
+  c.follow=await p.sample();c.anchors=await p.ev('measure.anchors.splice(0)');
+  await mark('input-wheel-'+rt);const measured=await Promise.all([p.inputs(),p.wheel()]);c.concurrent={input:measured[0],wheel:measured[1]};
+  await p.ev('document.querySelector("[data-c=latest]")?.click()');await p.settle();
+  await mark('shrink-'+rt);fs.copyFileSync(file,file+'.before-shrink');fs.truncateSync(file,p.manifest[rt+'-normal'].expected[5].split(':')[0]*1);
+  await p.until('document.querySelector(".conversation-reader").innerText.includes("shrank")');c.shrink=await p.ev('document.querySelector(".dialogue-status")?.innerText||document.querySelector(".conversation-reader").innerText.slice(-1000)');
+  fs.copyFileSync(file+'.before-shrink',file+'.replacement');fs.renameSync(file+'.replacement',file);
+  await p.ev('document.querySelector("[data-c=latest]").click()');await p.settle();await mark('replace-'+rt);
+  fs.copyFileSync(file,file+'.replacement');fs.renameSync(file+'.replacement',file);
+  await p.until('document.querySelector(".conversation-reader").innerText.includes("source changed")');c.replacement=await p.ev('document.querySelector(".conversation-reader").innerText.slice(-1000)');
+  await p.ev('document.querySelector("[data-c=latest]").click()');await p.settle();await mark('missing-'+rt);
+  fs.renameSync(file,file+'.absent');await p.until('document.querySelector(".conversation-reader").innerText.includes("transcript identity unknown")');c.missing=await p.ev('document.querySelector(".conversation-reader").innerText.slice(-1000)');fs.renameSync(file+'.absent',file);
+  await p.choose(rt+'-normal');await p.choose(id);await p.settle();
+  c.measures=await p.ev('({renders:measure.renders.splice(0),longtasks:measure.longtasks.splice(0)})');console.log('END',id);
+  fs.writeFileSync(path.join(base,'adverse.json'),JSON.stringify(results,null,2));
+ }
+ // The earlier Claude attempt completed its behavior observations but failed before trace export.
+ // Capture just its missing task trace; retain its original interaction observations above.
+ if(process.argv.includes('--resume')){
+  await p.choose('claude-mutable');await mark('trace-prepend-claude');
+  await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=0;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+  await p.ev('document.querySelector("[data-c=latest]")?.click()');await p.settle();await mark('trace-append-claude');
+  fs.appendFileSync(path.join(base,'claude-mutable.jsonl'),JSON.stringify(p.record('claude',400,'Trace append only'))+'\n');
+  await p.until('document.querySelector(".dialogue-transcript").innerText.includes("Trace append only")');await p.settle();
+ }
+ // The native adapter receives the identical latest-page request 20 times. Unmatched receipt IDs do not mutate the view.
+ for(const rt of ['claude','codex'])for(const name of ['normal','100mib','10k']){
+  const id=rt+'-'+name;await mark('warm-'+id);for(let n=0;n<20;n++){
+   const request='warm-'+id+'-'+n;await p.ev('measureNativePost('+JSON.stringify(JSON.stringify({a:'conversation-dialogue',id:request,conversation:id,action:'transcript'}))+')');
+   await p.until('measure.raw.some(r=>r.id==='+JSON.stringify(request)+')');
+  }results.warm.push({id,samples:20});
+ }
+ await p.cmd('Tracing.end');const end=Date.now()+15000;while(!p.traceComplete()&&Date.now()<end)await p.delay(50);assert(p.traceComplete(),'native trace complete');
+ const names=new Map(p.trace.filter(e=>e.name==='thread_name').map(e=>[e.pid+':'+e.tid,e.args?.name]));
+ results.traces=p.trace.filter(e=>e.ph==='X'&&['RunTask','ThreadControllerImpl::RunTask','FunctionCall','EventDispatch','FireAnimationFrame','UpdateLayoutTree','Layout','Paint'].includes(e.name)).map(e=>({name:e.name,thread:names.get(e.pid+':'+e.tid)||'unknown',ts_us:e.ts,duration_ms:e.dur/1000}));
+ results.marks=p.trace.filter(e=>e.name?.startsWith('phase:')).map(e=>({name:e.name,ts_us:e.ts}));results.trace_events=p.trace.length;
+ await p.choose('claude-normal');await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=Math.max(0,e.scrollHeight*.4);e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+ await p.delay(400);results.restart={before:await p.anchor(),navigation:JSON.parse(fs.readFileSync(path.join(base,'navigation.json'),'utf8'))};await p.stop();
+ results.restart.native=await p.boot();await p.settle();results.restart.after=await p.anchor();results.restart.delta=await p.displacement(results.restart.before);await p.stop();
+ results.preservation=Object.fromEntries(Object.entries(p.manifest).filter(([id])=>!id.endsWith('mutable')).map(([id,f])=>[id,{sha256:p.hash(path.join(base,f.file)),unchanged:p.hash(path.join(base,f.file))===f.sha256}]));assert(Object.values(results.preservation).every(v=>v.unchanged));
+ results.finished=new Date().toISOString();fs.writeFileSync(path.join(base,'adverse.json'),JSON.stringify(results,null,2));console.log('DONE');
+}
+run().catch(async e=>{results.error=e.message;fs.writeFileSync(path.join(base,'adverse.json'),JSON.stringify(results,null,2));console.error(e.stack);try{await p.stop();}catch{}process.exitCode=1;});
