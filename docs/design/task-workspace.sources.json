@@ -7,6 +7,7 @@
     "src/answer-card.js",
     "src/app-shell.js",
     "src/notification-panel.js",
+    "src/pm-composer.js",
     "src/project-blocks.js",
     "src/relative-time.js",
     "src/reply-files.js",
