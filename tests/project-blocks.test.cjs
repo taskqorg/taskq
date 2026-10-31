@@ -9,6 +9,8 @@ const counts=(o={},unknown=false)=>Object.keys(names).map(state=>({state,name:na
 const all=(o,open,partial=[])=>({counts:counts(o,!!partial.length),partial,open:partial.length?null:open});
 // K-A1/K-A6: Held is its own counter and Closed is gone; unknown counts and All tasks read `?`, never zero.
 assert.deepEqual(Object.keys(q.marks),Object.keys(names),'one mark per model state');
+// #2081 owner decision: Held is circle-dashed, Later circle-pause; a swap back or equal icons fails.
+assert.deepEqual([q.marks.held[0],q.marks.later[0]],['circle-dashed','circle-pause'],'Held and Later icons');
 // The released fixture is display model output: its project carries model counts/partial and its row the model name/age.
 assert.deepEqual([p.counts,p.partial,p.open,row.state_name],[counts(),[],0,names[row.state]],'fixture follows the display model');
 assert.match(q.aggregate(all({},null,['project']),[]),/All tasks \?<\/button>/);
@@ -86,7 +88,7 @@ assert.deepEqual(actions,[['tasks',p.id,'review'],['project',p.id],['open',row.u
 const manifest=require('../docs/design/project-blocks.sources.json');
 // #1841: the build derives the released hashes from the committed file and icon lists.
 const built=JSON.parse(fs.readFileSync('build/web/project-blocks.sources.json','utf8'));
-assert.equal(manifest.icons.length,16);
+assert.equal(manifest.icons.length,17);
 assert.deepEqual(Object.keys(built.files),manifest.files);assert.deepEqual(Object.keys(built.icons),manifest.icons);
 for(const [file,hash] of Object.entries(built.files))assert.equal(crypto.createHash('sha256').update(fs.readFileSync(file,'utf8').replace(/\r\n/g,'\n')).digest('hex'),hash,file);
 for(const [name,hash] of Object.entries(built.icons))assert.equal(crypto.createHash('sha256').update(q.assets[name]).digest('hex'),hash,name);

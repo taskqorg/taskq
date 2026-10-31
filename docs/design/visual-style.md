@@ -68,8 +68,8 @@ The owner accepts the mapping below and the paired theme colors on 2026-10-23, r
 | Failed | circle-x | Failed |
 | Ready | circle | Neutral |
 | Blocked by a dependency | link | Neutral |
-| Later | clock | Neutral |
-| Held | circle-pause | Neutral |
+| Later | circle-pause | Neutral |
+| Held | circle-dashed | Neutral |
 | Confirmed merged PR result | git-merge | Review purple; explicit Merged label |
 
 Blocked's link means dependency; never use a pull-request or merge glyph for it. Actual blocking references/reasons belong in details. Held is a task state; the admission Pause control is a different action. Review does not prove a reviewer is currently running. Loading indicators describe loading, never Doing. Missing asset names must fail catalog validation; never silently substitute a circle that looks like Ready. `git-merge` can also identify explicit merge policy/actions, but never asserts that they have completed. It is absent from the inspected runtime bundle; implementation must add the pinned asset before using that route.
