@@ -789,6 +789,13 @@ fn guarded_policy(configured:Res<Policy>,barrier:&Res<()>)->(Res<Policy>,(u64,u6
 
 pub fn run(install: &Path) -> Res<()> {
     fs::create_dir_all(install).map_err(|e| e.to_string())?;
+    // #2057: after a re-exec the old image's helpers (tray `open`, curl, `log show`) are children no thread waits for
+    #[cfg(unix)]
+    match crate::runtime::inherit_children() {
+        Ok(pids) if pids.is_empty() => {},
+        Ok(pids) => crate::platform::log(&format!("host start: {} inherited children reaped on exit", pids.len())),
+        Err(e) => crate::platform::log(&format!("host start: {e}; inherited children stay unreaped")),
+    }
     let mut reported=String::new();
     let mut linked=std::time::Instant::now();
     let _owner=loop {
@@ -1072,6 +1079,7 @@ pub fn run(install: &Path) -> Res<()> {
             }
         }
         drop(h);
+        #[cfg(unix)] crate::runtime::reap_inherited();
         if crate::installed(install) {
             // #2048: hourly host doctor, off the tick thread: stale releases and qualification leftovers.
             if let Some(line)=doctor.tick(install) {crate::platform::log(&line);}
