@@ -14,10 +14,10 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Should the new admin API keep compatibility with existing clients?",
             "evidence": [
@@ -30,17 +30,17 @@
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -113,10 +113,10 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Should the new admin API keep compatibility with existing clients?",
             "evidence": [
@@ -129,17 +129,17 @@
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -192,10 +192,10 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/850",
           "revision": 4,
-          "card": "Done: read #1443\nProblem: Merge after [#1443](https://github.com/o/r/issues/1443) or now?\nEvidence: [shot](https://github.com/o/r/pull/12)\n1. Wait for [#1443](https://github.com/o/r/issues/1443) ★\n2. Merge now, see [bad](javascript:alert(1))\nTo answer: `taskq answer 850.K` or comment `K` or the option text.",
+          "card": "Done: read #1443\nProblem: Merge after [#1443](https://github.com/o/r/issues/1443) or now?\nEvidence: [shot](https://github.com/o/r/pull/12)\n1. Wait for #1443 - + merges after [#1443](https://github.com/o/r/issues/1443) lands; - slower ★\n2. [bad](javascript:alert%281%29) - + merges now; - skips the fix\nTo answer: `taskq answer 850.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: read #1443\nProblem: Merge after [#1443](https://github.com/o/r/issues/1443) or now?\nEvidence: [shot](https://github.com/o/r/pull/12)\n1. Wait for [#1443](https://github.com/o/r/issues/1443) ★\n2. Merge now, see [bad](javascript:alert(1))\nTo answer: `taskq answer 850.K` or comment `K` or the option text.",
+            "text": "Done: read #1443\nProblem: Merge after [#1443](https://github.com/o/r/issues/1443) or now?\nEvidence: [shot](https://github.com/o/r/pull/12)\n1. Wait for #1443 - + merges after [#1443](https://github.com/o/r/issues/1443) lands; - slower ★\n2. [bad](javascript:alert%281%29) - + merges now; - skips the fix\nTo answer: `taskq answer 850.K` or comment `K` or the option text.",
             "done": "read #1443",
             "problem": "Merge after [#1443](https://github.com/o/r/issues/1443) or now?",
             "evidence": [
@@ -208,17 +208,17 @@
             "choices": [
               {
                 "id": 1,
-                "text": "Wait for [#1443](https://github.com/o/r/issues/1443)",
-                "label": "Wait for [#1443](https://github.com/o/r/issues/1443)",
-                "detail": null,
+                "text": "Wait for #1443 - + merges after [#1443](https://github.com/o/r/issues/1443) lands; - slower",
+                "label": "Wait for #1443",
+                "detail": "+ merges after [#1443](https://github.com/o/r/issues/1443) lands; - slower",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Merge now, see [bad](javascript:alert(1))",
-                "label": "Merge now, see [bad](javascript:alert(1))",
-                "detail": null,
+                "text": "[bad](javascript:alert%281%29) - + merges now; - skips the fix",
+                "label": "[bad](javascript:alert%281%29)",
+                "detail": "+ merges now; - skips the fix",
                 "recommended": false,
                 "consequential": false
               }
@@ -237,7 +237,7 @@
           "has": [
             "Merge after <a href=\"https://github.com/o/r/issues/1443\" target=\"_blank\" rel=\"noopener\">#1443</a> or now?",
             "1.</span> <span>Wait for #1443 <span class=\"qac-star\"",
-            "<a class=\"qac-link\" href=\"https://github.com/o/r/issues/1443\" target=\"_blank\" rel=\"noopener\">#1443 ↗</a>",
+            "+ merges after <a href=\"https://github.com/o/r/issues/1443\" target=\"_blank\" rel=\"noopener\">#1443</a> lands; - slower</span>",
             "<a class=\"qac-link\" href=\"#\" target=\"_blank\" rel=\"noopener\">bad ↗</a>",
             ">shot</a>"
           ],
@@ -417,27 +417,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Should the new admin API keep compatibility with existing clients?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -505,27 +505,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/7",
           "revision": 2,
-          "card": "Done: not started\nProblem: which?\n1. a ★\n2. b\nTo answer: `taskq answer 7.K` or comment `K` or the option text.",
+          "card": "Done: not started\nProblem: which?\n1. a - + quick; - rough ★\n2. b - + careful; - slow\nTo answer: `taskq answer 7.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: not started\nProblem: which?\n1. a ★\n2. b\nTo answer: `taskq answer 7.K` or comment `K` or the option text.",
+            "text": "Done: not started\nProblem: which?\n1. a - + quick; - rough ★\n2. b - + careful; - slow\nTo answer: `taskq answer 7.K` or comment `K` or the option text.",
             "done": "not started",
             "problem": "which?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "a",
+                "text": "a - + quick; - rough",
                 "label": "a",
-                "detail": null,
+                "detail": "+ quick; - rough",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "b",
+                "text": "b - + careful; - slow",
                 "label": "b",
-                "detail": null,
+                "detail": "+ careful; - slow",
                 "recommended": false,
                 "consequential": false
               }
@@ -555,8 +555,12 @@
           "type": "check",
           "status": "sending",
           "sent": 1,
-          "op": {"text": "1\n2\n3\n4\n5"},
-          "not": ["At most 4 lines"]
+          "op": {
+            "text": "1\n2\n3\n4\n5"
+          },
+          "not": [
+            "At most 4 lines"
+          ]
         }
       ]
     },
@@ -573,35 +577,35 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/9",
           "revision": 3,
-          "card": "Done: measured the cold start on both hosts and read the release notes of every dependency touched by the upgrade path\nProblem: The upgrade keeps the old cache format for one release, which doubles disk use on small hosts for about two weeks.\nDropping it now forces a full rebuild on first start, about twenty minutes of downtime per host that nobody watches.\n1. Keep the old format for one release and accept double disk use on small hosts for two weeks ★\n2. Drop it now and accept one full rebuild per host on first start\n3. Ask each host owner first and delay the release by a week\nTo answer: `taskq answer 9.K` or comment `K` or the option text.",
+          "card": "Done: measured the cold start on both hosts and read the release notes of every dependency touched by the upgrade path\nProblem: The upgrade keeps the old cache format for one release, which doubles disk use on small hosts for about two weeks.\nDropping it now forces a full rebuild on first start, about twenty minutes of downtime per host that nobody watches.\n1. Keep the old format - + no host rebuilds during this release; - double disk use on small hosts for two weeks ★\n2. Drop it now - + one cache format from the next start; - one full rebuild per host on first start\n3. Ask each host owner first - + owners pick their downtime; - the release slips by a week\nTo answer: `taskq answer 9.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: measured the cold start on both hosts and read the release notes of every dependency touched by the upgrade path\nProblem: The upgrade keeps the old cache format for one release, which doubles disk use on small hosts for about two weeks.\nDropping it now forces a full rebuild on first start, about twenty minutes of downtime per host that nobody watches.\n1. Keep the old format for one release and accept double disk use on small hosts for two weeks ★\n2. Drop it now and accept one full rebuild per host on first start\n3. Ask each host owner first and delay the release by a week\nTo answer: `taskq answer 9.K` or comment `K` or the option text.",
+            "text": "Done: measured the cold start on both hosts and read the release notes of every dependency touched by the upgrade path\nProblem: The upgrade keeps the old cache format for one release, which doubles disk use on small hosts for about two weeks.\nDropping it now forces a full rebuild on first start, about twenty minutes of downtime per host that nobody watches.\n1. Keep the old format - + no host rebuilds during this release; - double disk use on small hosts for two weeks ★\n2. Drop it now - + one cache format from the next start; - one full rebuild per host on first start\n3. Ask each host owner first - + owners pick their downtime; - the release slips by a week\nTo answer: `taskq answer 9.K` or comment `K` or the option text.",
             "done": "measured the cold start on both hosts and read the release notes of every dependency touched by the upgrade path",
             "problem": "The upgrade keeps the old cache format for one release, which doubles disk use on small hosts for about two weeks. Dropping it now forces a full rebuild on first start, about twenty minutes of downtime per host that nobody watches.",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep the old format for one release and accept double disk use on small hosts for two weeks",
-                "label": "Keep the old format for one release and accept double disk use on small hosts for two weeks",
-                "detail": null,
+                "text": "Keep the old format - + no host rebuilds during this release; - double disk use on small hosts for two weeks",
+                "label": "Keep the old format",
+                "detail": "+ no host rebuilds during this release; - double disk use on small hosts for two weeks",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Drop it now and accept one full rebuild per host on first start",
-                "label": "Drop it now and accept one full rebuild per host on first start",
-                "detail": null,
+                "text": "Drop it now - + one cache format from the next start; - one full rebuild per host on first start",
+                "label": "Drop it now",
+                "detail": "+ one cache format from the next start; - one full rebuild per host on first start",
                 "recommended": false,
                 "consequential": false
               },
               {
                 "id": 3,
-                "text": "Ask each host owner first and delay the release by a week",
-                "label": "Ask each host owner first and delay the release by a week",
-                "detail": null,
+                "text": "Ask each host owner first - + owners pick their downtime; - the release slips by a week",
+                "label": "Ask each host owner first",
+                "detail": "+ owners pick their downtime; - the release slips by a week",
                 "recommended": false,
                 "consequential": false
               }
@@ -636,27 +640,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/11",
           "revision": 5,
-          "card": "What should I do here?\n1. this\n2. that",
+          "card": "What should I do here?\n1. this - + quick; - unclear\n2. that - + careful; - slow",
           "question": {
             "parsed": false,
-            "text": "What should I do here?\n1. this\n2. that",
+            "text": "What should I do here?\n1. this - + quick; - unclear\n2. that - + careful; - slow",
             "done": null,
             "problem": null,
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "this",
+                "text": "this - + quick; - unclear",
                 "label": "this",
-                "detail": null,
+                "detail": "+ quick; - unclear",
                 "recommended": false,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "that",
+                "text": "that - + careful; - slow",
                 "label": "that",
-                "detail": null,
+                "detail": "+ careful; - slow",
                 "recommended": false,
                 "consequential": false
               }
@@ -701,27 +705,27 @@
           "state": "review",
           "url": "https://github.com/o/r/issues/12",
           "revision": 8,
-          "card": "Changed: tray shows answers\nChecks: cargo test --locked -- pass\nOpen: none\n\nDone: shipped to a branch\nProblem: keep the new layout?\n1. close: ship ★\n2. redo with the old layout\nTo answer: `taskq answer 12.K` or comment `K` or the option text.",
+          "card": "Changed: tray shows answers\nChecks: cargo test --locked -- pass\nOpen: none\n\nDone: shipped to a branch\nProblem: keep the new layout?\n1. close: ship - + merges the new layout; - ends review ★\n2. redo with the old layout - + keeps the familiar layout; - one more attempt\nTo answer: `taskq answer 12.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Changed: tray shows answers\nChecks: cargo test --locked -- pass\nOpen: none\n\nDone: shipped to a branch\nProblem: keep the new layout?\n1. close: ship ★\n2. redo with the old layout\nTo answer: `taskq answer 12.K` or comment `K` or the option text.",
+            "text": "Changed: tray shows answers\nChecks: cargo test --locked -- pass\nOpen: none\n\nDone: shipped to a branch\nProblem: keep the new layout?\n1. close: ship - + merges the new layout; - ends review ★\n2. redo with the old layout - + keeps the familiar layout; - one more attempt\nTo answer: `taskq answer 12.K` or comment `K` or the option text.",
             "done": "shipped to a branch",
             "problem": "keep the new layout?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "close: ship",
+                "text": "close: ship - + merges the new layout; - ends review",
                 "label": "close: ship",
-                "detail": null,
+                "detail": "+ merges the new layout; - ends review",
                 "recommended": true,
                 "consequential": true
               },
               {
                 "id": 2,
-                "text": "redo with the old layout",
+                "text": "redo with the old layout - + keeps the familiar layout; - one more attempt",
                 "label": "redo with the old layout",
-                "detail": null,
+                "detail": "+ keeps the familiar layout; - one more attempt",
                 "recommended": false,
                 "consequential": false
               }
@@ -776,27 +780,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -841,27 +845,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -940,27 +944,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -976,27 +980,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 6,
-          "card": "Done: asked the client teams\nProblem: Two clients still use v1: keep it until they move?\n1. Keep v1 until both move ★\n2. Remove v1 now\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: asked the client teams\nProblem: Two clients still use v1: keep it until they move?\n1. Keep v1 until both move - + no client breaks; - two versions to maintain ★\n2. Remove v1 now - + one version; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: asked the client teams\nProblem: Two clients still use v1: keep it until they move?\n1. Keep v1 until both move ★\n2. Remove v1 now\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: asked the client teams\nProblem: Two clients still use v1: keep it until they move?\n1. Keep v1 until both move - + no client breaks; - two versions to maintain ★\n2. Remove v1 now - + one version; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "asked the client teams",
             "problem": "Two clients still use v1: keep it until they move?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep v1 until both move",
+                "text": "Keep v1 until both move - + no client breaks; - two versions to maintain",
                 "label": "Keep v1 until both move",
-                "detail": null,
+                "detail": "+ no client breaks; - two versions to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove v1 now",
+                "text": "Remove v1 now - + one version; - old clients break",
                 "label": "Remove v1 now",
-                "detail": null,
+                "detail": "+ one version; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1074,27 +1078,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1171,27 +1175,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1211,27 +1215,27 @@
             "answer": false,
             "reason": "permission revoked"
           },
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1278,27 +1282,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1369,10 +1373,10 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\nEvidence: [bad](javascript:alert(1))\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\nEvidence: [bad](javascript:alert(1))\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\nEvidence: [bad](javascript:alert(1))\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\nEvidence: [bad](javascript:alert(1))\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [
@@ -1385,17 +1389,17 @@
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1456,10 +1460,10 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Should the new admin API keep compatibility with existing clients?\nEvidence: [#12](https://github.com/o/r/pull/12)\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Should the new admin API keep compatibility with existing clients?",
             "evidence": [
@@ -1472,17 +1476,17 @@
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1635,27 +1639,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1712,27 +1716,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
@@ -1784,27 +1788,27 @@
           "state": "ask",
           "url": "https://github.com/o/r/issues/841",
           "revision": 4,
-          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+          "card": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
           "question": {
             "parsed": true,
-            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility ★\n2. Remove the old API\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
+            "text": "Done: compared both clients\nProblem: Keep compatibility?\n1. Keep compatibility - + old clients keep working; - more code to maintain ★\n2. Remove the old API - + simpler code; - old clients break\nTo answer: `taskq answer 841.K` or comment `K` or the option text.",
             "done": "compared both clients",
             "problem": "Keep compatibility?",
             "evidence": [],
             "choices": [
               {
                 "id": 1,
-                "text": "Keep compatibility",
+                "text": "Keep compatibility - + old clients keep working; - more code to maintain",
                 "label": "Keep compatibility",
-                "detail": null,
+                "detail": "+ old clients keep working; - more code to maintain",
                 "recommended": true,
                 "consequential": false
               },
               {
                 "id": 2,
-                "text": "Remove the old API",
+                "text": "Remove the old API - + simpler code; - old clients break",
                 "label": "Remove the old API",
-                "detail": null,
+                "detail": "+ simpler code; - old clients break",
                 "recommended": false,
                 "consequential": false
               }
