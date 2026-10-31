@@ -3,6 +3,12 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.56
+
+Deploy records on closed tasks: `taskq deployed` writes one `taskq: deployed` entry per task in a merged range; boards with `deploy` set label delivered closes `deploy-waiting` until the first entry, and `taskq status` counts tasks waiting for deploy (#2064). Process permits wait within the deadline (coreq 0.16.1, #2072). A host re-exec reaps inherited children (#2073). Linux service update keeps sandboxed Codex workers working when the root sandbox helper is stale (#2071).
+
+**Board**: a `deployed` entry never reopens a closed task and older readers ignore it; the `deploy-waiting` label appears only on boards that set `deploy`. No migration.
+
 ## v4.6.55
 
 Windows service runs without console windows: the service starts through a windowless launcher (coreq 0.16.0) and every child spawn (tasklist, git, glab, launcher, codex) sets the no-window flag (#2049). No board change.
