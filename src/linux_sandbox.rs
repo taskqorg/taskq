@@ -87,7 +87,7 @@ pub fn run(args: &[String]) -> Result<i32, String> {
     }
     let home = PathBuf::from(std::env::var_os("HOME").ok_or("linux sandbox: HOME missing")?);
     let ch = codex_home()?;
-    let mut c = Command::new(BWRAP);
+    let mut c = crate::platform::command(BWRAP);
     c.args(["--die-with-parent", "--new-session", "--unshare-user", "--unshare-pid", "--unshare-ipc", "--cap-drop", "ALL", "--ro-bind", "/", "/", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", "/var/tmp"]);
     let dns = Path::new("/etc/resolv.conf").canonicalize().map_err(|e| format!("linux sandbox DNS: {e}"))?;
     c.arg("--ro-bind").arg(&dns).arg(&dns);

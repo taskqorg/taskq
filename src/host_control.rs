@@ -44,7 +44,7 @@ pub fn install_state(tool:&coreq::Tool,owner:Option<&Identity>)->Res<InstallStat
         let unit=coreq::service::unit(tool,&tool.install,"");
         let target=unit.stop.first().and_then(|command|command.last()).ok_or("native host target missing")?;
         let exe=tool.install.join(tool.exe_name());
-        let native=output("host.install.owner",Command::new("launchctl").args(["print",target]))?;
+        let native=output("host.install.owner",crate::platform::command("launchctl").args(["print",target]))?;
         let text=String::from_utf8(native.stdout).map_err(|e|e.to_string())?;
         let field=|key:&str|text.lines().find_map(|line|line.trim().strip_prefix(key));
         if field("program = ")!=exe.to_str()||field("working directory = ")!=tool.install.to_str()
@@ -57,7 +57,7 @@ pub fn install_state(tool:&coreq::Tool,owner:Option<&Identity>)->Res<InstallStat
     #[cfg(target_os="linux")] {
         let unit=coreq::service::unit(tool,&tool.install,"");
         let exe=tool.install.join(tool.exe_name());
-        let query=output("host.install.owner",Command::new("systemctl").args(["--user","show",&format!("{}.service",tool.name),"--property=MainPID","--property=ExecStart","--property=WorkingDirectory","--property=FragmentPath","--no-pager"]))?;
+        let query=output("host.install.owner",crate::platform::command("systemctl").args(["--user","show",&format!("{}.service",tool.name),"--property=MainPID","--property=ExecStart","--property=WorkingDirectory","--property=FragmentPath","--no-pager"]))?;
         let text=String::from_utf8(query.stdout).map_err(|e|e.to_string())?;
         let field=|key:&str|text.lines().find_map(|line|line.strip_prefix(key));
         if field("WorkingDirectory=")!=tool.install.to_str()||field("FragmentPath=")!=unit.path.to_str()
@@ -98,6 +98,7 @@ impl InstallFailure {
     fn unknown(reason:String)->Self {Self {submitted:true,reason}}
 }
 pub fn start_install(tool:&coreq::Tool,state:InstallState)->Result<(),InstallFailure> {
+    #[cfg(windows)] scheduler_write(tool.title).map_err(InstallFailure::before)?;
     if install_state(tool,None).map_err(InstallFailure::before)?!=state {return Err(InstallFailure::before("native host scope changed before start; kept".into()));}
     let unit=coreq::service::unit(tool,&tool.install,"");
     if state==InstallState::Absent {
@@ -112,7 +113,7 @@ pub fn start_install(tool:&coreq::Tool,state:InstallState)->Result<(),InstallFai
         if state==InstallState::Saved {commands("host.install.start",&unit.load).map_err(InstallFailure::unknown)?;}
         else {
             let target=unit.stop.first().and_then(|command|command.last()).ok_or_else(||InstallFailure::before("native host target missing".into()))?;
-            output("host.install.start",Command::new("launchctl").args(["kickstart",target])).map_err(InstallFailure::unknown)?;
+            output("host.install.start",crate::platform::command("launchctl").args(["kickstart",target])).map_err(InstallFailure::unknown)?;
         }
     }
     #[cfg(target_os="linux")] {commands("host.install.start",&unit.load).map_err(InstallFailure::unknown)?;}
@@ -126,7 +127,7 @@ pub fn start_install(tool:&coreq::Tool,state:InstallState)->Result<(),InstallFai
 
 fn verify_saved_install_scope(tool:&coreq::Tool)->Res<()> {
     #[cfg(target_os="macos")] {
-        let saved=output("host.install.definition",Command::new("plutil").args(["-convert","json","-o","-"]).arg(definition(tool)?))?;
+        let saved=output("host.install.definition",crate::platform::command("plutil").args(["-convert","json","-o","-"]).arg(definition(tool)?))?;
         let saved:serde_json::Value=serde_json::from_slice(&saved.stdout).map_err(|e|e.to_string())?;
         if saved["Label"]!=format!("com.{}.service",tool.name)||saved["WorkingDirectory"]!=tool.install.to_string_lossy().as_ref()
             ||saved["ProgramArguments"]!=serde_json::json!([tool.install.join(tool.exe_name()),"service","run"]) {return Err("saved host unit scope differs; kept".into());}
@@ -193,8 +194,18 @@ fn output(name:&'static str,command:&mut Command)->Res<std::process::Output> {
 fn commands(name:&'static str,commands:&[Vec<String>])->Res<()> {
     for args in commands {
         let (program,args)=args.split_first().ok_or("native command missing")?;
-        output(name,Command::new(program).args(args))?;
+        output(name,crate::platform::command(program).args(args))?;
     }
+    Ok(())
+}
+/// #2049 A3: a test build never registers, changes or runs a real Scheduled Task. The product unit (`TaskQ`) and its
+/// `TaskQ-Stop-<id>` controllers stay untouched; native fixtures register their own `…-Probe-<nonce>` unit, and a Stop
+/// controller only for the owned `TASKQ_NATIVE_STOP_CASE` root. Product builds always pass.
+#[cfg(any(windows,test))]
+fn scheduler_write(title:&str)->Res<()> {
+    if !cfg!(test) {return Ok(());}
+    let controller=title.starts_with("TaskQ-Stop-")&&std::env::var_os("TASKQ_NATIVE_STOP_CASE").is_none();
+    if title==crate::platform::tool(Path::new("")).title||controller {return Err(format!("a test cannot register or change the real Scheduled Task {title}"));}
     Ok(())
 }
 #[cfg(windows)]
@@ -204,7 +215,7 @@ fn powershell(code:&str)->Command {
     // GetInstances(0) omits hidden tasks; match the documented hidden-inclusive query by exact task path.
     let code=format!("function Get-TaskQInstances($service,$task) {{ $service.GetRunningTasks(1) | Where-Object {{ $_.Path -eq $task.Path }} }}\n{code}");
     let bytes:Vec<u8>=code.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let mut command=Command::new("powershell.exe");command.args(["-NoProfile","-NonInteractive","-WindowStyle","Hidden","-EncodedCommand",&crate::tray::base64(&bytes)]);command
+    let mut command=crate::platform::command("powershell.exe");command.args(["-NoProfile","-NonInteractive","-WindowStyle","Hidden","-EncodedCommand",&crate::tray::base64(&bytes)]);command
 }
 
 /// #1625: the CoreQ unit's 5-minute repeat restarts an exited host; Stop disables only it, each host start enables it
@@ -213,6 +224,7 @@ fn powershell(code:&str)->Command {
 pub fn repeat_trigger(tool:&coreq::Tool,enable:bool)->Res<&'static str> {
     let exe=tool.install.join(tool.exe_name());
     if !exe.is_file() {return Ok("absent");}
+    scheduler_write(tool.title)?;
     let code=format!(r#"$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\')
 try{{$t=$r.GetTask({name})}}catch{{if(($_.Exception.GetBaseException()).HResult -ne -2147024894){{throw}};'absent';exit 0}}
 $d=$t.Definition;$a=$d.Actions.Item(1)
@@ -246,7 +258,7 @@ pub fn dispatch(install:&Path,pending:&lifecycle::Pending)->Res<Control> {
 fn controller_command(exe:&Path)->Command {
     use std::os::unix::process::CommandExt;
     // CoreQ captures pipes; exec redirects them before the controller outlives their reader.
-    let mut command=Command::new("/bin/sh");
+    let mut command=crate::platform::command("/bin/sh");
     command.args(["-c","exec \"$@\" </dev/null >/dev/null 2>&1","taskq-controller"]).arg(exe).process_group(0);
     command
 }
@@ -268,12 +280,13 @@ pub(crate) fn dispatch_command(install:&Path,id:&str,action:&str,context:&str)->
         return Ok(Control {id:id.into(),worker:Some(worker)});
     }
     #[cfg(target_os="linux")] {
-        output("host.stop.dispatch",Command::new("systemd-run").args(["--user","--quiet","--collect","--property=RuntimeMaxSec=120"])
+        output("host.stop.dispatch",crate::platform::command("systemd-run").args(["--user","--quiet","--collect","--property=RuntimeMaxSec=120"])
             .arg(format!("--unit=taskq-stop-{id}")).arg(format!("--working-directory={}",install.display()))
             .arg(format!("--setenv=TASKQ_INSTALL={}",install.display())).arg(format!("--setenv=COREQ_TRACE_CONTEXT={context}"))
             .arg(exe).args(["service",action,"--request",id]))?;
     }
     #[cfg(windows)] {
+        scheduler_write(&format!("TaskQ-Stop-{id}"))?;
         let args=controller_args(install,id,action,context,&exe)?;
         let code=format!(r#"$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
 $s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\');$name={name};$path=(Get-Command powershell.exe -ErrorAction Stop).Source;$args={args};$cwd={cwd};$identity=[Security.Principal.WindowsIdentity]::GetCurrent()
@@ -303,13 +316,13 @@ fn remove_unit(tool:&coreq::Tool,id:&str,expected:&Identity,unit_revision:&str)-
     if present {
         let unit=coreq::service::unit(&tool,install,"");
         #[cfg(target_os="linux")] commands("host.uninstall.disable",&unit.unload)?;
-        #[cfg(windows)] if !native_absent(&tool)? {commands("host.uninstall.delete",std::slice::from_ref(unit.unload.last().ok_or("native delete command missing")?))?;}
+        #[cfg(windows)] if !native_absent(&tool)? {scheduler_write(tool.title)?;commands("host.uninstall.delete",std::slice::from_ref(unit.unload.last().ok_or("native delete command missing")?))?;}
         #[cfg(not(target_os="linux"))] if !native_absent(&tool)? {return Err("native unit remains; definition kept".into());}
         #[cfg(target_os="macos")] let _=unit;
         if revision_for(&tool)?!=unit_revision {return Err("Uninstall unit changed before removal; kept".into());}
         crate::host::ownership(&path)?;fs::remove_file(&path).map_err(|e|e.to_string())?;
     }
-    #[cfg(target_os="linux")] output("host.uninstall.reload",Command::new("systemctl").args(["--user","daemon-reload"]))?;
+    #[cfg(target_os="linux")] output("host.uninstall.reload",crate::platform::command("systemctl").args(["--user","daemon-reload"]))?;
     if path.try_exists().map_err(|e|e.to_string())?||!native_absent(&tool)? {return Err("host unit removal not observed; retry the same Uninstall".into());}
     Ok(())
 }
@@ -319,7 +332,7 @@ pub(crate) fn native_absent(tool:&coreq::Tool)->Res<bool> {
         let unit=coreq::service::unit(tool,&tool.install,"");
         let target=unit.stop.first().and_then(|command|command.last()).ok_or("native unit target missing")?;
         let (domain,label)=target.rsplit_once('/').ok_or("launchd domain missing")?;
-        let query=output("host.uninstall.readback",Command::new("launchctl").args(["print",domain]))?;
+        let query=output("host.uninstall.readback",crate::platform::command("launchctl").args(["print",domain]))?;
         return Ok(!String::from_utf8(query.stdout).map_err(|e|e.to_string())?.lines().any(|line|line.split_whitespace().any(|field|field.trim_matches('"')==label)));
     }
     #[cfg(windows)] {
@@ -330,7 +343,7 @@ exit 0"#,name=quote(tool.title));
         return match String::from_utf8(query.stdout).map_err(|e|e.to_string())?.trim() {"absent"=>Ok(true),"present"=>Ok(false),_=>Err("native unit inventory unknown".into())};
     }
     #[cfg(target_os="linux")] {
-        let query=crate::platform::output("host.uninstall.readback",Command::new("systemctl").args(["--user","show",&format!("{}.service",tool.name),"--property=LoadState","--property=MainPID","--property=ActiveState","--no-pager"]),Duration::from_secs(30))?;
+        let query=crate::platform::output("host.uninstall.readback",crate::platform::command("systemctl").args(["--user","show",&format!("{}.service",tool.name),"--property=LoadState","--property=MainPID","--property=ActiveState","--no-pager"]),Duration::from_secs(30))?;
         let text=String::from_utf8(query.stdout).map_err(|e|e.to_string())?;
         return systemd_absence(&text,query.status.success()).map_err(|reason|format!("{reason}; {}",query.status));
     }
@@ -358,31 +371,32 @@ fn stop_unit(tool:&coreq::Tool,id:&str,expected:&Identity,unit_revision:&str)->R
         let live=coreq::process::identity(expected.pid).map_err(|e|e.to_string())?;
         if live.is_some() {
             if live.as_ref()!=Some(expected) {return Err("native host incarnation changed; Stop refused".into());}
-            let query=output("host.stop.owner",Command::new("launchctl").args(["print",target]))?;
+            let query=output("host.stop.owner",crate::platform::command("launchctl").args(["print",target]))?;
             let text=String::from_utf8(query.stdout).map_err(|e|e.to_string())?;
             if !text.lines().any(|line|line.trim()==format!("pid = {}",expected.pid)) {return Err("launchd owner differs; Stop refused".into());}
             commands("host.stop.effect",&unit.stop)?;
         } else {
             // A lost response can be reconciled only by a successful native-domain inventory.
             let (domain,label)=target.rsplit_once('/').ok_or("launchd domain missing")?;
-            let query=output("host.stop.readback",Command::new("launchctl").args(["print",domain]))?;
+            let query=output("host.stop.readback",crate::platform::command("launchctl").args(["print",domain]))?;
             if String::from_utf8(query.stdout).map_err(|e|e.to_string())?.lines().any(|l|l.split_whitespace().any(|f|f.trim_matches('"')==label)) {return Err("host unit remains loaded with unknown owner; Stop outcome unknown".into());}
         }
     }
     #[cfg(target_os="linux")] {
         let name=unit.stop.first().and_then(|command|command.last()).ok_or("systemd unit target missing")?.as_str();
-        let query=output("host.stop.owner",Command::new("systemctl").args(["--user","show",name,"--property=MainPID","--property=LoadState","--property=ActiveState","--no-pager"]))?;
+        let query=output("host.stop.owner",crate::platform::command("systemctl").args(["--user","show",name,"--property=MainPID","--property=LoadState","--property=ActiveState","--no-pager"]))?;
         let text=String::from_utf8(query.stdout).map_err(|e|e.to_string())?;
         let pid=text.lines().find_map(|l|l.strip_prefix("MainPID=")).and_then(|p|p.parse::<u32>().ok()).ok_or("systemd owner unknown")?;
         if !text.lines().any(|l|l=="LoadState=loaded")||pid!=0&&pid!=expected.pid {return Err("systemd owner differs; Stop refused".into());}
         if pid==0&&coreq::process::identity(expected.pid).map_err(|e|e.to_string())?.as_ref()==Some(expected) {return Err("live daemon has no attributable systemd owner; Stop refused".into());}
         if pid!=0&&coreq::process::identity(pid).map_err(|e|e.to_string())?.as_ref()!=Some(expected) {return Err("systemd native incarnation differs; Stop refused".into());}
         commands("host.stop.effect",&unit.stop)?;
-        let query=output("host.stop.readback",Command::new("systemctl").args(["--user","show",name,"--property=MainPID","--property=ActiveState","--no-pager"]))?;
+        let query=output("host.stop.readback",crate::platform::command("systemctl").args(["--user","show",name,"--property=MainPID","--property=ActiveState","--no-pager"]))?;
         let text=String::from_utf8(query.stdout).map_err(|e|e.to_string())?;
         if !text.lines().any(|l|l=="MainPID=0")||!text.lines().any(|l|l=="ActiveState=inactive") {return Err("systemd Stop not observed".into());}
     }
     #[cfg(windows)] {
+        scheduler_write(tool.title)?;
         let setup=format!(r#"$ErrorActionPreference='Stop';$ProgressPreference='SilentlyContinue'
 $s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\');$t=$r.GetTask({name});$a=$t.Definition.Actions.Item(1);[xml]$saved=Get-Content -Raw -LiteralPath {definition};$exec=$saved.Task.Actions.Exec
 if($t.Definition.Actions.Count -ne 1 -or @($exec).Count -ne 1 -or !(Test-CoreQPath $a.Path ([string]$exec.Command)) -or $a.Arguments -ne [string]$exec.Arguments -or !(Test-CoreQPath $a.WorkingDirectory ([string]$exec.WorkingDirectory)) -or !(Test-CoreQPath $a.WorkingDirectory {cwd})){{throw 'scheduled host scope differs'}}
@@ -474,6 +488,24 @@ exit 0"#,name=quote(&format!("TaskQ-Stop-{id}")),args=quote(&args),cwd=quote(&in
 mod tests {
     use super::*;
     use serde_json::{Value,json};
+
+    // Defect #2049 A3: nothing kept a test from registering, editing or running the real TaskQ unit or a
+    // TaskQ-Stop controller on the host that ran it. Owned `…-Probe-<nonce>` fixtures stay allowed.
+    #[test]
+    fn tests_never_change_real_scheduled_tasks() {
+        assert!(scheduler_write("TaskQ").unwrap_err().contains("real Scheduled Task TaskQ"));
+        assert!(scheduler_write("TaskQ-Repeat-Probe-0123456789abcdef0123456789abcdef").is_ok());
+        if std::env::var_os("TASKQ_NATIVE_STOP_CASE").is_none() {assert!(scheduler_write("TaskQ-Stop-0123456789abcdef0123456789abcdef").is_err());}
+        #[cfg(windows)] {
+            let install=std::env::temp_dir().join(format!("taskq-real-task-{}",crate::runtime::uuid()));
+            fs::create_dir_all(&install).unwrap();
+            let tool=crate::platform::tool(&install);fs::write(install.join(tool.exe_name()),b"").unwrap();
+            let refused=start_install(&tool,InstallState::Absent).unwrap_err();
+            assert!(!refused.submitted&&refused.reason.contains("real Scheduled Task"),"{}",refused.reason);
+            assert!(repeat_trigger(&tool,true).unwrap_err().contains("real Scheduled Task"));
+            fs::remove_dir_all(install).unwrap();
+        }
+    }
 
     #[cfg(windows)]
     #[test]

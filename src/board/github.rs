@@ -337,7 +337,6 @@ impl GitHub {
     }
 
     fn rebase(&self, root: &std::path::Path, n: u64, sha: &str) -> Result<Publish> {
-        use std::process::Command;
         self.api.refresh()?;
         let path = root.join(".worktrees").join(format!("taskq-{n}"));
         let path = path.canonicalize().map_err(|_| "private fallback needs its owned task worktree on this host")?;
@@ -347,7 +346,7 @@ impl GitHub {
         let host = self.api.root.strip_prefix("https://").unwrap_or_default().split('/').next().unwrap_or_default();
         let host = if host == "api.github.com" { "github.com" } else { host };
         let git = |args: &[&str]| -> Result<std::process::Output> {
-            Command::new("git").current_dir(&path).args(args).env("GIT_TERMINAL_PROMPT", "0")
+            crate::platform::command("git").current_dir(&path).args(args).env("GIT_TERMINAL_PROMPT", "0")
                 // Git's credential protocol receives the host board token through the environment, never argv/logs.
                 .env("GIT_CONFIG_COUNT", "2").env("GIT_CONFIG_KEY_0", "credential.helper").env("GIT_CONFIG_VALUE_0", "")
                 .env("GIT_CONFIG_KEY_1", format!("credential.https://{host}.helper"))
@@ -362,7 +361,7 @@ impl GitHub {
         };
         let common = read(&["rev-parse", "--git-common-dir"])?;
         let common = path.join(common).canonicalize().map_err(|_| "private fallback ownership unknown")?;
-        let project = Command::new("git").current_dir(root).args(["rev-parse", "--git-common-dir"]).output().map_err(|e| format!("private fallback project unknown: `git rev-parse --git-common-dir` failed: {e}"))?;
+        let project = crate::platform::command("git").current_dir(root).args(["rev-parse", "--git-common-dir"]).output().map_err(|e| format!("private fallback project unknown: `git rev-parse --git-common-dir` failed: {e}"))?;
         if !project.status.success() || root.join(String::from_utf8_lossy(&project.stdout).trim()).canonicalize().ok().as_ref() != Some(&common) {
             return Err("private fallback worktree belongs to another repository".into());
         }

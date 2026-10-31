@@ -2,7 +2,7 @@
 use crate::{Res, board::{Board, entries}, core::{self, Release, State}, dispatch, service::Config};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::{fs, path::Path, process::Command, time::Duration};
+use std::{fs, path::Path, time::Duration};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -49,7 +49,7 @@ fn workspace(root:&Path,n:u64)->Res<Value> {
     let path=root.join(".worktrees").join(format!("taskq-{n}"));
     if !path.is_dir()||fs::symlink_metadata(&path).map_err(|e|e.to_string())?.file_type().is_symlink() {return Err("preserved worktree missing or symlink; inspect work before recovery".into());}
     let git=|args:&[&str]|->Res<Vec<u8>> {
-        let o=crate::platform::output("recovery.workspace",Command::new("git").arg("--no-optional-locks").args(args).current_dir(&path),Duration::from_secs(10))?;
+        let o=crate::platform::output("recovery.workspace",crate::platform::command("git").arg("--no-optional-locks").args(args).current_dir(&path),Duration::from_secs(10))?;
         if !o.status.success() {return Err("preserved Git work unreadable; inspect before recovery".into());}Ok(o.stdout)
     };
     let top=git(&["rev-parse","--show-toplevel"])?;
@@ -206,6 +206,7 @@ fn resume_service_with(c:&Config,stop:&str,service:&Value,receipt:&Value,install
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
     use crate::board::Fake;
     use std::path::PathBuf;
     struct Fixture {dir:PathBuf,c:Config,b:Fake,n:u64}

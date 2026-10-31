@@ -7,7 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use ring::{aead, hkdf, rand::{SecureRandom, SystemRandom}};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{fs, path::{Path, PathBuf}, process::Command, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::{Duration, Instant}};
+use std::{fs, path::{Path, PathBuf}, sync::{atomic::{AtomicBool, Ordering}, Arc}, time::{Duration, Instant}};
 type Res<T> = Result<T, String>;
 
 pub const SEND: &str = "/link/v1/send";
@@ -307,7 +307,7 @@ impl Dash {
         let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
         let cfg = format!("url = \"{}{route}\"\nrequest = \"POST\"\nheader = \"Content-Type: application/json\"\nheader = \"Authorization: Bearer {}\"\ndata-binary = \"{}\"\nmax-time = {wait}\n",
             esc(self.destination.trim_end_matches('/')), esc(&self.credential), esc(&body.to_string()));
-        let out = match coreq::process::exchange("link.http", Command::new("curl").args(["-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"]),
+        let out = match coreq::process::exchange("link.http", crate::platform::command("curl").args(["-sS", "--proto", "=https", "-w", "\n%{http_code}", "--config", "-"]),
             cfg.as_bytes(), Duration::from_secs(wait + 5)) {
             Ok(o) | Err(coreq::process::Failure::Exit(o)) => o,
             Err(e) => return Err(format!("curl: {e}")),

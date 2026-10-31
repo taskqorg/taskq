@@ -33,7 +33,6 @@ fn codex_launch(own: &Path, r: &Request) -> Launched {
     let path = own.join("brief.txt");
     if let Err(e) = fs::write(&path, &r.brief) { return Launched::NoStart(format!("setup brief: {e}")); }
     let mut c = match super::cli(&r.runtime, &access, &env) { Ok(c) => c, Err(e) => return Launched::NoStart(format!("Codex launch: {e}")) };
-    crate::platform::quiet(&mut c);
     c.current_dir(own).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT")
         // the session folder is no repository; skipping that check trusts nothing and leaves sandbox and approvals as granted
@@ -132,7 +131,6 @@ pub fn turn(own: &Path, r: &Request) -> Res<std::process::Command> {
     let env = super::Env { context: "", root: workdir, exe: &exe, install, permission_mode: &mode, codex: &codex, publish: "", board_env: &[], jobs: None };
     let access = super::access(&env, if a.codex { a.setup } else { &r.runtime }).map_err(|e| e.message)?;
     let mut c = super::cli(&r.runtime, &access, &env)?;
-    crate::platform::quiet(&mut c);
     c.current_dir(workdir).env_remove("CLAUDE_CODE_SESSION_ID").env_remove("CODEX_THREAD_ID")
         .env_remove("TASKQ_TASK").env_remove("TASKQ_ATTEMPT").env_remove("TASKQ_ROLE").env_remove("TASKQ_ROOT");
     if a.codex {
@@ -304,10 +302,10 @@ pub(crate) fn trusted(text: Option<&str>, keys: &[String]) -> Res<(String, Vec<S
 /// Running Claude processes of this user's machine; an unreadable list is an error, never none (R12).
 pub fn claude_pids() -> Res<Vec<String>> {
     let out = if cfg!(windows) {
-        std::process::Command::new("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
+        crate::platform::command("tasklist").args(["/FI", "IMAGENAME eq claude.exe", "/FO", "CSV", "/NH"]).output()
     } else {
         // ponytail: process name `claude` (native installs); an npm `node` Claude is missed, match the command line if one shows up
-        std::process::Command::new("pgrep").args(["-x", super::of(super::OWNER).bin]).output()
+        crate::platform::command("pgrep").args(["-x", super::of(super::OWNER).bin]).output()
     }.map_err(|e| e.to_string())?;
     let text = String::from_utf8_lossy(&out.stdout);
     if cfg!(windows) {

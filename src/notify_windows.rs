@@ -175,9 +175,7 @@ pub fn watch(f: impl Fn(String) + Send + 'static) {
 }
 
 pub fn open_settings() {
-    use std::os::windows::process::CommandExt;
-    let _ = std::process::Command::new("cmd").args(["/c", "start", "", "ms-settings:notifications"])
-        .creation_flags(0x08000000).spawn();
+    let _ = crate::platform::command("cmd").args(["/c", "start", "", "ms-settings:notifications"]).spawn();
 }
 
 #[cfg(test)]

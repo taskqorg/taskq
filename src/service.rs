@@ -233,7 +233,7 @@ pub(crate) fn input_card(n: u64, text: &str, failures: usize) -> String {
 
 /// `git -C dir <args>`: stdout, else the command and its error (#1856: a failed call never reads as empty).
 fn git(dir: &std::path::Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    crate::tools::run("seed.git", std::process::Command::new("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60))
+    crate::tools::run("seed.git", crate::platform::command("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60))
 }
 
 /// #1620 (docs/testing.md#build-cache): before a worker's first start, create `.worktrees/taskq-<N>` (§ 7 rule 2) and
@@ -275,7 +275,7 @@ fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String>
 #[cfg(target_os = "linux")]
 fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
     // ponytail: reflink only (btrfs, XFS); ext4 fails at the first file and skips rather than copying gigabytes.
-    crate::tools::run("seed.cp", std::process::Command::new("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
+    crate::tools::run("seed.cp", crate::platform::command("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
         .map(|_| ()).map_err(|e| format!("{e} (no reflink on this volume?)"))
 }
 

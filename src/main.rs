@@ -256,7 +256,7 @@ fn hostname() -> String {
     // ponytail: first nonempty name per process (#1297: was one `hostname` child per call); a renamed host needs a service restart.
     static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     if let Some(name) = NAME.get() { return name.clone(); }
-    let name = match coreq::process::output("host.identity", &mut std::process::Command::new("hostname"), std::time::Duration::from_secs(10)) {
+    let name = match coreq::process::output("host.identity", &mut crate::platform::command("hostname"), std::time::Duration::from_secs(10)) {
         Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         // #1856: an empty name falls back to TASKQ_HOST or config; the log keeps the failed call
         Err(e) => { platform::log(&format!("host.identity: `hostname` failed: {e}")); String::new() }
@@ -2212,14 +2212,14 @@ fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
     // which every update rewrites with the current release
     let launcher = install.join(t.exe_name());
     let exe = if cfg!(windows) && launcher.is_file() { launcher } else { t.release_exe(&v) };
-    let mut c = std::process::Command::new(&exe);
+    let mut c = crate::platform::command(&exe);
     c.arg("tray");
     // through LaunchServices: a bundle exec'd by the service has the unbundled service as its responsible process,
     // and the OS refuses its authorization request (UNErrorDomain 1). `open` passes no args, env or stderr here: the
     // bundle with no args is the tray of its parent folder and writes its own tray.log (`bundled_tray`)
     #[cfg(target_os = "macos")]
     if let Some(app) = tray_app(install, &exe) {
-        c = std::process::Command::new("open");
+        c = crate::platform::command("open");
         c.args(["-n", "-W", "-g"]).arg(app);
     }
     // #1755: appended, so a relaunch keeps the last tray's fault lines; it starts over past 1 MiB
@@ -2230,7 +2230,7 @@ fn keep_tray(install: &Path, tray: &mut Option<std::process::Child>) {
     // its own process group: stopping one project's service (launchctl bootout) leaves the host's tray alone
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut c, 0);
-    *tray = platform::quiet(&mut c).spawn().ok();
+    *tray = c.spawn().ok();
 }
 
 /// #1801: only the OS default install's bundle is `org.taskq.tray`; temp, test and evidence installs take their own id,
@@ -2273,7 +2273,7 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
         Ok(true) => true,
         r => {
             if let Err(e) = r { platform::log(&format!("signing failed, TaskQ.app stays ad-hoc: {e}")) }
-            tools::run("signing.adhoc", std::process::Command::new("codesign").args(["-f", "-s", "-"]).arg(&app), std::time::Duration::from_secs(30))
+            tools::run("signing.adhoc", crate::platform::command("codesign").args(["-f", "-s", "-"]).arg(&app), std::time::Duration::from_secs(30))
                 .map_err(|e| platform::log(&format!("ad-hoc signing failed: {e}"))).is_ok()
         }
     };
@@ -2281,7 +2281,7 @@ fn tray_app(install: &Path, exe: &Path) -> Option<PathBuf> {
     // LaunchServices to re-read it so the release icon wins over a cached or stale registration
     if signed && home.is_some() {
         const LSREGISTER: &str = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-        if let Err(e) = coreq::process::output("lsregister", std::process::Command::new(LSREGISTER).arg("-f").arg(&app), std::time::Duration::from_secs(30)) {
+        if let Err(e) = coreq::process::output("lsregister", crate::platform::command(LSREGISTER).arg("-f").arg(&app), std::time::Duration::from_secs(30)) {
             platform::log(&format!("lsregister -f failed, the notification icon may stay stale: {e}"));
         }
     }
@@ -2384,7 +2384,7 @@ fn reexec(s: &Service, cfg: &Config) -> Res<()> {
         return fs::write(dot(&cfg.root).join("restart"), "").map_err(|e| e.to_string());
     }
     save_kids(s, &cfg.root)?;
-    let mut command = std::process::Command::new(cfg.install.join(platform::tool(&cfg.install).exe_name()));
+    let mut command = crate::platform::command(cfg.install.join(platform::tool(&cfg.install).exe_name()));
     command.args(["service", "run"]);
     coreq::telemetry::capture::before_exec();
     let e = command.exec();
@@ -3663,7 +3663,7 @@ fn application() {
         #[cfg(windows)]
         if args.first().map(String::as_str) != Some("tray") && !(args.first().map(String::as_str) == Some("service") && args.get(1).map(String::as_str) == Some("run")) {
             let v = coreq::launcher::pick(&t, false).unwrap_or_else(|e| platform::die(&e));
-            let status = std::process::Command::new(t.release_exe(&v)).args(&args).env(t.env("INSTALL"), &t.install).status();
+            let status = platform::console_command(t.release_exe(&v)).args(&args).env(t.env("INSTALL"), &t.install).status();
             platform::exit(status.map_or_else(|e| platform::die(&format!("start {v}: {e}")), |s| s.code().unwrap_or(1)));
         }
         #[cfg(not(windows))]
