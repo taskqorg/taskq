@@ -1,0 +1,2203 @@
+{
+  "kind": "menu",
+  "routes": "home,project,settings,appearance,hosts,cadence,notification-settings,agents,projects,delivery,services,recovery,about",
+  "started": "2026-10-31T00:31:19.527Z",
+  "readbackOnly": true,
+  "samples": [
+    {
+      "at": "2026-10-31T00:31:21.607Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 229,
+        "height": 286
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 229,
+        "scrollWidth": 229
+      },
+      "nodes": 9
+    },
+    {
+      "at": "2026-10-31T00:31:22.117Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 330,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 330,
+        "scrollWidth": 330
+      },
+      "nodes": 427
+    },
+    {
+      "at": "2026-10-31T00:31:22.633Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 330,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 330,
+        "scrollWidth": 330
+      },
+      "nodes": 427
+    },
+    {
+      "at": "2026-10-31T00:31:23.144Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 427
+    },
+    {
+      "at": "2026-10-31T00:31:23.646Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 946
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 259
+    },
+    {
+      "at": "2026-10-31T00:31:24.159Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 946
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 259
+    },
+    {
+      "at": "2026-10-31T00:31:24.676Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 838
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 305
+    },
+    {
+      "at": "2026-10-31T00:31:25.191Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 838
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 305
+    },
+    {
+      "at": "2026-10-31T00:31:25.702Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 808
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 305
+    },
+    {
+      "at": "2026-10-31T00:31:26.219Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 643
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:26.736Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 643
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:27.264Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 773
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:27.769Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 773
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:28.276Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 330,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 330,
+        "scrollWidth": 330
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:28.783Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:29.297Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:29.808Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 681
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 151
+    },
+    {
+      "at": "2026-10-31T00:31:30.324Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 681
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 151
+    },
+    {
+      "at": "2026-10-31T00:31:30.837Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 763
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 151
+    },
+    {
+      "at": "2026-10-31T00:31:31.353Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 718
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:31.865Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 718
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:32.378Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 820
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:32.889Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 820
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:33.405Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 610
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:33.920Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 735
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:34.436Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 735
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:34.948Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 891
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 140
+    },
+    {
+      "at": "2026-10-31T00:31:35.462Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 891
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 140
+    },
+    {
+      "at": "2026-10-31T00:31:35.972Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 140
+    },
+    {
+      "at": "2026-10-31T00:31:36.490Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 315
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:37.004Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 315
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:37.514Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:38.022Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:38.535Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 345
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 155
+    },
+    {
+      "at": "2026-10-31T00:31:39.048Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 385
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 155
+    },
+    {
+      "at": "2026-10-31T00:31:39.558Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 385
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 155
+    },
+    {
+      "at": "2026-10-31T00:31:40.063Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:31:40.576Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:31:41.086Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 395
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:31:41.600Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 198
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    },
+    {
+      "at": "2026-10-31T00:31:42.113Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 198
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    },
+    {
+      "at": "2026-10-31T00:31:42.626Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 213
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    },
+    {
+      "at": "2026-10-31T00:31:43.140Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 213
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "dark"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    },
+    {
+      "at": "2026-10-31T00:31:43.656Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 330,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 330,
+        "scrollWidth": 330
+      },
+      "nodes": 427
+    },
+    {
+      "at": "2026-10-31T00:31:44.170Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 427
+    },
+    {
+      "at": "2026-10-31T00:31:44.686Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 427
+    },
+    {
+      "at": "2026-10-31T00:31:45.197Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 946
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 259
+    },
+    {
+      "at": "2026-10-31T00:31:45.699Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 946
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 259
+    },
+    {
+      "at": "2026-10-31T00:31:46.216Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 838
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 305
+    },
+    {
+      "at": "2026-10-31T00:31:46.731Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 808
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 305
+    },
+    {
+      "at": "2026-10-31T00:31:47.246Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 808
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 305
+    },
+    {
+      "at": "2026-10-31T00:31:47.760Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 643
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:48.273Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 643
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:48.787Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 773
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 166
+    },
+    {
+      "at": "2026-10-31T00:31:49.302Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 330,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 330,
+        "scrollWidth": 330
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:49.816Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 330,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 330,
+        "scrollWidth": 330
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:50.332Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:50.847Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 187
+    },
+    {
+      "at": "2026-10-31T00:31:51.363Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 681
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 151
+    },
+    {
+      "at": "2026-10-31T00:31:51.880Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 763
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 151
+    },
+    {
+      "at": "2026-10-31T00:31:52.395Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 763
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 151
+    },
+    {
+      "at": "2026-10-31T00:31:52.912Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 718
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:53.421Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 718
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:53.935Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 820
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 126
+    },
+    {
+      "at": "2026-10-31T00:31:54.451Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 610
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:54.963Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 610
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:55.479Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 735
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:56.010Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 735
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 122
+    },
+    {
+      "at": "2026-10-31T00:31:56.521Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 891
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 140
+    },
+    {
+      "at": "2026-10-31T00:31:57.034Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 140
+    },
+    {
+      "at": "2026-10-31T00:31:57.547Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 370,
+        "height": 995
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 370,
+        "scrollWidth": 370
+      },
+      "nodes": 140
+    },
+    {
+      "at": "2026-10-31T00:31:58.062Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 315
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:58.575Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 315
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:59.089Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 90
+    },
+    {
+      "at": "2026-10-31T00:31:59.599Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 345
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 155
+    },
+    {
+      "at": "2026-10-31T00:32:00.114Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 345
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 155
+    },
+    {
+      "at": "2026-10-31T00:32:00.627Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 385
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 155
+    },
+    {
+      "at": "2026-10-31T00:32:01.128Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:32:01.642Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 320,
+        "height": 350
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 320,
+        "scrollWidth": 320
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:32:02.157Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 395
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:32:02.667Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 360,
+        "height": 395
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 360,
+        "scrollWidth": 360
+      },
+      "nodes": 106
+    },
+    {
+      "at": "2026-10-31T00:32:03.183Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 198
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    },
+    {
+      "at": "2026-10-31T00:32:03.703Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 213
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    },
+    {
+      "at": "2026-10-31T00:32:04.212Z",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+      "dpr": 1.399999976158142,
+      "screen": {
+        "width": 1829,
+        "height": 1029,
+        "availWidth": 1829,
+        "availHeight": 995
+      },
+      "viewport": {
+        "width": 720,
+        "height": 213
+      },
+      "body": {
+        "font": "16px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "colorScheme": "light"
+      },
+      "menu": {
+        "font": "20px -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif",
+        "width": 720,
+        "scrollWidth": 720
+      },
+      "nodes": 75
+    }
+  ],
+  "lastReadError": "fetch failed",
+  "browser": {
+    "protocolVersion": "1.3",
+    "product": "Edg/156.0.4314.50",
+    "revision": "@af2ba23ae0ecf7084d900446fc59d5119dd5fd5e",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0",
+    "jsVersion": "15.6.12.7"
+  },
+  "code": 0,
+  "signal": null,
+  "finished": "2026-10-31T00:32:04.725Z"
+}

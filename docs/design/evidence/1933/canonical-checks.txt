@@ -1,0 +1,12 @@
+python scripts/check.py --base cbeb8db913aa0908fbe9490e7de8404e7a306231
+Child exit: 0
+Environment: fresh disposable TEMP/TMP; canonical isolated Rust install/bindings helper.
+Selected checks: full | base: cbeb8db913aa0908fbe9490e7de8404e7a306231
+test result: ok. 746 passed; 0 failed; 39 ignored; 0 measured; 0 filtered out; finished in 83.46s
+test result: ok. 19 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 15.58s
+Selected gate elapsed: 181.797s / 900s; no retries
+Node component commands passed: 33
+Offline selftest and all selected artifact-script checks: passed.
+Initial run: all checks logged positive in 185.688s; outer UTF-8 log reader failed afterward.
+Final run repeats the unchanged gate solely to preserve the child exit before reading mixed-encoding output.
+No product/test/config changes or in-suite retries. Native acceptance remains separate (R12).

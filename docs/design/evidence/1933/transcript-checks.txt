@@ -1,0 +1,15 @@
+running 11 tests
+test transcript::tests::codex_scripts_with_open_quotes_and_comments_read_without_panic ... ok
+test transcript::tests::codex_custom_tool_calls_read_as_commands ... ok
+test transcript::tests::codex_rollout_is_found_and_read ... ok
+test transcript::tests::conversation_1929_generation_survives_append_and_detects_replacement ... ok
+test transcript::tests::sidebar_activity_uses_the_newest_visible_native_record ... ok
+test transcript::tests::conversation_1930_observed_native_times_survive_pages_and_gaps ... ok
+test transcript::tests::tool_lines_mask_headers_bearer_and_json_fields ... ok
+test transcript::tests::tool_lines_redact_credentials ... ok
+test transcript::tests::ten_mib_claude_transcript_pages_by_cursor ... ok
+100 MiB stress: 108 MiB in 374 backward pages, 4.1108906s with writing
+test transcript::tests::hundred_mib_source_and_oversized_record_stay_explicit ... ok
+test transcript::tests::ten_thousand_records_traverse_both_ways_in_any_order ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 774 filtered out; finished in 12.02s
