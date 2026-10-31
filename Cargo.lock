@@ -251,8 +251,8 @@ dependencies = [
 
 [[package]]
 name = "coreq"
-version = "0.16.0"
-source = "git+https://github.com/taskqorg/coreq?rev=c5fb7e0e9c7b5f49eb29bf30dd84a9f8cc2a80b5#c5fb7e0e9c7b5f49eb29bf30dd84a9f8cc2a80b5"
+version = "0.16.1"
+source = "git+https://github.com/taskqorg/coreq?rev=59065bfc5fb814ab451ae2d9c2b6590ee7a9811b#59065bfc5fb814ab451ae2d9c2b6590ee7a9811b"
 dependencies = [
  "coreq-instrument",
  "flate2",
@@ -267,7 +267,7 @@ dependencies = [
 [[package]]
 name = "coreq-instrument"
 version = "0.1.0"
-source = "git+https://github.com/taskqorg/coreq?rev=c5fb7e0e9c7b5f49eb29bf30dd84a9f8cc2a80b5#c5fb7e0e9c7b5f49eb29bf30dd84a9f8cc2a80b5"
+source = "git+https://github.com/taskqorg/coreq?rev=59065bfc5fb814ab451ae2d9c2b6590ee7a9811b#59065bfc5fb814ab451ae2d9c2b6590ee7a9811b"
 dependencies = [
  "proc-macro2",
  "quote",
