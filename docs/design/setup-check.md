@@ -31,6 +31,7 @@ Host, per project:
 | `login <rt>` | the runtime CLI is not logged in | the relogin step (docs/relogin.md) |
 | `access <rt>` | § 8 Access refuses the runtime, so its launches are held | `taskq service permissions --runtime <rt> --mode workspace --scope project` (Claude on Linux and Windows: `--mode full`) |
 | `codex-dir` | Linux, Codex in use with a workspace grant, and `<root>/.codex` is missing | `mkdir <root>/.codex` |
+| `host-setup` | `taskq.json` declares `host_setup` and its last successful `service install` run is not stamped in `<root>/.taskq/host-setup` with that exact command | `taskq service install` in the project root, which runs it outside the worker sandbox; `taskq doctor` prints the same gap |
 | `host-label` | `claim: labelled` on this host and open tasks carry no `host-*` label | `taskq service capacity --host <host> --claim any`, or label the tasks |
 | `token` | GitHub board and `<install>/token` is missing, empty or unreadable (§ 8) | the owner installs the token; never `gh auth login` |
 

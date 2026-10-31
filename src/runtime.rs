@@ -858,7 +858,8 @@ pub fn brief(env: &Env, l: &Launch) -> String {
         )
     } else {
         format!(
-            "Work only in `.worktrees/taskq-{n}` on branch `taskq-{n}` from origin/main (continue an existing branch).\n\
+            "Work only in `.worktrees/taskq-{n}` on branch `taskq-{n}` from origin/main (continue an existing branch); the service creates it before your first start.\n\
+             If it is missing and Git cannot write the shared `.git` (read-only file system or permission denied), do not retry: {gap}.\n\
              For implementation changes, commit with the line `Task: {url}` in the message, rebase on origin/main, run the project checks, then {push}.\n\
              {PUBLISH_ONCE}{DEV_LOOP}Experiments (`research` or a `Hypothesis:` line, any type) deliver docs/research/{n}.md by PR: Question, Findings with evidence, Options with pros/cons, Verdict, Recommendation, Proposed tasks; other types add the result line `Report: docs/research/{n}.md`. Follow docs/design/reports.md for the taskq-tasks JSON array.\n\
              Hand in the report with result; review closes it and the PM or owner decides it from Decide. Ask only when another task waits on that decision (§ 7).\n\
@@ -869,6 +870,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              - {park},\n\
              - `{q} requeue {n} --text \"<why it cannot be done>\"`.\n{formats}",
             ask = ask(&q, n),
+            gap = format!("hand in once `{q} ask {n} --text \"Done: not started\nProblem: host gap: the worker sandbox cannot write the shared .git (<exact git error>); the service or owner must create .worktrees/taskq-{n}\"` with no option (an owner action, § 7 rule 2)"),
             formats = FORMATS,
             url = l.url,
             push = if env.publish == "direct" { "push the branch" } else { "push the branch and open one PR/MR into main" }
@@ -4479,6 +4481,9 @@ mod tests {
                     if role == "worker" { assert!(brief(&env, &l).contains(SANDBOX_CHECKS) && brief(&env, &l).contains(DEV_LOOP)); }
                     // #1842: a worker publishes once; a moved main alone never sends it back to rebase or recheck.
                     assert_eq!(brief(&env, &l).contains(PUBLISH_ONCE), role == "worker", "{rt} {role}: publish once");
+                    // cs#548 (#2078 A4): a read-only shared .git burned attempts on retries; the worker hands in one host gap
+                    assert_eq!(brief(&env, &l).contains("do not retry: hand in once") && brief(&env, &l).contains("Problem: host gap: the worker sandbox cannot write the shared .git"),
+                        role == "worker", "{rt} {role}: one exact host gap");
                     assert!(brief(&env, &l).contains("later 7 --blocker #M --text") && brief(&env, &l).contains("resumes when #M closes"), "{rt} {role}: a park names its blocker task");
                     assert!(brief(&env, &l).contains("later 7 --until <UTC> --text"), "{rt} {role}: a wait for elapsed time parks until it, not requeue (#1823)");
                     assert!(brief(&env, &l).contains("add `--stage A<k>` per finished item"), "{rt} {role}: a stage park names its flag (#1880)");

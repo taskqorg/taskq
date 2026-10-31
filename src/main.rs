@@ -339,6 +339,7 @@ fn project_config_value(root:&Path, v: Value)->Res<(Config,Value)> {
         update_every: secs("update_every", 60),
         rollback_after: secs("rollback_after", 600),
         external: v["workspace"].as_str() == Some("external"),
+        host_setup: v["host_setup"].as_str().filter(|s| !s.is_empty()).map(String::from),
     };
     if cfg.repo.is_empty() {
         return Err("taskq.json: repo is required".into());
@@ -2660,6 +2661,7 @@ fn service(args: &Args) -> Res<()> {
         "install" => {
             let (cfg, _, _) = check_load(&root)?;
             println!("{}",host::install_project(&cfg.install,&root)?);
+            if let Some(l)=host_setup(&cfg) {println!("{l}");}
             for l in tools::gaps(&cfg.install,Some(&root)) {println!("{l}");}
             // #1555: a root Claude does not trust starts no Claude worker; say so and how, without writing
             if let Some(home)=std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
@@ -2674,6 +2676,19 @@ fn service(args: &Args) -> Res<()> {
         }
         _ => Err("usage: taskq service install|check|run|onboard|focus|pause|resume|capacity|channel|permissions|hold|release|recover|status|restart|stop|uninstall|list".into()),
     }
+}
+
+/// § 6 Shared project bootstrap (#2078): run the project's `host_setup` once per host, outside any worker sandbox, and
+/// stamp it so the `host-setup` gap clears; a failure keeps the gap and says why. `None`: undeclared or already done.
+fn host_setup(cfg: &Config) -> Option<String> {
+    let cmd = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c))?;
+    // only a script inside the root: no absolute path, no `..`
+    if !Path::new(cmd).components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return Some(format!("host setup: `{cmd}` refused: not a path inside the project root"));
+    }
+    let ran = tools::run("host.setup", platform::command(cfg.root.join(cmd)).current_dir(&cfg.root), std::time::Duration::from_secs(300))
+        .and_then(|_| fs::create_dir_all(cfg.root.join(".taskq")).and_then(|_| fs::write(check::host_setup_stamp(&cfg.root), format!("{cmd}\n"))).map_err(|e| e.to_string()));
+    Some(match ran { Ok(()) => format!("host setup: `{cmd}` done"), Err(e) => format!("host setup: `{cmd}` failed: {e}") })
 }
 
 /// § 6 setup check items of one project (#1938): read-only. The caller passes the effective runtime limits, the § 5
@@ -2705,6 +2720,7 @@ fn setup_items(cfg: &Config, limits: &BTreeMap<String, u32>, delivery: Result<St
         token: (cfg.board.name == "github").then(|| board::github::token(&cfg.install).map(|_| ()).map_err(|_| "missing, empty or unreadable".to_string())),
         delivery,
         pr_route: (cfg.publish == "pr").then(|| pr_route.unwrap_or_else(|| check::Probe::Unknown("board not read".into()))),
+        host_setup: cfg.host_setup.as_ref().map(|c| (c.clone(), check::host_setup_done(&cfg.root, c))),
     })
 }
 
@@ -3159,6 +3175,12 @@ fn run(argv: &[String]) -> Res<()> {
         // #2060 (docs/design/host-service.md#host-doctor): one host doctor pass now; no board
         "doctor" => {
             for l in doctor::cli(&platform::default_install(), a.flags.contains_key("dry-run")) { println!("{l}"); }
+            // #2078: a project's missing one-time host setup is a host gap the doctor names too
+            if let Some(cfg) = find_root().ok().and_then(|r| load(&r).ok()).map(|(c, _)| c) {
+                if let Some(cmd) = cfg.host_setup.as_deref().filter(|c| !check::host_setup_done(&cfg.root, c)) {
+                    for l in check::lines(&[check::host_setup_item(&cfg.root, cmd, false)]) { println!("{l}"); }
+                }
+            }
             Ok(())
         }
         // § 5: an owner session (§ 4) in this project; no board
@@ -4020,6 +4042,38 @@ mod tests {
         fs::remove_dir_all(&t).unwrap();
     }
 
+    // Defect cs#548 (#2078 A3): the PM installed the shared pre-commit hook by hand on pds18. Protection: `service
+    // install` runs the declared host setup once, stamps it so the gap clears, and a failing run keeps the gap.
+    #[cfg(unix)]
+    #[test]
+    fn install_runs_the_host_setup_once_and_clears_its_gap() {
+        let mut c = cfg();
+        c.root = std::env::temp_dir().join(format!("taskq-host-setup-run-{}", crate::runtime::uuid()));
+        fs::create_dir_all(c.root.join("scripts")).unwrap();
+        let script = c.root.join("scripts/install-git-hooks.sh");
+        // `cp` writes the executable from its own process (see tools tests: ETXTBSY under parallel forks)
+        fs::write(c.root.join("src.sh"), "#!/bin/sh\necho run >> ran\n").unwrap();
+        fs::set_permissions(c.root.join("src.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        assert!(std::process::Command::new("cp").arg(c.root.join("src.sh")).arg(&script).status().unwrap().success());
+        assert_eq!(host_setup(&c), None, "undeclared: nothing runs");
+        c.host_setup = Some("scripts/install-git-hooks.sh".into());
+        let gap = |c: &Config| setup_items(c, &BTreeMap::new(), Ok("auto-merge".into()), &Value::Null, &[], None, None).into_iter().find(|i| i.id == "host-setup").unwrap().status;
+        assert_eq!(gap(&c), "gap");
+        assert_eq!(host_setup(&c).as_deref(), Some("host setup: `scripts/install-git-hooks.sh` done"));
+        assert_eq!(gap(&c), "ok");
+        assert_eq!(host_setup(&c), None, "a done setup never reruns");
+        assert_eq!(fs::read_to_string(c.root.join("ran")).unwrap(), "run\n", "ran once, in the project root");
+        c.host_setup = Some("scripts/missing.sh".into());
+        assert!(host_setup(&c).unwrap().starts_with("host setup: `scripts/missing.sh` failed: "));
+        assert_eq!(gap(&c), "gap", "a failed run keeps the gap");
+        // repo-controlled config never runs a script outside the root
+        for bad in ["../x.sh", "/bin/sh"] {
+            c.host_setup = Some(bad.into());
+            assert!(host_setup(&c).unwrap().ends_with("refused: not a path inside the project root"), "{bad}");
+        }
+        fs::remove_dir_all(&c.root).unwrap();
+    }
+
     // Defect (#1938 A6): codex limit 4 with no grant held every Codex launch; with default_runtime codex the reviewer
     // never spawned either. Protection: a runtime with a limit or the review default is checked; one at limit 0 is not.
     #[test]
@@ -4131,6 +4185,7 @@ mod tests {
             update_every: 900,
             rollback_after: 600,
             external: false,
+            host_setup: None,
         }
     }
 
