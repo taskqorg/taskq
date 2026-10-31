@@ -1,0 +1,59 @@
+Window: "TaskQ Settings", App: TaskQ Qualification 1932.
+0 standard window TaskQ Settings, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content about:blank
+			3 container
+				4 button Settings home
+				5 button Back
+				6 container Breadcrumb
+					7 link Settings, Value: about:blank#
+					8 text ›
+				9 heading Appearance, Value: 1
+					10 text Appearance
+				11 container Window controls
+					12 toggle button Always on top, Value: off
+					13 toggle button Enlarge window, Value: off
+					14 button Close settings
+			15 heading Text size · 20 px, Value: 2
+				16 text Text size · 20 px
+			17 text Theme follows system appearance.
+			18 toggle button 14, Value: off
+			19 toggle button 16, Value: off
+			20 toggle button 18, Value: off
+			21 toggle button 20, Value: on
+			22 heading Tray icon, Value: 2
+				23 text Tray icon
+			24 toggle button Icon, Value: off
+			25 toggle button Summary, Value: on
+			26 heading Window transparency, Value: 2
+				27 text Window transparency
+			28 toggle button Whole window, Value: on
+			29 toggle button Background only, Value: off
+			30 text Menu opacity · 100%
+			31 toggle button Off, Value: on
+			32 slider (settable, float) Menu opacity · 100%, Value: 100, Details: Off · 100% opaque
+				33 value indicator 100
+			34 text Whole window: 60–100% opaque, including text and controls.
+			35 text Background opacity · 100%
+			36 slider (disabled, settable, float) Background opacity · 100%, Value: 100, Details: 100% opaque
+				37 value indicator 100
+			38 text Select Background only to adjust fills while keeping text and controls opaque.
+			39 heading Window, Value: 2
+				40 text Window
+			41 text Auto follows the actual tray opening direction. Dragging pins the window; explicit growth choices stay selected.
+			42 container Window growth
+				43 text Window growth
+				44 toggle button Auto, Value: on
+				45 toggle button Down, Value: off
+				46 toggle button Up, Value: off
+				47 toggle button Fixed, Value: off
+			48 toggle button Keep menu open, Value: off
+			49 toggle button Menu always on top, Value: on
+			50 container
+				51 text TaskQ v4.6.50
+				52 button Resize window with arrow keys, Help: Drag to resize · arrow keys
+53 menu bar
+	54 TaskQ Qualification 1932
+	55 Edit
+
+The focused UI element is 2 HTML content about:blank

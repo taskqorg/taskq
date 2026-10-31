@@ -1,0 +1,100 @@
+{
+  "candidate": "67f729e4dc35d20f044efe8cb7a3b6a939c5e048",
+  "main": "cbeb8db913aa0908fbe9490e7de8404e7a306231",
+  "version": "4.6.50",
+  "clips": [
+    {
+      "file": "native-question.mp4",
+      "scene": "question-dark-20",
+      "frames": 19,
+      "fps": 2,
+      "duration_s": 9.5,
+      "from": "frame-00001.png",
+      "to": "frame-00019.png",
+      "boundary": "WKWebView snapshots during CUA native input; no window chrome/cursor/physical-device proof",
+      "sha256": "e341d8036dacbad258f906ad4e37b693e90234c02b7e144cb171157a33ef19f2",
+      "timing": "Sampled frame playback; manual snapshots add frames; not real-time video"
+    },
+    {
+      "file": "native-history.mp4",
+      "scene": "chat-light-20",
+      "frames": 17,
+      "fps": 2,
+      "duration_s": 8.5,
+      "from": "frame-00023.png",
+      "to": "frame-00039.png",
+      "boundary": "WKWebView snapshots during CUA native input; no window chrome/cursor/physical-device proof",
+      "sha256": "5970c42aa59d8bcb10868b056830bf71b223f16d37f38c8381898a3b19799bcb",
+      "timing": "Sampled frame playback; manual snapshots add frames; not real-time video"
+    }
+  ],
+  "hashes": {
+    "build/web/workspace.html": "e4ebb95ecf37f063832e98136db5b89379d0991b98693a89d6482a16893f846a",
+    "docs/design/tray-fixture.sh": "34a0cda151f2eb6932a8dd3f99120e61665ef85ab2172892db18346ec330cfb2",
+    "tests/fixtures/conversation-shots.js": "cdf8adc440470e60ae9f81ced04eeb140d6ecf82d33a70882e1dd0855dd8b124",
+    "tests/conversations-render.browser.cjs": "b060c86446e43d9ee289bc2a4fe8f932c9ee9406b33316836feddfd159011c2f",
+    "docs/design/evidence/1932/interaction.swift": "dd18ca52d504746cae6c8c0887e90137715bf72037c02ab5907815ecf2cb96f9",
+    "docs/design/evidence/1932/interaction.js": "a0aa5ee00e43be4361d95405850f94a3a4aaf8bb5f646d46d50a92c101f39be0",
+    "docs/design/evidence/1932/history-state.js": "e58a64c5c7edaf2816fbbc1500527b141c1b4d19bf30005b822e839673e0f899",
+    "renderer-binary": "2ee2e462a63b5f57c8dc49ac1846456feb448d0870c539bdbd8c3d71173f6a93"
+  },
+  "binary_sha256": {
+    "menu-settings-eight-cells": "bbfb8076a9991470bc378df29c0dc36b414983b7efcdde1fd9893b2e5a552e25",
+    "conversations-ten-cells": "3f40ff4fc69cbfd60aaad7c44694efcf540d7d4d1a99b1cf81b3a41265ccedea",
+    "summary-rasters": "512318c34c4c107cd5af0fbb56b34e007633c4f905215dc385428eda53222d95"
+  },
+  "screens": [
+    {
+      "file": "screens/01-home-16.png",
+      "sha256": "7bea63e76bb3198f95ab7523c8b7a31ecac55afd3579d76542d5e93ff77f6ed8",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/02-settings-20.png",
+      "sha256": "737da4117d58fdcc501af0d610a9053da5818f416e12633027f108f3b774b7ab",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/03-owner-draft-18.png",
+      "sha256": "35604d25e85c8f0b5e9ff6ca3422b212f10d10112163e2ad2b373fb5f2ea3d97",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/04-answer-send-missing-20.png",
+      "sha256": "ce04b1a688b846b09f2c74c9796531b5f3926248cca7719433bdefae7825390a",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/05-pm-fixture-18.png",
+      "sha256": "eb1e2c87d1e488020a15d97cc827de45510f1a987eb5f294ed6cf20aeace6d13",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/06-summary-unknown.png",
+      "sha256": "0ed9f2f5615530b0032bb5ce30deb8ca083301f71fa0a081f60e9b670e1a3c57",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/07-summary-pause.png",
+      "sha256": "b3456fac2415bbfae3e857e708f0500635f1b8b4d3b56e99c1943f4af9cc6723",
+      "candidate": "554552daf48d5b413918d54a8a6d0f88efba4020"
+    },
+    {
+      "file": "screens/08-home-bell-after-16.png",
+      "sha256": "b8bfe8492ba0e31bb23fef810f66bcb057cda25a1a28874f4538e03a87a980b9",
+      "candidate": "67f729e4dc35d20f044efe8cb7a3b6a939c5e048"
+    },
+    {
+      "file": "screens/09-settings-bell-after-20.png",
+      "sha256": "82f2ad67c9e334557d6989b7907aae916b1907bf347c1bf7ac28a86489ef073d",
+      "candidate": "67f729e4dc35d20f044efe8cb7a3b6a939c5e048"
+    },
+    {
+      "file": "screens/10-native-history-start.png",
+      "sha256": "bb9cb93b990489cda20b4805426147e6937a45e3a36f5cdf1e90018fe9fdaa09",
+      "candidate": "67f729e4dc35d20f044efe8cb7a3b6a939c5e048"
+    }
+  ],
+  "boundary": "Native renderer and CUA input; no real provider/native-IPC/service lifecycle qualification",
+  "combined_route_observation": "--route home,settings,icon produced only 36 icon/app rasters; no page pass claimed; --route home --route settings produced exactly eight PNGs and exit 0"
+}

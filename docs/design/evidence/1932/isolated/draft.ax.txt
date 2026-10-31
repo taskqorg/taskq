@@ -1,0 +1,82 @@
+Window: "TaskQ Workspace", App: TaskQ Qualification 1932.
+0 standard window TaskQ Workspace, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content about:blank
+			3 container
+				4 button Workspace home
+				5 button Back
+				6 heading Conversations, Value: 1
+					7 text Conversations
+				8 button Refresh workspace status
+				9 summary Workspace navigation, Value: off
+				10 container Window controls
+					11 toggle button Always on top, Value: off
+					12 toggle button Enlarge window, Value: off
+					13 button Close workspace
+			14 container
+				15 container Results
+					16 button (collapsed) Results · unknown, Secondary Actions: Expand
+				17 container Conversations
+					18 button New chat
+					19 button Search threads
+					20 button Work sessions
+					21 container
+						22 container Threads
+							23 toggle button Recent, Value: on
+							24 toggle button Archive, Value: off
+							25 container alpha
+								26 button (expanded) alpha 1, Secondary Actions: Collapse
+								27 button Qualification 1932 · disposable draft Draft · Last activity · 31 Oct 2026 at 08:19:54 GMT+07:00 · Asia/Bangkok
+								28 button Pin
+								29 button Archive
+						30 container Selected request
+							31 heading Qualification 1932 · disposable draft, Value: 2
+								32 text Qualification 1932 · disposable draft
+							33 button Detach
+							34 button Archive
+							35 container (expanded) Secondary Actions: Collapse
+								36 summary Conversation info ⌄, Value: on
+									37 text Conversation info
+									38 text ⌄
+								39 container
+									40 text Request name
+									41 text field (settable) Request name, Placeholder: Qualification 1932 · disposable draft
+								42 container
+									43 text Project
+									44 pop up button (collapsed) Project, Value: alpha, Secondary Actions: Expand
+								45 text Claude Code · mac
+								46 text Request 4eded416a3d6994c6f3e322b1ae9e59d
+								47 text Send shares this request and selected files with the visible native session.
+							48 text Describe work for alpha. First Send opens your project manager chat. Tasks start only after assignment.
+							49 container Request record
+							50 container Change the project in Conversation info.
+								51 text alpha · Claude Code · mac
+							52 text Request draft
+							53 text entry area (settable) Request draft, Value: [text entry area], Placeholder: Ask AI…
+								54 text (settable) Qualification 1932 · disposable draft
+Русский текст 日本語 😀
+Line 1: preserve draft and keep Send reachable.
+Line 2: preserve draft and keep Send reachable.
+Line 3: preserve draft and keep Send reachable.
+Line 4: preserve draft and keep Send reachable.
+Line 5: preserve draft and keep Send reachable.
+Line 6: preserve draft and keep Send reachable.
+Line 7: preserve draft and keep Send reachable.
+Line 8: preserve draft and keep Send reachable.
+Line 9: preserve draft and keep Send reachable.
+Line 10: preserve dra
+							55 container Attach files
+								56 text Attach
+								57 file upload button Attach files
+							58 summary History, Value: off
+							59 button Send
+							60 summary File limits and message help, Value: off
+					61 text Data from 08:19
+			62 container
+				63 text TaskQ v4.6.50
+				64 button Resize workspace, Help: Resize workspace; arrow keys adjust size
+65 menu bar
+	66 TaskQ Qualification 1932
+	67 Edit
+
+The focused UI element is 36 summary Conversation info ⌄, Value: on
