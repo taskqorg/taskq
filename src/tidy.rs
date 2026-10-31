@@ -26,18 +26,34 @@ pub struct Tidy<'a> {
     pub root: &'a Path,
     pub me: &'a str,
     pub boot: fn() -> Result<i64, String>,
-    /// `workspace: external` (§ 9): worktrees are host-owned, so only the registry prune and the root step run.
+    /// `workspace: external` (§ 9): other worktrees are host-owned, so only `.worktrees/taskq-<N>`, `review-<N>` and
+    /// branches `taskq-<N>` are tidied besides the registry prune and the root step.
     pub external: bool,
     /// `taskq cleanup --force`: a dirty task worktree is saved to `.taskq/trash` and then force-removed.
     pub force: bool,
+    /// `taskq cleanup --dry-run`: every line of the pass, nothing changed (no fetch, prune, removal, release or report).
+    pub dry: bool,
 }
 
-/// One pass: its log lines (removals, refusals, root moves), the `status.json` `tidy` report and telemetry counts.
+/// One pass: its log lines (removals, refusals, root moves), all lines for `taskq cleanup` (the log plus why each open
+/// task's worktree stays), the `status.json` `tidy` report, telemetry counts and the conditions a finding may file.
 pub struct Outcome {
     pub log: Vec<String>,
+    pub lines: Vec<String>,
     pub report: Value,
     pub counts: BTreeMap<String, u64>,
+    /// `dirty`, `kept`, `stale` ([findings](../docs/design/worktrees.md#report)): the lines that show each one.
+    pub conditions: BTreeMap<&'static str, Vec<String>>,
 }
+
+impl Outcome {
+    fn new(log: Vec<String>, report: Value, counts: BTreeMap<String, u64>) -> Outcome {
+        Outcome { lines: log.clone(), log, report, counts, conditions: BTreeMap::new() }
+    }
+}
+
+/// What step 2 or 3 did with one directory: removed, kept on a refusal (logged), kept as expected (cleanup only).
+enum Step { Done(String), Refused(String), Note(String) }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Class { Worker(u64), Review(u64), Reserved, Unowned, Foreign }
@@ -59,6 +75,11 @@ fn class(name: &str) -> Class {
         if let Some(n) = num(n).filter(|_| rest.is_none_or(|a| num(a).is_some())) { return Class::Review(n); }
     }
     Class::Unowned
+}
+
+/// How a line names a task-class directory.
+fn what(n: u64, class: Class) -> String {
+    if matches!(class, Class::Review(_)) { format!("#{n} review worktree") } else { format!("#{n} worktree") }
 }
 
 /// A path as Git and the OS may spell it, for comparison only. On Windows the verbatim prefix (`\\?\`, `\\?\UNC\`),
@@ -103,11 +124,57 @@ fn label(args: &[&str]) -> &'static str {
     }
 }
 
+thread_local! {
+    /// The pass's root key and its `safe.directory` values; set while [`Tidy::run`] runs on this thread.
+    static SAFE: std::cell::RefCell<Option<(String, Vec<String>)>> = const { std::cell::RefCell::new(None) };
+    #[cfg(test)]
+    static TEST_ENV: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(vec![]) };
+}
+
+/// A path as Git spells it for `safe.directory`: canonical (Git compares the real path, letter case included), with
+/// `/` and without the Windows verbatim prefix.
+fn spelled(p: &Path) -> String {
+    let s = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf()).to_string_lossy().replace('\\', "/");
+    match s.strip_prefix("//?/UNC/") { Some(r) => format!("//{r}"), None => s.strip_prefix("//?/").map_or(s.clone(), String::from) }
+}
+
+/// #2060: Git refuses a repository another account owns (`detected dubious ownership`, Windows roots); the pass trusts
+/// only its own root and the directories under its `.worktrees`, never `*` and never a foreign entry.
+struct Safe;
+
+impl Safe {
+    fn set(root: &Path) -> Safe {
+        let base = spelled(root);
+        let mut values = vec![base.clone(), format!("{base}/.worktrees/*")];
+        values.extend(std::fs::read_dir(root.join(".worktrees")).into_iter().flatten().flatten().map(|d| spelled(&d.path())));
+        SAFE.with_borrow_mut(|s| *s = Some((key(root), values)));
+        Safe
+    }
+}
+
+impl Drop for Safe {
+    fn drop(&mut self) { SAFE.with_borrow_mut(|s| *s = None); }
+}
+
+/// The `safe.directory` values for a Git call in `dir`: the pass's, plus `dir` itself when it lies under the root's
+/// `.worktrees` (a submodule); none outside a pass.
+fn safe(dir: &Path) -> Vec<String> {
+    SAFE.with_borrow(|s| s.as_ref().map(|(root, values)| {
+        let mut v = values.clone();
+        if key(dir).starts_with(&format!("{root}/.worktrees/")) { v.push(spelled(dir)); }
+        v
+    })).unwrap_or_default()
+}
+
 /// `core.longpaths`: Git for Windows otherwise fails a removal at 260 characters (`Filename too long`, deep `target/`
 /// paths), after dropping the registry entry and `.git` file, so the rest of the directory stays; other Gits ignore it.
 fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let mut c = crate::platform::command("git");
-    c.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.longpaths=true", "--no-optional-locks"]).args(args);
+    c.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.longpaths=true", "--no-optional-locks"]);
+    for v in safe(dir) { c.arg("-c").arg(format!("safe.directory={v}")); }
+    #[cfg(test)]
+    TEST_ENV.with_borrow(|e| { c.envs(e.iter().map(|(k, v)| (k, v))); });
+    c.args(args);
     match coreq::process::output(label(args), &mut c, std::time::Duration::from_secs(120)) {
         Ok(o) => Ok(o.stdout),
         Err(coreq::process::Failure::Exit(o)) => Err(String::from_utf8_lossy(&o.stderr).lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("git failed").to_string()),
@@ -120,7 +187,7 @@ fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 #[derive(Clone, Debug, Default)]
-struct Entry { path: String, branch: Option<String>, locked: bool }
+struct Entry { path: String, branch: Option<String>, locked: bool, prunable: bool }
 
 fn registry(root: &Path) -> Result<Vec<Entry>, String> {
     Ok(git(root, &["worktree", "list", "--porcelain"])?.split("\n\n").filter_map(|block| {
@@ -129,6 +196,7 @@ fn registry(root: &Path) -> Result<Vec<Entry>, String> {
             if let Some(p) = l.strip_prefix("worktree ") { e.path = p.into(); }
             if let Some(b) = l.strip_prefix("branch refs/heads/") { e.branch = Some(b.into()); }
             if l == "locked" || l.starts_with("locked ") { e.locked = true; }
+            if l == "prunable" || l.starts_with("prunable ") { e.prunable = true; }
         }
         (!e.path.is_empty()).then_some(e)
     }).collect())
@@ -191,14 +259,18 @@ impl Tidy<'_> {
     pub fn run(&self, live: &mut dyn FnMut(u64) -> bool, known: &dyn Fn(u64) -> Option<State>) -> Outcome {
         let at = now();
         if !self.root.join(".git").exists() {
-            return Outcome { log: vec![], report: Value::Null, counts: BTreeMap::new() };
+            return Outcome::new(vec![], Value::Null, BTreeMap::new());
         }
+        let _safe = Safe::set(self.root);
         let dot = crate::dot(self.root);
-        if let Err(e) = std::fs::create_dir_all(&dot) { return self.skip(at, format!(".taskq unwritable: {e}")); }
-        let _lock = match coreq::file_lock::try_lock(&dot.join("tidy.lock")) {
-            Ok(l) => l,
-            Err(std::fs::TryLockError::WouldBlock) => return self.skip(at, "taskq lock held".into()),
-            Err(std::fs::TryLockError::Error(e)) => return self.skip(at, format!("taskq lock unreadable: {e}")),
+        if !self.dry && let Err(e) = std::fs::create_dir_all(&dot) { return self.skip(at, format!(".taskq unwritable: {e}")); }
+        // a dry run creates no `.taskq`; one that exists is locked as for a real pass
+        let _lock = if self.dry && !dot.exists() { None } else {
+            match coreq::file_lock::try_lock(&dot.join("tidy.lock")) {
+                Ok(l) => Some(l),
+                Err(std::fs::TryLockError::WouldBlock) => return self.skip(at, "taskq lock held".into()),
+                Err(std::fs::TryLockError::Error(e)) => return self.skip(at, format!("taskq lock unreadable: {e}")),
+            }
         };
         let dirs = match git(self.root, &["rev-parse", "--git-dir", "--git-common-dir"]) {
             Ok(t) => t.lines().map(|l| self.root.join(l.trim())).collect::<Vec<_>>(),
@@ -209,38 +281,56 @@ impl Tidy<'_> {
             return self.skip(at, format!("Git lock {l} held"));
         }
         let mut log = vec![];
+        // indices of `log` lines only `taskq cleanup` prints
+        let mut notes = BTreeSet::new();
         let mut counts = BTreeMap::new();
-        let fetched = git(self.root, &["fetch", "-q", "origin", "main"]);
+        let mut conditions: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+        // a dry run reads the last fetched `origin/main`
+        let fetched = if self.dry { Ok(String::new()) } else { git(self.root, &["fetch", "-q", "origin", "main"]) };
         // 1. registry prune: entries whose directory is gone; Git keeps locked ones
         let before = registry(self.root).map_or(0, |r| r.len());
-        let after = git(self.root, &["worktree", "prune"]).and_then(|_| registry(self.root)).map_or(before, |r| r.len());
-        if after < before { log.push(format!("tidy pruned {} worktree registry entries without a directory", before - after)); }
-        counts.insert("pruned".into(), (before - after.min(before)) as u64);
+        let pruned = if self.dry {
+            let n = registry(self.root).map_or(0, |r| r.iter().filter(|e| e.prunable).count());
+            if n > 0 { log.push(format!("tidy would prune {n} worktree registry entries without a directory")); }
+            n
+        } else {
+            let after = git(self.root, &["worktree", "prune"]).and_then(|_| registry(self.root)).map_or(before, |r| r.len());
+            if after < before { log.push(format!("tidy pruned {} worktree registry entries without a directory", before - after)); }
+            before - after.min(before)
+        };
+        counts.insert("pruned".into(), pruned as u64);
         let mut items = self.items();
         let mut stages = HashMap::new();
         let (mut removed, mut refused, mut branches) = (0, 0, 0);
-        if !self.external {
-            // 2. task class, 3. unowned class
-            for it in items.iter_mut().filter(|it| it.entry.is_some()) {
-                let outcome = match it.class {
-                    Class::Worker(n) | Class::Review(n) if live(n) => None,
-                    Class::Worker(n) | Class::Review(n) => self.task(n, it, known, &mut stages, &mut log),
-                    Class::Unowned => self.unowned(it, at),
-                    Class::Reserved | Class::Foreign => None,
-                };
-                match outcome {
-                    Some(Ok(line)) => { it.removed = true; removed += 1; log.push(line); }
-                    Some(Err(line)) => { refused += 1; log.push(line); }
-                    None => {}
-                }
+        // 2. task class, 3. unowned class (not in an external workspace)
+        for it in items.iter_mut() {
+            let task = match it.class { Class::Worker(n) | Class::Review(n) => Some(n), _ => None };
+            let alive = task.is_some_and(|n| live(n));
+            let outcome = match it.class {
+                Class::Worker(n) | Class::Review(n) if alive => Some(Step::Note(format!("{} kept: running child on this host", what(n, it.class)))),
+                Class::Worker(n) | Class::Review(n) => Some(self.task(n, it, known, &mut stages, &mut log)),
+                Class::Unowned if !self.external && it.entry.is_some() => self.unowned(it, at),
+                Class::Unowned | Class::Reserved | Class::Foreign => None,
+            };
+            let refusal = match outcome {
+                Some(Step::Done(line)) => { it.removed = !self.dry; removed += 1; log.push(line); None }
+                Some(Step::Refused(line)) => { refused += 1; log.push(line.clone()); Some(line) }
+                Some(Step::Note(line)) => { notes.insert(log.len()); log.push(line); None }
+                None => None,
+            };
+            // findings: a task worktree dirty while no child runs it; a closed task's worktree that stays
+            if let Some(n) = task.filter(|_| !it.removed && !alive) {
+                if it.dirty { conditions.entry("dirty").or_default().push(format!("{} dirty, untouched {}", what(n, it.class), crate::age(at.saturating_sub(it.newest) as i64))); }
+                if stages.get(&n) == Some(&Some(State::Closed)) && let Some(line) = refusal { conditions.entry("kept").or_default().push(line); }
             }
-            // 4. local `taskq-<N>` branches without a worktree
-            let (deleted, kept) = self.branches(live, known, &mut stages, &mut log);
-            branches += deleted;
-            refused += kept;
         }
+        // 4. local `taskq-<N>` branches without a worktree
+        let (deleted, kept) = self.branches(live, known, &mut stages, &mut log);
+        branches += deleted;
+        refused += kept;
         // 5. root
         let (root, behind, moved) = self.root_step(&fetched, &gitdir, &mut log);
+        if root.starts_with("stale") { conditions.entry("stale").or_default().push(format!("root {root}")); }
         let mut report = json!({"at": at, "outcome": "ok", "root": root});
         for c in CLASSES {
             let kept: Vec<&Item> = items.iter().filter(|it| !it.removed && it.class.key() == c).collect();
@@ -255,7 +345,9 @@ impl Tidy<'_> {
         counts.extend([("removed".into(), removed), ("refused".into(), refused), ("branches_deleted".into(), branches),
             ("root_behind".into(), behind), ("root_moved".into(), moved as u64), ("skipped".into(), 0)]);
         self.save(&report);
-        Outcome { log, report, counts }
+        let lines = log.clone();
+        let log = log.into_iter().enumerate().filter(|(i, _)| !notes.contains(i)).map(|(_, l)| l).collect();
+        Outcome { log, lines, report, counts, conditions }
     }
 
     /// A skipped pass keeps the last report and says why.
@@ -265,12 +357,12 @@ impl Tidy<'_> {
         report["at"] = json!(at);
         report["outcome"] = json!(format!("skipped {reason}"));
         self.save(&report);
-        Outcome { log: vec![format!("tidy skipped: {reason}")], report, counts: BTreeMap::from([("skipped".into(), 1)]) }
+        Outcome::new(vec![format!("tidy skipped: {reason}")], report, BTreeMap::from([("skipped".into(), 1)]))
     }
 
     fn save(&self, report: &Value) {
-        // a cache of the last outcome for `status.json` (R1); a failed write only loses the report
-        let _ = std::fs::write(crate::dot(self.root).join("tidy.json"), report.to_string());
+        // a cache of the last outcome for `status.json` (R1); a failed write only loses the report; a dry run writes none
+        if !self.dry { let _ = std::fs::write(crate::dot(self.root).join("tidy.json"), report.to_string()); }
     }
 
     /// Directories under `.worktrees` and foreign registry entries, each with its class.
@@ -304,27 +396,45 @@ impl Tidy<'_> {
         }))
     }
 
-    /// Step 2: `taskq-<N>` leaves with a closed task, `review-<N>` once the task is no longer in `review`.
-    fn task(&self, n: u64, it: &Item, known: &dyn Fn(u64) -> Option<State>, stages: &mut HashMap<u64, Option<State>>, log: &mut Vec<String>) -> Option<Result<String, String>> {
+    /// Step 2: `taskq-<N>` leaves with a closed task, `review-<N>` once the task is no longer in `review`; every other
+    /// outcome names why the directory stays.
+    fn task(&self, n: u64, it: &Item, known: &dyn Fn(u64) -> Option<State>, stages: &mut HashMap<u64, Option<State>>, log: &mut Vec<String>) -> Step {
         let review = matches!(it.class, Class::Review(_));
-        let what = if review { format!("#{n} review worktree") } else { format!("#{n} worktree") };
-        let state = self.stage(n, known, stages)?;
+        let what = what(n, it.class);
+        let Some(state) = self.stage(n, known, stages) else { return Step::Note(format!("{what} kept: task state unknown")) };
         let closed = state == State::Closed;
-        if !(closed || review && state != State::Review) { return None; }
-        if it.entry.as_ref().is_some_and(|e| e.locked) { return Some(Err(format!("{what} kept: locked (git worktree unlock it first)"))); }
+        if !(closed || review && state != State::Review) {
+            return Step::Note(format!("{what} kept: {}", if review { "task in review".into() } else { format!("task open ({})", state.name()) }));
+        }
+        // #2060: a task directory outside the registry is no worktree; Git reads the root's status in it
+        if it.entry.is_none() {
+            const WHY: &str = "empty directory, not a registered worktree";
+            if std::fs::read_dir(&it.path).map_or(true, |mut d| d.next().is_some()) {
+                return Step::Refused(format!("{what} kept: not a registered worktree; inspect it and delete it by hand"));
+            }
+            if self.dry { return Step::Done(format!("{what} would be removed: {WHY}")); }
+            return match std::fs::remove_dir(&it.path) {
+                Ok(()) => Step::Done(format!("{what} removed: {WHY}")),
+                Err(e) => Step::Refused(format!("{what} kept: {WHY}, removal failed: {e}")),
+            };
+        }
+        if it.entry.as_ref().is_some_and(|e| e.locked) { return Step::Refused(format!("{what} kept: locked (git worktree unlock it first)")); }
         let subs = match submodules(&it.path) {
             Ok(s) => s,
-            Err(e) => return Some(Err(format!("{what} kept: submodules unreadable: {e}"))),
+            Err(e) => return Step::Refused(format!("{what} kept: submodules unreadable: {e}")),
         };
         if it.dirty && !self.force {
             let at = subs.iter().find(|s| changed(&it.path.join(s))).map_or(String::new(), |s| format!(" in submodule {s}"));
-            return Some(Err(format!("{what} kept: uncommitted changes{at}; inspect them before `taskq cleanup --force`")));
+            return Step::Refused(format!("{what} kept: uncommitted changes{at}; inspect them before `taskq cleanup --force`"));
         }
         // #1875: a submodule's commits live only in this worktree's Git dir, so removal would lose those on no remote
         if let Some(s) = subs.iter().find(|s| git(&it.path.join(s), &["rev-list", "-n", "1", "HEAD", "--branches", "--not", "--remotes"]).map_or(true, |o| !o.trim().is_empty())) {
-            return Some(Err(format!("{what} kept: submodule {s} has commits on no remote; push them first")));
+            return Step::Refused(format!("{what} kept: submodule {s} has commits on no remote; push them first"));
         }
-        if let Err(e) = self.held(n, closed, log) { return Some(Err(format!("{what} kept: {e}"))); }
+        if let Err(e) = self.held(n, closed, log) { return Step::Refused(format!("{what} kept: {e}")); }
+        if self.dry {
+            return Step::Done(format!("{what} would be removed{}", if it.dirty { " after saving a patch to .taskq/trash" } else { "" }));
+        }
         let rel = format!(".worktrees/{}", it.name);
         let force = || git(self.root, &["worktree", "remove", "--force", &rel]).map(drop);
         // the refusal line carries Git's first stderr line; the service logs it once while it stays the same
@@ -345,10 +455,10 @@ impl Tidy<'_> {
                 false => Err(e),
             })
         };
-        Some(match removed {
-            Ok(()) => Ok(format!("{what} removed")),
-            Err(e) => Err(format!("{what} removal unconfirmed: {e}; {}", if self.force { "inspect the worktree" } else { "inspect uncommitted work before `taskq cleanup --force`" })),
-        })
+        match removed {
+            Ok(()) => Step::Done(format!("{what} removed")),
+            Err(e) => Step::Refused(format!("{what} removal unconfirmed: {e}; {}", if self.force { "inspect the worktree" } else { "inspect uncommitted work before `taskq cleanup --force`" })),
+        }
     }
 
     /// #1549: only this host's executions (its name or OS hostname) hold a worktree. Of a closed task, a boot after
@@ -362,6 +472,7 @@ impl Tidy<'_> {
             let intent = comments.iter().find(|c| c.id == x.id).map(|c| c.created).filter(|t| *t > 0);
             let ended = intent.zip((self.boot)().ok()).map(|(intent, at)| crate::snapshot::verdict(&crate::snapshot::Signals { local: true, boot: Some((at, intent)), ..Default::default() }));
             let released = match ended {
+                Some(("ended", proof)) if self.dry => { log.push(format!("#{n} would release {} exit: {proof}", x.id)); Ok(()) }
                 Some(("ended", proof)) => crate::service::release_execution_text(self.board, n, x.attempt, x.id, "exit", &proof)
                     .map(|_| log.push(format!("#{n} released {} exit: {proof}", x.id))),
                 _ => Err(format!("execution {} on {} termination unknown; stop its process or reboot this host", x.id, x.host)),
@@ -372,14 +483,16 @@ impl Tidy<'_> {
     }
 
     /// Step 3: a clean unowned worktree untouched for 7 days; its branch stays.
-    fn unowned(&self, it: &Item, at: u64) -> Option<Result<String, String>> {
+    fn unowned(&self, it: &Item, at: u64) -> Option<Step> {
         let commit = git(&it.path, &["log", "-1", "--format=%ct", "HEAD"]).ok().and_then(|t| t.trim().parse::<u64>().ok())?;
         let touched = it.newest.max(commit);
         if it.dirty || it.entry.as_ref().is_some_and(|e| e.locked) || at.saturating_sub(touched) < UNOWNED_AFTER { return None; }
         let rel = format!(".worktrees/{}", it.name);
+        let age = crate::age(at.saturating_sub(touched) as i64);
+        if self.dry { return Some(Step::Done(format!("{rel} would be removed: unowned, untouched {age}"))); }
         Some(match git(self.root, &["worktree", "remove", &rel]) {
-            Ok(_) => Ok(format!("{rel} removed: unowned, untouched {}", crate::age(at.saturating_sub(touched) as i64))),
-            Err(e) => Err(format!("{rel} kept: {e}")),
+            Ok(_) => Step::Done(format!("{rel} removed: unowned, untouched {age}")),
+            Err(e) => Step::Refused(format!("{rel} kept: {e}")),
         })
     }
 
@@ -394,6 +507,12 @@ impl Tidy<'_> {
             let Class::Worker(n) = class(name) else { continue };
             if checked.contains(name) || live(n) || self.stage(n, known, stages) != Some(State::Closed) { continue; }
             let merged = git(self.root, &["merge-base", "--is-ancestor", tip, "origin/main"]).is_ok() || self.receipt(n, tip);
+            // a dry run reads what `branch -d` checks: the tip merged into HEAD
+            if self.dry {
+                if merged || git(self.root, &["merge-base", "--is-ancestor", tip, "HEAD"]).is_ok() { deleted += 1; log.push(format!("#{n} branch would be deleted")); }
+                else { kept += 1; log.push(format!("#{n} branch kept: not merged into origin/main")); }
+                continue;
+            }
             match git(self.root, &["branch", if merged { "-D" } else { "-d" }, name]) {
                 Ok(_) => { deleted += 1; log.push(format!("#{n} branch deleted")); }
                 Err(e) => { kept += 1; log.push(format!("#{n} branch kept: {}{e}", if merged { "" } else { "not merged into origin/main: " })); }
@@ -427,6 +546,10 @@ impl Tidy<'_> {
         let reason = match reason {
             Some(r) => r,
             None if behind == 0 => return ("current".into(), 0, false),
+            None if self.dry => {
+                log.push(format!("root would fast-forward {behind} commits to origin/main"));
+                return (format!("behind {behind}"), behind, false);
+            }
             None => match git(self.root, &["-c", "merge.autoStash=false", "merge", "--ff-only", "-q", "origin/main"]) {
                 Ok(_) => {
                     log.push(format!("root fast-forwarded {behind} commits to origin/main"));
@@ -495,9 +618,18 @@ mod tests {
         }
         fn head(&self) -> String { self.sh(&self.root, &["rev-parse", "HEAD"]) }
         fn tidy<'a>(&'a self, b: &'a Fake, external: bool) -> Tidy<'a> {
-            Tidy { board: b, root: &self.root, me: "mac", boot: no_boot, external, force: false }
+            Tidy { board: b, root: &self.root, me: "mac", boot: no_boot, external, force: false, dry: false }
         }
         fn wt(&self, name: &str) -> bool { self.root.join(".worktrees").join(name).exists() }
+        /// Everything a pass may change: registry, branches, HEAD, `origin/main`, each status and `.taskq`.
+        fn state(&self) -> String {
+            let mut s = [self.sh(&self.root, &["worktree", "list", "--porcelain"]), self.sh(&self.root, &["branch", "--list"]),
+                self.head(), self.sh(&self.root, &["status", "--porcelain"]), format!("taskq {}", self.root.join(".taskq").exists())].join("\n");
+            for d in std::fs::read_dir(self.root.join(".worktrees")).into_iter().flatten().flatten() {
+                s += &format!("\n{}: {:?}", d.file_name().to_string_lossy(), std::fs::read_dir(d.path()).unwrap().flatten().map(|e| e.file_name()).collect::<Vec<_>>());
+            }
+            s
+        }
     }
     impl Drop for Repo {
         fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.base); }
@@ -612,10 +744,12 @@ mod tests {
         r.tidy(&b, false).run(&mut |_| false, &|n| (n == 4).then_some(State::Doing));
         assert!(!r.wt("review-4-6177396825"));
 
-        // `workspace: external` runs only steps 1 and 5
+        // #2060 (Mac cs, 55 closed-task worktrees): `workspace: external` still tidies TaskQ's own task worktrees and
+        // `taskq-<N>` branches; dev-build and foreign entries stay, the unmerged branch too
         std::fs::remove_file(r.root.join(".worktrees/taskq-2/wip")).unwrap();
         let o = pass(&r.tidy(&b, true));
-        assert!(r.wt("taskq-2") && branch("taskq-6"), "{:?}", o.log);
+        assert!(!r.wt("taskq-2") && r.wt("dev-build") && foreign.exists() && branch("taskq-6"), "{:?}", o.log);
+        assert!(o.log.contains(&"#2 worktree removed".into()), "{:?}", o.log);
         // a squash merge: the close receipt records the merge of the task's result at the branch tip
         let tip = r.sh(&r.root, &["rev-parse", "taskq-6"]);
         let attempt = b.comment(6, "taskq: spawn worker claude:owned other").unwrap();
@@ -702,6 +836,94 @@ mod tests {
         assert!(std::fs::read_to_string(r.root.join(".taskq/trash/taskq-5--sub.patch")).unwrap().contains("+mine"), "{:?}", o.log);
     }
 
+    // Chain: `taskq cleanup --dry-run [--force]` on a temp repo. Defect (#2060): cleanup had no preview, and `--force`
+    // removed dirty worktrees without a list. Risk protected: a dry run that fetches, prunes, removes, deletes a branch,
+    // moves the root or writes `.taskq`, and a line that differs from what the real pass then does.
+    #[test]
+    fn dry_run_prints_every_line_and_changes_nothing() {
+        let r = Repo::new("dry");
+        let b = Fake::default();
+        for _ in 0..5 { b.create("T", "", &["taskq".into()]).unwrap(); }
+        for w in ["taskq-1", "taskq-2", "taskq-9"] { r.sh(&r.root, &["worktree", "add", "-q", "-b", w, &format!(".worktrees/{w}")]); }
+        r.sh(&r.root, &["worktree", "add", "-q", "--detach", ".worktrees/review-3"]);
+        std::fs::remove_dir_all(r.root.join(".worktrees/taskq-9")).unwrap();
+        std::fs::write(r.root.join(".worktrees/taskq-2/wip"), "x").unwrap();
+        r.sh(&r.root, &["branch", "taskq-5", "origin/main"]);
+        for n in [1, 2, 5] { b.close(n).unwrap(); }
+        r.upstream("b", "1");
+        r.sh(&r.root, &["fetch", "-q", "origin", "main"]);
+        let known = |n: u64| (n == 3).then_some(State::Review);
+        let before = r.state();
+        let o = Tidy { dry: true, ..r.tidy(&b, false) }.run(&mut |_| false, &known);
+        assert_eq!(o.lines, ["tidy would prune 1 worktree registry entries without a directory", "#3 review worktree kept: task in review",
+            "#1 worktree would be removed", "#2 worktree kept: uncommitted changes; inspect them before `taskq cleanup --force`",
+            "#5 branch would be deleted", "root would fast-forward 1 commits to origin/main"]);
+        let o = Tidy { dry: true, force: true, ..r.tidy(&b, false) }.run(&mut |_| false, &known);
+        assert!(o.lines.contains(&"#2 worktree would be removed after saving a patch to .taskq/trash".into()), "{:?}", o.lines);
+        assert_eq!(r.state(), before, "tree, registry, branches, root and .taskq unchanged");
+        // the real pass does what the preview said
+        let o = r.tidy(&b, false).run(&mut |_| false, &known);
+        assert!(!r.wt("taskq-1") && r.wt("taskq-2") && r.wt("review-3") && o.report["root"] == "current", "{:?}", o.lines);
+        assert_eq!(r.sh(&r.root, &["branch", "--list", "taskq-5"]), "");
+    }
+
+    // Chain: tidy step 2 on directories outside the registry. Defect (#2060, Windows taskq): review-1594, taskq-948 and
+    // others were empty leftovers without `.git`, so Git read the root's 1336 changes there, and the pass skipped them
+    // with no line. Risk protected: deleting a non-empty unregistered directory, and a kept task worktree with no reason.
+    #[test]
+    fn unregistered_task_directories_and_kept_reasons() {
+        let r = Repo::new("unreg");
+        let b = Fake::default();
+        for _ in 0..4 { b.create("T", "", &["taskq".into()]).unwrap(); }
+        std::fs::create_dir_all(r.root.join(".worktrees/review-1")).unwrap();
+        std::fs::create_dir_all(r.root.join(".worktrees/taskq-2")).unwrap();
+        std::fs::write(r.root.join(".worktrees/taskq-2/notes"), "x").unwrap();
+        for w in ["taskq-3", "taskq-4"] { r.sh(&r.root, &["worktree", "add", "-q", "-b", w, &format!(".worktrees/{w}")]); }
+        std::fs::write(r.root.join(".worktrees/taskq-4/wip"), "x").unwrap();
+        for n in [1, 2, 4] { b.close(n).unwrap(); }
+        let o = r.tidy(&b, false).run(&mut |_| false, &|n| (n == 3).then_some(State::Doing));
+        assert!(!r.wt("review-1") && r.wt("taskq-2") && r.wt("taskq-3") && r.wt("taskq-4"), "{:?}", o.lines);
+        let kept2 = "#2 worktree kept: not a registered worktree; inspect it and delete it by hand";
+        let kept4 = "#4 worktree kept: uncommitted changes; inspect them before `taskq cleanup --force`";
+        assert_eq!(o.lines, ["#1 review worktree removed: empty directory, not a registered worktree", kept2, "#3 worktree kept: task open (doing)", kept4]);
+        assert!(!o.log.iter().any(|l| l.contains("task open")), "the service log keeps only removals and refusals: {:?}", o.log);
+        assert_eq!(o.conditions["kept"], [kept2, kept4]);
+        assert!(o.conditions["dirty"].len() == 1 && o.conditions["dirty"][0].starts_with("#4 worktree dirty, untouched "), "{:?}", o.conditions);
+        // a live child keeps it with its own line, and no finding condition
+        let o = r.tidy(&b, false).run(&mut |n| n == 4, &|n| (n == 3).then_some(State::Doing));
+        assert!(o.lines.contains(&"#4 worktree kept: running child on this host".into()) && !o.conditions.contains_key("dirty"), "{:?}", o.lines);
+    }
+
+    // Chain: tidy on a root Git calls dubious ownership. Defect (#2060, Windows coreq, dashq, desiign, serverq, specq):
+    // `tidy skipped: git unreadable: fatal: detected dubious ownership in repository`. Risk protected: trusting any path
+    // besides the root and its `.worktrees` (no `*`, no global config write).
+    #[test]
+    fn dubious_ownership_root_is_tidied() {
+        let r = Repo::new("owner");
+        let b = Fake::default();
+        b.create("T", "", &["taskq".into()]).unwrap();
+        r.sh(&r.root, &["worktree", "add", "-q", "-b", "taskq-1", ".worktrees/taskq-1"]);
+        let foreign = r.base.join("foreign");
+        r.sh(&r.root, &["worktree", "add", "-q", "--detach", foreign.to_str().unwrap()]);
+        b.close(1).unwrap();
+        r.upstream("b", "1");
+        TEST_ENV.with_borrow_mut(|e| *e = vec![("GIT_TEST_ASSUME_DIFFERENT_OWNER".into(), "1".into())]);
+        match git(&r.root, &["status"]) {
+            Err(e) => assert!(e.contains("dubious ownership"), "outside a pass Git refuses the root: {e}"),
+            // Git before 2.45 honours the test owner switch only on Windows (WSL git 2.43): nothing to simulate
+            Ok(_) => { TEST_ENV.with_borrow_mut(Vec::clear); eprintln!("skipped: this Git cannot simulate another owner"); return; }
+        }
+        let o = pass(&r.tidy(&b, false));
+        TEST_ENV.with_borrow_mut(Vec::clear);
+        // the test's `origin` is a local repository that this Git test mode also marks foreign, and upload-pack ignores
+        // command-line safe.directory, so only the fetch fails; a real origin is a URL
+        assert!(!r.wt("taskq-1") && o.report["root"] == "stale fetch failed", "{:?} {}", o.lines, o.report);
+        assert_eq!(o.log, ["#1 worktree removed", "#1 branch deleted", "root stale: fetch failed"]);
+        assert_eq!(pass(&r.tidy(&b, false)).report["root"], "current", "the same root reaches origin/main once Git trusts its owner");
+        // the clean foreign checkout reads dirty: Git still refused its status, so it stayed untrusted
+        assert_eq!((o.report["foreign"]["count"].as_u64(), o.report["foreign"]["dirty"].as_u64()), (Some(1), Some(1)));
+    }
+
     // Chain: tidy step 3. Risk protected: removing recent or dirty unowned work.
     #[test]
     fn unowned_worktrees_leave_only_clean_and_a_week_old() {
@@ -730,6 +952,8 @@ mod tests {
         assert!(o.status.success());
         age(&r.root.join(".worktrees/scratch"));
         std::fs::write(r.root.join(".worktrees/fresh/wip"), "x").unwrap();
+        // #2060: `workspace: external` keeps every other path host-owned, old and clean ones too
+        assert!(pass(&r.tidy(&b, true)).log.is_empty() && r.wt("scratch"));
         let o = pass(&r.tidy(&b, false));
         assert!(!r.wt("scratch") && r.wt("fresh"), "{:?}", o.log);
         assert!(o.log[0].starts_with(".worktrees/scratch removed: unowned, untouched "), "{:?}", o.log);

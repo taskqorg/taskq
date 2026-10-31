@@ -98,7 +98,7 @@ const USAGE: &str = "taskq agents
  taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
  taskq wait [--window MIN] [--only L,..]
- taskq cleanup [--force] | taskq update [--check]
+ taskq cleanup [--force] [--dry-run] [--all] | taskq doctor [--dry-run] | taskq update [--check]
  taskq enroll <https-url> [--headless] [--telemetry] | taskq connection status | taskq disconnect
  taskq service install|run|pause|resume|status|restart|stop|uninstall|list
  taskq service setup [--runtime claude|codex] [--client C] [--target PATH..] [--json]
@@ -152,7 +152,7 @@ impl Args {
         while let Some(x) = it.next() {
             match x.strip_prefix("--") {
                 Some(k) => {
-                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
+                    let val = if matches!(k, "text-stdin" | "later" | "hold" | "start" | "check" | "force" | "help" | "json" | "apply" | "headless" | "telemetry" | "host-policy" | "project-limits" | "closed" | "open" | "transcript" | "dry-run" | "all") || k=="host"&&a.pos==["service","uninstall"] { String::new() } else { it.next().cloned().ok_or(format!("--{k} needs a value"))? };
                     a.flags.entry(k.to_string()).or_default().push(val);
                 }
                 None => a.pos.push(x.clone()),
@@ -3133,6 +3133,28 @@ fn run(argv: &[String]) -> Res<()> {
         // § 3 Runtime accounts: list reads every host; enable, disable, move and add write this host only
         "accounts" => accounts_cli(&a),
         "service" => service(&a),
+        // #2060 (docs/design/worktrees.md#commands): the tidy of each registered project of this host
+        "cleanup" if a.flags.contains_key("all") => {
+            let roots = host::projects(&platform::default_install())?;
+            if roots.is_empty() { println!("cleanup: no registered project on this host"); }
+            for root in roots {
+                println!("{}: {}", project_name(&root), root.display().to_string().trim_start_matches(r"\\?\"));
+                let lines = load(&root).and_then(|(cfg, raw)| {
+                    let b = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
+                    Ok(cleanup_lines(&*b, &cfg, &a))
+                });
+                match lines {
+                    Ok(lines) => for l in lines { println!("{l}"); },
+                    Err(e) => println!("skipped: {e}"),
+                }
+            }
+            Ok(())
+        }
+        // #2060 (docs/design/host-service.md#host-doctor): one host doctor pass now; no board
+        "doctor" => {
+            for l in doctor::cli(&platform::default_install(), a.flags.contains_key("dry-run")) { println!("{l}"); }
+            Ok(())
+        }
         // § 5: an owner session (§ 4) in this project; no board
         "retro" => {
             let (cfg, _) = load(&find_root()?)?;
@@ -3294,6 +3316,23 @@ fn finding_submit(b: &dyn Board, raw: &Value, root: &Path, title: &str, body: &s
     (create, Some(r))
 }
 
+/// One finding's body (Source, Evidence, op id) and its identity-derived op id, then its claimed create
+/// (docs/design/finding-tasks.md); `taskq finding` and the service's tidy findings (docs/design/worktrees.md) share it.
+/// `evidence` lines come without the `- ` bullet. Errors come only from the task body.
+#[allow(clippy::too_many_arguments)]
+fn submit_finding(b: &dyn Board, raw: &Value, root: &Path, board: &str, web_host: &str, repo: &str, new: &NewTask, source: &str, evidence: &[String], op: &mut Op, start: bool) -> Res<(Receipt, Option<Receipt>)> {
+    let (mut body, labels) = task_body(b, new, &Op::default())?;
+    let board_url = b.url(0);
+    let identity = json!({"kind": board, "host": web_host, "repo": repo, "url": board_url.trim_end_matches("/0"), "source": source});
+    let hash: String = ring::digest::digest(&ring::digest::SHA256, identity.to_string().as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    op.id = Some(format!("finding.{hash}"));
+    body += &format!("\n## Source\n{source}\n");
+    if !evidence.is_empty() { body += &format!("\n## Evidence\n{}\n", evidence.iter().map(|e| format!("- {e}")).collect::<Vec<_>>().join("\n")); }
+    let request = json!({"board": identity, "start": start}).to_string();
+    body += &format!("\nop-id: {}\n", op.id.as_deref().unwrap());
+    Ok(finding_submit(b, raw, root, &new.title, &body, &labels, &request, op, start))
+}
+
 /// Section 1 start log -> eligibility label -> authoritative readback, shared by start and finding.
 fn start_one(b: &dyn Board, root: &Path, n: u64, op: &Op) -> Receipt {
     let mut start_op = op.clone();
@@ -3344,6 +3383,18 @@ fn emit_finding(create: Receipt, start: Option<Receipt>, json: bool) -> Res<()> 
         if let Some(r) = start { println!("Start: {}", r.text()); }
     }
     if ok { Ok(()) } else { Err(String::new()) }
+}
+
+/// `taskq cleanup [--force] [--dry-run]` of one root ([worktrees](docs/design/worktrees.md#commands)): every removal,
+/// refusal, kept task worktree and root move with its reason, else `nothing to clean`.
+fn cleanup_lines(b: &dyn Board, cfg: &Config, a: &Args) -> Vec<String> {
+    // a child the local service still runs keeps its worktree, whatever the board says
+    let st: Value = fs::read_to_string(dot(&cfg.root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let live: Vec<u64> = st["kids"].as_array().into_iter().flatten().filter_map(|k| k["task"].as_u64()).collect();
+    let t = tidy::Tidy { board: b, root: &cfg.root, me: &cfg.me, boot: platform::boot_time, external: cfg.external,
+        force: a.flags.contains_key("force"), dry: a.flags.contains_key("dry-run") };
+    let lines = t.run(&mut |n| live.contains(&n), &|_| None).lines;
+    if lines.is_empty() { vec!["nothing to clean".into()] } else { lines }
 }
 
 fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
@@ -3420,8 +3471,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 labels: vec![],
             };
             if finding {
-                let (mut body, labels) = task_body(b, &new, &Op::default()).map_err(|e| serve_hint(e, cfg))?;
-                let finding_request;
+                task_body(b, &new, &Op::default()).map_err(|e| serve_hint(e, cfg))?;
                 for (flag, values) in &a.flags {
                     if !["board", "source", "goal", "acceptance", "scope", "deps", "type", "runtime", "priority", "host", "evidence", "start", "json"].contains(&flag.as_str()) {
                         return Err(format!("finding does not accept --{flag}"));
@@ -3440,17 +3490,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 if a.all("source").len() != 1 || parts.len() != 3 || parts.iter().any(|p| p.is_empty() || p.bytes().all(|c| c == b'.') || p.len() > 64 || !p.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))) {
                     return Err("--source: installation/rule/episode; each part 1-64 ASCII letters, digits, dot, underscore or hyphen".into());
                 }
-                let evidence: Vec<_> = a.all("evidence").into_iter().map(|e| format!("- {e}")).collect();
-                one_line("--evidence", &evidence)?;
-                limit("Evidence", &evidence, 0, 4, 240)?;
-                let identity = json!({"kind": cfg.board.name, "host": cfg.web_host, "repo": cfg.repo, "url": board_url, "source": source});
-                let hash: String = ring::digest::digest(&ring::digest::SHA256, identity.to_string().as_bytes()).as_ref().iter().map(|b| format!("{b:02x}")).collect();
-                op.id = Some(format!("finding.{hash}"));
-                body += &format!("\n## Source\n{source}\n");
-                if !evidence.is_empty() { body += &format!("\n## Evidence\n{}\n", evidence.join("\n")); }
-                finding_request = json!({"board": identity, "start": a.flags.contains_key("start")}).to_string();
-                body += &format!("\nop-id: {}\n", op.id.as_deref().unwrap());
-                let (create, start) = finding_submit(b, &c.raw, root, title, &body, &labels, &finding_request, &op, a.flags.contains_key("start"));
+                let evidence: Vec<_> = a.all("evidence").into_iter().map(String::from).collect();
+                let bullets: Vec<_> = evidence.iter().map(|e| format!("- {e}")).collect();
+                one_line("--evidence", &bullets)?;
+                limit("Evidence", &bullets, 0, 4, 240)?;
+                let (create, start) = submit_finding(b, &c.raw, root, cfg.board.name, &cfg.web_host, &cfg.repo, &new, source, &evidence, &mut op, a.flags.contains_key("start"))
+                    .map_err(|e| serve_hint(e, cfg))?;
                 let create = if create.ok() { create.wake(root) } else { create };
                 return emit_finding(create, start, json);
             } else if ["start", "source", "board", "evidence"].iter().any(|f| a.flags.contains_key(*f)) {
@@ -3609,12 +3654,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             Ok(())
         }
         "cleanup" => {
-            // a child the local service still runs keeps its worktree, whatever the board says
-            let st: Value = fs::read_to_string(dot(root).join("status.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
-            let live: Vec<u64> = st["kids"].as_array().into_iter().flatten().filter_map(|k| k["task"].as_u64()).collect();
-            let t = tidy::Tidy { board: b, root, me: &cfg.me, boot: platform::boot_time, external: cfg.external, force: a.flags.contains_key("force") };
-            let log = t.run(&mut |n| live.contains(&n), &|_| None).log;
-            println!("{}", if log.is_empty() { "nothing to clean".into() } else { log.join("\n") });
+            for l in cleanup_lines(b, cfg, a) { println!("{l}"); }
             Ok(())
         }
         "issue" => {

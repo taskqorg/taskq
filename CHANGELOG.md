@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.54
+
+Publication: a task PR in another repository is published, compared and requeued in its own repository, not the board's (#2047, #2061). Each issue keeps one summary comment edited in place, projecting state, result, PR and verdict for people; `fold` never reads it (#2042). Runtime accounts per host: `taskq accounts` lists, orders and enables login homes, and a usage limit moves the runtime to the next enabled account (#2052). Host doctor removes stale releases and qualification leftovers (#2053). Result and ask hand in zip, tar.gz, PDF and HTML files (#2019). Tray snapshots and callbacks publish as one menu view (#2044). Seeds plain-copy `target/` where the volume has no reflink (#2059). No board change: older issues get their summary comment at their next accepted entry.
+
 ## v4.6.53
 
 Status snapshot: `status --json` task rows carry a typed `verdict` (`changed`, `checks`, `open`) and the snapshot carries a `vocabulary` of states and telemetry codes; each release ships the snapshot schema and golden fixture for DashQ, PilotQ and CoreQ (#2014). Every service card (retry limit, blocked, closed, start refused, input failed) goes through the same card writer as `ask` (#2012). GitLab note research for #2016 (#2030). No board change.

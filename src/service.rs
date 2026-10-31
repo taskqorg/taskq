@@ -35,7 +35,7 @@ pub struct Config {
     pub poll: u64,
     pub update_every: u64,
     pub rollback_after: u64,
-    /// `workspace: external` (§ 9): the hourly tidy runs only its registry prune and root step.
+    /// `workspace: external` (§ 9): the hourly tidy skips unowned worktrees and touches only TaskQ's own task worktrees.
     pub external: bool,
 }
 
@@ -52,6 +52,73 @@ fn tray_fault(install: &std::path::Path) -> Option<String> {
     let code = std::fs::read_to_string(install.join("tray.fault")).ok()?;
     let code = code.trim();
     (!code.is_empty() && code.len() <= 40 && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'-')).then(|| code.to_string())
+}
+
+/// docs/design/worktrees.md Findings: one held finding per root and tidy condition that has lasted over a day, nothing
+/// more while that task is open. `.taskq/findings.json` keeps `{condition: {since, issue}}` and the last reason a
+/// finding could not be filed, so the reason logs once (a cache, R1).
+fn tidy_findings(b: &dyn Board, cfg: &Config, conditions: &BTreeMap<&'static str, Vec<String>>, now: u64, log: &mut Vec<String>) {
+    const DAY: u64 = 86_400;
+    let path = crate::dot(&cfg.root).join("findings.json");
+    let read = |p: &std::path::Path| std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()).filter(Value::is_object);
+    let last = read(&path).unwrap_or_else(|| json!({}));
+    let mut next = json!({});
+    if let Some(reason) = last.get("unfiled") { next["unfiled"] = reason.clone(); }
+    // a source part: 1-48 of `[A-Za-z0-9._-]`, never only dots
+    let part = |s: &str| -> String {
+        let p: String = s.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '-' }).take(48).collect();
+        if p.bytes().all(|c| c == b'.') { "x".into() } else { p }
+    };
+    let (host, project) = (part(&cfg.me), part(&crate::project_name(&cfg.root)));
+    for (cond, lines) in conditions {
+        let mut entry = last.get(*cond).cloned().filter(|e| e["since"].is_u64()).unwrap_or_else(|| json!({"since": now}));
+        if let Some(n) = entry["issue"].as_u64() {
+            // open or unreadable: nothing more; closed while the condition holds: a new day starts
+            if b.issue(n).is_ok_and(|i| !i.open) { entry = json!({"since": now}); }
+            next[*cond] = entry;
+            continue;
+        }
+        let since = entry["since"].as_u64().unwrap_or(now);
+        if now.saturating_sub(since) > DAY {
+            let (what, goal) = match *cond {
+                "dirty" => ("Task worktree dirty", format!("A task worktree on host {} stays dirty while no child of that host runs its task: keep or drop its changes so the tidy pass can remove it.", cfg.me)),
+                "stale" => ("Root stale", format!("The project root on host {} has not followed origin/main for over a day: settle the stale reason so the tidy pass can fast-forward it.", cfg.me)),
+                _ => ("Closed task worktree kept", format!("A closed task's worktree on host {} stays after each tidy pass: settle its kept reason so the worktree goes.", cfg.me)),
+            };
+            let new = crate::NewTask {
+                conversation: None,
+                title: format!("{what} over a day: {project} on {host}").chars().take(80).collect(),
+                goal,
+                acceptance: vec![format!("taskq cleanup --dry-run on host {} no longer prints the evidence lines of this task.", cfg.me)],
+                scope: vec![], deps: vec![], kind: None, runtime: None, priority: None, host: None, labels: vec![],
+            };
+            let evidence: Vec<String> = lines.iter().take(4).map(|l| l.replace(['\r', '\n'], " ").chars().take(238).collect()).collect();
+            let source = format!("{host}/tidy-{cond}/{project}-{since}");
+            let raw = read(&cfg.root.join("taskq.json")).unwrap_or(Value::Null);
+            let mut op = crate::dispatch::Op::default();
+            let reason = match crate::submit_finding(b, &raw, &cfg.root, cfg.board.name, &cfg.web_host, &cfg.repo, &new, &source, &evidence, &mut op, false) {
+                Ok((r, _)) if r.ok() => {
+                    entry["issue"] = json!(r.task);
+                    log.push(format!("#{} finding filed: tidy {cond} over a day", r.task));
+                    None
+                }
+                Ok((r, _)) => Some(r.reason),
+                Err(e) => Some(e),
+            };
+            match reason {
+                Some(r) => {
+                    let line = format!("tidy finding not filed: {r}");
+                    if last["unfiled"].as_str() != Some(&line) { log.push(line.clone()); }
+                    next["unfiled"] = json!(line);
+                }
+                None => { next.as_object_mut().unwrap().remove("unfiled"); }
+            }
+        }
+        next[*cond] = entry;
+    }
+    if next != last && let Err(e) = std::fs::create_dir_all(crate::dot(&cfg.root)).and_then(|_| std::fs::write(&path, next.to_string())) {
+        log.push(format!("findings cache: {e}"));
+    }
 }
 
 /// Only issues labelled `taskq` are tasks (§ 1): a user issue never starts by itself.
@@ -2221,7 +2288,7 @@ impl<'a> Service<'a> {
         self.tidied = Some(std::time::Instant::now());
         let kids: Vec<u64> = self.kids.iter().map(|k| k.task).collect();
         let states: HashMap<u64, State> = open.iter().map(|(n, v)| (*n, v.projection.task.state)).collect();
-        let t = crate::tidy::Tidy { board: self.board, root: &self.cfg.root, me: &self.cfg.me, boot: self.boot, external: self.cfg.external, force: false };
+        let t = crate::tidy::Tidy { board: self.board, root: &self.cfg.root, me: &self.cfg.me, boot: self.boot, external: self.cfg.external, force: false, dry: false };
         let o = crate::profile::measure_counted("service.tidy", || {
             let o = t.run(&mut |n| kids.contains(&n), &|n| states.get(&n).copied());
             let counts = o.counts.clone();
@@ -2242,6 +2309,10 @@ impl<'a> Service<'a> {
         }
         if next != last && let Err(e) = std::fs::create_dir_all(crate::dot(&self.cfg.root)).and_then(|_| std::fs::write(&path, next.into_iter().map(|l| l + "\n").collect::<String>())) {
             self.log.push(format!("cleanup cache: {e}"));
+        }
+        if !skipped {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            tidy_findings(self.board, &self.cfg, &o.conditions, now, &mut self.log);
         }
     }
 
@@ -7113,7 +7184,7 @@ Open: none";
         let mut restarted = service(&b, &c, Default::default());
         restarted.pass().unwrap();
         assert_eq!(kept(&restarted), 0, "a restart with the same outcome logs nothing: {:?}", restarted.log);
-        let cleanup = |boot, force| crate::tidy::Tidy { board: &b, root: &root, me: "mac", boot, external: false, force }.run(&mut |_| false, &|_| None).log;
+        let cleanup = |boot, force| crate::tidy::Tidy { board: &b, root: &root, me: "mac", boot, external: false, force, dry: false }.run(&mut |_| false, &|_| None).log;
         cleanup(no_boot, true);
         assert_eq!((wt("2"), wt("3")), (false, true), "force removes dirty closed; open stays");
         assert!(wt("4"), "even forced cleanup preserves an unresolved execution's worktree");
@@ -7121,6 +7192,48 @@ Open: none";
         assert!(!wt("4"), "a boot after intent releases and permits cleanup: {log:?}");
         assert!(core::executions(4, &crate::board::entries(&b, 4).unwrap()).iter().all(|x| x.id != execution || x.release == Some(core::Release::Exit)));
         assert!(std::fs::read_to_string(root.join(".taskq/trash/taskq-2.patch")).unwrap().contains("wip"), "dirty work saved");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // Chain: tidy conditions -> `.taskq/findings.json` -> held finding (docs/design/worktrees.md Findings, #2060).
+    // Defect: hosts repeated the same dirty, stale and kept tidy lines for weeks and nothing filed a task. Kept
+    // protection: one finding per root and condition after a day, none while it is open, a new day once it is closed,
+    // and a board without a claim issue logs its reason once.
+    #[test]
+    fn tidy_conditions_file_one_finding_per_condition_after_a_day() {
+        let root = std::env::temp_dir().join(format!("taskq-tidy-findings-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let b = Fake::default();
+        b.create("Claims", "", &[]).unwrap();
+        let mut c = cfg("mac");
+        c.root = root.clone();
+        let dirty = BTreeMap::from([("dirty", vec!["#7 worktree dirty, untouched 3d".to_string()])]);
+        let mut log = vec![];
+        let mut run = |conds: &BTreeMap<&'static str, Vec<String>>, now: u64| { log.clear(); tidy_findings(&b, &c, conds, now, &mut log); log.clone() };
+        let t0 = 1_800_000_000;
+        // no claim issue configured: nothing filed, the reason logs once
+        assert!(run(&dirty, t0).is_empty());
+        let unfiled = run(&dirty, t0 + 86_401);
+        assert_eq!(unfiled, ["tidy finding not filed: configure create_claim_issue before idempotent create"]);
+        assert!(run(&dirty, t0 + 86_402).is_empty(), "the same reason logs once");
+        std::fs::write(root.join("taskq.json"), r#"{"create_claim_issue": 1}"#).unwrap();
+        assert_eq!(run(&dirty, t0 + 86_403), ["#2 finding filed: tidy dirty over a day"]);
+        let issue = b.issue(2).unwrap();
+        assert!(issue.title.starts_with("Task worktree dirty over a day: ") && is_held(&issue), "{}", issue.title);
+        assert!(issue.body.contains(&format!("## Source\nmac/tidy-dirty/{}-{t0}\n", crate::project_name(&root))), "{}", issue.body);
+        assert!(issue.body.contains("## Evidence\n- #7 worktree dirty, untouched 3d\n"), "{}", issue.body);
+        assert!(run(&dirty, t0 + 5 * 86_400).is_empty(), "no repeat while the finding is open");
+        assert_eq!(b.issues(Some(0)).unwrap().len(), 2);
+        // closed while the condition holds: a new day starts, then a second finding
+        b.close(2).unwrap();
+        let t1 = t0 + 6 * 86_400;
+        assert!(run(&dirty, t1).is_empty());
+        assert_eq!(run(&dirty, t1 + 86_401), ["#3 finding filed: tidy dirty over a day"]);
+        // a cleared condition forgets its first-seen time
+        assert!(run(&BTreeMap::new(), t1 + 86_402).is_empty());
+        let cache: Value = serde_json::from_str(&std::fs::read_to_string(root.join(".taskq/findings.json")).unwrap()).unwrap();
+        assert!(cache.get("dirty").is_none(), "{cache}");
         let _ = std::fs::remove_dir_all(&root);
     }
 
