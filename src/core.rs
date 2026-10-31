@@ -115,6 +115,11 @@ pub fn op_id(n: u64, body: &str) -> Option<&str> {
     parse(n, body)?.op
 }
 
+/// The text of a log entry of task `n` (§ 2): after its first line, without the op id fields.
+pub fn entry_text(n: u64, body: &str) -> &str {
+    parse(n, body).map_or("", |l| l.text)
+}
+
 /// Whether `text` ends with lines that would read as the § 2 fields: such text is refused before writing.
 pub fn has_fields(text: &str) -> bool {
     fields(text).1.is_some()

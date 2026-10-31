@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "source": "board",
-  "observed": 99,
+  "observed": 102,
   "complete": true,
   "reason": null,
   "board": {
@@ -17,8 +17,76 @@
     "held": 0,
     "later": 0,
     "ready": 1,
-    "review": 0,
+    "review": 1,
     "waiting": 1
+  },
+  "vocabulary": {
+    "states": [
+      {
+        "id": "doing",
+        "name": "Doing",
+        "label": "q-doing"
+      },
+      {
+        "id": "review",
+        "name": "Review",
+        "label": "q-review"
+      },
+      {
+        "id": "ask",
+        "name": "Ask",
+        "label": "q-ask"
+      },
+      {
+        "id": "failed",
+        "name": "Failed",
+        "label": "q-failed"
+      },
+      {
+        "id": "ready",
+        "name": "Ready",
+        "label": "q-ready"
+      },
+      {
+        "id": "waiting",
+        "name": "Blocked",
+        "label": "q-blocked"
+      },
+      {
+        "id": "later",
+        "name": "Later",
+        "label": "q-later"
+      },
+      {
+        "id": "held",
+        "name": "Held",
+        "label": "q-held"
+      }
+    ],
+    "telemetry": {
+      "errors": [
+        "none",
+        "http4xx",
+        "http5xx",
+        "timeout",
+        "permission",
+        "invalid",
+        "other",
+        "panic",
+        "argument-too-long"
+      ],
+      "stage_errors": [
+        "exit",
+        "left-board",
+        "unreadable"
+      ],
+      "runtimes": [
+        "claude",
+        "codex",
+        "codex-app",
+        "other"
+      ]
+    }
   },
   "tasks": [
     {
@@ -44,6 +112,7 @@
         "stop",
         "later"
       ],
+      "verdict": null,
       "since": null,
       "created": 1,
       "steps": [
@@ -57,7 +126,7 @@
       "stuck": false,
       "admission": {
         "code": "unknown",
-        "observed": 99,
+        "observed": 102,
         "host": null,
         "reason": "no host decision"
       }
@@ -111,6 +180,7 @@
         "stop",
         "later"
       ],
+      "verdict": null,
       "executions": [
         {
           "task": 2,
@@ -181,6 +251,7 @@
         "stop",
         "later"
       ],
+      "verdict": null,
       "since": null,
       "created": 6,
       "steps": [
@@ -194,7 +265,7 @@
       "stuck": false,
       "admission": {
         "code": "dependency",
-        "observed": 99,
+        "observed": 102,
         "host": null,
         "reason": "#3 open"
       }
@@ -220,6 +291,7 @@
       "controls": [
         "retry"
       ],
+      "verdict": null,
       "since": 8,
       "created": 7,
       "steps": [
@@ -237,6 +309,80 @@
         }
       ],
       "stuck": false
+    },
+    {
+      "n": 7,
+      "title": "Reviewed",
+      "state": "review",
+      "labels": [
+        "taskq"
+      ],
+      "url": "https://board/7",
+      "revision": 12,
+      "updated": 12,
+      "session": null,
+      "attempt": null,
+      "role": null,
+      "deps": [],
+      "blocked": [],
+      "card": null,
+      "question": null,
+      "failed": null,
+      "controls": [
+        "stop",
+        "later"
+      ],
+      "verdict": {
+        "changed": "faster status\nfor every reader",
+        "checks": [
+          "cargo test --locked -- pass",
+          "cargo run -- selftest -- pass"
+        ],
+        "open": "none"
+      },
+      "result": "cccccccccccccccccccccccccccccccccccccccc",
+      "executions": [
+        {
+          "task": 7,
+          "attempt": 11,
+          "id": 11,
+          "through": 11,
+          "state": "unknown",
+          "reason": "termination unconfirmed; status missing or stale; restore owning service",
+          "host": "mac",
+          "runtime": "claude",
+          "observed": null,
+          "role": "worker"
+        }
+      ],
+      "execution_wait": "execution 11 on mac: unknown: termination unconfirmed; status missing or stale; restore owning service",
+      "wait": "Run state unknown; see service log",
+      "since": 12,
+      "created": 10,
+      "steps": [
+        {
+          "state": "ready",
+          "start": 10,
+          "end": 11,
+          "complete": true
+        },
+        {
+          "state": "doing",
+          "start": 11,
+          "end": 12,
+          "complete": true
+        },
+        {
+          "state": "review",
+          "start": 12,
+          "end": null,
+          "complete": false
+        }
+      ],
+      "stuck": false,
+      "ops": [
+        "op-1"
+      ]
     }
   ],
   "hosts": [

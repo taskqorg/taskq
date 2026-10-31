@@ -181,6 +181,8 @@ pub struct Row {
     pub stage: Option<(usize, usize)>,
     /// § 4 Churn (#1905): set only while the task is flagged.
     pub churn: Option<Churn>,
+    /// § 7 text of the accepted `result` entry behind the current result; `None` without a result.
+    pub verdict: Option<String>,
 }
 
 /// § 4 Churn counts of one task's board notes: all notes, `spawn` and `accepted` entries.
@@ -395,6 +397,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
             v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),
             hosts, observed, cfg.ttl),
         churn: churn(&v.comments, observed),
+        verdict: v.projection.task.result.as_ref().and_then(|_| v.projection.changes.iter().rev()
+            .find_map(|(id, _, _)| v.log.iter().find(|e| e.id == *id && e.body.starts_with("taskq: result "))))
+            .map(|e| core::entry_text(v.issue.number, &e.body).to_string()),
         created: Some(v.issue.created).filter(|t| *t > 0),
         steps: stage_history(v),
         since: v.projection.changes.last().and_then(|(id, ..)| v.comments.iter().find(|c| c.id == *id)).map(|c| c.created),
@@ -525,7 +530,7 @@ impl Row {
             "deps": self.deps.iter().filter(|b| b.dep.repo.is_none() && b.reason == "open").map(|b| b.dep.n).collect::<Vec<_>>(),
             "blocked": self.deps.iter().map(|b| json!({"ref": b.dep.name(), "url": b.url, "reason": b.reason})).collect::<Vec<_>>(),
             "card": self.task.card, "question": self.task.card.as_deref().map(question), "failed": self.failed,
-            "controls": controls(self.task.state.name())});
+            "controls": controls(self.task.state.name()), "verdict": self.verdict.as_deref().map(verdict_fields)});
         if let Some(c) = &self.conversation { row["conversation"] = c.clone(); }
         if let Some(id) = &self.task.enqueued { row["enqueued"] = json!(id); }
         if let Some(sha) = &self.task.result { row["result"] = json!(sha); }
@@ -554,6 +559,39 @@ impl Row {
         if let Some(p) = &self.publication { row["publication"] = json!({"reason": p.reason, "since": p.since, "age_s": p.age_s}); }
         row
     }
+}
+
+/// § 7 typed result verdict (status-report.md Snapshot contract): `Changed:` and `Open:` text (1-2 lines, joined by a
+/// newline) and one `Checks:` item per line, each without its prefix. A line without a prefix continues the field
+/// before it; another `Word: ` field (`Verdict:`, `Report:`) or the blank line before a card ends it. Missing reads null.
+pub fn verdict_fields(text: &str) -> Value {
+    const KEYS: [(&str, &str); 3] = [("Changed: ", "changed"), ("Checks: ", "checks"), ("Open: ", "open")];
+    let mut f: [Vec<String>; 3] = Default::default();
+    let mut cur = None;
+    for l in text.lines().map(str::trim_end) {
+        if l.trim().is_empty() { if cur.is_some() { break } else { continue } }
+        if let Some((i, rest)) = KEYS.iter().enumerate().find_map(|(i, k)| l.strip_prefix(k.0).map(|r| (i, r))) {
+            cur = Some(i);
+            if i == 1 || f[i].is_empty() { f[i].push(rest.trim().to_string()); continue }
+            f[i].last_mut().unwrap().push_str(&format!("
+{}", rest.trim()));
+        } else if l.split_once(": ").is_some_and(|(w, _)| !w.is_empty() && w.starts_with(|c: char| c.is_ascii_uppercase()) && w.chars().all(|c| c.is_alphanumeric())) {
+            cur = None;
+        } else if let Some(last) = cur.and_then(|i| f[i].last_mut()) {
+            last.push_str(&format!("
+{}", l.trim()));
+        }
+    }
+    let one = |v: &Vec<String>| v.first().cloned();
+    json!({"changed": one(&f[0]), "checks": f[1], "open": one(&f[2])})
+}
+
+/// Published vocabularies of the snapshot (status-report.md Snapshot contract): open states in counter order with
+/// owner name and projected `q-` label, and the telemetry error, stage error and runtime codes readers accept.
+pub fn vocabulary() -> Value {
+    let label = |s: &str| if s == "waiting" { "q-blocked".to_string() } else { format!("q-{s}") };
+    json!({"states": crate::display::STATES.iter().map(|(id, name)| json!({"id": id, "name": name, "label": label(id)})).collect::<Vec<_>>(),
+        "telemetry": {"errors": crate::profile::ERRORS, "stage_errors": crate::profile::STAGE_ERRORS, "runtimes": crate::profile::RUNTIMES}})
 }
 
 /// Published task controls `taskq.task-controls/1` (docs/design/task-controls.md): action, CLI command, fixed reason,
@@ -613,6 +651,19 @@ pub fn question(card: &str) -> Value {
         "choices": choices, "limits": {"chars": ANSWER_CHARS}})
 }
 
+// Chain: § 7 result verdict -> typed snapshot fields (#2014). Risk: a consumer re-parses verdict text and drifts.
+#[test]
+fn verdict_fields_split_changed_checks_and_open() {
+    let v = verdict_fields("Changed: a\nb\nVerdict: confirmed x\nChecks: t -- pass\nChecks: u -- fail\nOpen: none\nReport: docs/research/7.md\n\nDone: d\nProblem: p\n1. x ★");
+    assert_eq!(v, json!({"changed": "a\nb", "checks": ["t -- pass", "u -- fail"], "open": "none"}));
+    let w = vocabulary();
+    assert_eq!(w["states"].as_array().unwrap().iter().map(|s| s["id"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["doing", "review", "ask", "failed", "ready", "waiting", "later", "held"], "counter order");
+    assert_eq!(w["states"][5]["label"], "q-blocked");
+    assert!(w["telemetry"]["errors"].as_array().unwrap().iter().any(|e| e == "argument-too-long"));
+    assert_eq!(verdict_fields("free text"), json!({"changed": null, "checks": [], "open": null}), "a hand-written result without fields reads null");
+}
+
 #[test]
 fn review_approval_choices_require_the_board() {
     for action in ["close: ship".to_string(), format!("approve {}", "a".repeat(40))] {
@@ -631,7 +682,7 @@ impl Snapshot {
     pub fn json(&self) -> Value {
         let caps: &[&str] = if self.source == "host" { &HOST_CAPS } else { &BOARD_CAPS };
         json!({"schema": SCHEMA, "source": self.source, "observed": self.observed, "complete": self.reason.is_none(), "reason": self.reason,
-            "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
+            "board": self.board, "totals": self.reason.is_none().then(|| self.totals()), "vocabulary": vocabulary(), "tasks": self.tasks.iter().map(Row::json).collect::<Vec<_>>(),
             "hosts": self.hosts.iter().map(|h| {
                 let mut r = json!({"name": h.name, "version": h.version, "updated": h.updated, "diagnostics": h.diagnostics});
                 if let Some(l) = &h.link { r["link"] = json!(l) }
@@ -641,11 +692,11 @@ impl Snapshot {
     }
 
     /// The snapshot keys of `status.json` (§ 4) after a pass; `error`: the pass failed, so tasks are the last read's.
-    pub fn status_keys(&self, error: Option<&str>) -> [(&'static str, Value); 8] {
+    pub fn status_keys(&self, error: Option<&str>) -> [(&'static str, Value); 9] {
         let reason = error.map(String::from).or(self.reason.clone());
         [("schema", json!(SCHEMA)), ("source", json!("host")), ("observed", json!(self.observed)), ("complete", json!(reason.is_none())),
             ("reason", json!(reason)), ("totals", json!(reason.is_none().then(|| self.totals()))),
-            ("tasks", json!(self.tasks.iter().map(Row::json).collect::<Vec<_>>())), ("hosts", self.json()["hosts"].clone())]
+            ("tasks", json!(self.tasks.iter().map(Row::json).collect::<Vec<_>>())), ("hosts", self.json()["hosts"].clone()), ("vocabulary", vocabulary())]
     }
 
     /// R6 text report.
@@ -833,7 +884,7 @@ mod tests {
     fn remote_codex_reads_starting_until_accepted() {
         let task = Task { attempt: Some(5), session: Some("codex:- win".into()), ..Default::default() };
         let mut r = Row { conversation: None, n: 1, title: String::new(), labels: vec![], url: String::new(), task, revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None };
+            executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let cfg = crate::tests::cfg();
         assert_eq!(session_link(&cfg, &json!({}), &r).1, "win: starting");
         r.accepted = true;
@@ -857,7 +908,7 @@ mod tests {
         use std::fs;
         let task = |host: &str| Task { attempt: Some(5), session: Some(format!("codex:thread-1 {host}")), ..Default::default() };
         let row = |host: &str| Row { conversation: None, n: 3, title: String::new(), labels: vec![], url: String::new(), task: task(host), revision: 5, updated: None, execution_wait: None,
-            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None };
+            executions: vec![], accepted: true, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck: None, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let mut cfg = crate::tests::cfg();
         cfg.me = "mac".into();
         let pages = json!({"pages": "https://p"});
@@ -904,7 +955,7 @@ mod tests {
     #[test]
     fn stuck_row_prints_one_line_and_json_age() {
         let row = |n, stuck| Row { conversation: None, n, title: "T".into(), labels: vec![], url: format!("u{n}"), task: Task { state: State::Ask, ..Default::default() }, revision: 0, updated: None,
-            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None };
+            execution_wait: None, executions: vec![], accepted: false, deps: vec![], failed: None, later: None, session_url: None, since: None, created: None, steps: vec![], stuck, admission: None, answered: None, history: vec![], ops: vec![], publication: None, stage: None, churn: None, verdict: None };
         let snap = Snapshot { source: "board", observed: 0, reason: None, board: json!({"url": "b"}), tasks: vec![row(1, Some(9000)), row(2, None)], hosts: vec![] };
         let text = snap.text(&crate::tests::cfg(), &json!({})).unwrap();
         assert_eq!(text.lines().filter(|l| l.starts_with("Stuck: ")).collect::<Vec<_>>(), ["Stuck: [#1 T](u1) (ask, 2h)"], "{text}");

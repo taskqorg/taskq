@@ -1,4 +1,4 @@
-# § 8 Release: a live push (a fast-forward to a tested main commit) that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, the telemetry sync wire fixture, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing.
+# § 8 Release: a live push (a fast-forward to a tested main commit) that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, the telemetry sync wire fixture, the status snapshot schema and fixture, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing.
 name: release
 on:
   push:
@@ -126,6 +126,9 @@ jobs:
             cp tests/fixtures/resource-controls.json "dist/taskq-$VER-resource-controls-fixtures.json"
             cp tests/fixtures/resource-policy-v1.json "dist/taskq-$VER-resource-policy-fixtures.json"
             cp tests/fixtures/telemetry-sync.json "dist/taskq-$VER-telemetry-sync-fixtures.json"
+            # status snapshot contract (docs/design/status-report.md)
+            cp tests/fixtures/status-snapshot.json "dist/taskq-$VER-status-snapshot-fixtures.json"
+            cp tests/fixtures/status-snapshot.schema.json "dist/taskq-$VER-status-snapshot-schema.json"
           fi
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: needs.tag.outputs.tag

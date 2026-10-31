@@ -5432,6 +5432,11 @@ mod tests {
         let f = b.create("Broken", "", &["taskq".into()]).unwrap();
         b.comment(f, &entry("failed", &[], None, "Reason: no login")).unwrap();
         b.create("taskq host mac", "version 4.0.0", &[service::HOST_LABEL.into()]).unwrap();
+        // #2014: a review row carries the typed § 7 verdict of its result
+        let r = b.create("Reviewed", "", &["taskq".into()]).unwrap();
+        b.comment(r, &entry("spawn", &["worker", "claude:def", "mac"], None, "")).unwrap();
+        let a = fold(r, &entries(&b, r).unwrap(), false).attempt.unwrap();
+        b.comment(r, &core::with_fields(entry("result", &[&"c".repeat(40)], Some(a), "Changed: faster status\nfor every reader\nChecks: cargo test --locked -- pass\nChecks: cargo run -- selftest -- pass\nOpen: none"), Some("op-1"), None)).unwrap();
         b.advance(90);
         b
     }
@@ -5492,6 +5497,51 @@ mod tests {
         assert_eq!(snap.json(), want, "TASKQ_BLESS=1 rewrites {}", path.display());
     }
 
+    /// The JSON Schema subset the snapshot schema uses: type, const, enum, required, properties, additionalProperties, items.
+    fn schema_errors(schema: &Value, v: &Value, at: &str, out: &mut Vec<String>) {
+        let kind = |v: &Value| match v { Value::Null => "null", Value::Bool(_) => "boolean", Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
+            Value::Number(_) => "number", Value::String(_) => "string", Value::Array(_) => "array", Value::Object(_) => "object" };
+        let types: Vec<&str> = match &schema["type"] { Value::String(t) => vec![t], Value::Array(ts) => ts.iter().filter_map(Value::as_str).collect(), _ => vec![] };
+        if !types.is_empty() && !types.contains(&kind(v)) { return out.push(format!("{at}: {} is not {types:?}", kind(v))) }
+        if schema.get("const").is_some_and(|c| c != v) { out.push(format!("{at}: not {}", schema["const"])) }
+        if schema["enum"].as_array().is_some_and(|e| !e.contains(v)) { out.push(format!("{at}: {v} not in enum")) }
+        if let Value::Object(o) = v {
+            for k in schema["required"].as_array().into_iter().flatten().filter_map(Value::as_str).filter(|k| !o.contains_key(*k)) { out.push(format!("{at}: missing {k}")) }
+            for (k, x) in o {
+                let sub = schema["properties"].get(k).or_else(|| schema.get("additionalProperties").filter(|a| a.is_object()));
+                if let Some(sub) = sub { schema_errors(sub, x, &format!("{at}.{k}"), out) }
+            }
+        }
+        if let (Value::Array(a), Some(items)) = (v, schema.get("items")) { for (i, x) in a.iter().enumerate() { schema_errors(items, x, &format!("{at}[{i}]"), out) } }
+    }
+
+    // Chain: § 5 status --json schema -> released snapshot schema and fixtures (#2014). Risk: consumers read a contract the output no longer meets.
+    #[test]
+    fn status_json_meets_the_released_snapshot_schema() {
+        let schema: Value = serde_json::from_str(include_str!("../tests/fixtures/status-snapshot.schema.json")).unwrap();
+        let fixture: Value = serde_json::from_str(include_str!("../tests/fixtures/status-snapshot.json")).unwrap();
+        let snap = snapshot::read(&snapshot_board(), &cfg(), &Value::Null, &[]).json();
+        for (name, v) in [("status --json", &snap), ("fixture", &fixture)] {
+            let mut errors = vec![];
+            schema_errors(&schema, v, "$", &mut errors);
+            assert!(errors.is_empty(), "{name}: {errors:?}");
+        }
+        // the schema's state enum is the snapshot vocabulary, and the fixture shows a typed verdict
+        let ids: Vec<Value> = snap["vocabulary"]["states"].as_array().unwrap().iter().map(|s| s["id"].clone()).collect();
+        assert_eq!(schema["properties"]["tasks"]["items"]["properties"]["state"]["enum"].as_array().unwrap(), &ids);
+        assert!(snap["tasks"].as_array().unwrap().iter().any(|t| t["verdict"]["checks"].as_array().is_some_and(|c| !c.is_empty())));
+        let mut bad = snap.clone();
+        bad["tasks"][0]["verdict"] = json!({"changed": "x"});
+        let mut errors = vec![];
+        schema_errors(&schema, &bad, "$", &mut errors);
+        assert_eq!(errors, ["$.tasks[0].verdict: missing checks", "$.tasks[0].verdict: missing open"]);
+        // A3: each release publishes both files, covered by SHA256SUMS
+        let release = include_str!("../.github/workflows/release.yml");
+        for (file, asset) in [("status-snapshot.json", "status-snapshot-fixtures.json"), ("status-snapshot.schema.json", "status-snapshot-schema.json")] {
+            assert!(release.contains(&format!("cp tests/fixtures/{file} \"dist/taskq-$VER-{asset}\"")), "release misses {file}");
+        }
+    }
+
     // Chain: § 2 card -> canonical parsed question -> shared answer card fixtures. Risk: a UI fixture drifts from TaskQ's parse.
     #[test]
     fn answer_card_fixtures_carry_the_canonical_parse() {
@@ -5546,7 +5596,7 @@ mod tests {
         let want: Value = serde_json::from_str(include_str!("../tests/fixtures/enrollment-projection.json")).unwrap();
         assert_eq!(got, want);
         let text = got.to_string();
-        for omitted in ["forge-secret", "session", "labels", "title", "Which way?", "no login", "url", "hosts"] {
+        for omitted in ["forge-secret", "session", "labels", "title", "Which way?", "no login", "faster status", "verdict", "url", "hosts"] {
             assert!(!text.contains(omitted), "{omitted}");
         }
         assert!(project(&snap, &"a".repeat(64), &[], &local).is_err());
