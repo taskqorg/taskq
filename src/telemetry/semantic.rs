@@ -309,6 +309,58 @@ mod tests {
         let back:Value=serde_json::from_str(line(&value).unwrap().split_once(' ').unwrap().1).unwrap();
         assert_eq!(back["ops"],json!({"GET issues/N/comments 304":2,"GET issues/N/comments":3,"GET  304":1}));
     }
+    /// The published field list CoreQ pins (#2013), released as `taskq-<v>-telemetry-fields-fixtures.json`.
+    const FIELDS_FIXTURE:&str=include_str!("../../tests/fixtures/telemetry-fields.json");
+    // Defect (#1981 finding 11): CoreQ kept a hand copy of TaskQ's field names, so a new TaskQ field was refused until
+    // CoreQ changed. Risk kept: a field TaskQ writes missing from the published fixture, a field without a type, or a
+    // fixture observation the pinned CoreQ store refuses or alters. `TASKQ_TELEMETRY_FIXTURE=1` rewrites the fixture.
+    #[test]
+    fn published_field_fixture_lists_every_taskq_field() {
+        // one fully populated record per kind first, then records whose nulls carry an unknown reason
+        let full=[
+            r#"taskq-profile {"op":"spawn","us":9,"error":"none","at_ms":1,"trace":{"run":1,"process":2,"span":3,"parent":4},"counts":{"removed":1}}"#,
+            r#"taskq-stage {"host":"win","open":true,"project":"o/r","stage":"build","task":1,"attempt":2,"rt":"claude","us":9,"outcome":"ok","error":"none","at_ms":1,"calls":2,"tokens":30,"input_tokens":10,"cache_read_tokens":15,"cache_write_tokens":5,"model":"claude-opus-5-5","output_tokens":3,"unknown":"app-turn"}"#,
+            r#"taskq-board {"op":"close","us":12,"outcome":"ok","error":"none","remaining":4000,"at_ms":2}"#,
+            r#"taskq-transition {"project":"o/r","task":1,"entry":2,"from":"doing","to":"review","prev_s":30,"rt":"claude","host":"win","at_ms":3}"#,
+            r#"taskq-requests {"at_ms":4,"source":"cli status","ops":{"GET issues/N/comments":2}}"#,
+        ];
+        let sparse=[
+            r#"taskq-profile {"op":"spawn","us":9,"error":"none","at_ms":null,"trace":{"run":null,"process":2,"span":0,"parent":0}}"#,
+            r#"taskq-stage {"host":"win","open":true,"project":"o/r","stage":"build","task":1,"attempt":2,"rt":"codex","us":null,"outcome":"unknown","error":"none","at_ms":null,"calls":null,"tokens":null,"unknown":"open-stage"}"#,
+            r#"taskq-board {"op":"close","us":12,"outcome":"failed","error":"http4xx","remaining":null,"at_ms":null}"#,
+            r#"taskq-transition {"project":"o/r","task":1,"entry":2,"from":"doing","to":"ask","prev_s":null,"rt":null,"host":null,"at_ms":null}"#,
+        ];
+        let mut observations=Vec::new();
+        for (index,text) in full.iter().enumerate() {
+            let value=observation(text).unwrap();let kind=KINDS[index];assert_eq!(value["kind"],kind);
+            // a new field mapping needs a value in this kind's full record, or the fixture would not list it
+            for (old,new) in fields(kind).unwrap() {assert!(value.get(*new).is_some_and(|v|!v.is_null()),"{kind}: full record misses {old}, so the fixture lacks {new}");}
+            observations.push(value);
+        }
+        for text in sparse {observations.push(observation(text).unwrap());}
+        let counts=["accepted","committed","lost","failed_batches","inflight","queued_bytes","queued_events"].into_iter().map(|k|(k.into(),json!(1))).collect();
+        observations.push(super::super::diagnostic::health_observation("0.0.0",5,6,true,counts));
+        let mut types=std::collections::BTreeMap::<String,std::collections::BTreeSet<&str>>::new();
+        for value in &observations {for (key,field) in value.as_object().unwrap() {
+            types.entry(key.clone()).or_default().insert(match field {Value::Null=>"null",Value::Bool(_)=>"boolean",Value::Number(_)=>"number",Value::String(_)=>"string",Value::Array(_)=>"array",Value::Object(_)=>"object"});
+        }}
+        // CoreQ accepts an unknown reason only for a field it knows: every reason names a listed field
+        for value in &observations {for key in value["unknown"].as_object().unwrap().keys() {assert!(types.contains_key(key),"unknown reason for unlisted field {key}");}}
+        let got=json!({"schema":"taskq-telemetry-fields/1","source":"src/telemetry/semantic.rs published_field_fixture_lists_every_taskq_field","fields":types,"observations":observations});
+        if std::env::var("TASKQ_TELEMETRY_FIXTURE").is_ok_and(|v|v=="1") {
+            std::fs::write(concat!(env!("CARGO_MANIFEST_DIR"),"/tests/fixtures/telemetry-fields.json"),serde_json::to_string_pretty(&got).unwrap()+"\n").unwrap();
+        }
+        assert_eq!(got,serde_json::from_str::<Value>(FIELDS_FIXTURE).unwrap(),"TaskQ fields drifted from the published fixture; rerun with TASKQ_TELEMETRY_FIXTURE=1 after an intended change");
+        // the pinned CoreQ store keeps every fixture observation unchanged
+        let dir=std::env::temp_dir().join(format!("taskq-fields-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));std::fs::create_dir(&dir).unwrap();
+        let store=coreq::telemetry::Store::open(&dir.join("db")).unwrap();
+        for (index,value) in observations.iter().enumerate() {store.append(&[coreq::telemetry::Event::identified("taskq.fields",&index.to_string(),value.clone()).unwrap()]).unwrap();}
+        let rows=store.export(0,0,1024).unwrap();let rows=rows["events"].as_array().unwrap();assert_eq!(rows.len(),observations.len());
+        for (row,value) in rows.iter().zip(&observations) {assert_eq!(&row["observation"],value);}
+        drop(store);std::fs::remove_dir_all(dir).unwrap();
+        // each release publishes the fixture, covered by SHA256SUMS
+        assert!(include_str!("../../.github/workflows/release.yml").contains(r#"cp tests/fixtures/telemetry-fields.json "dist/taskq-$VER-telemetry-fields-fixtures.json""#),"release misses the field fixture");
+    }
     #[test]
     fn unsupported_or_unsafe_source_metadata_is_refused() {
         for text in [r#"taskq-profile {"op":"unknown","us":1,"error":"none","at_ms":1}"#,
