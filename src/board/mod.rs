@@ -396,13 +396,16 @@ pub fn http_date(s: &str) -> Option<i64> {
 
 // ---------- HTTP through curl ----------
 
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct Reply {
     status: u16,
     headers: Vec<(String, String)>,
     body: String,
+    #[serde(skip, default = "read_operation")]
     operation: &'static str,
 }
+
+fn read_operation() -> &'static str { "read" }
 
 impl Reply {
     fn header(&self, name: &str) -> Option<&str> {
@@ -619,6 +622,7 @@ impl Kind {
         let mut api = (self.api)(host, repo, &token);
         api.credentials.get_mut().pause = Some(crate::requests::pause_file(&tool.install, &api.root, &token));
         api.credentials.get_mut().user = Some(crate::requests::user_file(&tool.install, &api.root, &token));
+        api.credentials.get_mut().store = Some(crate::requests::cache_dir(&tool.install, &api.root, &token));
         if self.reload_token {
             let (tool, host, lookup) = (tool.clone(), host.to_string(), self.token);
             api.token_source = Some((tool.install.clone(), Box::new(move || lookup(&tool, &host))));
@@ -664,15 +668,67 @@ struct Credentials {
     pause: Option<std::path::PathBuf>,
     /// The login kept for every process of the install (§ 4 budget).
     user: Option<std::path::PathBuf>,
+    /// [`store`] directory of this credential; none for test and one-off APIs.
+    store: Option<std::path::PathBuf>,
 }
 
 /// Cached conditional replies per process; past this the cache restarts empty.
 const ETAGS: usize = 256;
 
+/// Reads whose conditional reply every process of the install shares (#1985): a CLI process or a restarted service
+/// asks with the last `ETag` too, so an unchanged issue, its comments or its events answer 304, which GitHub does not bill.
+const SHARED: [&str; 3] = ["GET issues/N", "GET issues/N/comments", "GET issues/N/events"];
+
+/// The on-disk side of [`SHARED`] reads: one file per URL under `<install>/board-cache-<key>/`.
+mod store {
+    use super::Reply;
+    use std::path::Path;
+
+    /// Entries older than this are pruned; past [`MAX`] entries the oldest go first.
+    const AGE: std::time::Duration = std::time::Duration::from_secs(86_400);
+    const MAX: usize = 4096;
+
+    fn file(dir: &Path, url: &str) -> std::path::PathBuf {
+        let h: String = ring::digest::digest(&ring::digest::SHA256, url.as_bytes()).as_ref()[..16].iter().map(|b| format!("{b:02x}")).collect();
+        dir.join(format!("{h}.json"))
+    }
+
+    /// The stored `ETag` and reply of `url`; a malformed or foreign entry reads as none.
+    pub fn get(dir: &Path, url: &str) -> Option<(String, Reply)> {
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(file(dir, url)).ok()?).ok()?;
+        if v["url"] != url { return None; }
+        Some((v["etag"].as_str()?.to_string(), serde_json::from_value(v["reply"].clone()).ok()?))
+    }
+
+    /// Writes through a temporary file, so a concurrent reader sees the old entry or the new one; failures only lose the entry.
+    pub fn put(dir: &Path, url: &str, etag: &str, reply: &Reply) {
+        static PRUNED: std::sync::Once = std::sync::Once::new();
+        if std::fs::create_dir_all(dir).is_err() { return; }
+        PRUNED.call_once(|| prune(dir));
+        let path = file(dir, url);
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        let text = serde_json::json!({"url": url, "etag": etag, "reply": reply}).to_string();
+        if std::fs::write(&tmp, text).is_err() || std::fs::rename(&tmp, &path).is_err() { let _ = std::fs::remove_file(&tmp); }
+    }
+
+    pub fn forget(dir: &Path, url: &str) { let _ = std::fs::remove_file(file(dir, url)); }
+
+    /// Once per process: drops entries past [`AGE`], then the oldest past [`MAX`].
+    fn prune(dir: &Path) {
+        let now = std::time::SystemTime::now();
+        let mut entries: Vec<_> = std::fs::read_dir(dir).into_iter().flatten().flatten()
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path()))).collect();
+        entries.retain(|(at, path)| now.duration_since(*at).is_ok_and(|age| age <= AGE) || std::fs::remove_file(path).is_err());
+        entries.sort();
+        let over = entries.len().saturating_sub(MAX);
+        for (_, path) in entries.into_iter().take(over) { let _ = std::fs::remove_file(path); }
+    }
+}
+
 impl Api {
     fn new(root: String, base: String, token: &str) -> Api {
         let budget = crate::requests::Shared::for_api(&root, token);
-        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None, user: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), scope: RefCell::new(None), #[cfg(test)] transport: None }
+        Api { base, root, token_source: None, generation: Default::default(), credentials: RefCell::new(Credentials {auth: format!("Authorization: Bearer {token}"), budget, pause: None, user: None, store: None}), me: RefCell::new(None), clock: RefCell::new(0), label_schema: RefCell::new(None), labels_ok: RefCell::default(), etags: RefCell::default(), unchanged: Default::default(), scope: RefCell::new(None), #[cfg(test)] transport: None }
     }
 
     /// Missing credentials fail closed; replacement drops user/conditional caches and the old token's pause.
@@ -682,7 +738,8 @@ impl Api {
         let auth = format!("Authorization: Bearer {token}");
         if self.credentials.borrow().auth != auth {
             *self.credentials.borrow_mut() = Credentials {auth, budget: crate::requests::Shared::for_api(&self.root, &token),
-                pause: Some(crate::requests::pause_file(install, &self.root, &token)), user: Some(crate::requests::user_file(install, &self.root, &token))};
+                pause: Some(crate::requests::pause_file(install, &self.root, &token)), user: Some(crate::requests::user_file(install, &self.root, &token)),
+                store: Some(crate::requests::cache_dir(install, &self.root, &token))};
             *self.me.borrow_mut() = None;
             self.etags.borrow_mut().clear();
             self.labels_ok.borrow_mut().clear();
@@ -747,6 +804,10 @@ impl Api {
         crate::requests::tally(op);
         self.unchanged.set(false);
         let conditional = method == "GET" && body.is_none();
+        let shared = self.credentials.borrow().store.clone().filter(|_| conditional && SHARED.contains(&op));
+        if let Some((e, cached)) = shared.as_deref().filter(|_| !self.etags.borrow().contains_key(&url)).and_then(|d| store::get(d, &url)) {
+            self.etags.borrow_mut().insert(url.clone(), (e, cached));
+        }
         let etag = conditional.then(|| self.etags.borrow().get(&url).map(|(e, _)| e.clone())).flatten();
         crate::profile::measure_classified("forge.call", || {
             #[cfg(test)]
@@ -781,8 +842,12 @@ impl Api {
                     Some(e) => {
                         if etags.len() >= ETAGS && !etags.contains_key(&url) { etags.clear(); }
                         etags.insert(url.clone(), (e.to_string(), r.clone()));
+                        if let Some(d) = &shared { store::put(d, &url, e, &r); }
                     }
-                    None => { etags.remove(&url); }
+                    None => {
+                        etags.remove(&url);
+                        if let Some(d) = &shared { store::forget(d, &url); }
+                    }
                 }
             }
             if !(200..300).contains(&r.status) {
@@ -845,7 +910,7 @@ impl Api {
             // #1903: a 304 replays the cached reply's Link; a full last page may have grown a next page since
             let size = u.split(['?', '&']).find_map(|p| p.strip_prefix("per_page=")?.parse::<usize>().ok());
             if self.unchanged.get() && r.next().is_none() && size == Some(items.len()) {
-                self.etags.borrow_mut().remove(&self.absolute(&u));
+                self.forget_etag(&self.absolute(&u));
                 r = self.send("GET", &u, None, &op)?;
                 items = page(&r)?;
             }
@@ -853,6 +918,12 @@ impl Api {
             next = r.next();
         }
         Ok(out)
+    }
+
+    /// Drops the conditional reply of `url` in this process and in the install's store.
+    fn forget_etag(&self, url: &str) {
+        self.etags.borrow_mut().remove(url);
+        if let Some(d) = &self.credentials.borrow().store { store::forget(d, url); }
     }
 
     /// The board user, `key` its name field.
@@ -2997,6 +3068,41 @@ exit 0
         let ops = api.credentials.borrow().budget.borrow().ops.clone();
         assert_eq!(ops.get("GET x 304"), Some(&1), "{ops:?}");
         assert_eq!((ops.get("GET x"), crate::requests::billed(&ops)), (Some(&2), 2), "{ops:?}");
+    }
+
+    // Chain: #1985 four hosts share one board user. Risk: every CLI process or restarted service rereads unchanged issues,
+    // comments and events in full, or a 304 counts against the budget GitHub never billed.
+    #[test]
+    fn issue_reads_carry_across_processes_and_304_is_unbilled() {
+        let dir = std::env::temp_dir().join(format!("taskq-board-cache-{}", crate::runtime::uuid()));
+        let open = |replies: Vec<(&'static str, Reply)>| {
+            let mut api = (BOARDS[0].api)("github.com", "o/r", "test");
+            api.credentials.get_mut().store = Some(dir.clone());
+            let replies = RefCell::new(replies);
+            api.transport = Some(Box::new(move |_, url, _| {
+                let (path, reply) = replies.borrow_mut().remove(0);
+                assert!(url.ends_with(path), "{url} for {path}");
+                Ok(reply)
+            }));
+            api
+        };
+        let tagged = |status, body: &str| Reply { status, headers: vec![("ETag".into(), "W/\"e5\"".into())], body: body.into(), operation: "read" };
+        let first = open(vec![("/issues/5/comments", tagged(200, "[1]")), ("/pulls/5", tagged(200, "{}"))]);
+        assert_eq!(first.call("GET", "/issues/5/comments", None).unwrap().body, "[1]");
+        first.call("GET", "/pulls/5", None).unwrap();
+        // a second process: the stored ETag turns the unchanged comments into a free 304 with the stored body;
+        // reads outside the shared set stay in their own process
+        let second = open(vec![("/issues/5/comments", tagged(304, "")), ("/pulls/5", tagged(200, "{}"))]);
+        assert_eq!((second.call("GET", "/issues/5/comments", None).unwrap().body, second.unchanged.get()), ("[1]".to_string(), true));
+        second.call("GET", "/pulls/5", None).unwrap();
+        assert!(!second.unchanged.get(), "only issue, comment and event reads are shared");
+        let ops = second.credentials.borrow().budget.borrow().ops.clone();
+        assert_eq!((ops.get("GET issues/N/comments 304"), crate::requests::billed(&ops)), (Some(&1), 1), "GitHub does not bill a 304: {ops:?}");
+        // a changed issue replaces the stored reply for the next process
+        let third = open(vec![("/issues/5/comments", Reply { status: 200, headers: vec![("ETag".into(), "W/\"e6\"".into())], body: "[1,2]".into(), operation: "read" })]);
+        assert_eq!(third.call("GET", "/issues/5/comments", None).unwrap().body, "[1,2]");
+        assert_eq!(store::get(&dir, &format!("{}/issues/5/comments", third.base)).map(|(e, r)| (e, r.body)), Some(("W/\"e6\"".to_string(), "[1,2]".to_string())));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Chain: #1903 claim readback on an issue past 100 notes. Risk: a 304 on page 1 replays the Link cached while the
