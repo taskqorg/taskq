@@ -70,8 +70,8 @@ node docs/design/exploration/reports-conversations.check.cjs
 | A2 | Real shared renderer in prototype; all five reactions and held-proposal decision specified with choice/confirmation/Next rules | Approved; typed shared-card adapter implemented, focused checks pass |
 | A3 | Four supported source-derived wide paths: 0 worse, 3 fewer clicks; report Accept is currently unavailable | Approved baseline qualification; native/narrow timing not tested |
 | A4 | Six distinct reference screens and editable fixture; 72 layout cases | Approved six-screen mockup package |
-| A5 | Production source integrates results and PM outcomes in Conversations | Bundled browser behavior passes; installed-app acceptance unverified |
-| A6 | Decision/controller, receipt and grouped-sidebar instruments cover changed behavior | Focused checks pass; native Windows/macOS reference comparison unverified |
+| A5 | Production source integrates results and PM outcomes in Conversations; wide Windows candidate capture passes | Build behavior verified; live installed activation unverified ([existing-host ledger](evidence/1977/windows-current/README.md)) |
+| A6 | Decision/controller, receipt and grouped-sidebar instruments pass; both themes captured in Windows WebView2 | Windows structural comparison partial at owner 140% text; Mac connection refused; native-input cells Not tested |
 
 Implementation evidence: `npm.cmd run build`, `node tests/answer-card.test.cjs`, `node tests/report-decisions.test.cjs`, `node tests/reports.test.cjs`, `node tests/reports-cache.test.cjs` and `node tests/reports-bulk.test.cjs` pass. The bundled browser instrument covers 16 surface/theme/width/font cells, including local result reading, held successors, source-bound retries, PM-linked membership, Next, exact-SHA links and stable history cursors. Existing grouped-sidebar preservation remains separately checked by `tests/conversations-sidebar.browser.cjs`.
 
@@ -88,3 +88,9 @@ The isolated WebView2 debug candidate produced [report](evidence/1977/windows/po
 Launching the bare Cargo debug executable returned loader status `0xC0000135`; the same binary captured successfully through `cargo +stable run --locked`, which supplies its build dependency environment. This is an instrument, not installed-layout or live service proof. macOS capture is not available on this Windows attempt. A5 installed-app acceptance and A6 native reference comparison remain open (R12); continue this same task's qualification stage on the required host after parking the current attempt (R2).
 
 The post-reset canonical run passed the Rust suite and isolated offline selftest, then detected that `src/pm-composer.js` was missing from the published task-workspace input list after result reasons began using it. Refreshing only `docs/design/task-workspace.sources.json` with the existing `--write` command retains the unchanged bundled-input, released-byte and hash assertions; its focused check passes. The canonical gate is rerun after this manifest correction, with results recorded on the task.
+
+## Existing-host continuation
+
+The [owner continuation](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6546915208) removes the disposable Mac prerequisite and requests exact Not tested gaps. The [six-screen native review and acceptance ledger](evidence/1977/windows-current/README.md) records the installed Windows baseline, the wide relocated candidate, measured display/text settings and failed access to the existing Mac. No live installation or native-input acceptance is claimed. The new capture-size change affects only the result snapshot routes; ordinary windows keep their existing size.
+
+Source `aa2cea419fd7a7bcb0e962889983e8fcedd489ae` passed the canonical gate in 299.250 s, including 744 Rust tests, 19 integration tests, offline selftest and the 16 report browser cells. The grouped-sidebar browser instrument also passed. A1-A4 remain approved. A5 activation and incomplete A6 native cells are reported openly for publication review under R12 and §7.8; they do not wait on another disposable-context task.
