@@ -131,6 +131,62 @@ pub fn liveness(pid: u32) -> Result<bool, String> {
     coreq::process::identity(pid).map(|identity|identity.is_some()).map_err(|e|format!("process liveness unknown: {e}"))
 }
 
+/// #2057: children an exec'd host image inherited from the old one, with each exit status once reaped. Threads that
+/// owned them (tray `open -W`, board and link curl, `log show`) died at exec, so nothing else waits for them.
+// ponytail: entries stay until the next exec; bounded by the children one image inherits
+#[cfg(unix)]
+static INHERITED: std::sync::Mutex<std::collections::BTreeMap<u32, Option<i32>>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Records this process's current children as inherited; call once at host start, before it spawns any.
+#[cfg(unix)]
+pub fn inherit_children() -> Result<Vec<u32>, String> {
+    let pids = children()?;
+    INHERITED.lock().unwrap_or_else(|e| e.into_inner()).extend(pids.iter().map(|&p| (p, None)));
+    Ok(pids)
+}
+
+#[cfg(target_os = "macos")]
+fn children() -> Result<Vec<u32>, String> {
+    let mut buf = vec![0 as libc::c_int; 4096];
+    // SAFETY: the buffer outlives the call and its byte size is passed; the result counts the pids written
+    let n = unsafe { libc::proc_listchildpids(std::process::id() as i32, buf.as_mut_ptr().cast(), (buf.len() * 4) as i32) };
+    if n < 0 { return Err(format!("child list unreadable: {}", std::io::Error::last_os_error())); }
+    Ok(buf[..(n as usize).min(buf.len())].iter().filter(|&&p| p > 0).map(|&p| p as u32).collect())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn children() -> Result<Vec<u32>, String> {
+    let me = std::process::id().to_string();
+    let entries = std::fs::read_dir("/proc").map_err(|e| format!("child list unreadable: {e}"))?;
+    Ok(entries.flatten().filter_map(|e| {
+        let pid: u32 = e.file_name().to_str()?.parse().ok()?;
+        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
+        (stat.rsplit_once(')')?.1.split_whitespace().nth(1)? == me).then_some(pid)
+    }).collect())
+}
+
+/// An inherited child's status: `None` when not inherited, `Some(None)` while it runs. The lock spans the wait, so the
+/// host's reap and an adopter never race for the one exit status.
+#[cfg(unix)]
+fn inherited_wait(pid: u32) -> Option<Option<i32>> {
+    let mut map = INHERITED.lock().unwrap_or_else(|e| e.into_inner());
+    let slot = map.get_mut(&pid)?;
+    if slot.is_none() {
+        let mut st = 0;
+        // SAFETY: non-blocking wait on one pid this image inherited as its direct child
+        let r = unsafe { libc::waitpid(pid as i32, &mut st, libc::WNOHANG) };
+        if r == pid as i32 { *slot = Some(if libc::WIFEXITED(st) { libc::WEXITSTATUS(st) } else { -1 }); } else if r < 0 { *slot = Some(-1); }
+    }
+    Some(*slot)
+}
+
+/// Reaps exited inherited children; an adopted worker's status stays for its `Adopted::exited`. Returns how many ended.
+#[cfg(unix)]
+pub fn reap_inherited() -> usize {
+    let pids: Vec<u32> = INHERITED.lock().unwrap_or_else(|e| e.into_inner()).iter().filter(|(_, s)| s.is_none()).map(|(p, _)| *p).collect();
+    pids.into_iter().filter(|&p| matches!(inherited_wait(p), Some(Some(_)))).count()
+}
+
 /// Protected native identity recovered after re-exec or cold restart; control stays bound to that incarnation.
 #[cfg(unix)]
 pub struct Adopted { identity:coreq::process::Identity, ended:Option<i32>, direct:bool }
@@ -144,6 +200,14 @@ impl Adopted {
 impl Proc for Adopted {
     fn exited(&mut self) -> Result<Option<i32>, String> {
         if self.ended.is_some() { return Ok(self.ended); }
+        // #2057: an inherited child's exit status comes from the shared reap only, which may already have taken it
+        match inherited_wait(self.identity.pid) {
+            // the unreaped child holds the pid: another readable incarnation means the recorded one is gone
+            Some(None) if matches!(coreq::process::identity(self.identity.pid), Ok(Some(ref i)) if *i!=self.identity) => { self.ended=Some(-1); return Ok(self.ended); },
+            Some(None) => { self.direct=true; return Ok(None); },
+            Some(code) => { self.ended=code; return Ok(code); },
+            None => {},
+        }
         // An unreaped owned child cannot reuse its PID, including while zombie; a zombie's identity read fails (#1541).
         let unread = match coreq::process::identity(self.identity.pid) {
             Ok(identity) if identity.as_ref()!=Some(&self.identity) => { self.ended=Some(-1); return Ok(self.ended); },
@@ -3838,6 +3902,60 @@ mod tests {
         let protected=crate::kids_path(&install,&root).unwrap();std::fs::write(&protected,"corrupt").unwrap();
         assert!(recover(&root,&install,7,&x).is_err());assert_eq!(std::fs::read_to_string(protected).unwrap(),"corrupt");
         drop(after_exit);std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // #2057 Chain: image with an untracked helper and a worker child -> exec -> both exit -> host reap.
+    // Defect: the old image's helpers (curl, `open -W`, `log show`) stayed zombies, ~3 per re-exec. Risk: the reap
+    // misses them, or takes the adopted worker's exit status.
+    #[cfg(unix)]
+    #[test]
+    fn reexec_reaps_untracked_children_and_keeps_adopted_status() {
+        let root=std::env::temp_dir().join(format!("taskq-inherit-{}",uuid()));
+        std::fs::create_dir_all(&root).unwrap();
+        let result=coreq::process::output("qualification.reexec-reap",Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","runtime::tests::reexec_reap_child","--ignored","--nocapture"])
+            .env("TASKQ_IMAGE_ROOT",&root).env("TASKQ_IMAGE_PHASE","before"),std::time::Duration::from_secs(30));
+        assert!(result.is_ok(),"re-exec reap fixture failed: {result:?}");
+        assert_eq!(std::fs::read_to_string(root.join("verified")).unwrap(),"helper reaped; worker exit 7");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore="re-exec reap fixture"]
+    fn reexec_reap_child() {
+        use std::os::unix::process::CommandExt;
+        let root=PathBuf::from(std::env::var_os("TASKQ_IMAGE_ROOT").unwrap());
+        if std::env::var("TASKQ_IMAGE_PHASE").unwrap()=="before" {
+            // Handles drop at exec, as a dying update or link thread drops its curl.
+            let helper=Command::new("sleep").arg("1").spawn().unwrap().id();
+            let worker=Command::new("sh").args(["-c","sleep 1; exit 7"]).spawn().unwrap().id();
+            std::fs::write(root.join("pids"),format!("{helper} {worker}")).unwrap();
+            let error=Command::new(std::env::current_exe().unwrap()).args(["--exact","runtime::tests::reexec_reap_child","--ignored","--nocapture"])
+                .env("TASKQ_IMAGE_PHASE","after").exec();
+            panic!("exec failed: {error}");
+        }
+        let pids:Vec<u32>=std::fs::read_to_string(root.join("pids")).unwrap().split(' ').map(|p|p.parse().unwrap()).collect();
+        let (helper,worker)=(pids[0],pids[1]);
+        let mut inherited=inherit_children().unwrap();inherited.sort();
+        let mut want=pids.clone();want.sort();
+        assert_eq!(inherited,want,"the new image sees both old children");
+        let mut adopted=Adopted::new(coreq::process::identity(worker).unwrap().unwrap());
+        assert_eq!(adopted.exited(),Ok(None),"worker still runs");
+        let exited=|pid:u32|{ // exited, not yet reaped
+            let mut info:libc::siginfo_t=unsafe{std::mem::zeroed()};
+            if unsafe{libc::waitid(libc::P_PID,pid,&mut info,libc::WEXITED|libc::WNOHANG|libc::WNOWAIT)}!=0 {return false;}
+            #[cfg(target_os="linux")] return unsafe{info.si_pid()}!=0;
+            #[cfg(not(target_os="linux"))] return info.si_pid!=0;
+        };
+        let until=std::time::Instant::now()+std::time::Duration::from_secs(10);
+        while !(exited(helper)&&exited(worker)) {assert!(std::time::Instant::now()<until,"children did not exit");std::thread::sleep(std::time::Duration::from_millis(10));}
+        // The host reap runs first and takes both statuses; neither stays a zombie.
+        assert_eq!(reap_inherited(),2);
+        let mut info:libc::siginfo_t=unsafe{std::mem::zeroed()};
+        for pid in [helper,worker] {assert_eq!(unsafe{libc::waitid(libc::P_PID,pid,&mut info,libc::WEXITED|libc::WNOHANG|libc::WNOWAIT)},-1,"{pid} left a zombie");}
+        assert_eq!(adopted.exited(),Ok(Some(7)),"adopted worker keeps its exit status");
+        std::fs::write(root.join("verified"),"helper reaped; worker exit 7").unwrap();
     }
 
     // Chain: live Claude background turn -> protected checkpoint -> image re-exec -> recovered observer -> native exit -> board exit (#1407).
