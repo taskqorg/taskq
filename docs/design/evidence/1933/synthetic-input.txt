@@ -1,0 +1,11 @@
+Source: cbeb8db913aa0908fbe9490e7de8404e7a306231
+Binary SHA-256: 124f2a2303c9eaae4e9978f066225c7bcf2bc9f9f1d85f55f2d3f740acdf53e6
+Computer Use: sky.list_windows succeeded; no TaskQ window returned before or after launch.
+Disposable store: projects empty; pinned 620x560; font20; Icon; no --open/raise.
+Child: task/session/board-token bindings removed; incident reporting off.
+Command: cargo run --locked -- tray
+Exit: 1
+Error: taskq tray already runs on this host
+Next: Check the input and board/service status, then retry; use `taskq help` for syntax.
+No host-lock bypass, existing-tray stop/raise, service registration, provider launch or synthetic input occurred.
+Native synthetic interaction verdict: Not tested; targetable fixture window unavailable.

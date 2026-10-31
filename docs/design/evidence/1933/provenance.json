@@ -1,0 +1,58 @@
+{
+  "source": "cbeb8db913aa0908fbe9490e7de8404e7a306231",
+  "branch": "taskq-1933",
+  "version": "4.6.50",
+  "binary": {
+    "path": "target/debug/taskq.exe",
+    "sha256": "124f2a2303c9eaae4e9978f066225c7bcf2bc9f9f1d85f55f2d3f740acdf53e6",
+    "bytes": 59889582,
+    "type": "GNU debug; not installed"
+  },
+  "inputs": {
+    "docs/design/tray-fixture.sh": "41e4b9597ef600c68f9734ff4673d595965b69536ca476bebaa71f5318449bb9",
+    "tests/fixtures/conversation-shots.js": "ab63b5de2578535c80658b22899e0e9e593268ea5920f2b9991f918cce205f07",
+    "taskq.md": "e8e3b4a1f9aac8e179d676294bd1a1956f82b239e78582c14cb9cd828ae4cb60",
+    "docs/design/ui-polish.md": "a5d1a59abddf8624c60df80e507361f1c461d9578d1373ecf5ef4cca82664b3a",
+    "docs/design/ui-polish-capabilities.md": "c17d908c87aab1f1a753fb0cf61f09add00865ef2ed07c260e69577291db4df1"
+  },
+  "generatedFixture": {
+    "install/projects": "93086a323d2c40427ea7e932277f3d50e3e4c977d85edcd94cfc31aeb2056637",
+    "alpha/.taskq/status.json": "b0fcb11115abb990b56bfa33c736b7b699f26e7e6bb29bf41b4c8bd8b7c1f9bb",
+    "alpha/.taskq/events": "37ff828d254ce61cd95149f6aa1d00d9998c76f415e50cf952a2c27b259141f2",
+    "beta/.taskq/status.json": "f9e95c38312c1418da37b341d459a7eb7a521b2fc0728ca82c52df1479e67a67",
+    "gamma/.taskq/status.json": "de13028e23f3a0de7c9c34fb26435b7c2d941d3af41943fbd3c2a8a6c763d016"
+  },
+  "host": {
+    "registryDisplayVersion": "26H2",
+    "registryBuild": "26300.9711",
+    "registryProductName": "Windows 10 Pro",
+    "screen": [
+      0,
+      0,
+      2560,
+      1440
+    ],
+    "workArea": [
+      0,
+      0,
+      2560,
+      1392
+    ],
+    "textScaleFactor": 140,
+    "registryAppliedDPI": 96,
+    "nativePerMonitorDPI": "unverified",
+    "appsTheme": "dark",
+    "systemTheme": "dark"
+  },
+  "scope": "disposable snapshot installation; no physical input/provider or production changes",
+  "captureCommands": {
+    "menu": "cargo run --locked -- tray --snapshot <output> --route home,project,settings,appearance,hosts,cadence,notification-settings,agents,projects,delivery,services,recovery,about",
+    "conversations": "cargo run --locked -- tray --snapshot <output> --route conversations",
+    "font": "cargo run --locked -- tray --snapshot <output> --route home"
+  },
+  "tools": {
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cargo": "cargo 1.99.0 (5f94df478 2026-08-27)",
+    "node": "v24.5.0"
+  }
+}

@@ -1,0 +1,12 @@
+> build
+> node scripts/build-web.cjs && node scripts/design-sources.cjs
+
+PASS #1930 relative formatting, explicit units, malformed dates and source attribution
+PASS tray capability, exact IPC payload, duplicate request, foreign receipt, timeout, same-ID retry, shared stale/lost-response fixtures
+PASS task workspace: tray embeds the released bundle and stylesheet, pinned source hashes, release assets
+PASS Reports: source-bound receipts, read, Later, partial/unknown protection, Make tasks and Drop dispatch
+PASS Reports: Decide rows, verdict and age, Later revisit
+PASS task reply image/document payload, file-only send, same-operation retry and revision fencing
+PASS controls follow row state, Close stays on the board, op identity matches fixture, bundle and release wiring
+PASS UX30-06 / A1–A5: host/family totals, idle/partial/stale/conflict/duplicate/ended/runtime cases; roles, resources, source and sign-in preserved
+PASS Settings: sign-in, access, versions, routes, recovery and bounded opacity with Off
