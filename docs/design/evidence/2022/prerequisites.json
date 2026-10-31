@@ -1,0 +1,30 @@
+{
+    "homes":  [
+                  {
+                      "runtime":  "claude",
+                      "source":  "USERPROFILE",
+                      "jsonl_files":  1202,
+                      "subdirectory":  ".claude/projects"
+                  },
+                  {
+                      "runtime":  "codex",
+                      "source":  "USERPROFILE",
+                      "jsonl_files":  61,
+                      "subdirectory":  ".codex/sessions"
+                  }
+              ],
+    "disposable_task":  2029,
+    "policy":  {
+                   "pm_targets":  0,
+                   "pm_grants":  0,
+                   "claude":  "full host grant",
+                   "codex":  "full host grant",
+                   "revision":  4,
+                   "codex_app":  "refused: no operator grant and no policy store protection"
+               },
+    "attempt":  6539527317,
+    "source":  "73df356b19e841e3900c06878206bfdd73b7c41e",
+    "create_before":  "idempotent create rejected: configure create_claim_issue before idempotent create; no task created",
+    "platform":  "native Windows",
+    "create_after":  "one ordinary add accepted held #2029; read back before Start; no origin-chat binding claimed"
+}

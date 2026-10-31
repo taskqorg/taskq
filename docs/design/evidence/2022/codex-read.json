@@ -1,0 +1,10 @@
+{
+  "scope": "Read-only lookup of this worker native transcript; no Codex owner session launch or PM turn",
+  "session": "01a1906a-3818-75c3-b058-c82d39a0da75",
+  "Ok": {
+    "file": "rollout-2026-10-31T12-24-02-01a1906a-3818-75c3-b058-c82d39a0da75.jsonl",
+    "items": 14,
+    "generation": "8792189111753583385:[157, 187, 43, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0]:165456b99e805788e0861b9a9496f3a0846dd1fe92cb6768b582aa198b337d45",
+    "size": 2902742
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "service_owned": true,
+  "chat_id": "qualify-2022-6539527317-claude",
+  "native_job": "373dfb86",
+  "native_session": "373dfb86-89c5-4e12-9ed6-c484d498a8aa",
+  "native_messages": [
+    {
+      "role": "assistant",
+      "text": "QUALIFY2022 PM TURN1 READY",
+      "updated": "2026-10-31T06:07:03.678Z",
+      "at": 503577,
+      "i": 0
+    },
+    {
+      "role": "assistant",
+      "text": "QUALIFY2022 PM TURN2 FILE-OK",
+      "updated": "2026-10-31T06:08:15.298Z",
+      "at": 528943,
+      "i": 0
+    },
+    {
+      "role": "assistant",
+      "text": "QUALIFY2022 PM TURN3 DONE",
+      "updated": "2026-10-31T06:09:16.550Z",
+      "at": 549080,
+      "i": 0
+    }
+  ],
+  "source_timestamp_field": "Claude JSONL timestamp at the adapter byte cursor; equality asserted",
+  "turn3": {
+    "op_id": "qualify-2022-turn3",
+    "state": "done",
+    "outcome": "success"
+  },
+  "native_generation": "8792189111753583385:[123, 27, 44, 0, 0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0]:53623270125ce3c0c832091445fe33511396549b99f9059d6570e960488deaa1",
+  "same_id_launch": "qualify-2022-open-check returned the same request/session; changed input refused",
+  "one_writer": "qualify-2022-busy refused working while turn3 occupied the session",
+  "retained_draft": {
+    "id": "qualify-2022-retained-draft",
+    "text_retained": true,
+    "caret": [
+      4,
+      12
+    ],
+    "files": 1,
+    "file_sha256": "d05a62a37a6167c063274eae6354595a2a53f25e5c4c4327da081e0cebe3b788"
+  },
+  "saved_view_keys_unchanged": true,
+  "limits": [
+    "Adapter calls, not native window gestures",
+    "No production service restart",
+    "No Codex owner-session or remote PM authority"
+  ],
+  "task_relay_messages": [
+    {
+      "role": "assistant",
+      "text": "Question on #2029: \"Pick which disposable marker the no-change result returns in Changed.\" Option 1 is QUALIFY2022-ALPHA (recommended), option 2 is QUALIFY2022-BETA.",
+      "updated": "2026-10-31T06:10:34.644Z",
+      "at": 579122,
+      "i": 0
+    },
+    {
+      "role": "assistant",
+      "text": "QUALIFY2022 PM CLARIFICATION ANSWERED",
+      "updated": "2026-10-31T06:10:45.387Z",
+      "at": 587819,
+      "i": 0
+    },
+    {
+      "role": "assistant",
+      "text": "Status of #2029: it is still in `review`. The trusted reviewer's verdict is published, but the task is not Closed. There is no `close` entry in the log yet.\n\n- **Worker marker:** `Changed: QUALIFY2022-ALPHA`. Result SHA `93215a4c90235b390ee4e5b5ccf94f10cee31cd0` (origin/main), with no source change and no PR.\n- **Reviewer:** session `claude:0cb09df3-d346-43e3-945e-17f7d1be73fb win`. The verdict was published at attempt 6539943085 and accepted at 6539949171.\n- **Exact reviewer verdict:**\n```\nChanged: none; worker returned marker QUALIFY2022-ALPHA as picked, no source change\nChecks: Task fit: A1 ok (ask offered ALPHA/BETA, ALPHA recommended), A2 ok (Changed QUALIFY2022-ALPHA, result = origin/main 93215a4c); merge-result CI n/a: no-change, no PR\nChecks: Implementation quality: none\nOpen: none\n```\n\nQUALIFY2022 PM REVIEWED RESULT QUALIFY2022-ALPHA",
+      "updated": "2026-10-31T06:13:46.628Z",
+      "at": 614526,
+      "i": 0
+    }
+  ],
+  "task": {
+    "number": 2029,
+    "worker_attempt": 6539917596,
+    "worker_requested_session": "054032c3-226f-49bf-a2dd-c53a35ac4dbe",
+    "worker_native_session": "74e7a5a3-bdda-4927-af6c-9fce09ecbca4",
+    "answer": 6539929959,
+    "reviewer_attempt": 6539943085,
+    "result": "93215a4c90235b390ee4e5b5ccf94f10cee31cd0",
+    "close": 6539966514
+  }
+}
