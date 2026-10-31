@@ -1353,7 +1353,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
                 #[cfg(windows)]
