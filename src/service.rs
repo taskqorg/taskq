@@ -3228,6 +3228,61 @@ mod tests {
         assert_eq!(task(&b, n).state, State::Closed);
     }
 
+    // Chain: section 7 Publication routes, task PR in another repository (#2047) -> service pass enqueues it in that
+    // repository -> status row shows the merge queue stage -> merged with green merge_group CI -> one close naming it.
+    // Defect (#2009 dashq#240, #2010 pilotq#200, #2015 dashq#241): publication looped on the board repository's compare
+    // HTTP 404 with no stage shown. Retained: the foreign PR moves through the same stages and receipt as a local one.
+    #[test]
+    fn a_task_pr_in_another_repository_shows_its_stage_and_closes_after_its_merge() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        let n = b.create("Invented foreign PR", "", &["taskq".into()]).unwrap();
+        let (head, merge) = ("a".repeat(40), "b".repeat(40));
+        let text = "Changed: [o/x#240](https://github.com/o/x/pull/240)\nChecks: A1 ok\nOpen: none";
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        let result = core::entry("result", &[&head], Some(a), text);
+        b.comment(n, &result).unwrap();
+        let r = b.comment(n, "taskq: spawn reviewer codex:r win").unwrap();
+        let publish = core::entry("publish", &[], Some(r), text);
+        b.comment(n, &publish).unwrap();
+        // 0 open, 1 queued, 2 merged
+        let phase = Rc::new(std::cell::Cell::new(0));
+        let (p, h, m) = (phase.clone(), head.clone(), merge.clone());
+        b.state.borrow_mut().publish = "queue-foreign".into();
+        b.state.borrow_mut().publisher = Some(crate::board::replying_to(&crate::board::github::KIND, move |method, url, body| {
+            if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                return if rest.starts_with("/compare/") { Err(format!("GET {url}: HTTP 404 Not Found")) }
+                    else if rest.starts_with(&format!("/issues/{n}/comments")) {
+                        Ok(json!([result.clone(), publish.clone()].iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "author_association": "OWNER",
+                            "created_at": "2026-10-30T00:00:00Z", "updated_at": "2026-10-30T00:00:00Z", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+                    } else { panic!("board repository read {method} {url}") };
+            }
+            if url.ends_with("/graphql") {
+                let query = body.unwrap()["query"].as_str().unwrap().to_string();
+                if query.contains("enqueuePullRequest") { p.set(1); return Ok(json!({"data": {"enqueuePullRequest": {"mergeQueueEntry": {"id": "MQE_1"}}}})); }
+                let entry = if p.get() == 1 { json!({"id": "MQE_1"}) } else { Value::Null };
+                return Ok(json!({"data": {"node": {"headRefOid": h, "mergeable": "MERGEABLE", "merged": p.get() == 2, "mergeCommit": if p.get() == 2 { json!({"oid": m}) } else { Value::Null },
+                    "mergeQueueEntry": entry, "timelineItems": {"nodes": []}}}}));
+            }
+            let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {method} {url}"));
+            Ok(if rest.starts_with("/compare/") { json!({"status": if rest.ends_with(&m) { "identical" } else { "diverged" }}) }
+                else if rest == "/pulls/240" { json!({"number": 240, "node_id": "PR_240", "state": "open", "draft": false, "head": {"sha": h}, "merged_at": null}) }
+                else if rest == "/rules/branches/main" { json!([{"type": "merge_queue"}]) }
+                else if rest.starts_with("/actions/runs?") { json!({"workflow_runs": [{"head_sha": m, "event": "merge_group", "status": "completed", "conclusion": "success", "name": "ci", "check_suite_id": 5}]}) }
+                else if rest.contains("/check-runs") { json!({"check_runs": [{"name": "ci", "status": "completed", "conclusion": "success", "app": {"slug": "github-actions"}, "check_suite": {"id": 5}}]}) }
+                else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                else { panic!("unexpected {method} {url}") })
+        }));
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process for a waiting publication")));
+        for _ in 0..3 { s.pass().unwrap(); }
+        let row = s.snapshot.as_ref().unwrap().tasks.iter().find(|r| r.n == n).unwrap().json();
+        assert_eq!((&row["state"], &row["enqueued"]), (&json!("review"), &json!("MQE_1")), "A2: the merge queue stage, as for a local PR: {row}");
+        phase.set(2);
+        s.pass().unwrap();
+        let closes: Vec<_> = b.comments(n).unwrap().into_iter().filter(|e| e.body.starts_with("taskq: close")).collect();
+        assert_eq!((task(&b, n).state, closes.len()), (State::Closed, 1));
+        assert!(closes[0].body.contains(&format!("merged #240 in o/x as {merge}; merge-result CI green")), "A1: {}", closes[0].body);
+    }
+
     // Chain: § 7 rule 9 -> worker closes its own task -> § 1 dependency unknown -> § 4 step 5 reopen + one ask (#1950).
     // Risk (desiign#50): issue text said "write done and close"; the worker commented done and closed the issue, so the
     // close read as done, review was skipped and q-doing stayed on a closed issue.
