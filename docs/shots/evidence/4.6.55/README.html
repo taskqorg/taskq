@@ -1,0 +1,47 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><base href="../../../../"><title>TaskQ README preview</title><style>body{margin:0;background:#fff;color:#1f2328;font:16px/1.5 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif}article{padding:24px;max-width:900px;margin:auto;overflow-wrap:break-word}img{max-width:100%;height:auto}pre{padding:16px;background:#f6f8fa;overflow:auto}code{font:85% ui-monospace,SFMono-Regular,Menlo,monospace}a{color:#0969da}h3,h4{margin-top:24px}</style><article>
+<p align="center">
+  <img src="docs/header.webp" alt="Relaxing while the agents work" width="720">
+  <br><em>Agents working.</em>
+</p>
+<h3>Install</h3>
+<p>Paste into Claude or Codex:</p>
+<pre lang="text"><code>Install taskq from https://github.com/taskqorg/taskq and set it up for this project.
+</code></pre>
+<p>The agent confirms setup changes, installs TaskQ and connects your project board.</p>
+<details>
+<summary>Starting a new project?</summary>
+<pre lang="text"><code>Install taskq from https://github.com/taskqorg/taskq and create project &lt;name&gt; from &lt;idea or folder&gt;.
+</code></pre>
+<p>Replace <code>&lt;name&gt;</code> and <code>&lt;idea or folder&gt;</code> with your project.</p>
+</details>
+<p>Describe the work. Agents do it, a reviewer checks it, and you follow progress in TaskQ.</p>
+<h3>1. Describe the work</h3>
+<p>Write a request in Conversations or your usual Claude or Codex chat. Agree the plan before starting tasks.</p>
+<a href="docs/shots/popover-dark-conversations-owner-18.png"><img src="docs/shots/popover-dark-conversations-owner-18.png" alt="Conversations with a draft request to preserve the cart after sign-in" width="720"></a>
+<h3>2. Follow progress</h3>
+<p>Tasks live as GitHub or GitLab issues. See what is running, under review or ready from the tray.</p>
+<a href="docs/shots/popover-dark-project-16.png"><img src="docs/shots/popover-dark-project-16.png" alt="Storefront queue showing the cart task in work, redirect in review and another task ready" width="320"></a>
+<h3>3. Answer a question</h3>
+<p>A worker waits when it needs your decision. Pick an answer or write your own.</p>
+<a href="docs/shots/popover-dark-conversations-question-18.png"><img src="docs/shots/popover-dark-conversations-question-18.png" alt="Cart worker asking whether duplicate quantities should keep the larger value or be added" width="720"></a>
+<p><em>Real TaskQ interface with illustrative data; the request is an unsent draft. Open any image at full size.</em></p>
+<details>
+<summary>Prefer commands?</summary>
+<p>Run these in your project folder, or ask an agent to run them. Task #41 is the illustrative example above; use your own task number.</p>
+<pre lang="sh"><code>taskq status       # See the queue
+taskq start 41     # Start an agreed, held task
+taskq answer 41.1  # Pick option 1 on its current question
+</code></pre>
+</details>
+<p><a href="taskq.md">Setup, commands and project rules</a>.</p>
+<details>
+<summary>Verify a downloaded release</summary>
+<p>Check the file against the release's <code>SHA256SUMS</code>, then verify its build provenance:</p>
+<pre lang="sh"><code>shasum -a 256 -c SHA256SUMS --ignore-missing
+gh attestation verify &lt;file&gt; --repo taskqorg/taskq
+</code></pre>
+<p>Replace <code>&lt;file&gt;</code> with the downloaded release file.</p>
+</details>
+<p>License: <a href="LICENSE">MIT</a>.</p>
+<p>If taskq saves you time, <a href="https://alex.kirs.online/donate">buy me a coffee</a>.</p>
+</article></html>
