@@ -1,0 +1,58 @@
+{
+ "renderer": "scripts/readme-preview.cjs Markdown subset; Playwright Chromium",
+ "browser": "156.0.8078.4",
+ "checks": [
+  {
+   "width": 1280,
+   "overflow": false,
+   "images": [
+    {
+     "src": "docs/header.webp",
+     "loaded": true,
+     "width": 720
+    },
+    {
+     "src": "file:///Users/runner/work/_temp/taskq-shots.5ySewi/stage/popover-dark-conversations-owner-18.png",
+     "loaded": true,
+     "width": 720
+    },
+    {
+     "src": "file:///Users/runner/work/_temp/taskq-shots.5ySewi/stage/popover-dark-project-16.png",
+     "loaded": true,
+     "width": 320
+    },
+    {
+     "src": "file:///Users/runner/work/_temp/taskq-shots.5ySewi/stage/popover-dark-conversations-question-18.png",
+     "loaded": true,
+     "width": 720
+    }
+   ]
+  },
+  {
+   "width": 390,
+   "overflow": false,
+   "images": [
+    {
+     "src": "docs/header.webp",
+     "loaded": true,
+     "width": 342
+    },
+    {
+     "src": "file:///Users/runner/work/_temp/taskq-shots.5ySewi/stage/popover-dark-conversations-owner-18.png",
+     "loaded": true,
+     "width": 342
+    },
+    {
+     "src": "file:///Users/runner/work/_temp/taskq-shots.5ySewi/stage/popover-dark-project-16.png",
+     "loaded": true,
+     "width": 320
+    },
+    {
+     "src": "file:///Users/runner/work/_temp/taskq-shots.5ySewi/stage/popover-dark-conversations-question-18.png",
+     "loaded": true,
+     "width": 342
+    }
+   ]
+  }
+ ]
+}
