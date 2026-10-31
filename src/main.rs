@@ -17,6 +17,7 @@ mod core;
 mod control;
 mod data;
 mod doctor;
+mod deploy;
 mod dispatch;
 mod display;
 mod enrollment;
@@ -94,6 +95,7 @@ const USAGE: &str = "taskq agents
  taskq status [--only L,..] [--json] | taskq status --closed [--page N] [--since T] [--task N [--transcript [--before B]]] | taskq inbox N [--json]
  taskq issue N | taskq issue N --comment T|--label L [--op-id ID] [--json]
  taskq claim-issue [N] [--json]
+ taskq deployed --version V --env E --range A..B [--host H] [--json]
  taskq results [N] [--action open|read|accept|followup|reopen|later|drop|make] [--sha SHA] [--text REASON] [--until UTC] [--page N|--before TIME:N] --json
  taskq reports ... (alias of results)
  taskq profile [guide|export|tasks|board|actions|health|watch|migrate] [--since 24h] | taskq retro
@@ -1571,8 +1573,12 @@ fn service_run(c: &Ctx, host: Option<host::Shared>) -> Res<()> {
             checked = Some(Instant::now());
             if is_installed {
                 match platform::service_update(&cfg.install) {
-                    Ok(Some(_)) => {
+                    Ok(Some(v)) => {
                         update = None;
+                        // § 9 deploy: the release flow records the applied version before the re-exec
+                        if let Ok(exe) = std::env::current_exe() {
+                            for l in deploy::applied(&exe, std::slice::from_ref(&cfg.root), platform::channel(&cfg.install).unwrap_or("live"), platform::VERSION, &v, &hostname()) { log!("{l}"); }
+                        }
                         reexec(&s, cfg)?;
                     }
                     Ok(None) => update = None,
@@ -3647,6 +3653,11 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
                 println!("{}", snap.text_with(cfg, &c.raw, Some(&decide))?);
+                // § 2 Deploy: closed tasks still waiting for their first deploy, a live board read
+                match deploy::status(b, deploy::config(&cfg.root).as_ref()) {
+                    Ok(lines) => for l in lines { println!("{l}"); },
+                    Err(e) => println!("Waiting for deploy: unknown ({e})"),
+                }
                 println!("{}", requests::quota(&b.requests()));
                 // § 6: the live service's open setup gaps follow the report
                 for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
@@ -3674,6 +3685,24 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             else if ok { println!("#{n} {}", if r["label"].is_string() { format!("label {}", r["label"].as_str().unwrap_or("")) } else { format!("comment {}", r["comment"]) }); }
             else { eprintln!("Error: #{n}: {}\nNext: {}", compact(r["reason"].as_str().unwrap_or(""), 153), compact(r["next"].as_str().unwrap_or(""), 154)); }
             if ok { Ok(()) } else { Err(String::new()) }
+        }
+        "deployed" => {
+            if a.flags.iter().any(|(k, v)| !["version", "env", "range", "host", "json"].contains(&k.as_str()) || v.len() != 1) {
+                return Err("deployed: use --version, --env, --range, optionally --host and --json, once each".into());
+            }
+            let need = |k: &str| a.one(k).ok_or(format!("deployed: --{k} is required"));
+            let v = deploy::run(b, &cfg.root, need("version")?, need("env")?, need("range")?, a.one("host"))?;
+            if a.flags.contains_key("json") { println!("{v}"); return Ok(()); }
+            for r in v["tasks"].as_array().into_iter().flatten() {
+                let reason = r["reason"].as_str().filter(|s| !s.is_empty()).map_or(String::new(), |s| format!(": {s}"));
+                println!("#{} {}{reason}", r["issue"], r["outcome"].as_str().unwrap_or_default());
+            }
+            for r in v["skipped"].as_array().into_iter().flatten() {
+                println!("skipped {}: {}", r["url"].as_str().unwrap_or_default(), r["reason"].as_str().unwrap_or_default());
+            }
+            if v["tasks"].as_array().is_none_or(|t| t.is_empty()) && v["skipped"].as_array().is_none_or(|t| t.is_empty()) { println!("no Task: trailers in the range"); }
+            if v["tasks"].as_array().into_iter().flatten().any(|r| r["outcome"] == "unknown") { return Err("deployed: some entries are unknown; rerun the same command".into()); }
+            Ok(())
         }
         "claim-issue" => {
             if a.flags.iter().any(|(k, v)| k != "json" || v.len() != 1) { return Err("claim-issue: only --json, once".into()); }

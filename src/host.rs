@@ -991,6 +991,10 @@ pub fn run(install: &Path) -> Res<()> {
             let text=match &updated {Ok(Maintenance::Update(Some(v)))=>format!("update: {v}"),Ok(Maintenance::Update(None))=>"update: up to date".into(),Ok(Maintenance::Installation(result))=>format!("installation: {result}"),Err(e)=>format!("maintenance: {e}")};
             if maintenance_once(&mut maintenance_result,&text) {log_all(install,&roots,&text);}
             if crate::installed(install)&&matches!(updated,Ok(Maintenance::Update(Some(_)))) {h.restart=true;}
+            // § 9 deploy: the release flow records the applied version in each release root that sets `deploy`
+            if let (true,Ok(Maintenance::Update(Some(v))),Ok(exe))=(crate::installed(install),&updated,std::env::current_exe()) {
+                for l in crate::deploy::applied(&exe,&roots,crate::platform::channel(install).unwrap_or("live"),crate::platform::VERSION,v,&crate::hostname()) {log_all(install,&roots,&l);}
+            }
         }
         let transition_ready=crate::platform::transition_ready(install).is_ok();
         if !transition_ready&&h.updating.is_none()&&installation_checked.is_none_or(|at|at.elapsed().as_secs()>=5) {

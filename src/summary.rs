@@ -1,5 +1,5 @@
 //! § 2 Summary: one trusted comment per task that projects the fold for people, like a label. `fold` never reads it.
-use crate::{Res, board::{Board, Comment}, core::{self, Entry, State, Task}};
+use crate::{Res, board::{Board, Comment}, core::{self, Entry, State, Task}, deploy::Deploy};
 
 pub const MARKER: &str = "<!-- taskq-summary -->";
 /// File links shown before `and N more`.
@@ -16,8 +16,9 @@ pub fn find(comments: &[Comment]) -> Option<&Comment> {
     comments.iter().filter(|c| is(c)).min_by_key(|c| c.id)
 }
 
-/// The summary text of task `n`: `body` is the issue text, `t` its fold, `link` a comment's URL (0: the issue).
-pub fn render(n: u64, body: &str, log: &[Entry], t: &Task, link: &dyn Fn(u64) -> String) -> String {
+/// The summary text of task `n`: `body` is the issue text, `t` its fold, `link` a comment's URL (0: the issue),
+/// `deploy` the project's § 9 setting that adds a closed task's deploy lines.
+pub fn render(n: u64, body: &str, log: &[Entry], t: &Task, link: &dyn Fn(u64) -> String, deploy: Option<&Deploy>) -> String {
     let p = core::project(n, log, false);
     let mut accepted: Vec<&Entry> = log.iter().filter(|e| p.accepts(e.id)).collect();
     accepted.sort_by_key(|e| e.id);
@@ -45,6 +46,7 @@ pub fn render(n: u64, body: &str, log: &[Entry], t: &Task, link: &dyn Fn(u64) ->
         State::Closed => {
             let text = last(&["close"]).map(|e| core::verdict(n, log, core::entry_text(n, &e.body))).unwrap_or_default();
             lines.extend(outcome(&text));
+            lines.extend(deploy.map(|d| crate::deploy::lines(n, log, d)).unwrap_or_default());
         }
         State::Later | State::Failed => {
             if let Some(reason) = last(&["later", "failed"]).and_then(|e| core::entry_text(n, &e.body).lines().map(str::trim).find(|l| !l.is_empty())) {
@@ -74,13 +76,13 @@ pub fn render(n: u64, body: &str, log: &[Entry], t: &Task, link: &dyn Fn(u64) ->
 }
 
 /// The current summary of task `n` on board `b`.
-pub fn text(b: &dyn Board, n: u64, body: &str, log: &[Entry], t: &Task) -> String {
-    render(n, body, log, t, &|id| if id == 0 { b.url(n) } else { b.comment_url(n, id) })
+pub fn text(b: &dyn Board, n: u64, body: &str, log: &[Entry], t: &Task, deploy: Option<&Deploy>) -> String {
+    render(n, body, log, t, &|id| if id == 0 { b.url(n) } else { b.comment_url(n, id) }, deploy)
 }
 
 /// Edits the summary of task `n` to its current text, or creates it when missing. Returns whether it wrote.
-pub fn write(b: &dyn Board, n: u64, body: &str, comments: &[Comment], log: &[Entry], t: &Task) -> Res<bool> {
-    put(b, n, comments, &text(b, n, body, log, t))
+pub fn write(b: &dyn Board, n: u64, body: &str, comments: &[Comment], log: &[Entry], t: &Task, deploy: Option<&Deploy>) -> Res<bool> {
+    put(b, n, comments, &text(b, n, body, log, t, deploy))
 }
 
 /// Writes `want` unless the summary already reads so.
@@ -189,7 +191,7 @@ mod tests {
     fn summary_of(f: &Value) -> String {
         let n = f["number"].as_u64().unwrap();
         let log = reply::log(n, &comments(f)).unwrap();
-        render(n, f["body"].as_str().unwrap(), &log, &core::fold(n, &log, false), &github_link(n))
+        render(n, f["body"].as_str().unwrap(), &log, &core::fold(n, &log, false), &github_link(n), None)
     }
 
     // Chain: R1, § 2 Summary -> GitHub comment and GitLab note parsing -> reply::log -> fold. Risk (#2017 A6): the
@@ -246,7 +248,7 @@ mod tests {
         let mut log = vec![e(10, "taskq: spawn worker codex:w win".into()),
             e(11, core::entry("result", &[&sha], Some(10), "Changed: the summary\nOpen: none\nFiles: [a](https://example.com/a.zip), [b](https://example.com/b.log), [a](https://example.com/a.zip)")),
             e(12, "taskq: publish\nChanged: the summary, published\nOpen: none\nPR: https://github.com/o/r/pull/7".into())];
-        let render_at = |log: &[Entry]| render(5, body, log, &core::fold(5, log, false), &github_link(5));
+        let render_at = |log: &[Entry]| render(5, body, log, &core::fold(5, log, false), &github_link(5), None);
         assert_eq!(render_at(&log), format!("{MARKER}\n**Review** · result ccccccc · [PR #7](https://github.com/o/r/pull/7)\nChanged: the summary, published\nOpen: none\nFiles: [a](https://example.com/a.zip), [b](https://example.com/b.log), [shot](https://github.com/user-attachments/assets/1) and [1 more](https://github.com/taskqorg/taskq/issues/5)"));
         log.truncate(1);
         log.push(e(11, core::entry("ask", &[], Some(10), "Done: checked\nProblem: Ship?\n1. Ship - + now; - risk\n2. Wait - + safe; - slow")));
@@ -267,12 +269,12 @@ mod tests {
             let result = crate::result_text(5, "Changed: c\nOpen: none", &["cargo test -- pass".into()], &[], None, files).unwrap();
             assert!(result.ends_with(&format!("\nEvidence: {}, {}", files[0], files[1])), "{host}: {result}");
             let log = vec![e(10, "taskq: spawn worker claude:w win".into()), e(11, core::entry("result", &[&sha], Some(10), &result))];
-            let got = render(5, "## Goal\ng", &log, &core::fold(5, &log, false), &github_link(5));
+            let got = render(5, "## Goal\ng", &log, &core::fold(5, &log, false), &github_link(5), None);
             assert_eq!(got.lines().last(), Some(format!("Files: {}, {}", files[0], files[1]).as_str()), "{host}: {got}");
             let opts = ["Ship - + done; - risk".to_string(), "Hold - + safe; - slow".into()];
             let card = crate::ask_card(5, "Done: built\nProblem: ship it?", &opts, Some("1"), &files[..1]).unwrap();
             let log = vec![e(10, "taskq: spawn worker claude:w win".into()), e(11, core::entry("ask", &[], Some(10), &card))];
-            let got = render(5, "## Goal\ng", &log, &core::fold(5, &log, false), &github_link(5));
+            let got = render(5, "## Goal\ng", &log, &core::fold(5, &log, false), &github_link(5), None);
             assert!(got.contains(&format!("\nEvidence: {}\n", files[0])) && got.ends_with(&format!("\nFiles: {}", files[0])), "{host}: {got}");
         }
     }

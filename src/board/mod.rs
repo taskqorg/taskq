@@ -52,6 +52,8 @@ pub trait Board {
     fn closed_tasks(&self, _page: u32, _since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { Err("closed task history unsupported on this board".into()) }
     /// §7 Reports: all closed research/report issues, with authoritative close times. Demand reads only.
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { Err("research reports unsupported on this board".into()) }
+    /// § 2 Deploy: every closed `taskq` issue with `label`, with its close time; demand reads only.
+    fn closed_labelled(&self, _label: &str) -> Result<Vec<(Issue, i64)>> { Err("closed label lists unsupported on this board".into()) }
     /// Repository text at an immutable accepted result SHA; never the local checkout or moving main.
     fn source(&self, _path: &str, _sha: &str) -> Result<String> { Err("report source unsupported on this board".into()) }
     /// I3: earliest recorded addition of `taskq`, including removed labels; None proves no recorded admission.
@@ -312,6 +314,7 @@ impl Board for Profiled {
     fn issue(&self, n: u64) -> Result<Issue> { self.op("read", |b| b.issue(n)) }
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { self.op("list", |b| b.closed_tasks(page, since)) }
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { self.op("list", |b| b.research_tasks()) }
+    fn closed_labelled(&self, label: &str) -> Result<Vec<(Issue, i64)>> { self.op("list", |b| b.closed_labelled(label)) }
     fn source(&self, path: &str, sha: &str) -> Result<String> { self.op("read", |b| b.source(path, sha)) }
     fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> { self.op("history", |b| b.first_admission(n)) }
     fn comments(&self, n: u64) -> Result<Vec<Comment>> { self.op("inbox", |b| b.comments(n)) }
@@ -1070,6 +1073,11 @@ impl Fake {
 #[cfg(test)]
 impl Board for Fake {
     fn first_admission(&self, n: u64) -> Result<Option<(u64, i64)>> { self.state.borrow().admissions.get(&n).cloned().unwrap_or(Ok(None)) }
+    fn closed_labelled(&self, label: &str) -> Result<Vec<(Issue, i64)>> {
+        let st = self.state.borrow();
+        Ok(st.issues.iter().filter(|i| !i.open && i.labels.iter().any(|l| l == label))
+            .map(|i| (i.clone(), st.report_closed.get(&i.number).copied().or(i.closed).unwrap_or(i.updated))).collect())
+    }
     fn research_tasks(&self)->Result<Vec<(Issue,i64)>> {
         let st=self.state.borrow();
         Ok(st.issues.iter().filter(|i|!i.open&&i.labels.iter().any(|l|l=="research"||l=="docs"))

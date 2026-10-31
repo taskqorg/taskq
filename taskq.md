@@ -4,7 +4,7 @@ taskq queues agent work on GitHub and GitLab boards: the board holds every task 
 ### Change rule
 Rule changes name the R-number, edit this file with code and list amended R-numbers in the result. Changed rules keep numbers; new rules get the next one. A rule conflicting with this file elsewhere is a defect. No history, dates or decision logs.
 ### R1. The board's own objects are the only state
-Trusted comments are truth; labels and the summary comment (§2) project them, and `fold` never reads the summary. Public: labels, issue text, `taskq:` comments and the summary (§2), heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue.
+Trusted comments are truth; labels and the summary comment (§2) project them, and `fold` never reads the summary. A closed task still takes trusted `deployed` entries (§2); they never reopen it. Public: labels, issue text, `taskq:` comments and the summary (§2), heartbeats (§4); no issue machine block. Restart rebuilds caches; no local task DB/queue.
 Non-task exceptions: minimal native recovery identity (§3); [DashQ](docs/design/enrollment.md#contract-detail); owner requests, tray AI history and agentq preferences (§4); incidents/profiles; host policy/migration backup; emergency hold;
 [operator grants/receipts](docs/design/shared-resource-controls.md#host-adapter). Fresh `status.json` checks per-root pid; `<install>/service` checks native host identity/generation (§4). [Chat](docs/design/ai-workspace.md).
 ### R2. One task, one attempt
@@ -94,6 +94,12 @@ Closing a `later`/`failed` task stays the owner's own act.
 Its lines: `**<State>**`, `result <sha7>` while open, the PR/MR link, the close's merge receipt or `<role> running`, joined by ` · `; then in `ask` the open card, in `review` the result's `Changed:`/`Open:` (a pending publication's once written), when closed the close verdict's, in `later`/`failed` `Reason:` with its first line;
 then `Files: ` with ≤ 3 file links of the issue body and outcome entries (newest outcome first, body last; uploads or a file extension), then `and [N more](<comment>)`.
 The writer edits it after each accepted entry and creates it when missing, so a new task gets it at its first accepted entry and an older one at its next write; each pass edits a stale one and recreates one it saw deleted. Of several, the lowest id counts. A `close` after `publish` names it (`Repeats: publish <id>`) instead of copying its verdict; readers show the publish text in its place.
+- **Deploy.** `taskq: deployed <env> <version>` (text `at <UTC>`, optionally `host <name>`; op id `deployed-<env>-<version>[-<host>]`) says a closed task's merged change went live.
+`taskq deployed --version V --env E --range A..B [--host H]` writes one per task a `Task:` trailer of the range names, skips and lists other boards' tasks, and repeats nothing (op id).
+`fold` ignores the kind (N-1 too): the task stays closed, its dependents' start unchanged.
+With `deploy` (§9), a task closed from `review` as delivered (§7) gets label `deploy-waiting` and the summary line `Merged, waiting for deploy` until its first `deployed`, which removes both.
+Then one line per configured environment, in its order, from its first entry: `<project> <version> · <env> · <UTC time>`, then ` · <host>` if named. A no-change close shows none.
+`taskq status` adds `Waiting for deploy: N tasks, oldest <age>` with each task linked.
 ### Ask card
 `ask` writes, in order, ≤ 9 nonblank lines, without headings or blank lines:
 1. `Done: <what was checked or attempted>` -- one line, ≤ 160 characters; say `not started` when true.
@@ -196,6 +202,7 @@ Now: macOS signs locally with the [`TaskQ Local Signing` identity](docs/design/w
 `taskq.json` beside the project root; its keys, host.json keys and the recipe format: [configuration](docs/design/configuration.md#contract-detail).
 - One module per board (`src/board/`: API, token, login probe, CLI, env, default host; `mod.rs`: shared HTTP, registry) and one [adapter per runtime](docs/runtime-qualification.md#runtime-adapters) (`src/runtime.rs`). These are the only contract: other code never branches on board kind or runtime name; edits stay in one module.
 - `<install>/projects` is the explicit owner-approved list of exact roots (R10). Drain a removed root before retiring its thread; keep status until verified exit. Six-copy migration: [configuration](docs/design/configuration.md#contract-detail).
+- `deploy`: the project's environments in deploy order, e.g. `["dev", "live"]`; absent, no deploy line or label (§2). A host that applies a newer TaskQ release runs `taskq deployed --version <new> --env <its channel> --range v<old>..v<new> --host <host>` in each root of the release repository that sets `deploy`; other release scripts call the same command ([commands](docs/design/commands.md)).
 - `ttl` and `poll` stay per project (300 and 60 s); `update_every` and `rollback_after` move to host.json (60 and 600 s). Missing/invalid host policy reads unknown and holds launches, never per-project copies.
 - GitHub token: one owner-installed credential per host in `<install>/token` (owner-only access), shared by service and workers; a fine-grained PAT preferred, an OAuth token accepted. No env or CLI-login fallback; TaskQ, workers and setup never run `gh auth login`; a missing, empty or unreadable token is an owner item, same error in service and worker. Never in config.
 GitLab keeps coreq token lookup and `Authorization: Bearer`. A cutover is one step per project, not per host; board formats never mix. No migration code: `CHANGELOG.md` says per release what changed on the board and what an open issue needs. Publication cutover, planning, owner approval, apply order and repair: [configuration](docs/design/configuration.md#contract-detail).
