@@ -1,0 +1,54 @@
+﻿{
+    "source":  "73df356b19e841e3900c06878206bfdd73b7c41e",
+    "version":  "4.6.52",
+    "binary":  {
+                   "path":  "candidate/taskq.exe (disposable copy)",
+                   "sha256":  "be71e568b3c49d4c04829365deef95fe6924f3107ebedb7610bd8aa18bd08c29",
+                   "bytes":  30192640,
+                   "kind":  "byte-identical copy of published MSVC Windows release; no install"
+               },
+    "inputs":  {
+                   "taskq.md":  "8319680888e7787ce98e038c8ec84deb7a21949f7c8afca437f3a5449481f677",
+                   "Cargo.lock":  "c5c839324c084768593a3d6e814cd073b54522f2601d048c0ed9f427cc8a4e75",
+                   "src/tray.rs":  "afcf5540267e1648d2a775813a04f0dfc86cee2763571bc1c89b5293951767e0",
+                   "docs/design/icon-summary.md":  "b09cf8c4d881fd18fdd3d7398bf220eb0a26ac8b2b186e854fa2b294dc56f836",
+                   "docs/design/tray-fixture.sh":  "41e4b9597ef600c68f9734ff4673d595965b69536ca476bebaa71f5318449bb9"
+               },
+    "fixture":  {
+                    "source":  "docs/design/tray-fixture.sh",
+                    "extraProjects":  0,
+                    "identity":  "three invented projects alpha/beta/gamma; incomplete/error/stale observations",
+                    "files":  {
+                                  "alpha/.taskq/events":  "07f8452603fb316d834b8abffc753dded9c73485058d79c84630b7ea44cd96a2",
+                                  "alpha/.taskq/status.json":  "e879b16edba3dd6b243f058fa1708cc167e5910467ce6a0749cbc9b39f0c2326",
+                                  "beta/.taskq/focus.paused":  "81de9ecc6dee64a3e893ce838a55fb44e3bcd32a3022c76570fe82101677c98e",
+                                  "beta/.taskq/status.json":  "7481d45fbde8117637add993c952059a084b04a7208df8d2b5a8879887137ab3",
+                                  "gamma/.taskq/status.json":  "de13028e23f3a0de7c9c34fb26435b7c2d941d3af41943fbd3c2a8a6c763d016",
+                                  "install/projects":  "4d02fdd0f5debb5dd0bf7290822087a80dd376dcc59f207fdb2ac979ac8b5985"
+                              }
+                },
+    "capture":  {
+                    "command":  "\u003cverified-release-copy\u003e tray --snapshot \u003coutput\u003e --route home,appearance,cadence",
+                    "exit":  0,
+                    "routes":  "home,appearance,cadence",
+                    "screensProduced":  12,
+                    "screensRetained":  3,
+                    "physicalInput":  false,
+                    "interactionRecordings":  0
+                },
+    "screens":  {
+                    "popover-dark-home-16.png":  {
+                                                     "sha256":  "d36ef4addb41a9bb85fa3907b37598ddafcb50d3e54b24f9f9a7429aff6d6ef7",
+                                                     "bytes":  88725
+                                                 },
+                    "popover-light-appearance-20.png":  {
+                                                            "sha256":  "a5203d85b79f6cc3cd798230044467b62245b5fc9a3d6216ed6f8c178fad36c3",
+                                                            "bytes":  119978
+                                                        },
+                    "popover-dark-cadence-20.png":  {
+                                                        "sha256":  "525311319dfea95118861e4977a31aa5bb8d8bc1a7b55a1035b8da1a43e37182",
+                                                        "bytes":  111344
+                                                    }
+                },
+    "scope":  "disposable snapshot installation; no physical input, board writes, production changes, permission changes or runtime fallback"
+}

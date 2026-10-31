@@ -1,0 +1,35 @@
+﻿{
+    "observedAt":  "2026-10-31T05:25:26.7328321Z",
+    "os":  {
+               "displayVersion":  "26H2",
+               "productName":  "Windows 10 Pro",
+               "build":  "26300.9711"
+           },
+    "monitors":  [
+                     {
+                         "device":  "\\\\.\\DISPLAY1",
+                         "monitor":  {
+                                         "left":  0,
+                                         "top":  0,
+                                         "right":  2560,
+                                         "bottom":  1440
+                                     },
+                         "work":  {
+                                      "left":  0,
+                                      "top":  0,
+                                      "right":  2560,
+                                      "bottom":  1392
+                                  },
+                         "flags":  1,
+                         "dpiX":  96,
+                         "dpiY":  96,
+                         "dpiHresult":  0,
+                         "scaleHresult":  0,
+                         "scalePercent":  100
+                     }
+                 ],
+    "dpiProbe":  "GetDpiForMonitor MDT_EFFECTIVE_DPI + GetScaleFactorForMonitor under thread PER_MONITOR_AWARE_V2; thread restored",
+    "textScaleFactor":  140,
+    "appsUseLightTheme":  0,
+    "systemUsesLightTheme":  0
+}
