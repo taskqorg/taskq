@@ -1347,7 +1347,15 @@ mod tests {
         let _=fs::remove_dir_all(&install);
         let t=tool(&install);
         let (dev,release)=(format!("{VERSION}-dev.1"),"0.9.0");
-        for v in [dev.as_str(),release] {fs::create_dir_all(t.release_exe(v).parent().unwrap()).unwrap();fs::write(t.release_exe(v),v).unwrap();}
+        // #2049 A1: a Windows update derives the GUI launcher from the release, so the fixture is a console PE image.
+        let image=|v:&str|-> Vec<u8> {
+            if !cfg!(windows) {return v.as_bytes().to_vec();}
+            let mut b=vec![0u8;0x40+24+240];
+            b[..2].copy_from_slice(b"MZ");b[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());b[0x40..0x44].copy_from_slice(b"PE\0\0");
+            b[0x40+20..0x40+22].copy_from_slice(&240u16.to_le_bytes());b[0x40+24..0x40+26].copy_from_slice(&0x20bu16.to_le_bytes());
+            b[0x40+24+68..0x40+24+70].copy_from_slice(&3u16.to_le_bytes());b.extend_from_slice(v.as_bytes());b
+        };
+        for v in [dev.as_str(),release] {fs::create_dir_all(t.release_exe(v).parent().unwrap()).unwrap();fs::write(t.release_exe(v),image(v)).unwrap();}
         write_atomic(&install.join("current"),&dev).unwrap();
         let latest=std::cell::RefCell::new(release.to_string());
         let fetch=|name:&str,to:&Path| -> Result<(),String> {
@@ -1373,7 +1381,8 @@ mod tests {
         assert_eq!(channel(&install).unwrap(),"live");
         assert_eq!(channel_update(&install,&fetch).unwrap().as_deref(),Some(release));
         assert_eq!((t.current().unwrap(),fs::read_to_string(install.join("previous")).unwrap()),(release.to_string(),dev.clone()));
-        assert_eq!(fs::read_to_string(install.join(t.exe_name())).unwrap(),release);
+        assert_eq!(fs::read(install.join(t.exe_name())).unwrap(),image(release));
+        if cfg!(windows) {assert!(install.join(t.gui_exe_name()).is_file(),"the update places the GUI launcher the Scheduled Tasks start");}
         fs::write(install.join("host.json"),r#"{"channel":"beta"}"#).unwrap();
         assert!(channel(&install).is_err());
         fs::remove_dir_all(&install).unwrap();
