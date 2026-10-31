@@ -123,9 +123,70 @@ pub(crate) fn supervise(mut c: Command) -> Result<i32, String> {
     Ok(s.code().unwrap_or_else(|| 128 + s.signal().unwrap_or(0)))
 }
 
+/// Host side of #1920: a private parent process between the host and the launcher. Self-updates never refresh the
+/// root-owned helper copy, so a helper older than `supervise` still execs bwrap, and `--die-with-parent` then fires
+/// when the service re-exec ends the project thread that spawned it (#2071). Forked inside the spawned child, the
+/// parent is a single-thread process the host owns and the re-exec hands over; it waits for the launcher and ends
+/// with its status. Killing it still ends the sandbox: the launcher carries PR_SET_PDEATHSIG SIGKILL.
+pub(crate) fn own(c: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    // Only async-signal-safe calls: this runs between fork and exec of a multithreaded host.
+    unsafe {
+        c.pre_exec(|| {
+            let parent = libc::getpid();
+            match libc::fork() {
+                -1 => Err(std::io::Error::last_os_error()),
+                0 => {
+                    if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 { return Err(std::io::Error::last_os_error()); }
+                    if libc::getppid() != parent { return Err(std::io::Error::from_raw_os_error(libc::ESRCH)); }
+                    Ok(())
+                }
+                launcher => {
+                    // The host waits for exec on a pipe and reads stdio until EOF: hold no descriptor.
+                    if libc::syscall(libc::SYS_close_range, 0u32, u32::MAX, 0u32) != 0 { for fd in 0..65536 { libc::close(fd); } }
+                    // Never run a copied host handler: a stop signal ends this parent, and with it the launcher.
+                    for sig in 1..32 { libc::signal(sig, libc::SIG_DFL); }
+                    let mut st = 0;
+                    while libc::waitpid(launcher, &mut st, 0) < 0 {
+                        if std::io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) { libc::_exit(127); }
+                    }
+                    if libc::WIFSIGNALED(st) { libc::kill(parent, libc::WTERMSIG(st)); }
+                    libc::_exit(if libc::WIFEXITED(st) { libc::WEXITSTATUS(st) } else { 128 + libc::WTERMSIG(st) })
+                }
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Chain: host stops a sandboxed worker -> SIGKILL to the private parent -> launcher ends; exit status passes through (#2071).
+    // Risk: the parent hides the launcher, so a stopped worker keeps running, or spawn blocks on the parent's descriptors.
+    #[test]
+    fn private_parent_passes_status_and_stop() {
+        use std::os::unix::process::ExitStatusExt;
+        let status = |script: &str| { let mut c = Command::new("/bin/sh"); c.args(["-c", script]); own(&mut c); c.status().unwrap() };
+        assert_eq!(status("exit 7").code(), Some(7));
+        assert_eq!(status("kill -TERM $$").signal(), Some(libc::SIGTERM));
+        let mut missing = Command::new("/nonexistent/taskq-sandbox"); own(&mut missing);
+        assert!(missing.spawn().is_err(), "a launch failure stops the attempt");
+        let file = std::env::temp_dir().join(format!("taskq-private-parent-{}", std::process::id()));
+        let mut c = Command::new("/bin/sh"); c.args(["-c", "echo $$ > \"$0\"; exec sleep 30"]).arg(&file); own(&mut c);
+        let start = std::time::Instant::now();
+        let mut parent = c.spawn().unwrap();
+        let launcher = loop {
+            if let Some(pid) = std::fs::read_to_string(&file).ok().and_then(|s| s.trim().parse::<i32>().ok()) { break pid; }
+            assert!(start.elapsed().as_secs() < 5, "launcher never started"); std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_ne!(launcher, parent.id() as i32, "the launcher runs below a private parent");
+        parent.kill().unwrap(); parent.wait().unwrap();
+        while std::fs::read_to_string(format!("/proc/{launcher}/stat")).is_ok_and(|s| !s.contains(") Z ")) {
+            assert!(start.elapsed().as_secs() < 10, "stopping the parent left the launcher running"); std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_file(file);
+    }
 
     #[test]
     fn codex_login_state_stays_writable() {

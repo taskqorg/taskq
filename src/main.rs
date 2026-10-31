@@ -5252,6 +5252,9 @@ mod tests {
             command.args(["--exact",if sandbox {"tests::sandbox_helper_child"} else {"tests::handover_native_child"},"--ignored","--nocapture"])
                 .env("TASKQ_IMAGE_ROOT",&root).stdin(std::process::Stdio::null()).stdout(output).stderr(std::process::Stdio::null());
             // #1920: a host service spawns children on a project thread, which lives until the re-exec ends it.
+            // #2071: through the private parent `runtime::executable` gives the launcher.
+            #[cfg(target_os="linux")]
+            if sandbox { linux_sandbox::own(&mut command); }
             let child=if sandbox {
                 let (sent,spawned)=std::sync::mpsc::channel();
                 std::thread::spawn(move || { sent.send(command.spawn()).unwrap(); loop { std::thread::park(); } });
@@ -5348,6 +5351,8 @@ mod tests {
     fn sandbox_helper_child() {
         let mut bwrap=std::process::Command::new(std::env::current_exe().unwrap());
         bwrap.args(["--exact","tests::handover_native_child","--ignored","--nocapture"]).env("TASKQ_IMAGE_PDEATHSIG","1");
+        // A root-owned helper copy older than #1934 execs bwrap; self-updates never refresh it (#2071).
+        if std::env::var_os("TASKQ_IMAGE_STALE").is_some() { panic!("exec failed: {}",std::os::unix::process::CommandExt::exec(&mut bwrap)); }
         crate::platform::exit(linux_sandbox::supervise(bwrap).unwrap());
     }
 
@@ -5362,6 +5367,22 @@ mod tests {
             .args(["--exact","tests::handover_image_child","--ignored","--nocapture"])
             .env("TASKQ_IMAGE_ROOT",&root).env("TASKQ_IMAGE_SANDBOX","1").env("TASKQ_IMAGE_PHASE","before"),Duration::from_secs(20));
         assert!(result.is_ok(),"sandboxed image handover failed: {result:?}");
+        assert_eq!(fs::read_to_string(root.join("verified")).unwrap(),"same process; exact execution; accepted input; native exit");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Chain: Linux service update with a helper copy older than #1934 -> launcher execs bwrap -> host re-exec ->
+    // adopted live child, exit receipt (#2071, pds18 4.6.55: live pilotq workers recorded gone, exit -1).
+    // Risk: the host relies on helper code that self-updates never refresh, so the re-exec kills the worker.
+    #[cfg(target_os="linux")]
+    #[test]
+    fn stale_sandbox_helper_child_survives_the_reexec() {
+        let root=std::env::temp_dir().join(format!("taskq-image-stale-{}",runtime::uuid()));
+        fs::create_dir_all(&root).unwrap();
+        let result=coreq::process::output("qualification.image-handover",std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","tests::handover_image_child","--ignored","--nocapture"])
+            .env("TASKQ_IMAGE_ROOT",&root).env("TASKQ_IMAGE_SANDBOX","1").env("TASKQ_IMAGE_STALE","1").env("TASKQ_IMAGE_PHASE","before"),Duration::from_secs(20));
+        assert!(result.is_ok(),"stale-helper image handover failed: {result:?}");
         assert_eq!(fs::read_to_string(root.join("verified")).unwrap(),"same process; exact execution; accepted input; native exit");
         fs::remove_dir_all(root).unwrap();
     }
