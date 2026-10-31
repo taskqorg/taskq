@@ -11,27 +11,39 @@ pub struct Cache {
     entries: std::collections::BTreeMap<u64,(i64,i64,Option<Value>)>,
     value: Value,
     verified: Option<i64>,
+    /// #2083: board time of the last read of every issue updated since the one before (label-removed tasks included).
+    full: Option<i64>,
+    /// #2083: `since` of the next read of `taskq` issues only: the newest task update read, so an unchanged board repeats
+    /// one URL and answers 304, where heartbeat writes change every reply of all issues.
+    cursor: Option<i64>,
 }
+
+/// #2083: the longest between report reads of every issue.
+const FULL_SCAN: i64 = 300;
 impl Cache {
     fn retaining(value:Value)->Self {
         let entries=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten())
             .filter_map(|r|r["n"].as_u64().map(|n|(n,(r["updated"].as_i64().unwrap_or(-1),r["proof"].as_i64().unwrap_or(0),Some(r.clone()))))).collect();
         // A restart resumes the stored cursor; rows keep their read proof, so only issues that moved re-read comments.
         let verified=value["verified"].as_i64();
-        Self{entries,value,verified}
+        Self{entries,value,verified,full:None,cursor:None}
     }
     pub fn collect(&mut self,b:&dyn Board) {
         let result=coreq::telemetry::capture::operation("reports.collect",|| -> Res<Value> {
             // Start before paging: updates racing a later page must remain inside the next overlap.
             let verified=b.now()?;
+            let full=self.cursor.is_none() || self.full.is_none_or(|t|verified-t>=FULL_SCAN||t>verified);
+            let since=self.verified.map(|v|if full {self.full.unwrap_or(v).min(v)-1} else {self.cursor.unwrap_or(v-1).min(v-1)});
             let issues=coreq::telemetry::capture::operation("reports.collect.list",|| -> Res<Vec<(Issue,i64)>> {
-                if let Some(since)=self.verified {
-                    return Ok(b.issues(Some(since-1))?.into_iter().map(|i|{let closed=i.closed.or_else(||self.entries.get(&i.number).and_then(|(_,_,r)|r.as_ref()).and_then(|r|r["closed"].as_i64())).unwrap_or(i.updated);(i,closed)}).collect());
+                if let Some(since)=since {
+                    let issues=if full {b.issues(Some(since))?} else {b.tasks(since)?};
+                    return Ok(issues.into_iter().map(|i|{let closed=i.closed.or_else(||self.entries.get(&i.number).and_then(|(_,_,r)|r.as_ref()).and_then(|r|r["closed"].as_i64())).unwrap_or(i.updated);(i,closed)}).collect());
                 }
                 let mut all=Vec::new();let mut page=1;
                 loop {let (rows,more)=b.closed_tasks(page,None)?;all.extend(rows);if !more {break;}page+=1;}
                 Ok(all)
             },|_|"board-read")?;
+            let newest=issues.iter().filter(|(i,_)|i.labels.iter().any(|l|l==crate::service::TASK_LABEL)).map(|(i,_)|i.updated).max();
             let mut next=if self.verified.is_none(){Default::default()}else{self.entries.clone()};let mut errors=Vec::new();
             for (i,closed) in issues {
                 let old=self.entries.get(&i.number);
@@ -70,7 +82,13 @@ impl Cache {
                 next.insert(i.number,(i.updated,if reusable{old.unwrap().1}else{verified},row));
             }
             self.entries=next;
-            if errors.is_empty() {self.verified=Some(verified);}
+            if errors.is_empty() {
+                if let Some(since)=since {
+                    if full {self.full=Some(verified);}
+                    self.cursor=newest.map(|t|t-30).filter(|t|*t<=verified).into_iter().chain(self.cursor).max().or(Some(since));
+                }
+                self.verified=Some(verified);
+            }
             let mut rows:Vec<Value>=self.entries.values().filter_map(|(at,proof,r)|r.clone().map(|mut r|{r["updated"]=json!(at);r["proof"]=json!(proof);r})).collect();
             rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();

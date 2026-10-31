@@ -3812,7 +3812,7 @@ mod tests {
         let text = snap.text(&cfg, &json!({})).unwrap();
         assert!(!text.contains("retired"));
         assert!(text.contains("stale v4") && text.contains(" stale"), "{text}");
-        let (_, hosts) = crate::service::views(&a, &mut Default::default(), &mut Default::default()).unwrap();
+        let (_, hosts) = crate::service::views(&a, &mut Default::default(), &mut Default::default(), 300).unwrap();
         assert_eq!(hosts.iter().filter_map(crate::service::host_name).collect::<Vec<_>>(), ["stale"]);
         let status = snap.json();
         let (strip, _) = liveness(&status, Some(0), cfg.ttl, &mut vec![]);

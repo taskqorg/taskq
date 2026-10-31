@@ -43,10 +43,17 @@ pub struct GitHub {
 
 struct Open {
     at: std::time::Instant,
+    /// The board clock when the list was read (#2083): a kept heartbeat is never newer than the board at this time.
+    listed: i64,
+    /// The last `issues(None)` returned this list without reading it.
+    reused: bool,
     list: Vec<Issue>,
-    /// `updated` of every issue the list accounts for, closed ones the relisting probe saw too; its maximum is the probe's `since`.
+    /// `updated` of every `taskq` issue the list accounts for, closed ones the relisting probe saw too; its maximum is the
+    /// probe's `since`.
     known: std::collections::HashMap<u64, i64>,
 }
+
+fn task(i: &Issue) -> bool { i.labels.iter().any(|l| l == crate::service::TASK_LABEL) }
 
 /// The longest an open-issue list is reused over unchanged probes; a deleted issue does not bump `updated_at`.
 const OPEN_REUSE: std::time::Duration = std::time::Duration::from_secs(300);
@@ -91,26 +98,20 @@ const OPEN_ISSUES: &str = "query($owner: String!, $name: String!, $after: String
     nodes { number title body updatedAt createdAt authorAssociation labels(first: 50) { nodes { name } } } } } }";
 
 impl GitHub {
-    /// Every board change bumps some issue's `updated_at`; one `since` query of the newest known update finds them,
-    /// a 304 when nothing changed (#1819). Heartbeat writes and pull requests alone patch the list instead of relisting
-    /// it (#1968): three hosts beating every minute would otherwise relist on every pass.
+    /// Every task change bumps some `taskq` issue's `updated_at`; one `since` query of the newest known task update
+    /// finds them, a 304 when nothing changed (#1819). The probe asks for `taskq` issues only (#2083): heartbeat writes
+    /// of three hosts changed every reply and billed each pass. Heartbeats, held drafts and other open issues come from
+    /// the full list, read at least every [`OPEN_REUSE`]; `views` relists a kept heartbeat that turns stale (§ 3).
     fn open_unchanged(&self) -> Result<Vec<Issue>> {
         let cached = self.open.borrow_mut().take().filter(|o| o.at.elapsed() < OPEN_REUSE);
         let mut seen = vec![];
         if let Some(mut o) = cached {
             let since = o.known.values().max().copied().unwrap_or(0);
-            let url = format!("/issues?state=all&sort=updated&direction=desc&per_page=100&since={}", stamp(since));
+            let url = format!("/issues?state=all&labels={}&sort=updated&direction=desc&per_page=100&since={}", crate::service::TASK_LABEL, stamp(since));
             if let Ok(Value::Array(rows)) = self.api.call("GET", &url, None).and_then(|r| r.json()) {
                 let issues: Vec<Issue> = rows.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect();
-                if rows.len() < 100 && issues.iter().all(|i| crate::service::is_host(i) || o.known.get(&i.number) == Some(&i.updated)) {
-                    for h in issues.into_iter().filter(crate::service::is_host) {
-                        match o.list.iter().position(|i| i.number == h.number) {
-                            Some(at) if h.open => o.list[at] = h,
-                            Some(at) => { o.list.remove(at); }
-                            None if h.open => o.list.push(h),
-                            None => {}
-                        }
-                    }
+                if rows.len() < 100 && issues.iter().all(|i| o.known.get(&i.number) == Some(&i.updated)) {
+                    o.reused = true;
                     let list = o.list.clone();
                     *self.open.borrow_mut() = Some(o);
                     return Ok(list);
@@ -120,8 +121,9 @@ impl GitHub {
         }
         // a failed list keeps nothing: the next pass reads in full
         let list = self.open_issues()?;
-        let known = seen.iter().chain(&list).map(|i| (i.number, i.updated)).collect();
-        *self.open.borrow_mut() = Some(Open { at: std::time::Instant::now(), list: list.clone(), known });
+        let known = seen.iter().chain(&list).filter(|i| task(i)).map(|i| (i.number, i.updated)).collect();
+        let listed = *self.api.clock.borrow();
+        *self.open.borrow_mut() = Some(Open { at: std::time::Instant::now(), listed, reused: false, list: list.clone(), known });
         Ok(list)
     }
 
@@ -674,6 +676,7 @@ fn head_moved(number: &Value, head: &str, sha: &str) -> Publish {
 
 impl Board for GitHub {
     fn forget(&self) { *self.open.borrow_mut() = None; }
+    fn kept(&self) -> Option<i64> { self.open.borrow().as_ref().filter(|o| o.reused).map(|o| o.listed) }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.merge_ci(sha)?.map(|_| ()) }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> {
         if mode != "pr" { return Ok(None); }
@@ -719,6 +722,11 @@ impl Board for GitHub {
             None if self.api.root == "https://api.github.com" => return self.open_unchanged(),
             None => "/issues?state=open&per_page=100".into(),
         };
+        Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect())
+    }
+
+    fn tasks(&self, since: i64) -> Result<Vec<Issue>> {
+        let url = format!("/issues?state=all&labels={}&per_page=100&since={}", crate::service::TASK_LABEL, stamp(since));
         Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(parse_issue).collect())
     }
 
@@ -793,20 +801,31 @@ impl Board for GitHub {
 
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64> {
         if let Some(names) = self.api.creation_labels(labels)? { self.ensure_labels(&names)?; }
+        // #2083: a new heartbeat or held draft is not a `taskq` change the probe sees; the next list reads in full
+        self.forget();
         let n = self.api.call("POST", "/issues", Some(json!({ "title": title, "body": body, "labels": labels })))?.json()?["number"].as_u64().ok_or("no issue number")?;
         verify_assignment(self, n, labels, &[])?;
         Ok(n)
     }
 
     fn edit(&self, n: u64, body: &str) -> Result<()> {
-        self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "body": body }))).map(|_| ())
+        let reply = self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "body": body })))?;
+        // #2083: the probe does not see this host's heartbeat write; its reply patches the kept list, so the next
+        // pass reads the new `updated_at` and does not write again
+        let issue = reply.json().map(|v| parse_issue(&v)).ok().filter(|i| i.number == n && i.open && !task(i));
+        if let (Some(issue), Some(o)) = (issue, self.open.borrow_mut().as_mut()) {
+            if let Some(at) = o.list.iter().position(|i| i.number == n) { o.list[at] = issue; }
+        }
+        Ok(())
     }
 
     fn close(&self, n: u64) -> Result<()> {
+        self.forget();
         self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "closed" }))).map(|_| ())
     }
 
     fn reopen(&self, n: u64) -> Result<()> {
+        self.forget();
         self.api.call("PATCH", &format!("/issues/{n}"), Some(json!({ "state": "open" }))).map(|_| ())
     }
 
