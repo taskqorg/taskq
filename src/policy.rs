@@ -158,7 +158,7 @@ pub fn profile(install: &Path, writable: Option<&[PathBuf]>, home: &Path) -> Str
             s += &format!("(deny file-write* (subpath {}))\n", sb(if d.ends_with("bin") { d.parent().unwrap_or(d) } else { d }));
         }
     }
-    s += "(deny file-write* (regex #\"/\\.codex/[^/]*\\.toml$\"))\n";
+    s += "(deny file-write* (regex #\"/\\.codex/(taskq-accounts/[^/]+/)?[^/]*\\.toml$\"))\n";
     s
 }
 

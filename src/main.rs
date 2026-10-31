@@ -5,6 +5,7 @@ macro_rules! log {
     ($($t:tt)*) => { $crate::platform::log(&format!($($t)*)) };
 }
 
+use runtime::accounts;
 mod admission;
 mod check;
 #[cfg(any(target_os="macos",windows,test))]
@@ -76,6 +77,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
+ taskq accounts [--json] | taskq accounts enable|disable <runtime> <label> | taskq accounts move <runtime> <label> <position> | taskq accounts add <runtime> <label>
  taskq labels
  taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
@@ -162,6 +164,7 @@ impl Args {
             Some("service") if a.pos.get(1).is_some_and(|p| p == "focus") => a.pos.len(),
             Some("service") if a.pos.get(1).is_some_and(|p| p == "channel") => 3,
             Some("rules") => 6,
+            Some("accounts") => 5,
             Some("service" | "profile" | "add" | "finding" | "approve" | "recipe" | "ask" | "answer" | "pick" | "result" | "requeue" | "later" | "failed" | "steer" | "inbox" | "issue" | "claim-issue" | "reports" | "results" | "enroll" | "connection") => 2,
             _ => 1,
         };
@@ -3127,6 +3130,8 @@ fn run(argv: &[String]) -> Res<()> {
             for r in runtime::agents(&platform::default_install()).as_array().into_iter().flatten() { println!("{}", runtime::agents_line(r)); }
             Ok(())
         }
+        // § 3 Runtime accounts: list reads every host; enable, disable, move and add write this host only
+        "accounts" => accounts_cli(&a),
         "service" => service(&a),
         // § 5: an owner session (§ 4) in this project; no board
         "retro" => {
@@ -3140,6 +3145,36 @@ fn run(argv: &[String]) -> Res<()> {
         "reports"|"results" => match reports::read_cli(&find_root()?,&a)? {Some(value)=>{println!("{value}");Ok(())},None=>command(&ctx()?,cmd,&a)},
         _ => command(&ctx()?, cmd, &a),
     }
+}
+
+/// `taskq accounts` ([§ 3 Runtime accounts](../taskq.md#runtime-accounts)): this host's rows from its own files and a
+/// read-only login probe per home (the email only here); other hosts' rows from their heartbeats, never an email.
+fn accounts_cli(a: &Args) -> Res<()> {
+    let install = platform::default_install();
+    let w: Vec<&str> = a.pos.iter().skip(1).map(String::as_str).collect();
+    let out = match w.as_slice() {
+        [] => {
+            let h = accounts::Host::read(&install);
+            if let Some(e) = &h.error { eprintln!("accounts: {e}; this host reads as one default account per runtime"); }
+            let board = ctx();
+            let me = board.as_ref().map_or_else(|_| "this-host".to_string(), |c| c.cfg.me.clone());
+            let mut rows = h.rows(&me, accounts::now(), runtime::account_email);
+            match &board {
+                Ok(c) => for i in c.board.issues(None)?.iter().filter(|i| i.trusted) {
+                    if let Some(host) = service::host_name(i).filter(|h| *h != me) { rows.extend(accounts::heartbeat_rows(host, &i.body)); }
+                },
+                Err(e) => eprintln!("accounts: other hosts unknown ({e}); this host only"),
+            }
+            if a.flags.contains_key("json") { serde_json::to_string(&rows.iter().map(accounts::Row::json).collect::<Vec<_>>()).map_err(|e| e.to_string())? }
+            else { rows.iter().map(accounts::Row::text).collect::<Vec<_>>().join("\n") }
+        }
+        [op @ ("enable" | "disable"), rt, label] => accounts::write(&install, op, rt, label, None)?,
+        ["move", rt, label, at] => accounts::write(&install, "move", rt, label, Some(at.parse().map_err(|_| "position must be a number")?))?,
+        ["add", rt, label] => accounts::add(&install, rt, label)?,
+        _ => return Err("usage: taskq accounts [--json] | taskq accounts enable|disable <runtime> <label> | taskq accounts move <runtime> <label> <position> | taskq accounts add <runtime> <label>".into()),
+    };
+    println!("{out}");
+    Ok(())
 }
 
 fn create_claim_issue(b: &dyn Board, raw: &Value, op: &Op) -> Result<u64, Receipt> {
