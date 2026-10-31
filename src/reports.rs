@@ -20,12 +20,16 @@ pub struct Cache {
 
 /// #2083: the longest between report reads of every issue.
 const FULL_SCAN: i64 = 300;
+/// #2087: github.com serves issue lists up to 5 min old (§ 4), so a read of every issue starts this far before the
+/// previous one: an update the lagging reply left out falls inside the next window instead of before it.
+const LIST_LAG: i64 = 300;
 impl Cache {
     fn retaining(value:Value)->Self {
         let entries=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten())
             .filter_map(|r|r["n"].as_u64().map(|n|(n,(r["updated"].as_i64().unwrap_or(-1),r["proof"].as_i64().unwrap_or(0),Some(r.clone()))))).collect();
         // A restart resumes the stored cursor; rows keep their read proof, so only issues that moved re-read comments.
-        let verified=value["verified"].as_i64();
+        // #2087: a cache written without the list-lag overlap may have missed an update for good; list it once in full.
+        let verified=value["verified"].as_i64().filter(|_|value["overlap"]==LIST_LAG);
         Self{entries,value,verified,full:None,cursor:None}
     }
     pub fn collect(&mut self,b:&dyn Board) {
@@ -33,7 +37,7 @@ impl Cache {
             // Start before paging: updates racing a later page must remain inside the next overlap.
             let verified=b.now()?;
             let full=self.cursor.is_none() || self.full.is_none_or(|t|verified-t>=FULL_SCAN||t>verified);
-            let since=self.verified.map(|v|if full {self.full.unwrap_or(v).min(v)-1} else {self.cursor.unwrap_or(v-1).min(v-1)});
+            let since=self.verified.map(|v|if full {self.full.unwrap_or(v).min(v)-LIST_LAG-1} else {self.cursor.unwrap_or(v-1).min(v-1)});
             let issues=coreq::telemetry::capture::operation("reports.collect.list",|| -> Res<Vec<(Issue,i64)>> {
                 if let Some(since)=since {
                     let issues=if full {b.issues(Some(since))?} else {b.tasks(since)?};
@@ -92,7 +96,7 @@ impl Cache {
             let mut rows:Vec<Value>=self.entries.values().filter_map(|(at,proof,r)|r.clone().map(|mut r|{r["updated"]=json!(at);r["proof"]=json!(proof);r})).collect();
             rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
-            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified}))
+            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified,"overlap":LIST_LAG}))
         },|_|"board-read");
         match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(reason);}}
     }
@@ -686,6 +690,28 @@ mod tests {
         let mut restarted=Cache::retaining(legacy);b.advance(2);restarted.collect(&b);
         assert_eq!(b.state.borrow().comment_reads,reads,"a full listing still reuses rows with their read proof");
         assert_eq!(restarted.value["complete"],true);assert!(restarted.value["reports"][0]["body"].is_string());
+    }
+
+    // #2087 A1: a decision whose issue update a lagging list left out must still leave Decide, before and after a restart,
+    // and a cache stored before the list-lag overlap must heal once. Risk: a dropped report stays in Decide for good.
+    #[test] fn lagging_list_never_hides_a_decision_for_good() {
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let list=b.state.borrow().issues.clone();b.raw(n,&format!("taskq: report-drop {sha}"),true,false);b.state.borrow_mut().stale_list=Some(list);
+        b.advance(FULL_SCAN);cache.collect(&b);
+        assert_eq!(cache.value["reports"][0]["n"],n,"the lagging reply still shows the report");
+        b.advance(FULL_SCAN);cache.collect(&b);
+        assert!(cache.value["reports"].as_array().unwrap().is_empty(),"the next full read overlaps the lag");
+        assert_eq!(cache.value["history"][0]["decision"],"drop");
+        // The same miss just before a restart heals in the retained cache's first pass.
+        let (b,_,n,sha)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let list=b.state.borrow().issues.clone();b.raw(n,&format!("taskq: report-drop {sha}"),true,false);b.state.borrow_mut().stale_list=Some(list);
+        b.advance(FULL_SCAN);cache.collect(&b);assert_eq!(cache.value["reports"][0]["n"],n);
+        let mut restarted=Cache::retaining(cache.value.clone());b.advance(60);restarted.collect(&b);
+        assert!(restarted.value["reports"].as_array().unwrap().is_empty());assert_eq!(restarted.value["history"][0]["decision"],"drop");
+        // A cache stored before the overlap (no `overlap` key) relists once in full and drops the stale row.
+        let mut old=cache.value.clone();old.as_object_mut().unwrap().remove("overlap");old["verified"]=json!(b.now().unwrap());
+        let mut healed=Cache::retaining(old);healed.collect(&b);assert!(healed.value["reports"].as_array().unwrap().is_empty());
+        assert_eq!(healed.value["overlap"],LIST_LAG);
     }
 
     // #1973 A1: open tasks and host heartbeats move every minute but never project; they must cost no comment read.
