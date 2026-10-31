@@ -1,6 +1,6 @@
 # Reports in Conversations: design review
 
-Put questions, reports and finished work in one Conversations window. Keep the grouped sidebar visible while the operator reads and decides. The [owner answer](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6535685297) approved the Product design and six-screen package. Build verification and native qualification remain distinct (A5/A6, R12).
+Put questions, reports and finished work in one Conversations window. Keep the grouped sidebar visible while the operator reads and decides. The [owner answer](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6535685297) approved the Product design and six-screen package. Build verification and native qualification remain distinct (A5/A6, R12). The [dated Later decision](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6547159713) keeps main's revisit rule: the shared card collects a future date before Send, defaulting to one week. Other primary choices remain direct.
 
 Requirements: [taskq.md Product](../../taskq.md#product), [RC1–RC7](reports.md#conversations-design-checkpoint-1977), [decision cards](answer-card.md#result-decision-candidate-1977), [Conversations placement](tray-workspace.md#reports-and-finished-work-candidate-1977). Shared [design workflow](https://github.com/taskqorg/specq/blob/main/design/workflow.md) and F1–F6 govern approval and qualification. R1, R6 and §2 lifecycle protections are retained; this proposes no queue transition change.
 
@@ -53,6 +53,7 @@ All data is invented. The editable [mockup](exploration/reports-conversations.ht
 | [4 · Empty](evidence/1977/04-empty.png) | No conversations versus no filtered matches; no false board-wide clear state |
 | [5 · Many items](evidence/1977/05-many.png) | Scrollable grouped list; loaded counts explicitly incomplete |
 | [6 · Unknown delivery](evidence/1977/06-unknown.png) | Cached reading stays available; conflicting actions disabled; Check delivery retains intent |
+| [7 · Dated Later](evidence/1977/07-later.png) | Approved continuation: date entry and Send in the source question; no board write until Send |
 
 Reference capture: Chromium headless on Windows, system-ui (Segoe UI), dark theme, 16 CSS px, device scale 1, viewport 1280×1000; the app crop is 1280×760. These are browser mockups, not native Windows screenshots. [Instrument results](evidence/1977/prototype-checks.json) include renderer version, source baseline and the 72 cells (six scenes × three widths × two fonts × two themes). No theme/size-only variants are added to the owner review set.
 

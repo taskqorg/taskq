@@ -6,6 +6,7 @@ const replyFiles=require('./reply-files.js');
 const {fresh,textProblem,status,step,render,compose,receipt,mount,replay}=execution.module("answer-card",{
 fresh:function(row) { return {draft: '', bound: row.revision, op: null, receipt: null}; },
 textProblem:function(q, text, files) {
+    if(q?.resultDate){const at=new Date(text+'T12:00:00Z');return /^\d{4}-\d{2}-\d{2}$/.test(text)&&Number.isFinite(+at)&&at.toISOString().slice(0,10)===text&&at>Date.now()?null:'Choose a future revisit date';}
     if(q?.resultReason && (text.trim().length===0 || [...text.trim()].length>180 || /[\r\n]/.test(text))) return 'Give a one-line reason, at most 180 characters';
     return replyFiles.problem(files)|| (text.trim() || files?.length ? null : 'Type an answer');
   },
@@ -45,11 +46,11 @@ step:function(row, local, cap, ev, newId) {
         const c = row.question.choices.find(x => x.id === ev.id);
         if (!c || c.consequential) return {local, send: null};
         if(row.resultDecision && c.local) return {local:l,send:null};
-        if(row.resultDecision && c.reason) return {local:{...l,intent:c.reason},send:null};
+        if(row.resultDecision && c.reason) return {local:{...l,intent:c.reason,...(c.reason==='later'&&!l.draft?{draft:new Date(Date.now()+7*86400000).toISOString().slice(0,10)}:{})},send:null};
         return start({choice: c.id});
       }
       case 'submit':
-        if(row.resultDecision && (!row.question.resultReason || !l.intent)) return {local,send:null};
+        if(row.resultDecision && (!(row.question.resultReason||row.question.resultDate) || !l.intent)) return {local,send:null};
         if (!cap || !cap.answer || !LIVE.includes(st) || textProblem(draftQuestion(row, cap), l.draft,l.files)) return {local, send: null};
         // an unparsed fallback card takes a requeue reason; a parsed owner action without options takes a text answer
         return start(fallback(row, cap) ? {action: 'requeue', text: l.draft.trim()} : {text: l.draft.trim()}, st === 'changed' && !fallback(row, cap) ? l.bound : row.revision);
@@ -66,6 +67,7 @@ step:function(row, local, cap, ev, newId) {
         if (!l.op || ev.opId !== l.op.id) return {local, send: null};
         l.receipt = {state: ['accepted', 'rejected', 'stale', 'unknown', 'failed', 'partial'].includes(ev.state) ? ev.state : 'unknown', reason: ev.reason, next: ev.next, ...(ev.note?{note:true}:{})};
         if (ev.state === 'accepted' && (l.op.text||l.op.files?.length)) {l.draft='';l.files=[];}
+        if (ev.state === 'accepted' && l.intent==='later') l.intent=null;
         return {local: l, send: null};
       case 'retry':
         // uncertain, unsent or partial delivery reconciles with the same id and payload, never a new one

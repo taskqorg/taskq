@@ -13,9 +13,9 @@ const task={...report,n:13,title:'Recover interrupted requests once',kind:'task'
   const state={...fx.state,font,theme,projects:[{...fx.state.projects[0],root:'fixture',name:'Research',issues:board,tasks:[],alive:true,complete:true,reports:{complete:true,observed:200,reports:[report,task],history:[{...task,n:14,title:'Earlier accepted result',url:board+'/14',read:true,decision:'accepted',visible:false}]}}],messages:{complete:true,count:0,entries:[]},conversations:{complete:true,items:[]},ai:{history:[],runtime:{id:'invented',name:'Fixture',available:false}}};
   await page.evaluate(state=>{window.sent=[];window.locals={};window.refuse=false;window.hold=false;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='answer-local'){locals[m.key]=m.local;return;}if(m.a!=='reports')return;if(hold)return;
    const p=state.projects[0],row=[...p.reports.reports,...p.reports.history].find(r=>r.n===m.n);if(refuse){queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,reason:'Board unavailable; decision unknown'}}));return;}
-   if(m.action!=='open')row.read=true;if(m.action==='accept')row.decision='accepted';if(m.action==='later')row.decision='later';if(m.action==='drop'){row.decision='drop';row.visible=false;}if(m.action==='make'){row.decision='made';row.visible=false;row.tasks_made=[21];}
+   if(m.action!=='open')row.read=true;if(m.action==='accept')row.decision='accepted';if(m.action==='later'){assertFutureDate(m.until);row.decision='later';row.later_until=m.until;}if(m.action==='drop'){row.decision='drop';row.visible=false;}if(m.action==='make'){row.decision='made';row.visible=false;row.tasks_made=[21];}
    queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,report:{...row},...(['reopen','followup'].includes(m.action)?{successor:22,successor_url:p.issues+'/22'}:{})}}));
-  }};window.fixtureState=state;taskq.receive(state);},state);
+  }};function assertFutureDate(until){if(!(Date.parse(until)>Date.now()))throw Error('Later needs a future revisit date');}window.fixtureState=state;taskq.receive(state);},state);
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports').length),0,'initial snapshot does not acknowledge read');
   if(surface==='tray'){
    await page.locator('[data-route=notifications]').click();await page.locator('[data-notification=open]').first().click();
@@ -27,7 +27,14 @@ const task={...report,n:13,title:'Recover interrupted requests once',kind:'task'
    assert(await page.locator('.report-card').isVisible());assert.equal(await page.locator('.reports-section').count(),0);
    if(width>620)assert(await page.locator('.conversation-list').isVisible(),'reader preserves sidebar');
    assert.match(await page.locator('.report-card').innerText(),/Recommendation/);
-   await page.locator('[data-result-card=decision] [data-choice="2"]').click();await page.waitForFunction(()=>sent.some(m=>m.a==='reports'&&m.action==='later'));
+   await page.locator('[data-result-card=decision] [data-choice="2"]').click();await page.getByLabel('Revisit date').waitFor();
+   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').length),0,'Later waits for the date and Send');
+   await page.getByLabel('Revisit date').fill('2000-01-01');assert.equal(await page.locator('[data-report=date-send]').isEnabled(),false,'past dates cannot send');
+   await page.getByLabel('Revisit date').fill('2099-01-02');await page.evaluate(()=>taskq.receive(fixtureState));assert.equal(await page.getByLabel('Revisit date').inputValue(),'2099-01-02','refresh keeps the date draft');
+   await page.evaluate(()=>{refuse=true;});await page.locator('[data-report=date-send]').click();await page.locator('[data-result-card=decision] [data-qac=retry]').waitFor();
+   const dateBefore=await page.evaluate(()=>sent.find(m=>m.a==='reports'&&m.action==='later'));assert.equal(dateBefore.until,'2099-01-02T12:00:00Z');assert.equal(await page.getByLabel('Revisit date').isEnabled(),false,'unknown delivery freezes the date');
+   await page.evaluate(()=>{refuse=false;});await page.locator('[data-result-card=decision] [data-qac=retry]').click();await page.waitForFunction(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').length===2);
+   const dateAfter=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').at(-1));assert.equal(dateAfter.id,dateBefore.id);assert.equal(dateAfter.until,dateBefore.until);await page.getByLabel('Revisit date').waitFor({state:'detached'});
    if(width<621)await page.locator('[data-c=list]').click();await page.locator('[data-c=result-filter][data-filter=decision]').click();assert(await page.locator('[data-report=open][data-n="12"]').isVisible(),'read/Later report remains undecided');
    await page.locator('[data-c=result-filter][data-filter=finished]').click();assert(await page.locator('[data-report=open][data-n="14"]').isVisible(),'decided history retained');
    await page.locator('[data-report=open][data-n="13"]').click();await page.locator('[data-result-card=decision] [data-choice="1"]').waitFor();

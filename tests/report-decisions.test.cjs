@@ -15,6 +15,11 @@ assert.equal(card.step(keep,card.fresh(keep),{answer:true},{type:'choose',id:1},
 const sent=[],v=create({send:m=>sent.push(m),draw(){},defer(){},id:()=>String(sent.length+1)}),sha='a'.repeat(40);
 const report={n:12,sha,title:'Invented report',kind:'report',closed:40,read:true,decision:'none',visible:true,body:'Report'};
 const projects=[{root:'fixture',name:'Alpha',issues:'https://example.invalid/issues',reports:{complete:true,reports:[report],history:[{...report,n:13,decision:'drop',visible:false}]}}];
+const dated=v.cardRow(report,'decision'),later=card.step(dated,card.fresh(dated),{answer:true,composer:true},{type:'choose',id:2},()=> 'unused');
+assert.equal(later.send,null,'report Later collects its date before sending');assert.equal(later.local.intent,'later');assert.equal(card.textProblem(dated.question,later.local.draft),null,'default is a future revisit date');
+for(const text of ['','2000-01-01','2099-02-30','2099-01-02\n'])assert(card.textProblem(dated.question,text),'invalid or past revisit dates cannot send');
+const datedSend=card.step(dated,{...later.local,draft:'2099-01-02'},{answer:true,composer:true},{type:'submit'},()=> 'dated-op');assert.equal(datedSend.send.text,'2099-01-02');assert.equal(datedSend.send.id,'dated-op');
+const datedRetry=card.step(dated,{...datedSend.local,receipt:{state:'unknown'}},{answer:true},{type:'retry'},()=> 'never');assert.deepEqual(datedRetry.send,datedSend.send,'unknown retries retain the date and operation');
 v.sync(projects);assert.equal(v.threads().length,2,'Finished retains decided history');assert.equal(v.threads().find(r=>r.report===12).needsDecision,true,'reading leaves a report undecided');assert.equal(v.unread().length,0);
 v.open('fixture',13);assert.equal(v.current().n,13,'decided history opens locally');assert.equal(sent.length,0);
 const k='result:https://example.invalid/issues#12@'+sha+':decision';v.hydrate({[k]:{draft:'',bound:sha+':decision',op:{id:'original',task:12,revision:sha+':decision',choice:1},request:{id:'original',root:'fixture',n:12,sha,action:'accept'},receipt:{state:'sending'}}});
@@ -22,6 +27,23 @@ assert.equal(sent.length,0,'restoring unknown delivery never replays it');assert
 const wrong=create({send:m=>sent.push(m),draw(){},defer(){},id:()=> 'wrong'});wrong.sync(projects);wrong.open('fixture',12);wrong.act('accept');wrong.receive({id:'wrong',root:'fixture',report});assert.match(wrong.feedback(),/not confirmed/,'a matching source alone does not confirm the requested action');
 const late=create({send:m=>sent.push(m),draw(){},defer(){},id:()=> 'late-successor'});late.sync([{...projects[0],reports:{complete:true,reports:[{...report,comments_through:10}]}}]);late.open('fixture',12);late.act('followup','More work');late.sync([{...projects[0],reports:{complete:true,reports:[],history:[{...report,decision:'accepted',visible:false,comments_through:20}]}}]);late.receive({id:'late-successor',root:'fixture',report:{...report,comments_through:10},successor:42});assert.equal(late.current().decision,'accepted','late successor cannot overwrite newer collected acceptance');assert.equal(late.current().comments_through,20);assert.match(late.feedback(),/Created held draft/);assert.equal(late.threads()[0].needsDecision,false);
 assert.equal(late.open('fixture',12,'b'.repeat(40)),false,'an exact old-SHA deep link never substitutes another result');
+const wrongDate=create({send:m=>sent.push(m),draw(){},defer(){},id:()=> 'wrong-date'});wrongDate.sync(projects);wrongDate.open('fixture',12);wrongDate.act('later',undefined,'2099-01-02T12:00:00Z');wrongDate.receive({id:'wrong-date',root:'fixture',report:{...report,decision:'later',later_until:'2099-02-01T12:00:00Z'}});assert.match(wrongDate.feedback(),/not confirmed/,'another revisit date cannot confirm this request');
 console.log('PASS result cards: closed-source choices, intent then validated reason, duplicate guard, decided history and independent attention');
 
 const restored=create({send(){},draw(){},defer(){}});restored.sync(projects);const ck='result:https://example.invalid/issues#12@'+sha+':correction';restored.hydrate({[ck]:{draft:'',bound:sha+':correction',op:{id:'done'},request:{id:'done',root:'fixture',n:12,sha,action:'followup'},receipt:{state:'accepted'},successor:42}});restored.open('fixture',12);const markup=JSON.stringify(restored.section(projects));assert.match(markup,/Read held draft #42/,'restart shows recovered held successor without a transient notice');
+
+// Failed readback must not flood the board when the workspace redraws the same reader.
+const reads=[],menu={querySelectorAll:()=>[]};let reader;
+reader=create({send:m=>reads.push(m),draw(){reader.mount(menu);},defer(){},id:()=>String(reads.length+1)});
+reader.sync([{...projects[0],reports:{complete:true,reports:[{...report,read:false}]}}]);reader.open('fixture',12);
+const read=reads[0];assert.equal(read.action,'read');reader.receive({id:read.id,root:'fixture',reason:'Board unavailable'});reader.mount(menu);
+assert.equal(reads.length,1,'a failed read acknowledgement is not automatically retried on redraw');
+reader.open('fixture',12);assert.equal(reads.length,2,'explicitly reopening permits one new read attempt');
+
+// A complete same-SHA winning decision settles the losing request without writing or hiding its receipt.
+const raced=[],deferred=[],race=create({send:m=>raced.push(m),draw(){},defer:f=>deferred.push(f),id:()=> 'losing-accept'});
+race.sync(projects);race.open('fixture',12);race.act('accept');race.receive({id:'losing-accept',root:'fixture',reason:'Delivery unknown'});
+race.sync([{...projects[0],reports:{complete:true,reports:[],history:[{...report,decision:'made',visible:false,tasks_made:[42]}]}}]);
+for(const f of deferred)f();
+assert.equal(race.capability({...report,root:'fixture',decision:'made'},'correction').answer,true,'a known competing decision releases the losing unknown fence');
+assert.match(race.feedback(),/not confirmed/);assert.equal(raced.filter(m=>m.a==='reports').length,1,'reconciliation never sends a new board decision');

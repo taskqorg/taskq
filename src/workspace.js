@@ -270,7 +270,7 @@ const {create}=execution.module('workspace',{
      else if(b.dataset.a==='sync-retry')ui.send({a:'sync-retry',root:b.dataset.root,id:b.dataset.id});
      else if(b.dataset.a==='answer-dismiss')answers.dismiss(b.dataset.key);
     });
-    ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.cField==='result-reason')reports.reasonInput(e.target.value,[e.target.selectionStart,e.target.selectionEnd]);});
+    ui.listen(menu,'input',e=>{if(view.page==='operations')operations.operationInput(e);if(e.target.dataset.cField==='result-reason')reports.reasonInput(e.target.value,[e.target.selectionStart,e.target.selectionEnd]);if(e.target.dataset.cField==='result-date')reports.dateInput(e.target.value);});
     for(const event of ['select','keyup','click'])ui.listen(menu,event,e=>{const c=api.answerContext();if(e.target.dataset.cField==='answer'&&c)answers.answerInput(c.board,c.task,null,[e.target.selectionStart,e.target.selectionEnd]);});
     ui.listen(menu,'compositionstart',()=>{composing=true;});ui.listen(menu,'compositionend',()=>{composing=false;});
     ui.listen(menu,'scroll',()=>state.schedule(),true);ui.listen(menu,'toggle',()=>state.schedule(),true);

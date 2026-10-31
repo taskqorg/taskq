@@ -52,10 +52,10 @@ const decideProject=[{root:'decide',name:'Decide',issues:'https://github.com/o/d
  {n:4,kind:'report',sha:'a',title:'Waiting',closed:now-300,read:true,decision:'later',later_until:iso(now+3600),visible:true},
  {n:5,kind:'task',sha:'a',title:'Task',closed:now,read:false,decision:'none',visible:true},
  {n:6,kind:'report',sha:'a',title:'Making',closed:now-400,read:true,decision:'none',pending_decision:'make',visible:true}]}}];
-d.toggle(decideProject);assert.deepEqual(d.decide().map(r=>r.n),[2,3,1],'undecided and due reports, oldest close first');
-const listed=JSON.stringify(d.section(decideProject));
-assert(listed.includes('Decide · 3')&&listed.includes('#2 · Read · Decide · verdict unknown · 3d')&&listed.includes('#1 · Unread · Decide · refuted · 0d'),listed);
-assert(listed.indexOf('#2 · Read · Decide')<listed.indexOf('#5 · Unread'),'Decide rows come first');
+d.sync(decideProject);assert.deepEqual(d.decide().map(r=>r.n),[2,3,1],'undecided and due reports, oldest close first');
+// Product RC1 moves the old Results list into Conversations; retain verdict/age in its shared reader.
+d.open('decide',2);assert(JSON.stringify(d.section(decideProject)).includes('Verdict: unknown · 3d'));
+d.open('decide',1);assert(JSON.stringify(d.section(decideProject)).includes('Verdict: refuted · 0d'));
 assert.equal(d.threads().find(t=>t.report===2).marker,'Needs decision','a read but undecided report stays marked');
 console.log('PASS Reports: Decide rows, verdict and age, Later revisit');
 const unread=[{root:'new-project',name:'New',issues:'https://github.com/o/new/issues'}];
