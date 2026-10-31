@@ -1,0 +1,387 @@
+{
+ "A1": {
+  "issue": "https://github.com/alexkirs/taskq-native-qualification-20261011-p1/issues/14 (private)",
+  "steps": [
+   {
+    "snapshot": "before",
+    "action": "5 entries posted 05:24:08-05:24:28Z",
+    "rest_issue": {
+     "comments": 5,
+     "number": 14,
+     "updated_at": "2026-10-31T05:24:28Z"
+    },
+    "rest_comments": [
+     {
+      "id": 6539529053,
+      "created_at": "2026-10-31T05:24:08Z",
+      "updated_at": "2026-10-31T05:24:08Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: hold"
+     },
+     {
+      "id": 6539529455,
+      "created_at": "2026-10-31T05:24:11Z",
+      "updated_at": "2026-10-31T05:24:11Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: start"
+     },
+     {
+      "id": 6539529893,
+      "created_at": "2026-10-31T05:24:14Z",
+      "updated_at": "2026-10-31T05:24:14Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: spawn worker claude:probe-2016 win"
+     },
+     {
+      "id": 6539530314,
+      "created_at": "2026-10-31T05:24:17Z",
+      "updated_at": "2026-10-31T05:24:17Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "human note: synthetic comment between entries"
+     },
+     {
+      "id": 6539531783,
+      "created_at": "2026-10-31T05:24:28Z",
+      "updated_at": "2026-10-31T05:24:28Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: result 1111111111111111111111111111111111111111 attempt 6539529893\nChanged: synthetic result for the collapse probe\nChecks: none -- synthetic\nOpen: none"
+     }
+    ],
+    "graphql_issue_updatedAt": "2026-10-31T05:24:28Z",
+    "graphql_comments": [
+     {
+      "databaseId": 6539529053,
+      "createdAt": "2026-10-31T05:24:08Z",
+      "updatedAt": "2026-10-31T05:24:08Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539529455,
+      "createdAt": "2026-10-31T05:24:11Z",
+      "updatedAt": "2026-10-31T05:24:11Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539529893,
+      "createdAt": "2026-10-31T05:24:14Z",
+      "updatedAt": "2026-10-31T05:24:14Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539530314,
+      "createdAt": "2026-10-31T05:24:17Z",
+      "updatedAt": "2026-10-31T05:24:17Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539531783,
+      "createdAt": "2026-10-31T05:24:28Z",
+      "updatedAt": "2026-10-31T05:24:28Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     }
+    ],
+    "fold_current_adapter": {
+     "state": "review",
+     "result": "1111111111111111111111111111111111111111"
+    }
+   },
+   {
+    "snapshot": "after",
+    "action": "minimizeComment at 05:24:46-50Z: 6539529053 RESOLVED, 6539529455 OUTDATED, 6539529893 OUTDATED",
+    "rest_issue": {
+     "comments": 5,
+     "number": 14,
+     "updated_at": "2026-10-31T05:24:49Z"
+    },
+    "rest_comments": [
+     {
+      "id": 6539529053,
+      "created_at": "2026-10-31T05:24:08Z",
+      "updated_at": "2026-10-31T05:24:47Z",
+      "author_association": "OWNER",
+      "minimized": {
+       "reason": "resolved"
+      },
+      "body": "taskq: hold"
+     },
+     {
+      "id": 6539529455,
+      "created_at": "2026-10-31T05:24:11Z",
+      "updated_at": "2026-10-31T05:24:49Z",
+      "author_association": "OWNER",
+      "minimized": {
+       "reason": "outdated"
+      },
+      "body": "taskq: start"
+     },
+     {
+      "id": 6539529893,
+      "created_at": "2026-10-31T05:24:14Z",
+      "updated_at": "2026-10-31T05:24:50Z",
+      "author_association": "OWNER",
+      "minimized": {
+       "reason": "outdated"
+      },
+      "body": "taskq: spawn worker claude:probe-2016 win"
+     },
+     {
+      "id": 6539530314,
+      "created_at": "2026-10-31T05:24:17Z",
+      "updated_at": "2026-10-31T05:24:17Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "human note: synthetic comment between entries"
+     },
+     {
+      "id": 6539531783,
+      "created_at": "2026-10-31T05:24:28Z",
+      "updated_at": "2026-10-31T05:24:28Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: result 1111111111111111111111111111111111111111 attempt 6539529893\nChanged: synthetic result for the collapse probe\nChecks: none -- synthetic\nOpen: none"
+     }
+    ],
+    "graphql_issue_updatedAt": "2026-10-31T05:24:49Z",
+    "graphql_comments": [
+     {
+      "databaseId": 6539529053,
+      "createdAt": "2026-10-31T05:24:08Z",
+      "updatedAt": "2026-10-31T05:24:47Z",
+      "lastEditedAt": null,
+      "isMinimized": true,
+      "minimizedReason": "resolved"
+     },
+     {
+      "databaseId": 6539529455,
+      "createdAt": "2026-10-31T05:24:11Z",
+      "updatedAt": "2026-10-31T05:24:49Z",
+      "lastEditedAt": null,
+      "isMinimized": true,
+      "minimizedReason": "outdated"
+     },
+     {
+      "databaseId": 6539529893,
+      "createdAt": "2026-10-31T05:24:14Z",
+      "updatedAt": "2026-10-31T05:24:50Z",
+      "lastEditedAt": null,
+      "isMinimized": true,
+      "minimizedReason": "outdated"
+     },
+     {
+      "databaseId": 6539530314,
+      "createdAt": "2026-10-31T05:24:17Z",
+      "updatedAt": "2026-10-31T05:24:17Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539531783,
+      "createdAt": "2026-10-31T05:24:28Z",
+      "updatedAt": "2026-10-31T05:24:28Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     }
+    ],
+    "fold_current_adapter": {
+     "state": "ready",
+     "result": null
+    }
+   },
+   {
+    "snapshot": "unmin-edit",
+    "action": "unminimizeComment 6539529893 at 05:25:13Z, then REST PATCH body of 6539530314 at 05:25:14Z",
+    "rest_issue": {
+     "comments": 5,
+     "number": 14,
+     "updated_at": "2026-10-31T05:25:13Z"
+    },
+    "rest_comments": [
+     {
+      "id": 6539529053,
+      "created_at": "2026-10-31T05:24:08Z",
+      "updated_at": "2026-10-31T05:24:47Z",
+      "author_association": "OWNER",
+      "minimized": {
+       "reason": "resolved"
+      },
+      "body": "taskq: hold"
+     },
+     {
+      "id": 6539529455,
+      "created_at": "2026-10-31T05:24:11Z",
+      "updated_at": "2026-10-31T05:24:49Z",
+      "author_association": "OWNER",
+      "minimized": {
+       "reason": "outdated"
+      },
+      "body": "taskq: start"
+     },
+     {
+      "id": 6539529893,
+      "created_at": "2026-10-31T05:24:14Z",
+      "updated_at": "2026-10-31T05:25:13Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: spawn worker claude:probe-2016 win"
+     },
+     {
+      "id": 6539530314,
+      "created_at": "2026-10-31T05:24:17Z",
+      "updated_at": "2026-10-31T05:25:14Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "human note: synthetic comment between entries (edited)"
+     },
+     {
+      "id": 6539531783,
+      "created_at": "2026-10-31T05:24:28Z",
+      "updated_at": "2026-10-31T05:24:28Z",
+      "author_association": "OWNER",
+      "minimized": null,
+      "body": "taskq: result 1111111111111111111111111111111111111111 attempt 6539529893\nChanged: synthetic result for the collapse probe\nChecks: none -- synthetic\nOpen: none"
+     }
+    ],
+    "graphql_issue_updatedAt": "2026-10-31T05:25:13Z",
+    "graphql_comments": [
+     {
+      "databaseId": 6539529053,
+      "createdAt": "2026-10-31T05:24:08Z",
+      "updatedAt": "2026-10-31T05:24:47Z",
+      "lastEditedAt": null,
+      "isMinimized": true,
+      "minimizedReason": "resolved"
+     },
+     {
+      "databaseId": 6539529455,
+      "createdAt": "2026-10-31T05:24:11Z",
+      "updatedAt": "2026-10-31T05:24:49Z",
+      "lastEditedAt": null,
+      "isMinimized": true,
+      "minimizedReason": "outdated"
+     },
+     {
+      "databaseId": 6539529893,
+      "createdAt": "2026-10-31T05:24:14Z",
+      "updatedAt": "2026-10-31T05:25:13Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539530314,
+      "createdAt": "2026-10-31T05:24:17Z",
+      "updatedAt": "2026-10-31T05:25:14Z",
+      "lastEditedAt": "2026-10-31T05:25:14Z",
+      "isMinimized": false,
+      "minimizedReason": null
+     },
+     {
+      "databaseId": 6539531783,
+      "createdAt": "2026-10-31T05:24:28Z",
+      "updatedAt": "2026-10-31T05:24:28Z",
+      "lastEditedAt": null,
+      "isMinimized": false,
+      "minimizedReason": null
+     }
+    ],
+    "fold_current_adapter": {
+     "state": "ready",
+     "result": null
+    }
+   }
+  ],
+  "mutation_responses": [
+   {
+    "data": {
+     "minimizeComment": {
+      "minimizedComment": {
+       "isMinimized": true,
+       "minimizedReason": "resolved",
+       "viewerCanMinimize": true
+      }
+     }
+    }
+   },
+   {
+    "data": {
+     "minimizeComment": {
+      "minimizedComment": {
+       "isMinimized": true,
+       "minimizedReason": "outdated",
+       "viewerCanMinimize": true
+      }
+     }
+    }
+   },
+   {
+    "data": {
+     "minimizeComment": {
+      "minimizedComment": {
+       "isMinimized": true,
+       "minimizedReason": "outdated",
+       "viewerCanMinimize": true
+      }
+     }
+    }
+   },
+   {
+    "data": {
+     "unminimizeComment": {
+      "unminimizedComment": {
+       "isMinimized": false,
+       "minimizedReason": null
+      }
+     }
+    }
+   }
+  ]
+ },
+ "A2": {
+  "commit": "d5773f3003c3e1232cf61d3b5c57952096937f85",
+  "ref": "refs/taskq/probe-2016",
+  "rows": [
+   "taskqorg/taskq anon 200 text/plain; charset=utf-8 50 final=https://raw.githubusercontent.com/taskqorg/taskq/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt https://raw.githubusercontent.com/taskqorg/taskq/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt",
+   "taskqorg/taskq anon 200 text/plain; charset=utf-8 50 final=https://raw.githubusercontent.com/taskqorg/taskq/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt https://github.com/taskqorg/taskq/raw/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt",
+   "taskqorg/taskq anon 200 text/html; charset=utf-8 177720 final=https://github.com/taskqorg/taskq/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt https://github.com/taskqorg/taskq/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt",
+   "taskqorg/taskq token-raw 200 text/plain; charset=utf-8 50",
+   "taskqorg/taskq api-contents 50",
+   "taskqorg/taskq anon 200 image/png 74 final=https://raw.githubusercontent.com/taskqorg/taskq/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png https://raw.githubusercontent.com/taskqorg/taskq/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png",
+   "taskqorg/taskq anon 200 image/png 74 final=https://raw.githubusercontent.com/taskqorg/taskq/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png https://github.com/taskqorg/taskq/raw/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png",
+   "taskqorg/taskq anon 200 text/html; charset=utf-8 171438 final=https://github.com/taskqorg/taskq/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png https://github.com/taskqorg/taskq/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png",
+   "taskqorg/taskq token-raw 200 image/png 74",
+   "taskqorg/taskq api-contents 74",
+   "taskqorg/taskq ls-remote d5773f3003c3e1232cf61d3b5c57952096937f85\trefs/taskq/probe-2016",
+   "alexkirs/taskq-native-qualification-20261011-p1 anon 404 text/plain; charset=utf-8 14 final=https://raw.githubusercontent.com/alexkirs/taskq-native-qualification-20261011-p1/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt https://raw.githubusercontent.com/alexkirs/taskq-native-qualification-20261011-p1/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt",
+   "alexkirs/taskq-native-qualification-20261011-p1 anon 404 text/html; charset=utf-8 231760 final=https://github.com/alexkirs/taskq-native-qualification-20261011-p1/raw/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt https://github.com/alexkirs/taskq-native-qualification-20261011-p1/raw/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt",
+   "alexkirs/taskq-native-qualification-20261011-p1 anon 404 text/html; charset=utf-8 231792 final=https://github.com/alexkirs/taskq-native-qualification-20261011-p1/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt https://github.com/alexkirs/taskq-native-qualification-20261011-p1/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.txt",
+   "alexkirs/taskq-native-qualification-20261011-p1 token-raw 200 text/plain; charset=utf-8 50",
+   "alexkirs/taskq-native-qualification-20261011-p1 api-contents 50",
+   "alexkirs/taskq-native-qualification-20261011-p1 anon 404 text/plain; charset=utf-8 14 final=https://raw.githubusercontent.com/alexkirs/taskq-native-qualification-20261011-p1/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png https://raw.githubusercontent.com/alexkirs/taskq-native-qualification-20261011-p1/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png",
+   "alexkirs/taskq-native-qualification-20261011-p1 anon 404 text/html; charset=utf-8 231759 final=https://github.com/alexkirs/taskq-native-qualification-20261011-p1/raw/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png https://github.com/alexkirs/taskq-native-qualification-20261011-p1/raw/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png",
+   "alexkirs/taskq-native-qualification-20261011-p1 anon 404 text/html; charset=utf-8 231792 final=https://github.com/alexkirs/taskq-native-qualification-20261011-p1/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png https://github.com/alexkirs/taskq-native-qualification-20261011-p1/blob/d5773f3003c3e1232cf61d3b5c57952096937f85/probe-2016.png",
+   "alexkirs/taskq-native-qualification-20261011-p1 token-raw 200 image/png 74",
+   "alexkirs/taskq-native-qualification-20261011-p1 api-contents 74",
+   "alexkirs/taskq-native-qualification-20261011-p1 ls-remote d5773f3003c3e1232cf61d3b5c57952096937f85\trefs/taskq/probe-2016"
+  ],
+  "default_clone": "git clone --no-checkout of the private repo: fetch refspec +refs/heads/*:refs/remotes/origin/*; cat-file -e of the probe commit fails; git fetch origin refs/taskq/probe-2016 gets it",
+  "private_control": "main/.gitignore anon raw: 404 (private repos need auth for any ref)",
+  "github_com_raw_with_token_header": "404 (web route ignores the API token)"
+ }
+}
