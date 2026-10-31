@@ -1,0 +1,22 @@
+{
+  "source": "73df356b19e841e3900c06878206bfdd73b7c41e",
+  "binarySha256": "be71e568b3c49d4c04829365deef95fe6924f3107ebedb7610bd8aa18bd08c29",
+  "command": "<verified-release-copy> tray",
+  "isolation": {
+    "registeredProjects": [],
+    "fixturePreferences": {"pinned": true, "top": false, "size": [620, 560], "font": 20, "view": "icon"},
+    "openOrRaiseRequested": false,
+    "inheritedAttemptSessionBoardTokenBindings": "removed in child",
+    "incidentReporting": "off",
+    "tempRedirectedToBypassHostLock": false
+  },
+  "exit": 1,
+  "stderr": [
+    "Error: taskq tray already runs on this host",
+    "Next: Check the input and board/service status, then retry; use `taskq help` for syntax."
+  ],
+  "postLaunchInventoryAt": "2026-10-31T05:41:19.696Z",
+  "postLaunchTaskqWindows": [],
+  "inputSent": false,
+  "interactionVerdict": "Not tested; no targetable disposable window"
+}

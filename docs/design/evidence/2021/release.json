@@ -1,0 +1,11 @@
+﻿{
+    "tag":  "v4.6.52",
+    "source":  "73df356b19e841e3900c06878206bfdd73b7c41e",
+    "releaseUrl":  "https://github.com/taskqorg/taskq/releases/tag/v4.6.52",
+    "asset":  "taskq-4.6.52-windows-x86_64.exe",
+    "assetUrl":  "https://github.com/taskqorg/taskq/releases/download/v4.6.52/taskq-4.6.52-windows-x86_64.exe",
+    "sha256":  "be71e568b3c49d4c04829365deef95fe6924f3107ebedb7610bd8aa18bd08c29",
+    "bytes":  30192640,
+    "verifiedAt":  "2026-10-31T05:35:18.5138890Z",
+    "method":  "Existing executable SHA256 equals GitHub release asset digest; local tag resolved with git"
+}
