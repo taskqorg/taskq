@@ -3,6 +3,9 @@
  "label_schema": "canonical",
  "repo": "taskqorg/taskq",
  "publish": "pr",
+ "deploy": [
+  "live"
+ ],
  "limits": {
   "claude": 4,
   "codex": 4

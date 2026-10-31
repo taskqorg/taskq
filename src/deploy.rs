@@ -325,6 +325,15 @@ delivery auto-merge r0: merged #7"),
         assert!(range("v4.1.0..v4.2.0") && !range("v4.2.0") && !range("..v4") && !range("-x..y") && !range("a...b"));
     }
 
+    // A6: the release flow records only in a release root whose `deploy` names the channel. Risk: the tracked
+    // taskq.json loses `deploy` or `live`, and a live host update records nothing.
+    #[test]
+    fn release_root_records_live_deploys() {
+        let v: Value = serde_json::from_str(include_str!("../taskq.json")).unwrap();
+        assert_eq!(v["repo"].as_str(), Some(crate::platform::RELEASE_REPO));
+        assert!(parse(&v).is_some_and(|d| d.envs.iter().any(|e| e == "live")), "taskq.json deploy must name live");
+    }
+
     // Chain: A2 `taskq deployed` -> one entry per trailer task of this board, a rerun is a no-op by op id, the label
     // and summary follow. Risk: a rerun posts twice, another board's task is written, or the waiting label stays.
     #[test]
