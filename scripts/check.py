@@ -436,6 +436,7 @@ def main():
                 for script in sorted((ROOT / 'tests').glob('*.test.cjs')):
                     run(['node', script.relative_to(ROOT).as_posix()])
                 run(['sh', 'docs/shots/check.test.sh'])
+                run(['sh', 'docs/shots/update.test.sh'])
                 run(['sh', '.github/release-tag.test.sh'])
                 run([sys.executable, '.github/release-check.test.py'])
         for path in paths:

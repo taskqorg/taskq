@@ -1,70 +1,79 @@
-# README shots run on dispatch or a release tag, never per tray push (taskq.md R12, Product).
+# README shots (docs/design/readme-plan.md, Images and acceptance; #2024): on dispatch, never per tray push
+# (taskq.md R12, Product). release.yml dispatches it with the new tag, whose release binary is verified and captured.
+# A stale set arrives as a draft PR from branch taskq-shots-<version> through the merge queue, never a push to main;
+# runs dispatched on another branch only upload artifacts.
 name: README shots
 on:
   workflow_dispatch:
-  push:
-    tags: ['v*']
+    inputs:
+      ref:
+        description: Commit, branch or release tag to capture
+        default: main
+        required: true
 permissions:
   contents: write
+  pull-requests: write
   actions: write
 concurrency:
-  group: readme-shots-${{ github.ref }}
+  group: readme-shots-${{ inputs.ref }}
   cancel-in-progress: false
 jobs:
   capture:
     runs-on: macos-latest
     timeout-minutes: 40
+    env:
+      REF: ${{ inputs.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # a release tag refreshes main, which the tag was cut from
-          ref: ${{ github.ref_type == 'tag' && 'main' || github.ref }}
       - run: rustup default stable
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      # Committed shots that are still fresh came from a Mac at 2x; the 1x runner capture must not replace them.
-      - name: Check committed shots
-        id: fresh
-        run: if docs/shots/check.sh; then echo stale=false; else echo stale=true; fi >> "$GITHUB_OUTPUT"
-      - name: Capture README shots
+      - name: Browser for the README preview
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install chromium-headless-shell
+      - name: Release binary for a tag
+        id: bin
+        if: startsWith(inputs.ref, 'v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$REF" --repo "$GITHUB_REPOSITORY" --pattern "taskq-${REF#v}-macos-aarch64" --dir "$RUNNER_TEMP"
+          echo "args=--bin $RUNNER_TEMP/taskq-${REF#v}-macos-aarch64" >> "$GITHUB_OUTPUT"
+      - name: Capture, verify and preview
+        id: shots
         shell: bash
-        run: docs/shots/update.sh 2>&1 | tee "$RUNNER_TEMP/shots.log"
-      - run: docs/shots/check.sh
-      - uses: actions/upload-artifact@v4
-        with:
-          name: readme-shots
-          path: docs/shots/
-          if-no-files-found: error
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          docs/shots/update.sh "$REF" ${{ steps.bin.outputs.args }} --publish | tee "$RUNNER_TEMP/shots.out"
+          grep -q '^fresh ' "$RUNNER_TEMP/shots.out" && echo fresh=true >> "$GITHUB_OUTPUT" || echo fresh=false >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: readme-shots-log
-          path: ${{ runner.temp }}/shots.log
+          name: readme-shots
+          path: |
+            docs/shots/
+            ${{ runner.temp }}/taskq-shots.*/update.log
           if-no-files-found: warn
-      - name: Commit and verify refreshed shots
-        if: (github.ref == 'refs/heads/main' || github.ref_type == 'tag') && steps.fresh.outputs.stale == 'true'
-        shell: bash
+      - name: Draft PR
+        if: github.ref == 'refs/heads/main' && steps.shots.outputs.fresh == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          version=$(python3 -c 'import json; print(json.load(open("docs/shots/manifest.json"))["version"])')
+          branch="taskq-shots-$version"
+          git switch -c "$branch"
           git add docs/shots/
           git diff --cached --quiet && exit 0
-          git commit -m 'Refresh README screenshots' -m 'Task: https://github.com/taskqorg/taskq/issues/924'
-          docs/shots/check.sh
-          sha=$(git rev-parse HEAD)
-          branch="taskq-shots-$GITHUB_RUN_ID"
+          git commit -m "Refresh README screenshots for $version" -m "Captured from $REF by docs/shots/update.sh." -m 'Task: https://github.com/taskqorg/taskq/issues/2024'
+          # An existing branch for this version means a PR is already open; never force it.
           git push origin "HEAD:refs/heads/$branch"
-          # Token pushes do not start CI; dispatch the existing full suite on this exact bot commit.
+          gh pr create --draft --base main --head "$branch" --title "Refresh README screenshots for $version" \
+            --body "Images, manifest and README preview (1280 and 390 px, docs/shots/evidence/$version/) from \`docs/shots/update.sh $REF\`. Review the three images and both preview widths before merging through the merge queue."
+          # Token pushes start no CI; dispatch the suite on the branch without waiting for it.
           gh workflow run tests.yml --ref "$branch"
-          for attempt in {1..12}; do
-            run=$(gh run list --workflow tests.yml --branch "$branch" --event workflow_dispatch --commit "$sha" --json databaseId --jq '.[0].databaseId // empty')
-            [ -n "$run" ] && break
-            sleep 5
-          done
-          test -n "$run"
-          gh run watch "$run" --exit-status
-          # A concurrent main update makes this ordinary fast-forward push fail; never force it.
-          git push origin HEAD:refs/heads/main
-          git push origin --delete "$branch"
