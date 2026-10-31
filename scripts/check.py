@@ -317,6 +317,19 @@ def rule_gate(base):
     return f'rule gate: the task does not name {", ".join(left)} (docs/design/rule-ids.md#contract-detail)' if left else None
 
 
+# taskq.md R8: the shared contract lint (specq engineering/contracts.md#lint) at the pinned specq commit.
+SPECQ = '39e6024037fb69e68a84180c04fb7ac53eddb9f9'
+CONTRACT_LINT = Path('engineering/scripts/contract_lint.py')
+
+
+def contract_lint(root=ROOT):
+    """The lint command over taskq.md from a specq checkout at `.specq` (CI) or the pinned cache, or None."""
+    for base in (root / '.specq', root / '.taskq' / 'specq' / SPECQ):
+        if (base / CONTRACT_LINT).is_file():
+            return [sys.executable, str(base / CONTRACT_LINT), 'taskq.md']
+    return None
+
+
 def changes(base):
     args = ['git', 'diff', '--name-only', '-z', base, '--']
     changed = subprocess.check_output(args, cwd=ROOT).decode().split('\0')
@@ -353,7 +366,14 @@ def main():
     parser.add_argument('--full', action='store_true')
     parser.add_argument('--plan', action='store_true', help='print selection without running checks')
     parser.add_argument('--rules', action='store_true', help='run only the rule-change gate and coverage report')
+    parser.add_argument('--lint', action='store_true', help='run only the specq contract lint; a missing specq checkout fails')
     args = parser.parse_args()
+    if args.lint:
+        command = contract_lint()
+        if command is None:
+            raise SystemExit(f'contract lint unknown (R12): no specq {SPECQ} checkout at .specq')
+        subprocess.run(command, cwd=ROOT, check=True)
+        return
     if args.rules:
         failed = rule_gate(args.base)
         if failed:
@@ -389,6 +409,13 @@ def main():
         failed = None if os.environ.get('GITHUB_ACTIONS') else rule_gate(args.base)
         if failed:
             raise SystemExit(failed)
+        # CI runs the contract lint once, in the plan job; local runs include it when specq is checked out.
+        if not os.environ.get('GITHUB_ACTIONS'):
+            lint = contract_lint()
+            if lint:
+                run(lint)
+            else:
+                print(f'Contract lint: unknown (R12), no specq {SPECQ[:12]} checkout at .specq; CI runs it', flush=True)
         found = [f for p in sorted(ROOT.glob('src/**/*.rs')) for f in runtime_names(p.relative_to(ROOT).as_posix(), p.read_text(encoding='utf-8'))]
         if found:
             raise SystemExit('runtime name outside the runtime adapter (docs/runtime-qualification.md#runtime-adapters):\n' + '\n'.join(found))

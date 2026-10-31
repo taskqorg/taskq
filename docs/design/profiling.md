@@ -1,6 +1,6 @@
 # Profiling detail
 
-Implemented detail of the profiling records and of `taskq profile export|tasks|board` (#1147, #1173, #1174). The records are decided in [taskq.md § 4 Profiling](../../taskq.md#profiling-988); the command, its views and their columns in [§ 5](../../taskq.md#5-commands). Chain check of the views: `export_then_reports` in `src/profile.rs`.
+Implemented detail of the profiling records and of `taskq profile export|tasks|board` (#1147, #1173, #1174). The records are decided in [taskq.md § 4 Profiling](../../taskq.md#profiling); the command, its views and their columns in [§ 5](../../taskq.md#5-commands). Chain check of the views: `export_then_reports` in `src/profile.rs`.
 
 ## Service wakeups
 
@@ -36,7 +36,7 @@ Resume/admitting focus refuses before effects if tracking cannot be prepared. Em
 
 ## Stage tokens
 
-The [terminal-record invariant](../../taskq.md#profiling-988) uses the same `taskq-stage` records. A lifetime marker has `open: true`, `outcome: unknown`, `unknown: open-stage`, and no duration; reports exclude it from completed duration samples. New records include the host name; historical records without it show unknown until repair proves ownership from the accepted spawn matching this host/runtime and a nonempty readable attempt log in this project root. Missing, unreadable or conflicting ownership evidence leaves the record unchanged. Repair appends a classification with unknown duration and usage; original records and attempt logs stay unchanged. Export keeps open markers as observations with `unknown: open-stage`. Missing terminal records are listed from the retained window only; fresh registered-project service snapshots exclude only children whose liveness is running; task rows and unknown child liveness exclude nothing. Selftest uses a fresh board read of this project instead, excluding fresh heartbeat leases, and uses its configured `ttl`; it lists each overdue gap once as `WARN` and passes. An unreadable record or unknown age prevents a healthy verdict. A terminal repair requires attributable native outcome or the exact execution release read back from the board. `gone`, issue closure/removal, a missing handle and age alone never prove that execution ended; they may classify task state only. Failed readback or append leaves the execution evidence unknown for a later check.
+The [terminal-record invariant](../../taskq.md#profiling) uses the same `taskq-stage` records. A lifetime marker has `open: true`, `outcome: unknown`, `unknown: open-stage`, and no duration; reports exclude it from completed duration samples. New records include the host name; historical records without it show unknown until repair proves ownership from the accepted spawn matching this host/runtime and a nonempty readable attempt log in this project root. Missing, unreadable or conflicting ownership evidence leaves the record unchanged. Repair appends a classification with unknown duration and usage; original records and attempt logs stay unchanged. Export keeps open markers as observations with `unknown: open-stage`. Missing terminal records are listed from the retained window only; fresh registered-project service snapshots exclude only children whose liveness is running; task rows and unknown child liveness exclude nothing. Selftest uses a fresh board read of this project instead, excluding fresh heartbeat leases, and uses its configured `ttl`; it lists each overdue gap once as `WARN` and passes. An unreadable record or unknown age prevents a healthy verdict. A terminal repair requires attributable native outcome or the exact execution release read back from the board. `gone`, issue closure/removal, a missing handle and age alone never prove that execution ended; they may classify task state only. Failed readback or append leaves the execution evidence unknown for a later check.
 
 For `build` and `review`, a `taskq-stage` line holds the context tokens (model input read across the stage's calls, cache included) and the call count that the runtime logged into the attempt log after launch.
 
@@ -149,6 +149,12 @@ Churn (#1905), observe only: an open task over 100 board notes, or with more tha
 |---|---|
 | `taskq profile [export\|tasks\|board] [--since 30m\|24h\|7d]` | no board; this host's retained log, all projects ([detail](profiling.md)). Bare: § 4. `export`: JSON lines, a header (columns, window, samples), one row per observation: `kind at_ms project task attempt entry name from to runtime host us prev_s outcome error remaining calls tokens input_tokens cache_read_tokens cache_write_tokens model output_tokens unknown` (schema 3). `tasks`: time in state (`Project Task State Runtime Host Count Total p50/p95/max`). `board`: operations (`Operation Count p50/p95/max Failed% Errors Lowest-remaining`). Unknown reads unknown with reason, never zero |
 | `taskq profile watch [--since 1h]` | no board; the [PM telemetry watch](#pm-telemetry-watch) pass of this install |
+
+Linked from `taskq.md` [§ 4 Profiling](../../taskq.md#profiling); this text binds like the contract (R8, R13).
+
+### Recovery proof, selftest capture and limits
+
+R8/R13: ended executions need terminal proof; repair needs native termination or exact execution release; hostless repair needs proven ownership. Profiling never controls recovery/admission. Selftest reads board fresh; nonlive unresolved attempts past ttl warn once, never fail; fresh children, never task rows, exclude live work. Owner waits keep evidence; reopened build/review needs new terminal. Instrumentation/receipts never fail or block operations; selftest fails on unavailable, empty or unflushed capture. [R8 limits](standalone-telemetry.md). [Stage tokens](#stage-tokens) per `model`.
 
 ## PM telemetry watch
 

@@ -148,7 +148,7 @@ pub fn valid(v: &Value, board: &str) -> bool {
         && (v["start"].is_null() && v["end"].is_null() || v["start"].as_i64().zip(v["end"].as_i64()).is_some_and(|(a,b)|a<=b))
 }
 
-/// Malformed records a complete history read gives again until its issue updates (§ 4 Admission history); other failures retry.
+/// Malformed records a complete history read gives again until its issue updates (§ 4 admission records); other failures retry.
 const SETTLED: [&str; 3] = ["admission ID unavailable", "admission time unavailable", "invalid first-admission provenance"];
 
 fn admission(board: &dyn Board, n: u64, task: bool) -> Result<Option<(u64, i64)>, String> {
@@ -219,7 +219,7 @@ mod tests {
     }
 
     // #1960 defect: a source whose complete history could not be used was read again on every pass, growing failed reads.
-    // Chain: §4 Admission history. Risk kept: a settled source proves zero, or a transient failure stops retrying.
+    // Chain: §4 admission records. Risk kept: a settled source proves zero, or a transient failure stops retrying.
     #[test]
     fn permanent_source_failure_settles_until_update_and_transient_retries() {
         let board=Fake::default();

@@ -15,7 +15,7 @@ This page proposes edits only. It changes no contract text; each edit task below
 
 - **§ 2 table.** `every_table_row_has_a_golden_trace` (`src/core.rs`) parses the rows after `| State | Entry |`. Keep the table in `taskq.md`, keep its header text, and keep every `(state, entry)` pair covered by `tests/golden/fold.json`.
 - **300-line test.** The same test asserts at most 300 lines and no `YYYY-MM-DD` date. Line count is not the size problem: long lines are. A byte bound is a separate follow-up (task 7).
-- **Names that code and docs cite.** R-numbers keep their numbers (Change rule). Code comments cite `§ 3`, `§ 4 Data`, `§ 4 Log and board budget`, `§ 8 Access`, `§ 8 Folders`, `§ 9`; `AGENTS.md` links `#executable-behavioral-model` and `#shared-project-bootstrap-600`. Keep section numbers and these headings, or update the citations in the same diff.
+- **Names that code and docs cite.** R-numbers keep their numbers (Change rule). Code comments cite `§ 3`, `§ 4 Data`, `§ 4 Log and board budget`, `§ 8 Access`, `§ 8 Folders`, `§ 9`; `AGENTS.md` links `#executable-behavioral-model` and `#shared-project-bootstrap`. Keep section numbers and these headings, or update the citations in the same diff.
 - **Contract hash.** `src/incident.rs` hashes `taskq.md` into the incident fingerprint, so every edit changes it. This is expected and needs no action.
 - **Spec first.** Shipped decisions stay in `taskq.md`. Only three kinds of text leave it: copies of specq rules (replaced by a link), design targets that are not shipped (moved to their design page), and implementation or evidence detail that a design or qualification page already owns.
 

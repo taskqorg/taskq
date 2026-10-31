@@ -24,3 +24,11 @@ Show shipped interface code, never design prototypes. Earlier [phrase evidence](
 Keep three dark images individually readable, with links to their originals. The manifest records the version, source commit, binary hash, environment, UI source blob IDs, capture-input hashes and image hashes. UI sources must be committed before capture; capture-input hashes identify fixture/script changes independently. Preserve the summary icon in the manifest, but omit it from the page because its light glyphs disappear on light backgrounds. Windows capture remains unqualified.
 
 Inspect the rendered README at desktop and narrow widths, including every image, setup disclosures and CLI examples. Preserve before/after renders and findings under `docs/shots/evidence/`. Source/image checks do not replace visual inspection or owner acceptance. Run `docs/shots/check.sh`, affected capture checks and the project-selected gate; report unavailable native or CI evidence explicitly.
+
+## Contract detail
+
+Linked from `taskq.md` [Product](../../taskq.md#product); this text binds like the contract (R8, R13).
+
+### README rules
+
+- Keep `docs/header.webp` and `Agents working.` first, then quick setup (exact phrase `Install taskq from https://github.com/taskqorg/taskq and set it up for this project.`; new-project variant in a disclosure), one purpose sentence and three visual examples: describe work, follow the queue, answer a worker. Show shipped interfaces with coherent illustrative data, one screenshot and short caption each; a draft is not submitted work or completed-run evidence. Dark native captures use `docs/shots/update.sh` and its fixtures, pinned by `docs/shots/manifest.json`; owner acceptance needs before/after evidence ([UI acceptance](ui-acceptance.md#contract-detail)). CLI and release verification are disclosures; retain one taskq.md link, MIT, no badges/emoji clutter, and the final line `If taskq saves you time, [buy me a coffee](…).` Omit long dialogues, telemetry tables and runtime-switch logs.

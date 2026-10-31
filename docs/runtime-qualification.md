@@ -339,6 +339,20 @@ Rule delivery follows the [current contract detail](#rule-delivery-contract-deta
 2. `taskq update` and service step 7 run the coreq update. A new `current` then gets one allowlist sweep of the rest of `<install>` and a `~/.local/bin/taskq` v3 python shim. Kept: `releases/` of `current`, `previous`, the running version and each `projects` root's `status.json` version (its service and live children), `current`, `previous`, `projects`, `token`, `gitlab-token`, `installation-id`, `connection/` ([DashQ connection](design/enrollment.md)), `worker-policy.json`, `windows-native/`, the launcher, `WebView2Loader.dll`, `*.log`, `tray*`, `capacity/`, `resources/`, `TaskQ-*.xml`, `*.tmp`. A file in use stays until a later update.
 3. At step 7, an installed service whose running version is older than `current` logs `current is <v>; restarting` and re-execs through the launcher without downloading or running selftest. The service re-execs; live CLI children and Claude background turns with a saved native identity pass to the new image through the protected native handover record (adapter recovery matrix). An active codex-app or operator turn, or a Claude turn without a saved native identity, defers re-exec until it ends; the restart request remains pending. Windows: exit 75 once no child is live; the coreq launcher restarts it. A pending restart skips update checks, logs `restart to <current> waits for #<N>, ..` once per changed set and lists it in `status.json` `restart_waits` (null when none) and `service status` `Restart: waits for ..`.
 
+Linked from `taskq.md` [§ 8](../taskq.md#8-runtimes-and-deployment); this text binds like the contract (R8, R13).
+
+### Spawn and resume
+
+| Runtime | spawn (child of service) | resume |
+|---|---|---|
+| Codex | `codex exec --json <codex opts> -C <root> -`, brief on stdin; session from the first `thread.started` line | `codex exec --json resume <id> -` |
+| Claude | `claude --bg --remote-control <name> --permission-mode <mode>`, brief in a per-turn file; short read-file instruction on stdin; native ID from `agents --json` | After stop readback: `claude --bg --resume <id>`, fresh brief as at spawn; saved native options, same ID required |
+| Codex app | Codex's spawn with a handshake brief; then `open codex://threads/<id>` and `codex queue --thread <id> --message <brief>` | `open` and `codex queue --thread <id> --message <text>` |
+
+### Child environment, briefs and logs
+
+Child environment drops `CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`, adds `TASKQ_TASK`, `TASKQ_ATTEMPT`, `TASKQ_ROLE`, [`CARGO_BUILD_JOBS`](design/capacity.md#compile-jobs) = host CPUs / occupied host slots, on GitHub the host board token and, with `sccache`, a [build cache](testing.md#build-cache). Briefs never pass through a shell. App turns need an owner-provisioned `gh` token, never injected by taskq. Logs: `<root>/.taskq/<T|R><N>-<attempt>.log`.
+
 ## Windows large background input (#1223)
 
 Native adapter probe: Windows, Claude Code 2.1.300, `dontAsk`, unchanged model and effort. This qualifies the file-reference transport and native session continuation; it is not a board/service-pass or other-platform qualification.
