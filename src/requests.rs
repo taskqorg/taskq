@@ -300,6 +300,8 @@ pub(crate) fn validate(&self)->Result<(),String> {
     if usage.source!="service"&&!(matches!(words.first(),Some(&"cli"|&"worker"|&"reviewer"))
         &&((words.len()==2&&command(&words[1]))||(words.len()==3&&words[1]=="service"&&command(&words[2])))) {return Err("invalid request source".into());}
     for name in usage.ops.keys() {
+        // #1985: an unbilled 304 counts as `<op> 304`
+        let name=name.strip_suffix(" 304").unwrap_or(name);
         let (method,path)=name.split_once(' ').ok_or("invalid request operation")?;
         if !matches!(method,"GET"|"POST"|"PUT"|"PATCH"|"DELETE"|"HEAD"|"OPTIONS")||op(method,&path.split('/').map(|part|if part=="N" {"0"} else {part}).collect::<Vec<_>>().join("/"))!=*name {return Err("invalid request operation".into());}
     }
