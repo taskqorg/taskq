@@ -1701,7 +1701,7 @@ mod tests {
                 *reads.borrow_mut() += 1;
                 let yes = if *reads.borrow() == 1 { first_merged } else { second_merged.ok_or("HTTP 503")? };
                 json!({"merged": yes, "state": if yes { "merged" } else { "opened" }, "merge_commit_sha": merged})
-            } else { panic!("unexpected {method} {url}") };
+            } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         (h, calls)
@@ -1773,7 +1773,7 @@ mod tests {
                         json!([{"number": 6, "iid": 6, "head": {"sha": "d".repeat(40)}, "sha": "d".repeat(40), "merged_at": "x"},
                                {"number": 7, "iid": 7, "head": {"sha": "a".repeat(40)}, "sha": "a".repeat(40), "merged_at": "x", "merge_commit_sha": "b".repeat(40),
                                 "base": {"ref": base}, "target_branch": base}])
-                    } else { panic!("unexpected {method} {url}") };
+                    } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let Publish::Done(m) = h.publish(1, &"a".repeat(40), "pr", "title", "Task: fake") else { panic!("not reconciled") };
@@ -1804,7 +1804,7 @@ mod tests {
                 else if url.contains("state=closed") { json!([{"number": 7, "head": {"sha": "a".repeat(40)}, "merged_at": "x", "merge_commit_sha": "b".repeat(40), "base": {"ref": "main"}}]) }
                 else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
                 else if url.ends_with("/status") { json!({"total_count": 0}) }
-                else { panic!("unexpected {method} {url}") };
+                else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         for _ in 0..3 {
@@ -1834,7 +1834,7 @@ mod tests {
                     json!([{"number": 86, "head": {"sha": "d".repeat(40)}, "merged_at": "x"},
                            {"number": 87, "head": {"sha": "a".repeat(40)}, "merged_at": null},
                            {"number": 88, "head": {"sha": "e".repeat(40)}, "merged_at": "x"}])
-                } else { panic!("unexpected {method} {url}") };
+                } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         let sha = "a".repeat(40);
@@ -1873,7 +1873,7 @@ mod tests {
                     }
                     else if url.contains("/check-runs") { json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
                     else if url.ends_with("/status") { json!({"total_count": 0}) }
-                    else { panic!("unexpected {method} {url}") };
+                    else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let sha = "a".repeat(40);
@@ -1965,7 +1965,7 @@ mod tests {
                     else if url.contains("/actions/runs?") { assert!(url.contains(&merge)); runs.clone() }
                     else if url.contains("/check-runs") { assert!(url.contains(&merge)); checks.clone() }
                     else if url.ends_with("/status") { assert!(url.contains(&merge)); recorded("status-none") }
-                    else { panic!("unexpected {method} {url}") };
+                    else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let prior = !matches!(scenario, "new" | "draft" | "readback" | "public" | "graphql" | "enqueue-conflict" | "enqueue-race" | "head-moved" | "conflicting" | "enqueue-checks-running" | "enqueue-checks-failed");
@@ -2027,7 +2027,7 @@ mod tests {
                 else if url.contains("/actions/runs?") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); runs.clone() }
                 else if url.contains("/check-runs") { assert!(url.contains(&merged), "CI read on the merge result: {url}"); recorded("checks-green") }
                 else if url.ends_with("/status") { recorded("status-none") }
-                else { panic!("unexpected {method} {url}") };
+                else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
             Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
         }));
         // A rebase would need the task worktree; this host has none, so any rebase attempt fails the pass.
@@ -2157,6 +2157,90 @@ mod tests {
         }
     }
 
+    // #2061 defect (#2010 pilotq#200, #2015 dashq#241): a result naming its PR as `owner/name#P` compared in the board
+    // repository (HTTP 404 every pass), and a PR merged at a rebased head whose diff GitHub omitted a file patch of, or
+    // whose hunks a rebase reordered, asked the owner. Chain: publication (agent-behavior.md, publication.md) -> the
+    // named PR's repository only -> merged head carries the result's changes -> close with the merge commit.
+    // Retained: a mention that is not the task's PR is skipped; a merged head with other changes still asks the owner.
+    #[test]
+    fn a_task_pr_named_by_reference_publishes_in_its_repository_and_closes_its_rebased_merge() {
+        use crate::core::entry;
+        let (sha, head, merge, base) = ("a".repeat(40), "d".repeat(40), "b".repeat(40), "c".repeat(40));
+        let views = |patch: &str| json!({"filename": "docs/views.md", "status": "modified", "sha": "1".repeat(40), "patch": patch});
+        let blob = |b: &str| json!({"filename": "assets/app.js", "status": "modified", "sha": b.repeat(40)});
+        // the merged head: main inserted context next to the change and the diff moved the removed line after the added ones
+        let merged = json!({"files": [views("@@ -41,3 +41,4 @@ ## Views\n sibling row\n+row new\n+row two\n-row old\n context"), blob("e")]});
+        for case in ["same", "binary", "lines"] {
+            let result = json!({"files": [
+                views(if case == "lines" { "@@ -38,3 +38,4 @@\n before\n-row old\n+row new\n+row three\n after" } else { "@@ -38,3 +38,4 @@\n before\n-row old\n+  row new\n+row two\n after" }),
+                blob(if case == "binary" { "f" } else { "e" })]});
+            // the last named PR is read first: o/y#7 is only a mention
+            let log = [entry("result", &[&sha], Some(1), "Changed: delivered in taskq-style o/x#241, follows o/y#7.\nChecks: A1 ok\nOpen: none")];
+            let reads = std::rc::Rc::new(RefCell::new(vec![]));
+            let seen = reads.clone();
+            let h = {
+                let (sha, head, merge, base, merged) = (sha.clone(), head.clone(), merge.clone(), base.clone(), merged.clone());
+                http(&github::KIND, None, Box::new(move |method, url, _| {
+                    assert_eq!(method, "GET", "no publication write: {url}");
+                    seen.borrow_mut().push(url.to_string());
+                    let value = if let Some(rest) = url.strip_prefix("https://api.github.com/repos/o/r") {
+                        // A1: the board repository serves only the task log; any compare or PR read there panics
+                        assert!(rest.starts_with("/issues/1/comments"), "board repository read {url}");
+                        json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                            "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>())
+                    } else if url == "https://api.github.com/repos/o/y/pulls/7" {
+                        json!({"number": 7, "state": "open", "head": {"ref": "feature", "sha": "9".repeat(40)}})
+                    } else {
+                        let rest = url.strip_prefix("https://api.github.com/repos/o/x").unwrap_or_else(|| panic!("read outside o/x: {url}"));
+                        if rest == "/pulls/241" {
+                            json!({"number": 241, "state": "closed", "merged_at": "x", "merge_commit_sha": merge, "head": {"ref": "taskq-1", "sha": head}, "base": {"ref": "main"}})
+                        } else if rest == format!("/compare/main...{sha}") { json!({"status": "diverged"}) }
+                        else if rest == "/rules/branches/main" { json!([]) }
+                        else if rest == format!("/commits/{merge}") { json!({"parents": [{"sha": base}]}) }
+                        else if rest == format!("/compare/{base}...{head}") { merged.clone() }
+                        else if rest == format!("/compare/{base}...{sha}") { result.clone() }
+                        else if rest.contains("/check-runs") { assert!(rest.contains(&head)); json!({"check_runs": [{"status": "completed", "conclusion": "success"}]}) }
+                        else if rest.ends_with("/status") { json!({"total_count": 0}) }
+                        else { panic!("unexpected {method} {url}") }
+                    };
+                    Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
+                }))
+            };
+            let got = h.resume_publication(1, &sha, "pr", "title", "Task: invented", std::path::Path::new("missing-worktree"), false);
+            match case {
+                // A2: the rebased merge carries the reviewed changes; it closes with its merge commit, no ask
+                "same" => assert_eq!(got, Publish::Done(format!("merged #241 in o/x as {merge} (head ddddddd, the result's changes); exact-SHA CI green on {head}"))),
+                // A3: another blob or other changed lines keep the publication-blocked ask, named by the PR
+                _ => {
+                    assert!(matches!(&got, Publish::Superseded { reason, merged } if reason.starts_with("o/x#241: ") && merged == "#241 at ddddddd"), "{case}: {got:?}");
+                    assert_eq!(got.outcome().0, "ask", "{case}");
+                }
+            }
+            // A1: the mention o/y#7 is read once and skipped; every other read is in o/x
+            assert_eq!(reads.borrow().iter().filter(|u| u.contains("/repos/o/y/")).count(), 1, "{case}: {:?}", reads.borrow());
+        }
+    }
+
+    // #2061 A4 defect (#2010): the board repository's compare HTTP 404 was the only reason shown for a result the board
+    // repository does not hold. Chain: publication -> no task PR of another repository named -> one stable reason
+    // naming the repository compared, so the service logs it once. Retained: the publication waits, no ask.
+    #[test]
+    fn a_result_missing_from_the_board_repository_waits_with_one_reason_naming_it() {
+        let sha = "a".repeat(40);
+        let log = [crate::core::entry("result", &[&sha], Some(1), "Changed: x, see #12\nChecks: A1 ok\nOpen: none")];
+        let h = http(&github::KIND, None, Box::new(move |method, url, _| {
+            let rest = url.strip_prefix("https://api.github.com/repos/o/r").unwrap_or_else(|| panic!("read outside o/r: {method} {url}"));
+            let reply = |status: u16, v: Value| Ok(Reply { status, headers: vec![], body: v.to_string(), operation: operation(method) });
+            if rest.starts_with("/compare/") { reply(404, json!({"message": "Not Found"})) }
+            else if rest.starts_with("/issues/1/comments") {
+                reply(200, json!(log.iter().enumerate().map(|(i, b)| json!({"id": i + 1, "body": b, "created_at": "2026-10-30T00:00:00Z",
+                    "updated_at": "2026-10-30T00:00:00Z", "author_association": "OWNER", "user": {"login": "owner"}})).collect::<Vec<_>>()))
+            } else { panic!("unexpected {method} {url}") }
+        }));
+        let want = Publish::Pending(format!("result {sha} not found in o/r (compare HTTP 404); the result names no task PR of another repository"));
+        for pass in 0..2 { assert_eq!(h.publish(1, &sha, "pr", "title", "Task: invented"), want, "pass {pass}"); }
+    }
+
     // Chain: section 7 private fallback real Git fetch/rebase/leased push, or conflict/dirty preservation.
     // An HTTP-only fixture cannot prove preservation of the worktree or the pushed branch.
     #[test]
@@ -2214,7 +2298,7 @@ exit 0
                     else if url.ends_with("/git/ref/heads/taskq-1") {
                         let out = std::process::Command::new("git").arg("--git-dir").arg(&bare).args(["rev-parse", "refs/heads/taskq-1"]).output().unwrap();
                         json!({"object": {"sha": String::from_utf8(out.stdout).unwrap().trim()}})
-                    } else { panic!("unexpected {method} {url}") };
+                    } else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let out = h.resume_publication(1, &sha, "pr", "title", "Task: invented", &root, false);
@@ -2526,7 +2610,7 @@ exit 0
                     }
                     else if url.ends_with("/pulls/7/merge") { assert_eq!(body.unwrap()["sha"], result); json!({"sha": merged}) }
                     else if url.ends_with("/pulls/7") { json!({"merged": true, "merge_commit_sha": merged}) }
-                    else { panic!("unexpected {method} {url}") };
+                    else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") };
                 Ok(Reply { status: 200, headers: vec![], body: value.to_string(), operation: operation(method) })
             }));
             let out = h.resume_publication(1, &"a".repeat(40), "pr", "title", "Task: fake", std::path::Path::new("unused"), false);
