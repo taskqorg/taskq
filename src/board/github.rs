@@ -735,6 +735,11 @@ impl Board for GitHub {
         Ok(parse_issue(&self.api.call("GET", &format!("/issues/{n}"), None)?.json()?))
     }
 
+    fn closed_labelled(&self, label: &str) -> Result<Vec<(Issue, i64)>> {
+        let url = format!("/issues?state=closed&labels={},{}&per_page=100", crate::service::TASK_LABEL, encode(label));
+        Ok(self.api.all(&url)?.iter().filter(|v| v.get("pull_request").is_none()).map(|v| (parse_issue(v), iso(&s(v, "closed_at")).unwrap_or(0))).collect())
+    }
+
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> {
         let mut rows = std::collections::BTreeMap::new();
         for label in ["research", "docs"] {

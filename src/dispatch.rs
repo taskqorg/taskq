@@ -356,8 +356,13 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
     if let Err(e) = service::project(b, &issue, &t) {
         return unknown(e);
     }
+    let deploy = crate::deploy::config(root);
+    // § 2 Deploy: a delivered close waits for its first `deployed` entry; a failed write is the service pass's to repair
+    if t.state == core::State::Closed && let Err(e) = crate::deploy::label(b, &issue, &log, deploy.as_ref()) {
+        tracing::info!(task = n, "deploy label not written: {e}");
+    }
     // § 2 Summary: a projection like the label; a failed write is the next pass's to repair, never the entry's
-    if b.summaries() && let Err(e) = crate::summary::write(b, n, &issue.body, &comments, &log, &t) {
+    if b.summaries() && let Err(e) = crate::summary::write(b, n, &issue.body, &comments, &log, &t, deploy.as_ref()) {
         tracing::info!(task = n, "summary not written: {e}");
     }
     note_receipt(b, accepted(t.state, rev), n, &log, op).wake(root)

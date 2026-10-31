@@ -1871,11 +1871,14 @@ impl<'a> Service<'a> {
                 self.label_fixes.insert(n, (want, stale, count, fixed_at, reported));
             }
             if v.projection.task.state == State::Closed {
+                // § 2 Deploy: a close typed on the board gets its waiting label like a written one
+                if let Err(e) = crate::deploy::label(self.board, &v.issue, &v.log, crate::deploy::config(&self.cfg.root).as_ref()) { log!("#{n} {} label not written: {e}", crate::deploy::LABEL); }
                 touched.insert(n);
             }
         }
         // § 2 Summary: rewrite a stale one from the log like a label
         let previous = std::mem::take(&mut self.summary_fixes);
+        let deploy = crate::deploy::config(&self.cfg.root);
         // the label step marks a closed task touched without writing to it
         let skip = |v: &&View| touched.contains(&v.issue.number) && (v.projection.task.state != State::Closed || written.contains(&v.issue.number));
         for v in views.iter().filter(|v| self.board.summaries() && !skip(v)) {
@@ -1885,7 +1888,7 @@ impl<'a> Service<'a> {
             let moved = self.seen.get(&n).is_some_and(|s| *s != v.projection.task.state);
             if have.is_none() && !moved && !self.summarized.contains(&n) { continue; }
             self.summarized.insert(n);
-            let want = crate::summary::text(self.board, n, &v.issue.body, &v.log, &v.projection.task);
+            let want = crate::summary::text(self.board, n, &v.issue.body, &v.log, &v.projection.task, deploy.as_ref());
             if have.is_some_and(|c| crate::summary::same(&c.body, &want)) { continue; }
             // a missing one is always written; a peer that renders another text is edited back once per 60 passes
             let streak = if have.is_none() { 1 } else { previous.get(&n).map_or(1, |s| s.saturating_add(1)) };
@@ -3571,7 +3574,7 @@ Open: none")).unwrap();
         assert!(core::verdict(n, &log, text).starts_with("Changed: the menu shows the summary\nOpen: none\n"), "readers show the publish text");
         let closed = |b: &Fake| b.comments(n).unwrap().into_iter().filter(crate::summary::is).collect::<Vec<_>>();
         s.pass().unwrap();
-        let want = crate::summary::text(&b, n, "", &log, &core::fold(n, &log, false));
+        let want = crate::summary::text(&b, n, "", &log, &core::fold(n, &log, false), None);
         assert!(want.starts_with(&format!("{}\n**Closed**", crate::summary::MARKER)) && want.contains("\nChanged: the menu shows the summary\nOpen: none"), "{want}");
         assert_eq!(closed(&b).iter().map(|c| c.body.as_str()).collect::<Vec<_>>(), [want.as_str()], "the state change created it");
         // an open task: a stale summary is rewritten from the log, a deleted one recreated; an older task without one
@@ -3580,7 +3583,7 @@ Open: none")).unwrap();
         let (m, old) = (b.create("Parked", "", &["taskq".into()]).unwrap(), b.create("Older", "", &["taskq".into()]).unwrap());
         for k in [m, old] { b.comment(k, "taskq: later\nReason: Waits for the owner.").unwrap(); }
         let log = entries(&b, m).unwrap();
-        crate::summary::write(&b, m, "", &b.comments(m).unwrap(), &log, &core::fold(m, &log, false)).unwrap();
+        crate::summary::write(&b, m, "", &b.comments(m).unwrap(), &log, &core::fold(m, &log, false), None).unwrap();
         let want = summary(m)[0].body.clone();
         assert_eq!(want, format!("{}\n**Later**\nReason: Waits for the owner.", crate::summary::MARKER));
         s.pass().unwrap();
