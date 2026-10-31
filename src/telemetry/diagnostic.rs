@@ -100,11 +100,7 @@ pub(crate) fn health_at(now:Option<u64>)->Value {
         // ponytail: gauges (inflight, queued_*) are sampled once per window; status.json keeps their live value.
         let key=(started/HEALTH_WINDOW_MS,json!([health["state"],health["lost"],health["failed_batches"]]));
         if LAST_HEALTH.with(|last|last.borrow().as_ref()!=Some(&key)) {
-            coreq::telemetry::capture::observe(json!({"product":"taskq","version":crate::platform::VERSION,"operation":"collector.health",
-                "kind":"collection","started_ms":started,"process_id":std::process::id(),
-                "trace":null,"span":null,"unknown":{"trace":"not-recorded","span":"not-recorded"},
-                "source":"process","outcome":if health["state"]=="collecting" {"ok"} else {"unknown"},
-                "error":if health["state"]=="collecting" {"none"} else {"collection-incomplete"},"counts":counts}))?;
+            coreq::telemetry::capture::observe(health_observation(crate::platform::VERSION,started,std::process::id(),health["state"]=="collecting",counts))?;
             LAST_HEALTH.with(|last|*last.borrow_mut()=Some(key));
         }
         health["scope"]=json!("this-process");health["process_id"]=json!(std::process::id());
@@ -113,6 +109,15 @@ pub(crate) fn health_at(now:Option<u64>)->Value {
         Ok::<_,String>(health)
     })();
     result.unwrap_or_else(|_|json!({"state":"unknown","scope":"this-process","reason":"collector-snapshot-unavailable"}))
+}
+
+/// The `collector.health` observation; the published field fixture (#2013) builds it here too.
+pub(crate) fn health_observation(version:&str,started:u64,process:u32,collecting:bool,counts:serde_json::Map<String,Value>)->Value {
+    json!({"product":"taskq","version":version,"operation":"collector.health",
+        "kind":"collection","started_ms":started,"process_id":process,
+        "trace":null,"span":null,"unknown":{"trace":"not-recorded","span":"not-recorded"},
+        "source":"process","outcome":if collecting {"ok"} else {"unknown"},
+        "error":if collecting {"none"} else {"collection-incomplete"},"counts":counts})
 }
 
 #[derive(Default)]
