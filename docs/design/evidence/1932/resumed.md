@@ -38,7 +38,7 @@ swift docs/design/evidence/1991/capture.swift "$PWD" "$fixture/composer"
 | `node tests/tray-answer.test.cjs` | Pass: exact IPC, foreign receipt, timeout, same-ID and stale/lost-response fixtures. |
 | `node tests/notifications.browser.cjs` | Pass: four Chromium dark/light × 16/20 px cells, native-platform flags, exact count/warning, unchanged clipped-label negative guard, race/clear/question preservation. |
 | `node tests/conversation-times.browser.cjs` | Partial: Chromium 12 width/font/theme cells pass; command then exits 1 because Playwright WebKit executable `webkit-2370/pw_run.sh` is absent. WebKit-browser matrix Not tested, not a failure of the product WKWebView. No browser was installed outside the allowed folders. |
-| Canonical gate | Recorded below after the frozen evidence candidate. |
+| Canonical gate | **sandbox-blocked, not PASS**: 241.006 s / 900 s, no retries; details below. |
 
 The combined `--route home,settings,icon` invocation exited 0 but produced only 36 icon/app rasters and **no** Home/Settings PNGs. It is not counted as an eight-cell pass. The explicit repeated-route invocation above produced all eight files and exercised the guard. Cause of the combined-route discrepancy remains uninvestigated; no product fix is inferred from that observation.
 
@@ -95,4 +95,11 @@ Exactly ten representative PNGs. Original seven retain source `554552da`; images
 
 ## Canonical gate
 
-Pending the one frozen-candidate invocation below. Prior attempt's sandbox-blocked gate remains historical, not reused for the new instrument.
+`python3 scripts/check.py --base cbeb8db913aa0908fbe9490e7de8404e7a306231` ran once on frozen evidence candidate `311c6b76df4c2699e0a111c1a1ddb02322464a77`. Selection was full. Outcome: **sandbox-blocked, not PASS**, command exit 1 after 241.006 / 900 seconds, no retry.
+
+- Rule/change checks and web bundle generation passed; no changed contract/rule assertion was proposed.
+- Rust unit driver: 752 passed, 0 failed, 35 ignored, 63.35 s. This includes the actual 10 MiB/100 MiB/oversized-source and 10,000-record transcript checks; their source-reader boundary remains distinct from native UI/cold-warm I/O.
+- Integration: 21 passed, one blocked, one ignored, 4.26 s. `telemetry_process::resume_records_its_result_without_releasing_the_host_hold`, `tests/telemetry_process.rs:189`, reports `sandbox-exec: sandbox_apply: Operation not permitted`.
+- The unit log separately records `seatbelt_keeps_workers_out_of_the_policy_store` sandbox-blocked. No permission, containment or assertion was weakened.
+- Later offline selftest and canonical component/artifact stages were not reached. Independent browser/native/component outcomes above keep their own attribution; they do not convert the full gate into PASS.
+- The final evidence-only note changes no application/test/dependency/instrument or native capture. The full gate is not repeated for that note (§7.4, R12). Merge-result `merge_group` CI remains pending; no CI wait, merge or rollout is claimed.
