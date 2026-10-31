@@ -18,6 +18,10 @@ One bounded live scenario covers each applicable runtime, role and continuation.
 
 Deterministic checks follow [specq test classes](https://github.com/taskqorg/specq/blob/main/engineering/verification.md#test-classes). TaskQ chains: state transitions, duplicate/stale writes, admission, publication and preservation of active work. A constructor/argument-string check is not live permission or behavior proof.
 
+## Cleanup after a run
+
+Every qualification or canary run (#2048) names the native objects it creates with a `Qualification` or `Canary` marker together with `TaskQ`, `CoreQ`, `Codex` or `Claude` (for example `TaskQ-Qualification-<id>`), keeps its scratch in an OS-temp folder named `taskq-<purpose>-<id>`, and removes its Scheduled Tasks, user units, launchd jobs and scratch folders after the run, failed runs included; the result names any object it had to leave. The [host doctor](design/host-service.md#host-doctor) removes leftovers of interrupted runs after a day. Fixtures outside the OS temp dir and `<install>` (for example `~/.local/share/taskq-*` or `~/taskq-*`) are outside the service's folders (taskq.md § 8); the run that made them removes them.
+
 ## Evidence reuse and invalidation (R12)
 
 Keep model (pure transitions), adapter (integration with substitutes), process (real executable/IPC) and native-platform (actual client/OS/service) proof distinct. A fake board or native manager cannot qualify the installed manager; a release hash, heartbeat, result or stop acknowledgment cannot prove native execution exit.

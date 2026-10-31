@@ -636,9 +636,9 @@ fn update_result(result: Result<Option<String>, String>) -> Result<Option<String
     result
 }
 
-/// § 8 step 2 sweep: everything in `<install>` the current version does not own, and the v3 shim. Best effort: a file
-/// in use (a running Windows exe) stays until a later update.
-pub fn sweep(install: &Path, shim: &Path) {
+/// Releases in use: current, previous, the running version and each registered project's published version; `None`
+/// when the registry or a project version is unreadable, so release ownership is unknown and every release stays.
+pub fn releases_in_use(install: &Path) -> Option<Vec<String>> {
     let read = |f: &str| fs::read_to_string(install.join(f)).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
     let mut keep: Vec<String> = [read("current"), read("previous"), Some(VERSION.into())].into_iter().flatten().collect();
     // a corrupt status.json leaves its project's version unknown: every release stays (§ 4 Data)
@@ -652,6 +652,13 @@ pub fn sweep(install: &Path, shim: &Path) {
         },|_|"version-unknown");
         match version {Ok(version)=>keep.push(version),Err(_)=>unknown=true}
     }
+    (!unknown).then_some(keep)
+}
+
+/// § 8 step 2 sweep: everything in `<install>` the current version does not own, and the v3 shim. Best effort: a file
+/// in use (a running Windows exe) stays until a later update.
+pub fn sweep(install: &Path, shim: &Path) {
+    let keep = releases_in_use(install);
     let owned = |n: &str| {
         ["releases", "current", "previous", "projects", "token", "gitlab-token", "installation-id", "link-key", "link", "connection", "taskq", "taskq.exe", "WebView2Loader.dll", "TaskQ.app", "capacity", "resources", "resource-state", "windows-native", crate::policy::FILE, "taskq-profile.lock", "hold", "admission.json", "admission.lock", "update.lock", "host.json", "host.json.pending", "host-policy-migration", "native", "service", "service.lock", "poke", "restart", "update", "projects.lock", "projects.pending", "rollback-floor", "login-off"].contains(&n)
             ||["setup","messages.json","messages.tmp"].contains(&n)
@@ -668,7 +675,7 @@ pub fn sweep(install: &Path, shim: &Path) {
     }
     for e in fs::read_dir(install.join("releases")).into_iter().flatten().flatten() {
         let n = e.file_name().to_string_lossy().to_string();
-        if !unknown && !n.ends_with(".tmp") && !keep.contains(&n) {
+        if keep.as_ref().is_some_and(|keep| !n.ends_with(".tmp") && !keep.contains(&n)) {
             gone(&e.path());
         }
     }

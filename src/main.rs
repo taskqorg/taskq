@@ -15,6 +15,7 @@ mod board;
 mod core;
 mod control;
 mod data;
+mod doctor;
 mod dispatch;
 mod display;
 mod enrollment;

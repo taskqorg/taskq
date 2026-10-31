@@ -9,7 +9,7 @@ use std::sync::{OnceLock, atomic::{AtomicU64, Ordering}};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use crate::telemetry::Sample;
 
-pub const OPS: [&str; 8] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn"];
+pub const OPS: [&str; 9] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn", "service.doctor"];
 #[cfg(test)] const PREFIX: &str = "taskq-profile ";
 pub(crate) const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
 static LOG: OnceLock<PathBuf> = OnceLock::new();
