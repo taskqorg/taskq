@@ -15,8 +15,10 @@ pub struct Cache {
 impl Cache {
     fn retaining(value:Value)->Self {
         let entries=value["reports"].as_array().into_iter().flatten().chain(value["history"].as_array().into_iter().flatten())
-            .filter_map(|r|r["n"].as_u64().map(|n|(n,(-1,0,Some(r.clone()))))).collect();
-        Self{entries,value,..Default::default()}
+            .filter_map(|r|r["n"].as_u64().map(|n|(n,(r["updated"].as_i64().unwrap_or(-1),r["proof"].as_i64().unwrap_or(0),Some(r.clone()))))).collect();
+        // A restart resumes the stored cursor; rows keep their read proof, so only issues that moved re-read comments.
+        let verified=value["verified"].as_i64();
+        Self{entries,value,verified}
     }
     pub fn collect(&mut self,b:&dyn Board) {
         let result=coreq::telemetry::capture::operation("reports.collect",|| -> Res<Value> {
@@ -69,10 +71,10 @@ impl Cache {
             }
             self.entries=next;
             if errors.is_empty() {self.verified=Some(verified);}
-            let mut rows:Vec<Value>=self.entries.values().filter_map(|(_,_,r)|r.clone()).collect();
+            let mut rows:Vec<Value>=self.entries.values().filter_map(|(at,proof,r)|r.clone().map(|mut r|{r["updated"]=json!(at);r["proof"]=json!(proof);r})).collect();
             rows.sort_by_key(|r|(std::cmp::Reverse(r["closed"].as_i64().unwrap_or(0)),std::cmp::Reverse(r["n"].as_u64().unwrap_or(0))));
             let visible:Vec<_>=rows.iter().filter(|r|r["visible"]==true).collect();let archived:Vec<_>=rows.iter().filter(|r|r["visible"]!=true).collect();
-            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now()}))
+            Ok(json!({"reports":visible,"history":archived,"complete":errors.is_empty(),"reason":(!errors.is_empty()).then(||errors.join("; ")),"observed":now(),"verified":self.verified}))
         },|_|"board-read");
         match result {Ok(value)=>self.value=value,Err(reason)=>{self.value["complete"]=json!(false);self.value["reason"]=json!(reason);}}
     }
@@ -574,6 +576,7 @@ mod tests {
         b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().updated=before+2;
         cache.collect(&b);assert_eq!(cache.value["reports"][0]["decision"],"later","update inside paging window must be revisited");
         let mut restarted=Cache::retaining(cache.value.clone());b.state.borrow_mut().fail_comment_reads=1;
+        b.advance(2);let moved=b.now().unwrap();b.state.borrow_mut().issues.iter_mut().find(|i|i.number==n).unwrap().updated=moved;
         restarted.collect(&b);assert_eq!(restarted.value["complete"],false);assert_eq!(restarted.value["reports"][0]["n"],n);
         assert!(restarted.value["reason"].as_str().unwrap().contains("comment read failed"));
     }
@@ -633,6 +636,18 @@ mod tests {
         cache.collect(&b);assert_eq!(b.state.borrow().comment_reads,reads,"settled unchanged projections reuse comments");
         b.raw(n,&format!("taskq: report-drop {sha}"),true,false);cache.collect(&b);
         assert!(cache.value["reports"].as_array().unwrap().is_empty());
+    }
+
+    // #1985: dev installs restart the service every few minutes; a restart must not re-read every closed task's comments.
+    #[test] fn restart_reuses_settled_rows_without_comment_reads() {
+        let (b,_,_,_)=board();let mut cache=Cache::default();cache.collect(&b);b.advance(2);cache.collect(&b);
+        let reads=b.state.borrow().comment_reads;
+        let mut restarted=Cache::retaining(cache.value.clone());b.advance(2);restarted.collect(&b);
+        assert_eq!(b.state.borrow().comment_reads,reads,"restart resumes the cursor");
+        let mut legacy=cache.value.clone();legacy["verified"]=Value::Null;
+        let mut restarted=Cache::retaining(legacy);b.advance(2);restarted.collect(&b);
+        assert_eq!(b.state.borrow().comment_reads,reads,"a full listing still reuses rows with their read proof");
+        assert_eq!(restarted.value["complete"],true);assert!(restarted.value["reports"][0]["body"].is_string());
     }
 
     // #1973 A1: open tasks and host heartbeats move every minute but never project; they must cost no comment read.
