@@ -1,56 +1,62 @@
 # Existing-host qualification
 
-Reports and finished tasks render in the candidate's Conversations pane with the grouped sidebar and shared decision cards. This is native Windows renderer evidence, not live activation or complete A5/A6 acceptance (R12). The [owner continuation](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6546915208) drops the disposable Mac prerequisite and requests explicit Not tested cells on the existing hosts.
+Reports and finished tasks render in Conversations with the grouped sidebar and shared decision cards. The rebased candidate retains experiment verdicts, CLI Decide revisit dates and the [approved dated Later flow](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6547159713). Native rendering, installed activation and physical input are separate claims (R12).
+
+The [owner continuation](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6546915208) drops the disposable Mac prerequisite and requests explicit Not tested cells on the existing hosts. This evidence does not replace the owner release batch under §7.8.
 
 ## Candidate and environment
 
-Source: `aa2cea419fd7a7bcb0e962889983e8fcedd489ae`. The only source change after `a2570a31` makes the two result snapshot routes use the approved 1280 by 760 logical window; the normal installed window keeps its existing size. [Capture metadata](capture.json) records executable, loader and image hashes.
+Source: `51b6c40634c1589f4e637c4c93ec6a9a1c07f300`, rebased on `49ebbe4addf65807a99197c919115c8f512c5b70`. [Capture metadata](capture-rebase.json) records executable, loader and image hashes. The executable and x64 WebView2 loader were relocated together into an isolated OS temporary store; both snapshot routes ran directly there. No service was registered, replaced or restarted. Invented IPC receipts prevent real decisions and task creation.
 
-Windows WebView2; configured 16 CSS px; Windows display DPI 96 (100%); owner TextScaleFactor 140%. Primary display 2560 by 1440, work area `(0, 0, 2560, 1392)`. Captures are 1281 by 761 physical pixels, including the native capture edge. Text scaling was read, not changed. The approved browser reference uses 100% text size, so these frames establish structure and wrapping on this host, not pixel equality to that reference.
+Windows WebView2; configured 16 CSS px; display DPI 96 (100%); owner TextScaleFactor 140%; primary display 2560 by 1440 and work area `(0, 0, 2560, 1392)`. The 1280 by 760 logical window produces 1281 by 761 physical-pixel captures including its native edge. Settings were read, not changed. The approved reference uses 100% text size, so the comparison establishes structure and wrapping on this host, not pixel equality. Fixture epoch timestamps do not qualify recency or collection freshness; the unknown verdict is also invented fixture data.
 
-The candidate executable and its x64 `WebView2Loader.dll` were relocated together into an isolated OS temporary directory. Both routes started directly there without Cargo's loader PATH. The store was isolated; no service was registered, replaced or restarted. The actual installed Windows baseline remains v4.6.56. Invented IPC receipts prevent real decisions and task creation. The existing fixture uses epoch timestamps, so the displayed age and freshness are not recency qualification.
+The installed Windows baseline remains v4.6.56. Its executable SHA-256 was freshly read back as `32193943edc9ee5c9135b1c2863df7462735293268d1a8e7ed4ef3056e9e2479`, matching the retained baseline captures. Earlier candidate frames and [their metadata](capture.json) remain historical evidence, outside the current review set.
 
-## Six-screen review set
+## Six-screen native review set
 
 | Frame | Observation |
 |---|---|
-| [Installed report, dark](installed-report-dark.png) | v4.6.56 has the separate reader with Make tasks/Later/Drop and no visible Conversations sidebar |
-| [Candidate report, dark](candidate-report-dark.png) | Project grouping and All/Needs reply/Needs decision/Finished stay beside Question, Recommendation and the numbered Accept/Later/Drop card |
-| [Candidate report, light](candidate-report-light.png) | Same reading and decision structure in the other theme |
-| [Installed finished task, dark](installed-finished-dark.png) | Baseline before the merged reader |
-| [Candidate finished task, dark](candidate-finished-dark.png) | Changed/Checks/Open, review link and shared question remain inside the selected Conversations pane |
-| [Candidate finished task, light](candidate-finished-light.png) | Same finished-task structure in the other theme |
+| [Installed report, dark](installed-report-dark.png) | Retained v4.6.56 baseline: separate reader, no Conversations sidebar |
+| [Rebased report, dark](candidate-rebase-report-dark.png) | Grouped sidebar and filters remain beside report content and its numbered decision card |
+| [Rebased report, light](candidate-rebase-report-light.png) | Same reading and decision structure in the other theme |
+| [Installed finished task, dark](installed-finished-dark.png) | Retained baseline before the merged reader |
+| [Rebased finished task, dark](candidate-rebase-finished-dark.png) | Changed/Checks/Open and review link remain in the selected Conversations pane |
+| [Rebased finished task, light](candidate-rebase-finished-light.png) | Same finished-task structure in the other theme |
 
-Compare the candidate report and finished-task frames with approved mockups [2](../02-report.png) and [3](../03-finished.png). Titles, fixture content, existing app chrome and the owner's text scale differ. The shared sidebar destination, filter meanings, report-first reading and decision question order match the approved model. The long reader scrolls; controls below the fold are covered by the browser instrument, not by native input in these stills. Earlier narrow captures under `../windows/` are historical instruments, outside this six-screen review set.
+Compare with approved mockups [2](../02-report.png) and [3](../03-finished.png). App chrome, content and owner text scale differ. Sidebar placement, filters, report-first reading and primary choice order follow the approved model. Controls below the fold, dated Later entry, IME and native accessibility were not exercised through native input. The [seventh browser reference](../07-later.png) illustrates the approved date-entry addition; browser instruments verify its delivery, validation and retry behavior.
 
-Commands, with temporary store and evidence destinations substituted:
+Native commands, substituting only temporary capture destinations:
 
 ```text
-<installed executable> tray --snapshot <baseline> --route reports-conversations
-<installed executable> tray --snapshot <baseline> --route results-conversations
-<relocated candidate> tray --snapshot <candidate> --route reports-conversations
-<relocated candidate> tray --snapshot <candidate> --route results-conversations
+<relocated candidate> tray --snapshot <report captures> --route reports-conversations
+<relocated candidate> tray --snapshot <finished captures> --route results-conversations
 ```
 
 ## Acceptance and remaining cells
 
 | Acceptance / cell | Evidence | Status |
 |---|---|---|
-| A1-A4 | Approved Product design, five-job table and six mockups | Retained |
-| A5 implementation | Bundled report/finished reader, legacy redirects and exact-SHA navigation; native candidate frames above | Pass for candidate behavior |
-| A5 live Windows activation | Existing installed v4.6.56 is still the baseline; no candidate activation occurred | Not tested; publication and owner release batch remain under §7.8 |
-| A5 Mac dev install | SSH failed before authentication; no Mac command or installation readback ran | Not tested; existing host is inaccessible from this attempt |
-| A6 Windows native reading | Both result kinds and themes at the measured display/text settings | Partial; structural comparison only, no pixel-equality claim |
-| A6 Mac WKWebView comparison | `banner exchange: Connection to UNKNOWN port -1: Connection refused`; hostname and direct IPv4 attempts failed | Not tested; no Mac screenshot or installed version can be attributed |
-| A6 native input / owner-session cells | Physical input, IME, native accessibility and lower-card scrolling were not exercised | Not tested; require owner session or physical input |
-| A6 decision and grouping protection | Canonical report browser matrix plus existing sidebar browser instrument | Pass at candidate source |
-
-No disposable Mac context, replacement task, permission change or real board reaction was created. A5 live activation and the missing A6 cells remain unknown; these frames do not silently complete those acceptance items.
+| A1-A4 | Approved Product design, five-job table, six original mockups and dated Later continuation | Retained |
+| A5 implementation | Bundled Conversations reader, redirects, exact-SHA navigation and current native frames | Pass for candidate behavior |
+| A5 live Windows activation | Existing installation remains the baseline | Not tested; owner release batch under §7.8 |
+| A5 Mac dev install | SSH refused before authentication; no remote command ran | Not tested; existing host inaccessible |
+| A6 Windows reading | Both kinds/themes at measured display/text settings | Partial; structural comparison, not pixel equality |
+| A6 Mac WKWebView | Fresh `ssh -o BatchMode=yes -o ConnectTimeout=10 macbook-m2.local` returned `banner exchange: Connection to UNKNOWN port -1: Connection refused` | Not tested; no Mac capture or version readback |
+| A6 native input | Physical input, date selection, lower-card scroll, IME and accessibility | Not tested; owner session or physical input required |
+| A6 decision/grouping protection | Canonical 16-cell report browser matrix and final bundled sidebar instrument | Pass at candidate source |
 
 ## Verification
 
-`python3 scripts/check.py --base 554552daf48d5b413918d54a8a6d0f88efba4020` passed on the source above in **299.250 s / 900 s**, no retries: 744 Rust tests passed, 39 ignored; 19 integration tests passed, one ignored; isolated offline selftest, Node/component/artifact/release checks and all 16 report browser cells passed. Ignored/native cases remain unknown. The final commit adds evidence only and does not change tested source, tests, dependencies or contract.
+`python3 scripts/check.py --base 49ebbe4addf65807a99197c919115c8f512c5b70` passed on the exact source above in **433.828 s / 900 s**, no retries: 793 Rust tests and 19 integration tests passed; 40 Rust and one integration case remain ignored. Isolated offline selftest, Node/component/artifact/release checks and all 16 report browser cells passed. Offline board/tool probes remain unknown by design, not live acceptance.
 
-`node tests/conversations-sidebar.browser.cjs` passed on the same bundled candidate: mixed grouping/recency, pin/collapse receipts, search/reopen, Archive/Restore and retained drafts/focus. Its receipts are invented; no execution effects occurred.
+The local full gate reported contract lint unknown because its pinned checkout was absent. The exact CI-pinned SpecQ revision `39e6024037fb69e68a84180c04fb7ac53eddb9f9` was then fetched and its identity verified. `python3 scripts/check.py --lint` separately passed: 47,273 UTF-8 bytes, 234 lines, longest visible line 394 characters, zero errors. Lint thresholds and existing size guards are unchanged. The rule gate reports only Product amended under R13.
 
-Failure before: installed v4.6.56 hides the sidebar while reading a report; the previous candidate snapshot is only 800 by 600, too narrow for the approved wide reference. After: the native candidate shows the sidebar and shared card at the approved wide size. Earlier report-Accept rejection, stale-receipt and missing-composer-manifest defects and retained guards are recorded in the [design review](../../../reports-conversations.md#checkpoint-and-remaining-evidence). Green merge-result CI remains the publication gate (§7, R12); this local gate does not establish it.
+`node tests/conversations-sidebar.browser.cjs` passed on the final bundle: grouping/recency, pin/collapse receipts, search/reopen, Archive/Restore and retained drafts/focus. `node docs/design/exploration/reports-conversations.check.cjs` passed the original 72 geometry cells and the dated Later interaction. These instruments use invented receipts; they do not qualify real board writes or native input.
+
+Failure before / pass after:
+
+- The merged adapter lost `until`; `tests/reports.test.cjs` failed with `undefined` instead of the selected date. It now passes while retaining future-date validation and Decide revisit behavior.
+- Failed read acknowledgement caused another read on redraw (two requests instead of one). The regression now passes: one automatic attempt per displayed source, one new attempt on explicit reopen.
+- Unknown Accept followed by another host's Make tasks left correction capability false after authoritative collection. Its regression now passes: same-SHA terminal readback settles the loser without a new decision write. Unknown correction/successor creation remains fenced.
+
+The shared-card tests retain immutable SHA/request identity, source-numbered choices, held-only creation, first-winner Make reservations, closed originals and decided history. Read-only review verified the two receipt fixes. Green merge-result `merge_group` CI remains the publication gate (§7, R12); neither local success nor these frames prove publication or installed activation.

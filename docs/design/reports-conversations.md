@@ -43,6 +43,8 @@ All is default. Needs reply and Needs decision reveal matching items across proj
 
 ## Six-screen reference
 
+The original six screens remain the approved reference. Screen 7 records the subsequently approved dated Later interaction; it adds date entry and Send without changing the five operator-path comparisons.
+
 All data is invented. The editable [mockup](exploration/reports-conversations.html) uses the real `src/answer-card.js` renderer and existing answer-card/Conversations styles, with local-only navigation and action simulation. It does not implement the result adapter or board writes. Header window controls, pin/archive, More, native attachments, full dialogue persistence and installation are shown or preserved in the ledger, not qualified by the simulation. The correction form is a design representation of the shared composer, not its production controller.
 
 | Screen | Decision or state |
@@ -95,3 +97,9 @@ The post-reset canonical run passed the Rust suite and isolated offline selftest
 The [owner continuation](https://github.com/taskqorg/taskq/issues/1977#issuecomment-6546915208) removes the disposable Mac prerequisite and requests exact Not tested gaps. The [six-screen native review and acceptance ledger](evidence/1977/windows-current/README.md) records the installed Windows baseline, the wide relocated candidate, measured display/text settings and failed access to the existing Mac. No live installation or native-input acceptance is claimed. The new capture-size change affects only the result snapshot routes; ordinary windows keep their existing size.
 
 Source `aa2cea419fd7a7bcb0e962889983e8fcedd489ae` passed the canonical gate in 299.250 s, including 744 Rust tests, 19 integration tests, offline selftest and the 16 report browser cells. The grouped-sidebar browser instrument also passed. A1-A4 remain approved. A5 activation and incomplete A6 native cells are reported openly for publication review under R12 and §7.8; they do not wait on another disposable-context task.
+
+## Rebased candidate
+
+Source `51b6c40634c1589f4e637c4c93ec6a9a1c07f300` resolves the main-moved conflicts and implements the approved dated Later flow. The canonical gate passed in 433.828 s: 793 Rust and 19 integration tests, isolated offline selftest, component/artifact/release checks and the 16-cell report browser matrix. The exact CI-pinned contract lint separately passed, and the sidebar instrument passed on the final bundle. Failed read redraws and losing unknown decisions have failure-before/pass-after regressions; future-date, immutable SHA, held-only and closed-original protections remain.
+
+The [current six-screen native set and acceptance ledger](evidence/1977/windows-current/README.md) pins four fresh Windows candidate frames in both themes and retains two baseline frames. Native date input, physical interaction, accessibility, Mac access and installed activation remain explicitly Not tested. Source checks and structural native evidence do not establish merge-result CI or live acceptance (R12, §7).
