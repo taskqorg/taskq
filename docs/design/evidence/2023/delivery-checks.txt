@@ -1,0 +1,16 @@
+Task #2023 delivery is documentation and text evidence only.
+Product source measured: 73df356b19e841e3900c06878206bfdd73b7c41e.
+Canonical command: python scripts/check.py --base 3a110e239d45be78e6451c4eac8a82a91212b937
+Checked candidate: d206f7883ca52b2c038604ebdcc8594c02bf26a8.
+Gate child exit: 0. Wrapper measured 7.000s; checker measured 6.797s / 900s, no retries.
+Selection: docs. git diff --check, selection/identity/credential/harness/adapter/rule/approval checks pass.
+Rule gate: no rule or rule-citing test changed. Existing rule-coverage gaps are report-only.
+Contract lint: unknown locally (R12); the worktree lacks the pinned executable specq checkout. CI runs it.
+Rust regression suites and offline selftest: not run, per the docs-only selection in docs/testing.md.
+The outer log-printer then failed to encode a replacement character with CP1252 after saving the child's exit 0.
+Fresh readback of the saved receipt and bounded raw log confirmed exit 0; explicit UTF-8 printing succeeded.
+The unchanged canonical gate was not repeated. A receipt-only documentation commit follows this checked candidate.
+Native instrument assertions and integrity checks pass; all 10 original fixture hashes match and all 9 child exits are 0.
+No history-2023 native process remains. No production service, session, setting, grant or source record changed.
+CI/merge_group publication, installed qualification and rollout: not performed by this worker.
+Native measurement outcomes and limits are in README.md; source CI cannot substitute for them (R12).

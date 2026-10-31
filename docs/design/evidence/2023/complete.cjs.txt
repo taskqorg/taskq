@@ -1,0 +1,42 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),p=require('./measure.cjs'),base=__dirname;
+const result={started:new Date().toISOString(),cases:[],trace:{state:'not started'},restart:null};
+const state=JSON.parse(fs.readFileSync(path.join(base,'state.json'),'utf8'));
+for(const rt of ['claude','codex']){
+ const id=rt+'-trace',file=id+'.jsonl';fs.copyFileSync(path.join(base,rt+'-normal.jsonl'),path.join(base,file));
+ p.manifest[id]={...p.manifest[rt+'-normal'],file};state.conversations.items=state.conversations.items.filter(c=>c.id!==id);state.conversations.items.push({...state.conversations.items.find(c=>c.id===rt+'-normal'),id,title:id,request:{id,state:'launched',kind:'launched',next:'Read only'}});
+}
+fs.writeFileSync(path.join(base,'fixtures.json'),JSON.stringify(p.manifest));fs.writeFileSync(path.join(base,'state.json'),JSON.stringify(state));
+let ws,serial=0,pending=new Map(),traceReceipt;
+const save=()=>fs.writeFileSync(path.join(base,'complete.json'),JSON.stringify(result,null,2));
+function browser(method,params={}){return new Promise((resolve,reject)=>{const id=++serial,t=setTimeout(()=>{pending.delete(id);reject(Error(method+' browser timeout'));},15000);pending.set(id,{resolve,reject,t});ws.send(JSON.stringify({id,method,params}));});}
+async function main(){
+ result.native=await p.boot();save();
+ const version=await (await fetch('http://127.0.0.1:19223/json/version')).json();ws=new WebSocket(version.webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});
+ ws.onmessage=e=>{const m=JSON.parse(e.data),r=pending.get(m.id);if(m.method==='Tracing.tracingComplete')traceReceipt=m.params;if(r){clearTimeout(r.t);pending.delete(m.id);m.error?r.reject(Error(JSON.stringify(m.error))):r.resolve(m.result);}};
+ try{await browser('Tracing.start',{categories:'devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline',transferMode:'ReturnAsStream'});result.trace.state='recording';}catch(e){result.trace={state:'unavailable',reason:e.message};}
+ for(const rt of ['claude','codex']){
+  const id=rt+'-trace',c={id};result.cases.push(c);await p.choose(id);console.log('TRACE',id);
+  await p.ev('measure.phase="prepend-'+rt+'";performance.mark("prepend-'+rt+'");(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=0;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+  await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=500;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();
+  c.before=await p.anchor();await p.ev('measure.phase="append-'+rt+'";performance.mark("append-'+rt+'")');fs.appendFileSync(path.join(base,id+'.jsonl'),JSON.stringify(p.record(rt,301,'Final native append '+rt))+'\n');
+  await p.until('document.querySelector("[data-c=latest]")?.innerText.includes("New messages")');await p.settle();c.append_delta=await p.displacement(c.before);await p.delay(150);c.delayed_delta=await p.displacement(c.before);
+  await p.ev('document.querySelector("[data-c=latest]").click()');await p.until('document.querySelector(".dialogue-transcript").innerText.includes('+JSON.stringify('Final native append '+rt)+')');await p.settle();
+  c.measures=await p.ev('({renders:measure.renders.splice(0),longtasks:measure.longtasks.splice(0)})');save();
+ }
+ if(result.trace.state==='recording'){
+  try{
+   await browser('Tracing.end');const end=Date.now()+20000;while(!traceReceipt&&Date.now()<end)await p.delay(50);assert(traceReceipt?.stream,'browser trace stream receipt missing');
+   let data='';for(;;){const r=await browser('IO.read',{handle:traceReceipt.stream,size:1024*1024});data+=r.base64Encoded?Buffer.from(r.data,'base64').toString('utf8'):r.data;if(r.eof)break;}await browser('IO.close',{handle:traceReceipt.stream});
+   const events=JSON.parse(data).traceEvents,names=new Map(events.filter(e=>e.name==='thread_name').map(e=>[e.pid+':'+e.tid,e.args?.name]));
+   result.trace={state:'complete',event_count:events.length,tasks:events.filter(e=>e.ph==='X'&&['RunTask','ThreadControllerImpl::RunTask','FunctionCall','EventDispatch','FireAnimationFrame','UpdateLayoutTree','Layout','Paint'].includes(e.name)).map(e=>({name:e.name,thread:names.get(e.pid+':'+e.tid)||'unknown',ts_us:e.ts,duration_ms:e.dur/1000})),marks:events.filter(e=>/^(prepend|append)-/.test(e.name)).map(e=>({name:e.name,ts_us:e.ts}))};
+  }catch(e){result.trace={state:'unknown',reason:e.message};}
+ }
+ ws.close();save();
+ await p.choose('claude-normal');await p.ev('(()=>{const e=document.querySelector(".conversation-reader");e.scrollTop=e.scrollHeight*.4;e.dispatchEvent(new Event("scroll",{bubbles:true}));})()');await p.settle();await p.delay(400);
+ result.restart={before:await p.anchor(),navigation:JSON.parse(fs.readFileSync(path.join(base,'navigation.json'),'utf8'))};save();await p.stop();
+ result.restart.native=await p.boot();await p.settle();result.restart.after=await p.anchor();result.restart.delta=await p.displacement(result.restart.before);save();await p.stop();
+ result.preservation=Object.fromEntries(Object.entries(p.manifest).filter(([id])=>!/(mutable|trace)$/.test(id)).map(([id,f])=>[id,{sha256:p.hash(path.join(base,f.file)),unchanged:p.hash(path.join(base,f.file))===f.sha256}]));assert(Object.values(result.preservation).every(v=>v.unchanged));
+ result.finished=new Date().toISOString();save();console.log('DONE',result.trace.state,result.restart.delta);
+}
+main().catch(async e=>{result.error=e.message;save();console.error(e.stack);try{ws?.close();await p.stop();}catch{}process.exitCode=1;});
