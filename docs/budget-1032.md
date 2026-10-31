@@ -146,10 +146,11 @@ issues; one reader thread per project keeps its board between passes.
 Moved from taskq.md § 4 Log and board budget, which keeps the rules.
 
 - **Log line:** `<UTC time> <text>`, time ISO 8601 `YYYY-MM-DDThh:mm:ssZ` from the local clock; the lines of one message, an HTTP error body or a panic included, fold into one line.
-- **Operation:** `<METHOD> <path>`, the path API-relative, at most 3 segments, numbers as `N`, other ids as `*`; later pages count under their first page.
+- **Operation:** `<METHOD> <path>`, the path API-relative, at most 3 segments, numbers as `N`, other ids as `*`; later pages count under their first page. A 304 reply to a conditional GET counts apart as `<op> 304`: GitHub does not bill it, so the host rate below leaves it out (#1985).
 - **Pause:** a 403 or 429 with `retry-after`, or with zero `x-ratelimit-remaining`/`ratelimit-remaining`, pauses the process's board calls on the monotonic clock until `retry-after`, else the reset header against the reply `Date`, else 60 s; at most 1 h. A GraphQL `RATE_LIMIT` or `RATE_LIMITED` error, over HTTP 200 or 403, pauses like a 403 even without those headers. Log lines: `rate limit: board requests paused until <time>` and `... resumed`.
 - **Buckets:** GitHub budgets per `x-ratelimit-resource` (`core`, `graphql`); `remaining`, `limit`, `reset` and `resource` are those of the bucket with the lowest remaining share.
 - **`status.json` `requests`:** `since`, cumulative `total` and `ops`, `last_hour` (null until a full hour), last `remaining`/`limit`, `paused_until`; under the alarm also `reset`, `resource` and `top`.
+- **Host share (#1985):** each heartbeat carries `requests <n>/h`, the billed requests (no `304` operations) of that host's service in its last full hour; the `taskq status` `Hosts:` line shows ` <n> req/h` per host. `taskq status` also prints `Board quota: <used>/<limit> <resource> used, <remaining> left until <reset>` from the budget headers of its own reads, else `Board quota: unknown (no budget headers)`.
 - **Hourly log:** `requests 1h: <total>; <op> <n>, ..`, top 8 operations, then `other`.
 - **Alarm log:** `board budget low: <remaining>/<limit> <resource> until <reset>; top here: <op> <n>`, `top` being the largest operation of this process's current hour.
 - **Sources (#1084):** `source` is `service` or `<role> <command>`; `service` adds its subcommand; the role is `worker`/`reviewer` from `TASKQ_ROLE`, else `cli`; other words are `*`.

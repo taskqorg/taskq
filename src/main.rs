@@ -3431,6 +3431,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                 json_output(&serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?, a.one("json-file"))?;
             } else {
                 println!("{}", snap.text_with(cfg, &c.raw, Some(&decide))?);
+                println!("{}", requests::quota(&b.requests()));
                 // § 6: the live service's open setup gaps follow the report
                 for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
             }

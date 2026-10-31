@@ -328,6 +328,8 @@ pub struct Host {
     pub limits: Vec<String>,
     /// The code of this host's tray interface fault (§ 4 step 3, #1755).
     pub tray: Option<String>,
+    /// Heartbeat `requests <n>/h`: billed board requests of this host's last full hour (#1985).
+    pub requests: Option<u64>,
     /// Heartbeat `link <installation-id> <public key>` line ([host link](../docs/design/host-link.md), #1832).
     pub link: Option<String>,
 }
@@ -408,6 +410,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         focus: h.body.lines().find_map(|l| l.strip_prefix("focus ")).map(str::to_string),
         limits: h.body.lines().filter_map(|l| l.strip_prefix("limit ")).map(str::to_string).collect(),
         tray: h.body.lines().find_map(|l| l.strip_prefix("tray ")).map(str::to_string),
+        requests: h.body.lines().find_map(|l| l.strip_prefix("requests ")?.strip_suffix("/h")?.parse::<u64>().ok()),
         // only a heartbeat the board trusts may name a key a host serves
         link: h.body.lines().find_map(|l| l.strip_prefix("link ")).filter(|_| h.trusted).map(str::to_string),
     }).collect();
@@ -732,7 +735,8 @@ impl Snapshot {
         let hs: Vec<String> = self.hosts.iter().map(|h| format!("{} v{} {}{}{}", h.name, h.version, age(self.observed - h.updated),
             if live(self.observed - h.updated, cfg.ttl) { "" } else { " stale" }, h.focus.as_ref().map(|f| format!(" focus {f}")).unwrap_or_default()
             + &h.limits.iter().map(|l| l.split_once(' ').map_or_else(|| format!(" {l}"), |(rt, at)| format!(" {rt} limit {at}"))).collect::<String>()
-            + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default())).collect();
+            + &h.tray.as_ref().map(|code| format!(" tray {code}")).unwrap_or_default()
+            + &h.requests.as_ref().map(|n| format!(" {n} req/h")).unwrap_or_default())).collect();
         if !hs.is_empty() {
             out.push(String::new());
             out.push(format!("Hosts: {}", hs.join(", ")));

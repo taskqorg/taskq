@@ -736,6 +736,8 @@ impl Api {
             }
             if r.status == 304 && etag.is_some() {
                 if let Some((_, cached)) = self.etags.borrow().get(&url) {
+                    self.credentials.borrow().budget.borrow_mut().unbilled(op);
+                    crate::requests::untally(op);
                     self.unchanged.set(true);
                     return Ok(cached.clone());
                 }
@@ -2653,6 +2655,7 @@ exit 0
     }
 
     // Chain: § 4 budget (#1819). Risk: a repeated GET is counted by GitHub, or a 304 loses the body.
+    // #1985 A1: an unbilled 304 counts apart, so it does not inflate the host's billed rate.
     #[test]
     fn repeated_get_reuses_its_body_on_304() {
         let mut api = (BOARDS[0].api)("github.com", "o/r", "test");
@@ -2671,6 +2674,9 @@ exit 0
         assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[1]".to_string(), true));
         assert_eq!((api.call("GET", "/x", None).unwrap().body, api.unchanged.get()), ("[2]".to_string(), false));
         assert!(api.etags.borrow().is_empty(), "a reply without ETag drops the cached one");
+        let ops = api.credentials.borrow().budget.borrow().ops.clone();
+        assert_eq!(ops.get("GET x 304"), Some(&1), "{ops:?}");
+        assert_eq!((ops.get("GET x"), crate::requests::billed(&ops)), (Some(&2), 2), "{ops:?}");
     }
 
     // Chain: #1903 claim readback on an issue past 100 notes. Risk: a 304 on page 1 replays the Link cached while the
