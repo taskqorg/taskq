@@ -1322,6 +1322,8 @@ impl<'a> Service<'a> {
         lines.extend(self.limited.keys().map(|rt| format!("limit {rt} {}", self.limit_line(rt))));
         lines.extend(self.logged_out.iter().map(|rt| format!("login {rt} off")));
         lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
+        // #1985: this host's billed requests of its last full hour, its share of the board user's quota
+        lines.extend(self.host.as_ref().and_then(|h| h.lock().ok()?.last_hour.as_ref().map(crate::requests::billed)).map(|n| format!("requests {n}/h")));
         let kids: BTreeSet<_> = self.kids.iter().map(|k| (k.task, k.attempt)).chain(self.pending.iter().copied()).collect();
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
@@ -4450,6 +4452,24 @@ Open: none")).unwrap();
         let stale=crate::snapshot::from_views("board",&b,&c,at+c.ttl as i64+1,&[],&[crate::board::Issue {
             number:1,title:"taskq host mac".into(),body:s.heartbeat_body(),labels:vec![],assignees:vec![],updated:at,created:at,closed:None,open:true,trusted:true,reason:None}]);
         assert_eq!(stale.json()["hosts"][0]["diagnostics"]["running"]["state"],"stale");
+    }
+
+    // Chain: #1985 A4 host hourly requests -> heartbeat `requests <n>/h` -> status Hosts line. Risk: the PM cannot see
+    // which host spends the board user's quota, or unbilled 304s count toward it.
+    #[test]
+    fn host_hourly_requests_reach_hosts_line() {
+        let b = Fake::default();
+        let c = cfg("win");
+        let mut s = service(&b, &c, Default::default());
+        assert!(!s.heartbeat_body().lines().any(|l| l.starts_with("requests ")), "no full hour, no line");
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("none".into()))));
+        host.lock().unwrap().last_hour = Some([("GET issues".to_string(), 5), ("GET issues 304".to_string(), 40)].into());
+        s.host = Some(host);
+        let body = s.heartbeat_body();
+        assert!(body.lines().any(|l| l == "requests 5/h"), "{body}");
+        let issue = crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 100, created: 100, closed: None, open: true, trusted: true, reason: None };
+        let text = crate::snapshot::from_views("board", &b, &c, 100, &[], &[issue]).text(&c, &json!({})).unwrap();
+        assert!(text.lines().any(|l| l.starts_with("Hosts: win v4.0.0 ") && l.ends_with(" 5 req/h")), "{text}");
     }
 
     // Chain: #1755 A4 tray fault file -> heartbeat `tray <code>` -> status Hosts line. Risk: a tray fault stays in a

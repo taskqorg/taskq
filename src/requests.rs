@@ -97,6 +97,11 @@ impl Budget {
         *self.ops.entry(op).or_default() += 1;
     }
 
+    /// Moves one count of `op` to `<op> 304`: a 304 to a conditional GET, which GitHub does not bill (#1985).
+    pub fn unbilled(&mut self, op: &str) {
+        unbill(&mut self.ops, op);
+    }
+
     pub fn total(&self) -> u64 {
         self.ops.values().sum()
     }
@@ -217,11 +222,34 @@ pub fn warning(status: &Value) -> Option<String> {
         r["reset"].as_str().unwrap_or("unknown"), r["top"].as_str().unwrap_or("none")))
 }
 
+fn unbill(ops: &mut BTreeMap<String, u64>, op: &str) {
+    if let Some(n) = ops.get_mut(op).filter(|n| **n > 0) { *n -= 1; *ops.entry(format!("{op} 304")).or_default() += 1; }
+}
+
+/// Billed requests of `ops`: `304` operations left out (#1985).
+pub fn billed(ops: &BTreeMap<String, u64>) -> u64 {
+    ops.iter().filter(|(k, _)| !k.ends_with(" 304")).map(|(_, n)| n).sum()
+}
+
+/// `Board quota: ..` of this process's own reads (#1985).
+pub fn quota(b: &Budget) -> String {
+    match (b.remaining, b.limit) {
+        (Some(r), Some(l)) => format!("Board quota: {}/{l}{} used, {r} left until {}", l.saturating_sub(r),
+            b.resource.as_ref().map(|s| format!(" {s}")).unwrap_or_default(), b.reset.map_or("unknown".into(), crate::board::stamp)),
+        _ => "Board quota: unknown (no budget headers)".into(),
+    }
+}
+
 pub fn totals() -> BTreeMap<String, u64> { PROCESS.lock().map(|p| p.clone()).unwrap_or_default() }
 
 /// Counts one request of this process for its exit record.
 pub fn tally(op: &str) {
     if let Ok(mut m) = PROCESS.lock() { *m.entry(op.into()).or_default() += 1; }
+}
+
+/// Moves one request of this process to `<op> 304` (#1985).
+pub fn untally(op: &str) {
+    if let Ok(mut m) = PROCESS.lock() { unbill(&mut m, op); }
 }
 
 /// The source of a CLI process: `<role> <command>` (`service` adds its subcommand), from the positionals as dispatch
@@ -327,6 +355,15 @@ mod tests {
     // Chain: #1084 A1 CLI process -> source record -> `taskq profile` hour table. Risk: a source is merged with
     // another, a request outside the hour is counted, a missing or corrupt record reads as zero, or free text
     // from arguments reaches the log.
+    // Chain: #1985 A4 `taskq status` quota line. Risk: the PM reads no used/remaining of the board user.
+    #[test]
+    fn quota_line_names_used_and_left() {
+        let mut b = Budget::default();
+        assert_eq!(quota(&b), "Board quota: unknown (no budget headers)");
+        (b.remaining, b.limit, b.resource, b.reset) = (Some(4000), Some(5000), Some("core".into()), Some(0));
+        assert_eq!(quota(&b), "Board quota: 1000/5000 core used, 4000 left until 1970-01-01T00:00:00Z");
+    }
+
     #[test]
     fn requests_by_source_for_the_last_hour() {
         let args = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
