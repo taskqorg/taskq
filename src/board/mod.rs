@@ -104,6 +104,9 @@ pub trait Board {
     fn delivery_gap(&self, _mode: &str) -> Result<Option<String>> { Ok(None) }
     /// § 2 visual evidence: stores the image file `path` for task `n` on the board and returns its absolute https URL.
     fn upload_file(&self, _n: u64, _path: &std::path::Path) -> Result<String> { Err("image upload unsupported on this board".into()) }
+    /// § 2 evidence files (#2019): stores a zip, tar.gz, PDF or HTML file `path` for task `n` and returns the absolute
+    /// URL that downloads it; [`Board::file`] reads it back. Boards without a separate store keep it like an image.
+    fn upload_attachment(&self, n: u64, path: &std::path::Path) -> Result<String> { self.upload_file(n, path) }
     /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
     fn file(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
     /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
@@ -348,6 +351,7 @@ impl Board for Profiled {
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> { self.op("read", |b| b.delivery_gap(mode)) }
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_file(n, path)) }
+    fn upload_attachment(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_attachment(n, path)) }
     fn file(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.file(url)) }
     fn video_inline(&self) -> bool { self.0.video_inline() }
     fn pr_route(&self) -> crate::check::Probe { self.op("read", |b| Ok(b.pr_route())).unwrap_or_else(crate::check::Probe::Unknown) }
@@ -778,7 +782,7 @@ impl Api {
     }
 
     /// A binary GET, or a multipart POST of the file `form` (GitLab uploads), under the same token, API and budget
-    /// rules as [`Api::send`]; any HTTP error fails. ponytail: no test transport, the URL builders around it are tested.
+    /// rules as [`Api::send`]; any HTTP error fails. The test transport sees a multipart POST as `{"file": <name>}`.
     fn raw(&self, url: &str, form: Option<&std::path::Path>) -> Result<Vec<u8>> {
         let url = if url.starts_with("https://") { url.to_string() } else { format!("{}{url}", self.base) };
         if !url.starts_with(&format!("{}/", self.root)) { return Err(format!("refused: {url} is outside the board API")); }
@@ -789,6 +793,11 @@ impl Api {
         let op = self.op(method, &url);
         self.credentials.borrow().budget.borrow_mut().count(op.clone());
         crate::requests::tally(&op);
+        #[cfg(test)]
+        if let Some(transport) = &self.transport {
+            let form = form.map(|f| serde_json::json!({"file": f.file_name().map(|n| n.to_string_lossy().into_owned())}));
+            return transport(method, &url, form).map(|r| r.body.into_bytes());
+        }
         let mut cfg = format!("silent\nshow-error\nfail\nurl = {}\nheader = {}\nheader = \"Expect:\"\nmax-time = 120\n", quote(&url), quote(&self.credentials.borrow().auth));
         let files=HttpFiles::new()?;
         cfg+=&format!("output = {}\n",quote(&files.path("response").to_string_lossy()));
@@ -1321,6 +1330,65 @@ mod tests {
         api.transport = Some(transport);
         *api.label_schema.borrow_mut() = schema;
         (kind.board)(api)
+    }
+
+    // Chain: § 2 evidence files (#2019) -> GitHub and GitLab adapters. Defect: neither board stored a worker's zip,
+    // tar.gz, PDF or HTML file. Risk: GitHub commits files to a branch that default clones download, links a moving ref
+    // instead of the commit, or GitLab links a relative upload; on both boards a file links before its load check.
+    #[test]
+    fn evidence_files_commit_under_a_non_branch_ref_on_github_and_upload_on_gitlab() {
+        use base64::Engine;
+        let dir = std::env::temp_dir().join(format!("taskq-evidence-files-{}", crate::runtime::uuid()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip = dir.join("build.zip");
+        std::fs::write(&zip, b"PK\x03\x04 zip body").unwrap();
+        let paths = [zip.display().to_string()];
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let reply = |v: Value, method: &str| Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: operation(method) });
+        let calls = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = calls.clone();
+        let content = base64::engine::general_purpose::STANDARD.encode(std::fs::read(&zip).unwrap());
+        let github = http(&github::KIND, None, Box::new(move |method, url, body| {
+            seen.borrow_mut().push(format!("{method} {url} {}", body.map(|b| b.to_string()).unwrap_or_default()));
+            let path = url.strip_prefix("https://api.github.com/repos/o/r").unwrap_or(url);
+            match (method, path) {
+                ("GET", "/git/ref/taskq/evidence") => Err("HTTP 404 Not Found".into()),
+                ("POST", "/git/blobs") => reply(json!({"sha": "b1"}), method),
+                ("POST", "/git/trees") => reply(json!({"sha": "t1"}), method),
+                ("POST", "/git/commits") => reply(json!({"sha": sha}), method),
+                ("POST", "/git/refs") => reply(json!({}), method),
+                ("GET", p) if p.starts_with("/contents/7/") => reply(json!({"sha": "b1"}), method),
+                ("GET", "/git/blobs/b1") => reply(json!({"content": content}), method),
+                _ => Err(format!("unexpected {method} {url}")),
+            }
+        }));
+        let links = crate::upload_attachments(github.as_ref(), 7, &paths).unwrap();
+        let digest: String = ring::digest::digest(&ring::digest::SHA256, &std::fs::read(&zip).unwrap()).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(links, [format!("[⬇ build.zip](https://github.com/o/r/raw/{sha}/7/{digest}-build.zip)")]);
+        let calls = calls.borrow();
+        assert!(calls.iter().any(|c| c.starts_with("POST https://api.github.com/repos/o/r/git/refs ") && c.contains(r#""ref":"refs/taskq/evidence""#)), "{calls:?}");
+        assert!(!calls.iter().any(|c| c.contains("heads")), "no branch: default clones skip the file; {calls:?}");
+
+        let uploads = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+        let seen = uploads.clone();
+        let gitlab = http(&gitlab::KIND, None, Box::new(move |method, url, body| {
+            let path = url.strip_prefix("https://gitlab.example/api/v4/projects/o%2Fr").unwrap_or(url);
+            match (method, path) {
+                ("GET", "") => reply(json!({"id": 39}), method),
+                ("POST", "/uploads") => {
+                    let name = body.and_then(|b| b["file"].as_str().map(String::from)).unwrap_or_default();
+                    seen.borrow_mut().push(name.clone());
+                    reply(json!({"id": 5, "url": format!("/uploads/cef859da/{name}")}), method)
+                }
+                ("GET", "/uploads/5") => Ok(Reply { status: 200, headers: vec![], body: "PK\x03\x04 zip body".into(), operation: "read" }),
+                _ => Err(format!("unexpected {method} {url}")),
+            }
+        }));
+        let links = crate::upload_attachments(gitlab.as_ref(), 7, &paths).unwrap();
+        let name = uploads.borrow()[0].clone();
+        assert!(name.ends_with("-build.zip"), "{name}");
+        assert_eq!(links, [format!("[⬇ build.zip](https://gitlab.example/-/project/39/uploads/cef859da/{name}#upload=5)")]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     // Chain: § 5 `taskq issue` (#1892) -> GitHub/GitLab adapters. Defect: PilotQ owner actions on any issue refused,

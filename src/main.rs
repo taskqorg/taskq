@@ -177,8 +177,9 @@ impl Args {
             || !matches!(a.pos.first().map(String::as_str), Some("status" | "answer" | "steer" | "requeue" | "later" | "close" | "start" | "failed"))) {
             return Err("--json-file requires --json with status or a task control/reply command (not --closed)".into());
         }
-        if (a.flags.contains_key("file")||a.flags.contains_key("files-from")) && (!matches!(a.pos.first().map(String::as_str),Some("answer"|"steer"|"requeue"))||a.pos.get(1).is_some_and(|n|n.contains('.'))) {
-            return Err("--file requires answer N, steer N or owner requeue N; choose a text reply instead of a numbered option".into());
+        let worker_files = a.flags.contains_key("file") && !a.flags.contains_key("files-from") && matches!(a.pos.first().map(String::as_str), Some("result" | "ask"));
+        if (a.flags.contains_key("file")||a.flags.contains_key("files-from")) && !worker_files && (!matches!(a.pos.first().map(String::as_str),Some("answer"|"steer"|"requeue"))||a.pos.get(1).is_some_and(|n|n.contains('.'))) {
+            return Err("--file requires answer N, steer N, owner requeue N, result N or ask N; choose a text reply instead of a numbered option".into());
         }
         if a.all("files-from").len()>1{return Err("pass --files-from once with a JSON array of file paths".into());}
         Ok(a)
@@ -703,6 +704,51 @@ fn upload_images(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<Stri
     }).collect()
 }
 
+/// § 2 evidence files (#2019): the kinds `result --file` and `ask --file` take, by name ending and leading bytes.
+const FILE_KINDS: [(&str, &[&[u8]]); 6] = [(".zip", &[b"PK\x03\x04", b"PK\x05\x06"]), (".tar.gz", &[b"\x1f\x8b"]), (".tgz", &[b"\x1f\x8b"]),
+    (".pdf", &[b"%PDF-"]), (".html", &[b"<"]), (".htm", &[b"<"])];
+
+/// § 2 evidence files (#2019): each `--file` of a result or ask is a zip, tar.gz, PDF or HTML file of at most 25 MB,
+/// checked before any write; returns the Evidence label of each, `⬇ <name>` of at most 32 characters.
+fn attachment_files(paths: &[String]) -> Res<Vec<String>> {
+    paths.iter().map(|p| {
+        let lower = p.to_ascii_lowercase();
+        let (ext, heads) = FILE_KINDS.iter().find(|(e, _)| lower.ends_with(e)).ok_or(format!("--file {p}: not a .zip, .tar.gz, .tgz, .pdf, .html or .htm file"))?;
+        let size = std::fs::metadata(p).map_err(|e| format!("--file {p}: {e}"))?.len();
+        if size > 25 << 20 { return Err(format!("--file {p}: {size} bytes, at most 25 MB")); }
+        let head = std::fs::File::open(p).and_then(|f| { let mut b = vec![]; std::io::Read::read_to_end(&mut std::io::Read::take(f, 1024), &mut b).map(|_| b) }).map_err(|e| format!("--file {p}: {e}"))?;
+        // HTML may start with a byte order mark and blank lines before its first tag
+        let lead = if *ext == ".html" || *ext == ".htm" { head.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&head).trim_ascii_start() } else { &head[..] };
+        if !heads.iter().any(|h| lead.starts_with(h)) { return Err(format!("--file {p}: content is not a {} file", &ext[1..])); }
+        let name = Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let stem: String = name[..name.len() - ext.len()].replace(['[', ']', ',', '(', ')'], " ").split_whitespace().collect::<Vec<_>>().join(" ").chars().take(30 - ext.len()).collect();
+        Ok(format!("⬇ {}{}", if stem.trim().is_empty() { "file" } else { stem.trim() }, &name[name.len() - ext.len()..]))
+    }).collect()
+}
+
+/// § 2 evidence files (#2019): uploads each `--file` to the board's file store and links it as `[⬇ name](absolute URL)`
+/// in the Evidence line only after the board serves the same bytes back (the load check); a failed check publishes
+/// nothing.
+fn upload_attachments(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<String>> {
+    paths.iter().zip(attachment_files(paths)?).map(|(p, label)| {
+        let url = b.upload_attachment(n, Path::new(p))?;
+        let sent = std::fs::read(p).map_err(|e| format!("--file {p}: {e}"))?;
+        let back = b.file(&url).map_err(|e| format!("file load check failed for {url}: {e}"))?;
+        if back != sent { return Err(format!("file load check failed: {url} serves {} bytes, {} uploaded", back.len(), sent.len())); }
+        Ok(format!("[{label}]({url})"))
+    }).collect()
+}
+
+/// The Evidence links `--file` will add, with a placeholder URL: the card checks them before any upload.
+fn file_stubs(paths: &[String]) -> Res<Vec<String>> {
+    Ok(attachment_files(paths)?.into_iter().map(|l| format!("[{l}](https://board.invalid/file)")).collect())
+}
+
+/// § 2 evidence files (#2019): an uploaded `--file` link, `[⬇ name](url)`.
+fn attachment(l: &str) -> bool {
+    l.starts_with("[⬇ ")
+}
+
 /// § 2 visual evidence: where the name starts in an uploaded image or video, `![name](url)` or `[▶ name](url)`; none
 /// for a link.
 fn media(l: &str) -> Option<usize> {
@@ -773,7 +819,7 @@ fn card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[S
     };
     one_line("--link", links)?;
     if links.iter().filter(|l| media(l).is_none()).count() > 2 {
-        return Err("Evidence: at most two --link".into());
+        return Err("Evidence: at most two --link and --file together".into());
     }
     let ev: Vec<String> = links.iter().filter(|l| media(l).is_none()).map(|l| evidence(l)).collect();
     if ev.iter().any(|e| e.split_once("](").is_some_and(|(l, _)| l.chars().count() > 41)) {
@@ -808,7 +854,7 @@ fn card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[S
 /// § 7 result: Changed, one `Checks:` line per check, Open; a decision appends the § 2 card (Done/Problem in `--text`).
 fn result_text(n: u64, text: &str, checks: &[String], opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
     let d = !opts.is_empty() as usize;
-    if d == 0 && (recommend.is_some() || links.iter().any(|l| media(l).is_none())) {
+    if d == 0 && (recommend.is_some() || links.iter().any(|l| media(l).is_none() && !attachment(l))) {
         return Err("--recommend and --link need --option".into());
     }
     let f = fields(text, &[("Changed", 1, 2, 240), ("Open", 1, 2, 240), ("Done", d, d, 160), ("Problem", d, 2 * d, 240)])?;
@@ -816,6 +862,9 @@ fn result_text(n: u64, text: &str, checks: &[String], opts: &[String], recommend
     limit("Checks", &checks, 1, 8, 240)?;
     let verdict = [f[0].clone(), checks, f[1].clone()].concat();
     limit("result", &verdict, 3, 12, 240)?;
+    if links.iter().filter(|l| media(l).is_none()).count() > 2 {
+        return Err("Evidence: at most two --link and --file together".into());
+    }
     let card = if d == 1 { ask_card(n, &[f[2].clone(), f[3].clone()].concat().join("\n"), opts, recommend, links)? } else if links.is_empty() { String::new() } else { format!("Evidence: {}", links.join(", ")) };
     Ok(join(&[&verdict.join("\n"), &card]))
 }
@@ -3327,12 +3376,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         }
         "ask" => {
             let n = a.num(1)?;
-            let (links, images) = (a.all("link"), a.all("image"));
-            if links.iter().any(|l| l.starts_with('!') || media(l).is_some()) { return Err("--link takes links; images and videos go through --image".into()); }
+            let (links, images, files) = (a.all("link"), a.all("image"), a.all("file"));
+            if links.iter().any(|l| l.starts_with('!') || media(l).is_some() || attachment(l)) { return Err("--link takes links; images and videos go through --image, files through --file".into()); }
             // validate the card and the files before any upload
-            ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &links)?;
+            ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links.clone(), file_stubs(&files)?].concat())?;
             image_files(&images)?;
-            let body = ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
+            let body = ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links, upload_attachments(b, n, &files)?, upload_images(b, n, &images)?].concat())?;
             emit(&[act(b, root, n, "ask", &[], &body, &op)], json)
         }
         "answer" if a.pos.get(1).is_some_and(|p| p.contains('.')) => {
@@ -3346,12 +3395,12 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
         "result" => {
             let n = a.num(1)?;
             let sha = a.need("sha")?;
-            let (links, images) = (a.all("link"), a.all("image"));
-            if links.iter().any(|l| l.starts_with('!') || media(l).is_some()) { return Err("--link takes links; images and videos go through --image".into()); }
-            result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &links)?;
+            let (links, images, files) = (a.all("link"), a.all("image"), a.all("file"));
+            if links.iter().any(|l| l.starts_with('!') || media(l).is_some() || attachment(l)) { return Err("--link takes links; images and videos go through --image, files through --file".into()); }
+            result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links.clone(), file_stubs(&files)?].concat())?;
             image_files(&images)?;
             let report = reports::prepare(b, root, n, sha)?;
-            let mut body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_images(b, n, &images)?].concat())?;
+            let mut body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_attachments(b, n, &files)?, upload_images(b, n, &images)?].concat())?;
             if report {body+=&format!("\nReport: docs/research/{n}.md");if body.lines().filter(|l|!l.trim().is_empty()).count()>12 {return Err("report result exceeds 12 lines; shorten the verdict".into());}}
             emit(&[act(b, root, n, "result", &[sha], &body, &op)], json)
         }
@@ -4583,6 +4632,63 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    // Chain: § 2 evidence files (#2019). Defect: a worker had no way to hand in a zip, tar.gz, PDF or HTML file with
+    // its result. Risk: a file of another kind or over 25 MB uploads or writes an entry, a file links before the load
+    // check, files and links together exceed the § 2 cap of two links, or a result without a card refuses file links.
+    #[test]
+    fn result_and_ask_files_link_after_the_load_check_and_refuse_big_files_before_any_write() {
+        let mut config = cfg();
+        fs::create_dir(&config.root).unwrap();
+        config.install = config.root.clone();
+        let dir = config.root.clone();
+        let file = |name: &str, bytes: &[u8]| { let p = dir.join(name); fs::write(&p, bytes).unwrap(); p.display().to_string() };
+        let zip = file("build (final).zip", b"PK\x03\x04 zip body");
+        let tgz = file("logs.tar.gz", b"\x1f\x8b gzip body");
+        let pdf = file("report.pdf", b"%PDF-1.7 body");
+        let html = file("site.HTML", b"\xef\xbb\xbf\n  <!doctype html><p>x");
+        let fake_pdf = file("fake.pdf", b"PK\x03\x04 a zip");
+        let exe = file("tool.exe", b"MZ");
+        let big = file("big.zip", &[b"PK\x03\x04".as_slice(), &vec![0; 25 << 20]].concat());
+        let exact = file("exact.pdf", &[b"%PDF-".as_slice(), &vec![0; (25 << 20) - 5]].concat());
+        assert_eq!(attachment_files(&[zip.clone(), tgz.clone(), pdf.clone(), html.clone(), exact]).unwrap(), ["⬇ build final.zip", "⬇ logs.tar.gz", "⬇ report.pdf", "⬇ site.HTML", "⬇ exact.pdf"]);
+        assert!(attachment_files(&[fake_pdf]).unwrap_err().contains("content is not a pdf file"));
+        assert!(attachment_files(&[exe]).unwrap_err().contains("not a .zip, .tar.gz, .tgz, .pdf, .html or .htm file"));
+        let b = Fake::default();
+        b.state.borrow_mut().bad_image = true;
+        assert!(upload_attachments(&b, 7, std::slice::from_ref(&pdf)).unwrap_err().starts_with("file load check failed"));
+        let b = Fake::default();
+        let n = b.create("Files", "", &["taskq".into()]).unwrap();
+        b.comment(n, "taskq: spawn worker claude:fixture mac").unwrap();
+        let c = Ctx { cfg: config, raw: Value::Null, board: Box::new(b) };
+        let run = |v: &[&str]| command(&c, v[0], &Args::parse(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>()).unwrap());
+        let writes = || entries(c.board.as_ref(), n).unwrap().len();
+        let before = writes();
+        let (num, sha) = (n.to_string(), "a".repeat(40));
+        let result = ["result", num.as_str(), "--sha", sha.as_str(), "--checks", "cargo test -- pass", "--text", "Changed: c\nOpen: none"];
+        let e = run(&[&result[..], &["--file", &big]].concat()).unwrap_err();
+        assert!(e.contains("at most 25 MB"), "{e}");
+        let e = run(&[&result[..], &["--file", &zip, "--file", &pdf, "--file", &tgz]].concat()).unwrap_err();
+        assert!(e.contains("at most two --link and --file"), "{e}");
+        assert_eq!(writes(), before, "a refused file writes no entry");
+        let ask = ["ask", num.as_str(), "--text", "Done: built\nProblem: ship it?", "--option", "Ship - + done; - risk", "--option", "Hold - + safe; - slow", "--recommend", "1"];
+        let e = run(&[&ask[..], &["--link", "https://example.org/1", "--file", &pdf, "--file", &tgz]].concat()).unwrap_err();
+        assert!(e.contains("at most two --link and --file"), "{e}");
+        assert!(run(&[&ask[..], &["--link", "[⬇ x.zip](https://example.org/x.zip)"]].concat()).unwrap_err().contains("files through --file"));
+        assert_eq!(writes(), before, "a refused file writes no entry");
+        // the first upload has index 0: the refused files uploaded nothing
+        let files = upload_attachments(c.board.as_ref(), n, &[zip, html.clone()]).unwrap();
+        assert_eq!(files, [format!("[⬇ build final.zip](https://board.example/{n}/0-build--final-.zip)"), format!("[⬇ site.HTML](https://board.example/{n}/1-site.HTML)")]);
+        assert_eq!(c.board.file(&format!("https://board.example/{n}/1-site.HTML")).unwrap(), fs::read(&html).unwrap());
+        // a result without a decision card takes file links; a plain --link still needs --option
+        let body = result_text(n, "Changed: c\nOpen: none", &["cargo test -- pass".into()], &[], None, &files).unwrap();
+        assert!(body.ends_with(&format!("\nEvidence: {}, {}", files[0], files[1])), "{body}");
+        assert!(result_text(n, "Changed: c\nOpen: none", &["t -- pass".into()], &[], None, &["https://example.org/1".into()]).is_err());
+        let opts = ["Ship - + done; - risk".to_string(), "Hold - + safe; - slow".into()];
+        let card = ask_card(n, "Done: built\nProblem: ship it?", &opts, Some("1"), &["https://example.org/1".into(), files[0].clone()]).unwrap();
+        assert!(card.contains(&format!("\nEvidence: [#1](https://example.org/1), {}\n1. Ship", files[0])), "{card}");
+        fs::remove_dir_all(&c.cfg.root).unwrap();
+    }
+
     // Chain: § 2 visual evidence links (#1844). Defect: csgo#415 hand-posted host-less `/-/project/39/uploads/..mp4`
     // links that GitLab rewrote into missing repository files. Risk: a relative, host-less or repository-path media link
     // reaches a task, or an uploaded media URL or a plain link is refused.
@@ -5767,9 +5873,11 @@ mod tests {
             args.read_text(&mut std::io::Cursor::new(text.as_bytes())).unwrap();command(&c,kind,&args).unwrap();
             let log=entries(c.board.as_ref(),n).unwrap();let files=reply_files::manifest(&log.last().unwrap().body).unwrap();assert_eq!(files.len(),1);assert_eq!(files[0].name,"downloaded-photo.png");
         }
-        for command in [vec!["answer","7.1"],vec!["close","7"],vec!["result","7"]] {
+        for command in [vec!["answer","7.1"],vec!["close","7"],vec!["later","7"],vec!["result","7","--files-from",&list.display().to_string()]] {
             let mut command:Vec<String>=command.iter().map(|s|s.to_string()).collect();command.extend(["--file".into(),file.display().to_string()]);assert!(Args::parse(&command).is_err());
         }
+        // #2019: a worker hands in files with result N and ask N
+        for kind in ["result","ask"] {assert!(Args::parse(&[kind.into(),"7".into(),"--file".into(),file.display().to_string()]).is_ok());}
         fs::remove_dir_all(c.cfg.root).unwrap();
     }
 
