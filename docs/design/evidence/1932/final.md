@@ -75,3 +75,5 @@ No new request, PM message, board steer, real task answer or provider session wa
 ## Validation boundary
 
 This continuation's canonical command is `python3 scripts/check.py --base 7bd2ba55f852465eb5ec57e89b2e8e222e216e47`; Markdown-only selection is `docs`. Its attributable outcome goes in the commit and task result. Local link, proposed-task JSON/limits, artifact identity and no-dispatch assertions also run. The prior broader [sandbox-blocked gate](isolated/checks.md) remains sandbox-blocked; a documentation pass does not replace its native/process gaps. No CI wait, merge, release or rollout is performed (R12, §7).
+
+The first hand-in was refused before a result write: `report proposals invalid: invalid type: integer 2, expected a string`. The proposal used an optional numeric priority; that field was removed. A focused check against the existing `Proposal` field types, allowed keys and formatted task limits then passed. No product/parser rule or guarding assertion was changed; report-input validation remains intact.
