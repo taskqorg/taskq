@@ -393,6 +393,10 @@ pub struct Service<'a> {
     /// Label fix streaks: wanted label, stale labels, passes, board time after the last write, reported.
     label_fixes: HashMap<u64, (String, Vec<String>, u32, i64, bool)>,
     cancelled_publications: HashMap<u64, u64>,
+    /// § 2 Summary: tasks this service saw with a summary, and its consecutive rewrites of each (a peer that renders
+    /// another text is rewritten once per 60 passes, like a reverted label).
+    summarized: HashSet<u64>,
+    summary_fixes: HashMap<u64, u32>,
     /// #1820 each publication's last recorded wait reason: one `checks` observation per reason, never one per pass.
     publication_waits: HashMap<u64, String>,
     /// The last invalid `taskq.json` delivery, logged once (#1942).
@@ -720,7 +724,7 @@ pub fn record(path: &std::path::Path, now: i64, moves: &[(u64, &str, u64, String
 impl<'a> Service<'a> {
     pub fn new(board: &'a dyn Board, cfg: &'a Config, version: &str, start: Box<dyn FnMut(&Launch) -> Result<Box<dyn Proc>, crate::runtime::StartError> + 'a>) -> Self {
         let cap = Ok(Capacity::fixed(cfg.limits.clone(), GATE_DEFAULT));
-        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
+        Service { recovery_after: None, reduced_at: None, host: None, wall: 0, reserved: vec![], requested: vec![], refused: None, host_used: None, project_revision: None, board, cfg: cfg.clone(), version: version.into(), diagnostics: Default::default(), started: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0,|d|d.as_secs()), kids: vec![], instance: String::new(), link: String::new(), machine: String::new(), focus: vec![], focus_error: None, delivered: HashMap::new(), cache: HashMap::new(), deps: HashMap::new(), label_fixes: HashMap::new(), cancelled_publications: HashMap::new(), summarized: HashSet::new(), summary_fixes: HashMap::new(), publication_waits: HashMap::new(), delivery_error: None, unowned: HashSet::new(), tidied: None, start, recover: None, boot: if cfg!(test) {|| Err("boot time not read in tests".into())} else {crate::platform::boot_time as fn() -> Result<i64, String>}, #[cfg(test)] agent_status: json!([]), log: vec![], snapshot: None, tasks_read: None, ownership_known: false, host_issue: None, observations: BTreeMap::new(), seen: HashMap::new(), stuck: HashMap::new(), churned: HashSet::new(), gone_after: None, moved_after: None, events_since: None, cap, gate: Gate::default(), mono: 0, held: vec![], pending: BTreeSet::new(), unseen: HashMap::new(), hold: None, stop_progress: vec![], refused_access: BTreeMap::new(), limited: BTreeMap::new(), logged_out: BTreeSet::new(), gui_checked: None, gui_probe: Err("not probed".into()), gui_stale: false, grants: BTreeMap::new(), full: BTreeSet::new(), waits: BTreeMap::new(), execution_waits: BTreeMap::new(), pending_releases: BTreeSet::new(), begun: HashMap::new(), asked: HashMap::new(), listed: HashSet::new(), unlisted: BTreeSet::new(), }
     }
 
     /// Rebuild board-derived state after unwind; live handles, pending launches and delivery cursors stay owned.
@@ -1706,6 +1710,7 @@ impl<'a> Service<'a> {
         self.tidy(&by_n);
 
         // 5. projected labels
+        let written = touched.clone();
         for v in &views {
             let n = v.issue.number;
             if touched.contains(&n) {
@@ -1754,6 +1759,26 @@ impl<'a> Service<'a> {
             if v.projection.task.state == State::Closed {
                 touched.insert(n);
             }
+        }
+        // § 2 Summary: rewrite a stale one from the log like a label
+        let previous = std::mem::take(&mut self.summary_fixes);
+        // the label step marks a closed task touched without writing to it
+        let skip = |v: &&View| touched.contains(&v.issue.number) && (v.projection.task.state != State::Closed || written.contains(&v.issue.number));
+        for v in views.iter().filter(|v| self.board.summaries() && !skip(v)) {
+            let n = v.issue.number;
+            let have = crate::summary::find(&v.comments);
+            // § 2: a missing one is created at a state change (an older task's next write) or when this service saw it
+            let moved = self.seen.get(&n).is_some_and(|s| *s != v.projection.task.state);
+            if have.is_none() && !moved && !self.summarized.contains(&n) { continue; }
+            self.summarized.insert(n);
+            let want = crate::summary::text(self.board, n, &v.issue.body, &v.log, &v.projection.task);
+            if have.is_some_and(|c| crate::summary::same(&c.body, &want)) { continue; }
+            // a missing one is always written; a peer that renders another text is edited back once per 60 passes
+            let streak = if have.is_none() { 1 } else { previous.get(&n).map_or(1, |s| s.saturating_add(1)) };
+            if streak % 60 == 1 && let Err(e) = crate::summary::put(self.board, n, &v.comments, &want) {
+                log!("#{n} summary not written: {e}");
+            }
+            self.summary_fixes.insert(n, streak);
         }
 
         for v in &views {
@@ -2055,7 +2080,9 @@ impl<'a> Service<'a> {
             let n = *n;
             if *kind != "close" { continue; }
             let Some(comments) = views.iter().find(|v| v.issue.number == n).map(|v| &v.comments).or_else(|| closed.iter().find(|x| x.0 == n).map(|x| &x.2)) else { continue };
-            let verdict = comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: close")).map(|c| c.body.split_once('\n').map_or("", |x| x.1));
+            let entries: Vec<core::Entry> = comments.iter().filter(|c| c.trusted).map(|c| core::Entry { id: c.id, body: c.body.clone(), edited: c.edited }).collect();
+            let verdict = comments.iter().rev().find(|c| c.trusted && c.body.starts_with("taskq: close")).map(|c| core::verdict(n, &entries, c.body.split_once('\n').map_or("", |x| x.1)));
+            let verdict = verdict.as_deref();
             // § 7 outcome: a replaced task names its successor's state, read from this pass or the board
             let next = verdict.and_then(crate::display::successor).map(|m| views.iter().find(|v| v.issue.number == m).map(|v| v.projection.task.state.name())
                 .or_else(|| crate::dispatch::current(self.board, m).ok().map(|(i, t, _)| if i.open { t.state.name() } else { "closed" })).unwrap_or("unknown"));
@@ -2991,7 +3018,9 @@ mod tests {
         assert!(!b.issue(n).unwrap().open);
         let comments = b.comments(n).unwrap();
         let close = comments.iter().find(|e| e.body.starts_with("taskq: close")).unwrap();
-        assert!(close.body.contains(verdict));
+        // § 2 Summary: the close names the publish it repeats; readers resolve it to the verdict
+        assert!(close.body.contains(core::REPEATS) && !close.body.contains(verdict), "{}", close.body);
+        assert!(core::verdict(n, &entries(&b, n).unwrap(), core::entry_text(n, &close.body)).contains(verdict));
         assert_eq!(comments.iter().filter(|e| e.body.starts_with("taskq: close")).count(), 1);
     }
 
@@ -3346,6 +3375,50 @@ Open: none")).unwrap();
         b.comment(n, "taskq: enqueued MQ_2").unwrap();
         s.pass().unwrap();
         assert!(b.state.borrow().cancelled_publications.is_empty(), "the newer publication stays queued");
+    }
+
+    // Chain: R1, § 2 Summary -> resumed publication close -> pass repair. Risk (#2017 A2, A5): the close copies the
+    // publish verdict instead of naming it, the summary loses the verdict, or a stale or deleted summary stays wrong.
+    #[test]
+    fn close_names_its_publish_and_the_pass_repairs_the_summary() {
+        let (b, c) = (Fake::default(), cfg("win"));
+        b.state.borrow_mut().summaries = true;
+        let n = b.create("Summary repair", "", &["taskq".into()]).unwrap();
+        let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
+        b.comment(n, &core::entry("result", &["a".repeat(40).as_str()], Some(a), "Changed: x")).unwrap();
+        let publish = b.comment(n, "taskq: publish\nChanged: the menu shows the summary\nOpen: none").unwrap();
+        let mut s = Service::new(&b, &c, "test", Box::new(|_| panic!("no process")));
+        s.pass().unwrap();
+        let log = entries(&b, n).unwrap();
+        let close = log.iter().rfind(|e| core::kind(n, &e.body) == "close").expect("publication resumed and closed");
+        let text = core::entry_text(n, &close.body);
+        assert!(text.starts_with(&format!("{}{publish}\n", core::REPEATS)), "{text}");
+        assert!(!text.contains("Changed:"), "the close names the publish instead of copying it");
+        assert!(core::verdict(n, &log, text).starts_with("Changed: the menu shows the summary\nOpen: none\n"), "readers show the publish text");
+        let closed = |b: &Fake| b.comments(n).unwrap().into_iter().filter(crate::summary::is).collect::<Vec<_>>();
+        s.pass().unwrap();
+        let want = crate::summary::text(&b, n, "", &log, &core::fold(n, &log, false));
+        assert!(want.starts_with(&format!("{}\n**Closed**", crate::summary::MARKER)) && want.contains("\nChanged: the menu shows the summary\nOpen: none"), "{want}");
+        assert_eq!(closed(&b).iter().map(|c| c.body.as_str()).collect::<Vec<_>>(), [want.as_str()], "the state change created it");
+        // an open task: a stale summary is rewritten from the log, a deleted one recreated; an older task without one
+        // keeps none until its state changes
+        let summary = |n: u64| b.comments(n).unwrap().into_iter().filter(crate::summary::is).collect::<Vec<_>>();
+        let (m, old) = (b.create("Parked", "", &["taskq".into()]).unwrap(), b.create("Older", "", &["taskq".into()]).unwrap());
+        for k in [m, old] { b.comment(k, "taskq: later\nReason: Waits for the owner.").unwrap(); }
+        let log = entries(&b, m).unwrap();
+        crate::summary::write(&b, m, "", &b.comments(m).unwrap(), &log, &core::fold(m, &log, false)).unwrap();
+        let want = summary(m)[0].body.clone();
+        assert_eq!(want, format!("{}\n**Later**\nReason: Waits for the owner.", crate::summary::MARKER));
+        s.pass().unwrap();
+        let id = summary(m)[0].id;
+        b.state.borrow_mut().comments.iter_mut().find(|(_, c)| c.id == id).unwrap().1.body = format!("{}\n**Ready**", crate::summary::MARKER);
+        s.pass().unwrap();
+        assert_eq!(summary(m).iter().map(|c| (c.id, c.body.as_str())).collect::<Vec<_>>(), [(id, want.as_str())], "a stale summary is rewritten");
+        b.state.borrow_mut().comments.retain(|(_, c)| c.id != id);
+        s.pass().unwrap();
+        assert_eq!(summary(m).iter().map(|c| c.body.as_str()).collect::<Vec<_>>(), [want.as_str()], "a deleted summary is recreated");
+        assert!(summary(old).is_empty(), "an older task gets its summary at its next state change");
+        assert_eq!(core::fold(m, &entries(&b, m).unwrap(), false).state, State::Later);
     }
 
     type Exits = Rc<RefCell<Vec<(u64, Rc<RefCell<Option<i32>>>)>>>;
@@ -5362,7 +5435,8 @@ Open: none";
             s.pass().unwrap();
             s.pass().unwrap();
             assert_eq!(task(&b, n).state, State::Closed, "{labels:?}");
-            assert!(b.comments(n).unwrap().iter().any(|e| e.body.starts_with("taskq: close") && e.body.contains(verdict)));
+            let log = entries(&b, n).unwrap();
+            assert!(log.iter().any(|e| core::kind(n, &e.body) == "close" && core::verdict(n, &log, core::entry_text(n, &e.body)).contains(verdict)));
         }
     }
 

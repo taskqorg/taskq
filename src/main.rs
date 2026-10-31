@@ -50,6 +50,7 @@ mod messages;
 mod conversations;
 mod snapshot;
 mod reports;
+mod summary;
 #[cfg(any(target_os = "macos", windows))]
 mod icon;
 #[cfg(any(target_os = "macos", windows))]
@@ -955,7 +956,8 @@ fn closed_row(b: &dyn Board, i: &board::Issue, closed: Option<i64>, gitlab: bool
     })}else{None};
     let merged = log.as_ref().ok().and_then(|log| merge_receipt(log));
     // § 7 close outcome (#1800): delivered, no change or replaced by #M with its current state, plus unverified items
-    let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| e.body.split_once('\n').map_or("", |x| x.1)));
+    let verdict = log.as_ref().ok().and_then(|log| log.iter().rev().find(|e| !e.edited && e.body.starts_with("taskq: close")).map(|e| core::verdict(i.number, log, e.body.split_once('\n').map_or("", |x| x.1))));
+    let verdict = verdict.as_deref();
     let next = verdict.and_then(display::successor).map(|m| dispatch::current(b, m).map_or("unknown", |(i, t, _)| if i.open { t.state.name() } else { "closed" }));
     let close = log.is_ok().then(|| display::close_outcome(verdict, next));
     json!({"n": i.number, "title": i.title, "url": b.url(i.number), "state": if i.open { "open" } else { "closed" }, "closed": closed, "outcome": outcome, "close": close, "result": result, "pr": pr, "merged": merged, "history":history,"conversation": conversation.map(|id| json!({"id":id,"brief":i.body,"verdict":verdict})), "error": log.as_ref().err()})
@@ -4356,6 +4358,7 @@ mod tests {
             fn now(&self) -> Res<i64> { self.b.now() }
             fn publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str) -> board::Publish { self.b.publish(n, sha, mode, title, task_line) }
             fn url(&self, n: u64) -> String { self.b.url(n) }
+            fn summaries(&self) -> bool { self.b.summaries() }
         }
         for mode in ["create", "claim", "race"] {
             let b = Writes { b: Fake::default(), lose_create: Cell::new(mode == "create"), lose_claim: Cell::new(mode == "claim"), hide_issue: Cell::new(false), race: Cell::new(mode == "race") };

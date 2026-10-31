@@ -321,7 +321,11 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
         Err(e) => return unknown(e),
     };
     // re-read: report what the board holds (R12); a concurrent writer may have won the same revision
-    let log = match entries(b, n) {
+    let comments = match b.comments(n) {
+        Ok(c) => c,
+        Err(e) => return unknown(e),
+    };
+    let log = match board::reply::log(n, &comments) {
         Ok(l) => l,
         Err(e) => return unknown(e),
     };
@@ -351,6 +355,10 @@ fn act_input(b:&dyn Board,root:&Path,n:u64,kind:&str,args:&[&str],text:&str,op:&
     let (t, rev) = (projection.task, projection.revision);
     if let Err(e) = service::project(b, &issue, &t) {
         return unknown(e);
+    }
+    // § 2 Summary: a projection like the label; a failed write is the next pass's to repair, never the entry's
+    if b.summaries() && let Err(e) = crate::summary::write(b, n, &issue.body, &comments, &log, &t) {
+        tracing::info!(task = n, "summary not written: {e}");
     }
     note_receipt(b, accepted(t.state, rev), n, &log, op).wake(root)
 }
@@ -485,7 +493,7 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
     let op = Op { revision: Some(rev), ..Default::default() };
     let write = |kind, args: &[&str], text: &str| act_as(b, &cfg.root, n, kind, args, text, &op, None, None);
     match b.resume_publication(n, t.result.as_deref().unwrap_or_default(), &cfg.publish, &issue.title, &format!("Task: {}", b.url(n)), &cfg.root, t.enqueued.is_some()) {
-        Publish::Done(m) => write("close", &[], &join(&[verdict, &format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision)])),
+        Publish::Done(m) => write("close", &[], &join(&[&repeats(n, log, verdict), &format!("delivery {} r{}: {m}", cfg.delivery, cfg.delivery_revision)])),
         Publish::Enqueued(id) if t.enqueued.is_none() => write("enqueued", &[&id], ""),
         Publish::Enqueued(_) => Receipt::accepted(n, &op, t.state, rev),
         Publish::Rebased(sha) => write("rebased", &[&sha], ""),
@@ -495,6 +503,12 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
         Publish::Superseded { reason, merged } => write("publication-blocked", &[], &blocked_card(n, &reason, Some(&merged))),
         Publish::Pending(m) | Publish::Waiting(m) => Receipt::rejected(n, &op, m),
     }
+}
+
+/// § 2 Summary: the `close` of a saved verdict names its `publish` entry instead of copying it; without one, the copy.
+fn repeats(n: u64, log: &[Entry], verdict: &str) -> String {
+    log.iter().filter(|e| !e.edited && core::kind(n, &e.body) == "publish" && core::entry_text(n, &e.body) == verdict).map(|e| e.id).max()
+        .map_or_else(|| verdict.to_string(), |id| format!("{}{id}", core::REPEATS))
 }
 
 /// § 2 ask card of a publication only the owner can unblock (#1413); its answer resumes publication.

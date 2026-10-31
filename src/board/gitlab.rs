@@ -43,6 +43,18 @@ fn csv(v: &[String]) -> String {
     v.join(",")
 }
 
+/// One issue note of the REST API; `trusted` is whether its author is a project member.
+pub(crate) fn parse_note(v: &Value, trusted: bool) -> Comment {
+    Comment {
+        id: v["id"].as_u64().unwrap_or(0),
+        created: iso(&s(v, "created_at")).unwrap_or(0),
+        body: s(v, "body"),
+        trusted,
+        edited: s(v, "updated_at") != s(v, "created_at"),
+        author: s(&v["author"], "username"),
+    }
+}
+
 impl GitLab {
     fn parse_issue(&self, v: &Value) -> Issue {
         Issue {
@@ -335,19 +347,14 @@ impl Board for GitLab {
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
         Ok(self.api.all(&format!("/issues/{n}/notes?sort=asc&order_by=created_at&per_page=100"))?.iter()
             .filter(|v| v["system"].as_bool() != Some(true))
-            .map(|v| Comment {
-                id: v["id"].as_u64().unwrap_or(0),
-                created: iso(&s(v, "created_at")).unwrap_or(0),
-                body: s(v, "body"),
-                trusted: self.member(v["author"]["id"].as_u64().unwrap_or(0)),
-                edited: s(v, "updated_at") != s(v, "created_at"),
-                author: s(&v["author"], "username"),
-            }).collect())
+            .map(|v| parse_note(v, self.member(v["author"]["id"].as_u64().unwrap_or(0)))).collect())
     }
 
     fn comment(&self, n: u64, body: &str) -> Result<u64> {
         self.api.call("POST", &format!("/issues/{n}/notes"), Some(json!({ "body": body })))?.json()?["id"].as_u64().ok_or("no comment id".into())
     }
+
+    fn comment_url(&self, n: u64, id: u64) -> String { format!("{}#note_{id}", self.url(n)) }
 
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()> {
         self.api.call("PUT", &format!("/issues/{n}/notes/{id}"), Some(json!({ "body": body }))).map(|_| ())

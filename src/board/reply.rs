@@ -49,7 +49,8 @@ pub fn post(b: &dyn Board, n: u64, body: &str) -> Result<u64> {
 
 /// All board-to-model readers use the same assembly. An incomplete committed reply makes the read unknown.
 pub fn log(n: u64, comments: &[Comment]) -> Result<Vec<Entry>> {
-    comments.iter().filter(|c| c.trusted).map(|c| {
+    // § 2 Summary: a projection for people, never a log entry
+    comments.iter().filter(|c| c.trusted && !crate::summary::is(c)).map(|c| {
         let mut body = c.body.clone();
         let mut lines = body.lines();
         let command = lines.next().and_then(|l| l.strip_prefix("taskq: ")).and_then(|l| l.split_whitespace().next());

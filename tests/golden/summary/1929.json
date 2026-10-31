@@ -1,0 +1,427 @@
+{
+ "number": 1929,
+ "body": "## Goal\nMake PM communication, assignment, agent progress, clarification and result one clear flow with responsive history and reachable input.\n\n## Acceptance\nA1. Complete PM message -> held brief -> one assignment -> worker -> clarification -> answer -> reviewer -> result in the originating chat. Task activity is optional; native/board receipts, not timers, establish state.\nA2. New chat explains project and first Send; continuing an existing PM is direct. Preserve rename, files, history, New from draft, watch, archive/delete/Undo, detach/return, ownership and independent drafts.\nA3. Use one reading viewport per thread and a naturally growing shared composer with no manual grip or inner text scroll. Keep Send reachable on long drafts; transcript content never shrinks/overlaps the composer.\nA4. Reuse bounded native history with stable generation/cursor identities. Prepend/append/reflow/switch/reopen preserve record/offset; wheel-up pauses follow and only Latest resumes it. Preserve selection/copy/focus.\nA5. Working workers accept a board-steer message before any question, using existing revision/attempt and one-writer boundaries. Ask uses current fluent answer semantics; retain #1817 files and #1818/#1785 race handling.\nA6. Separate delivery from activity/outcome. Slow means elapsed only; unknown retains draft/files and checks the same operation, never auto-resends. Ended/reviewer/unsupported attempts explain limits and preserve input.\nA7. Integrate #1918 append-only question/answer history and grouped tool steps. Remove duplicate identity/status text, not real history/evidence. No new task DB, gateway, scheduler, native writer or runtime fallback.\nA8. Pass UX30-11..16, all eight daily journeys, Q-A1..Q-A12 and Claude adverse cases. Requalify existing #1741/#1742 behavior rather than replacing it; measure responsiveness and bound DOM/cache/IPC.\n\n## Scope\n- References: live-polish current task/agent preview plus baseline-v7 PM journey, preservation audit, input/scroll review and full Claude dispositions.\n- Respect current main and #1918; the old mock is not authority to restore retired answer confirmations, attachment caps or flattened tool history.\n- Use explicit disposable test sessions for native send proof after task release; never send an answer to a real owner task for a screenshot.\n\nDepends on #1928\nDepends on #1918\n\n## Oct 30 review packet\n[Complete prototype, plan, preservation audit, scenarios and Claude review](https://github.com/user-attachments/files/34184601/taskq-ui-polish-handoff-2026-10-30-v2.zip)\n\nSHA-256: `e397147ee8fe6d6867af8ecfe604141e9921b0ce6c46e2f059a03851e9b3342d` (195 files; 11,108,468 bytes).\nRead `README.md`, `handoff/plan.md`, `handoff/acceptance.md` and `handoff/issues.json`; inspect `index.html`.\nCoordinator: #1924. Dependencies: #1928, #1918.\n\nPreserve current main and later accepted decisions. These source snapshots are proposed deltas, not replacement files.\nAll tasks were filed Held. Filing does not authorize task start, a PM message, deployment, service or permission changes.\n",
+ "comments": [
+  {
+   "id": 6523622997,
+   "created": 1793365809,
+   "body": "taskq: hold",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6524075254,
+   "created": 1793367205,
+   "body": "taskq: start",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527474216,
+   "created": 1793376652,
+   "body": "taskq: spawn worker codex:- mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527480275,
+   "created": 1793376668,
+   "body": "taskq: accepted 6527474216 attempt 6527474216\nop-id: accept-6527474216",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527556432,
+   "created": 1793376885,
+   "body": "taskq: ask attempt 6527474216\nDone: Checked native owner records, hold/start receipts, #1918/#1742 and the handoff; code unchanged.\nProblem: A1 needs a durable chat-to-task link, absent from code and contract. Choose its storage before adding metadata (R1/R13, section 7.1).\n1. Board-held chat reference - + portable across hosts/restarts; - adds an opaque chat ID to the board hold receipt ★\n2. Local chat reference - + keeps chat ID off the board; - association stays in this installation owner history\nTo answer: `taskq answer 1929.K` or comment `K` or the option text.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527566901,
+   "created": 1793376915,
+   "body": "taskq: released 6527474216 exit attempt 6527474216\nop-id: release-6527474216",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527570046,
+   "created": 1793376924,
+   "body": "taskq: answer 1\nBoard-held chat reference - + portable across hosts/restarts; - adds an opaque chat ID to the board hold receipt",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527573189,
+   "created": 1793376933,
+   "body": "taskq: executing 6527570046 attempt 6527474216\nop-id: execute-6527474216-6527570046-6527474216",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6527576664,
+   "created": 1793376943,
+   "body": "taskq: accepted 6527573189 attempt 6527474216\nop-id: accept-6527573189",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529073629,
+   "created": 1793381298,
+   "body": "taskq: result 45a49935c155d394fd1eee934accc48df73cb640 attempt 6527474216\nChanged: PM briefs, questions and results share their chat/reader. Fixed missing worker input and record jumps; kept source choices, files and race fences. R1 amended. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: python3 scripts/check.py -- sandbox-blocked: macOS sandbox_apply denied; 728 unit and 20 integration checks passed (R12/section 7.4)\nChecks: TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest -- PASS, isolated temporary installation\nChecks: node tests/conversations-flow.browser.cjs -- A5 input and A4 board-anchor failed before; PM chain, steer, reflow and switch PASS after\nChecks: node tests/conversations-stable.browser.cjs -- PASS, #1741 draft/focus, foreign receipts and unknown recovery\nChecks: node tests/conversations-render.browser.cjs -- PASS, #1742; 10000 records/provider, mounted <=662/643, anchors <=2 px\nChecks: node tests/reply-files.browser.cjs -- PASS, files and refusal preservation\nChecks: node tests/dialogue.browser.cjs -- PASS, saved delivery separate from PM activity, ordered history and refusal drafts\nChecks: node tests/tray-answer.test.cjs -- PASS; 29 Node component files, shot/release fixtures and nine affected browser instruments PASS\nOpen: Full gate sandbox-blocked; merge-result CI pending. Native disposable/Mac/Windows checks #1932/#1933 and later same-prefix source rewrites remain unqualified (R12/section 7.8).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529079449,
+   "created": 1793381315,
+   "body": "taskq: released 6527573189 exit attempt 6527474216\nop-id: release-6527573189",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529080432,
+   "created": 1793381319,
+   "body": "taskq: spawn reviewer claude:5c59dea4-f3aa-423f-9f52-ecdbfa3140d6 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529085454,
+   "created": 1793381334,
+   "body": "taskq: accepted 6529080432 attempt 6529080432\nop-id: accept-6529080432",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529109811,
+   "created": 1793381409,
+   "body": "taskq: requeue attempt 6529080432\nReason: A6 gap: reply intent can stick forever. send_op 'native holder unknown; not sent' keeps it, and a later watch turn overwrites turn.json; reply-check then never matches, Send refuses.\nNext: Clear intent on every pre-store send_op refusal; keep op readback across later turns (or block watch while intent pends); add Rust test for both; list add --conversation in taskq.md section 5.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529118212,
+   "created": 1793381434,
+   "body": "taskq: released 6529080432 exit attempt 6529080432\nop-id: release-6529080432",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529119456,
+   "created": 1793381438,
+   "body": "taskq: spawn worker codex:- mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529128678,
+   "created": 1793381463,
+   "body": "taskq: accepted 6529119456 attempt 6529119456\nop-id: accept-6529119456",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529345079,
+   "created": 1793381961,
+   "body": "taskq: ask attempt 6529119456\nDone: Fixed A6 in PR #1961; both failures reproduced, six targeted and 22 module checks passed; draft/file and no-replay guards retained.\nProblem: Review requires add --conversation in taskq.md section 5, but the rule gate rejects section 5 because #1929 does not name it (R13).\nApprove documenting the existing R1-approved flag in section 5; runtime behavior is unchanged.\nEvidence: [#1961](https://github.com/taskqorg/taskq/pull/1961)\n1. Document flag in section 5 - + exposes approved syntax; - edits the command-table rule ★\n2. Keep linked syntax only - + leaves section 5 unchanged; - omits the requested command-table fix\nTo answer: `taskq answer 1929.K` or comment `K` or the option text.\nop-id: work-1929-6529119456-section5\nrevision: 6529119456",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529355529,
+   "created": 1793381984,
+   "body": "taskq: answer 1\nDocument flag in section 5 - + exposes approved syntax; - edits the command-table rule",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529357934,
+   "created": 1793381990,
+   "body": "taskq: released 6529119456 exit attempt 6529119456\nop-id: release-6529119456",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529360902,
+   "created": 1793381997,
+   "body": "taskq: executing 6529355529 attempt 6529119456\nop-id: execute-6529119456-6529355529-6529119456",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529365046,
+   "created": 1793382007,
+   "body": "taskq: accepted 6529360902 attempt 6529119456\nop-id: accept-6529360902",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529552954,
+   "created": 1793382427,
+   "body": "taskq: result 389a39bf30f50f9bf9b13d85d168615eff3a1f67 attempt 6529119456\nChanged: Connected PM brief-to-result flow; fixed stuck reply intents and overwritten receipts; retained draft/file and no-replay guards. R1 and section 5 amended. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: python3 scripts/check.py --base 16b62345 -- sandbox-blocked: macOS sandbox_apply denied; 730 unit and 20 integration passed (R12/section 7.4)\nChecks: cargo test --locked --bin taskq conversation_1929_ -- holder-intent and watch-receipt failed before; 6 PASS after\nChecks: cargo test --locked --bin taskq dialogue::tests -- PASS 10; one manual native probe ignored\nChecks: cargo test --locked --bin taskq conversations::tests -- PASS 12; draft/file and revision guards retained\nChecks: TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest -- PASS in an isolated temporary installation\nChecks: node tests/tray-answer.test.cjs -- PASS; all 29 Node component files and shot/release fixtures PASS\nChecks: node tests/conversations-flow.browser.cjs -- PASS PM chain, steer and unknown readback; nine affected browser instruments PASS\nChecks: node tests/conversations-render.browser.cjs -- PASS #1742: 10000 records/provider, mounted <=662/643, anchors <=2 px, render p95 30/22 ms\nOpen: Full gate sandbox-blocked; merge-result CI pending. Disposable native Mac/Windows checks #1932/#1933 and later same-prefix source rewrites remain unqualified (R12/section 7.8).\nop-id: work-1929-6529119456-result-approved\nrevision: 6529119456",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529564679,
+   "created": 1793382452,
+   "body": "taskq: released 6529360902 exit attempt 6529119456\nop-id: release-6529360902",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529566445,
+   "created": 1793382456,
+   "body": "taskq: spawn reviewer claude:b11cffac-b251-4c8e-acde-8b9b3be5f6c1 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529571732,
+   "created": 1793382468,
+   "body": "taskq: accepted 6529566445 attempt 6529566445\nop-id: accept-6529566445",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529654868,
+   "created": 1793382652,
+   "body": "taskq: publish attempt 6529566445\nChanged: PM brief-to-result flow in one chat; stuck reply intents and watch-overwritten receipts fixed; add --conversation in section 5. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok, A5 ok, A6 ok (round-1 fixes verified), A7 ok, A8 ok; merge-result CI pending on pending\nChecks: cargo test --locked --bin taskq conversation_1929_ at 389a39bf -- 6 PASS (refusal clears intent, uncertain store keeps op, watch waits for ack)\nChecks: Implementation quality: none binding; R1 and section 5 edits named by owner answers 6527570046 and 6529355529\nOpen: PR conflicts with main in src/workspace.js (main-moved expected); native Mac/Windows checks #1932/#1933 unqualified (R12).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529659072,
+   "created": 1793382661,
+   "body": "taskq: released 6529566445 exit attempt 6529566445\nop-id: release-6529566445",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529675157,
+   "created": 1793382697,
+   "body": "taskq: requeue main-moved\nPR #1961 conflicts with main; conflict files: src/board/mod.rs, src/conversations.js, src/main.rs, src/reports.rs, src/tray.rs +2 more",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529681276,
+   "created": 1793382711,
+   "body": "taskq: spawn worker codex:- mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529686004,
+   "created": 1793382723,
+   "body": "taskq: accepted 6529681276 attempt 6529681276\nop-id: accept-6529681276",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529909464,
+   "created": 1793383363,
+   "body": "taskq: result f55f709c3226d55babf51064eaba970520ff4e36 attempt 6529681276\nChanged: PM-to-result flow retains main Results; fixed merged constructor and contract-size regressions. Draft/file and no-replay guards kept. R1 and section 5 amended. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: python3 scripts/check.py --base 0426dee15143f745bfd0df313f183750ab25c386 -- sandbox-blocked: sandbox_apply denied; 738 unit and 21 integration PASS; 143.251 s (R12/section 7.4)\nChecks: cargo test --locked --bin taskq conversation_1929_ -- E0063 before; 6 PASS after the merged constructor fix; intent/file/no-replay guards retained\nChecks: cargo test --locked --bin taskq reports::tests -- 15 PASS, including held successor creation and closed dependency preservation\nChecks: cargo test --locked --bin taskq every_table_row_has_a_golden_trace -- 61476 bytes failed before; 61438 bytes PASS after; size/trace assertions unchanged\nChecks: TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest -- PASS in an isolated temporary installation\nChecks: node tests/tray-answer.test.cjs -- PASS; all 30 Node component files and shot/release fixtures PASS\nChecks: node tests/conversations-flow.browser.cjs -- PASS; 13 browser instruments PASS, including Results closed-question route and #1741 draft/race preservation\nChecks: node tests/conversations-render.browser.cjs -- PASS #1742: 10000 records/provider, mounted <=662/643, anchors <=2 px; render p95 55/125 ms, native smoothness unknown\nOpen: Full gate sandbox-blocked; merge-result CI pending. Native Mac/Windows checks #1932/#1933 and same-prefix transcript rewrites remain unqualified (R12/section 7.8).\nop-id: work-1929-6529681276-result-main-moved\nrevision: 6529681276",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529913022,
+   "created": 1793383373,
+   "body": "taskq: released 6529681276 exit attempt 6529681276\nop-id: release-6529681276",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529914349,
+   "created": 1793383377,
+   "body": "taskq: spawn reviewer claude:56ac6a8a-69e4-4ae1-908d-5e66e774d568 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6529920126,
+   "created": 1793383392,
+   "body": "taskq: accepted 6529914349 attempt 6529914349\nop-id: accept-6529914349",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530156426,
+   "created": 1793384051,
+   "body": "taskq: publish attempt 6529914349\nChanged: PM brief-to-result flow in one chat, rebased on main with Results kept; stuck reply intents fixed; add --conversation in section 5. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok, A5 ok, A6 ok, A7 ok, A8 ok; merge-result CI pending on pending; PR CI green at f55f709c\nChecks: range-diff vs approved 389a39bf -- only workspace.js merge (Results branch plus composer kept); new: NewTask conversation:None, R1 label trim\nChecks: cargo test --locked --bin taskq conversation_1929_ / reports::tests / every_table_row_has_a_golden_trace at f55f709c -- 6, 15, 1 PASS; taskq.md 297 lines, 61438 bytes\nChecks: Implementation quality: none binding; R1 link-label shortening keeps targets and meaning\nOpen: Browser instruments not rerun by reviewer (local Playwright absent). Native Mac/Windows checks #1932/#1933 unqualified (R12).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530164815,
+   "created": 1793384073,
+   "body": "taskq: released 6529914349 exit attempt 6529914349\nop-id: release-6529914349",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530172536,
+   "created": 1793384093,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABL0sg284ABMFKzgOdXiA",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530277824,
+   "created": 1793384380,
+   "body": "taskq: publication-failed\npublication failed: merge queue removed PR: failed_checks",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530347175,
+   "created": 1793384565,
+   "body": "taskq: spawn worker codex:- mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530357332,
+   "created": 1793384592,
+   "body": "taskq: accepted 6530347175 attempt 6530347175\nop-id: accept-6530347175",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530552012,
+   "created": 1793385117,
+   "body": "taskq: result f61f51300fea3adc6476d48913924b0b38665360 attempt 6530347175\nChanged: PM-to-result flow retained; fixed merge-result contract overflow through the existing R1 reference. R1/section 5 amendments preserved; size/trace assertions unchanged. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: python3 scripts/check.py --base 0426dee15143f745bfd0df313f183750ab25c386 -- sandbox-blocked: sandbox_apply denied; 738 unit and 21 integration PASS; 104.226 s (R12/section 7.4)\nChecks: cargo test --locked --bin taskq every_table_row_has_a_golden_trace -- merged contract 61444 bytes failed before; 61421 PASS after; cap/trace guards retained\nChecks: TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest -- PASS in an isolated temporary installation\nChecks: node tests/tray-answer.test.cjs -- PASS; all 30 Node component files and shot/release fixtures PASS; remaining non-browser steps 62.031 s\nChecks: node tests/conversations-flow.browser.cjs -- PASS, originating PM chain, worker steer, same-op unknown readback, explicit Latest and reachable Send\nChecks: node tests/conversations-render.browser.cjs -- PASS #1742: 10000 records/provider, mounted <=662/643, anchors <=2 px; render p95 59/46 ms; native smoothness unknown\nChecks: node tests/conversations-declutter.browser.cjs; node tests/dialogue.browser.cjs; node tests/pm-composer.browser.cjs -- PASS; five selected browser instruments 58.377 s\nOpen: Full local gate sandbox-blocked; new merge-result CI required. Native Mac/Windows checks #1932/#1933 and same-prefix transcript rewrites remain unqualified (R12/section 7.8).\nop-id: work-1929-6530347175-result-contract-size\nrevision: 6530347175",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530558832,
+   "created": 1793385134,
+   "body": "taskq: released 6530347175 exit attempt 6530347175\nop-id: release-6530347175",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530560941,
+   "created": 1793385140,
+   "body": "taskq: spawn reviewer claude:b02e08df-5cb3-4422-9a5c-52446b99ac08 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530569245,
+   "created": 1793385161,
+   "body": "taskq: accepted 6530560941 attempt 6530560941\nop-id: accept-6530560941",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530587899,
+   "created": 1793385208,
+   "body": "taskq: publish attempt 6530560941\nChanged: PM brief-to-result flow in one chat; merge-result contract overflow fixed by reusing the existing R1 DashQ reference. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok, A5 ok, A6 ok, A7 ok, A8 ok; merge-result CI pending on pending\nChecks: diff f55f709c..f61f5130 -- only taskq.md R1 link to [dq] (same enrollment.md target) plus evidence note; code unchanged since approved review\nChecks: git merge-tree origin/main ed179014 + f61f5130 -- clean; merged taskq.md 299 lines, 61421 bytes, within 300 lines/60 KiB\nChecks: Implementation quality: none binding\nOpen: Native Mac/Windows checks #1932/#1933 unqualified (R12).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530593531,
+   "created": 1793385223,
+   "body": "taskq: released 6530560941 exit attempt 6530560941\nop-id: release-6530560941",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530612202,
+   "created": 1793385271,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABL0sg284ABMFKzgOdfnI",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530744313,
+   "created": 1793385619,
+   "body": "taskq: publication-failed\npublication failed: merge queue removed PR: failed_checks",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530760840,
+   "created": 1793385669,
+   "body": "taskq: spawn worker codex:- mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530766635,
+   "created": 1793385689,
+   "body": "taskq: accepted 6530760840 attempt 6530760840\nop-id: accept-6530760840",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530971684,
+   "created": 1793386312,
+   "body": "taskq: result 723d67e5e3fecc26514ac69784014e7ab7c28246 attempt 6530760840\nChanged: PM-to-result flow retained; Windows transcript generations use native file IDs. Equal-time replacement regression strengthened; append, draft/file and no-replay guards kept. R1/section 5 amended. [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: python3 scripts/check.py --base 0426dee15143f745bfd0df313f183750ab25c386 -- sandbox-blocked: sandbox_apply denied; 738 unit and 21 integration PASS; 205.866 s (R12/section 7.4)\nChecks: cargo test --locked --bin taskq transcript::tests -- 10 PASS on macOS; Windows replacement failed before in merge-group CI; corrected Windows execution still unverified\nChecks: cargo check --locked --bin taskq --tests --target x86_64-pc-windows-gnu -- toolchain-blocked: x86_64-w64-mingw32-gcc missing; not PASS\nChecks: TASKQ_SELFTEST_OFFLINE=1 cargo +stable run --locked -- selftest -- PASS in an isolated temporary installation\nChecks: node tests/tray-answer.test.cjs -- PASS; all 30 Node component files and shot/release fixtures PASS; remaining non-browser steps 70.144 s\nChecks: node tests/conversations-flow.browser.cjs -- PASS; five selected browser instruments PASS in 89.949 s; PM chain, steer, unknown recovery, explicit Latest and reachable Send retained\nChecks: node tests/conversations-render.browser.cjs -- PASS #1742: 10000 records/provider, mounted <=662/643, anchors <=2 px; render p95 76/201 ms; native smoothness unknown\nOpen: Full local gate sandbox-blocked; Windows execution and new merge-result CI pending. Native Mac/Windows #1932/#1933 and later same-prefix transcript rewrites remain unqualified (R12/section 7.8).\nop-id: work-1929-6530760840-result-windows-generation\nrevision: 6530760840",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530979319,
+   "created": 1793386331,
+   "body": "taskq: released 6530760840 exit attempt 6530760840\nop-id: release-6530760840",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530981139,
+   "created": 1793386336,
+   "body": "taskq: spawn reviewer claude:c542dab9-9945-4663-a5ad-84a1a441327e mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6530988793,
+   "created": 1793386357,
+   "body": "taskq: accepted 6530981139 attempt 6530981139\nop-id: accept-6530981139",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6534628513,
+   "created": 1793398483,
+   "body": "taskq: publish attempt 6530981139\nChanged: PM brief-to-result flow in one chat; Windows transcript generations now use native file IDs, so replacement is detected (A4). [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok, A5 ok, A6 ok, A7 ok, A8 ok; merge-result CI pending on pending; PR CI green at 723d67e5\nChecks: diff f61f5130..723d67e5 -- only transcript.rs generation (FILE_ID_INFO via existing windows crate feature), its test, testing.md note; code otherwise unchanged\nChecks: prior merge_group run 41108123051 -- only failure Windows transcript::tests replacement test; Windows test now forces equal creation time\nChecks: cargo test --locked --bin taskq transcript::tests at 723d67e5 on macOS -- 10 PASS\nChecks: Implementation quality: none binding\nOpen: Windows execution proven only by merge-group CI. Native Mac/Windows checks #1932/#1933 unqualified (R12).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6534633584,
+   "created": 1793398501,
+   "body": "taskq: released 6530981139 exit attempt 6530981139\nop-id: release-6530981139",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6534639159,
+   "created": 1793398521,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABL0sg284ABMFKzgOesTk",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6534729056,
+   "created": 1793398882,
+   "body": "taskq: close\nChanged: PM brief-to-result flow in one chat; Windows transcript generations now use native file IDs, so replacement is detected (A4). [PR](https://github.com/taskqorg/taskq/pull/1961)\nChecks: Task fit: A1 ok, A2 ok, A3 ok, A4 ok, A5 ok, A6 ok, A7 ok, A8 ok; merge-result CI pending on pending; PR CI green at 723d67e5\nChecks: diff f61f5130..723d67e5 -- only transcript.rs generation (FILE_ID_INFO via existing windows crate feature), its test, testing.md note; code otherwise unchanged\nChecks: prior merge_group run 41108123051 -- only failure Windows transcript::tests replacement test; Windows test now forces equal creation time\nChecks: cargo test --locked --bin taskq transcript::tests at 723d67e5 on macOS -- 10 PASS\nChecks: Implementation quality: none binding\nOpen: Windows execution proven only by merge-group CI. Native Mac/Windows checks #1932/#1933 unqualified (R12).\n\ndelivery auto-merge r0: merged #1961 as efce57d9295abd72184778d2ab32ab4e46a683f0; merge-result CI green",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6535141043,
+   "created": 1793400537,
+   "body": "taskq: result-read 723d67e5e3fecc26514ac69784014e7ab7c28246",
+   "trusted": true,
+   "edited": false
+  }
+ ],
+ "summary": "<!-- taskq-summary -->\n**Closed** · merged #1961 as efce57d9295abd72184778d2ab32ab4e46a683f0; merge-result CI green\nChanged: PM brief-to-result flow in one chat; Windows transcript generations now use native file IDs, so replacement is detected (A4). [PR](https://github.com/taskqorg/taskq/pull/1961)\nOpen: Windows execution proven only by merge-group CI. Native Mac/Windows checks #1932/#1933 unqualified (R12).\nFiles: [Complete prototype, plan, preservation …](https://github.com/user-attachments/files/34184601/taskq-ui-polish-handoff-2026-10-30-v2.zip)"
+}
