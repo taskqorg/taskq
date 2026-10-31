@@ -86,6 +86,8 @@ M3.1 The Home host strip and filter row stay pinned at the top while the list sc
 
 M3.25 Local capacity remains a separate observation: show occupied slots and held/requested reservations not matched to a running attempt, with its own age. Those reservations include unconfirmed executions, not just pending starts. Remote capacity is unknown without a local observation. Display Doing/Review task counts for reconciliation; neither task-state totals nor host-wide occupied slots must equal running counts. Host capacity can include other projects. Read-only rendering changes no admission policy. Acceptance: two hosts, a stale host, pending reservations, duplicate boards and incomplete data; both themes require owner approval before merge (#1349).
 
+M3.26 A refresh publishes one complete menu view. The menu never shows content that a later update in the same refresh removes. Snapshot adoption, pending-operation projection, navigation restoration and deferred presentation must settle before publication. Missing, stale and partial data remain explicit under R12.
+
 ## M4 Request, interpretation and applied state
 
 - You asked: original text from `service focus --request`; missing text says not recorded.
