@@ -406,6 +406,9 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
             if t.publication.is_some() {
                 return Receipt { extra: "publication pending; the service reconciles it".into(), ..Receipt::accepted(n, op, t.state, rev) };
             }
+            if let Err(e) = verdict_label(b, &issue, verdict) {
+                return Receipt { state: Some(t.state.name()), ..Receipt::rejected(n, op, e) };
+            }
             // § 4 Profiling: `checks` is the CI verification and merge call
             if b.defer_publication(&cfg.publish) {
                 let mut r = act(b, &cfg.root, n, "publish", &[], verdict, op);
@@ -456,6 +459,18 @@ fn close_body(b: &dyn Board, cfg: &Config, n: u64, verdict: &str, op: &Op, check
         }
         s => Receipt { state: Some(s.name()), ..Receipt::rejected(n, op, format!("#{n} is {}: `close` not accepted", s.name())) },
     }
+}
+
+/// #1979: an experiment's `Verdict:` becomes the `verdict-<v>` label before publication, confirmed by readback.
+fn verdict_label(b: &dyn Board, issue: &board::Issue, verdict: &str) -> Res<()> {
+    let Some(v) = crate::reports::outcome_verdict(verdict) else { return Ok(()) };
+    let want = format!("verdict-{v}");
+    let stale: Vec<String> = issue.labels.iter().filter(|l| l.starts_with("verdict-") && **l != want).cloned().collect();
+    if !issue.labels.contains(&want) || !stale.is_empty() {
+        b.labels(issue.number, std::slice::from_ref(&want), &stale)?;
+    }
+    let back = b.issue(issue.number)?;
+    if back.labels.contains(&want) && !back.labels.iter().any(|l| l.starts_with("verdict-") && *l != want) { Ok(()) } else { Err(format!("not closed: label {want} did not read back")) }
 }
 
 /// Service continuation of the saved reviewer verdict; writes are not attempt-bound (section 7).

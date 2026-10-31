@@ -2,7 +2,7 @@
   "schema": 1,
   "contract": "https://github.com/taskqorg/taskq/blob/main/taskq.md",
   "commands": [
-    {"name": "status", "use": "taskq status [--only L,..] [--json]", "purpose": "Read the board report: tasks in work, questions, held, later, failed and stuck tasks, hosts."},
+    {"name": "status", "use": "taskq status [--only L,..] [--json]", "purpose": "Read the board report: tasks in work, questions, undecided reports (Decide; keep them in Next until decided), held, later, failed and stuck tasks, hosts."},
     {"name": "wait", "use": "taskq wait [--window MIN] [--only L,..]", "purpose": "Block until a task moves to ask, review with options, closed or failed; prints the move or tick."},
     {"name": "inbox", "use": "taskq inbox N [--json]", "purpose": "Read one task: its text, folded state, answers and log."},
     {"name": "add", "use": "taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H]", "purpose": "File a new task; it starts held until `start`."},
@@ -15,7 +15,7 @@
     {"name": "close", "use": "taskq close N [M..] [--text VERDICT]", "purpose": "Publish and close accepted results."},
     {"name": "approve", "use": "taskq approve N [--sha SHA]", "purpose": "Record the owner's approval of the current result of a gated task."},
     {"name": "issue", "use": "taskq issue N [--comment T|--label L] [--json]", "purpose": "Read any board issue, or add a comment or a label."},
-    {"name": "reports", "use": "taskq reports [N] --json", "purpose": "List research and proposal reports waiting for the owner's decision."},
+    {"name": "reports", "use": "taskq reports [N] [--action make|later|drop] [--sha SHA] [--until UTC] --json", "purpose": "List or decide experiment reports: Make tasks, Later with a revisit date, or Drop; the PM decides technical outcomes, asks the owner product, scope or visual ones."},
     {"name": "focus", "use": "taskq service focus [all|off|<label..>] [--request TEXT]", "purpose": "Choose which tasks this host admits; no arguments prints focus and labels."},
     {"name": "profile watch", "use": "taskq profile watch [--since W]", "purpose": "PM telemetry pass of this install: stalls, new or growing action errors, board failures, cadence per board.", "procedure": "telemetry-watch"},
     {"name": "retro", "use": "taskq retro", "purpose": "Open an owner session on use-case proposals from board history."}

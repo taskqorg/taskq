@@ -12,7 +12,7 @@ const report={...row,read:false,body:'# Question\n\nHow should interrupted reque
   await page.evaluate(({state,row,report})=>{window.sent=[];window.reportRow=report;window.reportData=report;window.failReportAction=false;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a!=='reports')return;let value;
    if(m.action==='list')value={reports:reportRow.visible?[reportRow]:[],more:false};
    else if(failReportAction)value={reason:'Board unavailable; decision unknown'};
-   else {reportRow={...reportRow,read:true,decision:m.action==='make'?'made':m.action==='drop'?'drop':m.action==='later'?'later':reportRow.decision,visible:!['make','drop'].includes(m.action),tasks_made:m.action==='make'?[21]:[]};value={report:m.action==='open'?{...reportData,...reportRow}:reportRow};}
+   else {reportRow={...reportRow,read:true,decision:m.action==='make'?'made':m.action==='drop'?'drop':m.action==='later'?'later':reportRow.decision,visible:!['make','drop'].includes(m.action),tasks_made:m.action==='make'?[21]:[],...(m.action==='later'?{later_until:m.until}:{})};value={report:m.action==='open'?{...reportData,...reportRow}:reportRow};}
    queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,...value}}));}};taskq.receive(state);},{state,row,report});
   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports').length),0,'pushed reports need no list request');
   if(surface==='workspace'){if(await page.locator('[data-c=list]').isVisible())await page.locator('[data-c=list]').click();assert((await page.locator('.conversation-rows').innerText()).includes('Needs decision'));}else {assert((await page.locator('[data-a=workspace][data-page=conversations]').getAttribute('aria-label')).includes('0 new'));await page.locator('[data-route=notifications]').click();}
@@ -32,7 +32,8 @@ const report={...row,read:false,body:'# Question\n\nHow should interrupted reque
   assert.equal(await page.getByRole('heading',{name:'Proposed tasks',exact:true}).count(),1,'structured proposals have one heading');
   assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&[...document.querySelectorAll('.reports-section button')].every(e=>e.scrollWidth<=e.clientWidth+1)),'Reports must wrap at '+surface+'/'+width+'/'+font);
   if(out&&surface==='workspace'&&theme==='light'&&width===940&&font===16)await page.screenshot({path:path.join(out,'conversations-report.png')});
-  await page.locator('[data-report=later]').click();await page.getByText('Kept in Reports for later.',{exact:true}).waitFor();
+  await page.locator('[data-report=later]').click();await page.locator('[data-later-until]').fill('2099-01-02');await page.locator('[data-report=later-save]').click();await page.getByText('Later: back in Decide on 2099-01-02.',{exact:true}).waitFor();
+  assert(await page.evaluate(()=>sent.some(m=>m.action==='later'&&m.until==='2099-01-02T12:00:00Z')),'Later sends its revisit date');
   await page.locator('[data-report=back]').click();assert((await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').innerText()).includes('Read'));
   await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
   await page.evaluate(()=>failReportAction=true);await page.locator('[data-report=make]').click();await page.getByText('Board unavailable; decision unknown',{exact:true}).waitFor();

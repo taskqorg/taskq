@@ -379,7 +379,7 @@ impl Board for GitLab {
     }
 
     fn now(&self) -> Result<i64> {
-        self.api.now(KIND.user_key)
+        self.api.now(KIND.user_key, None)
     }
 
     fn me(&self) -> Result<String> {

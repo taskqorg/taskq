@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.50
+
+Board budget: requests pace when the shared GitHub quota is at or below 20 % (wait = time to reset / requests left, at most 5 s), the github.com clock comes from the free `GET /rate_limit`, and the board login is kept in `<install>/board-user-<key>` instead of a `GET /user` per process (#1985). Reports: undecided experiment reports stay in `taskq status` Decide until decided, Later needs a revisit date, and an experiment close carries a `verdict-<v>` label (#1979). Conversations: PM tasks connect to their conversation, and times show relative with exact local tooltips (#1961, #1986). No board change.
+
 ## v4.6.49
 
 Board budget: report collection stops re-reading comments that cannot project and keeps one board per project, cutting Mac REST reads (#1974); report rows stay out of `taskq service status --json`, so the status output fits PilotQ's 1 MiB tool cap again (#1975). macOS: every TaskQ window accepts the first click (#1969). No board change.

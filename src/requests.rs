@@ -18,6 +18,8 @@ pub(crate) struct Usage { at_ms: u64, source: String, ops: BTreeMap<String, u64>
 
 /// Longest pause: GitHub and GitLab budgets reset within the hour.
 const MAX_PAUSE: i64 = 3600;
+/// The longest wait before one request while the budget is low (§ 4 pacing).
+const MAX_PACE: f64 = 5.0;
 /// Operations named in the hourly log line; the rest add up to `other`.
 const TOP: usize = 8;
 
@@ -34,6 +36,11 @@ pub fn key(root: &str, auth: &str) -> String {
 /// The pause file of one API host and credential in `install`: the reset (Unix seconds) every process there honours.
 pub fn pause_file(install: &std::path::Path, root: &str, auth: &str) -> std::path::PathBuf {
     install.join(format!("requests-paused-{}", &key(root, auth)[..16]))
+}
+
+/// The board login of one API host and credential in `install`: every process reuses it instead of `GET /user`.
+pub fn user_file(install: &std::path::Path, root: &str, auth: &str) -> std::path::PathBuf {
+    install.join(format!("board-user-{}", &key(root, auth)[..16]))
 }
 
 /// A pause another process recorded in `file`: its reset while in the future, at most [`MAX_PAUSE`] ahead.
@@ -136,6 +143,13 @@ impl Budget {
         let reset = board_now + wait;
         self.paused = Some((now + Duration::from_secs(wait as u64), reset));
         Some(reset)
+    }
+
+    /// The wait before the next request while the budget is low: the time to the reset spread over the requests left,
+    /// at most [`MAX_PACE`]. `remaining` is per board user, so every host slows together before it reaches 0 (§ 4).
+    pub fn pace(&self, board_now: i64) -> Option<Duration> {
+        let (Some(r), Some(reset)) = (self.remaining, self.reset) else { return None };
+        (self.low() && board_now > 0 && reset > board_now).then(|| Duration::from_secs_f64(((reset - board_now) as f64 / r.max(1) as f64).min(MAX_PACE)))
     }
 
     /// The budget alarm (§ 4): the last `remaining` is at most 20 % of `limit`.
@@ -357,6 +371,15 @@ mod tests {
         let h = |pairs: &'static [(&'static str, &'static str)]| move |n: &str| pairs.iter().find(|(k, _)| *k == n).map(|(_, v)| v.to_string());
         assert_eq!(b.observe(200, false, h(&[("x-ratelimit-remaining", "12"), ("x-ratelimit-limit", "5000")]), 1000, t0), None);
         assert_eq!((b.remaining, b.limit, b.paused(t0)), (Some(12), Some(5000), None));
+        // low budget paces: the time to the reset spread over the requests left, capped; no reset known, no pacing
+        assert_eq!(b.pace(1000), None);
+        b.observe(200, false, h(&[("x-ratelimit-remaining", "1000"), ("x-ratelimit-limit", "5000"), ("x-ratelimit-reset", "3000")]), 1000, t0);
+        assert_eq!(b.pace(1000), Some(Duration::from_secs(2)));
+        b.observe(200, false, h(&[("x-ratelimit-remaining", "10"), ("x-ratelimit-limit", "5000"), ("x-ratelimit-reset", "3000")]), 1000, t0);
+        assert_eq!(b.pace(1000), Some(Duration::from_secs(5)));
+        b.observe(200, false, h(&[("x-ratelimit-remaining", "1001"), ("x-ratelimit-limit", "5000"), ("x-ratelimit-reset", "3000")]), 1000, t0);
+        assert_eq!(b.pace(1000), None, "above 20 % no pacing");
+        b.observe(200, false, h(&[("x-ratelimit-remaining", "12"), ("x-ratelimit-limit", "5000")]), 1000, t0);
         // a 403 without budget headers is an ordinary refusal
         assert_eq!(b.observe(403, false, h(&[]), 1000, t0), None);
         // primary limit: wait for the reset header against board time, not the local clock

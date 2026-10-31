@@ -666,7 +666,8 @@ impl Board for GitHub {
     }
 
     fn now(&self) -> Result<i64> {
-        self.api.now(KIND.user_key)
+        // GitHub does not count `GET /rate_limit` against the budget
+        self.api.now(KIND.user_key, Some("/rate_limit"))
     }
 
     fn me(&self) -> Result<String> {
@@ -884,6 +885,8 @@ mod token_tests {
         // Keep the production credential lookup, Kind::open and GitHub adapter; substitute only the HTTP endpoint.
         let kind = super::super::Kind { api: |root, repo, token| Api::new(root.into(),format!("{root}/repos/{repo}"),token), ..KIND };
         let board = kind.open(&root, "o/r", None, &crate::platform::tool(&dir)).unwrap();
+        std::fs::write(crate::requests::user_file(&dir, &root, "invented-first-token"), "kept-login").unwrap();
+        assert_eq!(board.me().as_deref(), Ok("kept-login"), "the kept login answers without GET /user");
         let first = board.issue(1).map(|issue| issue.title);
         let old_pause = crate::requests::pause_file(&dir, &root, "invented-first-token");
         std::fs::write(&old_pause, (super::super::wall() + 60).to_string()).unwrap();

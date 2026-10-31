@@ -26,7 +26,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
   if(won?.sha===op.sha&&won.visible===false)return won;
   // Receipts prove marker state, never the close time or immutable source. Late read replies cannot undo Later/Make.
   const fields={sha:report.sha};
-  for(const field of ['read','decision','visible','pending_decision','tasks_made','comments_through'])if(Object.hasOwn(report,field))fields[field]=report[field];
+  for(const field of ['read','decision','visible','pending_decision','tasks_made','comments_through','later_until'])if(Object.hasOwn(report,field))fields[field]=report[field];
   if(op.action==='read'&&won?.sha===op.sha){if(['later','accepted'].includes(won.decision))fields.decision=won.decision;if(won.pending_decision==='make')fields.pending_decision='make';}
   if(Number.isSafeInteger(won?.comments_through)&&Number.isSafeInteger(fields.comments_through))fields.comments_through=Math.max(won.comments_through,fields.comments_through);
   const merged={...(won?.sha===op.sha?won:{}),...fields};receipts.set(k,merged);return merged;
@@ -44,6 +44,9 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
   refresh(){api.sync(projects);draw();},
   rows(){return projects.flatMap(p=>(pages.get(p.root)?.rows||[]).map(r=>({...r,root:p.root}))).sort((a,b)=>(b.closed||0)-(a.closed||0)||b.n-a.n);},
   unread(){return api.rows().filter(r=>!r.read);},
+  // R6 Decide: mirrors reports::decide; an undated or past Later returns, the oldest close first.
+  undecided(r){const until=Date.parse(r.later_until||'');return r.kind!=='task'&&r.visible!==false&&!r.pending_decision&&(!r.decision||r.decision==='none'||r.decision==='later'&&!(until>Date.now()));},
+  decide(rows=api.rows()){return rows.filter(api.undecided).sort((a,b)=>(a.closed||0)-(b.closed||0)||a.n-b.n);},
   count(){return projects.every(p=>pages.has(p.root)&&!pages.get(p.root).unknown)?api.unread().length:null;},
   current(){return selected;},
   feedback(){return notice;},
@@ -57,7 +60,7 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
   readNext(){if([...pending.values()].some(p=>p.action==='read'))return;const r=readQueue.shift();if(r)request(r.root,'read',{n:r.n,sha:r.sha});},
   open(root,n){return execution.action('reports.card.open',()=>{const r=api.rows().find(r=>r.root===root&&r.n===n);if(!r)return;selected={...r};expanded=true;full=false;const prior=outcomes.get(receiptKey(root,n,r.sha));notice=prior?.notice||'';draft=null;successor=prior?.successor||null;draw();if((r.body||r.kind==='task')&&!r.read)request(root,'read',{n,sha:r.sha});})();},
   move(step){const rows=api.rows(),i=rows.findIndex(r=>r.root===selected?.root&&r.n===selected?.n),r=rows[i+step];if(r)api.open(r.root,r.n);},
-  act(action,text){if(!selected)return;outcome(selected,'',null);request(selected.root,action,{n:selected.n,sha:selected.sha,...(text===undefined?{}:{text})});draw();},
+  act(action,text,until){if(!selected)return;outcome(selected,'',null);request(selected.root,action,{n:selected.n,sha:selected.sha,...(text===undefined?{}:{text}),...(until===undefined?{}:{until})});draw();},
   receive(r){
    const op=pending.get(r.id);if(!op||op.root!==r.root)return false;pending.delete(r.id);const shown=active(op);
    if(r.reason){
@@ -71,7 +74,8 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
     const p=pages.get(r.root),report=remember(op,r.report);
     if(p)p.rows=p.rows.flatMap(row=>row.n!==op.n||row.sha!==op.sha?[row]:report.visible===false?[]:[{...row,...report,closed:row.closed}]);
     if(selected&&selected.sha===op.sha&&key(selected.root,selected.n)===key(r.root,op.n))selected=report.visible===false?null:{...selected,...report,closed:selected.closed};
-    if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>'#'+n).join(', '):'Report dropped.'):(op.action==='later'?'Kept in Reports for later.':''),undefined,shown);
+    if(op.action==='later'&&shown&&draft==='later')draft=null;
+    if(op.action!=='read')outcome(op,report.visible===false?(report.decision==='made'?'Created held drafts: '+(report.tasks_made||[]).map(n=>'#'+n).join(', '):'Report dropped.'):(op.action==='later'?'Later: back in Decide on '+(report.later_until||op.until||'').slice(0,10)+'.':''),undefined,shown);
     if(r.successor>0){outcome(op,'Created held draft. Read it back and start it separately.',{n:r.successor,url:r.successor_url||(typeof r.report.url==='string'?r.report.url.replace(/\d+$/,String(r.successor)):null)},shown);if(shown&&draft===op.action)draft=null;}
     if(op.action==='accept')outcome(op,'Result accepted.',undefined,shown);
    }else {if(op.action==='read')readFailure='Result read receipt unknown; waiting for service readback.';outcome(op,'Report receipt unknown; waiting for service readback.',undefined,shown);}
@@ -86,15 +90,17 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
    else if(action==='back'){selected=null;draw();}
    else if(action==='previous')api.move(-1);
    else if(action==='next')api.move(1);
-   else if(['followup','reopen'].includes(action)){draft=action;draw();}
+   else if(['followup','reopen','later'].includes(action)){draft=action;draw();}
+   else if(action==='later-save'){const day=b.closest('.report-card')?.querySelector('[data-later-until]')?.value,at=day&&new Date(day+'T12:00:00Z');if(at>Date.now())api.act('later',undefined,at.toISOString().replace(/\.\d{3}Z$/,'Z'));else{notice='Later needs a future revisit date.';draw();}}
    else if(action==='create'){const text=b.closest('.report-card')?.querySelector('[data-result-reason]')?.value;api.act(draft,text);}
-   else if(['accept','make','later','drop'].includes(action))api.act(action);
+   else if(['accept','make','drop'].includes(action))api.act(action);
    return true;
   },
-  threads(){return api.rows().map(r=>({id:'task:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'/'+r.n,root:r.root,report:r.n,title:r.title,result:r.result,updated:r.closed*1000,status:r.kind==='task'?'Finished':'Report',marker:r.read?'':r.kind==='task'?'New result':'Needs decision'}));},
+  threads(){return api.rows().map(r=>({id:'task:'+(projects.find(p=>p.root===r.root)?.issues||r.root)+'/'+r.n,root:r.root,report:r.n,title:r.title,result:r.result,updated:r.closed*1000,status:r.kind==='task'?'Finished':'Report',marker:api.undecided(r)?'Needs decision':r.read?'':r.kind==='task'?'New result':''}));},
   section(ps,reader=false){
    api.sync(ps);const loaded=api.count()!==null,rows=api.rows(),busy=selected&&[...pending.values()].some(p=>p.root===selected.root&&p.n===selected.n&&p.action!=='read'),project=root=>projects.find(p=>p.root===root)?.name||'Project unavailable';
-   const ordinary=selected?.kind==='task',position=rows.findIndex(r=>r.root===selected?.root&&r.n===selected?.n);
+   const ordinary=selected?.kind==='task',position=rows.findIndex(r=>r.root===selected?.root&&r.n===selected?.n),decide=api.decide(rows),age=r=>r.closed?Math.max(0,Math.floor((Date.now()/1000-r.closed)/86400))+'d':'age unknown';
+   const day=t=>new Date(t).toISOString().slice(0,10),row=(r,d)=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},project(r.root)+' · #'+r.n+' · '+(r.read?'Read':'Unread')+(d?' · Decide · '+(r.experiment_verdict||'verdict unknown')+' · '+age(r):'')),h('span',null,r.title));
    return h('section',{class:'reports-section group','aria-label':'Results',key:'reports'},
     !reader&&h('button',{class:'project',type:'button','data-report':'toggle','aria-expanded':String(expanded)},'Results · '+(loaded?rows.length:'unknown'),api.unread().length?' · '+api.unread().length+' new':''),
     expanded&&h('div',{class:'reports-content body'},
@@ -114,8 +120,9 @@ create:function({send=ui.send,draw,defer=ui.defer,id=()=>Array.from(crypto.getRa
       h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),
       selected.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry to reconcile the held drafts.'),
       h('div',{class:'options'},['make','later','drop'].map(action=>h('button',{'data-report':action,disabled:!!busy||!selected.body||action==='make'&&!selected.tasks?.length||action==='drop'&&selected.pending_decision==='make'},{make:selected.pending_decision==='make'?'Retry Make tasks':'Make tasks',later:'Later',drop:'Drop'}[action]))),
+      draft==='later'&&h('div',{key:'later'},h('label',null,'Revisit on',h('input',{type:'date','data-later-until':'',min:day(Date.now()+86400000),value:day(Date.now()+7*86400000),'aria-label':'Revisit date'})),h('p',{class:'meta'},'The report returns to Decide on this date.'),h('button',{'data-report':'later-save',disabled:!!busy},'Keep until this date')),
       selected.body&&h('div',null,h('button',{'data-report':'full','aria-expanded':String(full)},full?'Hide full report':'Full report'),full&&h('div',{class:'report-body'},body(selected.body))) ]):
-     [rows.length?rows.map(r=>h('button',{class:'project report-row','data-report':'open','data-root':r.root,'data-n':r.n,key:key(r.root,r.n)},h('span',{class:'meta'},project(r.root)+' · #'+r.n+' · '+(r.read?'Read':'Unread')),h('span',null,r.title))):loaded&&h('p',null,'No results waiting for review.')]));
+     [decide.length?[h('h3',{key:'decide'},'Decide · '+decide.length),...decide.map(r=>row(r,true))]:null,rows.length?rows.filter(r=>!decide.includes(r)).map(r=>row(r,false)):loaded&&h('p',null,'No results waiting for review.')]));
   }
  });return api;
 },
