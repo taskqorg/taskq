@@ -3225,7 +3225,7 @@ mod tests {
                 else if url.ends_with("/status") { json!({"total_count": 0}) }
                 else if url.ends_with("/git/ref/heads/taskq-1") { json!({"object": {"sha": head}}) }
                 else if method == "PATCH" && url.ends_with("/git/refs/heads/main") { *f.borrow_mut() += 1; json!({"object": {"sha": head}}) }
-                else { panic!("unexpected {method} {url}") })
+                else if url.contains("/issues/1/comments") { json!([]) } else { panic!("unexpected {method} {url}") })
         }));
         let a = b.comment(n, "taskq: spawn worker codex:w win").unwrap();
         b.comment(n, &core::entry("result", &[&sha], Some(a), "candidate")).unwrap();

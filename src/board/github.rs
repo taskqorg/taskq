@@ -396,26 +396,40 @@ impl GitHub {
     }
 
     fn try_publish(&self, n: u64, sha: &str, mode: &str, title: &str, task_line: &str, root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
-        let compare = self.api.call("GET", &format!("/compare/main...{sha}"), None);
-        // #2047 (#2009, #2010, #2015): the result SHA lives in another repository; its compare 404 retried every pass
-        if let Err(e) = &compare && e.contains("HTTP 404") && let Some((repo, p)) = self.foreign_pr(n)? {
-            return self.publish_foreign(&repo, p, (n, sha, mode, title, task_line), root, enqueued);
+        // #2061 (#2010 pilotq#200, #2015 dashq#241): a task PR of another repository publishes there, before any board
+        // repository read; a named PR that is not this task's (head `taskq-<N>` or the result) is only a mention
+        let mut unread = None;
+        for (repo, p) in self.foreign_prs(n)? {
+            match self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None).and_then(|r| r.json()) {
+                Ok(pr) if pr["head"]["ref"] == format!("taskq-{n}") || pr["head"]["sha"] == sha => {
+                    return self.publish_foreign(&repo, pr, (n, sha, mode, title, task_line), root, enqueued);
+                }
+                Ok(_) => {},
+                Err(e) if unreachable(&e) => { unread.get_or_insert((format!("{repo}#{p}"), e)); },
+                Err(e) => return Err(e),
+            }
         }
-        let status = compare?.json()?["status"].as_str().unwrap_or_default().to_string();
+        let status = match self.api.call("GET", &format!("/compare/main...{sha}"), None) {
+            // #2047: the result is in no repository this board reads; an unreadable named PR blocks by name at once
+            Err(e) if e.contains("HTTP 404") => return match unread {
+                Some((name, e)) => Ok(Publish::Blocked(format!("publication PR {name} unreachable: {e}"))),
+                // #2061 A4: one stable reason per result, so the service logs it once, naming the repository
+                None => Err(format!("result {sha} not found in {} (compare HTTP 404); the result names no task PR of another repository",
+                    self.api.repo().rsplit_once("/repos/").map_or("the board repository", |x| x.1))),
+            },
+            r => r?.json()?["status"].as_str().unwrap_or_default().to_string(),
+        };
         self.publish_in(&status, None, (n, sha, mode, title, task_line), root, enqueued)
     }
 
     /// #2047: the `pr` route of PR `p` in repository `repo` (same host and token): its merge state, merge queue and CI,
     /// named in every receipt and reason. An unreadable PR blocks at once; nothing retries it silently.
-    fn publish_foreign(&self, repo: &str, p: u64, task: (u64, &str, &str, &str, &str), root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
+    fn publish_foreign(&self, repo: &str, pr: Value, task: (u64, &str, &str, &str, &str), root: Option<&std::path::Path>, enqueued: bool) -> Result<Publish> {
         let sha = task.1;
+        let p = pr["number"].as_u64().ok_or("publication PR number unknown")?;
         let name = format!("{repo}#{p}");
         let r = self.api.scoped(format!("{}/repos/{repo}", self.api.root), || -> Result<Publish> {
             let read = |url: &str| self.api.call("GET", url, None).and_then(|r| r.json());
-            let pr = match read(&format!("/pulls/{p}")) {
-                Err(e) if unreachable(&e) => return Ok(Publish::Blocked(format!("publication PR {name} unreachable: {e}"))),
-                r => r?,
-            };
             let status = match read(&format!("/compare/main...{sha}")) {
                 Err(e) if unreachable(&e) => return Ok(Publish::Blocked(format!("result {sha} unreachable in {repo} of publication PR {name}: {e}"))),
                 r => r?["status"].as_str().unwrap_or_default().to_string(),
@@ -435,17 +449,27 @@ impl GitHub {
         })
     }
 
-    /// #2047: the PR of another repository on this board's host that the newest `result` (or a `publish` after it)
-    /// links in the trusted log; the last link wins.
-    fn foreign_pr(&self, n: u64) -> Result<Option<(String, u64)>> {
+    /// #2047, #2061: the PRs of other repositories on this board's host that the newest `result` (or a `publish` after
+    /// it) names in the trusted log, as a link or `owner/name#P`; the last named first, each once.
+    fn foreign_prs(&self, n: u64) -> Result<Vec<(String, u64)>> {
         let web = format!("{}/", self.api.root.replace("api.github.com", "github.com").replace("/api/v3", ""));
         let own = self.api.base.rsplit_once("/repos/").map(|x| x.1.to_lowercase()).unwrap_or_default();
-        Ok(result_links(n, &super::entries(self, n)?).iter().rev().find_map(|u| {
-            let mut parts = u.strip_prefix(&web)?.split('/');
-            let (owner, name, pull, number) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?.parse::<u64>().ok()?);
+        let name_ok = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b));
+        let mut prs: Vec<(String, u64)> = vec![];
+        for u in result_links(n, &super::entries(self, n)?).iter().rev() {
+            let (repo, number) = match u.strip_prefix(&web) {
+                Some(path) => match path.split('/').collect::<Vec<_>>()[..] {
+                    [owner, name, "pull", p] => (format!("{owner}/{name}"), p),
+                    _ => continue,
+                },
+                None => match u.split_once('#') { Some((repo, p)) => (repo.to_string(), p), None => continue },
+            };
+            let Ok(p) = number.parse::<u64>() else { continue };
+            let Some((owner, name)) = repo.split_once('/').filter(|(o, r)| name_ok(o) && name_ok(r)) else { continue };
             let repo = format!("{owner}/{name}");
-            (pull == "pull" && parts.next().is_none() && !owner.is_empty() && !name.is_empty() && repo.to_lowercase() != own).then_some((repo, number))
-        }))
+            if repo.to_lowercase() != own && !prs.contains(&(repo.clone(), p)) { prs.push((repo, p)); }
+        }
+        Ok(prs)
     }
 
     /// The `pr` and `direct` routes after the ancestry read `status` of the result; `foreign` is the PR of another
@@ -488,8 +512,8 @@ impl GitHub {
             if foreign.is_some() && merged_prs.is_empty() { return Ok(Publish::Blocked(format!("publication PR closed unmerged at result {sha}"))); }
             // #1820 (pilotq #106): a PR merged at a rebased head is the publication when it carries the result's patch
             let found = merged_prs.iter().find(|p| p["head"]["sha"] == sha).map(|p| (*p, String::new()))
-                .or_else(|| merged_prs.iter().find(|p| self.same_patch(p, sha).unwrap_or(false))
-                    .map(|p| (*p, format!(" (head {:.7}, the result's patch-id)", s(&p["head"], "sha")))));
+                .or_else(|| merged_prs.iter().find_map(|p| self.same_patch(p, sha).ok().flatten()
+                    .map(|by| (*p, format!(" (head {:.7}, the result's {by})", s(&p["head"], "sha"))))));
             if let Some((pr, note)) = found {
                 let merged = s(pr, "merge_commit_sha");
                 let head = s(&pr["head"], "sha");
@@ -561,13 +585,36 @@ impl GitHub {
 impl GitHub {
     /// § 7 (#1820): PR `pr`, merged at another head, carries the result `sha`'s patch. Both diffs start at the merge
     /// commit's first parent, so merge, squash and rebase merges compare alike; any unknown reads as a different patch.
-    fn same_patch(&self, pr: &Value, sha: &str) -> Result<bool> {
+    /// Returns what matched: `patch-id`, or (#2061, dashq#241) `changes` when a rebase moved hunk context or GitHub
+    /// omitted a file's patch.
+    fn same_patch(&self, pr: &Value, sha: &str) -> Result<Option<&'static str>> {
         let merge = s(pr, "merge_commit_sha");
-        if !hex40(&merge) { return Ok(false); }
+        if !hex40(&merge) { return Ok(None); }
         let base = self.api.call("GET", &format!("/commits/{merge}"), None)?.json()?["parents"][0]["sha"].as_str().map(String::from).ok_or("merge parent unknown")?;
-        let id = |head: &str| -> Result<Option<[u8; 20]>> { Ok(patch_id(&self.api.call("GET", &format!("/compare/{base}...{head}"), None)?.json()?)) };
-        Ok(matches!((id(&s(&pr["head"], "sha"))?, id(sha)?), (Some(a), Some(b)) if a == b))
+        let diff = |head: &str| -> Result<Value> { self.api.call("GET", &format!("/compare/{base}...{head}"), None)?.json() };
+        let (merged, result) = (diff(&s(&pr["head"], "sha"))?, diff(sha)?);
+        Ok(if matches!((patch_id(&merged), patch_id(&result)), (Some(a), Some(b)) if a == b) { Some("patch-id") }
+            else if matches!((changes(&merged), changes(&result)), (Some(a), Some(b)) if a == b) { Some("changes") } else { None })
     }
+}
+
+/// #2061 (dashq#241): a compare reply's changes per file, without hunk context or positions: its name, prior name and
+/// status, then its removed and its added lines, each in order and without whitespace; a file whose patch GitHub
+/// omits (binary, too large) is its blob. None when the list may be truncated (300 files).
+fn changes(compare: &Value) -> Option<Vec<(String, Vec<String>, Vec<String>)>> {
+    let files = compare["files"].as_array().filter(|f| !f.is_empty() && f.len() < 300)?;
+    let mut all = vec![];
+    for f in files {
+        let name = f["filename"].as_str()?;
+        let file = format!("{} {} {name}", f["status"].as_str()?, f["previous_filename"].as_str().unwrap_or(name));
+        let lines = |sign: char| -> Option<Vec<String>> { match f["patch"].as_str() {
+            Some(patch) => Some(patch.lines().filter_map(|l| l.strip_prefix(sign)).map(|l| l.chars().filter(|c| !c.is_whitespace()).collect()).collect()),
+            None => Some(vec![format!("blob {}", f["sha"].as_str().filter(|b| hex40(b))?)]),
+        } };
+        all.push((file, lines('-')?, lines('+')?));
+    }
+    all.sort();
+    Some(all)
 }
 
 /// `git patch-id --stable` over a compare reply's per-file diffs: per file, SHA-1 of its header and hunk lines without
@@ -603,16 +650,18 @@ fn unreachable(e: &str) -> bool {
     ["HTTP 401", "HTTP 403", "HTTP 404"].iter().any(|c| e.contains(c)) && !e.contains("rate limit")
 }
 
-/// #2047: the PR links of the newest `result` of task `n` and of the `publish` entries after it, in log order.
+/// #2047: the PR links of the newest `result` of task `n` and of the `publish` entries after it, in log order;
+/// #2061: `owner/name#P` references too.
 fn result_links(n: u64, log: &[crate::core::Entry]) -> Vec<String> {
     let mut links = vec![];
     for e in log.iter().filter(|e| !e.edited) {
         let kind = crate::core::kind(n, &e.body);
         if kind == "result" { links.clear(); }
         if matches!(kind, "result" | "publish") {
-            links.extend(e.body.split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '<' | '>'))
-                .filter(|u| u.starts_with("https://") && u.contains("/pull/"))
-                .map(|u| u.trim_end_matches(|c: char| !c.is_ascii_alphanumeric()).to_string()));
+            links.extend(e.body.split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '<' | '>' | ','))
+                .map(|u| u.trim_start_matches(|c: char| !c.is_ascii_alphanumeric()).trim_end_matches(|c: char| !c.is_ascii_alphanumeric()))
+                .filter(|u| u.starts_with("https://") && u.contains("/pull/") || !u.contains("://") && u.contains('/') && u.contains('#'))
+                .map(String::from));
         }
     }
     links
@@ -773,7 +822,7 @@ impl Board for GitHub {
         let prs = self.api.call("GET", &format!("/pulls?head={owner}:taskq-{n}&base=main&state=open"), None)?.json()?;
         let prs = prs.as_array().ok_or("cancellation PR list unknown")?;
         // #2047: no task PR here; the result's PR in another repository is the publication to cancel
-        if prs.is_empty() && let Some((repo, p)) = self.foreign_pr(n)? {
+        if prs.is_empty() && let Some((repo, p)) = self.foreign_prs(n)?.into_iter().next() {
             let name = format!("{repo}#{p}");
             let pr = self.api.call("GET", &format!("{}/repos/{repo}/pulls/{p}", self.api.root), None)
                 .and_then(|r| r.json()).map_err(|e| format!("publication PR {name} unreachable; verify merge before cancelling: {e}"))?;
