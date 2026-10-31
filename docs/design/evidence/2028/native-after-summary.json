@@ -1,0 +1,27 @@
+{
+  "candidate": "d277944047b4d16825a902434c14da6ed074eaf3",
+  "source_tree": "079710ba99940c914a5e54685479440bc4e76515",
+  "platform": "macOS WKWebView, signed development observer",
+  "started_utc": "2026-10-31T07:30:47.085Z",
+  "ended_utc": "2026-10-31T07:45:56.921Z",
+  "renderer_span_ms": 909834,
+  "visible_heartbeat_span_ms": 908838,
+  "input_packets": 437,
+  "changed_frames": 153,
+  "visible_heartbeats": 854,
+  "largest_heartbeat_gap_ms": 16649,
+  "user_events": 0,
+  "projects": 11,
+  "startup": "Saved custom Home view; navigation preserved",
+  "transient_elements": [],
+  "structural_transients": [],
+  "text_candidates": [],
+  "native_exit_code": 0,
+  "journal_sha256": "9bfd2d90ce8fa1c455e276cf355724b32e6025c5da739466398709c7a5746622",
+  "observer_binary_sha256": "3f2df602c46d1e1c284752805878247659c2848b5de7f5c9563a554e460d873b",
+  "limits": [
+    "Bounded dev observation; the original owner symptom was not reproduced.",
+    "The largest heartbeat gap is an observation gap, not evidence of continuous capture.",
+    "Installed pending-store/callback instrumentation remains sandbox-blocked."
+  ]
+}

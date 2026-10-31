@@ -707,7 +707,18 @@ const cut=edge=>Math.min(...lines().filter(l=>l.top<edge&&l.bottom>edge).map(l=>
 settle:function(c){if(!c.isConnected)return;const s=c.scrollTop;c.style.maxHeight='';c.scrollTop=s;wholeLines(c);fit();},
 refresh:function(now){if(view.pressedAt!==null&&now-view.pressedAt<5000){view.stale=true;return;}tick();},
 release:function(){view.pressedAt=null;if(view.stale){view.stale=false;defer(present);}},
+batch:function(updates){
+  batching++;let complete=false;
+  try {
+    const snapshot=updates.filter(update=>Array.isArray(update?.projects)).pop();
+    if(snapshot)receive(snapshot);
+    for(const update of updates)if(!Array.isArray(update?.projects))receive(update);
+    complete=true;
+  }
+  finally {if(!--batching&&staged){const args=staged;staged=null;if(complete){if(view.pressedAt!==null&&performance.now()-view.pressedAt<5000)view.stale=true;else present(...args);}}}
+},
 receive:function(s){
+  if(Array.isArray(s.updates)){api.batch(s.updates);return;}
   if(s.notificationReceipt){notificationPanel.receive(s.notificationReceipt);return;}
   if(s.reportReceipt){reports.receive(s.reportReceipt);return;}
   if(Object.hasOwn(s,'settingsWindow')){if(ports.settings)view.settingsChrome=s.settingsWindow;else{view.settingsWindow=s.settingsWindow===true;view.viewsWindow=s.viewsWindow===true;}if(view.S)present();return;}
@@ -835,10 +846,13 @@ const {defer,cancel,repeat=defer}=ports.timers||ui;
 const TaskqProjectBlocks=require('./project-blocks.js'),TaskqTaskControls=require('./task-controls.js');
 const send=ports.send||ui.send;
 const performance=window.performance||globalThis.performance,crypto=window.crypto||globalThis.crypto,CSS=window.CSS||globalThis.CSS;
-const present=execution.action('ui.render',(...args)=>(ports.render||draw)(...args));
+let batching=0,staged=null;
+// M3.26: native readback and its callbacks produce one DOM commit, fit and navigation save.
+const paint=(...args)=>{if(batching){staged=[!!(staged?.[0]||args[0])];return;}(ports.render||draw)(...args);};
+const present=execution.action('ui.render',paint);
 const reports=require('./reports.js').create({send,draw:()=>present(),defer});
 const notificationPanel=require('./notification-panel.js').create({view,reports,send,draw:()=>present(),openCard});
-const {tick}=execution.module('ui.render',{tick:(...args)=>(ports.render||draw)(...args)});
+const {tick}=execution.module('ui.render',{tick:paint});
 const renderer=shell.create(menu);
 const color=st=>({doing:'work',review:'review',ask:'ask',failed:'failed',ready:'ready'}[st]||'muted');
 const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;

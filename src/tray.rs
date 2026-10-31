@@ -1542,10 +1542,15 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 shown_at = Instant::now();
             }
             Event::UserEvent(Ev::Answer(receipt)) => {
-                if receipt["answerReceipt"].is_object() && sync.receipt(&receipt) {let _=proxy.send_event(Ev::Sync);}
-                push(&mut web,&ui,&receipt);
+                let packet=if receipt["answerReceipt"].is_object() && sync.receipt(&receipt) {
+                    let snapshot=state(&install,&settings,dark,None,&adding,&mut sync);
+                    seen_projects=snapshot["projects"].clone();
+                    let _=proxy.send_event(Ev::Sync);
+                    json!({"updates":[snapshot,receipt]})
+                } else {receipt.clone()};
+                push(&mut web,&ui,&packet);
                 if let (Some((_,wv)),Some(calls))=(&workspace,&mut workspace_web) {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}
-                // #1819: a detached conversation sees the answer it may show too
+                // #1819: a detached conversation sees the answer it may show too.
                 if receipt["answerReceipt"].is_object()||receipt["reportReceipt"].is_object() {for (_,wv,calls) in detached.values_mut() {if !calls.failed {web_eval(wv,&format!("taskq.receive({receipt})"),"tray.web.receive",&proxy,calls);}}}
             },
             // #1918: a store change rebuilds the one snapshot at once: every window, the icon and notifications read it
@@ -1846,9 +1851,8 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                             let _ = proxy.send_event(Ev::Shot);
                             return;
                         }
-                        reply!(&state(&install, &settings, dark, None, &adding, &mut sync));
-                        // R22: Settings opens its own window; a snapshot keeps it in the menu
-                        push(&mut web,&ui,&json!({"settingsWindow":true,"viewsWindow":true}));
+                        // M3.26: restore navigation and native window controls before the first fit escapes.
+                        reply!(&json!({"updates":[state(&install,&settings,dark,None,&adding,&mut sync),{"settingsWindow":true,"viewsWindow":true}]}));
                     }
                     "size" | "resize" => {
                         let Some((width, height)) = m["w"].as_f64().zip(m["h"].as_f64()).filter(|(w, h)| w.is_finite() && h.is_finite()) else { return };
