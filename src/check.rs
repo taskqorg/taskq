@@ -42,6 +42,8 @@ pub struct Facts {
     pub delivery: Result<String, String>,
     /// `None`: the preset does not publish by PR.
     pub pr_route: Option<Probe>,
+    /// `host_setup` and whether its last `service install` run succeeded; `None`: not declared.
+    pub host_setup: Option<(String, bool)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -95,6 +97,7 @@ pub fn items(f: &Facts) -> Vec<Item> {
     if codex_dir {
         out.push(Item::gap("codex-dir", format!("{root}/.codex is missing; the Linux Codex sandbox refuses to start"), format!("`mkdir {root}/.codex`")));
     }
+    if let Some((cmd, done)) = &f.host_setup { out.push(host_setup_item(&f.root, cmd, *done)); }
     if f.labelled {
         out.push(match &f.unlabelled {
             None => Item::unknown("host-label", "claim labelled: open tasks not read", "run `taskq service check` again when the board answers"),
@@ -120,6 +123,22 @@ pub fn items(f: &Facts) -> Vec<Item> {
         Some(Probe::Unknown(why)) => out.push(Item::unknown("pr-route", format!("PR route unknown: {why}"), "run `taskq service check` again when the board answers")),
     }
     out
+}
+
+/// `<root>/.taskq/host-setup`: the `host_setup` command of the last successful `service install` run.
+/// `ponytail:` a stamp, not a probe of the setup's effect; a project-defined probe if setups get undone by hand.
+pub fn host_setup_stamp(root: &std::path::Path) -> PathBuf { root.join(".taskq").join("host-setup") }
+
+/// The `host-setup` item; `taskq doctor` prints it too.
+pub fn host_setup_item(root: &std::path::Path, cmd: &str, done: bool) -> Item {
+    if done { return Item::ok("host-setup", format!("host setup `{cmd}` done")); }
+    Item::gap("host-setup", format!("host setup `{cmd}` has not run on this host; workers cannot do it from their sandbox"),
+        format!("run `taskq service install` in {}", root.display()))
+}
+
+/// Whether `cmd` ran successfully here: the stamp names exactly it, so a changed command runs again.
+pub fn host_setup_done(root: &std::path::Path, cmd: &str) -> bool {
+    std::fs::read_to_string(host_setup_stamp(root)).is_ok_and(|s| s.trim() == cmd)
 }
 
 /// Text output: `Gap:`/`Unknown:` plus `Next:` per open item, or one `Ready:` line.
@@ -152,6 +171,7 @@ mod tests {
             os: os.into(), root: PathBuf::from("/p"), host: "h".into(), git: true, external: None,
             runtimes: vec![Runtime { name: "claude".into(), login: Some("logged in".into()), granted: true, ..Default::default() }],
             codex_dir: true, labelled: false, unlabelled: None, token: Some(Ok(())), delivery: Ok("auto-merge".into()), pr_route: Some(Probe::Ok),
+            host_setup: None,
         }
     }
 
@@ -211,6 +231,28 @@ mod tests {
         f.os = "macos".into();
         f.runtimes[1].refused = None;
         assert!(gaps(&f).is_empty(), "only Linux needs the project .codex");
+    }
+
+    // Defect cs#548 (#2078 A3): the shared pre-commit hook was never installed on pds18, a worker sandbox cannot write
+    // the shared .git, and attempts burned silently. Protection: a declared host setup that has not run is a gap whose
+    // fix runs it outside the sandbox; a changed command needs a new run.
+    #[test]
+    fn host_setup_not_run_is_a_gap_until_install_stamps_it() {
+        let root = std::env::temp_dir().join(format!("taskq-host-setup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".taskq")).unwrap();
+        let cmd = "scripts/install-git-hooks.sh";
+        let mut f = facts("linux");
+        f.host_setup = Some((cmd.into(), host_setup_done(&root, cmd)));
+        assert_eq!(gaps(&f), [("host-setup".to_string(), "run `taskq service install` in /p".to_string())]);
+        assert!(status_lines(&json("p", &items(&f)))[0].starts_with("Setup gap: host setup `scripts/install-git-hooks.sh` has not run"));
+        std::fs::write(host_setup_stamp(&root), format!("{cmd}\n")).unwrap();
+        f.host_setup = Some((cmd.into(), host_setup_done(&root, cmd)));
+        assert!(gaps(&f).is_empty(), "{:?}", gaps(&f));
+        assert!(!host_setup_done(&root, "scripts/other.sh"), "a changed command runs again");
+        f.host_setup = None;
+        assert!(items(&f).iter().all(|i| i.id != "host-setup"), "undeclared: no item");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // Chain: § 6 setup check host items (#1938 A2). Risk: a missing CLI, login, token, checkout or host label stalls silently.

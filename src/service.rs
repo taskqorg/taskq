@@ -37,6 +37,8 @@ pub struct Config {
     pub rollback_after: u64,
     /// `workspace: external` (§ 9): the hourly tidy skips unowned worktrees and touches only TaskQ's own task worktrees.
     pub external: bool,
+    /// `host_setup` (§ 6 Shared project bootstrap): the project's one-time host setup command, run by `service install`.
+    pub host_setup: Option<String>,
 }
 
 pub const HOST_LABEL: &str = "taskq-host";
@@ -303,31 +305,37 @@ fn git(dir: &std::path::Path, args: &[&str]) -> Result<Vec<u8>, String> {
     crate::tools::run("seed.git", crate::platform::command("git").arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null"]).args(args), std::time::Duration::from_secs(60))
 }
 
-/// #1620 (docs/testing.md#build-cache): before a worker's first start, create `.worktrees/taskq-<N>` (§ 7 rule 2) and
-/// give it a copy-on-write clone of the newest `target/debug` of the root or another worktree: a recent build shares the
-/// current Cargo.lock, so only the workspace crate recompiles. The clone only reads its source, and each worktree owns
-/// its copy. An existing worktree or no `target/debug` is left alone; any failure only logs, and the worker creates the
-/// worktree itself. `ponytail:` a source mid-build clones as is; cargo's fingerprints rebuild whatever does not match.
+/// § 7 rule 2 (#2078): before a worker's first start the service, outside the worker sandbox (which may not write the
+/// shared `.git`), creates `.worktrees/taskq-<N>` on branch `taskq-<N>` from `origin/main`, or on the existing branch.
+/// An existing worktree is continued untouched. #1620 (docs/testing.md#build-cache): a new one gets a copy-on-write
+/// clone of the newest `target/debug` of the root or another worktree: a recent build shares the current Cargo.lock,
+/// so only the workspace crate recompiles. The clone only reads its source, and each worktree owns its copy. Any
+/// failure only logs; the worker brief names the host gap. `ponytail:` a source mid-build clones as is; cargo's
+/// fingerprints rebuild whatever does not match.
 pub fn seed(root: &std::path::Path, n: u64) -> Option<String> {
     let name = format!("taskq-{n}");
     let wt = root.join(".worktrees").join(&name);
     if wt.exists() { return None; }
-    let others = std::fs::read_dir(root.join(".worktrees")).into_iter().flatten().flatten().map(|e| e.path().join("target/debug"));
-    let src = std::iter::once(root.join("target/debug")).chain(others)
-        .filter_map(|p| Some((std::fs::metadata(&p).ok().filter(|m| m.is_dir())?.modified().ok()?, p))).max()?.1;
-    if let Err(e) = git(root, &["fetch", "-q", "origin", "main"]) { return Some(format!("#{n} seed skipped: {e}")); }
+    // a stale registration of a deleted folder would refuse the add
+    let _ = git(root, &["worktree", "prune"]);
+    // offline: the last fetched origin/main still gives the worker its branch; the worker rebases before its push
+    let fetched = git(root, &["fetch", "-q", "origin", "main"]).err().map_or(String::new(), |e| format!(" (fetch failed: {e})"));
     let rel = format!(".worktrees/{name}");
     let added = if git(root, &["rev-parse", "--verify", "-q", &format!("refs/heads/{name}")]).is_ok() {
         git(root, &["worktree", "add", "-q", &rel, &name])
     } else {
         git(root, &["worktree", "add", "-q", "-b", &name, &rel, "origin/main"])
     };
-    if let Err(e) = added { return Some(format!("#{n} seed skipped: {e}")); }
+    if let Err(e) = added { return Some(format!("#{n} worktree not created: {e}{fetched}")); }
+    let others = std::fs::read_dir(root.join(".worktrees")).into_iter().flatten().flatten().filter(|e| e.path() != wt).map(|e| e.path().join("target/debug"));
+    let Some(src) = std::iter::once(root.join("target/debug")).chain(others)
+        .filter_map(|p| Some((std::fs::metadata(&p).ok().filter(|m| m.is_dir())?.modified().ok()?, p))).max().map(|m| m.1)
+    else { return Some(format!("#{n} worktree created{fetched}")); };
     let dst = wt.join("target/debug");
     if let Err(e) = std::fs::create_dir_all(wt.join("target")) { return Some(format!("#{n} seed skipped: {e}")); }
     let cloned = clone_dir(&src, &dst);
     if cloned.is_err() { let _ = std::fs::remove_dir_all(&dst); }
-    Some(match cloned { Ok(()) => format!("#{n} seeded target/debug"), Err(e) => format!("#{n} seed skipped: {e}") })
+    Some(match cloned { Ok(()) => format!("#{n} seeded target/debug{fetched}"), Err(e) => format!("#{n} seed skipped: {e}{fetched}") })
 }
 
 #[cfg(target_os = "macos")]
@@ -2516,7 +2524,7 @@ impl<'a> Service<'a> {
         l.execution=Some(execution);
         self.observations.insert((l.task,execution),core::Execution {id:execution,attempt:l.attempt,through,
             host:self.cfg.me.clone(),runtime:l.rt.clone(),accepted:false,release:None,usage_hold:None});
-        if l.role == "worker" && l.resume.is_none() { if let Some(line) = seed(&self.cfg.root, l.task) { self.log.push(line); } }
+        if l.role == "worker" && l.resume.is_none() && !self.cfg.external { if let Some(line) = seed(&self.cfg.root, l.task) { self.log.push(line); } }
         let pos = std::fs::metadata(crate::runtime::attempt_log(&self.cfg.root, &l.role, l.task, l.attempt)).map_or(0, |m| m.len());
         let began = std::time::Instant::now();
         let started = (self.start)(&l).map(|proc| {
@@ -3068,6 +3076,7 @@ mod tests {
             update_every: 900,
             rollback_after: 600,
             external: false,
+            host_setup: None,
         }
     }
 
@@ -7121,7 +7130,16 @@ Open: none";
         git(&origin, &["init", "-q", "-b", "main"]);
         git(&origin, &["commit", "-q", "--allow-empty", "-m", "init"]);
         git(&base, &["clone", "-q", origin.to_str().unwrap(), "root"]);
-        assert_eq!(seed(&root, 7), None, "no target/debug: nothing to seed, the worker creates its worktree");
+        // Defect cs#548 (#2078 A2): without a target/debug no worktree was made, and a worker whose sandbox cannot write
+        // the shared .git burned its attempts. Protection: the service creates it, then continues the existing branch.
+        assert_eq!(seed(&root, 6).as_deref(), Some("#6 worktree created"), "no target/debug: the worktree still comes first");
+        let wt6 = root.join(".worktrees/taskq-6");
+        git(&wt6, &["commit", "-q", "--allow-empty", "-m", "wip"]);
+        assert_eq!(seed(&root, 6), None, "an existing worktree is continued untouched");
+        std::fs::remove_dir_all(&wt6).unwrap();
+        assert_eq!(seed(&root, 6).as_deref(), Some("#6 worktree created"), "a deleted folder's stale registration is pruned");
+        let log = std::process::Command::new("git").arg("-C").arg(&wt6).args(["log", "-1", "--format=%s"]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "wip", "the existing taskq-6 branch is continued, not reset to origin/main");
         std::fs::create_dir_all(root.join("target/debug/deps")).unwrap();
         std::fs::write(root.join("target/debug/deps/libx.rlib"), "warm").unwrap();
         let line = seed(&root, 7).unwrap();
@@ -7146,10 +7164,12 @@ Open: none";
         if seed(&root, 8).unwrap() == "#8 seeded target/debug" {
             assert!(root.join(".worktrees/taskq-8/target/debug/newest").exists(), "the newest target/debug is the source");
         }
-        // #1856: a failed fetch logs the command and Git's error, never a silent skip
+        // #1856: a failed fetch logs the command and Git's error, never a silent skip; the last fetched origin/main still
+        // gives the worker its worktree (#2078)
         std::fs::remove_dir_all(&origin).unwrap();
         let failed = seed(&root, 9).unwrap();
-        assert!(failed.starts_with("#9 seed skipped: `git -C ") && failed.contains("fetch -q origin main` failed: ") && failed.contains("origin"), "{failed}");
+        assert!(failed.contains(" (fetch failed: `git -C ") && failed.contains("fetch -q origin main` failed: "), "{failed}");
+        assert!(root.join(".worktrees/taskq-9/.git").exists(), "{failed}");
         let _ = std::fs::remove_dir_all(&base);
     }
 
