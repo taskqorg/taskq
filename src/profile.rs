@@ -11,7 +11,7 @@ use crate::telemetry::Sample;
 
 pub const OPS: [&str; 8] = ["service.pass", "dispatch", "spawn", "forge.call", "update", "tray.render", "service.tidy", "service.churn"];
 #[cfg(test)] const PREFIX: &str = "taskq-profile ";
-const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
+pub(crate) const ERRORS: [&str; 9] = ["none", "http4xx", "http5xx", "timeout", "permission", "invalid", "other", "panic", "argument-too-long"];
 static LOG: OnceLock<PathBuf> = OnceLock::new();
 static TRACE: OnceLock<bool> = OnceLock::new();
 static RUN: OnceLock<Option<u64>> = OnceLock::new();
@@ -156,8 +156,8 @@ pub const STAGES: [&str; 7] = ["claim", "start", "build", "checks", "review", "a
 #[cfg(test)] const STAGE_PREFIX: &str = "taskq-stage ";
 const OUTCOMES: [&str; 6] = ["ok", "ask", "retried", "failed", "cancelled", "unknown"];
 /// Stage-only error classes: a child ended without hand-in; its issue left the board read or could not be read back.
-const STAGE_ERRORS: [&str; 3] = ["exit", "left-board", "unreadable"];
-const RUNTIMES: [&str; 4] = { let r = crate::runtime::RUNTIMES; [r[0], r[1], r[2], "other"] };
+pub(crate) const STAGE_ERRORS: [&str; 3] = ["exit", "left-board", "unreadable"];
+pub(crate) const RUNTIMES: [&str; 4] = { let r = crate::runtime::RUNTIMES; [r[0], r[1], r[2], "other"] };
 const UNKNOWN: [&str; 6] = ["no-model", "no-usage", "log-unreadable", "app-turn", "adopted", "open-stage"];
 
 /// Model use of one stage: service stages run no model; a runtime that reports none reads unknown, never zero;
