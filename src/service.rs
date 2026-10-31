@@ -274,9 +274,10 @@ fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String>
 
 #[cfg(target_os = "linux")]
 fn clone_dir(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
-    // ponytail: reflink only (btrfs, XFS); ext4 fails at the first file and skips rather than copying gigabytes.
-    crate::tools::run("seed.cp", std::process::Command::new("cp").args(["-a", "--reflink=always"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
-        .map(|_| ()).map_err(|e| format!("{e} (no reflink on this volume?)"))
+    // #2051: `auto` clones on btrfs and XFS and falls back to a plain copy where the volume has no reflink (ext4).
+    // ponytail: the plain copy runs inside the 300 s budget; a slower volume times out and skips.
+    crate::tools::run("seed.cp", std::process::Command::new("cp").args(["-a", "--reflink=auto"]).arg(src).arg(dst), std::time::Duration::from_secs(300))
+        .map(|_| ())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -6935,6 +6936,12 @@ Open: none";
         let copy = root.join(".worktrees/taskq-7/target/debug/deps/libx.rlib");
         assert!(root.join(".worktrees/taskq-7/.git").exists(), "{line}");
         if cfg!(target_os = "macos") { assert_eq!(line, "#7 seeded target/debug", "APFS temp dir clones"); }
+        // #2051: where the volume has no reflink (ext4, as on CI), the seed copies plainly instead of skipping.
+        if cfg!(target_os = "linux") {
+            let probe = std::process::Command::new("cp").arg("--reflink=always").arg(root.join("target/debug/deps/libx.rlib")).arg(base.join("probe")).output().unwrap();
+            eprintln!("reflink here: {}", if probe.status.success() { "supported" } else { "unsupported, plain-copy path" });
+            assert_eq!(line, "#7 seeded target/debug", "a volume without reflink still seeds");
+        }
         if line == "#7 seeded target/debug" {
             std::fs::write(&copy, "edited").unwrap();
             assert_eq!(std::fs::read_to_string(root.join("target/debug/deps/libx.rlib")).unwrap(), "warm", "the seed never writes into its source");
