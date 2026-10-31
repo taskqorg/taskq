@@ -1,4 +1,4 @@
-# § 8 Release: a live push (a fast-forward to a tested main commit) that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations. A failing selftest publishes nothing.
+# § 8 Release: a live push (a fast-forward to a tested main commit) that changes the version tags v<Cargo.toml version> here (a GITHUB_TOKEN tag starts no run); one binary per OS, answer card and resource controls assets, the telemetry sync wire fixture and field list, the status snapshot schema and fixture, SHA256SUMS, latest.json; release files and SHA256SUMS carry build provenance attestations; publish then dispatches README shots for the tag. A failing selftest publishes nothing.
 name: release
 on:
   push:
@@ -180,6 +180,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -190,3 +191,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.tag.outputs.tag }}
         run: gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "taskq $TAG"
+      # README shots of this release binary (#2024); a stale set arrives as a draft PR. GITHUB_TOKEN may dispatch.
+      - name: README shots
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.tag.outputs.tag }}
+        run: gh workflow run shots.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$TAG"
