@@ -3,6 +3,10 @@
 Per release: what changed on the board and what each open issue needs. A cutover agent reads this (taskq.md § 9);
 there is no migration code. Releases without a **Board** section need nothing.
 
+## v4.6.52
+
+Board budget: a `304` reply to a conditional GET counts apart as `<op> 304` and stays out of the billed rate; each heartbeat carries the host's billed `requests <n>/h`, the `taskq status` Hosts line shows it per host, and `taskq status` prints the board quota from its own budget headers (#1985). No board change.
+
 ## v4.6.51
 
 Board budget: a service restart resumes report collection from the stored cursor, and settled report rows keep their comment-read proof, so only issues that moved re-read comments; frequent dev-install restarts no longer page every closed task and re-read its comments on each board (#1985). No board change.
