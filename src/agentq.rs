@@ -50,8 +50,9 @@ fn inspect(root:&Path,launcher:Res<bool>,status:Res<Option<(Value,u64)>>,clock:u
     let Some((s,age))=status else{return if launcher{unknown("installed launcher; service status missing")}else{json!({"kind":"shown"})}};
     let version=s["version"].as_str().unwrap_or("");
     let parts:Vec<_>=version.split('.').collect();
-    // #1702: 0.10.0 failed the old 0.5–0.9 bound; any 0.x from 0.5 keeps the same status shape
-    let compatible=parts.len()==3 && parts[0]=="0" && parts[1].parse::<u32>().is_ok_and(|v|v>=5) && parts[2].parse::<u32>().is_ok();
+    // #1702: 0.10.0 failed the old 0.5–0.9 bound; #2011: 1.x keeps the shape agentq publishes (tests/fixtures/agentq-status.json)
+    let n:Vec<u32>=parts.iter().map_while(|p|p.parse().ok()).collect();
+    let compatible=parts.len()==3 && n.len()==3 && ((n[0]==0 && n[1]>=5) || n[0]==1);
     let Some(at)=s["at"].as_u64() else{return unknown("status observation time missing")};
     let Some(pid)=s["pid"].as_u64().and_then(|p|u32::try_from(p).ok()).filter(|p|*p>0 && *p<=i32::MAX as u32) else{return unknown("status process identity missing")};
     if !compatible {return unknown(format!("unsupported agentq status version {version:?}"));}
@@ -195,8 +196,12 @@ mod tests {
     // #1391 A2: absence, stale/corrupt/denied observations and PID reuse cannot clear a warning as success.
     #[test]
     fn detection_requires_fresh_compatible_status_and_native_executable() {
-        let root=Path::new("/invented/agentq");let exe=root.join("releases/0.9.0").join(if cfg!(windows){"agentq.exe"}else{"agentq"});
-        let good=json!({"project":"host","version":"0.9.0","at":100,"pid":42});
+        // #2011 A1: statuses derive from the fixture agentq publishes (its tests/fixtures/status.json), not a TaskQ-authored shape
+        let published:Value=serde_json::from_str(include_str!("../tests/fixtures/agentq-status.json")).unwrap();
+        let with=|version:&str,at:u64|{let mut s=published.clone();s["version"]=json!(version);s["at"]=json!(at);s};
+        let release=|version:&str|Path::new("/invented/agentq").join("releases").join(version).join(if cfg!(windows){"agentq.exe"}else{"agentq"});
+        let root=Path::new("/invented/agentq");let exe=release("0.9.0");
+        let good=with("0.9.0",100);
         let check=|launcher,status,process:Res<Option<PathBuf>>|inspect(root,launcher,status,100,|_|process)["kind"].clone();
         assert_eq!(check(Ok(false),Ok(None),Ok(None)),"shown");
         assert_eq!(check(Ok(true),Ok(None),Ok(None)),"unknown");
@@ -206,9 +211,11 @@ mod tests {
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),91))),Ok(Some(exe.clone()))),"unknown");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),91))),Ok(None)),"stopped","#1702 A2: a disabled service's stale status reads as off");
         // #1702 A1: installed AgentQ 0.10.0 read as 'unsupported agentq status version or shape'
-        let ten=json!({"project":"host","version":"0.10.0","at":100,"pid":42});let ten_exe=root.join("releases/0.10.0").join(if cfg!(windows){"agentq.exe"}else{"agentq"});
-        assert_eq!(check(Ok(true),Ok(Some((ten,0))),Ok(Some(ten_exe))),"running");
-        assert_eq!(inspect(root,Ok(true),Ok(Some((json!({"project":"host","version":"0.4.0","at":100,"pid":42}),0))),100,|_|Ok(None))["reason"],"unsupported agentq status version \"0.4.0\"");
+        assert_eq!(check(Ok(true),Ok(Some((with("0.10.0",100),0))),Ok(Some(release("0.10.0")))),"running");
+        // #2011 A2: agentq 1.0 read as unsupported; the published fixture itself is a 1.x status
+        let at=published["at"].as_u64().unwrap();let v=published["version"].as_str().unwrap();
+        assert_eq!(inspect(root,Ok(true),Ok(Some((published.clone(),0))),at,|_|Ok(Some(release(v))))["kind"],"running");
+        assert_eq!(inspect(root,Ok(true),Ok(Some((with("0.4.0",100),0))),100,|_|Ok(None))["reason"],"unsupported agentq status version \"0.4.0\"");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(None)),"stopped");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Ok(Some("/other/agentq".into()))),"unknown");
         assert_eq!(check(Ok(true),Ok(Some((good.clone(),0))),Err("denied".into())),"unknown");
@@ -217,7 +224,7 @@ mod tests {
         assert_eq!(fresh(cached.clone(),100)["kind"],"running");assert_eq!(fresh(cached,101)["kind"],"unknown","cache cannot extend the source deadline");
         let cached=json!({"kind":"shown","warning":true,"checked":100});assert_eq!(fresh(cached.clone(),105)["kind"],"shown");
         let stale=fresh(cached,106);assert_eq!(stale["kind"],"unknown");assert_eq!(stale["warning"],true,"slow runtime discovery keeps the previous warning, never fresh health");
-        for bad in [json!({}),json!({"project":"host","version":"1.0.0","at":100,"pid":42}),json!({"project":"host","version":"0.9.0","at":101,"pid":42})]{assert_eq!(check(Ok(true),Ok(Some((bad,0))),Ok(Some(exe.clone()))),"unknown");}
+        for bad in [json!({}),with("2.0.0",100),with("1.0",100),with("0.9.0",101)]{assert_eq!(check(Ok(true),Ok(Some((bad,0))),Ok(Some(exe.clone()))),"unknown");}
     }
     #[cfg(any(target_os="macos",windows))]
     #[test]
