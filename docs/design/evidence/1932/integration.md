@@ -108,3 +108,15 @@ Open: Live cross-host restart and OS shell/Dock/Windows native placement Not tes
 
 delivery auto-merge r0: merged #1947 as b3b5c639e94820f3d37bb27985f7bfc54166805a; merge-result CI green
 ```
+
+## Resumed candidate
+
+Attempt `6536345627`: all nine recorded source/merge SHAs are ancestors of `67f729e4dc35d20f044efe8cb7a3b6a939c5e048`; application sources, tests, Cargo files and taskq.md equal main `cbeb8db913aa0908fbe9490e7de8404e7a306231`. No already-published commit was rebased.
+
+| Correction | Fresh board readback | Integrated merge SHA |
+|---|---|---|
+| #1991 / PR #1998 | Closed; Send visible in the byte-identical original image; no layout fix; refusal Next restored | `34f21b778330bf961dc63c542522b5b3cd2bcbd2` |
+| #1994 / PR #1999 | Closed; warning bottom/right 0, guard unchanged; merge-result CI green | `cbeb8db913aa0908fbe9490e7de8404e7a306231` |
+| #1992 | Closed as consolidated into #1994; no separate implementation | — |
+
+The fresh #1991/#1994 close receipts explicitly end with merge-result CI green. This is readback of implementation publication, not this qualification task's CI or native acceptance.

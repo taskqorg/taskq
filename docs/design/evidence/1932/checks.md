@@ -1,3 +1,7 @@
+# Historical first-attempt checks
+
+Superseded by [resumed checks](resumed.md). F1 below was a visual-review error: the retained frame contains Send; that diagnosis is retracted. F2 remains the valid before failure and passes after #1994. Old verdicts/timings describe source `554552da`, not the current candidate.
+
 # Candidate identity and attributable checks
 
 Worker attempt `6535498100`, 2026-10-31 in Asia/Bangkok. Source is `554552daf48d5b413918d54a8a6d0f88efba4020`; evidence edits do not change application code, tests, dependencies or the injected rules. R12 separates every boundary below.
