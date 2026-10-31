@@ -18,18 +18,20 @@ Candidate: `67f729e4dc35d20f044efe8cb7a3b6a939c5e048`, application sources equal
 | S10 | Not tested | Activate forge, number, runtime and explicit native/progress targets for local Claude/Codex/codex-app, remote Claude/Codex and no-link cases |
 | S11 | Not tested | Inspect current worker, reviewer, unknown/stale task and ended/replaced attempt; open closed pinned transcript and archived task |
 | S12 | Not tested | Write PM -> inspect brief -> assign once -> see worker -> answer clarification -> reviewer -> result |
-| S13 | Not tested | New chat vs continue PM; Task activity; New from draft; rename/history/Watch; switch owner/task/event threads |
-| S14 | Not tested; partial: Unicode paste, Shift+Enter and 60-line native draft pass; IME/files/full matrix open ([checks](resumed.md)) | Type/paste/restore one line and very long multiline/Unicode/IME text with files; resize and change font |
+| S13 | Not tested; partial native draft creation, independent draft and detach/return pass ([checkpoint](isolated/README.md)) | New chat vs continue PM; Task activity; New from draft; rename/history/Watch; switch owner/task/event threads |
+| S14 | Not tested; native Unicode/Shift+Enter and actual 55-byte file picker pass; IME and full matrix open ([checkpoint](isolated/README.md)) | Type/paste/restore one line and very long multiline/Unicode/IME text with files; resize and change font |
 | S15 | Not tested; partial: Native Claude-shaped fixture: all 15,000 items traversed, sampled DOM max 600; actual source I/O/hostile matrix open ([checks](resumed.md)) | Read 10 MiB, 100 MiB and 10,000-variable-height-record histories; short/hidden-only pages; long single/oversized records; UTF-8/group seams |
 | S16 | Not tested; partial: Native OS resize retains 0:0 at 34 px; full settled-anchor matrix open ([checks](resumed.md)) | Prepend/append, delayed image/layout changes, tool expansion, font/resize, switch/reopen while reading older text |
 | S17 | Not tested | Send choice/text/worker message; question changed/already answered; long reply; native writer busy; delayed/failed/unknown receipt |
-| S18 | Not tested; partial: Native missing-save receipt shows unknown and keeps draft; real delivery/restart open ([checks](resumed.md)) | Timeout/restart mid-send, out-of-order foreign response, rejected save, board/remote outage and worker replacement |
+| S18 | Not tested; local original-ID check/cancel pass; provider/fault matrix open ([checkpoint](isolated/README.md)) | Timeout/restart mid-send, out-of-order foreign response, rejected save, board/remote outage and worker replacement |
 | S19 | Not tested | Owner/worker messages, grouped and expanded tools, question/event record, list activity, sent request and watch/turn facts |
 | S20 | Not tested | Missing/invalid/zone-less time; seconds vs milliseconds vs ISO; future schedule; minute/day boundary and remote clock case |
 | S21 | Not tested | Summary A with incoming/closed/Ask/Failed mixtures, Blocked detail, first Held start, retry/requeue/resume, restart, legacy gap, zero/unknown/partial, rare event, overflow and pause |
 | S22 | Not tested; partial: Six native composer cells plus OS resize; full size/font/theme/scale matrix open ([checks](resumed.md)) | 320/360 menu and 350/620/940 workspace widths; 430/560/740 heights; 14/16/18/20 type; themes; real native scales; long IDs/files/code |
-| S23 | Not tested | Keyboard-only reading/answering, screen reader, copy/selection, scrollbar drag, attachments/refusal, archive/Undo/restore/delete, detach/return and owner change |
-| S24 | Not tested | Restart the isolated client with drafts, archived threads, pending operation and saved reading anchor; replay older/newer snapshot after answer |
+| S23 | Not tested; native attachment/detach/return/archive/Undo subsets pass; VoiceOver/drag/delete open ([checkpoint](isolated/README.md)) | Keyboard-only reading/answering, screen reader, copy/selection, scrollbar drag, attachments/refusal, archive/Undo/restore/delete, detach/return and owner change |
+| S24 | Not tested; native client restart preserves draft/file/caret/ID; pending-send/anchor/state-replay open ([checkpoint](isolated/README.md)) | Restart the isolated client with drafts, archived threads, pending operation and saved reading anchor; replay older/newer snapshot after answer |
+
+Current continuation: [isolated native application](isolated/README.md). Partial observations below do not promote whole criteria. A3/Q-A12 now has the exact service-authority blocker #2003.
 
 ## Complementary native criteria
 
@@ -42,11 +44,11 @@ Candidate: `67f729e4dc35d20f044efe8cb7a3b6a939c5e048`, application sources equal
 | Q-A5 | Not tested; partial: Native simulated paging reaches all 15,000 items, sampled DOM max 600; actual 10/100 MiB I/O/cache open ([checks](resumed.md)) | A 10 MiB source (existing D-A3), a 100 MiB stress source and 10,000 variable-height visible records remain traversable to the beginning without omissions/duplicates. Mounted nodes/cache plateau under the configured window; report the bound. Include long single messages and the documented oversized-record refusal. |
 | Q-A6 | Not tested; partial: Native samples: input p95 9 ms (n=4), receive p95 34 ms (n=105), wheel-adjacent frame p95 24 ms; main-thread/cold-warm I/O open ([checks](resumed.md)) | Proposed reference-host target: visible input/selection feedback p95 ≤100 ms; no UI main-thread task >50 ms caused by a normal page append/prepend after warm-up. Capture frame times during continuous wheel scrolling; target display refresh budget, report misses. Report exact host, renderer, scale, fixture, cold/warm state and I/O separately; no hard-coded sleep or “16.7 ms” label counts as evidence. |
 | Q-A7 | Not tested | Question #A cannot display answer #B's receipt, including two questions on the same board, late replies and a thread switch while pending. One submission has one visible status and never dispatches twice on timeout/reopen. Accepted transport is not displayed as agent completion. |
-| Q-A8 | Not tested | Free text, numbered choice, changed question, native writer busy, definite refusal and unknown result preserve identity, revision and independent next draft/files. Navigation/New/Archive/Mark read/Close do not dispatch a turn. IME, Enter/Shift+Enter and focus survive updates. |
-| Q-A9 | Not tested | Keyboard-only reading/answering, screen-reader attribution, text selection/copy and scrollbar dragging work with virtualized history. Do not announce the entire history on each prepend/poll. Secondary controls, diagnostics/watch, files, archive/Undo/delete and detach/return remain reachable. |
+| Q-A8 | Not tested; native independent Unicode draft, Shift+Enter and files pass; real IME/provider races open ([checkpoint](isolated/README.md)) | Free text, numbered choice, changed question, native writer busy, definite refusal and unknown result preserve identity, revision and independent next draft/files. Navigation/New/Archive/Mark read/Close do not dispatch a turn. IME, Enter/Shift+Enter and focus survive updates. |
+| Q-A9 | Not tested; actual file picker, archive/Undo and detach/return pass; drag/VoiceOver open ([checkpoint](isolated/README.md)) | Keyboard-only reading/answering, screen-reader attribution, text selection/copy and scrollbar dragging work with virtualized history. Do not announce the entire history on each prepend/poll. Secondary controls, diagnostics/watch, files, archive/Undo/delete and detach/return remain reachable. |
 | Q-A10 | Not tested; F1 retracted; six native composer cells and CUA input subset pass ([checks](resumed.md)) | No horizontal overflow or clipped actionable content at menu widths 320/360 and workspace widths 350/620/940 CSS px, 430/560/740 px heights, fonts 14/16/18/20, both themes and native 1×/2× scales. Include unbroken identifiers, long choices, files, code, unknown and empty states. Check scrollWidth on relevant containers, control rectangles and visual output; root clipping is not success. |
 | Q-A11 | Not tested; partial: Native missing-save receipt retains draft and exposes unknown; full fault matrix open ([checks](resumed.md)) | Inject delayed/out-of-order/failed reads, partial transcript writes, source shrink/replacement, save failure and missing receipt. The selected thread and draft remain coherent, navigation/Close keep working and recovery cannot replay an uncertain send. |
-| Q-A12 | Not tested | On an explicitly disposable local owner session for each supported runtime, send two PM messages, see the two corresponding native replies, revisit older history, switch threads and reopen. Same native session; no unintended worker/board effect. Qualify restart and one-writer refusal independently. |
+| Q-A12 | Not tested; isolated service run refuses worker; held #2003 provisions owner-run context ([checkpoint](isolated/README.md)) | On an explicitly disposable local owner session for each supported runtime, send two PM messages, see the two corresponding native replies, revisit older history, switch threads and reopen. Same native session; no unintended worker/board effect. Qualify restart and one-writer refusal independently. |
 
 ## UX30 implementation and native proof
 
@@ -68,7 +70,7 @@ Source destinations and implementation owners remain in [UI30](../../ui-polish.m
 | UX30-12 | Not tested | New chat and Task activity have clear purposes; browsing never creates or resumes a session |
 | UX30-13 | Not tested; F1 retracted; six native composer cells and CUA input subset pass ([checks](resumed.md)) | Composer grows automatically, no grip/inner scroll; Send and attachments remain reachable |
 | UX30-14 | Not tested; partial: Native full synthetic traversal and one resize observed; native source/cache/complete anchor matrix open ([checks](resumed.md)) | Long history remains bounded/traversable; append/prepend/reflow retain reading anchor and explicit follow |
-| UX30-15 | Not tested | Delivery, agent activity and result are distinct; slow/failure/unknown recovery never replays uncertain input |
+| UX30-15 | Not tested; local original-ID reconciliation/cancel pass; native provider recovery open ([checkpoint](isolated/README.md)) | Delivery, agent activity and result are distinct; slow/failure/unknown recovery never replays uncertain input |
 | UX30-16 | Not tested | Running-worker message is available before a question via existing board steer; ended/reviewer limits are explicit |
 | UX30-17 | Not tested | Relative times appear on messages, tools, questions/events, activity rows and status/watch facts |
 | UX30-18 | Not tested | Exact local date/seconds/time zone on hover/focus; source units and missing provenance are truthful |
@@ -109,7 +111,7 @@ Every row remains Retain. Original destination, owner and risk check: [84-group 
 | M22 | Not tested | Existing compact host line and expansion |
 | M23 | Not tested | Settings → Work mode; existing operation workspace |
 | M24 | Not tested | Existing emergency/recovery review |
-| M25 | Not tested | Settings → Appearance in its own window |
+| M25 | Not tested; native Appearance 16/20 px, Summary selection and wheel subset pass ([checkpoint](isolated/README.md)) | Settings → Appearance in its own window |
 | M26 | Not tested | Settings → Notifications |
 | M27 | Not tested | Activity history; Summary A event stacks via icon.rs; exact Blocked detail and unchanged current counter order |
 | M28 | Not tested | Settings → Agents/access |
@@ -118,21 +120,21 @@ Every row remains Retain. Original destination, owner and risk check: [84-group 
 | M31 | Not tested | Settings → About/updates |
 | M32 | Not tested | One menu reading scroll; separate window routes |
 | C01 | Not tested | Existing unified Conversations list |
-| C02 | Not tested | Chat list: New chat saves a draft; existing topics continue directly; narrow Chats/Back |
-| C03 | Not tested; F1 retracted; six native composer cells and CUA input subset pass ([checks](resumed.md)) | Existing durable draft/files/caret; automatically growing composer in the one thread reader, reachable Send |
+| C02 | Not tested; native New draft and independent second draft pass; full narrow/native-session path open ([checkpoint](isolated/README.md)) | Chat list: New chat saves a draft; existing topics continue directly; narrow Chats/Back |
+| C03 | Not tested; native draft/file/caret survive client restart; full reader/IME matrix open ([checkpoint](isolated/README.md)) | Existing durable draft/files/caret; automatically growing composer in the one thread reader, reachable Send |
 | C04 | Not tested | New chat shows its registered project before Start chat; recorded runtime stays fixed after launch |
 | C05 | Not tested | Same selected thread/composer |
 | C06 | Not tested | Composer secondary action; explicit new destination |
 | C07 | Not tested | Composer history icon; one direct menu; fills only |
 | C08 | Not tested | Existing editable conversation name |
-| C09 | Not tested | Existing composer file picker and drag/drop |
+| C09 | Not tested; real native text-file picker passes; drag/drop/refusal open ([checkpoint](isolated/README.md)) | Existing composer file picker and drag/drop |
 | C10 | Not tested | File chips → preview; Remove local reference |
 | C11 | Not tested | Task activity at existing Work sessions route; reading creates/resumes nothing; exact agent view plus separately named native/progress links |
 | C12 | Not tested | Conversation tools and separate window |
 | C13 | Not tested | Launch status → Cancel queued launch |
 | C14 | Not tested | One thread-local status; Check delivery |
 | C15 | Not tested | Inline actionable failure with retained draft/files |
-| C16 | Not tested | Conversation tools/Archive list; clear local scope |
+| C16 | Not tested; disposable draft Archive/Undo passes; full archive-list policies open ([checkpoint](isolated/README.md)) | Conversation tools/Archive list; clear local scope |
 | C17 | Not tested | Archive → Delete permanently → scoped confirmation |
 | C18 | Not tested | Existing selected event/thread controls |
 | C19 | Not tested | Conversation info → inline Watch controls; one disclosure |

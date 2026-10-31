@@ -1,0 +1,38 @@
+{
+  "attempt": 6537039713,
+  "checkout": "d257507aed50788e831af01c1d4f7fafcb468399",
+  "compiled_revision": "67f729e4dc35d20f044efe8cb7a3b6a939c5e048",
+  "application_source_diff": "empty between compiled revision and checkout for src, Cargo.toml, Cargo.lock, build.rs",
+  "version": "4.6.50",
+  "profile": "dev, unoptimized",
+  "bundle_identifier": "org.taskq.qualification1932",
+  "signing_identity": "TaskQ Local Signing",
+  "codesign_verify_strict_exit": 0,
+  "bundle_executable_sha256": "44e1117c299fadae0d2cf59351a3787d8ee96971b465790e18c970fcfd719e2a",
+  "source_binary_sha256": "4d0cace10cce26629aed567c1fdd4ec83461105995095368cf21af67a8d062c7",
+  "input_hashes": {
+    "docs/design/tray-fixture.sh": "34a0cda151f2eb6932a8dd3f99120e61665ef85ab2172892db18346ec330cfb2",
+    "build/web/workspace.html": "e4ebb95ecf37f063832e98136db5b89379d0991b98693a89d6482a16893f846a",
+    "build/web/tray.html": "ad34e3d0276cdb69e73056852c61f46e56716ddf10ffbc57ea6860b22710ee66"
+  },
+  "fixture": "tray-fixture.sh with 8 extra projects, plus two explicit disposable conversation records",
+  "native_themes": [
+    "dark"
+  ],
+  "native_fonts_px": [
+    16,
+    20
+  ],
+  "native_scale": 2,
+  "screens": [
+    {
+      "file": "draft.png",
+      "sha256": "de0134720bdbfdf2f527fd60ee17b131826b335160471d1b63ea60382a331ce5"
+    },
+    {
+      "file": "settings-20.png",
+      "sha256": "a4dcf9e72583e07deb2a27301f28281c40128956d6167d42e5bb4b261b988a21"
+    }
+  ],
+  "production_mutations": "none; no production service, policy, grant, saved view, task answer or owner session was changed"
+}

@@ -1,0 +1,52 @@
+{
+  "attempt": 6537039713,
+  "queued_request": {
+    "id": "4eded416a3d6994c6f3e322b1ae9e59d",
+    "state": "cancelled",
+    "runtime": "claude",
+    "job": null,
+    "session": null,
+    "reason": "Launch cancelled before native dispatch; no runtime work was rolled back"
+  },
+  "request_count": 1,
+  "draft": {
+    "id": "a1901456687af8ef47c7414e50bb90e4",
+    "revision": 6,
+    "title": "",
+    "root": "<fixture>/alpha",
+    "text": "1932 recovery draft · KEEP UNSENT\nРусский 日本語 😀\nindependent next line",
+    "caret": [
+      70,
+      70
+    ],
+    "scroll": 0,
+    "archived": false,
+    "deleting": false,
+    "next": false,
+    "parent": null,
+    "files": [
+      {
+        "id": "a7dc099febaf99518232f203123eab1a",
+        "name": "disposable-note.txt",
+        "mime": "text/plain",
+        "hash": "59afc661db57a3838aeff57537535111ecf73bb996c146e47e21ec06ecf608f5",
+        "bytes": 55
+      }
+    ],
+    "sent": null
+  },
+  "restart_equal": {
+    "text": true,
+    "files": true,
+    "archived": true,
+    "caret": true
+  },
+  "service_record_present": false,
+  "host_policy_present": false,
+  "cleanup": {
+    "first_tray_exit": 143,
+    "first_bundle_exit": 0,
+    "restarted_bundle_exit": 0,
+    "service_command_exit": 1
+  }
+}

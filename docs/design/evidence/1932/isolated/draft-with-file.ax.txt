@@ -1,0 +1,67 @@
+Window: "TaskQ Workspace", App: TaskQ Qualification 1932.
+0 standard window TaskQ Workspace, Secondary Actions: Raise
+	1 scroll area
+		2 HTML content about:blank
+			3 container
+				4 button Workspace home
+				5 button Back
+				6 heading Conversations, Value: 1
+					7 text Conversations
+				8 button Refresh workspace status
+				9 summary Workspace navigation, Value: off
+				10 container Window controls
+					11 toggle button Always on top, Value: off
+					12 toggle button Enlarge window, Value: off
+					13 button Close workspace
+			14 container
+				15 container Results
+					16 button (collapsed) Results · unknown, Secondary Actions: Expand
+				17 container Conversations
+					18 button New chat
+					19 button Search threads
+					20 button Work sessions
+					21 container
+						22 container Threads
+							23 toggle button Recent, Value: on
+							24 toggle button Archive, Value: off
+							25 container alpha
+								26 button (expanded) alpha 2, Secondary Actions: Collapse
+								27 button 1932 recovery draft · KEEP UNSENT Draft · Last activity · 31 Oct 2026 at 08:22:48 GMT+07:00 · Asia/Bangkok
+								28 button Pin
+								29 button Archive
+								30 button Qualification 1932 · disposable draft Delivery unknown · Last activity · 31 Oct 2026 at 08:20:53 GMT+07:00 · Asia/Bangkok · Unread
+								31 button Pin
+								32 button Archive
+						33 container Selected request
+							34 heading 1932 recovery draft · KEEP UNSENT, Value: 2
+								35 text 1932 recovery draft · KEEP UNSENT
+							36 button Detach
+							37 button Archive
+							38 summary Conversation info ›, Value: off
+								39 text Conversation info
+								40 text ›
+							41 text Describe work for alpha. First Send opens your project manager chat. Tasks start only after assignment.
+							42 container Request record
+							43 container Change the project in Conversation info.
+								44 text alpha · Claude Code · mac
+							45 button disposable-note.txt · 55 B
+							46 button Remove disposable-note.txt
+							47 text Request draft
+							48 text entry area (settable) Request draft, Value: [text entry area], Placeholder: Ask AI…
+								49 container (settable)
+									50 text (settable) 1932 recovery draft · KEEP UNSENT
+									51 text (settable) Русский 日本語 😀
+									52 text (settable) independent next line
+							53 container Attach files
+								54 text Attach
+								55 file upload button Attach files
+							56 summary History, Value: off
+							57 button Send
+							58 summary File limits and message help, Value: off
+					59 text Data from 08:19
+			60 container
+				61 text TaskQ v4.6.50
+				62 button Resize workspace, Help: Resize workspace; arrow keys adjust size
+63 menu bar
+	64 TaskQ Qualification 1932
+	65 Edit

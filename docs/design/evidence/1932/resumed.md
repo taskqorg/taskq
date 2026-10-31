@@ -76,6 +76,8 @@ Q-A6's p95 ≤100 ms and >50 ms main-thread thresholds remain proposed reference
 
 ## Review set
 
+Historical selection for this earlier checkpoint. The [current ten-screen selection](isolated/README.md#acceptance-and-review-set) replaces 03/05 with actual isolated application frames; all other frames below remain selected.
+
 Exactly ten representative PNGs. Original seven retain source `554552da`; images 08–10 use the resumed candidate. The manifest names source and SHA-256 for each. All were inspected at usable size; the original seven were also revisited in this attempt. Source/reference images are not promoted to current native after-state.
 
 | Screen | Scope |
