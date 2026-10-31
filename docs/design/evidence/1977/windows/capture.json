@@ -1,0 +1,50 @@
+{
+  "source": "13feba722f6f297485a740d477184be6a7e8abdc",
+  "binary_sha256": "d36ec9507f23adb43e30c357362526c1207d68c9a9943e51b83f4c980977eb1b",
+  "os": "Windows-11-10.0.26300-SP0",
+  "engine": "Windows WebView2",
+  "font_css_px": 16,
+  "themes": [
+    "dark",
+    "light"
+  ],
+  "fixtures": "tests/fixtures/reports-shots.js",
+  "commands": [
+    "cargo +stable run --locked -- tray --snapshot <evidence> --route reports-conversations",
+    "cargo +stable run --locked -- tray --snapshot <evidence> --route results-conversations"
+  ],
+  "installation": "isolated OS temporary store; Cargo debug environment; no live service replaced",
+  "scale": "unknown; not measured",
+  "usable_area": "unknown; not measured",
+  "frames": [
+    {
+      "file": "popover-dark-reports-conversations-16.png",
+      "pixels": [
+        801,
+        601
+      ]
+    },
+    {
+      "file": "popover-dark-results-conversations-16.png",
+      "pixels": [
+        801,
+        601
+      ]
+    },
+    {
+      "file": "popover-light-reports-conversations-16.png",
+      "pixels": [
+        801,
+        601
+      ]
+    },
+    {
+      "file": "popover-light-results-conversations-16.png",
+      "pixels": [
+        801,
+        601
+      ]
+    }
+  ],
+  "qualification": "partial instrument only; installed-app acceptance and Windows/macOS approved-reference comparison remain unverified"
+}
