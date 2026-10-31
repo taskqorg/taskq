@@ -1,5 +1,7 @@
 # Isolated native application checkpoint
 
+Historical checkpoint. The [final owner-directed continuation](../final.md) supersedes waiting for #2003; the native evidence and limitations below remain attributed to this earlier attempt.
+
 Attempt `6537039713` continues the review requeue. **A2–A6 remain incomplete.** The tray-lock limitation is resolved for a disposable context; an explicit service-authority refusal now blocks the provider chain. [#2003](https://github.com/taskqorg/taskq/issues/2003) is filed and read back held, with no attempt (R3, R9, R12, §7.3).
 
 ## Candidate and isolation
