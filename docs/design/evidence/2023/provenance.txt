@@ -15,7 +15,7 @@
     "adverse.cjs.txt": "d711baa3c8e97cfd4826b2bb28f3c93f439362efb9fe009999a712dc28e3c0c5",
     "complete.cjs.txt": "6737be2132deff6c324e809cc725964d4df5833d48d6829bafcaf7861a11d643",
     "measure.cjs.txt": "af3241c3bc8c5cdf6552eab73b2bdde7643913edf465600291acca35d3542677",
-    "native-before-missing.rs.txt": "d77099ab187231a0088446bd3ea66f51a58d4588518407f61f84fc2a0f517285",
+    "native-before-missing.rs.txt": "c02264c54a57da5fc7565dc3939deef66be971389335914cb54bcb5fecd26a57",
     "native-instrument.rs.txt": "16774d69458bd0e9d0d769317ef8f494c0ea00c7c93d7d69343bf0cfeed91735",
     "restart.cjs.txt": "1e7fb5159934869d855d36b601710f7d76e842e8b709fc2a4eee3aa984e21b2c"
   },
@@ -34,5 +34,6 @@
   "redactions": [
     "Loopback WebSocket session URLs omitted.",
     "Native filesystem generations in navigation g fields are SHA-256 hashes."
-  ]
+  ],
+  "file_hash_basis": "measurement-time file bytes; not normalized Git blob hashes"
 }
