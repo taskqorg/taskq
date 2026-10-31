@@ -67,3 +67,20 @@ Moved verbatim from `taskq.md` (#1179) to keep the contract under its R8 size bo
 **GitHub `pr`** (moved from `taskq.md`, #1942): Closed unmerged: dequeue, close open `taskq-<N>` PRs; one comment (task link, reason), keep branch; skip merged/closed; log unknown; requeue/later/failed keep PRs.
 
 **GitLab close** (§ 7; moved from `taskq.md`, #1939): `direct`: fast-forward MR; `pr`: main ancestor, exact-SHA CI green, ff/semi-linear protection, squash-merge/readback; both pend unless board setting `autoclose_referenced_issues` false. Incident ancestry: squash or direct SHA. A running MR pipeline or required check (merge refused as `ci_still_running`, or a running exact-SHA pipeline) is not missing CI: `close` records `publish` and ends the review with the pipeline link, and the task stays in review with a visible publication wait. The service polls it as it polls the GitHub `pr` route (the attempt host; others once its heartbeat is stale) and merges once the pipeline is green. A failed or canceled pipeline records one `publication-failed` with the pipeline link (+1 retry; the third asks). A pipeline still running 24 h after it started, by the board's clock, records `publication-blocked`; without a board clock the deadline never trips.
+
+Linked from `taskq.md` [§ 7](../../taskq.md#result-and-close-verdicts); this text binds like the contract (R8, R13).
+
+### Publication routes
+
+`close`: board API, except private fallback Git:
+
+- `direct`: branch `taskq-<N>` = result SHA, `main` its ancestor, CI green on it; move `main` to it without force, read back, close.
+- GitHub `pr`: one PR at result SHA; no rebase check. `close` records `publish`, ends review. Service readies drafts, enqueues at expected SHA; attempt host polls, others once its heartbeat is stale. Close: merge + green `merge_group` CI; failed push CI: noted. Conflict: `main-moved`; unknown: pending; merged on failed CI or dequeued: `publication-blocked` at once. Cancel dequeues, hand-typed too. Closed unmerged: [detail](#contract-detail). Plan without branch rules (403, probed once): status, menu and one comment per PR head link the PR as `needs a manual merge`; `selftest` lists fixes.
+- Private GitHub without queue: service rebases a clean owned task worktree at result SHA, leased-pushes, records `rebased`, waits exact-SHA CI, merges under strict main protection, reads back. Conflict: `main-moved`; dirty/missing/unknown: untouched. Rebase stales approval for review. Public: queue required, Git-free.
+- GitLab ([detail](#contract-detail)): `direct` and `pr` pend unless `autoclose_referenced_issues` false; running MR CI: `publish`, service merges green; red: `publication-failed` + link; >24 h: `publication-blocked`.
+- No commit (research, SHA on `main`): check ancestry, close.
+- Pending/missing CI: refuse, state unchanged; pending publication stays in review. Failed CI/conflict: requeue.
+- Attempt host: remove clean `.worktrees/taskq-<N>` and local branch; dirty stay.
+- Merged but open (no open task PR/MR to main): reconcile one task PR/MR merged at result SHA into any base; receipt `merged #P [into <base>] as SHA`, no second merge/requeue, close no issue. Merged only at other heads: result's patch-id closes; else `publication-blocked` lists them, option `close` (no merge). Reviewer `ask` keeps the result: close option works; worker ask: `later`, `close`.
+
+Pending publications take the current preset: `direct` delivers the PR head. `close` ends its verdict with `delivery <preset> r<revision>: <receipt>`.

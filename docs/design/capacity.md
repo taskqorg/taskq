@@ -166,6 +166,18 @@ Local CLI writes print the original observed-receipt ID and distinguish saved se
 
 A runtime whose CLI does not resolve on the service PATH admits no claim, resume or reviewer and reads as capacity reason `access` (`<cli> CLI not found on the service PATH`). On Linux every taskq process first appends an existing `~/.local/bin` to PATH, so `service install` writes it into the systemd unit and a service under an older unit still finds CLIs installed there (#1393).
 
+Linked from `taskq.md` [§ 3](../../taskq.md#3-attempts-lease-capacity); this text binds like the contract (R8, R13).
+
+### Slot keys
+
+- Key: project identity + attempt. A pending grant becoming a running child keeps its one slot, counted once for runtime limits, admission.max and project caps.
+
+### Load gate readings, host admission and emergency hold
+
+- A missing, invalid or stale reading holds; reopening needs 3 consecutive valid samples below the band; ≤ 1 launch per 30 s. A held resume keeps its inbox; a held won claim stays leased. No battery or thermal gating, no forced retirement. Serialize slot grants and transitions; release only after verified failed launch/exit. Pick ready projects round-robin; resumes/reviewers go first.
+- **Host admission.** In-process grants follow the host load gate, admission.max, runtime limits and 30 s spacing. No Fixed mode. A root whose fresh status names another live process holds admission host-wide; unknown liveness holds too. Setup (§ 4) skips limits, holds, Stop and restart.
+- **Emergency hold.** `<install>/hold` blocks worker and reviewer launches (not owner sessions) before the load gate; unreadable holds. `service release` clears ordinary holds only; Mac Stop survives restart/install; selected recovery requires owner evidence and native release ([E3](emergency-recovery.md#e3-recovery)). Children continue unless owner-confirmed Full stop (R11); older services ignore it.
+
 ## Compile jobs
 
 Parallel workers on one host share its CPUs for Rust builds. Each cargo run defaults to one compile job per CPU, so N workers building at once start N × CPUs jobs, thrash, and keep the load gate held (taskq.md § 3).

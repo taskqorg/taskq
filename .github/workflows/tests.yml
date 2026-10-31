@@ -28,6 +28,13 @@ jobs:
       - run: python3 scripts/check.py --rules
         env:
           GH_TOKEN: ${{ github.token }}
+      # taskq.md R8: the specq contract lint at the commit scripts/check.py pins.
+      - uses: actions/checkout@v4
+        with:
+          repository: taskqorg/specq
+          ref: 39e6024037fb69e68a84180c04fb7ac53eddb9f9
+          path: .specq
+      - run: python3 scripts/check.py --lint
   rust:
     needs: plan
     if: needs.plan.outputs.scope != 'docs'

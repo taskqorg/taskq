@@ -253,6 +253,36 @@ Host runtime detail for taskq.md sections 3, 4 and 9. Implementation and install
 
 - Binary version (taskq.md § 5 `taskq --version`, #1900): prints the running binary's build version (`CARGO_PKG_VERSION`) as one line on stdout and exits 0. It is handled before install lookup, telemetry and launcher delegation, so it reads no board, network, service or install state. Clients such as PilotQ read the installed version from this command instead of an owner-written receipt.
 
+Linked from `taskq.md` [§ 4](../../taskq.md#4-service) and [§ 8](../../taskq.md#8-runtimes-and-deployment); this text binds like the contract (R8, R13).
+
+### Heartbeat lines, renames, retirement and freshness (§ 4 step 3)
+
+3. Write heartbeat issue `taskq host <name>` (label `taskq-host`) every `ttl / 3` (60 s with `execution` rows) or on change, `at`/diagnostics times aside (rate-limited: stale, no exit): lines `version <v>`, `service <id>` (12 hex of SHA-256 of `<install>/installation-id`), `machine <hostname>[ wsl]` (agentq `host.name`; `wsl` under WSL; DashQ joins Hosts by it, [H2](https://github.com/taskqorg/dashq/blob/main/docs/design/hosts.md)), `#<N> <id>` per live child or gate-held launch, `session #<N> <id> <url>` per live Claude child with Remote Control URL, `focus off|unknown` when focus admits nothing, `limit <rt> until|probe <time>` or `login <rt> off` per held runtime, `tray <code>` on tray fault, `at <board time>` (same-body edits keep `updated_at`). Close other open `taskq host` issues with the same `service <id>` (rename); comment the new name. Retire hosts by closing every board's `taskq-host` heartbeat; strip, status and claim count only open host issues. Freshness: board `updated_at`, response `Date`, never local clocks.
+
+### Focus requests and printing
+
+- `--request` keeps the owner's words in `focus.request`; a focus without it removes the file. No arguments: print focus, `has`, labels of open tasks; an agent maps the owner's words to these, asks when unsure, says so when none fits.
+
+### Host lock, restart, tray, agentq, owner sessions, incidents, data, budget and admission records
+
+- One host owner holds `<install>/service.lock`; `<install>/service` projects native identity. Live/unknown owners of any age block startup; project threads wait too. This host's heartbeat under `ttl` naming another `service <id>` refuses writes: `another service <id> runs as host <name>`. Restart reconciles board/native executions (§3), never `gone`. `service restart|stop` tracks one host receipt; Mac `stop --mode drain|full` persists the reviewed hold (E2), full cancels owned work before board reconciliation; `--request ID` reconciles it. Legacy restart flags stay untracked until H-A5 retirement (§8 step3).
+- Tray (macOS, Windows; [menu](menu.md#contract-detail)): one normal app per host. Menu/dashboard sum loaded counts; each failed/stale project shows one name/cause line.
+- Agentq: [detail](standalone-onboarding.md).
+- Owner sessions: [setup/AI/retro](ai-workspace.md#contract-detail) launch once, visible; C1 threads/D1–D8, no §3 admission controls. PM: [opt-in grant](pm-requests.md#contract-detail).
+- [Incident reports](incidents.md#contract-detail): `incident_reports` (§ 9) default true; `false` or `TASKQ_INCIDENT_REPORTS=off` disables. Setup and the shipping update disclose destination and opt-out before any send. Only a catalog fault reports, with an allowlisted payload; a report never changes a task, the queue or an exit code.
+- Data: [bounds/handover](#contract-detail), `src/data.rs`: text logs hourly.
+- [Board budget](../budget-1032.md#contract-detail) owns hourly API host/token counts, install-wide pauses, ETags and the budget alarm in service status/list and R6.
+
+[I3](icon-summary.md#first-admission-source-and-compatibility): deleted labels admit nothing; malformed records wait for an issue update.
+
+### Release channels (§ 8 step 1)
+
+1. [Channels](https://github.com/taskqorg/specq/blob/main/engineering/release-contract.md#delivery-speed): on `dev` the `taskqorg/taskq` Mac service builds each new `main` SHA with green `merge_group` CI by that SHA's `scripts/dev-install.sh`, never the root working tree, checked each pass, one at a time; failure keeps `current`, logs once, no retry ([detail](#dev-install)). Host.json `channel` `dev|live` (missing: `live`): `dev` skips releases but re-execs to a newer local `current`; `live` installs the latest release, even over `-dev`. A `live` push (owner-promoted version merge) that changes the `Cargo.toml` version tags `v<version>` if absent (unreadable old version fails) and publishes once that SHA's `merge_group` CI passed (as tag pushes); tags never move; rollout reads heartbeats. Release hosts need no git, gh or toolchain except private-board Git (§ 7). Release runners `selftest` staged artifacts. Windows loader: [detail](../runtime-qualification.md#contract-detail); checksums, provenance: [release detail](#contract-detail).
+
+### Windows setup and macOS signing (§ 8 step 5)
+
+5. Windows setup runs outside MSIX; host rollback counts starts. macOS: every binary starts signed as a release; no `<install>` entry named Resources or Contents ([detail](worker-permissions.md#contract-detail)).
+
 ## Native stop and restart conditions
 
 On Mac, Stop offers Drain (let owned work finish) and Full stop (cancel owned execution immediately, including offline) under R11/E2. Both persist the reviewed host hold before stopping; unknown execution or board reconciliation keeps completion unresolved. Other platforms retain Drain. Stop verifies the exact native daemon exit and retains the autostart unit. It does not add a login observer or timer. The Windows unit also repeats every 5 minutes (CoreQ, IgnoreNew), so an exited service starts again with no person while `service.lock` keeps a second one waiting; Stop disables only that repeat trigger, and the service enables it again (adding it to an older unit) each time it starts: logon, install or restart. The result states the native restart condition: macOS/Windows retain their logon trigger; Linux retains the enabled user unit, which starts with its user manager or an explicit service install. With linger, another SSH login does not restart that manager. Explicit service install can start the stopped host on every platform. On Mac, restart, logon and install do not clear the reviewed Stop hold: admission remains held until reviewed recovery (#1285). Ordinary `service release` refuses that hold; #1285 delivers its selective recovery, so this change provides no clearing path. Restart/stop/uninstall share command identity and observed native outcomes; none infer worker termination from the daemon's exit.

@@ -8,7 +8,7 @@ Standalone means an install with no serverq connection. A connected install is o
 
 Facts on main at #1188 (shipped):
 
-- Collection never depends on a connection. Every service and CLI process appends `taskq-profile`, `taskq-stage`, `taskq-board`, `taskq-transition` and `taskq-requests` lines to `<install>/taskq.log` ([§ 4 Profiling](../../taskq.md#profiling-988)).
+- Collection never depends on a connection. Every service and CLI process appends `taskq-profile`, `taskq-stage`, `taskq-board`, `taskq-transition` and `taskq-requests` lines to `<install>/taskq.log` ([§ 4 Profiling](../../taskq.md#profiling)).
 - No code sends profile records off the host. The [DashQ connection](enrollment.md) sends no profile record. Incident reports (§ 4) are a separate fault report, not telemetry.
 - `taskq profile`, `taskq profile export|tasks|board [--since 30m|24h|7d]` read only that log. They make no board calls.
 - Store bound: `taskq.log` past 4 MiB keeps its newest half ([§ 4 Data](../../taskq.md#4-service)). The bound is shared with service text lines, and no retention window is named.
