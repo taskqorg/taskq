@@ -870,6 +870,13 @@ impl Board for GitHub {
         self.api.credentials.borrow().budget.borrow().clone()
     }
 
+    fn quota(&self) -> crate::requests::Budget {
+        // #2084: a status that read only GraphQL saw no core budget; `GET /rate_limit` is free and carries it.
+        // A failed read leaves the quota unknown.
+        if !self.requests().has_core() { let _ = self.api.call("GET", &format!("{}/rate_limit", self.api.root), None); }
+        self.requests()
+    }
+
     fn url(&self, n: u64) -> String {
         self.foreign_url(self.api.base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default(), n)
     }
