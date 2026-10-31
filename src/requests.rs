@@ -43,6 +43,11 @@ pub fn user_file(install: &std::path::Path, root: &str, auth: &str) -> std::path
     install.join(format!("board-user-{}", &key(root, auth)[..16]))
 }
 
+/// The conditional replies of one API host and credential in `install` that every process shares (#1985).
+pub fn cache_dir(install: &std::path::Path, root: &str, auth: &str) -> std::path::PathBuf {
+    install.join(format!("board-cache-{}", &key(root, auth)[..16]))
+}
+
 /// A pause another process recorded in `file`: its reset while in the future, at most [`MAX_PAUSE`] ahead.
 pub fn recorded_pause(file: &std::path::Path, wall: i64) -> Option<(i64, i64)> {
     let reset = std::fs::read_to_string(file).ok()?.trim().parse::<i64>().ok()?;
