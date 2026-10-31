@@ -709,8 +709,9 @@ const FILE_KINDS: [(&str, &[&[u8]]); 6] = [(".zip", &[b"PK\x03\x04", b"PK\x05\x0
     (".pdf", &[b"%PDF-"]), (".html", &[b"<"]), (".htm", &[b"<"])];
 
 /// § 2 evidence files (#2019): each `--file` of a result or ask is a zip, tar.gz, PDF or HTML file of at most 25 MB,
-/// checked before any write; returns the Evidence label of each, `⬇ <name>` of at most 32 characters.
-fn attachment_files(paths: &[String]) -> Res<Vec<String>> {
+/// checked before any write; returns the Evidence label of each, `⬇ <name>` of at most 32 characters. `zip_html`
+/// (a board that shows HTML as source) labels an HTML file `⬇ <name>.html.zip`, the zip it uploads instead.
+fn attachment_files(paths: &[String], zip_html: bool) -> Res<Vec<String>> {
     paths.iter().map(|p| {
         let lower = p.to_ascii_lowercase();
         let (ext, heads) = FILE_KINDS.iter().find(|(e, _)| lower.ends_with(e)).ok_or(format!("--file {p}: not a .zip, .tar.gz, .tgz, .pdf, .html or .htm file"))?;
@@ -718,30 +719,83 @@ fn attachment_files(paths: &[String]) -> Res<Vec<String>> {
         if size > 25 << 20 { return Err(format!("--file {p}: {size} bytes, at most 25 MB")); }
         let head = std::fs::File::open(p).and_then(|f| { let mut b = vec![]; std::io::Read::read_to_end(&mut std::io::Read::take(f, 1024), &mut b).map(|_| b) }).map_err(|e| format!("--file {p}: {e}"))?;
         // HTML may start with a byte order mark and blank lines before its first tag
-        let lead = if *ext == ".html" || *ext == ".htm" { head.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&head).trim_ascii_start() } else { &head[..] };
+        let html = *ext == ".html" || *ext == ".htm";
+        let lead = if html { head.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&head).trim_ascii_start() } else { &head[..] };
         if !heads.iter().any(|h| lead.starts_with(h)) { return Err(format!("--file {p}: content is not a {} file", &ext[1..])); }
         let name = Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let stem: String = name[..name.len() - ext.len()].replace(['[', ']', ',', '(', ')'], " ").split_whitespace().collect::<Vec<_>>().join(" ").chars().take(30 - ext.len()).collect();
-        Ok(format!("⬇ {}{}", if stem.trim().is_empty() { "file" } else { stem.trim() }, &name[name.len() - ext.len()..]))
+        let zip = if html && zip_html { ".zip" } else { "" };
+        let stem: String = name[..name.len() - ext.len()].replace(['[', ']', ',', '(', ')'], " ").split_whitespace().collect::<Vec<_>>().join(" ").chars().take(30 - ext.len() - zip.len()).collect();
+        Ok(format!("⬇ {}{}{zip}", if stem.trim().is_empty() { "file" } else { stem.trim() }, &name[name.len() - ext.len()..]))
     }).collect()
 }
 
 /// § 2 evidence files (#2019): uploads each `--file` to the board's file store and links it as `[⬇ name](absolute URL)`
 /// in the Evidence line only after the board serves the same bytes back (the load check); a failed check publishes
-/// nothing.
+/// nothing. On a board that shows HTML as source, an HTML file goes up inside `<name>.zip`, so one click downloads it.
 fn upload_attachments(b: &dyn board::Board, n: u64, paths: &[String]) -> Res<Vec<String>> {
-    paths.iter().zip(attachment_files(paths)?).map(|(p, label)| {
-        let url = b.upload_attachment(n, Path::new(p))?;
-        let sent = std::fs::read(p).map_err(|e| format!("--file {p}: {e}"))?;
+    let zip_html = !b.html_downloads();
+    paths.iter().zip(attachment_files(paths, zip_html)?).map(|(p, label)| {
+        let mut sent = std::fs::read(p).map_err(|e| format!("--file {p}: {e}"))?;
+        let html = [".html", ".htm"].iter().any(|e| p.to_ascii_lowercase().ends_with(e));
+        let url = if zip_html && html {
+            let name = Path::new(p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            sent = zip_one(&name, &sent)?;
+            let dir = std::env::temp_dir().join(format!("taskq-file-{}", runtime::uuid()));
+            let zip = dir.join(format!("{name}.zip"));
+            let up = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&zip, &sent)).map_err(|e| format!("--file {p}: {e}"))
+                .and_then(|_| b.upload_attachment(n, &zip));
+            let _ = std::fs::remove_dir_all(&dir);
+            up?
+        } else { b.upload_attachment(n, Path::new(p))? };
         let back = b.file(&url).map_err(|e| format!("file load check failed for {url}: {e}"))?;
         if back != sent { return Err(format!("file load check failed: {url} serves {} bytes, {} uploaded", back.len(), sent.len())); }
         Ok(format!("[{label}]({url})"))
     }).collect()
 }
 
+/// A zip archive holding the one file `name` with `data`, deflated, for a board that would show it as text (#2019).
+fn zip_one(name: &str, data: &[u8]) -> Res<Vec<u8>> {
+    use std::io::Write;
+    let mut z = flate2::write::DeflateEncoder::new(vec![], flate2::Compression::default());
+    let packed = z.write_all(data).and_then(|_| z.finish()).map_err(|e| format!("zip {name}: {e}"))?;
+    let mut crc = flate2::Crc::new();
+    crc.update(data);
+    let sizes = [packed.len() as u32, data.len() as u32];
+    // version 2.0, UTF-8 name flag, deflate, 1980-01-01 00:00; sizes fit u32 under the 25 MB cap
+    let entry = |sig: u32| [&sig.to_le_bytes()[..], &20u16.to_le_bytes(), &0x0800u16.to_le_bytes(), &8u16.to_le_bytes(), &0u16.to_le_bytes(),
+        &33u16.to_le_bytes(), &crc.sum().to_le_bytes(), &sizes[0].to_le_bytes(), &sizes[1].to_le_bytes(),
+        &(name.len() as u16).to_le_bytes(), &0u16.to_le_bytes()].concat();
+    let local = [entry(0x0403_4b50), name.as_bytes().to_vec(), packed].concat();
+    // the central entry adds "made by" before the shared fields, then comment, disk, attributes and the local offset
+    let shared = entry(0x0201_4b50);
+    let central = [&shared[..4], &20u16.to_le_bytes(), &shared[4..], &[0u8; 14], name.as_bytes()].concat();
+    let end = [&0x0605_4b50u32.to_le_bytes()[..], &[0u8; 4], &1u16.to_le_bytes(), &1u16.to_le_bytes(),
+        &(central.len() as u32).to_le_bytes(), &(local.len() as u32).to_le_bytes(), &0u16.to_le_bytes()].concat();
+    Ok([local, central, end].concat())
+}
+
+/// Test reader of a [`zip_one`] archive: the one file's name and bytes, after checking its CRC and the end record.
+#[cfg(test)]
+fn unzip_one(zip: &[u8]) -> (String, Vec<u8>) {
+    let u16_at = |i: usize| u16::from_le_bytes([zip[i], zip[i + 1]]) as usize;
+    let u32_at = |i: usize| u32::from_le_bytes(zip[i..i + 4].try_into().unwrap());
+    assert_eq!((u32_at(0), u16_at(8)), (0x0403_4b50, 8), "local header, deflate");
+    let (packed, name_len) = (u32_at(18) as usize, u16_at(26));
+    let name = String::from_utf8(zip[30..30 + name_len].to_vec()).unwrap();
+    let mut data = vec![];
+    std::io::Read::read_to_end(&mut flate2::read::DeflateDecoder::new(&zip[30 + name_len..30 + name_len + packed]), &mut data).unwrap();
+    let mut crc = flate2::Crc::new();
+    crc.update(&data);
+    assert_eq!((crc.sum(), u32_at(22) as usize), (u32_at(14), data.len()), "CRC and size");
+    let end = zip.len() - 22;
+    assert_eq!((u32_at(end), u16_at(end + 10), u32_at(end + 16) as usize), (0x0605_4b50, 1, 30 + name_len + packed), "end record");
+    assert_eq!(u32_at(30 + name_len + packed), 0x0201_4b50, "central entry");
+    (name, data)
+}
+
 /// The Evidence links `--file` will add, with a placeholder URL: the card checks them before any upload.
-fn file_stubs(paths: &[String]) -> Res<Vec<String>> {
-    Ok(attachment_files(paths)?.into_iter().map(|l| format!("[{l}](https://board.invalid/file)")).collect())
+fn file_stubs(b: &dyn board::Board, paths: &[String]) -> Res<Vec<String>> {
+    Ok(attachment_files(paths, !b.html_downloads())?.into_iter().map(|l| format!("[{l}](https://board.invalid/file)")).collect())
 }
 
 /// § 2 evidence files (#2019): an uploaded `--file` link, `[⬇ name](url)`.
@@ -3379,7 +3433,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let (links, images, files) = (a.all("link"), a.all("image"), a.all("file"));
             if links.iter().any(|l| l.starts_with('!') || media(l).is_some() || attachment(l)) { return Err("--link takes links; images and videos go through --image, files through --file".into()); }
             // validate the card and the files before any upload
-            ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links.clone(), file_stubs(&files)?].concat())?;
+            ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links.clone(), file_stubs(b, &files)?].concat())?;
             image_files(&images)?;
             let body = ask_card(n, a.need("text")?, &a.all("option"), a.one("recommend"), &[links, upload_attachments(b, n, &files)?, upload_images(b, n, &images)?].concat())?;
             emit(&[act(b, root, n, "ask", &[], &body, &op)], json)
@@ -3397,7 +3451,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             let sha = a.need("sha")?;
             let (links, images, files) = (a.all("link"), a.all("image"), a.all("file"));
             if links.iter().any(|l| l.starts_with('!') || media(l).is_some() || attachment(l)) { return Err("--link takes links; images and videos go through --image, files through --file".into()); }
-            result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links.clone(), file_stubs(&files)?].concat())?;
+            result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links.clone(), file_stubs(b, &files)?].concat())?;
             image_files(&images)?;
             let report = reports::prepare(b, root, n, sha)?;
             let mut body = result_text(n, text, &a.all("checks"), &a.all("option"), a.one("recommend"), &[links, upload_attachments(b, n, &files)?, upload_images(b, n, &images)?].concat())?;
@@ -4650,9 +4704,12 @@ mod tests {
         let exe = file("tool.exe", b"MZ");
         let big = file("big.zip", &[b"PK\x03\x04".as_slice(), &vec![0; 25 << 20]].concat());
         let exact = file("exact.pdf", &[b"%PDF-".as_slice(), &vec![0; (25 << 20) - 5]].concat());
-        assert_eq!(attachment_files(&[zip.clone(), tgz.clone(), pdf.clone(), html.clone(), exact]).unwrap(), ["⬇ build final.zip", "⬇ logs.tar.gz", "⬇ report.pdf", "⬇ site.HTML", "⬇ exact.pdf"]);
-        assert!(attachment_files(&[fake_pdf]).unwrap_err().contains("content is not a pdf file"));
-        assert!(attachment_files(&[exe]).unwrap_err().contains("not a .zip, .tar.gz, .tgz, .pdf, .html or .htm file"));
+        assert_eq!(attachment_files(&[zip.clone(), tgz.clone(), pdf.clone(), html.clone(), exact], false).unwrap(), ["⬇ build final.zip", "⬇ logs.tar.gz", "⬇ report.pdf", "⬇ site.HTML", "⬇ exact.pdf"]);
+        // a board that shows HTML as source gets the page zipped; other kinds keep their name, labels stay ≤ 32 characters
+        let long = file("a very long page name for the release notes.htm", b"<p>x");
+        assert_eq!(attachment_files(&[zip.clone(), html.clone(), long], true).unwrap(), ["⬇ build final.zip", "⬇ site.HTML.zip", "⬇ a very long page name.htm.zip"]);
+        assert!(attachment_files(&[fake_pdf], false).unwrap_err().contains("content is not a pdf file"));
+        assert!(attachment_files(&[exe], false).unwrap_err().contains("not a .zip, .tar.gz, .tgz, .pdf, .html or .htm file"));
         let b = Fake::default();
         b.state.borrow_mut().bad_image = true;
         assert!(upload_attachments(&b, 7, std::slice::from_ref(&pdf)).unwrap_err().starts_with("file load check failed"));

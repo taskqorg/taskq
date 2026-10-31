@@ -107,6 +107,9 @@ pub trait Board {
     /// § 2 evidence files (#2019): stores a zip, tar.gz, PDF or HTML file `path` for task `n` and returns the absolute
     /// URL that downloads it; [`Board::file`] reads it back. Boards without a separate store keep it like an image.
     fn upload_attachment(&self, n: u64, path: &std::path::Path) -> Result<String> { self.upload_file(n, path) }
+    /// § 2 evidence files (#2019): false when the board serves an uploaded HTML file as text, so one click shows its
+    /// source; `--file` then uploads the page inside a zip, which downloads.
+    fn html_downloads(&self) -> bool { true }
     /// The bytes behind an image URL this board serves, read with the board token: the load check and the app's copy.
     fn file(&self, url: &str) -> Result<Vec<u8>> { Err(format!("image unknown: {url} is not served by this board")) }
     /// § 2 visual evidence (#1844): true when `![name](url)` of an uploaded video plays inline in a comment; else a link.
@@ -354,6 +357,7 @@ impl Board for Profiled {
     fn upload_attachment(&self, n: u64, path: &std::path::Path) -> Result<String> { self.op("write", |b| b.upload_attachment(n, path)) }
     fn file(&self, url: &str) -> Result<Vec<u8>> { self.op("read", |b| b.file(url)) }
     fn video_inline(&self) -> bool { self.0.video_inline() }
+    fn html_downloads(&self) -> bool { self.0.html_downloads() }
     fn pr_route(&self) -> crate::check::Probe { self.op("read", |b| Ok(b.pr_route())).unwrap_or_else(crate::check::Probe::Unknown) }
 }
 
@@ -1347,24 +1351,34 @@ mod tests {
         let reply = |v: Value, method: &str| Ok(Reply { status: 200, headers: vec![], body: v.to_string(), operation: operation(method) });
         let calls = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
         let seen = calls.clone();
-        let content = base64::engine::general_purpose::STANDARD.encode(std::fs::read(&zip).unwrap());
+        let html = dir.join("site.html");
+        std::fs::write(&html, b"<!doctype html><p>page</p>").unwrap();
+        // the blob GitHub stores is the blob it serves back
+        let blob = std::rc::Rc::new(RefCell::new(String::new()));
+        let stored = blob.clone();
         let github = http(&github::KIND, None, Box::new(move |method, url, body| {
-            seen.borrow_mut().push(format!("{method} {url} {}", body.map(|b| b.to_string()).unwrap_or_default()));
+            seen.borrow_mut().push(format!("{method} {url} {}", body.as_ref().map(|b| b.to_string()).unwrap_or_default()));
             let path = url.strip_prefix("https://api.github.com/repos/o/r").unwrap_or(url);
             match (method, path) {
                 ("GET", "/git/ref/taskq/evidence") => Err("HTTP 404 Not Found".into()),
-                ("POST", "/git/blobs") => reply(json!({"sha": "b1"}), method),
+                ("POST", "/git/blobs") => { *stored.borrow_mut() = body.as_ref().map(|b| s(b, "content")).unwrap_or_default(); reply(json!({"sha": "b1"}), method) }
                 ("POST", "/git/trees") => reply(json!({"sha": "t1"}), method),
                 ("POST", "/git/commits") => reply(json!({"sha": sha}), method),
                 ("POST", "/git/refs") => reply(json!({}), method),
                 ("GET", p) if p.starts_with("/contents/7/") => reply(json!({"sha": "b1"}), method),
-                ("GET", "/git/blobs/b1") => reply(json!({"content": content}), method),
+                ("GET", "/git/blobs/b1") => reply(json!({"content": stored.borrow().clone()}), method),
                 _ => Err(format!("unexpected {method} {url}")),
             }
         }));
         let links = crate::upload_attachments(github.as_ref(), 7, &paths).unwrap();
         let digest: String = ring::digest::digest(&ring::digest::SHA256, &std::fs::read(&zip).unwrap()).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
         assert_eq!(links, [format!("[⬇ build.zip](https://github.com/o/r/raw/{sha}/7/{digest}-build.zip)")]);
+        // Defect: GitHub raw serves HTML as text/plain, so one click showed the page source; the page goes up zipped
+        let links = crate::upload_attachments(github.as_ref(), 7, &[html.display().to_string()]).unwrap();
+        let packed = base64::engine::general_purpose::STANDARD.decode(blob.borrow().as_str()).unwrap();
+        let digest: String = ring::digest::digest(&ring::digest::SHA256, &packed).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(links, [format!("[⬇ site.html.zip](https://github.com/o/r/raw/{sha}/7/{digest}-site.html.zip)")]);
+        assert_eq!(crate::unzip_one(&packed), ("site.html".to_string(), std::fs::read(&html).unwrap()));
         let calls = calls.borrow();
         assert!(calls.iter().any(|c| c.starts_with("POST https://api.github.com/repos/o/r/git/refs ") && c.contains(r#""ref":"refs/taskq/evidence""#)), "{calls:?}");
         assert!(!calls.iter().any(|c| c.contains("heads")), "no branch: default clones skip the file; {calls:?}");
@@ -1388,6 +1402,7 @@ mod tests {
         let name = uploads.borrow()[0].clone();
         assert!(name.ends_with("-build.zip"), "{name}");
         assert_eq!(links, [format!("[⬇ build.zip](https://gitlab.example/-/project/39/uploads/cef859da/{name}#upload=5)")]);
+        assert!(gitlab.html_downloads() && !github.html_downloads(), "GitLab keeps an HTML upload as is; GitHub zips it");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -751,6 +751,9 @@ impl Board for GitHub {
         Ok(raw_url(&self.api.root, &self.api.base, &sha, &file))
     }
 
+    /// GitHub raw serves `.html` and `.htm` as `text/plain`: the browser shows the page source instead of saving it.
+    fn html_downloads(&self) -> bool { false }
+
     fn file(&self, url: &str) -> Result<Vec<u8>> {
         use base64::Engine;
         let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| format!("image unknown: {url} is not a taskq evidence image of this repository"))?;
