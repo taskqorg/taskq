@@ -644,6 +644,8 @@ pub(crate) fn executable(bin: PathBuf, access: &crate::policy::Effective, env: &
     if access.linux {
         let mut c = crate::platform::command("/usr/local/libexec/taskq-sandbox");
         c.arg(env.root).arg(env.install).arg(&access.mode).arg(bin);
+        #[cfg(target_os = "linux")]
+        crate::linux_sandbox::own(&mut c);
         return Ok(c);
     }
     Ok(match &access.profile {
