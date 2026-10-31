@@ -283,7 +283,7 @@ Linked from `taskq.md` [§ 4](../../taskq.md#4-service) and [§ 8](../../taskq.m
 
 ### Windows setup and macOS signing (§ 8 step 5)
 
-5. Windows setup runs outside MSIX; host rollback counts starts. macOS: every binary starts signed as a release; no `<install>` entry named Resources or Contents ([detail](worker-permissions.md#contract-detail)).
+5. Windows setup runs outside MSIX; host rollback counts starts. macOS: every binary starts signed as a release by the [signing step](../../taskq.md#install-and-signing); no `<install>` entry named Resources or Contents ([detail](worker-permissions.md#contract-detail)).
 
 ## Native stop and restart conditions
 
