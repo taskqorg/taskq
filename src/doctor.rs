@@ -20,9 +20,11 @@ const MAX_TEMP: usize = 2000;
 /// OS-temp folders the doctor never removes: live worker private temp (Windows sandbox).
 const KEEP_TEMP: [&str; 1] = ["taskq-windows"];
 
-/// What one pass removed and kept; `freed` is the byte size of removed files.
+/// What one pass removed and kept; `freed` is the byte size of removed files. `lines`: one per removed (or, in a dry
+/// run, removable) release, temp folder and native object, and per failure, for `taskq doctor` only.
 #[derive(Debug, Default, PartialEq)]
-pub struct Outcome { pub releases: u64, pub temp: u64, pub native: u64, pub freed: u64, pub kept: u64, pub failed: u64, pub unknown: u64 }
+pub struct Outcome { pub releases: u64, pub temp: u64, pub native: u64, pub freed: u64, pub kept: u64, pub failed: u64, pub unknown: u64,
+    pub lines: Vec<String>, dry: bool }
 
 impl Outcome {
     fn counts(&self) -> BTreeMap<String, u64> {
@@ -33,12 +35,51 @@ impl Outcome {
     /// One host log line, only when the pass removed or failed to remove something, or release ownership was unknown.
     fn line(&self) -> Option<String> {
         (self.releases + self.temp + self.native + self.failed + self.unknown > 0).then(|| {
-            let mut line = format!("doctor: removed {} old releases, {} temp folders, {} qualification objects; freed {} MiB",
+            let (remove, free) = if self.dry { ("would remove", "would free") } else { ("removed", "freed") };
+            let mut line = format!("doctor: {remove} {} old releases, {} temp folders, {} qualification objects; {free} {} MiB",
                 self.releases, self.temp, self.native, self.freed / (1 << 20));
             if self.failed > 0 { line.push_str(&format!("; {} removals failed", self.failed)); }
             if self.unknown > 0 { line.push_str("; release ownership unknown, every release kept"); }
             line
         })
+    }
+    /// `taskq doctor`: the item lines, then the summary with the kept release count.
+    pub fn cli_lines(mut self) -> Vec<String> {
+        let summary = self.line().unwrap_or_else(|| "doctor: nothing to remove".into());
+        self.lines.push(format!("{summary}; kept {} releases", self.kept));
+        self.lines
+    }
+    /// A removed item; a dry run counts it and removes nothing.
+    fn gone(&mut self, path: &Path, bytes: u64, what: String) -> bool {
+        let mib = |b: u64| if b >= 1 << 20 { format!(" ({} MiB)", b >> 20) } else { String::new() };
+        if self.dry {
+            self.freed += bytes;
+            self.lines.push(format!("would remove {what}{}", mib(bytes)));
+            return true;
+        }
+        let meta = fs::symlink_metadata(path);
+        let gone = if meta.as_ref().is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(path) } else { fs::remove_file(path) };
+        match gone {
+            Ok(()) => { self.freed += bytes; self.lines.push(format!("removed {what}{}", mib(bytes))); true }
+            Err(e) => { self.failed += 1; self.lines.push(format!("{what} kept: removal failed: {e}")); false }
+        }
+    }
+}
+
+/// `taskq doctor [--dry-run]` (#2060): one pass now. `<install>/doctor.lock` keeps a CLI pass and the service's apart.
+pub fn cli(install: &Path, dry: bool) -> Vec<String> {
+    let _lock = match lock(install) {
+        Ok(l) => l,
+        Err(e) => return vec![e],
+    };
+    pass(install, &std::env::temp_dir(), SystemTime::now(), &Native::Host, dry).cli_lines()
+}
+
+fn lock(install: &Path) -> Result<coreq::file_lock::Lock, String> {
+    match coreq::file_lock::try_lock(&install.join("doctor.lock")) {
+        Ok(l) => Ok(l),
+        Err(fs::TryLockError::WouldBlock) => Err("doctor: a pass is running".into()),
+        Err(fs::TryLockError::Error(e)) => Err(format!("doctor: lock unreadable: {e}")),
     }
 }
 
@@ -61,16 +102,20 @@ impl Doctor {
             self.last = Some(Instant::now());
             let install = install.to_path_buf();
             self.running = std::thread::Builder::new().name("taskq-doctor".into())
-                .spawn(move || pass(&install, &std::env::temp_dir(), SystemTime::now(), &Native::Host).line()).ok();
+                .spawn(move || {
+                    // a `taskq doctor` pass that holds the lock stands in for this one
+                    let _lock = lock(&install).ok()?;
+                    pass(&install, &std::env::temp_dir(), SystemTime::now(), &Native::Host, false).line()
+                }).ok();
         }
         line
     }
 }
 
 /// One doctor pass, recorded as the `service.doctor` operation with its counts.
-pub fn pass(install: &Path, temp: &Path, now: SystemTime, native: &Native) -> Outcome {
+pub fn pass(install: &Path, temp: &Path, now: SystemTime, native: &Native, dry: bool) -> Outcome {
     crate::profile::measure_counted("service.doctor", || {
-        let mut o = Outcome::default();
+        let mut o = Outcome { dry, ..Outcome::default() };
         releases(install, now, &mut o);
         leftovers(temp, now, &mut o);
         native.clean(now, &mut o);
@@ -99,15 +144,6 @@ fn tree(path: &Path) -> (u64, SystemTime) {
 
 fn stale(newest: SystemTime, now: SystemTime) -> bool { now.duration_since(newest).is_ok_and(|age| age >= STALE) }
 
-fn remove(path: &Path, bytes: u64, o: &mut Outcome) -> bool {
-    let meta = fs::symlink_metadata(path);
-    let gone = if meta.as_ref().is_ok_and(|m| m.is_dir()) { fs::remove_dir_all(path) } else { fs::remove_file(path) };
-    match gone {
-        Ok(()) => { o.freed += bytes; true }
-        Err(_) => { o.failed += 1; false }
-    }
-}
-
 /// A1: keep every release in use plus the [`KEEP_PREVIOUS`] newest others; remove the rest and staging leftovers
 /// (`*.tmp`) older than [`STALE`]. Unknown ownership (registry or a project version unreadable) keeps everything.
 fn releases(install: &Path, now: SystemTime, o: &mut Outcome) {
@@ -124,13 +160,13 @@ fn releases(install: &Path, now: SystemTime, o: &mut Outcome) {
     let mut previous = 0;
     for (name, path, bytes, newest) in entries {
         if name.ends_with(".tmp") {
-            if stale(newest, now) && remove(&path, bytes, o) { o.releases += 1; }
+            if stale(newest, now) && o.gone(&path, bytes, format!("release staging {name}")) { o.releases += 1; }
             continue;
         }
         if in_use.contains(&name) || previous < KEEP_PREVIOUS {
             if !in_use.contains(&name) { previous += 1; }
             o.kept += 1;
-        } else if remove(&path, bytes, o) {
+        } else if o.gone(&path, bytes, format!("release {name}")) {
             o.releases += 1;
         }
     }
@@ -151,7 +187,7 @@ fn leftovers(temp: &Path, now: SystemTime, o: &mut Outcome) {
         if !leftover(&name) || !fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_dir()) { continue; }
         let (bytes, newest) = tree(&e.path());
         if !stale(newest, now) { continue; }
-        if remove(&e.path(), bytes, o) { o.temp += 1; removed += 1; }
+        if o.gone(&e.path(), bytes, format!("temp folder {name}")) { o.temp += 1; removed += 1; }
     }
 }
 
@@ -181,9 +217,18 @@ pub enum Native { #[cfg_attr(not(test), allow(dead_code))] None, Host }
 impl Native {
     fn clean(&self, now: SystemTime, o: &mut Outcome) {
         if matches!(self, Native::None) { return; }
-        match native_clean(now) {
-            Ok((removed, failed)) => { o.native += removed; o.failed += failed; }
-            Err(_) => o.failed += 1,
+        let names = match native_candidates(now) {
+            Ok(n) => n,
+            Err(e) => { o.failed += 1; o.lines.push(format!("qualification objects unread: {e}")); return; }
+        };
+        if o.dry {
+            o.native += names.len() as u64;
+            o.lines.extend(names.iter().map(|n| format!("would remove qualification object {n}")));
+            return;
+        }
+        for (n, ok) in native_remove(&names) {
+            if ok { o.native += 1; o.lines.push(format!("removed qualification object {n}")); }
+            else { o.failed += 1; o.lines.push(format!("qualification object {n} kept: removal failed")); }
         }
     }
 }
@@ -192,18 +237,23 @@ const NATIVE_BUDGET: Duration = Duration::from_secs(60);
 
 /// Windows Scheduled Tasks of the root folder: state 4 is running; `LastRunTime` before 2000 means never run.
 #[cfg(windows)]
-fn native_clean(now: SystemTime) -> Result<(u64, u64), String> {
+fn native_candidates(now: SystemTime) -> Result<Vec<String>, String> {
     const LIST: &str = "$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\\');foreach($t in $r.GetTasks(1)){$l=$t.LastRunTime;$u=if($l.Year -lt 2000){0}else{[DateTimeOffset]::new($l.ToUniversalTime()).ToUnixTimeSeconds()};\"{0}`t{1}`t{2}\" -f $t.Name,$t.State,$u}";
     let out = crate::platform::output("doctor.tasks", &mut crate::host_control::powershell(LIST), NATIVE_BUDGET)?;
     if !out.status.success() { return Err("scheduled tasks unreadable".into()); }
-    let names = removable(&windows_tasks(&String::from_utf8_lossy(&out.stdout)), now, None);
-    if names.is_empty() { return Ok((0, 0)); }
+    Ok(removable(&windows_tasks(&String::from_utf8_lossy(&out.stdout)), now, None))
+}
+
+/// Each name with whether its removal succeeded.
+#[cfg(windows)]
+fn native_remove(names: &[String]) -> Vec<(String, bool)> {
+    if names.is_empty() { return vec![]; }
     let quoted: Vec<String> = names.iter().map(|n| format!("'{}'", n.replace('\'', "''"))).collect();
     let code = format!("$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$r=$s.GetFolder('\\');foreach($n in @({})){{try{{$r.DeleteTask($n,0);'removed'}}catch{{'failed'}}}}", quoted.join(","));
-    let out = crate::platform::output("doctor.tasks.remove", &mut crate::host_control::powershell(&code), NATIVE_BUDGET)?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let removed = text.lines().filter(|l| l.trim() == "removed").count() as u64;
-    Ok((removed, names.len() as u64 - removed))
+    let text = crate::platform::output("doctor.tasks.remove", &mut crate::host_control::powershell(&code), NATIVE_BUDGET)
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let mut said = text.lines().map(|l| l.trim() == "removed");
+    names.iter().map(|n| (n.clone(), said.next().unwrap_or(false))).collect()
 }
 
 /// Parses `name<TAB>state<TAB>last-run-seconds` lines of the Scheduled Task listing.
@@ -218,27 +268,25 @@ fn windows_tasks(text: &str) -> Vec<Entry> {
 
 /// systemd user units: failed qualification or `taskq-*` units are reset; the service unit never matches.
 #[cfg(target_os = "linux")]
-fn native_clean(now: SystemTime) -> Result<(u64, u64), String> {
+fn native_candidates(now: SystemTime) -> Result<Vec<String>, String> {
     use std::process::Command;
     let out = crate::platform::output("doctor.units", Command::new("systemctl").args(["--user", "list-units", "--all", "--state=failed",
         "--plain", "--no-legend", "--no-pager"]), NATIVE_BUDGET)?;
     if !out.status.success() { return Err("user units unreadable".into()); }
     let failed: Vec<String> = String::from_utf8_lossy(&out.stdout).lines().filter_map(|l| l.split_whitespace().next().map(String::from))
         .filter(|u| u != "taskq.service").collect();
-    if failed.is_empty() { return Ok((0, 0)); }
+    if failed.is_empty() { return Ok(vec![]); }
     let show = crate::platform::output("doctor.units.age", Command::new("systemctl").args(["--user", "show", "--property=Id",
         "--property=StateChangeTimestampMonotonic", "--no-pager"]).args(&failed), NATIVE_BUDGET)?;
     let uptime = fs::read_to_string("/proc/uptime").ok().and_then(|t| t.split_whitespace().next()?.parse::<f64>().ok())
         .ok_or("uptime unknown")?;
-    let names = removable(&linux_units(&String::from_utf8_lossy(&show.stdout), uptime, now), now, Some("taskq-"));
-    let (mut removed, mut failures) = (0, 0);
-    for unit in names.into_iter().filter(|u| u != "taskq.service") {
-        match crate::platform::output("doctor.units.reset", Command::new("systemctl").args(["--user", "reset-failed", &unit]), NATIVE_BUDGET) {
-            Ok(o) if o.status.success() => removed += 1,
-            _ => failures += 1,
-        }
-    }
-    Ok((removed, failures))
+    Ok(removable(&linux_units(&String::from_utf8_lossy(&show.stdout), uptime, now), now, Some("taskq-")).into_iter().filter(|u| u != "taskq.service").collect())
+}
+
+#[cfg(target_os = "linux")]
+fn native_remove(names: &[String]) -> Vec<(String, bool)> {
+    names.iter().map(|unit| (unit.clone(), crate::platform::output("doctor.units.reset",
+        std::process::Command::new("systemctl").args(["--user", "reset-failed", unit]), NATIVE_BUDGET).is_ok_and(|o| o.status.success()))).collect()
 }
 
 /// Parses `systemctl show` blocks of `Id=` and `StateChangeTimestampMonotonic=` (microseconds since boot) into failed
@@ -258,18 +306,16 @@ fn linux_units(text: &str, uptime: f64, now: SystemTime) -> Vec<Entry> {
 /// launchd user jobs: a loaded qualification job without a process is removed; launchd keeps no age, so the job's
 /// last exit is taken as its end.
 #[cfg(target_os = "macos")]
-fn native_clean(_now: SystemTime) -> Result<(u64, u64), String> {
-    use std::process::Command;
-    let out = crate::platform::output("doctor.jobs", Command::new("launchctl").arg("list"), NATIVE_BUDGET)?;
+fn native_candidates(_now: SystemTime) -> Result<Vec<String>, String> {
+    let out = crate::platform::output("doctor.jobs", std::process::Command::new("launchctl").arg("list"), NATIVE_BUDGET)?;
     if !out.status.success() { return Err("launchd jobs unreadable".into()); }
-    let (mut removed, mut failures) = (0, 0);
-    for label in mac_jobs(&String::from_utf8_lossy(&out.stdout)) {
-        match crate::platform::output("doctor.jobs.remove", Command::new("launchctl").args(["remove", &label]), NATIVE_BUDGET) {
-            Ok(o) if o.status.success() => removed += 1,
-            _ => failures += 1,
-        }
-    }
-    Ok((removed, failures))
+    Ok(mac_jobs(&String::from_utf8_lossy(&out.stdout)))
+}
+
+#[cfg(target_os = "macos")]
+fn native_remove(names: &[String]) -> Vec<(String, bool)> {
+    names.iter().map(|label| (label.clone(), crate::platform::output("doctor.jobs.remove",
+        std::process::Command::new("launchctl").args(["remove", label]), NATIVE_BUDGET).is_ok_and(|o| o.status.success()))).collect()
 }
 
 /// Labels of `launchctl list` (`PID<TAB>status<TAB>label`) naming an idle qualification job.
@@ -283,7 +329,10 @@ fn mac_jobs(text: &str) -> Vec<String> {
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
-fn native_clean(_now: SystemTime) -> Result<(u64, u64), String> { Ok((0, 0)) }
+fn native_candidates(_now: SystemTime) -> Result<Vec<String>, String> { Ok(vec![]) }
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn native_remove(_names: &[String]) -> Vec<(String, bool)> { vec![] }
 
 #[cfg(test)]
 mod tests {
@@ -321,11 +370,38 @@ mod tests {
         fs::write(install.join("current"), "4.0.2").unwrap();
         fs::write(install.join("previous"), "4.0.1").unwrap();
         fs::write(install.join("projects"), "").unwrap();
-        let o = pass(&install, &base.join("none"), now, &Native::None);
+        let o = pass(&install, &base.join("none"), now, &Native::None, false);
         let on_disk = names(&install.join("releases"));
         for v in ["4.0.1", "4.0.2", "4.0.5", "4.0.6", "4.0.8.tmp"] { assert!(on_disk.contains(&v.to_string()), "{v} kept: {on_disk:?}"); }
         for v in ["4.0.3", "4.0.4", "4.0.7.tmp"] { assert!(!on_disk.contains(&v.to_string()), "{v} removed: {on_disk:?}"); }
         assert_eq!((o.releases, o.freed, o.kept, o.failed, o.unknown), (3, 210, 4, 0, 0));
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    // #2060 defect: the doctor ran only hourly and printed no item, so nobody could preview or force a pass. Kept
+    // protection: `taskq doctor --dry-run` removes nothing, and a running pass (the service's) blocks a second one.
+    #[test]
+    fn doctor_dry_run_lists_items_and_removes_nothing() {
+        let base = scratch("dry");
+        let install = base.join("install");
+        let old = SystemTime::now() - Duration::from_secs(10 * 86_400);
+        for v in ["4.0.1", "4.0.2", "4.0.3", "4.0.4"] { file(&install.join("releases").join(v).join("taskq"), 100, old); }
+        file(&base.join("temp/taskq-candidate-1/x"), 5, old);
+        fs::write(install.join("current"), "4.0.4").unwrap();
+        fs::write(install.join("projects"), "").unwrap();
+        let o = pass(&install, &base.join("temp"), SystemTime::now(), &Native::None, true);
+        assert_eq!(names(&install.join("releases")).len(), 4);
+        assert_eq!(names(&base.join("temp")), ["taskq-candidate-1"]);
+        let lines = o.cli_lines();
+        assert_eq!(lines.iter().filter(|l| l.starts_with("would remove release 4.0.1")).count(), 1, "{lines:?}");
+        assert!(lines.contains(&"would remove temp folder taskq-candidate-1".into()), "{lines:?}");
+        assert_eq!(lines.last().unwrap(), "doctor: would remove 1 old releases, 1 temp folders, 0 qualification objects; would free 0 MiB; kept 3 releases");
+        let o = pass(&install, &base.join("temp"), SystemTime::now(), &Native::None, false);
+        assert_eq!(o.cli_lines().last().unwrap(), "doctor: removed 1 old releases, 1 temp folders, 0 qualification objects; freed 0 MiB; kept 3 releases");
+        assert_eq!(pass(&install, &base.join("temp"), SystemTime::now(), &Native::None, false).cli_lines(), ["doctor: nothing to remove; kept 3 releases"]);
+        let held = lock(&install).unwrap();
+        assert_eq!(cli(&install, true), ["doctor: a pass is running"]);
+        drop(held);
         let _ = fs::remove_dir_all(&base);
     }
 
@@ -337,7 +413,7 @@ mod tests {
         for v in ["4.0.1", "4.0.2", "4.0.3", "4.0.4"] { file(&install.join("releases").join(v).join("taskq"), 1, SystemTime::UNIX_EPOCH + Duration::from_secs(86_400)); }
         fs::write(install.join("current"), "4.0.4").unwrap();
         fs::create_dir_all(install.join("projects")).unwrap();
-        let o = pass(&install, &base.join("none"), SystemTime::now(), &Native::None);
+        let o = pass(&install, &base.join("none"), SystemTime::now(), &Native::None, false);
         assert_eq!(names(&install.join("releases")).len(), 4);
         assert_eq!((o.releases, o.unknown, o.kept), (0, 1, 4));
         assert!(o.line().unwrap().contains("ownership unknown"));
@@ -359,7 +435,7 @@ mod tests {
         file(&temp.join("taskq-setup-1/fresh"), 3, now);
         file(&temp.join("other-tool/x"), 1, old);
         file(&temp.join("taskq-tray.lock"), 1, old);
-        let o = pass(&base.join("install"), &temp, now, &Native::None);
+        let o = pass(&base.join("install"), &temp, now, &Native::None, false);
         assert_eq!(names(&temp), ["other-tool", "taskq-setup-1", "taskq-tray.lock", "taskq-windows"]);
         assert_eq!((o.temp, o.freed, o.failed), (2, 42, 0));
         assert_eq!(o.counts()["removed"], 2);
