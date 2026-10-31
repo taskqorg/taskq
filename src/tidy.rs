@@ -908,7 +908,11 @@ mod tests {
         b.close(1).unwrap();
         r.upstream("b", "1");
         TEST_ENV.with_borrow_mut(|e| *e = vec![("GIT_TEST_ASSUME_DIFFERENT_OWNER".into(), "1".into())]);
-        assert!(git(&r.root, &["status"]).unwrap_err().contains("dubious ownership"), "outside a pass Git refuses the root");
+        match git(&r.root, &["status"]) {
+            Err(e) => assert!(e.contains("dubious ownership"), "outside a pass Git refuses the root: {e}"),
+            // Git before 2.45 honours the test owner switch only on Windows (WSL git 2.43): nothing to simulate
+            Ok(_) => { TEST_ENV.with_borrow_mut(Vec::clear); eprintln!("skipped: this Git cannot simulate another owner"); return; }
+        }
         let o = pass(&r.tidy(&b, false));
         TEST_ENV.with_borrow_mut(Vec::clear);
         // the test's `origin` is a local repository that this Git test mode also marks foreign, and upload-pack ignores
