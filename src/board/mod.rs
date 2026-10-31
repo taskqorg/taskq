@@ -61,6 +61,10 @@ pub trait Board {
     fn comment(&self, n: u64, body: &str) -> Result<u64>;
     /// Edits comment `id` of issue `n`: an edited entry is ignored by `fold` (§ 2).
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()>;
+    /// The web URL of comment `id` of issue `n`.
+    fn comment_url(&self, n: u64, id: u64) -> String { format!("{}#issuecomment-{id}", self.url(n)) }
+    /// Whether writers keep the § 2 summary comment; in-memory test boards opt in.
+    fn summaries(&self) -> bool { true }
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()>;
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64>;
     fn edit(&self, n: u64, body: &str) -> Result<()>;
@@ -310,6 +314,8 @@ impl Board for Profiled {
         self.op(if body.starts_with("taskq: spawn ") { "claim" } else { "comment" }, |b| b.comment(n, body))
     }
     fn edit_comment(&self, n: u64, id: u64, body: &str) -> Result<()> { self.op("comment", |b| b.edit_comment(n, id, body)) }
+    fn comment_url(&self, n: u64, id: u64) -> String { self.0.comment_url(n, id) }
+    fn summaries(&self) -> bool { self.0.summaries() }
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> { self.op("label", |b| b.labels(n, add, remove)) }
     fn create(&self, title: &str, body: &str, labels: &[String]) -> Result<u64> { self.op("write", |b| b.create(title, body, labels)) }
     fn edit(&self, n: u64, body: &str) -> Result<()> { self.op("write", |b| b.edit(n, body)) }
@@ -953,6 +959,8 @@ pub struct FakeState {
     /// `pending` or `failed` makes `publish` refuse; anything else merges.
     pub publish: String,
     pub hide_latest_comment: bool,
+    /// Writers keep the § 2 summary comment on this board.
+    pub summaries: bool,
     pub cancelled_publications: Vec<(u64, String)>,
     pub fail_publication_cancel: bool,
     /// `close_task_prs` calls `(task, reason)`; `fail_task_prs` makes them unknown.
@@ -1122,6 +1130,7 @@ impl Board for Fake {
         }
         Ok(())
     }
+    fn summaries(&self) -> bool { self.state.borrow().summaries }
     fn labels(&self, n: u64, add: &[String], remove: &[String]) -> Result<()> {
         let mut st = self.state.borrow_mut();
         if std::mem::take(&mut st.fail_labels) { return Err("label write failed".into()); }

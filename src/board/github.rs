@@ -54,6 +54,18 @@ fn trusted(v: &Value) -> bool {
     matches!(v["author_association"].as_str(), Some("OWNER" | "MEMBER" | "COLLABORATOR"))
 }
 
+/// One issue comment of the REST API.
+pub(crate) fn parse_comment(v: &Value) -> Comment {
+    Comment {
+        id: v["id"].as_u64().unwrap_or(0),
+        created: iso(&s(v, "created_at")).unwrap_or(0),
+        body: s(v, "body"),
+        trusted: trusted(v),
+        edited: s(v, "updated_at") != s(v, "created_at"),
+        author: s(&v["user"], "login"),
+    }
+}
+
 fn parse_issue(v: &Value) -> Issue {
     Issue {
         number: v["number"].as_u64().unwrap_or(0),
@@ -611,14 +623,7 @@ impl Board for GitHub {
     }
 
     fn comments(&self, n: u64) -> Result<Vec<Comment>> {
-        Ok(self.api.all(&format!("/issues/{n}/comments?per_page=100"))?.iter().map(|v| Comment {
-            id: v["id"].as_u64().unwrap_or(0),
-            created: iso(&s(v, "created_at")).unwrap_or(0),
-            body: s(v, "body"),
-            trusted: trusted(v),
-            edited: s(v, "updated_at") != s(v, "created_at"),
-            author: s(&v["user"], "login"),
-        }).collect())
+        Ok(self.api.all(&format!("/issues/{n}/comments?per_page=100"))?.iter().map(parse_comment).collect())
     }
 
     fn comment(&self, n: u64, body: &str) -> Result<u64> {

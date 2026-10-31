@@ -1,0 +1,714 @@
+{
+ "number": 1758,
+ "body": "## Goal\nOwner 2026-10-28: users see one app named TaskQ, not an app plus a service. Open, hide, quit and restart work as in any app; Dock and taskbar pins survive updates.\n\n## Acceptance\nA1. Spec first (R13): menu.md M15 and taskq.md tray line say: Open starts all; closing or hiding the window keeps work running; Quit drain-stops; Restart exists; user text never says service.\nA2. macOS: TaskQ.app is always a regular app (Dock icon, Cmd+Tab); app menu has About, Hide Cmd+H, Hide Others, Show All, Restart TaskQ, Quit Cmd+Q; LSUIElement dropped; menu bar icon stays.\nA3. Windows: tray menu has Open, Restart TaskQ, Quit TaskQ; Start menu TaskQ.lnk targets <default install>/taskq-tray.exe tray --open; taskbar pin of it opens or raises TaskQ.\nA4. Defect fix: a tray of a non-default install (tests, temp installs) never writes the user's Start menu shortcut; the default tray repairs a wrong TaskQ.lnk target on start. Failing test before, pass after.\nA5. Restart: drain-stop as Quit, then Open; readback shows a new service generation and one tray pid on both OSes.\nA6. Update path: the Dock item and taskbar pin keep the same path across a release N to N+1 update on the live channel and still open TaskQ; Mac and Windows evidence, or Not tested with the exact reason.\n\n## Scope\n- src/tray.rs\n- src/notify_windows.rs\n- docs/design/menu.md\n- taskq.md\n",
+ "comments": [
+  {
+   "id": 6469666564,
+   "created": 1793192522,
+   "body": "taskq: hold",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6469671050,
+   "created": 1793192534,
+   "body": "taskq: start",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6469689196,
+   "created": 1793192586,
+   "body": "taskq: spawn worker claude:aaafe4f9-3b64-4743-bdc0-61aa2da51837 win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6469710246,
+   "created": 1793192648,
+   "body": "taskq: accepted 6469689196 attempt 6469689196\nop-id: accept-6469689196",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6469734439,
+   "created": 1793192717,
+   "body": "taskq: steer\nOwner 2026-10-28: on Windows the app is <install>\\taskq.exe; drop the taskq-tray.exe copy. Start menu, taskbar pin and double-click run taskq.exe: no args opens TaskQ.\nKeep it simple: no console window on double-click, CLI output in terminals unchanged, notification-area pin and toasts keep working across updates. A3 reads taskq.exe in place of taskq-tray.exe.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470109559,
+   "created": 1793193712,
+   "body": "taskq: steer\nPM: this attempt runs on Windows, so A2 and the Mac half of A5/A6 cannot run here. Build and unit-test the macOS code paths you can; then ask the PM for a Mac readback instead of marking them Not tested.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470615524,
+   "created": 1793194965,
+   "body": "taskq: result eac473146f6265b4d3f330ace655e96c85722eb9 attempt 6469689196\nChanged: TaskQ shows as one normal app: macOS Dock app with Hide/Restart/Quit menu; Windows tray Open/Restart TaskQ/Quit TaskQ; temp installs no longer touch the user's Start menu link. PR #1761.\nChecks: cargo test --locked --bin taskq only_the_default_install_writes_and_repairs_the_start_menu_link -- FAIL before fix (register Ok(true) != Ok(false) for temp install), PASS after\nChecks: python3 scripts/check.py -- diff check, check.test.py, runtime names PASS; cargo test 537 pass, 18 worker-env blocked (TASKQ_ATTEMPT host/lifecycle guards, Windows sandbox restore), not PASS\nChecks: cargo run --locked -- selftest (offline, temp TASKQ_INSTALL) -- PASS: 99 golden traces, formats\nChecks: node tests/*.test.cjs (25 scripts) -- PASS; sh docs/shots/check.test.sh -- PASS; docs/shots/update.sh refreshed after rebase\nChecks: macOS build and app menu/Dock behavior -- not tested: Windows host; merge_group CI covers macOS build\nChecks: A5 live Restart readback, A6 Dock/taskbar pin across release update -- not tested: worker attempt would drain-wait on itself; needs published N+1 release\nOpen: Mac behavior and live A5/A6 unverified; Dock-menu Quit is not drained (tao has no terminate hook); Settings Services and operator errors keep service wording.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470657154,
+   "created": 1793195079,
+   "body": "taskq: released 6469689196 exit attempt 6469689196\nop-id: release-6469689196",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470661602,
+   "created": 1793195091,
+   "body": "taskq: spawn reviewer claude:514f219d-afc4-4518-9b8b-1551113efe00 win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470674100,
+   "created": 1793195126,
+   "body": "taskq: accepted 6470661602 attempt 6470661602\nop-id: accept-6470661602",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470680119,
+   "created": 1793195142,
+   "body": "taskq: requeue attempt 6470661602\nReason: A3 ignores owner steer: Start menu, pin and double-click must run <install>\\taskq.exe (no args opens TaskQ, no console); spec, link and test still use taskq-tray.exe. taskq.md tray line drops Writes/readback and ipc rules.\nNext: apply steer, drop taskq-tray.exe; restore dropped rules (trim elsewhere or move to menu.md); A5 Windows Restart readback; per PM steer ask PM for Mac A2/A5/A6 readback, not Not tested.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470695279,
+   "created": 1793195182,
+   "body": "taskq: released 6470661602 exit attempt 6470661602\nop-id: release-6470661602",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470712891,
+   "created": 1793195229,
+   "body": "taskq: spawn worker claude:f790588b-fc4e-44c4-973d-81671045642a mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470734377,
+   "created": 1793195286,
+   "body": "taskq: accepted 6470712891 attempt 6470712891\nop-id: accept-6470712891",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470919661,
+   "created": 1793195773,
+   "body": "taskq: ask attempt 6470712891\nDone: 83dd7d67 pushed to PR #1761: taskq.exe is the Windows app, taskq-tray.exe dropped, tray rules restored; Mac build+bin tests pass\nProblem: PM readback needed (worker cannot drain itself): Mac A2 Dock/app menu, A5 Restart new generation + one tray pid Mac+Win, A6 pin path after N+1\nEvidence: [#1761](https://github.com/taskqorg/taskq/pull/1761)\nTo answer: `taskq answer 1758 --text <done>`.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6470969418,
+   "created": 1793195905,
+   "body": "taskq: released 6470712891 exit attempt 6470712891\nop-id: release-6470712891",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6471201253,
+   "created": 1793196494,
+   "body": "taskq: answer\nPM Mac readback on 83dd7d67 (dev 4.6.40-dev.1793196143): A2 Pass: regular app in Dock, no LSUIElement, menu About, Hide (Cmd+H), Hide Others, Show All, Restart TaskQ, Quit (Cmd+Q); one menu bar status item.\nA5 Mac: Restart TaskQ queued a drain stop (2f09a978) that preserves live csgo #400; old generation cc3bf94b, tray pid 88962. New generation lands when #400 ends; PM posts it then.\nA6 Mac: dev N to N+1 install kept ~/Applications/TaskQ.app and it opens; live channel Not tested: Mac is dev-only by owner decision. TaskQ is not pinned in the Dock.\nWindows A3/A5/A6: drain also waits for live win #378; PM checks after it ends. Do not wait idle: finish the rest and put the PR in review with these gaps named.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472289602,
+   "created": 1793199154,
+   "body": "taskq: requeue\nReason: Mac drain restart deadlocked on this task's released attempt; PM requeued it to free ownership. Continue per the last PM answer.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472394418,
+   "created": 1793199402,
+   "body": "taskq: spawn worker claude:2777487e-a3d5-46ce-81bc-f431ba44026c win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472417655,
+   "created": 1793199460,
+   "body": "taskq: accepted 6472394418 attempt 6472394418\nop-id: accept-6472394418",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472568558,
+   "created": 1793199838,
+   "body": "taskq: steer\nPM A5 Mac: Restart drain 2f09a978 deadlocked on this task's released attempt (defect #1769). PM kickstarted twice; new generation pid 60148, Mac admits again 15:03Z. Record A5 Mac as Fail with #1769; do not retest Restart here.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472642592,
+   "created": 1793200017,
+   "body": "taskq: result e5e233c9f2266bb9429d4fbb2df37033721c4b28 attempt 6472394418\nChanged: TaskQ is one normal app: macOS Dock app with Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: cargo test --locked --bin taskq shortcut_identity_readback_and_ownership -- FAIL before (stale tray args), PASS after\nChecks: cargo test --locked --bin taskq only_the_default_install_writes_and_repairs_the_start_menu_link -- FAIL before fix, PASS after\nChecks: python3 scripts/check.py (Windows, full selection) -- PASS: cargo 555 pass, 36 ignored; node checks; 148 s\nChecks: cargo run --locked -- selftest (temp TASKQ_INSTALL) -- 99 golden traces, formats PASS; board read skipped: no token offline\nChecks: PM Mac readback on 83dd7d67 -- A2 PASS; A6 dev N to N+1 keeps TaskQ.app and it opens\nChecks: A5 Mac+Windows, A3/A6 Windows live -- not tested here: drain waits on live #400/#378 and this attempt; PM reads back\nOpen: PM readback pending: A5 new generation + one tray pid (Mac, Windows), Windows A3/A6 pin; A6 live channel not tested (Mac dev-only); Dock-menu Quit is not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472672059,
+   "created": 1793200089,
+   "body": "taskq: released 6472394418 exit attempt 6472394418\nop-id: release-6472394418",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472673968,
+   "created": 1793200094,
+   "body": "taskq: spawn reviewer claude:7d0faa19-3aec-43cb-be08-66c7b6b6664b win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472675065,
+   "created": 1793200097,
+   "body": "taskq: spawn reviewer claude:b8f89d84-8a96-4462-b394-4af1c925a974 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472695444,
+   "created": 1793200150,
+   "body": "taskq: accepted 6472673968 attempt 6472673968\nop-id: accept-6472673968",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472909124,
+   "created": 1793200662,
+   "body": "taskq: publish attempt 6472673968\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Task fit: A1 ok (taskq.md tray line, menu.md M15), A2 ok (PM Mac readback), A3 ok by code and link test, live pin unknown, A4 ok (fail-before/pass-after test, rerun PASS on Windows)\nChecks: Task fit: A5 gap: Mac Restart drain deadlocked, owned by #1769, Windows readback unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app, live channel and Windows not tested (reasons in result)\nChecks: live A3/A5/A6 go to the pre-release owner batch (taskq.md section 7 rule 8: no per-task live install proof)\nChecks: PR CI green on e5e233c9 (plan, shots, rust ubuntu, tests); merge-result CI pending on merge_group\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao); taskq.md Data line drops telemetry detail now only in Product\nOpen: #1769 Restart drain deadlock; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472936786,
+   "created": 1793200729,
+   "body": "taskq: released 6472673968 exit attempt 6472673968\nop-id: release-6472673968",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6472963233,
+   "created": 1793200795,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgON3nM",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473172930,
+   "created": 1793201318,
+   "body": "taskq: requeue main-moved\nmerge queue removed PR: merge_conflict",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473182481,
+   "created": 1793201342,
+   "body": "taskq: spawn worker claude:790ecb20-c966-4a69-bd39-4128fda8a02d win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473187405,
+   "created": 1793201354,
+   "body": "taskq: accepted 6473182481 attempt 6473182481\nop-id: accept-6473182481",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473330757,
+   "created": 1793201710,
+   "body": "taskq: result b31a4ad0b3c090624adef3ab2ff8a5c3a3c0f881 attempt 6473182481\nChanged: PR #1761 rebased on main after merge_conflict dequeue; no behavior change since e5e233c. TaskQ stays one normal app on Mac and Windows.\nChecks: git rebase origin/main (34ea7a5) -- menu.md M15 conflict resolved: kept #1766 drain-stop status line and this task's app lifecycle text; other files auto-merged\nChecks: python3 scripts/check.py (Windows, full selection, TASKQ_* worker env unset) -- PASS: cargo 557 pass, 36 ignored; node and release checks; 116 s\nChecks: python3 scripts/check.py inside worker env -- 18 host/lifecycle tests refused by TASKQ_ATTEMPT guards: sandbox-blocked, not PASS\nChecks: cargo run --locked -- selftest (temp TASKQ_INSTALL) -- 99 golden traces, formats PASS; board read skipped: no token offline\nChecks: docs/shots/manifest.json uiSources -- unchanged by main since old base; tray.rs blob eb70716 matches\nChecks: A2 Mac PASS, A5 Mac Fail (#1769), live Windows A3/A5 and A6 -- unchanged from prior result; release owner batch (section 7 rule 8)\nOpen: #1769 Restart drain deadlock; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; Dock-menu Quit not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473359800,
+   "created": 1793201781,
+   "body": "taskq: released 6473182481 exit attempt 6473182481\nop-id: release-6473182481",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473361981,
+   "created": 1793201787,
+   "body": "taskq: spawn reviewer claude:d7b5ea28-717b-4783-bf79-9fbe738cc3ec win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473383110,
+   "created": 1793201843,
+   "body": "taskq: accepted 6473361981 attempt 6473361981\nop-id: accept-6473361981",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473410998,
+   "created": 1793201918,
+   "body": "taskq: publish attempt 6473361981\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Rebase review: git range-diff vs reviewed e5e233c -- only menu.md M15 conflict resolution; #1766 drain-stop line kept, Restart and refused Quit/Restart lines kept; other commits identical\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after test)\nChecks: Task fit: A5 gap: Mac Restart drain deadlock owned by #1769, Windows readback unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app, live/Windows not tested\nChecks: live A3/A5/A6 go to the pre-release owner batch (taskq.md section 7 rule 8: no per-task live install proof)\nChecks: PR CI green on b31a4ad (plan, shots, rust ubuntu, tests); taskq.md 299 lines, 61437 bytes (within 60 KiB); merge-result CI pending on merge_group\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: #1769 Restart drain deadlock; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473440452,
+   "created": 1793201986,
+   "body": "taskq: released 6473361981 exit attempt 6473361981\nop-id: release-6473361981",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473465888,
+   "created": 1793202047,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOApk",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473543037,
+   "created": 1793202240,
+   "body": "taskq: requeue main-moved\nmerge queue removed PR: merge_conflict",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473547566,
+   "created": 1793202251,
+   "body": "taskq: spawn worker claude:8b9f65b8-f9d6-4e78-9792-f6d72d0b5e65 win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473572229,
+   "created": 1793202310,
+   "body": "taskq: accepted 6473547566 attempt 6473547566\nop-id: accept-6473547566",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473661406,
+   "created": 1793202539,
+   "body": "taskq: result 36e1e2c6584725a54e3edcb0d7aaa3d45f3b536f attempt 6473547566\nChanged: PR #1761 rebased on main after second merge_conflict dequeue (#1770 menu.md line); no behavior change since e5e233c. TaskQ stays one normal app on Mac and Windows.\nChecks: git rebase origin/main (9d4126b, #1770) -- menu.md M15 Quit conflict resolved twice: kept #1769 'asked or exited resumes after next start' clause and this task's app text\nChecks: python3 scripts/check.py (Windows, full selection, TASKQ_* worker env unset) -- PASS: cargo 560 pass, 36 ignored; node and release checks; 206 s\nChecks: cargo run --locked -- selftest (temp TASKQ_INSTALL) -- 99 golden traces, formats PASS; board read skipped: no token offline\nChecks: taskq.md size -- 299 lines, 61438 bytes (within 60 KiB)\nChecks: A2 Mac PASS, A5 Mac Fail (#1769, now merged), live Windows A3/A5 and A6 -- unchanged from prior result; release owner batch (section 7 rule 8)\nOpen: live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; A5 Mac retest after #1769 fix; Dock-menu Quit not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473691489,
+   "created": 1793202612,
+   "body": "taskq: released 6473547566 exit attempt 6473547566\nop-id: release-6473547566",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473695529,
+   "created": 1793202621,
+   "body": "taskq: spawn reviewer claude:11f27678-4cb0-4fc7-9fec-a8562066637b win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473716122,
+   "created": 1793202671,
+   "body": "taskq: accepted 6473695529 attempt 6473695529\nop-id: accept-6473695529",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473769626,
+   "created": 1793202795,
+   "body": "taskq: publish attempt 6473695529\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Rebase review: git range-diff b31a4ad vs 36e1e2c on 9d4126b -- only menu.md M15 Quit line changed; #1769 resume clause and this task's app text both kept; other commits identical\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after test)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (now merged), Windows readback unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app, live/Windows not tested\nChecks: live A3/A5/A6 go to the pre-release owner batch (taskq.md section 7 rule 8: no per-task live install proof)\nChecks: PR CI green on 36e1e2c (plan, shots, rust ubuntu, tests); taskq.md 299 lines, 61438 bytes (within 60 KiB); merge-result CI pending on merge_group\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473773870,
+   "created": 1793202804,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOHic",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473801869,
+   "created": 1793202862,
+   "body": "taskq: released 6473695529 exit attempt 6473695529\nop-id: release-6473695529",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473918014,
+   "created": 1793203135,
+   "body": "taskq: requeue main-moved\nmerge queue removed PR: merge_conflict",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473935829,
+   "created": 1793203181,
+   "body": "taskq: spawn worker claude:933c675d-d7ce-4157-8c66-cde4d66a0286 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6473940272,
+   "created": 1793203193,
+   "body": "taskq: accepted 6473935829 attempt 6473935829\nop-id: accept-6473935829",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474042470,
+   "created": 1793203447,
+   "body": "taskq: result da701885a2135391dd83c9a0a09dc530a9a9b297 attempt 6473935829\nChanged: PR #1761 rebased on main after third merge_conflict dequeue (#1768 CHANGELOG line); no behavior change since e5e233c. TaskQ stays one normal app on Mac and Windows.\nChecks: git rebase origin/main (7059974) -- CHANGELOG.md Unreleased conflict with #1768: kept both entries; other files auto-merged; PR #1761 MERGEABLE\nChecks: python3 scripts/check.py (Mac, TASKQ_* env unset) -- diff check, check.test.py, npm build PASS; cargo bin 569 pass, 32 ignored\nChecks: cargo test --locked --no-fail-fast -- integration 18 pass; resume_records_its_result_without_releasing_the_host_hold: sandbox-blocked (sandbox-exec: sandbox_apply: Operation not permitted), not PASS\nChecks: cargo run --locked -- selftest (temp TASKQ_INSTALL, offline) -- formats PASS; board read skipped offline\nChecks: node tests/*.test.cjs, docs/shots/check.test.sh, release-tag.test.sh, release-check.test.py -- PASS\nChecks: A2 Mac PASS, A5 Mac Fail before #1769, live Windows A3/A5 and A6 -- unchanged from prior result; release owner batch (section 7 rule 8)\nOpen: live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; A5 Mac retest after #1769 fix; Dock-menu Quit not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474070278,
+   "created": 1793203519,
+   "body": "taskq: released 6473935829 exit attempt 6473935829\nop-id: release-6473935829",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474073141,
+   "created": 1793203526,
+   "body": "taskq: spawn reviewer claude:50391861-07d3-43e5-b03a-579d17e8df15 win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474098456,
+   "created": 1793203588,
+   "body": "taskq: accepted 6474073141 attempt 6474073141\nop-id: accept-6474073141",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474150741,
+   "created": 1793203704,
+   "body": "taskq: publish attempt 6474073141\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Rebase review: git range-diff 36e1e2c vs da70188 on 7059974 -- only CHANGELOG Unreleased context changed (#1764 entry kept beside this task's); other commits identical; no conflict markers\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after test)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (merged), Windows readback unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app, live/Windows not tested\nChecks: live A3/A5/A6 go to the pre-release owner batch (taskq.md section 7 rule 8: no per-task live install proof)\nChecks: PR CI green on da70188 (plan, shots, rust ubuntu, tests); taskq.md 299 lines, 61438 bytes (within 60 KiB); merge-result CI pending on merge_group\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474154872,
+   "created": 1793203714,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOOo0",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474178653,
+   "created": 1793203771,
+   "body": "taskq: released 6474073141 exit attempt 6474073141\nop-id: release-6474073141",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474281441,
+   "created": 1793204031,
+   "body": "taskq: publication-failed\npublication failed: merge queue removed PR: failed_checks",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474298916,
+   "created": 1793204076,
+   "body": "taskq: spawn worker claude:68870285-e2c1-4976-a045-4f6b8b1ff6fb mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474319884,
+   "created": 1793204131,
+   "body": "taskq: accepted 6474298916 attempt 6474298916\nop-id: accept-6474298916",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474356336,
+   "created": 1793204223,
+   "body": "taskq: result 18d6f031fb80064d2e21e6b2ab59df240117b293 attempt 6474298916\nChanged: PR #1761 fixes the Windows merge_group failure: Start menu link test now compares canonical paths (8.3 temp dir on CI). No behavior change.\nChecks: merge_group run 40723065007 rust (windows-latest) -- FAIL before: start menu link test compared RUNNER~1 short path with stored long path\nChecks: fix: test compares canonical link targets; production register unchanged; Windows proof is merge_group CI (Mac cannot build the Windows test)\nChecks: python3 scripts/check.py (Mac, TASKQ_* env unset) -- cargo bin 569 pass, 32 ignored; integration 18 pass\nChecks: telemetry_process::resume_records_its_result_without_releasing_the_host_hold -- sandbox-blocked (sandbox_apply: Operation not permitted), not PASS\nChecks: A2 Mac PASS, A5 Mac Fail before #1769, live Windows A3/A5 and A6 -- unchanged; release owner batch (section 7 rule 8)\nOpen: live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; A5 Mac retest after #1769 fix; Dock-menu Quit not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474385220,
+   "created": 1793204295,
+   "body": "taskq: released 6474298916 exit attempt 6474298916\nop-id: release-6474298916",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474386893,
+   "created": 1793204299,
+   "body": "taskq: spawn reviewer claude:e9f99995-2186-41e5-b468-5bbf7a0a7e25 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474391516,
+   "created": 1793204311,
+   "body": "taskq: accepted 6474386893 attempt 6474386893\nop-id: accept-6474386893",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474452366,
+   "created": 1793204465,
+   "body": "taskq: publish attempt 6474386893\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Delta review: git range-diff da70188 vs 18d6f031 -- one test-only commit: Start menu link test compares canonicalized paths (8.3 RUNNER~1 on CI); production register unchanged\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after test; Windows rerun in merge_group)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (merged), Windows readback unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app, live/Windows not tested\nChecks: live A3/A5/A6 go to the pre-release owner batch (taskq.md section 7 rule 8: no per-task live install proof)\nChecks: PR CI green on 18d6f031 (plan, shots, rust ubuntu, tests); merge-result CI pending on merge_group (Windows rust job reruns the fixed test)\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474478476,
+   "created": 1793204531,
+   "body": "taskq: released 6474386893 exit attempt 6474386893\nop-id: release-6474386893",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474502944,
+   "created": 1793204595,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOU00",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474833504,
+   "created": 1793205466,
+   "body": "taskq: publication-failed\npublication failed: merge queue removed PR: failed_checks",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474837755,
+   "created": 1793205478,
+   "body": "taskq: spawn worker claude:6c397ffc-3fbb-441a-85f9-235f24d995d7 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474854922,
+   "created": 1793205524,
+   "body": "taskq: accepted 6474837755 attempt 6474837755\nop-id: accept-6474837755",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474864985,
+   "created": 1793205551,
+   "body": "taskq: result 18d6f031fb80064d2e21e6b2ab59df240117b293 attempt 6474837755\nChanged: PR #1761 unchanged at 18d6f031; second failed_checks was a macOS runner that never started, so the queue entry needs a rerun. No code change.\nChecks: merge_group run 40725163309 -- rust (windows-latest) PASS: canonical-path link test fix works; ubuntu, windows-gnu, plan, shots PASS\nChecks: merge_group run 40725163309 rust (macos-latest) -- cancelled: no runner assigned (runner_name empty, 0 steps, 16:21-16:36Z); infra, not code\nChecks: merge_group run 40723065007 rust (macos-latest) on same tree -- PASS in 2.5 min\nChecks: git merge-base --is-ancestor origin/main (7059974) 18d6f031 -- yes; PR #1761 MERGEABLE, no rebase needed\nChecks: A2 Mac PASS, A5 Mac Fail before #1769, live Windows A3/A5 and A6 -- unchanged; release owner batch (section 7 rule 8)\nOpen: live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; A5 Mac retest after #1769 fix; Dock-menu Quit not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474879719,
+   "created": 1793205587,
+   "body": "taskq: released 6474837755 exit attempt 6474837755\nop-id: release-6474837755",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474881772,
+   "created": 1793205592,
+   "body": "taskq: spawn reviewer claude:e1cbf94d-ced8-41a3-9147-b8c22c708909 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474897889,
+   "created": 1793205636,
+   "body": "taskq: publish attempt 6474881772\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Delta review: result 18d6f031 unchanged since last reviewed publish; origin/main 7059974 is its ancestor; PR #1761 MERGEABLE, CLEAN\nChecks: merge_group run 40725163309: rust windows/ubuntu, windows-gnu, plan, shots PASS; rust (macos-latest) cancelled with no runner and 0 steps (infra), tests aggregator failed on it\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after; Windows merge_group PASS)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (merged), Windows unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app; live A3/A5/A6 in pre-release owner batch (section 7 rule 8)\nChecks: merge-result CI pending on merge_group (requeue for macOS runner)\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474900690,
+   "created": 1793205644,
+   "body": "taskq: accepted 6474881772 attempt 6474881772\nop-id: accept-6474881772",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474901469,
+   "created": 1793205646,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOeUc",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6474922559,
+   "created": 1793205703,
+   "body": "taskq: released 6474881772 exit attempt 6474881772\nop-id: release-6474881772",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475291229,
+   "created": 1793206684,
+   "body": "taskq: publication-failed\npublication failed: merge queue removed PR: failed_checks\nProblem: retry limit 3 reached by this requeue; the task waits for the owner.\n1. requeue: retry with a fresh attempt ★\n2. later: park the task until the owner requeues it\nTo answer: `taskq answer 1758.K`; a bare comment `K` makes the task ready, not later.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475318677,
+   "created": 1793206760,
+   "body": "taskq: answer 1\nrequeue: retry with a fresh attempt",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475322774,
+   "created": 1793206772,
+   "body": "taskq: spawn worker claude:6d48d360-2fcd-451f-8eae-a56a01930ea2 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475332049,
+   "created": 1793206797,
+   "body": "taskq: accepted 6475322774 attempt 6475322774\nop-id: accept-6475322774",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475357683,
+   "created": 1793206867,
+   "body": "taskq: result 18d6f031fb80064d2e21e6b2ab59df240117b293 attempt 6475322774\nChanged: PR #1761 unchanged at 18d6f031; third failed_checks was again a macOS merge_group runner that never started. Needs a fresh queue entry, no code change.\nChecks: merge_group run 40728372433 rust (macos-latest) -- cancelled again: no runner, 0 steps, 16:41-16:56Z; infra, not code\nChecks: merge_group run 40728372433 -- rust windows/ubuntu, windows-gnu, plan, shots PASS; same tree macOS PASS in run 40723065007\nChecks: other taskqorg repos -- no Actions runs since 16:00Z, so no org macOS slot contention; githubstatus shows no open incident\nChecks: gh pr view 1761 -- head 18d6f031, MERGEABLE, CLEAN; origin/main 7059974 is its ancestor\nChecks: A2 Mac PASS, A5 Mac Fail before #1769, live Windows A3/A5 and A6 -- unchanged; release owner batch (section 7 rule 8)\nOpen: if macOS runner stalls again, owner may rerun the queue entry by hand; live Windows A3/A5, A6 pin and A5 Mac retest stay in the release batch.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475385096,
+   "created": 1793206941,
+   "body": "taskq: released 6475322774 exit attempt 6475322774\nop-id: release-6475322774",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475386858,
+   "created": 1793206946,
+   "body": "taskq: spawn reviewer claude:06262907-3960-4a27-b3b1-0f1a2092c751 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475403132,
+   "created": 1793206990,
+   "body": "taskq: publish attempt 6475386858\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Delta review: result 18d6f031 unchanged since last reviewed publish; origin/main 7059974 is its ancestor; PR #1761 MERGEABLE, CLEAN; PR CI green (plan, shots, rust ubuntu, tests)\nChecks: merge_group runs 40725163309 and 40728372433: rust macos-latest cancelled with no runner and 0 steps (infra); windows/ubuntu/gnu/plan/shots PASS; same tree macOS PASS in 40723065007\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after; Windows merge_group PASS)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (merged), Windows unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app; live A3/A5/A6 in pre-release owner batch (section 7 rule 8)\nChecks: merge-result CI pending on merge_group (fresh queue entry)\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; macOS merge_group runner stalls: owner may rerun by hand",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475405703,
+   "created": 1793206997,
+   "body": "taskq: accepted 6475386858 attempt 6475386858\nop-id: accept-6475386858",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475406720,
+   "created": 1793207000,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOo38",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475428074,
+   "created": 1793207058,
+   "body": "taskq: released 6475386858 exit attempt 6475386858\nop-id: release-6475386858",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475519201,
+   "created": 1793207302,
+   "body": "taskq: requeue main-moved\nmerge queue removed PR: merge_conflict",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475523693,
+   "created": 1793207315,
+   "body": "taskq: spawn worker claude:6e07bd5f-cb2f-4097-858d-ca10a9139503 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475546958,
+   "created": 1793207379,
+   "body": "taskq: accepted 6475523693 attempt 6475523693\nop-id: accept-6475523693",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475662016,
+   "created": 1793207684,
+   "body": "taskq: result a681c381fcadb30297acee9d502fd5a5c746c66c attempt 6475523693\nChanged: PR #1761 rebased on main after fourth merge_conflict dequeue (#1760 tray.rs and shots manifest); no behavior change since e5e233c.\nChecks: git rebase origin/main (ff5d34e, #1760) -- docs/shots/manifest.json conflict; tray.rs auto-merged; PR #1761 MERGEABLE\nChecks: sh docs/shots/update.sh (Mac) -- shots and manifest refreshed for merged tray.rs; docs/shots/check.sh PASS\nChecks: python3 scripts/check.py (Mac, TASKQ_* env unset) -- cargo bin 573 pass, 33 ignored; integration 18 pass\nChecks: telemetry_process::resume_records_its_result_without_releasing_the_host_hold -- sandbox-blocked (sandbox_apply: Operation not permitted), not PASS\nChecks: A2 Mac PASS, A5 Mac Fail before #1769, live Windows A3/A5 and A6 -- unchanged; release owner batch (section 7 rule 8)\nOpen: live Windows A3/A5 and A6 N to N+1 pin checks in the release batch; A5 Mac retest after #1769 fix; Dock-menu Quit not drained (tao).",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475688138,
+   "created": 1793207755,
+   "body": "taskq: released 6475523693 exit attempt 6475523693\nop-id: release-6475523693",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475690050,
+   "created": 1793207761,
+   "body": "taskq: spawn reviewer claude:e45b86d8-f619-434b-a2ac-c3efde2ce342 mac",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475710311,
+   "created": 1793207816,
+   "body": "taskq: accepted 6475690050 attempt 6475690050\nop-id: accept-6475690050",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475733855,
+   "created": 1793207881,
+   "body": "taskq: publish attempt 6475690050\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Delta review: git range-diff 18d6f031 vs a681c381 on ff5d34e (#1760) -- tray.rs context only (#1755 tick loop kept), shots commit re-created plus one shots refresh; other commits identical\nChecks: docs/shots/manifest.json uiSources src/tray.rs ca5465a matches a681c381 blob; PR CI green on a681c381 (plan, shots, rust ubuntu, tests); origin/main ff5d34e is its ancestor\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after; Windows merge_group PASS on 18d6f031)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (merged), Windows unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app; live A3/A5/A6 in pre-release owner batch (section 7 rule 8)\nChecks: merge-result CI pending on merge_group (fresh queue entry)\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475758779,
+   "created": 1793207947,
+   "body": "taskq: released 6475690050 exit attempt 6475690050\nop-id: release-6475690050",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475781441,
+   "created": 1793208014,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABLRccRM4ABMFKzgOOv1k",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6475954706,
+   "created": 1793208479,
+   "body": "taskq: close\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nChecks: Delta review: git range-diff 18d6f031 vs a681c381 on ff5d34e (#1760) -- tray.rs context only (#1755 tick loop kept), shots commit re-created plus one shots refresh; other commits identical\nChecks: docs/shots/manifest.json uiSources src/tray.rs ca5465a matches a681c381 blob; PR CI green on a681c381 (plan, shots, rust ubuntu, tests); origin/main ff5d34e is its ancestor\nChecks: Task fit: A1 ok, A2 ok (PM Mac readback), A3 ok by code and link test (live pin unknown), A4 ok (fail-before/pass-after; Windows merge_group PASS on 18d6f031)\nChecks: Task fit: A5 gap: Mac Restart Fail before #1769 fix (merged), Windows unknown; A6 unknown: Mac dev N to N+1 keeps TaskQ.app; live A3/A5/A6 in pre-release owner batch (section 7 rule 8)\nChecks: merge-result CI pending on merge_group (fresh queue entry)\nChecks: Implementation quality: no binding gaps; advisory: Dock-menu Quit not drained (tao)\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch\n\ndelivery auto-merge r0: merged #1761 as 28b2f9252b86fe72ccfc2c2aa76ffe11a7714359; merge-result CI green",
+   "trusted": true,
+   "edited": false
+  }
+ ],
+ "summary": "<!-- taskq-summary -->\n**Closed** · merged #1761 as 28b2f9252b86fe72ccfc2c2aa76ffe11a7714359; merge-result CI green\nChanged: TaskQ is one normal app: macOS Dock app with About/Hide/Restart/Quit menu; Windows taskq.exe opens TaskQ from Start menu, pin or double-click; tray Open/Restart/Quit; temp installs never touch TaskQ.lnk. PR #1761.\nOpen: A5 Mac retest after #1769; live Windows A3/A5 and A6 N to N+1 pin checks in the release batch"
+}

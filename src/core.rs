@@ -413,6 +413,19 @@ pub fn delivery(n: u64, entries: &[Entry], id: u64) -> String {
     options(&card).into_iter().find(|o| Some(o.0) == k).map(|o| o.1).unwrap_or_else(|| head.trim().to_string())
 }
 
+/// § 2 Summary: a `close` names the `publish` it repeats (`Repeats: publish <id>`); that entry's text stands in the
+/// line's place. Older closes that copy the verdict, or a reference to no `publish`, read unchanged.
+pub fn verdict(n: u64, entries: &[Entry], text: &str) -> String {
+    text.lines().map(|l| {
+        let id = l.trim().strip_prefix(REPEATS).and_then(|id| id.trim().parse::<u64>().ok());
+        id.and_then(|id| entries.iter().find(|e| e.id == id && !e.edited && kind(n, &e.body) == "publish"))
+            .map_or_else(|| l.to_string(), |e| entry_text(n, &e.body).to_string())
+    }).collect::<Vec<_>>().join("\n")
+}
+
+/// The `close` line naming the `publish` entry it repeats (§ 2 Summary).
+pub const REPEATS: &str = "Repeats: publish ";
+
 /// The kind of log entry `body` of task `n`: `answer` for a bare comment (§ 2).
 pub fn kind(n: u64, body: &str) -> &str {
     parse(n, body).map_or("answer", |l| l.kind)

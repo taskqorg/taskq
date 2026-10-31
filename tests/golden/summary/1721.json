@@ -1,0 +1,189 @@
+{
+ "number": 1721,
+ "body": "## Goal\nAfter 'capacity: resources lock unavailable ... held by pid <service>; launches held' at 11:57Z, mac service 4.6.40-dev launched nothing for 30+ min with csgo #372/#373 ready, 0 workers, capacity showing Claude ?/5 Codex ?/5.\n\n## Acceptance\nA1. A test where the resources lock is busy for one capacity pass shows the next pass launches a ready task.\nA2. A lock miss logs when launches resume; capacity shows running counts, not ?, once the lock is free.\n",
+ "comments": [
+  {
+   "id": 6415888088,
+   "created": 1793017344,
+   "body": "taskq: hold",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6415892969,
+   "created": 1793017359,
+   "body": "taskq: start",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6415920099,
+   "created": 1793017445,
+   "body": "taskq: spawn worker claude:3cfb04a8-24d9-4f6e-9286-11937d2850c8 win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6415938605,
+   "created": 1793017505,
+   "body": "taskq: accepted 6415920099 attempt 6415920099\nop-id: accept-6415920099",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416110721,
+   "created": 1793018057,
+   "body": "taskq: steer\nPM correction: launches were not held. csgo #372/#373 sat ready 30 min because labelled host-host-mac (host is mac). Fix instead: add --host with an unknown host or host- prefix is refused, and status shows the admission wait.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416353525,
+   "created": 1793018826,
+   "body": "taskq: result 3bb0168d17fb835ee8f969f5f30b7aa7f495b988 attempt 6415920099\nChanged: a resources lock miss no longer holds launches; a settled migration is read without the lock, and the host and project log when launches resume.\nChecks: cargo test --locked --bin taskq resources_lock_miss_holds_one_pass_only settled_migration_reads_policy -- PASS\nChecks: python3 scripts/check.py -- PASS with worker TASKQ_* env unset; with it set 18 operator-only tests refuse by design\nChecks: cargo run -- selftest -- PASS\nOpen: the Mac lock holder that lasted 30 min is unconfirmed; PR #1722.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416376040,
+   "created": 1793018897,
+   "body": "taskq: released 6415920099 exit attempt 6415920099\nop-id: release-6415920099",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416377384,
+   "created": 1793018901,
+   "body": "taskq: spawn reviewer claude:4e74dc04-db5b-4f9d-8371-8e41de82b8de win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416395514,
+   "created": 1793018958,
+   "body": "taskq: accepted 6416377384 attempt 6416377384\nop-id: accept-6416377384",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416448587,
+   "created": 1793019117,
+   "body": "taskq: ask attempt 6416377384\nDone: PR #1722 meets A1/A2 by its tests; PR CI green. PM steer 6416110721 never reached the worker: absent from its log.\nProblem: the steer says launches were not held; #372/#373 waited on label host-host-mac. It asks to refuse add --host with unknown or host- names and show the admission wait in status. PR lacks both.\nEvidence: [#1722](https://github.com/taskqorg/taskq/pull/1722)\n1. requeue: keep the lock fix, add the steer fix (add --host refusal, status admission wait) in PR #1722 ★\n2. close: merge the lock fix as is (A1/A2 met); PM files the --host fix as a new task\n3. requeue: drop the lock fix, do only the steer fix\nTo answer: `taskq answer 1721.K` or comment `K` or the option text.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416473326,
+   "created": 1793019195,
+   "body": "taskq: answer\n3. Drop the lock fix: PM diagnosis was wrong, launches resumed on their own. Do only the steer fix: add --host refuses unknown or host- prefixed names; status shows the admission wait reason.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416490000,
+   "created": 1793019246,
+   "body": "taskq: released 6416377384 exit attempt 6416377384\nop-id: release-6416377384",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416491598,
+   "created": 1793019251,
+   "body": "taskq: executing 6416473326 attempt 6416377384\nop-id: execute-6416377384-6416473326-6416377384",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416497411,
+   "created": 1793019269,
+   "body": "taskq: requeue attempt 6416377384\nReason: owner answer 3: PM diagnosis was wrong; drop the lock fix of PR #1722 (launches resumed on their own).\nNext: do only the steer fix: add --host refuses unknown or host- prefixed names; status shows the admission wait reason; tests for both.",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416500890,
+   "created": 1793019280,
+   "body": "taskq: accepted 6416491598 attempt 6416377384\nop-id: accept-6416491598",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416520278,
+   "created": 1793019341,
+   "body": "taskq: released 6416491598 exit attempt 6416377384\nop-id: release-6416491598",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416521654,
+   "created": 1793019345,
+   "body": "taskq: spawn worker claude:a9eb4bb1-a8cf-47fa-9be2-5300b994ddbf win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416539657,
+   "created": 1793019400,
+   "body": "taskq: accepted 6416521654 attempt 6416521654\nop-id: accept-6416521654",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416759306,
+   "created": 1793020067,
+   "body": "taskq: result a981dcd63eb585e12795959d83da106dcb5eb152 attempt 6416521654\nChanged: add --host refuses host- prefixed and unknown host names (#1721: host-host-mac sat ready); a ready task whose host label names no heartbeat shows 'No host <name>' in status. Lock-miss change reverted (owner answer 3).\nChecks: cargo test --locked add_host_refuses_prefixed_and_unknown_names_before_writing host_label_without_heartbeat_shows_its_wait_in_status -- PASS\nChecks: cargo test --locked -- 544 pass, 3 fail: dialogue tests need sh, absent on this Windows host (host-env, dialogue.rs unchanged)\nChecks: cargo run -- selftest -- PASS\nOpen: none",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416782716,
+   "created": 1793020137,
+   "body": "taskq: released 6416521654 exit attempt 6416521654\nop-id: release-6416521654",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416784042,
+   "created": 1793020141,
+   "body": "taskq: spawn reviewer claude:e525c297-5f22-404f-a2fe-9fabd0d62602 win",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416802964,
+   "created": 1793020197,
+   "body": "taskq: accepted 6416784042 attempt 6416784042\nop-id: accept-6416784042",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416874677,
+   "created": 1793020400,
+   "body": "taskq: publish attempt 6416784042\nChanged: add --host refuses host- prefixed and unknown host names before writing; status shows 'No host <name>' for a ready task whose host label no heartbeat names (PR #1722). Lock-miss change reverted per owner answer 3.\nChecks: Task fit: A1 ok, A2 ok as replaced by owner answer 3 (steer fix only); both new tests pass in PR CI at a981dcd\nChecks: merge-result CI pending (merge_group); PR CI green on a981dcd (rust ubuntu, tests, plan, shots)\nChecks: Implementation quality: no binding gaps; advisories: snapshot orphan check counts untrusted heartbeat issues, add counts trusted only; a real host named host-x cannot be targeted\nOpen: none",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416897532,
+   "created": 1793020466,
+   "body": "taskq: released 6416784042 exit attempt 6416784042\nop-id: release-6416784042",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416919573,
+   "created": 1793020529,
+   "body": "taskq: enqueued MQE_lQDOU960Jc8AAAABKxNTj84ABMFKzgN-X9s",
+   "trusted": true,
+   "edited": false
+  },
+  {
+   "id": 6416992925,
+   "created": 1793020739,
+   "body": "taskq: close\nChanged: add --host refuses host- prefixed and unknown host names before writing; status shows 'No host <name>' for a ready task whose host label no heartbeat names (PR #1722). Lock-miss change reverted per owner answer 3.\nChecks: Task fit: A1 ok, A2 ok as replaced by owner answer 3 (steer fix only); both new tests pass in PR CI at a981dcd\nChecks: merge-result CI pending (merge_group); PR CI green on a981dcd (rust ubuntu, tests, plan, shots)\nChecks: Implementation quality: no binding gaps; advisories: snapshot orphan check counts untrusted heartbeat issues, add counts trusted only; a real host named host-x cannot be targeted\nOpen: none\n\ndelivery auto-merge r0: merged #1722 as bbb9a3abbf57aba3e30213cb55d828833109d076; merge-result CI green",
+   "trusted": true,
+   "edited": false
+  }
+ ],
+ "summary": "<!-- taskq-summary -->\n**Closed** · merged #1722 as bbb9a3abbf57aba3e30213cb55d828833109d076; merge-result CI green\nChanged: add --host refuses host- prefixed and unknown host names before writing; status shows 'No host <name>' for a ready task whose host label no heartbeat names (PR #1722). Lock-miss change reverted per owner answer 3.\nOpen: none"
+}

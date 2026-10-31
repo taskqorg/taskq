@@ -302,7 +302,7 @@ pub fn project(i:&Issue,closed:i64,comments:&[Comment],url:String)->Option<Value
     let mut row=json!({"n":i.number,"title":i.title,"url":url,"sha":sha,"closed":closed,"read":read,"kind":if report{"report"}else{"task"},"state":"closed","outcome":if completed{"success"}else if i.reason.as_deref()==Some("not_planned"){"not_planned"}else{"unknown"},"merged":crate::merge_receipt(&accepted_close),
         "comments_through":comments.iter().filter(|c|c.trusted&&!c.edited).map(|c|c.id).max().unwrap_or(0),
         "decision":decision,"visible":!legacy_answered&&!matches!(decision,"drop"|"made"),"pending_decision":if making&&!matches!(decision,"made"|"drop"){Some("make")}else{None},"tasks_made":made});
-    let details=text(handin);let verdict=text(closing);
+    let details=text(handin);let verdict=crate::core::verdict(i.number,&log(comments),&text(closing));
     row["result"]=json!(details.lines().find_map(|l|l.strip_prefix("Changed: ")));
     row["pr"]=json!(format!("{details}\n{verdict}").split(|c:char|c.is_whitespace()||matches!(c,'('|')'|'['|']'|'<'|'>')).filter(|u|u.starts_with("https://")&&(u.contains("/pull/")||u.contains("/merge_requests/"))).last().map(|u|u.trim_end_matches(|c:char|!c.is_ascii_alphanumeric()).to_string()));
     row["close"]=json!(crate::display::close_outcome(Some(&verdict),None));
