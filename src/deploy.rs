@@ -119,7 +119,7 @@ pub fn tasks(b: &dyn Board, messages: &str) -> (BTreeSet<u64>, BTreeSet<String>)
 
 /// The commit messages of `range` (`A..B`) in `root`; a missing end fetches tags once, then reads again.
 fn messages(root: &Path, range: &str) -> Res<String> {
-    let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(root).args(args).output().map_err(|e| format!("git: {e}"));
+    let git = |args: &[&str]| crate::platform::command("git").arg("-C").arg(root).args(args).output().map_err(|e| format!("git: {e}"));
     let log = || git(&["log", "--format=%B", range, "--"]);
     let mut o = log()?;
     if !o.status.success() {
@@ -220,7 +220,7 @@ pub fn applied(exe: &Path, roots: &[std::path::PathBuf], channel: &str, old: &st
         if !release || config(root).is_none_or(|d| !d.envs.iter().any(|e| e == channel)) { continue; }
         let args = ["deployed", "--version", new, "--env", channel, "--range", &format!("v{old}..v{new}"), "--host", host];
         let out = std::fs::OpenOptions::new().create(true).append(true).open(crate::dot(root).join("deployed.log"));
-        let mut cmd = std::process::Command::new(exe);
+        let mut cmd = crate::platform::command(exe);
         cmd.args(args).current_dir(root).env("TASKQ_ROOT", root).stdin(std::process::Stdio::null());
         if let Ok(f) = out { if let Ok(g) = f.try_clone() { cmd.stdout(f).stderr(g); } }
         match cmd.spawn() {
