@@ -78,7 +78,7 @@ Every surface that shows a parsed card (tray, workspace Conversations, DashQ) us
 4. Options in source order. A button shows `N.` and the label, with `★` on the recommended one. The option's detail (`+ <gain>; - <cost>`) follows its button in full on its own line; it wraps and is never cut. A link in the detail opens inside the detail.
 5. Other answer, PM pick and the receipt; evidence links behind an Evidence disclosure.
 
-No surface shows the `To answer:` line: the controls convey answering, and the board card keeps the line for board readers. An option without ` - ` (a card written before #1787, or a service card such as retry/later/close) shows its whole text as the label and has no detail.
+No surface shows the `To answer:` line: the controls convey answering, and the board card keeps the line for board readers. An option without ` - ` (a card written before #1787) shows its whole text as the label and has no detail. Service cards (retry limit, blocked, closed, refused start, failed input) come from the same writer as `ask` (#2012), so their options carry a label and a detail too; their keyed options (`later:`, `close:`) run only through `taskq answer N.K`.
 
 Option syntax: `--option "<label> - + <gain>; - <cost>"`. `ask` and `result` reject a missing label, a label over 32 characters, a label repeated in another option (case ignored) and a detail without one `+` gain and one `-` cost; the error names `option line K`. Limits count Unicode characters, so a Russian label of 32 letters fits.
 

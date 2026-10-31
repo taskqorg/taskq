@@ -45,11 +45,14 @@ for (const c of fx.cases) {
 // #1787: a labelled fixture option (the Russian card included) stays within § 2 limits, counted in characters, and
 // its button shows only N. and the label. Risk: a long or cut option on a narrow surface hides what the owner picks.
 for (const c of fx.cases) for (const r of c.rows) for (const ch of (r.question && r.question.choices) || []) {
-  if (ch.detail == null) continue;
+  if (ch.detail == null || !r.question.parsed) continue;
   assert([...ch.label].length <= 32 && [...(ch.id + '. ' + ch.text + ' ★')].length <= 160, c.name + ': option ' + ch.id + ' over § 2 limits');
   const html = card.render(c.board, r, card.fresh(r), c.capability), b = html.indexOf('data-choice="' + ch.id + '"');
   const button = html.slice(b, html.indexOf('</button>', b));
-  assert(button.includes(ch.label) && !button.includes(ch.detail) && html.includes('>' + ch.detail + '</span>'), c.name + ': option ' + ch.id + ' button or detail');
+  // a `[label](url)` shows its label: beside the button for a label link, inside the detail for a detail link
+  const shown = s => s.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1'), d = html.indexOf('-o' + ch.id + '">', b + button.length) + ch.id.toString().length + 4;
+  const detail = html.slice(d, html.indexOf('</span>', d)).replace(/<[^>]*>/g, '');
+  assert(button.includes(shown(ch.label)) && !button.includes(shown(ch.detail)) && detail === shown(ch.detail), c.name + ': option ' + ch.id + ' button or detail');
 }
 console.log('PASS labelled options');
 // A2 / section 7: derive provenance at build time, preserving exact source and released-file protection.

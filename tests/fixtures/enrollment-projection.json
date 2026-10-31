@@ -6,7 +6,7 @@
     "host": "github.com",
     "repo": "o/r"
   },
-  "observed": 99,
+  "observed": 102,
   "complete": true,
   "reason": null,
   "totals": {
@@ -16,7 +16,7 @@
     "held": 0,
     "later": 0,
     "ready": 1,
-    "review": 0,
+    "review": 1,
     "waiting": 1
   },
   "tasks": [
@@ -27,7 +27,7 @@
       "choices": [],
       "admission": {
         "code": "unknown",
-        "observed": 99,
+        "observed": 102,
         "host": null,
         "reason": "no host decision"
       }
@@ -56,7 +56,7 @@
       "choices": [],
       "admission": {
         "code": "dependency",
-        "observed": 99,
+        "observed": 102,
         "host": null
       }
     },
@@ -64,6 +64,12 @@
       "n": 5,
       "state": "failed",
       "revision": 8,
+      "choices": []
+    },
+    {
+      "n": 7,
+      "state": "review",
+      "revision": 12,
       "choices": []
     }
   ],
@@ -73,9 +79,9 @@
       "kind": "online",
       "state": "online",
       "producer": null,
-      "observed": 99,
+      "observed": 102,
       "heartbeat": 9,
-      "valid_until": 399,
+      "valid_until": 402,
       "complete": false,
       "reason": "no service identity"
     },
@@ -84,8 +90,8 @@
       "kind": "queue",
       "state": "idle",
       "producer": null,
-      "observed": 99,
-      "valid_until": 399,
+      "observed": 102,
+      "valid_until": 402,
       "complete": true,
       "reason": null,
       "running": 0,

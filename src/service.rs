@@ -207,14 +207,28 @@ pub fn blockers(b: &dyn Board, body: &str, open: Option<&HashSet<u64>>, done: &m
 }
 
 /// § 4 step 5 ask card of a task closed during a worker attempt (#1950); its answer resumes the attempt.
-fn closed_card(n: u64, at: &str) -> String {
-    [
-        format!("Done: reopened; the issue was closed at {at} during this worker attempt, with no result or review."),
-        "Problem: only the reviewer's close or a person ends a task (§ 1); a close during an attempt never counts as done.".to_string(),
-        "1. redo: finish and hand in a result for review ★".into(),
-        format!("2. later: park it; `taskq close {n}` then ends it unmerged"),
-        format!("To answer: `taskq answer {n}.K` or comment `K`; `later` needs the CLI form."),
-    ].join("\n")
+pub(crate) fn closed_card(n: u64, at: &str) -> String {
+    crate::service_card(n, &format!("reopened; the issue was closed at {at} during this worker attempt, with no result or review."),
+        "only the reviewer's close or a person ends a task (§ 1); a close during an attempt never counts as done.", &[
+        "redo: finish the work - + the attempt hands in a result for review; - the attempt runs on".into(),
+        format!("later: park it - + nothing runs; `taskq close {n}` then ends it unmerged; - the work stays undone"),
+    ], 1)
+}
+
+/// § 2 ask card of a start the rules cap refused (#1946); an answer starts a fresh attempt.
+pub(crate) fn refused_card(n: u64, why: &str) -> String {
+    crate::service_card(n, "the service refused to start this attempt; nothing ran.", &format!("start refused: {}", why.replace("\nNext: ", "; ")), &[
+        "retry after trimming - + a fresh attempt starts; - it is refused again until the rules fit the cap".into(),
+        core::LATER.into(),
+    ], 1)
+}
+
+/// § 2 ask card of resumed input that failed to launch `failures` times; the input stays for a retry.
+pub(crate) fn input_card(n: u64, text: &str, failures: usize) -> String {
+    crate::service_card(n, &format!("the input is retained; {text}"), &format!("input launch failed {failures} times; input retained."), &[
+        "retry the input - + resends the undelivered input in this session; - it may fail the same way".into(),
+        core::LATER.into(),
+    ], 1)
 }
 
 /// `git -C dir <args>`: stdout, else the command and its error (#1856: a failed call never reads as empty).
@@ -2418,7 +2432,7 @@ impl<'a> Service<'a> {
                 let log = crate::board::entries(self.board, l.task).map_err(|r| format!("#{} {text}; gone not posted: {r}", l.task))?;
                 // #1946 (pilotq#170): the cap refusal repeats until the contract shrinks, so one ask replaces gone retries
                 if e.class() == "rules-cap" {
-                    let card = format!("Problem: start refused: {}\n1. Retry after trimming ★\n2. later: park the task", e.to_string().replace("\nNext: ", "; "));
+                    let card = refused_card(l.task, &e.to_string());
                     self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&format!("rules-cap-{execution}")), None))?;
                     return Ok(());
                 }
@@ -2426,7 +2440,7 @@ impl<'a> Service<'a> {
                     let failures = core::executions(l.task, &log).iter().filter(|x| x.attempt == l.attempt && x.through == through && x.release == Some(core::Release::NoStart)).count();
                     if failures >= core::GONE_MAX as usize {
                         let op = format!("input-retry-{execution}");
-                        let card = format!("{text}\nProblem: input launch failed {failures} times; input retained.\n1. Retry undelivered input in this session ★\n2. later: park the task");
+                        let card = input_card(l.task, &text, failures);
                         self.post(l.task, core::with_fields(core::entry("ask", &[], Some(l.attempt), &card), Some(&op), None))?;
                         return Ok(());
                     }
@@ -3238,7 +3252,7 @@ mod tests {
         let t = task(&b, n);
         assert_eq!(t.state, State::Ask);
         let card = t.card.unwrap();
-        assert!(card.contains("1. retry:") && card.contains("2. later:") && card.contains("3. close: superseded by merged #86 at ddddddd; no merge ★"), "{card}");
+        assert!(card.contains("1. retry:") && card.contains("2. later:") && card.contains("3. close: superseded, no merge - + merged #86 at ddddddd carries the work; - this result is not merged ★"), "{card}");
         let calls = b.state.borrow().publications;
         let got = crate::dispatch::answer_picks(&b, &c, &[format!("{n}.3")], &crate::dispatch::Op::default()).unwrap().remove(0);
         assert!(got.ok(), "{got:?}");
@@ -4259,8 +4273,8 @@ Open: none")).unwrap();
             let a = t.attempt.unwrap();
             assert_eq!((t.state, t.retries, *starts.borrow()), (State::Ask, 0, 1), "{role}: one start, no gone retry");
             let card = t.card.unwrap();
-            assert!(card.starts_with("Problem: start refused: rules bundle 131077 bytes, 5 over the 131072-byte cap; trim taskq.md below the cap"), "{card}");
-            assert!(card.contains("1. Retry after trimming ★") && card.contains("2. later:"), "{card}");
+            assert!(card.lines().nth(1).unwrap().starts_with("Problem: start refused: rules bundle 131077 bytes, 5 over the 131072-byte cap; trim taskq.md below the cap"), "{card}");
+            assert!(card.contains("1. retry after trimming - + a fresh attempt starts; - it is refused again until the rules fit the cap ★") && card.contains("2. later:"), "{card}");
             assert!(!b.comments(n).unwrap().iter().any(|c| c.body.starts_with("taskq: gone")), "{role}");
             b.comment(n, "taskq: answer 1").unwrap();
             assert_eq!(task(&b, n).attempt, Some(a), "{role}: the answer returns to the never-started attempt");
