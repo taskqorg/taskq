@@ -467,6 +467,9 @@ pub struct Host {
     pub request_since: u64,
     pub hour_start: BTreeMap<String, u64>,
     pub last_hour: Option<BTreeMap<String, u64>>,
+    /// Billed requests per API host: cumulative at the last full hour, and that hour's (#2084).
+    pub hosts_start: BTreeMap<String, u64>,
+    pub hosts_last_hour: Option<BTreeMap<String, u64>>,
     pub rebuilding: bool,
     rebuilt: BTreeSet<PathBuf>,
     published: BTreeMap<PathBuf, Instant>,
@@ -477,6 +480,7 @@ impl Host {
         Self { instance:crate::runtime::uuid(),policy, capacity_command:None, slots: BTreeMap::new(), gate: Gate::default(), began: Instant::now(), last: None,
             ready: BTreeSet::new(), turn: None, held: None, restart: false, restart_woken:false, stopping:false,stop_controller:None,busy: BTreeMap::new(), prepared: BTreeSet::new(), passing: BTreeSet::new(), recovered:BTreeSet::new(),updating:None, draining: BTreeSet::new(),
             request_since: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()), hour_start: crate::requests::totals(), last_hour: None,
+            hosts_start: crate::requests::host_totals(), hosts_last_hour: None,
             rebuilding: false, rebuilt: BTreeSet::new(), published: BTreeMap::new() }
     }
 
@@ -1097,6 +1101,8 @@ pub fn run(install: &Path) -> Res<()> {
             for root in &roots { append_project(install, root, &format!("requests 1h: {}", crate::requests::summary(&usage, ""))); }
             let mut h = shared.lock().unwrap_or_else(|e| e.into_inner());
             h.last_hour = Some(usage); h.hour_start = total.clone();
+            let hosts = crate::requests::host_totals();
+            h.hosts_last_hour = Some(crate::requests::diff(&hosts, &h.hosts_start)); h.hosts_start = hosts;
             hour = (Instant::now(), total);
         }
         // Watch <install>/poke every second; the registry is otherwise polled once a minute.

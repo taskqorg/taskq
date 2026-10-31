@@ -97,6 +97,8 @@ pub trait Board {
     }
     /// Request accounting and rate-limit pause of this process (§ 4); none for boards without HTTP.
     fn requests(&self) -> crate::requests::Budget { Default::default() }
+    /// The budget for `Board quota:` (#2084): [`Board::requests`] after a free read when no reply carried the core budget.
+    fn quota(&self) -> crate::requests::Budget { self.requests() }
     /// #1819: drop shortcuts over unchanged board reads; the next list reads the board in full.
     fn forget(&self) {}
     /// § 8 item 1 dev install: Ok only when `sha`'s `merge_group` CI passed; pending, failed or unknown is Err.
@@ -352,6 +354,7 @@ impl Board for Profiled {
     fn foreign(&self, repo: &str, n: u64) -> Result<Issue> { self.op("read", |b| b.foreign(repo, n)) }
     fn foreign_url(&self, repo: &str, n: u64) -> String { self.0.foreign_url(repo, n) }
     fn requests(&self) -> crate::requests::Budget { self.0.requests() }
+    fn quota(&self) -> crate::requests::Budget { self.0.quota() }
     fn forget(&self) { self.0.forget() }
     fn merge_ci_green(&self, sha: &str) -> Result<()> { self.op("read", |b| b.merge_ci_green(sha)) }
     fn delivery_gap(&self, mode: &str) -> Result<Option<String>> { self.op("read", |b| b.delivery_gap(mode)) }
@@ -801,7 +804,7 @@ impl Api {
         let pace = self.credentials.borrow().budget.borrow().pace(*self.clock.borrow());
         if let Some(wait) = pace { std::thread::sleep(wait); }
         self.credentials.borrow().budget.borrow_mut().count(op.into());
-        crate::requests::tally(op);
+        crate::requests::tally(op, &crate::requests::api_host(&self.root));
         self.unchanged.set(false);
         let conditional = method == "GET" && body.is_none();
         let shared = self.credentials.borrow().store.clone().filter(|_| conditional && SHARED.contains(&op));
@@ -831,7 +834,7 @@ impl Api {
             if r.status == 304 && etag.is_some() {
                 if let Some((_, cached)) = self.etags.borrow().get(&url) {
                     self.credentials.borrow().budget.borrow_mut().unbilled(op);
-                    crate::requests::untally(op);
+                    crate::requests::untally(op, &crate::requests::api_host(&self.root));
                     self.unchanged.set(true);
                     return Ok(cached.clone());
                 }
@@ -880,7 +883,7 @@ impl Api {
         let method = if form.is_some() { "POST" } else { "GET" };
         let op = self.op(method, &url);
         self.credentials.borrow().budget.borrow_mut().count(op.clone());
-        crate::requests::tally(&op);
+        crate::requests::tally(&op, &crate::requests::api_host(&self.root));
         #[cfg(test)]
         if let Some(transport) = &self.transport {
             let form = form.map(|f| serde_json::json!({"file": f.file_name().map(|n| n.to_string_lossy().into_owned())}));
@@ -3043,6 +3046,32 @@ exit 0
         assert!(h.issues(None).unwrap_err().contains("HTTP 403 rate limit: board requests paused until"));
         assert!(h.issues(None).unwrap_err().contains("paused"));
         assert_eq!(h.requests().total(), 12, "nothing is sent while paused");
+    }
+
+    // Chain: #2084 A2 `Board quota:` shows the core budget. Defect: a status that read only GraphQL showed the graphql
+    // budget as the board user's quota. Risk: the quota line names graphql, or the free budget read costs a request.
+    #[test]
+    fn github_quota_reads_core_for_free_after_graphql_only() {
+        let kind = BOARDS.iter().find(|k| k.name == "github").unwrap();
+        let sent = std::rc::Rc::new(RefCell::new(Vec::<String>::new()));
+        let log = sent.clone();
+        let mut api = (kind.api)("github.com", "o/r", "test");
+        api.transport = Some(Box::new(move |method, url, _| {
+            log.borrow_mut().push(format!("{method} {url}"));
+            let (resource, left) = if url.ends_with("/graphql") { ("graphql", "4990") } else { ("core", "3000") };
+            let headers = vec![("X-RateLimit-Resource".into(), resource.into()), ("X-RateLimit-Remaining".into(), left.into()),
+                ("X-RateLimit-Limit".into(), "5000".into()), ("X-RateLimit-Reset".into(), "0".into())];
+            Ok(Reply { status: 200, headers, body: "{}".into(), operation: operation(method) })
+        }));
+        api.call("POST", "https://api.github.com/graphql", Some(json!({}))).unwrap();
+        let h = (kind.board)(api);
+        assert_eq!(crate::requests::quota(&h.requests()), "Board quota: unknown (no core budget headers)");
+        assert_eq!(crate::requests::quota(&h.quota()), "Board quota: 2000/5000 core used, 3000 left until 1970-01-01T00:00:00Z");
+        assert_eq!(sent.borrow().last().map(String::as_str), Some("GET https://api.github.com/rate_limit"));
+        h.quota();
+        assert_eq!(sent.borrow().len(), 2, "a seen core budget needs no second read");
+        let ops = h.requests().ops;
+        assert_eq!((ops.get("GET rate_limit"), crate::requests::billed(&ops)), (Some(&1), 1), "GitHub never bills the budget read");
     }
 
     // Chain: § 4 budget (#1819). Risk: a repeated GET is counted by GitHub, or a 304 loses the body.

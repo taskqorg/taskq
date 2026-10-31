@@ -1459,8 +1459,9 @@ impl<'a> Service<'a> {
         // § 3 Runtime accounts: labels and state only, never an email, path or token
         lines.extend(crate::runtime::accounts::Host::read(&self.cfg.install).heartbeat(self.board.now().unwrap_or_else(|_| crate::runtime::accounts::now())));
         lines.extend(tray_fault(&self.cfg.install).map(|code| format!("tray {code}")));
-        // #1985: this host's billed requests of its last full hour, its share of the board user's quota
-        lines.extend(self.host.as_ref().and_then(|h| h.lock().ok()?.last_hour.as_ref().map(crate::requests::billed)).map(|n| format!("requests {n}/h")));
+        // #1985, #2084: this host's billed requests of its last full hour, in all and per API host: its share of each
+        // board user's quota
+        lines.extend(self.host.as_ref().and_then(|h| { let h = h.lock().ok()?; Some(crate::requests::heartbeat(h.last_hour.as_ref()?, h.hosts_last_hour.as_ref())) }).unwrap_or_default());
         let kids: BTreeSet<_> = self.kids.iter().map(|k| (k.task, k.attempt)).chain(self.pending.iter().copied()).collect();
         lines.extend(kids.iter().map(|(t, a)| format!("#{t} {a}")));
         lines.extend(self.kids.iter().filter_map(|k| k.session_url.as_ref().map(|u| format!("session #{} {} {u}", k.task, k.attempt))));
@@ -4743,6 +4744,32 @@ Open: none")).unwrap();
         let issue = crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 100, created: 100, closed: None, open: true, trusted: true, reason: None };
         let text = crate::snapshot::from_views("board", &b, &c, 100, &[], &[issue]).text(&c, &json!({})).unwrap();
         assert!(text.lines().any(|l| l.starts_with("Hosts: win v4.0.0 ") && l.ends_with(" 5 req/h")), "{text}");
+    }
+
+    // Chain: #2084 A1/A3 host hourly requests per API host -> heartbeat `requests <api host> <n>/h` -> Hosts line
+    // github.com share. Defect: a host with GitHub and GitLab boards showed one sum. Risk: the share is lost, or an
+    // older heartbeat with only `requests <n>/h` no longer reads.
+    #[test]
+    fn host_github_share_reaches_hosts_line() {
+        let b = Fake::default();
+        let c = cfg("win");
+        let mut s = service(&b, &c, Default::default());
+        let host = std::sync::Arc::new(std::sync::Mutex::new(crate::host::Host::new(Err("none".into()))));
+        host.lock().unwrap().last_hour = Some([("GET issues".to_string(), 5)].into());
+        host.lock().unwrap().hosts_last_hour = Some([("api.github.com".to_string(), 3), ("gitlab.com".to_string(), 2)].into());
+        s.host = Some(host);
+        let body = s.heartbeat_body();
+        for line in ["requests 5/h", "requests api.github.com 3/h", "requests gitlab.com 2/h"] {
+            assert!(body.lines().any(|l| l == line), "{line}: {body}");
+        }
+        let hosts = |body: String| {
+            let issue = crate::board::Issue { number: 1, title: "taskq host win".into(), body, labels: vec![], assignees: vec![], updated: 100, created: 100, closed: None, open: true, trusted: true, reason: None };
+            let text = crate::snapshot::from_views("board", &b, &c, 100, &[], &[issue]).text(&c, &json!({})).unwrap();
+            text.lines().find(|l| l.starts_with("Hosts: win v4.0.0 ")).unwrap_or_default().to_string()
+        };
+        assert!(hosts(body.clone()).ends_with(" 5 req/h (github.com 3)"), "{body}");
+        let old = body.lines().filter(|l| !l.starts_with("requests api.") && !l.starts_with("requests gitlab.")).collect::<Vec<_>>().join("\n");
+        assert!(hosts(old).ends_with(" 5 req/h"), "an older heartbeat still reads");
     }
 
     // Chain: #1755 A4 tray fault file -> heartbeat `tray <code>` -> status Hosts line. Risk: a tray fault stays in a

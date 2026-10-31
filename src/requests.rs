@@ -11,6 +11,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const RECORD: &str = "taskq-requests ";
 /// Requests of this process by operation, for its exit record.
 static PROCESS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+/// Billed requests of this process by API host (#2084): a host with GitHub and GitLab boards splits its rate.
+static HOSTS: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
+/// The one operation GitHub never bills: the budget read itself.
+const FREE: &str = "GET rate_limit";
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -231,30 +235,58 @@ fn unbill(ops: &mut BTreeMap<String, u64>, op: &str) {
     if let Some(n) = ops.get_mut(op).filter(|n| **n > 0) { *n -= 1; *ops.entry(format!("{op} 304")).or_default() += 1; }
 }
 
-/// Billed requests of `ops`: `304` operations left out (#1985).
+/// Whether the board bills `op`: not a `304` (#1985), not `GET rate_limit` (#2084).
+fn bills(op: &str) -> bool { !op.ends_with(" 304") && op != FREE }
+
+/// Billed requests of `ops` (#1985, #2084).
 pub fn billed(ops: &BTreeMap<String, u64>) -> u64 {
-    ops.iter().filter(|(k, _)| !k.ends_with(" 304")).map(|(_, n)| n).sum()
+    ops.iter().filter(|(k, _)| bills(k)).map(|(_, n)| n).sum()
 }
 
-/// `Board quota: ..` of this process's own reads (#1985).
+/// `Board quota: ..` of this process's own reads (#1985): the `core` budget, else the one unnamed budget (GitLab),
+/// never `graphql` (#2084).
 pub fn quota(b: &Budget) -> String {
-    match (b.remaining, b.limit) {
-        (Some(r), Some(l)) => format!("Board quota: {}/{l}{} used, {r} left until {}", l.saturating_sub(r),
-            b.resource.as_ref().map(|s| format!(" {s}")).unwrap_or_default(), b.reset.map_or("unknown".into(), crate::board::stamp)),
-        _ => "Board quota: unknown (no budget headers)".into(),
+    match b.buckets.get("core").map(|v| ("core", v)).or_else(|| b.buckets.get("").map(|v| ("", v))) {
+        Some((name, (r, l, reset))) if *l > 0 => format!("Board quota: {}/{l}{} used, {r} left until {}", l.saturating_sub(*r),
+            if name.is_empty() { String::new() } else { format!(" {name}") }, reset.map_or("unknown".into(), crate::board::stamp)),
+        _ => "Board quota: unknown (no core budget headers)".into(),
     }
+}
+
+impl Budget {
+    /// Whether a reply carried the `core` or the unnamed budget, the one [`quota`] shows.
+    pub fn has_core(&self) -> bool { self.buckets.contains_key("core") || self.buckets.contains_key("") }
 }
 
 pub fn totals() -> BTreeMap<String, u64> { PROCESS.lock().map(|p| p.clone()).unwrap_or_default() }
 
-/// Counts one request of this process for its exit record.
-pub fn tally(op: &str) {
-    if let Ok(mut m) = PROCESS.lock() { *m.entry(op.into()).or_default() += 1; }
+/// Billed requests of this process by API host (#2084).
+pub fn host_totals() -> BTreeMap<String, u64> { HOSTS.lock().map(|p| p.clone()).unwrap_or_default() }
+
+/// The API host of a board API `root`, as the heartbeat names it: `api.github.com`, `gitlab.com`; never a path.
+pub fn api_host(root: &str) -> String {
+    let authority = root.split_once("://").map_or(root, |x| x.1).split(['/', '?', '#']).next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or_default().split(':').next().unwrap_or_default().to_ascii_lowercase();
+    if !host.is_empty() && host.len() <= 100 && host.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b)) { host } else { "*".into() }
 }
 
-/// Moves one request of this process to `<op> 304` (#1985).
-pub fn untally(op: &str) {
+/// Counts one request of this process to API host `host` for its exit record.
+pub fn tally(op: &str, host: &str) {
+    if let Ok(mut m) = PROCESS.lock() { *m.entry(op.into()).or_default() += 1; }
+    if bills(op) && let Ok(mut m) = HOSTS.lock() { *m.entry(host.into()).or_default() += 1; }
+}
+
+/// Moves one request of this process to `<op> 304` (#1985): unbilled, so `host` loses it.
+pub fn untally(op: &str, host: &str) {
     if let Ok(mut m) = PROCESS.lock() { unbill(&mut m, op); }
+    if bills(op) && let Ok(mut m) = HOSTS.lock() && let Some(n) = m.get_mut(host) { *n = n.saturating_sub(1); }
+}
+
+/// Heartbeat lines of the last full hour (#1985, #2084): `requests <n>/h` over all API hosts, the line older readers
+/// know, then `requests <api host> <n>/h` per API host.
+pub fn heartbeat(hour: &BTreeMap<String, u64>, hosts: Option<&BTreeMap<String, u64>>) -> Vec<String> {
+    std::iter::once(format!("requests {}/h", billed(hour)))
+        .chain(hosts.into_iter().flatten().map(|(h, n)| format!("requests {h} {n}/h"))).collect()
 }
 
 /// The source of a CLI process: `<role> <command>` (`service` adds its subcommand), from the positionals as dispatch
@@ -366,9 +398,42 @@ mod tests {
     #[test]
     fn quota_line_names_used_and_left() {
         let mut b = Budget::default();
-        assert_eq!(quota(&b), "Board quota: unknown (no budget headers)");
-        (b.remaining, b.limit, b.resource, b.reset) = (Some(4000), Some(5000), Some("core".into()), Some(0));
+        assert_eq!(quota(&b), "Board quota: unknown (no core budget headers)");
+        let reply = |resource: &'static str, left: &'static str| move |h: &str| match h {
+            "x-ratelimit-resource" if !resource.is_empty() => Some(resource.to_string()),
+            "x-ratelimit-remaining" | "ratelimit-remaining" => Some(left.to_string()),
+            "x-ratelimit-limit" | "ratelimit-limit" => Some("5000".to_string()),
+            "x-ratelimit-reset" | "ratelimit-reset" => Some("0".to_string()),
+            _ => None,
+        };
+        let now = Instant::now();
+        // #2084 A2: a graphql reply alone leaves the quota unknown, and a lower graphql budget never replaces core
+        b.observe(200, false, reply("graphql", "100"), 0, now);
+        assert_eq!(quota(&b), "Board quota: unknown (no core budget headers)");
+        b.observe(200, false, reply("core", "4000"), 0, now);
+        b.observe(200, false, reply("graphql", "50"), 0, now);
+        assert_eq!(b.resource.as_deref(), Some("graphql"), "the pause budget stays the lowest one");
         assert_eq!(quota(&b), "Board quota: 1000/5000 core used, 4000 left until 1970-01-01T00:00:00Z");
+        let mut gitlab = Budget::default();
+        gitlab.observe(200, false, reply("", "4500"), 0, now);
+        assert_eq!(quota(&gitlab), "Board quota: 500/5000 used, 4500 left until 1970-01-01T00:00:00Z");
+    }
+
+    // Chain: #2084 A1 heartbeat requests per API host. Defect: a host with GitHub and GitLab boards sent one sum, so
+    // the uncounted gap of the GitHub quota was unknown. Risk: a path, user or token reaches the heartbeat, the free
+    // budget read or a 304 counts as billed, or the line older readers parse changes.
+    #[test]
+    fn heartbeat_splits_billed_requests_by_api_host() {
+        assert_eq!(api_host("https://api.github.com"), "api.github.com");
+        assert_eq!(api_host("https://GitLab.com/api/v4"), "gitlab.com");
+        assert_eq!(api_host("https://user@ghe.example:8443/api/v3?x"), "ghe.example", "no user or port");
+        assert_eq!(api_host("https://bad host/x"), "*");
+        assert_eq!(api_host(""), "*");
+        let hour = [("GET issues".to_string(), 5), ("GET issues 304".to_string(), 40), (FREE.to_string(), 2)].into();
+        assert_eq!(billed(&hour), 5);
+        assert_eq!(heartbeat(&hour, None), ["requests 5/h"]);
+        let hosts = [("api.github.com".to_string(), 3), ("gitlab.com".to_string(), 2)].into();
+        assert_eq!(heartbeat(&hour, Some(&hosts)), ["requests 5/h", "requests api.github.com 3/h", "requests gitlab.com 2/h"]);
     }
 
     #[test]

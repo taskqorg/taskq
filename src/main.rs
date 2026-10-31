@@ -3680,7 +3680,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
                     Ok(lines) => for l in lines { println!("{l}"); },
                     Err(e) => println!("Waiting for deploy: unknown ({e})"),
                 }
-                println!("{}", requests::quota(&b.requests()));
+                println!("{}", requests::quota(&b.quota()));
                 // § 6: the live service's open setup gaps follow the report
                 for l in data::json(&local).ok().flatten().filter(|_| snapshot::status_live(&local, cfg.ttl)).map(|s| check::status_lines(&s["setup"])).unwrap_or_default() { println!("{l}"); }
             }
