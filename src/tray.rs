@@ -1353,7 +1353,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
             Event::WindowEvent {window_id,..} if views_window.as_ref().is_some_and(|(w,_)|w.id()==window_id) => {}
             Event::NewEvents(StartCause::Init) => {
                 let b = WindowBuilder::new().with_window_icon(Some(window_icon(&compact(true,false,256.0/22.0)))).with_title("TaskQ").with_transparent(true).with_decorations(false).with_resizable(false).with_always_on_top(settings.pin.top)
-                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
+                    .with_visible(snapshot.is_some()).with_inner_size(if views_shots {LogicalSize::new(480.0,600.0)} else if conversation_shots && routes.iter().any(|r|r!="conversations") {LogicalSize::new(1280.0,760.0)} else if conversation_shots {LogicalSize::new(800.0,600.0)} else {LogicalSize::new(320.0, 400.0)}).with_position(tao::dpi::LogicalPosition::new(40.0, 40.0));
                 // ordinary snapshots render off-screen; opacity evidence must remain visible and unoccluded (R12)
                 let b = if snapshot.is_some() { b.with_position(tao::dpi::LogicalPosition::new(if agentq_shots||opacity_shots{40.0}else{-20000.0}, if agentq_shots||opacity_shots{40.0}else{-20000.0})).with_always_on_top(opacity_shots).with_focused(false) } else { b };
                 #[cfg(windows)]
@@ -1623,7 +1623,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                 let _continuation=context.as_ref().map(|context|context.span().entered());
                 if calls.failed {return;}
                 match m["a"].as_str() {
-                    Some("reports")=>{if let Err(reason)=report_actions.submit(&m) {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
+                    Some("reports")=>{let result=if m["local"].is_object(){answer_local(&install,m["local_key"].as_str().unwrap_or(""),&m["local"])}else{Ok(())}.and_then(|_|{let mut request=m.clone();request.as_object_mut().map(|v|{v.remove("local");v.remove("local_key");});report_actions.submit(&request)});if let Err(reason)=result {web_eval(wv,&format!("taskq.receive({})",json!({"reportReceipt":{"id":m["id"],"root":m["root"],"reason":reason}})),"tray.web.receive",&proxy,calls);}}
                     Some("sync-retry") => {
                         if let Some(request)=sync.retry(m["root"].as_str().unwrap_or(""),m["id"].as_str().unwrap_or("")) {let _=send_answer(&answer_actions,&mut sync,&request,&seen_projects,&proxy);}
                     }
@@ -1787,7 +1787,7 @@ pub fn run(install: PathBuf, snapshot: Option<PathBuf>, routes: Vec<String>, rai
                     "workspace" if snapshot.is_none() => {
                         workspace_open=m["open"].clone();
                         // #1699: the header entry (it names a thread) opens the main workspace, never a detached conversation
-                        if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
+                        if workspace_open["page"]=="conversations" && workspace_open["thread"].is_null() && workspace_open["task"].is_null() {if let Some(id)=requests_file(&install)["conversation_navigation"]["selected"].as_str(){if let Some((window,_,_))=detached.get(id){window.set_visible(true);window.set_focus();return;}}}
                         if workspace.is_none() {
                             let p=proxy.clone();
                             let built=WindowBuilder::new().with_title("TaskQ Workspace").with_decorations(false).with_always_on_top(requests_file(&install)["workspace_pin"]==true).with_inner_size(LogicalSize::new(800.0,600.0)).with_min_inner_size(LogicalSize::new(320.0,240.0)).with_visible(false).build(target).map_err(|e|e.to_string()).and_then(|window| {

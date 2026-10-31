@@ -1,0 +1,95 @@
+{
+  "source": "aa2cea419fd7a7bcb0e962889983e8fcedd489ae",
+  "os": "Windows-11-10.0.26300-SP0",
+  "engine": "Windows WebView2",
+  "candidate": {
+    "profile": "debug",
+    "binary_sha256": "2ba9c330db09b50cbff7fa6d358dddec383532fa0da77a339d77a6bfa35e98d1",
+    "loader_sha256": "86545b66cdb0603bc26b626fb9ad610cb6e71f28d468f5ea66df23b03dda96d5",
+    "layout": "Relocated executable and x64 WebView2Loader.dll in an isolated OS temporary store; no Cargo loader PATH, host registration or live activation"
+  },
+  "installed_baseline": {
+    "dpi": 96,
+    "primary_screen": [
+      2560,
+      1440
+    ],
+    "primary_work_area": [
+      0,
+      0,
+      2560,
+      1392
+    ],
+    "installed_version": "4.6.56",
+    "installed_sha256": "32193943edc9ee5c9135b1c2863df7462735293268d1a8e7ed4ef3056e9e2479"
+  },
+  "font_css_px": 16,
+  "windows_text_scale_percent": 140,
+  "candidate_window_logical_px": [
+    1280,
+    760
+  ],
+  "fixture": "tests/fixtures/reports-shots.js",
+  "routes": [
+    "reports-conversations",
+    "results-conversations"
+  ],
+  "network_effects": "Invented report receipts only; no real decision or task creation",
+  "frames": [
+    {
+      "file": "candidate-finished-dark.png",
+      "pixels": [
+        1281,
+        761
+      ],
+      "sha256": "e79113dea0a0c8623a1717424c8379cb02b2ef59e3ee6633d37e4866d9988185"
+    },
+    {
+      "file": "candidate-finished-light.png",
+      "pixels": [
+        1281,
+        761
+      ],
+      "sha256": "016a3314493022b3cebb840ef0d8b0df94c71d6996bd3b328593fdca6f8f65ff"
+    },
+    {
+      "file": "candidate-report-dark.png",
+      "pixels": [
+        1281,
+        761
+      ],
+      "sha256": "6a0f49d2ec59f0e8209ace094cb7ebe06be9d48d8ff723d6fd2871dbca2d9a84"
+    },
+    {
+      "file": "candidate-report-light.png",
+      "pixels": [
+        1281,
+        761
+      ],
+      "sha256": "2b02bcf1b411890c4edc8be26c6d016eb90645b4fae664ce58ff675fab25ea47"
+    },
+    {
+      "file": "installed-finished-dark.png",
+      "pixels": [
+        801,
+        601
+      ],
+      "sha256": "53b3f0ca85d04d62a935486f5fcf6843bfde7ba30b46b0a454b423deaaa8161c"
+    },
+    {
+      "file": "installed-report-dark.png",
+      "pixels": [
+        801,
+        601
+      ],
+      "sha256": "276bbe0ca6b9cfbcc8bea32485cf650f608511da504bdf587d728a857e8f4317"
+    }
+  ],
+  "gaps": [
+    "Live Windows install still runs v4.6.56 before publication; A5 activation not verified",
+    "macOS dev install: SSH connection refused before authentication; no remote command ran",
+    "Native physical input, IME, accessibility and lower-card scroll: Not tested",
+    "16 px reference uses 100 percent text size; current native Windows host retains 140 percent owner text size",
+    "Fixture timestamps are invented epoch values; recency and collection freshness are not qualified by these frames"
+  ]
+}

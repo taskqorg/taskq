@@ -211,7 +211,7 @@ GitLab keeps coreq token lookup and `Authorization: Bearer`. A cutover is one st
 ## Product
 Looks/sound: one line each (R13).
 - Home: current work, unresolved questions. Bell: [Notifications](docs/design/menu.md#m14-notifications). Read/clear changes no task state.
-- [Results](docs/design/reports.md).
+- Reports and finished tasks share [Conversations and decision cards](docs/design/reports.md).
 - [Promo A](docs/video-experiments/planning-802/approval.md).
 - Approved [targets](docs/design/README.md) and [navigation](docs/design/tray-workspace.md): parent-only breadcrumbs, keyboard-only rings, view-only counter-strip filter. [Foundation](docs/design/app-foundation.md): M3/M4 first, M2 parallel, M5 after; CoreQ only. Runtime changes need implementation and proof (R8/R12/R13).
 - UI: Preact/Signals/Wouter O1–O3; [UI30 targets](docs/design/ui-polish.md): palette A, exact counts, event stack A; no Custom. Native proof pending (R12).

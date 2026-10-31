@@ -1,59 +1,73 @@
 // Chain: §7 Reports -> Menu/Conversations buttons -> board receipts -> visible report. Invented IPC, real bundles.
 // Risk: one surface drifts, unavailable writes hide a report, or narrow/large-text cards lose actions.
+// Product #1977: Results now opens the exact Conversations thread; shared cards retain the old unknown/held-only protection.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const fx=require('./fixtures/task-workspace.json'),out=process.env.TASKQ_REPORT_EVIDENCE;
-const root='fixture',sha='a'.repeat(40),row={n:12,sha,title:'Retry limits for interrupted requests',url:'https://github.com/invented/research/issues/12',closed:200,read:false,decision:'none',visible:true};
-const report={...row,read:false,body:'# Question\n\nHow should interrupted requests recover?\n\n# Findings\n\nThe [recorded protocol](https://example.com/invented-evidence) exposes a stable request identity.\n\n# Options\n\n1. Reuse the identity. Pro: no duplicate work. Con: requires an immutable request.\n2. Start again. Pro: simple. Con: may duplicate work.\n\n# Recommendation\n\nReuse the request identity.\n\n# Proposed tasks\n\n```taskq-tasks\n[]\n```',tasks:[{title:'Document request recovery',goal:'Make recovery steps available to operators.',acceptance:['Help names the original request identity.'],type:'docs'}]};
+const sha='a'.repeat(40),board='https://github.com/invented/research/issues';
+const report={n:12,sha,title:'Recovery options for interrupted requests',kind:'report',url:board+'/12',closed:200,read:false,decision:'none',visible:true,body:'# Question\n\nHow should interrupted requests recover?\n\n# Findings\n\nImmutable requests retain their first receipt.\n\n# Options\n\nReuse the identity: avoids duplicate work; requires immutable input.\n\n# Recommendation\n\nReuse the original identity.\n\n# Proposed tasks\n\n```taskq-tasks\n[]\n```',tasks:[{title:'Document request recovery',goal:'Make recovery steps visible.',acceptance:['Help names the original request identity.']}]};
+const task={...report,n:13,title:'Recover interrupted requests once',kind:'task',url:board+'/13',body:'Changed: Requests recover once.\nChecks: replay -- passed\nChecks: identity -- passed\nOpen: Native recovery unverified.'};
 (async()=>{const browser=await chromium.launch(require('./browser.cjs')());let cells=0;try{
- for(const surface of ['workspace','tray'])for(const theme of ['dark','light'])for(const width of [350,940])for(const font of [16,20]){
-  const page=await browser.newPage({viewport:{width,height:surface==='workspace'?480:850}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ for(const surface of ['workspace','tray'])for(const theme of ['dark','light'])for(const width of [350,1100])for(const font of [16,20]){
+  const page=await browser.newPage({viewport:{width,height:850}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.setContent(fs.readFileSync('build/web/'+surface+'.html','utf8'));
-  const state={...fx.state,font,theme,projects:[{...fx.state.projects[0],root,name:'Research',issues:'https://github.com/invented/research/issues',tasks:[],reports:{complete:true,observed:200,reports:[report]}}],messages:{complete:true,count:0,entries:[]},conversations:{complete:true,items:[]},ai:{history:[],runtime:{id:'invented',name:'Fixture',available:false}}};
-  await page.evaluate(({state,row,report})=>{window.sent=[];window.reportRow=report;window.reportData=report;window.failReportAction=false;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a!=='reports')return;let value;
-   if(m.action==='list')value={reports:reportRow.visible?[reportRow]:[],more:false};
-   else if(failReportAction)value={reason:'Board unavailable; decision unknown'};
-   else {reportRow={...reportRow,read:true,decision:m.action==='make'?'made':m.action==='drop'?'drop':m.action==='later'?'later':reportRow.decision,visible:!['make','drop'].includes(m.action),tasks_made:m.action==='make'?[21]:[],...(m.action==='later'?{later_until:m.until}:{})};value={report:m.action==='open'?{...reportData,...reportRow}:reportRow};}
-   queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,...value}}));}};taskq.receive(state);},{state,row,report});
-  assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports').length),0,'pushed reports need no list request');
-  if(surface==='workspace'){if(await page.locator('[data-c=list]').isVisible())await page.locator('[data-c=list]').click();assert((await page.locator('.conversation-rows').innerText()).includes('Needs decision'));}else {assert((await page.locator('[data-a=workspace][data-page=conversations]').getAttribute('aria-label')).includes('0 new'));await page.locator('[data-route=notifications]').click();}
-  if(surface==='workspace')await page.locator('[data-report=toggle]').click();await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').waitFor({state:'attached',timeout:5000}).catch(async e=>{console.error({surface,theme,width,font,errors,text:await page.locator('.reports-section').innerText(),sent:await page.evaluate(()=>sent.filter(m=>m.a==='reports'))});throw e;});
-  assert((await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').innerText()).includes('Unread'));
-  if(out&&surface==='tray'&&theme==='dark'&&width===350&&font===16){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'menu-unread.png')});}
-  await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
-  assert.equal(await page.locator('[data-report=make]').isEnabled(),true);await page.waitForFunction(()=>document.querySelector('.report-card').innerText.includes('Read'));assert(!await page.evaluate(()=>sent.some(m=>m.a==='reports'&&['list','open'].includes(m.action))),'navigation makes no board read');
-  assert.equal(await page.locator('.report-body').count(),0,'findings stay behind Full report');
-  assert((await page.locator('.report-card').innerText()).indexOf('Recommendation')<(await page.locator('.report-card').innerText()).indexOf('Proposed tasks'));
-  await page.locator('[data-report=full]').click();assert.equal(await page.locator('.report-body a').getAttribute('href'),'https://example.com/invented-evidence');
-  if(surface==='workspace'){
-   assert(await page.evaluate(()=>document.querySelector('.reports-section').getBoundingClientRect().bottom<=document.querySelector('.status-footer').getBoundingClientRect().top+1),'the report reader must fit above the fixed footer');
-   await page.locator('[data-report=drop]').scrollIntoViewIfNeeded();
-   await page.waitForFunction(()=>{const b=document.querySelector('[data-report=drop]').getBoundingClientRect(),footer=document.querySelector('.status-footer').getBoundingClientRect();return b.top>=0&&b.bottom<=footer.top;},null,{timeout:3000});
+  const state={...fx.state,font,theme,projects:[{...fx.state.projects[0],root:'fixture',name:'Research',issues:board,tasks:[],alive:true,complete:true,reports:{complete:true,observed:200,reports:[report,task],history:[{...task,n:14,title:'Earlier accepted result',url:board+'/14',read:true,decision:'accepted',visible:false}]}}],messages:{complete:true,count:0,entries:[]},conversations:{complete:true,items:[]},ai:{history:[],runtime:{id:'invented',name:'Fixture',available:false}}};
+  await page.evaluate(state=>{window.sent=[];window.locals={};window.refuse=false;window.hold=false;window.ipc={postMessage:text=>{const m=JSON.parse(text);sent.push(m);if(m.a==='answer-local'){locals[m.key]=m.local;return;}if(m.a!=='reports')return;if(hold)return;
+   const p=state.projects[0],row=[...p.reports.reports,...p.reports.history].find(r=>r.n===m.n);if(refuse){queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,reason:'Board unavailable; decision unknown'}}));return;}
+   if(m.action!=='open')row.read=true;if(m.action==='accept')row.decision='accepted';if(m.action==='later'){assertFutureDate(m.until);row.decision='later';row.later_until=m.until;}if(m.action==='drop'){row.decision='drop';row.visible=false;}if(m.action==='make'){row.decision='made';row.visible=false;row.tasks_made=[21];}
+   queueMicrotask(()=>taskq.receive({reportReceipt:{id:m.id,root:m.root,report:{...row},...(['reopen','followup'].includes(m.action)?{successor:22,successor_url:p.issues+'/22'}:{})}}));
+  }};function assertFutureDate(until){if(!(Date.parse(until)>Date.now()))throw Error('Later needs a future revisit date');}window.fixtureState=state;taskq.receive(state);},state);
+  assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports').length),0,'initial snapshot does not acknowledge read');
+  if(surface==='tray'){
+   await page.locator('[data-route=notifications]').click();await page.locator('[data-notification=open]').first().click();
+   const open=await page.evaluate(()=>sent.find(m=>m.a==='workspace'));assert.equal(open.open.page,'conversations');assert.equal(open.open.board,board);assert.equal(open.open.sha,sha,'notification keeps immutable source identity');assert(open.open.task===12||open.open.task===13);assert.equal(await page.locator('.report-card').count(),0,'Notifications only deep-links');
+  }else{
+   if(width<621)await page.locator('[data-c=list]').click();
+   assert.equal(await page.locator('[data-report=toggle]').count(),0,'no separate Results surface');
+   await page.locator('[data-report=open][data-n="12"]').click();await page.locator('[data-result-card=decision] [data-choice="1"]').waitFor();
+   assert(await page.locator('.report-card').isVisible());assert.equal(await page.locator('.reports-section').count(),0);
+   if(width>620)assert(await page.locator('.conversation-list').isVisible(),'reader preserves sidebar');
+   assert.match(await page.locator('.report-card').innerText(),/Recommendation/);
+   await page.locator('[data-result-card=decision] [data-choice="2"]').click();await page.getByLabel('Revisit date').waitFor();
+   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').length),0,'Later waits for the date and Send');
+   await page.getByLabel('Revisit date').fill('2000-01-01');assert.equal(await page.locator('[data-report=date-send]').isEnabled(),false,'past dates cannot send');
+   await page.getByLabel('Revisit date').fill('2099-01-02');await page.evaluate(()=>taskq.receive(fixtureState));assert.equal(await page.getByLabel('Revisit date').inputValue(),'2099-01-02','refresh keeps the date draft');
+   await page.evaluate(()=>{refuse=true;});await page.locator('[data-report=date-send]').click();await page.locator('[data-result-card=decision] [data-qac=retry]').waitFor();
+   const dateBefore=await page.evaluate(()=>sent.find(m=>m.a==='reports'&&m.action==='later'));assert.equal(dateBefore.until,'2099-01-02T12:00:00Z');assert.equal(await page.getByLabel('Revisit date').isEnabled(),false,'unknown delivery freezes the date');
+   await page.evaluate(()=>{refuse=false;});await page.locator('[data-result-card=decision] [data-qac=retry]').click();await page.waitForFunction(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').length===2);
+   const dateAfter=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='later').at(-1));assert.equal(dateAfter.id,dateBefore.id);assert.equal(dateAfter.until,dateBefore.until);await page.getByLabel('Revisit date').waitFor({state:'detached'});
+   if(width<621)await page.locator('[data-c=list]').click();await page.locator('[data-c=result-filter][data-filter=decision]').click();assert(await page.locator('[data-report=open][data-n="12"]').isVisible(),'read/Later report remains undecided');
+   await page.locator('[data-c=result-filter][data-filter=finished]').click();assert(await page.locator('[data-report=open][data-n="14"]').isVisible(),'decided history retained');
+   await page.locator('[data-report=open][data-n="13"]').click();await page.locator('[data-result-card=decision] [data-choice="1"]').waitFor();
+   assert.match(await page.locator('.report-card').innerText(),/identity -- passed/);
+   const other=page.locator('.result-other');if(!await other.evaluate(e=>e.open))await other.locator('summary').click();
+   await page.locator('[data-result-card=correction] [data-choice="1"]').click();await page.locator('#result-reason').fill('Preserve the retry receipt');
+   assert.equal(await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='reopen').length),0,'choice waits for reason submit');
+   await page.locator('[data-report=reason-send]').click();await page.getByText(/1. Read held draft #22/).waitFor();
+   const op=await page.evaluate(()=>sent.find(m=>m.a==='reports'&&m.action==='reopen'));assert.equal(op.text,'Preserve the retry receipt');assert.equal(op.sha,sha);assert.equal(op.n,13);assert(await page.evaluate(()=>Object.values(locals).some(v=>v.request?.action==='reopen'&&v.receipt?.state==='accepted'&&v.successor===22)),'controller receipt save preserves immutable request and held link');
+   if(out&&width===1100&&font===16&&theme==='dark'){fs.mkdirSync(out,{recursive:true});await page.screenshot({path:path.join(out,'finished-conversations.png')});}
+   // Unknown response retains the same operation and blocks other result cards. A late readback updates its source.
+   if(width<621)await page.locator('[data-c=list]').click();await page.locator('[data-report=open][data-n="12"]').click();await page.evaluate(()=>{refuse=true;});
+   await page.locator('[data-result-card=decision] [data-choice="1"]').click();await page.locator('[data-result-card=decision] [data-qac=retry]').waitFor();
+   const before=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='accept').at(-1));await page.evaluate(()=>{refuse=false;});await page.locator('[data-result-card=decision] [data-qac=retry]').click();
+   await page.waitForFunction(()=>sent.filter(m=>m.a==='reports'&&m.action==='accept').length===2);const after=await page.evaluate(()=>sent.filter(m=>m.a==='reports'&&m.action==='accept').at(-1));assert.equal(after.id,before.id);assert.equal(after.sha,before.sha);
+   await page.waitForFunction(()=>document.querySelector('.report-card').textContent.includes('Decision recorded: accepted'));
+   const overflow=await page.evaluate(()=>[document.documentElement,...document.querySelectorAll('.report-card,.conversation-reader,.conversation-list')].filter(e=>e.clientWidth&&e.scrollWidth>e.clientWidth+2).map(e=>({class:e.className,scroll:e.scrollWidth,width:e.clientWidth})));assert.deepEqual(overflow,[],JSON.stringify({surface,theme,width,font,overflow}));
+   if(width===1100&&font===16&&theme==='dark'){
+    await page.evaluate(()=>{const p=fixtureState.projects[0],template=p.reports.reports[1];p.reports.history=Array.from({length:250},(_,i)=>({...template,n:100+i,closed:100,read:true,decision:'accepted',visible:false,title:'History '+(100+i)}));taskq.receive(fixtureState);});
+    await page.locator('[data-c=results-more]').click();assert.equal(await page.locator('[data-n="250"]').count(),1,'numeric task tie break keeps close-time boundary');assert.equal(await page.locator('[data-n="249"]').count(),0);
+    await page.evaluate(()=>{const p=fixtureState.projects[0];p.reports.history.unshift({...p.reports.history[0],n:999,closed:500});taskq.receive(fixtureState);});assert.equal(await page.locator('[data-n="250"]').count(),1,'new collection does not displace loaded boundary');
+    await page.locator('[data-c=results-more]').click();assert.equal(await page.locator('[data-n="150"]').count(),1,'More continues strictly after prior close-time/task cursor');
+    await page.evaluate(()=>{const p=fixtureState.projects[0];p.reports.history=[];p.reports.reports.push({...p.reports.reports[0],n:400,title:'PM outcome',conversation:'pm-result',read:true,decision:'none'});p.tasks=[{n:401,title:'Linked question',state:'ask',revision:5,updated:600,conversation:{id:'pm-question',brief:'Choose'}}];fixtureState.conversations.items=['pm-result','pm-question'].map((id,i)=>({id,root:'fixture',title:id,text:'Preserved PM draft',caret:[0,0],revision:1,files:[],updated:700000-i*100000}));fixtureState.messages.entries=[{key:'f'.repeat(64),kind:'question',board:p.issues,root:p.root,task:401,revision:5,title:'Linked question',state:'ask'}];taskq.receive(fixtureState);});
+    await page.locator('[data-c=result-filter][data-filter=reply]').click();assert.equal(await page.locator('.conversation-row[data-id="pm-question"]').count(),1,'linked question projects Needs reply onto PM');assert.equal(await page.locator('[data-thread="task:'+board+'/401"]').count(),0,'unopened PM task has no duplicate row');
+    await page.locator('[data-c=result-filter][data-filter=all]').click();await page.locator('[data-report=open][data-n="13"]').click();await page.locator('[data-report=unresolved]').click();assert.equal(await page.locator('.conversation-row[aria-current=page]').getAttribute('data-id'),'pm-result','Next resolves a composed PM sidebar row');
+    await page.getByRole('button',{name:'Read result and decide',exact:true}).click();assert(await page.locator('.report-card').isVisible(),await page.locator('main').innerText());assert.match(await page.locator('.conversation-detail').getAttribute('data-thread-id'),/^result:/,'PM result reading position uses its own source identity');assert.equal(await page.locator('[data-thread="task:'+board+'/400"]').count(),0,'reading linked outcome stays in its PM identity');await page.locator('[data-a=result-return]').click();assert.equal(await page.locator('[data-c-field=text]').inputValue(),'Preserved PM draft');
+    await page.evaluate(({board,sha})=>{fixtureState.conversations.items.find(c=>c.id==='pm-result').archived=true;taskq.receive(fixtureState);taskq.receive({open:{page:'conversations',root:'fixture',board,task:400,sha}});},{board,sha});assert(await page.locator('.report-card').isVisible(),'archived PM result displays before read');assert.equal(await page.locator('[data-c=archive-list]').getAttribute('aria-pressed'),'true','exact result opens owning PM archive');
+
+    await page.evaluate(({board})=>taskq.receive({open:{page:'results',root:'fixture',board,task:12,sha:'b'.repeat(40)}}),{board});assert.equal(await page.locator('.report-card').count(),0,'old-SHA link never shows current result');assert.match(await page.locator('.conversation-status').innerText(),/requested result SHA is unavailable/);
+   }
+
   }
-  assert.equal(await page.getByRole('heading',{name:'Proposed tasks',exact:true}).count(),1,'structured proposals have one heading');
-  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth&&[...document.querySelectorAll('.reports-section button')].every(e=>e.scrollWidth<=e.clientWidth+1)),'Reports must wrap at '+surface+'/'+width+'/'+font);
-  if(out&&surface==='workspace'&&theme==='light'&&width===940&&font===16)await page.screenshot({path:path.join(out,'conversations-report.png')});
-  await page.locator('[data-report=later]').click();await page.locator('[data-later-until]').fill('2099-01-02');await page.locator('[data-report=later-save]').click();await page.getByText('Later: back in Decide on 2099-01-02.',{exact:true}).waitFor();
-  assert(await page.evaluate(()=>sent.some(m=>m.action==='later'&&m.until==='2099-01-02T12:00:00Z')),'Later sends its revisit date');
-  await page.locator('[data-report=back]').click();assert((await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').innerText()).includes('Read'));
-  await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();
-  await page.evaluate(()=>failReportAction=true);await page.locator('[data-report=make]').click();await page.getByText('Board unavailable; decision unknown',{exact:true}).waitFor();
-  assert.equal(await page.locator('.report-card').count(),1,'unknown creation retains the report');
-  if(out&&surface==='tray'&&theme==='light'&&width===350&&font===20)await page.screenshot({path:path.join(out,'make-unknown.png')});
-  await page.evaluate(()=>failReportAction=false);await page.locator('[data-report=make]').click();await page.getByText('Created held drafts: #21',{exact:true}).waitFor();
-  assert.equal(await page.locator('.reports-section .report-row').count(),0);
-  await page.evaluate(({state,report})=>{reportRow={...report,n:13};taskq.receive({...state,projects:[{...state.projects[0],reports:{complete:true,observed:201,reports:[reportRow]}}]});},{state,report});await page.locator(surface==='tray'?'.notification-row':'.reports-section .report-row').waitFor();
-  await page.locator(surface==='tray'?'[data-notification=open]':'.reports-section [data-report=open]').click();await page.locator('.report-card').waitFor();await page.locator('[data-report=drop]').click();await page.getByText('Report dropped.',{exact:true}).waitFor();assert.equal(await page.locator('.reports-section .report-row').count(),0);
-  if(surface==='workspace'){await page.locator('[data-report=toggle]').click();assert(await page.locator('.conversations').isVisible(),'closing Reports restores Conversations');}
-  assert.deepEqual(errors,[]);cells++;await page.close();
+  assert.deepEqual(errors,[]);await page.close();cells++;
  }
- console.log('PASS Reports buttons and theme/width/text matrix: '+cells+' cells; Chromium instrument, native platforms separate');
- // Reuse the native fixture with a WebView2-shaped sink. Risk: a capture silently leaves Reports collapsed.
- for(const surface of ['tray','workspace']){
-  const page=await browser.newPage({viewport:{width:640,height:480}});await page.setContent(fs.readFileSync('build/web/'+surface+'.html','utf8'));
-  await page.evaluate(state=>{window.chrome={webview:{postMessage(t){if(JSON.parse(t).a==='reports')throw Error('fixture reached native IPC');}}};window.ipc=Object.freeze({postMessage:t=>window.chrome.webview.postMessage(t)});taskq.receive(state);},fx.state);
-  await page.evaluate(fs.readFileSync('tests/fixtures/reports-shots.js','utf8')+'taskqReportShot('+JSON.stringify(surface)+','+JSON.stringify(fx.state)+')');
-  await page.locator('.report-card').waitFor({timeout:5000});assert((await page.locator('.report-card').innerText()).includes('Retry limits'));
-  assert.equal(await page.locator('[data-report=make]').isEnabled(),true);await page.close();
- }
- console.log('PASS native Reports fixture invocation and WebView2-shaped IPC on both surfaces');
-}finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
+ console.log('PASS Reports in Conversations: '+cells+' surface/theme/width/font cells; shared decisions, held successor, source-bound retry and notification deep-links');
+ }finally{await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});
