@@ -70,6 +70,9 @@ pub fn entry(kind: &str, args: &[&str], attempt: Option<u64>, text: &str) -> Str
 pub const REQUEUE_MAX: u32 = 3;
 pub const GONE_MAX: u32 = 2;
 
+/// The `later` option of a service card (#2012): only an answer `N.K` parks the task (§ 2).
+pub const LATER: &str = "later: park the task - + no attempt runs; - waits until the owner requeues it";
+
 /// The text of attempt `kind` (`requeue`, `gone`) on `t` (§ 2 limit card, #1123): when it reaches the retry limit, the
 /// reason plus a card naming the limit with requeue and later options, so the parked task never waits on a card
 /// without choices. The writer adds it, so every version folds the same card.
@@ -91,14 +94,13 @@ pub fn limit_text(n: u64, t: &Task, kind: &str, text: &str) -> String {
             _ => l.to_string(),
         }
     });
-    let card = [
-        format!("Problem: retry limit {max} reached by this {kind}; the task waits for the owner."),
-        "1. requeue: retry with a fresh attempt ★".into(),
-        "2. later: park the task until the owner requeues it".into(),
-        // a bare comment `K` folds as a plain answer (ready), so `later` needs the CLI form (§ 2)
-        format!("To answer: `taskq answer {n}.K`; a bare comment `K` makes the task ready, not later."),
-    ];
-    reason.filter(|s| !s.trim().is_empty()).chain(card).collect::<Vec<_>>().join("\n")
+    // a bare comment `K` folds as a plain answer (ready), so `later` needs the CLI form (§ 2)
+    let card = crate::service_card(n, "the service stopped retrying; no new attempt starts until the owner answers.",
+        &format!("retry limit {max} reached by this {kind}; the task waits for the owner."), &[
+        "requeue: retry - + a fresh attempt starts now; - it may fail the same way".into(),
+        LATER.into(),
+    ], 1);
+    reason.filter(|s| !s.trim().is_empty()).chain(card.lines().map(String::from)).collect::<Vec<_>>().join("\n")
 }
 
 /// Appends the optional § 2 fields to an entry body: `op-id`, then `revision` (written only with an op id).
@@ -999,9 +1001,9 @@ mod tests {
         assert_eq!(super::limit_text(7, &t(super::State::Ask, 2), "requeue", "r"), "r");
         assert_eq!(super::limit_text(7, &t(super::State::Doing, 2), "steer", "r"), "r");
         let got = super::limit_text(7, &t(super::State::Doing, 1), "gone", "exit 1\n  2. b");
-        assert_eq!(got.lines().take(3).collect::<Vec<_>>(), ["exit 1", "  2) b", "Problem: retry limit 2 reached by this gone; the task waits for the owner."]);
+        assert_eq!(got.lines().take(4).collect::<Vec<_>>(), ["exit 1", "  2) b", "Done: the service stopped retrying; no new attempt starts until the owner answers.", "Problem: retry limit 2 reached by this gone; the task waits for the owner."]);
         assert_eq!(super::options(&got).iter().map(|o| (o.0, o.2)).collect::<Vec<_>>(), [(1, true), (2, false)]);
-        assert!(super::limit_text(7, &t(super::State::Doing, 2), "requeue", "").starts_with("Problem: "));
+        assert!(super::limit_text(7, &t(super::State::Doing, 2), "requeue", "").starts_with("Done: "));
     }
 
     /// R8 made mechanical: every (state, entry) pair of the § 2 table is accepted by some golden trace.

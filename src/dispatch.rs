@@ -499,20 +499,15 @@ pub fn resume_publication(b: &dyn Board, cfg: &Config, issue: &board::Issue, t: 
 
 /// § 2 ask card of a publication only the owner can unblock (#1413); its answer resumes publication.
 /// `merged`: superseded by these merged task PRs (#1779), so a `close` option ends the task with no merge.
-fn blocked_card(n: u64, reason: &str, merged: Option<&str>) -> String {
-    let reason: String = reason.chars().take(200).collect();
-    let mut card = vec![
-        "Done: the reviewed result is in publication; the service cannot finish it.".to_string(),
-        format!("Problem: {reason}"),
-        format!("1. retry: fix it on the board (rerun CI or re-enqueue the PR), then publish again{}", if merged.is_some() { "" } else { " ★" }),
-        "2. later: park the task until the owner requeues it".into(),
+pub(crate) fn blocked_card(n: u64, reason: &str, merged: Option<&str>) -> String {
+    let mut opts = vec![
+        "retry: publish again - + resumes publication; - fix it on the board first (rerun CI or re-enqueue the PR)".to_string(),
+        "later: park the task - + no publication runs; - waits until the owner requeues it".into(),
     ];
     if let Some(m) = merged {
-        let m: String = m.chars().take(100).collect();
-        card.push(format!("3. close: superseded by merged {m}; no merge ★"));
+        opts.push(format!("close: superseded, no merge - + merged {} carries the work; - this result is not merged", crate::plain(m, 60)));
     }
-    card.push(format!("To answer: `taskq answer {n}.K` or comment `K`; `close` and `later` need the CLI form."));
-    card.join("\n")
+    crate::service_card(n, "the reviewed result is in publication; the service cannot finish it.", reason, &opts, if merged.is_some() { 3 } else { 1 })
 }
 
 /// § 7: a close whose verdict names a successor (`superseded by #M`) leaves it moving. A held successor is started
@@ -1020,10 +1015,10 @@ g", &["taskq".into()]).unwrap();
         let n = at_limit(&["win", "mac"]);
         let t = fold(n, &entries(&b, n).unwrap(), false);
         let card = t.card.unwrap();
-        assert_eq!((t.retries, card.lines().take(3).collect::<Vec<_>>()), (3, vec!["Fix:", "1) x", "Problem: retry limit 3 reached by this requeue; the task waits for the owner."]));
+        assert_eq!((t.retries, card.lines().take(4).collect::<Vec<_>>()), (3, vec!["Fix:", "1) x", "Done: the service stopped retrying; no new attempt starts until the owner answers.", "Problem: retry limit 3 reached by this requeue; the task waits for the owner."]));
         assert_eq!(options(&card).into_iter().map(|o| (o.0, o.1.split(':').next().unwrap().to_string())).collect::<Vec<_>>(), [(1, "requeue".into()), (2, "later".into())]);
         assert!(b.issue(n).unwrap().labels.contains(&"q-ask".to_string()));
-        assert_eq!(card.lines().last(), Some(format!("To answer: `taskq answer {n}.K`; a bare comment `K` makes the task ready, not later.").as_str()));
+        assert_eq!(card.lines().last(), Some(format!("To answer: `taskq answer {n}.K`; a bare comment `K` is a plain answer, never `close` or `later`.").as_str()));
         // `taskq answer N.2` parks the task; a bare board comment `2` is a plain answer to `ready` (§ 2)
         let r = answer_picks(&b, &cfg, &[format!("{n}.2")], &Op::default()).unwrap().remove(0);
         assert_eq!((r.outcome, r.state), ("accepted", Some("later")), "{}", r.text());

@@ -733,6 +733,32 @@ fn media_links(values: &[&str]) -> Res<()> {
 
 /// § 2 ask card: Done, Problem, optional Evidence, 2-4 options with one ★ or none (an owner action), the answer line.
 fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[String]) -> Res<String> {
+    card(n, text, opts, recommend, links, false)
+}
+
+/// § 2 ask card of a service decision (retry limit, blocked publication, closed task, refused start, failed input,
+/// #2012): the writer of `ask`, so a format change reaches every card TaskQ posts. `done` and `problem` become one
+/// plain line each, cut to the field limit; options keep their key (`later:`, `close:`), which runs only through
+/// `taskq answer N.K` (§ 2). It never fails: a text the writer refuses is replaced by the refusal.
+pub(crate) fn service_card(n: u64, done: &str, problem: &str, opts: &[String], recommend: usize) -> String {
+    let text = |p: &str| format!("Done: {}\nProblem: {}", plain(done, 160), plain(p, 240));
+    let k = recommend.to_string();
+    card(n, &text(problem), opts, Some(&k), &[], true).unwrap_or_else(|e| {
+        let opts = ["retry: retry the step - + runs it again; - may fail the same way".into(), "later: park the task - + nothing runs; - waits until the owner requeues it".into()];
+        card(n, &text(&format!("card check failed: {e}")), &opts, Some("1"), &[], true).unwrap_or(e)
+    })
+}
+
+/// One line of at most `max` characters for a service card field: no link (`](` breaks), each URL as `code`.
+fn plain(s: &str, max: usize) -> String {
+    let s = s.split_whitespace().collect::<Vec<_>>().join(" ").replace("](", "] (");
+    let s = if s.is_empty() { "-".into() } else if s.chars().count() > max { format!("{}…", s.chars().take(max - 1).collect::<String>()) } else { s };
+    s.split(' ').map(|w| if w.starts_with("http://") || w.starts_with("https://") { format!("`{w}`") } else { w.into() }).collect::<Vec<_>>().join(" ")
+}
+
+/// The § 2 card writer of every card TaskQ posts. A `cli` card (a service decision) takes `taskq answer N.K` only:
+/// its `close` and `later` options never run from a bare comment `K`.
+fn card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links: &[String], cli: bool) -> Res<String> {
     let f = fields(text, &[("Done", 1, 1, 160), ("Problem", 1, 2, 240)])?;
     all([card_links("Problem", &f[1]), card_links("option", opts), option_lines(opts)])?;
     let mut lines = f.concat();
@@ -770,7 +796,11 @@ fn ask_card(n: u64, text: &str, opts: &[String], recommend: Option<&str>, links:
     let opts: Vec<String> = numbered(opts, Some(k)).lines().map(String::from).collect();
     limit("option", &opts, 2, 4, 160)?;
     lines.extend(opts);
-    lines.push(format!("To answer: `taskq answer {n}.K` or comment `K` or the option text."));
+    lines.push(if cli {
+        format!("To answer: `taskq answer {n}.K`; a bare comment `K` is a plain answer, never `close` or `later`.")
+    } else {
+        format!("To answer: `taskq answer {n}.K` or comment `K` or the option text.")
+    });
     Ok(lines.join("\n"))
 }
 
@@ -5528,6 +5558,114 @@ mod tests {
         }
         let owner = snapshot::question("Problem: add the board token\nTo answer: `taskq answer 7 --text <done>`");
         assert_eq!((owner["parsed"].clone(), owner["choices"].clone()), (json!(true), json!([])), "an owner action takes a text answer");
+    }
+
+    /// The card text written outside the § 2 writer in `src`: each string literal of production code (no test item, no
+    /// comment, no writer function) that holds a card marker, except where the code reads a card (`starts_with(` ...).
+    fn hand_cards(file: &str, src: &str) -> Vec<String> {
+        const WRITER: [&str; 5] = ["fn numbered(", "fn ask_card(", "fn service_card(", "fn plain(", "fn card("];
+        const READS: [&str; 7] = ["starts_with(", "strip_prefix(", "find(", "split_once(", "contains(", "field(", "trim_start_matches("];
+        let lines: Vec<&str> = src.lines().collect();
+        let (mut kept, mut i) = (String::new(), 0);
+        while i < lines.len() {
+            let t = lines[i].trim_start();
+            let indent = &lines[i][..lines[i].len() - t.len()];
+            let attr = t.starts_with("#[cfg(test)]") || t.starts_with("#[test]");
+            if attr || file == "main.rs" && indent.is_empty() && WRITER.iter().any(|w| t.contains(w)) {
+                let mut j = i + attr as usize;
+                while j < lines.len() && lines[j].trim_start().starts_with("#[") { j += 1; }
+                let one = lines.get(j).map(|l| l.trim_end()).is_some_and(|l| l.ends_with(';') || l.contains('{') && l.ends_with('}'));
+                if !one { while j < lines.len() && lines[j].trim_end() != format!("{indent}}}") { j += 1; } }
+                i = j + 1;
+                continue;
+            }
+            kept.push_str(lines[i]);
+            kept.push('\n');
+            i += 1;
+        }
+        let c: Vec<char> = kept.chars().collect();
+        let (mut out, mut i) = (vec![], 0);
+        while i < c.len() {
+            match c[i] {
+                '/' if c.get(i + 1) == Some(&'/') => while i < c.len() && c[i] != '\n' { i += 1; },
+                '\'' if c.get(i + 2) == Some(&'\'') => i += 2,
+                '\'' if c.get(i + 1) == Some(&'\\') && c.get(i + 3) == Some(&'\'') => i += 3,
+                '"' => {
+                    let start = i;
+                    i += 1;
+                    while i < c.len() && c[i] != '"' { i += if c[i] == '\\' { 2 } else { 1 }; }
+                    let lit: String = c[start + 1..i.min(c.len())].iter().collect();
+                    let before: String = c[start.saturating_sub(24)..start].iter().collect();
+                    let read = READS.iter().any(|r| before.trim_end().ends_with(r)) || before.contains("ask_card(");
+                    if !read && ["Problem: ", "Done: ", "To answer", "★"].iter().any(|m| lit.contains(m)) { out.push(lit); }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        out
+    }
+
+    // Chain: § 2 ask card -> every card TaskQ posts (#2012). Risk: a production card is written by hand, so a § 2 format
+    // change misses it; the scan reads every src file and only the writer, a card reader or this list may hold card text.
+    #[test]
+    fn every_production_card_goes_through_the_writer() {
+        // worker prompts that teach the card form, and the § 2 star of a pick shown in the inbox
+        const KNOWN: [(&str, &str); 4] = [("runtime.rs", "ask {n} --text"), ("runtime.rs", "Delivery review-pr:"), ("snapshot.rs", " ★"), ("main.rs", "Recommendation: worker ★")];
+        let mut found = vec![];
+        let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        while let Some(d) = dirs.pop() {
+            for e in fs::read_dir(&d).unwrap().map(Result::unwrap) {
+                let (p, name) = (e.path(), e.file_name().to_string_lossy().into_owned());
+                if p.is_dir() { dirs.push(p); continue; }
+                if !name.ends_with(".rs") { continue; }
+                for lit in hand_cards(&name, &fs::read_to_string(&p).unwrap()) {
+                    if !KNOWN.iter().any(|(f, s)| *f == name && lit.contains(s)) { found.push(format!("{name}: {lit}")); }
+                }
+            }
+        }
+        assert!(found.is_empty(), "card text outside the § 2 writer (use service_card or ask_card):\n{}", found.join("\n"));
+        let hand = "fn f(n: u64) -> String {\n    format!(\"Problem: p\\n1. a ★\\n2. b\")\n}\n";
+        assert_eq!(hand_cards("dispatch.rs", hand), ["Problem: p\\n1. a ★\\n2. b"], "the guard flags a hand-written card");
+        assert!(hand_cards("dispatch.rs", &format!("#[cfg(test)]\nmod tests {{\n    #[test]\n{hand}}}\n")).is_empty(), "test text is not production");
+        assert!(hand_cards("dispatch.rs", "fn f(l: &str) -> bool { l.starts_with(\"Problem: \") }\n").is_empty(), "reading a card is not writing one");
+    }
+
+    // Chain: § 2 option format -> the writer's check -> fixtures and service cards (#2012). Risk: a fixture or a service
+    // card shows an option the writer would refuse, so the apps are tested against cards TaskQ never posts.
+    #[test]
+    fn fixture_and_service_cards_pass_the_writer() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/answer-card.json");
+        let fx: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let mut seen = 0;
+        for c in fx["cases"].as_array().unwrap() {
+            for card in c["rows"].as_array().unwrap().iter().filter_map(|r| r["card"].as_str()) {
+                let opts: Vec<String> = core::options(card).into_iter().map(|o| o.1).collect();
+                if opts.is_empty() { continue; }
+                seen += 1;
+                assert_eq!(all([option_lines(&opts), card_links("option", &opts)]), Ok(()), "{}: {card}", c["name"]);
+            }
+        }
+        assert!(seen >= 10, "{seen} fixture cards with options");
+        let t = core::Task { state: State::Doing, retries: 2, ..Default::default() };
+        let cards = [
+            core::limit_text(7, &t, "requeue", ""),
+            dispatch::blocked_card(7, "CI failed on https://x/run/1 for [#9](https://x/9)", None),
+            dispatch::blocked_card(7, "the PR was merged elsewhere", Some("#86 at ddddddd")),
+            service::closed_card(7, "2026-10-31T09:00:00Z"),
+            service::refused_card(7, "rules over the cap\nNext: trim the rules"),
+            service::input_card(7, "worker input", 3),
+        ];
+        for got in &cards {
+            assert_eq!(snapshot::question(got)["parsed"], json!(true), "{got}");
+            assert!(!got.contains("card check failed"), "{got}");
+            let opts: Vec<String> = core::options(got).into_iter().map(|o| o.1).collect();
+            let k = core::options(got).into_iter().find(|o| o.2).unwrap().0.to_string();
+            let text = got.lines().filter(|l| l.starts_with("Done: ") || l.starts_with("Problem: ")).collect::<Vec<_>>().join("\n");
+            assert_eq!(card(7, &text, &opts, Some(&k), &[], true).as_deref(), Ok(got.as_str()), "the writer rebuilds the card");
+        }
+        let bad = service_card(7, "d", "p", &["no detail".into(), "later".into()], 1);
+        assert!(bad.contains("card check failed: option line 1") && snapshot::question(&bad)["parsed"] == json!(true), "{bad}");
     }
 
     // Chain: canonical board read -> approved projection.
