@@ -37,6 +37,7 @@ Scope optional, 1-4 bullet lines; with `--op-id`, a last line `op-id: <id>` mark
 | `taskq service pm [--grant ID --actor ID --hours N --project P.. --runtime R.. \| --revoke ID] [--json]` | [PM authority/receipts](pm-requests.md); owner-only, off by default |
 | `taskq profile [guide\|export\|tasks\|board\|actions\|health\|migrate] [--since 24h]` | Local telemetry; no board; [detail](profiling.md#contract-detail) |
 | `taskq agents` | read-only login probe per startable runtime: [runtime login](capacity.md#runtime-login) |
+| `taskq accounts [--json]` / `taskq accounts enable\|disable <runtime> <label>` / `move <runtime> <label> <position>` / `add <runtime> <label>` | list every host's runtime accounts; change this host's list or add one by device login: [runtime accounts](capacity.md#runtime-accounts) |
 | `taskq selftest` / `taskq --version` | load config, fold built-in `tests/golden`, read the board; no writes / [binary version](host-service.md#contract-detail) |
 
 ### Outputs, op ids and receipts
