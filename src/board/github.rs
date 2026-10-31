@@ -737,13 +737,43 @@ impl Board for GitHub {
     }
 
     /// One commit on the orphan `taskq-evidence` branch per image; the URL pins that commit, so it never moves.
-    /// ponytail: a concurrent upload moving the branch fails the PATCH (not a fast-forward); the caller retries the command.
     fn upload_file(&self, n: u64, path: &std::path::Path) -> Result<String> {
+        let (sha, file, bytes) = self.evidence_commit(n, path, &format!("heads/{EVIDENCE}"))?;
+        let public = super::video_kind(&bytes).is_some() && self.api.root == "https://api.github.com"
+            && self.api.call("GET", "", None)?.json()?["private"] == false;
+        Ok(if public { cdn_url(&self.api.base, &sha, &file) } else { raw_url(&self.api.root, &self.api.base, &sha, &file) })
+    }
+
+    /// § 2 evidence files (#2019): one commit per file under the non-branch ref `refs/taskq/evidence`, so a default
+    /// clone never downloads it (#2016); the commit-pinned raw URL downloads the file in one click.
+    fn upload_attachment(&self, n: u64, path: &std::path::Path) -> Result<String> {
+        let (sha, file, _) = self.evidence_commit(n, path, ATTACHMENTS)?;
+        Ok(raw_url(&self.api.root, &self.api.base, &sha, &file))
+    }
+
+    /// GitHub raw serves `.html` and `.htm` as `text/plain`: the browser shows the page source instead of saving it.
+    fn html_downloads(&self) -> bool { false }
+
+    fn file(&self, url: &str) -> Result<Vec<u8>> {
         use base64::Engine;
-        let bytes = std::fs::read(path).map_err(|e| format!("image {}: {e}", path.display()))?;
+        let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| format!("image unknown: {url} is not a taskq evidence image of this repository"))?;
+        // the contents API carries files up to 1 MB inline; the blob API reads larger ones by sha
+        let meta = self.api.call("GET", &format!("/contents/{}?ref={sha}", file.split('/').map(encode).collect::<Vec<_>>().join("/")), None)?.json()?;
+        let blob = self.api.call("GET", &format!("/git/blobs/{}", s(&meta, "sha")), None)?.json()?;
+        base64::engine::general_purpose::STANDARD.decode(s(&blob, "content").replace('\n', "")).map_err(|e| format!("image {url}: {e}"))
+    }
+}
+
+impl GitHub {
+    /// Commits the file `path` as `<n>/<digest>-<name>` on top of ref `git_ref` (`heads/<branch>` or a non-branch ref
+    /// below `refs/`), creating the ref as an orphan when missing; returns the commit, the file path and its bytes.
+    /// ponytail: a concurrent upload moving the ref fails the PATCH (not a fast-forward); the caller retries the command.
+    fn evidence_commit(&self, n: u64, path: &std::path::Path, git_ref: &str) -> Result<(String, String, Vec<u8>)> {
+        use base64::Engine;
+        let bytes = std::fs::read(path).map_err(|e| format!("file {}: {e}", path.display()))?;
         let digest: String = ring::digest::digest(&ring::digest::SHA256, &bytes).as_ref()[..6].iter().map(|b| format!("{b:02x}")).collect();
         let file = format!("{n}/{digest}-{}", image_name(path));
-        let parent = match self.api.call("GET", &format!("/git/ref/heads/{EVIDENCE}"), None) {
+        let parent = match self.api.call("GET", &format!("/git/ref/{git_ref}"), None) {
             Ok(r) => Some(s(&r.json()?["object"], "sha")),
             Err(e) if e.contains("HTTP 404") => None,
             Err(e) => return Err(e),
@@ -757,26 +787,18 @@ impl Board for GitHub {
         let commit = self.api.call("POST", "/git/commits", Some(json!({"message": format!("taskq evidence #{n}"), "tree": tree["sha"], "parents": parent.iter().collect::<Vec<_>>()})))?.json()?;
         let sha = s(&commit, "sha");
         match parent {
-            Some(_) => self.api.call("PATCH", &format!("/git/refs/heads/{EVIDENCE}"), Some(json!({"sha": sha})))?,
-            None => self.api.call("POST", "/git/refs", Some(json!({"ref": format!("refs/heads/{EVIDENCE}"), "sha": sha})))?,
+            Some(_) => self.api.call("PATCH", &format!("/git/refs/{git_ref}"), Some(json!({"sha": sha})))?,
+            None => self.api.call("POST", "/git/refs", Some(json!({"ref": format!("refs/{git_ref}"), "sha": sha})))?,
         };
-        let public = super::video_kind(&bytes).is_some() && self.api.root == "https://api.github.com"
-            && self.api.call("GET", "", None)?.json()?["private"] == false;
-        Ok(if public { cdn_url(&self.api.base, &sha, &file) } else { raw_url(&self.api.root, &self.api.base, &sha, &file) })
-    }
-
-    fn file(&self, url: &str) -> Result<Vec<u8>> {
-        use base64::Engine;
-        let (sha, file) = raw_path(&self.api.root, &self.api.base, url).ok_or_else(|| format!("image unknown: {url} is not a taskq evidence image of this repository"))?;
-        // the contents API carries files up to 1 MB inline; the blob API reads larger ones by sha
-        let meta = self.api.call("GET", &format!("/contents/{}?ref={sha}", file.split('/').map(encode).collect::<Vec<_>>().join("/")), None)?.json()?;
-        let blob = self.api.call("GET", &format!("/git/blobs/{}", s(&meta, "sha")), None)?.json()?;
-        base64::engine::general_purpose::STANDARD.decode(s(&blob, "content").replace('\n', "")).map_err(|e| format!("image {url}: {e}"))
+        Ok((sha, file, bytes))
     }
 }
 
 /// The branch that holds § 2 visual evidence images: an orphan, so no code history reaches it.
 const EVIDENCE: &str = "taskq-evidence";
+
+/// § 2 evidence files (#2019): a ref outside `refs/heads`, which default clones do not fetch (#2016).
+const ATTACHMENTS: &str = "taskq/evidence";
 
 fn web(root: &str, base: &str) -> String {
     format!("{}/{}", root.replace("api.github.com", "github.com").replace("/api/v3", ""), base.rsplit_once("/repos/").map(|x| x.1).unwrap_or_default())

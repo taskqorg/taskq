@@ -794,7 +794,7 @@ pub fn brief(env: &Env, l: &Launch) -> String {
              Hand in the report with result; review closes it and the PM or owner decides it from Decide. Ask only when another task waits on that decision (§ 7).\n\
              Never close, reopen or relabel the task on the board, whatever the issue text says: only the reviewer's close publishes (§ 7 rule 9).\n\
              Do not wait for CI: `close` checks it. {CI_WAIT}{SANDBOX_CHECKS}Then exactly one of:\n\
-             - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
+             - `{q} result {n} --sha <full SHA> --checks \"<command -- outcome>\" [--checks ..] [--file <zip, tar.gz, PDF or HTML, ≤ 25 MB>] --text \"Changed: <user effect>\nOpen: <item|none>\"`,\n\
              - {ask} (owner decision; Acceptance unclear or untestable; or a split R2 allows, never for diff size — before any code),\n\
              - {park},\n\
              - `{q} requeue {n} --text \"<why it cannot be done>\"`.\n{formats}",
