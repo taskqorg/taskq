@@ -148,7 +148,7 @@ create:function({send=ui.send,draw,defer=ui.defer,onOpen,id=()=>Array.from(crypt
     !ordinary&&r.tasks&&h('section',null,h('h3',null,'Proposed tasks'),r.tasks.length?r.tasks.map((t,i)=>h('details',{key:i,'data-view-key':namespace(r,'proposal'+i)},h('summary',null,(i+1)+'. '+t.title),h('p',null,t.goal),h('ul',null,t.acceptance?.map(a=>h('li',null,a))),t.scope?.map(s=>h('p',null,s)))):h('p',null,'No follow-up tasks proposed.'),h('p',{class:'meta'},'Make tasks creates held drafts linked to this report. Start them separately.'),r.pending_decision==='make'&&h('p',{role:'status'},'Make tasks is pending. Retry Make tasks to reconcile the original claims.'),!settled(r)&&slot('make')),
     !ordinary&&r.body&&h('details',{'data-view-key':namespace(r,'full')},h('summary',null,'Full report'),body(r.body)),
     notice&&h('p',{role:'status'},notice),
-    notice&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
+    (notice||successor||r.tasks_made?.length)&&![...pending.values()].some(op=>active(op)&&op.action!=='read')&&h('div',{class:'conversation-tools result-next'},
      successor&&h('a',{href:successor.url,'data-url':successor.url},'1. Read held draft #'+successor.n+' ★'),
      !!r.tasks_made?.length&&h('details',{'data-view-key':namespace(r,'drafts')},h('summary',null,'1. Read held drafts ★'),r.tasks_made.map(n=>h('a',{href:r.url?.replace(/\d+$/,String(n)),'data-url':r.url?.replace(/\d+$/,String(n)),key:n},'Read held draft #'+n))),
      h('button',{'data-report':'unresolved'},(successor||r.tasks_made?.length?'2. Next unresolved item':'1. Next unresolved item ★')),
