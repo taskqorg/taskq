@@ -71,7 +71,7 @@ fn below(found: &str, min: &str) -> bool {
 /// `<tool> --version` through `bin`: the found version, or the failed command with its error (never empty).
 fn version(tool: &str, bin: &Path) -> Result<String, String> {
     let cmd = format!("`{tool} --version`");
-    let out = crate::platform::output("tool.version", Command::new(bin).arg("--version"), Duration::from_secs(10)).map_err(|e| format!("{cmd} failed: {e}"))?;
+    let out = crate::platform::output("tool.version", crate::platform::command(bin).arg("--version"), Duration::from_secs(10)).map_err(|e| format!("{cmd} failed: {e}"))?;
     let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     let first = text.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no output");
     if !out.status.success() {

@@ -4,7 +4,6 @@
 use crate::core::Entry;
 use serde_json::{Value, json};
 use std::cell::RefCell;
-use std::process::Command;
 
 pub type Result<T> = std::result::Result<T, String>;
 /// Closed tasks per Completed page; each costs one comment read (§ 4 budget).
@@ -482,7 +481,7 @@ fn curl(method: &str, url: &str, auth: &str, body: Option<&Value>, etag: Option<
         files.body(b)?;
         cfg += &format!("header = \"Content-Type: application/json\"\ndata-binary = {}\n", quote(&format!("@{}",files.path("request").display())));
     }
-    let out = match coreq::process::exchange("board.http", Command::new("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(65)) {
+    let out = match coreq::process::exchange("board.http", crate::platform::command("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(65)) {
         Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
         Err(e) => return Err(format!("curl: {e}")),
     };
@@ -826,7 +825,7 @@ impl Api {
         let files=HttpFiles::new()?;
         cfg+=&format!("output = {}\n",quote(&files.path("response").to_string_lossy()));
         if let Some(f) = form { cfg += &format!("form = {}\n", quote(&format!("file=@{}", f.display()))); }
-        let out = match coreq::process::exchange("board.http", Command::new("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(125)) {
+        let out = match coreq::process::exchange("board.http", crate::platform::command("curl").args(["-K", "-"]), cfg.as_bytes(), std::time::Duration::from_secs(125)) {
             Ok(out) | Err(coreq::process::Failure::Exit(out)) => out,
             Err(e) => return Err(format!("curl: {e}")),
         };
@@ -1276,6 +1275,7 @@ impl Board for Fake {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     // Chain: real curl/config stdin -> local HTTP refusal -> request accounting and secret-free execution trace.
     #[test]

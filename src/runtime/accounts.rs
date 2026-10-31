@@ -376,7 +376,7 @@ pub fn add(install: &Path, rt: &str, label: &str) -> Result<String, String> {
     if !bin.is_absolute() { return Err(format!("{} CLI not found on PATH", crate::runtime::of(rt).bin)); }
     let args: &[&str] = if rt == "claude" { &["auth", "login"] } else { &["login", "--device-auth"] };
     // the owner's terminal runs the native login; TaskQ never sees the token
-    let ok = std::process::Command::new(&bin).args(args).env(var(rt), &home).status().map_err(|e| format!("{} login: {e}", rt))?.success();
+    let ok = crate::platform::console_command(&bin).args(args).env(var(rt), &home).status().map_err(|e| format!("{} login: {e}", rt))?.success();
     if !ok { return Err(format!("{rt} login for {label} did not finish; the list is unchanged")); }
     append(&mut p, rt, label)?;
     write_policy(install, &p)?;

@@ -122,19 +122,20 @@ fn image(process:&OwnedHandle)->Result<std::path::PathBuf,String> {
     use std::os::windows::ffi::OsStringExt;
     Ok(std::ffi::OsString::from_wide(&buffer[..size as usize]).into())
 }
-/// The parent process when its image is `launcher`; a parent pid can be reused, so the image proves the parent.
-fn launched_by(launcher:&std::path::Path)->Result<Option<OwnedHandle>,String> {
+/// The parent process when its image is one of `launchers`; a parent pid can be reused, so the image proves the parent.
+fn launched_by(launchers:&[std::path::PathBuf])->Result<Option<OwnedHandle>,String> {
     let pid=parent(unsafe {GetCurrentProcessId()})?;
     let raw=unsafe {OpenProcess(0x1000|0x00100000,0,pid)};
     let handle=owned(raw,io::Error::last_os_error())?;
     let same=|p:&std::path::Path|p.canonicalize().ok().map(|p|p.to_string_lossy().to_lowercase());
     let path=same(&image(&handle)?);
-    Ok((path.is_some() && path==same(launcher)).then_some(handle))
+    Ok((path.is_some() && launchers.iter().any(|l|same(l)==path)).then_some(handle))
 }
 /// #1435 A2: ending the Scheduled Task ends only the launcher; `service run` then exits too, so no old release keeps
-/// running. Workers stay in their own jobs and the next service rebuilds from the board (§ 4).
-pub fn exit_with_launcher(launcher:&std::path::Path) {
-    let handle=match launched_by(launcher) {Ok(Some(h))=>h,Ok(None)=>return,Err(e)=>{log!("launcher watch unavailable: {e}");return;}};
+/// running. Workers stay in their own jobs and the next service rebuilds from the board (§ 4). #2049 A1: the task
+/// starts the GUI launcher; a task an older binary registered starts the console one.
+pub fn exit_with_launcher(launchers:&[std::path::PathBuf]) {
+    let handle=match launched_by(launchers) {Ok(Some(h))=>h,Ok(None)=>return,Err(e)=>{log!("launcher watch unavailable: {e}");return;}};
     std::thread::spawn(move || {
         if unsafe {WaitForSingleObject(handle.as_raw_handle(),u32::MAX)}==0 {crate::platform::service_exit(0,"launcher ended");}
     });
@@ -249,7 +250,10 @@ mod tests {
         assert_eq!(parent(child.id()).unwrap(),unsafe {GetCurrentProcessId()});
         let own=owned(unsafe {OpenProcess(0x1000,0,GetCurrentProcessId())},io::Error::last_os_error()).unwrap();
         assert_eq!(image(&own).unwrap().canonicalize().unwrap(),std::env::current_exe().unwrap().canonicalize().unwrap());
-        assert!(launched_by(&std::env::current_exe().unwrap()).unwrap().is_none(),"the test runner is not its own parent");
+        assert!(launched_by(&[std::env::current_exe().unwrap()]).unwrap().is_none(),"the test runner is not its own parent");
+        // #2049 A1: any listed launcher (console or GUI) is the parent.
+        let up=owned(unsafe {OpenProcess(0x1000,0,parent(GetCurrentProcessId()).unwrap())},io::Error::last_os_error()).unwrap();
+        assert!(launched_by(&[std::env::current_exe().unwrap(),image(&up).unwrap()]).unwrap().is_some(),"the runner's parent is a listed launcher");
         child.kill().ok();child.wait().ok();
     }
     // Chain: native failure -> automatically captured adapter -> original diagnostic.

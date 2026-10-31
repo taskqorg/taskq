@@ -169,7 +169,7 @@ fn safe(dir: &Path) -> Vec<String> {
 /// `core.longpaths`: Git for Windows otherwise fails a removal at 260 characters (`Filename too long`, deep `target/`
 /// paths), after dropping the registry entry and `.git` file, so the rest of the directory stays; other Gits ignore it.
 fn run(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
-    let mut c = std::process::Command::new("git");
+    let mut c = crate::platform::command("git");
     c.arg("-C").arg(dir).args(["-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-c", "core.longpaths=true", "--no-optional-locks"]);
     for v in safe(dir) { c.arg("-c").arg(format!("safe.directory={v}")); }
     #[cfg(test)]

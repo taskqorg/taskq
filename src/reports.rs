@@ -482,7 +482,7 @@ fn finish(b:&dyn Board,n:u64,sha:&str,prior:&Value,made:&[u64])->Value {
 pub fn prepare(b:&dyn Board,root:&Path,n:u64,sha:&str)->Res<bool> {
     let research=b.issue(n)?.labels.iter().any(|l|l=="research");
     let spec=format!("{sha}:docs/research/{n}.md");
-    let out=crate::platform::output("reports.candidate",std::process::Command::new("git").current_dir(root).args(["cat-file","-e",&spec]),std::time::Duration::from_secs(15))?;
+    let out=crate::platform::output("reports.candidate",crate::platform::command("git").current_dir(root).args(["cat-file","-e",&spec]),std::time::Duration::from_secs(15))?;
     if !research&&!out.status.success() {return Ok(false);}
     let body=b.source(&format!("docs/research/{n}.md"),sha)?.replace("\r\n","\n");
     for task in proposals(&body)? {crate::task_body(b,&task.task(n),&crate::Op::default())?;}
