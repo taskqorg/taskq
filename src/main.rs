@@ -77,7 +77,7 @@ use std::time::{Duration, Instant, SystemTime};
 pub type Res<T> = Result<T, String>;
 
 const USAGE: &str = "taskq agents
- taskq accounts [--json] | taskq accounts enable|disable <runtime> <label> | taskq accounts move <runtime> <label> <position> | taskq accounts add <runtime> <label>
+ taskq accounts [--json] | taskq accounts enable|disable|move <runtime> <label> [<position>] | taskq accounts add <runtime> <label>
  taskq labels
  taskq add <title> --goal G --acceptance A [--acceptance B..] [--scope P..] [--deps N..] [--type T] [--runtime R] [--priority 0|1|2] [--host H] [--conversation ID --op-id ID]
  taskq finding <title> --board URL --source installation/rule/episode --goal G --acceptance A.. [--evidence E..] [--start] [--json]
