@@ -201,10 +201,11 @@ pub fn outcome(runtime: &str, out: &str, err: &str) -> String {
 
 /// The session's transcript (D1): Claude `projects/*/<id>.jsonl`, Codex `sessions/**/rollout-*-<id>.jsonl`.
 pub fn transcript(runtime: &str, session: &str) -> Res<PathBuf> {
-    // ponytail: no Windows probe qualified these homes (R12); unknown there until one does
-    if cfg!(windows) { return Err("transcript unknown: Windows transcript paths are not qualified".into()); }
-    let home = |var: &str, dir: &str| std::env::var_os(var).map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(dir))).ok_or("transcript unknown: no home folder".to_string());
-    if super::of(runtime).codex { codex_transcript_in(&home("CODEX_HOME", ".codex")?, session) } else { super::claude_transcript_in(&home("CLAUDE_CONFIG_DIR", ".claude")?, session) }
+    if super::of(runtime).codex {
+        codex_transcript_in(&super::codex_home().ok_or("transcript unknown: no home folder")?, session)
+    } else {
+        super::claude_transcript_in(&super::claude_home().ok_or("transcript unknown: no home folder")?, session)
+    }
 }
 
 pub(crate) fn codex_transcript_in(home: &Path, session: &str) -> Res<PathBuf> {
@@ -326,6 +327,49 @@ pub(crate) const ACCESS: &str = "access refused:";
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // R12 / #2022: Windows owner reads must resolve the same native homes as worker recovery, including overrides.
+    #[test]
+    fn owner_transcripts_use_native_homes() {
+        let root = std::env::temp_dir().join(format!("taskq-owner-homes-{}", super::super::uuid()));
+        fs::create_dir_all(&root).unwrap();
+        for overrides in [false, true] {
+            let mut c = std::process::Command::new(std::env::current_exe().unwrap());
+            c.args(["--exact", "runtime::owner::tests::owner_transcript_home_fixture", "--ignored", "--nocapture"])
+                .env("TASKQ_TRANSCRIPT_FIXTURE", &root).env_remove("CLAUDE_CONFIG_DIR").env_remove("CODEX_HOME")
+                .env_remove("HOME").env("USERPROFILE", &root);
+            if !cfg!(windows) { c.env("HOME", &root); }
+            if overrides { c.env("CLAUDE_CONFIG_DIR", root.join("override-claude")).env("CODEX_HOME", root.join("override-codex")); }
+            let out = coreq::process::output("owner.transcript-homes", &mut c, std::time::Duration::from_secs(30)).unwrap();
+            assert!(out.status.success(), "{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore = "isolated home-resolution subprocess"]
+    fn owner_transcript_home_fixture() {
+        let root = PathBuf::from(std::env::var_os("TASKQ_TRANSCRIPT_FIXTURE").expect("owned fixture root"));
+        let session = "11111111-2222-4333-8444-555555555555";
+        for runtime in ["claude", "codex"] {
+            let home = if runtime == "claude" { super::super::claude_home() } else { super::super::codex_home() }.unwrap();
+            assert!(home.starts_with(&root));
+            let relative = if runtime == "claude" { format!("projects/invented/{session}.jsonl") }
+                else { format!("sessions/2026/10/31/rollout-invented-{session}.jsonl") };
+            let path = home.join(relative);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, "invented transcript\n").unwrap();
+            assert_eq!(transcript(runtime, session).unwrap(), path);
+            assert!(transcript(runtime, "../../escape").is_err());
+            assert!(transcript(runtime, "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee").is_err());
+            let duplicate = home.join(if runtime == "claude" { format!("projects/duplicate/{session}.jsonl") }
+                else { format!("sessions/2026/10/30/rollout-duplicate-{session}.jsonl") });
+            fs::create_dir_all(duplicate.parent().unwrap()).unwrap();
+            fs::write(&duplicate, "invented duplicate\n").unwrap();
+            assert!(transcript(runtime, session).is_err(), "ambiguous native identity must stay unknown");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "invented transcript\n");
+        }
+    }
 
     // #1749: the idle job TaskQ launched must not refuse the next Send; any other open writer still does (D3 one writer).
     #[test]
