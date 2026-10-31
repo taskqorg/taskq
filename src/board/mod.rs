@@ -46,6 +46,12 @@ pub trait Board {
     fn ensure_labels(&self, _names: &[String]) -> Result<()> { Ok(()) }
     /// Open issues; with `since` (board seconds) every issue, closed too, updated at or after it.
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>>;
+    /// #2083: `taskq` issues, closed too, updated at or after `since` (board seconds); heartbeat writes never change it.
+    fn tasks(&self, since: i64) -> Result<Vec<Issue>> {
+        Ok(self.issues(Some(since))?.into_iter().filter(|i| i.labels.iter().any(|l| l == crate::service::TASK_LABEL)).collect())
+    }
+    /// #2083: the board time of the open list the last `issues(None)` reused instead of reading; None when it read in full.
+    fn kept(&self) -> Option<i64> { None }
     fn issue(&self, n: u64) -> Result<Issue>;
     /// One page (from 1) of closed `taskq` issues, most recently updated first, with each close time and whether another
     /// page follows: the Completed view reads board history on demand, never a local task store (MP14).
@@ -313,6 +319,8 @@ impl Board for Profiled {
     fn state_label(&self, state: &str) -> Result<String> { self.0.state_label(state) }
     fn ensure_labels(&self, names: &[String]) -> Result<()> { self.op("label", |b| b.ensure_labels(names)) }
     fn issues(&self, since: Option<i64>) -> Result<Vec<Issue>> { self.op("list", |b| b.issues(since)) }
+    fn tasks(&self, since: i64) -> Result<Vec<Issue>> { self.op("list", |b| b.tasks(since)) }
+    fn kept(&self) -> Option<i64> { self.0.kept() }
     fn issue(&self, n: u64) -> Result<Issue> { self.op("read", |b| b.issue(n)) }
     fn closed_tasks(&self, page: u32, since: Option<i64>) -> Result<(Vec<(Issue, i64)>, bool)> { self.op("list", |b| b.closed_tasks(page, since)) }
     fn research_tasks(&self) -> Result<Vec<(Issue, i64)>> { self.op("list", |b| b.research_tasks()) }
@@ -2994,7 +3002,7 @@ exit 0
         let changed = changes.clone();
         let h = http(kind, Some(true), Box::new(move |method, url, body| {
             if method == "GET" {
-                assert!(url.starts_with("https://api.github.com/repos/o/r/issues?state=all&sort=updated&direction=desc&per_page=100&since=2026-10-14T04:"), "{url}");
+                assert!(url.starts_with("https://api.github.com/repos/o/r/issues?state=all&labels=taskq&sort=updated&direction=desc&per_page=100&since=2026-10-14T04:27"), "{url}");
                 *probed.borrow_mut() += 1;
                 let reply = changed.borrow_mut().take();
                 return Ok(Reply { status: if reply.is_some() { 200 } else { 304 }, headers: vec![("ETag".into(), "\"e1\"".into())],
@@ -3011,7 +3019,7 @@ exit 0
             let value = if *flag.borrow() { json!({"errors": [{"type": "RATE_LIMITED", "message": "API rate limit exceeded"}]}) }
                 else if body["variables"]["after"].is_null() { json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": true, "endCursor": "c1"},
                     "nodes": [{"number": 5, "title": "t", "body": "b", "updatedAt": "2026-10-14T04:27:00Z", "createdAt": "2026-10-14T04:20:00Z", "authorAssociation": "OWNER",
-                        "labels": {"nodes": [{"name": "q-ready"}]}}]}}}}) }
+                        "labels": {"nodes": [{"name": "taskq"}, {"name": "q-ready"}]}}]}}}}) }
                 else { json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": false, "endCursor": null},
                     "nodes": [{"number": 6, "title": "u", "body": null, "updatedAt": "2026-10-14T04:28:00Z", "authorAssociation": "NONE",
                         "labels": {"nodes": []}}]}}}}) };
@@ -3019,21 +3027,18 @@ exit 0
         }));
         let list = h.issues(None).unwrap();
         assert_eq!(list.iter().map(|i| (i.number, i.open, i.trusted)).collect::<Vec<_>>(), [(5, true, true), (6, true, false)]);
-        assert_eq!((list[0].labels.clone(), list[0].assignees.clone(), list[0].updated, list[0].created), (vec!["q-ready".to_string()], vec![], iso("2026-10-14T04:27:00Z").unwrap(), iso("2026-10-14T04:20:00Z").unwrap()));
+        assert_eq!((list[0].labels.clone(), list[0].assignees.clone(), list[0].updated, list[0].created), (vec!["taskq".to_string(), "q-ready".to_string()], vec![], iso("2026-10-14T04:27:00Z").unwrap(), iso("2026-10-14T04:20:00Z").unwrap()));
         let b = h.requests();
         assert_eq!((b.ops.get("POST graphql"), b.resource.clone(), b.remaining), (Some(&2), Some("graphql".into()), Some(4990)));
         assert_eq!(h.issues(None).unwrap(), list, "an empty probe keeps the last list");
         assert_eq!(h.issues(None).unwrap(), list, "a 304 probe keeps the last list");
         assert_eq!((h.requests().ops.get("POST graphql"), *probes.borrow()), (Some(&2), 2));
-        // #1968 A3: another host's heartbeat write and a pull request update patch the list without a relist
-        let beat = json!({"number": 7, "title": "taskq host win", "body": "beat", "state": "open", "updated_at": "2026-10-14T04:29:00Z",
-            "author_association": "OWNER", "labels": [{"name": "taskq-host"}]});
-        let pull = json!({"number": 8, "title": "PR", "state": "open", "updated_at": "2026-10-14T04:29:30Z", "pull_request": {}, "labels": []});
-        *changes.borrow_mut() = Some(json!([pull, beat]).to_string());
-        let beaten = h.issues(None).unwrap();
-        assert_eq!((beaten.len(), beaten[2].number, beaten[2].body.as_str()), (3, 7, "beat"));
-        assert_eq!(h.issues(None).unwrap(), beaten, "a 304 keeps the patched list");
-        assert_eq!(h.requests().ops.get("POST graphql"), Some(&2), "a heartbeat write alone never relists");
+        // #2083: the probe asks for `taskq` issues only, so heartbeat writes never reach it; a pull request update keeps the list
+        let pull = json!({"number": 8, "title": "PR", "state": "open", "updated_at": "2026-10-14T04:29:30Z", "pull_request": {}, "labels": [{"name": "taskq"}]});
+        *changes.borrow_mut() = Some(json!([pull]).to_string());
+        assert_eq!(h.issues(None).unwrap(), list, "a pull request update keeps the list");
+        assert_eq!(h.issues(None).unwrap(), list, "a 304 keeps the list");
+        assert_eq!(h.requests().ops.get("POST graphql"), Some(&2), "only a task change relists");
         // a task change relists
         *changes.borrow_mut() = Some(json!([{"number": 5, "title": "t", "state": "open", "updated_at": "2026-10-14T04:30:00Z", "labels": []}]).to_string());
         h.issues(None).unwrap();
@@ -3072,6 +3077,85 @@ exit 0
         assert_eq!(sent.borrow().len(), 2, "a seen core budget needs no second read");
         let ops = h.requests().ops;
         assert_eq!((ops.get("GET rate_limit"), crate::requests::billed(&ops)), (Some(&1), 1), "GitHub never bills the budget read");
+    }
+
+    // Chain: § 4 budget (#2083) -> § 3 lease. Defect: every host's heartbeat write changed the reply of the open-issue
+    // probe and of the admission and report scans, so an unchanged board billed three `GET issues` a pass on every host.
+    // Protection kept: a live host never reads stale from the kept list, a stopped one reads stale at the first pass
+    // after its last beat + ttl, and this host's own write patches the kept list instead of writing again.
+    #[test]
+    fn heartbeats_leave_issue_reads_unbilled_and_stale_leases_show() {
+        use std::{cell::Cell, collections::HashMap, rc::Rc};
+        const TTL: i64 = 300;
+        let start = iso("2026-10-14T04:00:00Z").unwrap();
+        let clock = Rc::new(Cell::new(start));
+        // (number, title, labels, updated): one ready task and three hosts that beat
+        type Row = (u64, &'static str, Vec<&'static str>, i64);
+        let state: Rc<RefCell<Vec<Row>>> = Rc::new(RefCell::new(vec![(5, "task", vec!["taskq", "q-ready"], start - 3600),
+            (7, "taskq host win", vec!["taskq-host"], start - 30), (8, "taskq host mac", vec!["taskq-host"], start - 30),
+            (9, "taskq host fra", vec!["taskq-host"], start - 30)]));
+        let (now, issues) = (clock.clone(), state.clone());
+        let last = RefCell::new(HashMap::<String, String>::new());
+        let h = http(&github::KIND, Some(true), Box::new(move |method, url, _| {
+            let t = now.get();
+            let rest = |i: &Row| json!({"number": i.0, "title": i.1, "body": "beat", "state": "open", "updated_at": stamp(i.3),
+                "created_at": stamp(start - 7200), "author_association": "OWNER", "labels": i.2.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()});
+            let path = url.strip_prefix("https://api.github.com/repos/o/r").unwrap_or(url);
+            let value = match (method, path) {
+                ("POST", _) => json!({"data": {"repository": {"issues": {"pageInfo": {"hasNextPage": false, "endCursor": null},
+                    "nodes": issues.borrow().iter().map(|i| json!({"number": i.0, "title": i.1, "body": "beat", "updatedAt": stamp(i.3),
+                        "createdAt": stamp(start - 7200), "authorAssociation": "OWNER",
+                        "labels": {"nodes": i.2.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()}})).collect::<Vec<_>>()}}}}),
+                ("PATCH", p) => {
+                    let n: u64 = p.strip_prefix("/issues/").unwrap().parse().unwrap();
+                    let mut rows = issues.borrow_mut();
+                    let i = rows.iter_mut().find(|i| i.0 == n).unwrap();
+                    i.3 = t;
+                    rest(i)
+                }
+                ("GET", p) if p.starts_with("/issues?state=closed") => json!([]),
+                ("GET", p) if p.starts_with("/issues?") => {
+                    let since = p.split('&').find_map(|q| q.strip_prefix("since=")).and_then(iso).unwrap_or(0);
+                    let mut rows: Vec<Row> = issues.borrow().iter().filter(|i| i.3 >= since && (!p.contains("labels=taskq") || i.2.contains(&"taskq"))).cloned().collect();
+                    rows.sort_by_key(|i| -i.3);
+                    json!(rows.iter().map(rest).collect::<Vec<_>>())
+                }
+                ("GET", "/issues/5/events?per_page=100") => json!([{"id": 1, "event": "labeled", "label": {"name": "taskq"}, "created_at": stamp(start - 3600)}]),
+                ("GET", _) => json!([]),
+                _ => panic!("{method} {url}"),
+            };
+            let body = value.to_string();
+            // GitHub answers a repeated GET whose reply did not change with an unbilled 304 (ETag: see the test below)
+            let same = method == "GET" && last.borrow_mut().insert(url.to_string(), body.clone()).as_deref() == Some(body.as_str());
+            let s = stamp(t);
+            let month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][s[5..7].parse::<usize>().unwrap() - 1];
+            let date = format!("Wed, {} {month} {} {} GMT", &s[8..10], &s[0..4], &s[11..19]);
+            Ok(Reply { status: if same { 304 } else { 200 }, headers: vec![("ETag".into(), format!("\"{}\"", body.len())), ("Date".into(), date)],
+                body: if same { String::new() } else { body }, operation: operation(method) })
+        }));
+        let (mut cache, mut deps) = (HashMap::new(), HashMap::new());
+        let (mut history, mut reports) = (crate::incoming::History::default(), crate::reports::Cache::default());
+        let stopped = start + 30 * 60;
+        // one hour of 60 s passes: mac beats throughout, fra stops at the half hour, this host (win) writes every ttl/3
+        for pass in 0..60 {
+            let t = start + pass * 60;
+            clock.set(t);
+            for n in [8, 9].into_iter().filter(|n| *n == 8 || t <= stopped) {
+                state.borrow_mut().iter_mut().find(|i| i.0 == n).unwrap().3 = t;
+            }
+            let (_, hosts) = crate::service::views(h.as_ref(), &mut cache, &mut deps, TTL).unwrap();
+            let read = |n| t - hosts.iter().find(|i| i.number == n).unwrap().updated;
+            assert!(read(8) <= TTL && read(7) <= TTL, "a live host never reads stale (pass {pass})");
+            assert_eq!(read(9) > TTL, t > stopped + TTL, "a stopped host reads stale at the first pass after its beat + ttl (pass {pass})");
+            if read(7) >= TTL / 3 { h.edit(7, "beat").unwrap(); }
+            history.refresh(h.as_ref(), t);
+            reports.collect(h.as_ref());
+        }
+        let ops = h.requests().ops;
+        let count = |op: &str| ops.get(op).copied().unwrap_or(0);
+        assert!(count("GET issues 304") > count("GET issues"), "{ops:?}");
+        assert!(count("PATCH issues/N") <= 30, "the patched list keeps this host's write interval: {ops:?}");
+        assert!(count("POST graphql") <= 14, "a kept heartbeat relists about once per ttl: {ops:?}");
     }
 
     // Chain: § 4 budget (#1819). Risk: a repeated GET is counted by GitHub, or a 304 loses the body.

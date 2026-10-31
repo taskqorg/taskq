@@ -3097,7 +3097,7 @@ fn run(argv: &[String]) -> Res<()> {
                 println!("board: unknown (TASKQ_SELFTEST_OFFLINE set; no board read)");
             } else if let Ok(root) = find_root() {
                 let c = ctx()?;
-                let (views, hosts) = service::views(c.board.as_ref(), &mut Default::default(), &mut Default::default())?;
+                let (views, hosts) = service::views(c.board.as_ref(), &mut Default::default(), &mut Default::default(), c.cfg.ttl)?;
                 let now = c.board.now()?;
                 let live = views.iter().filter_map(|v| {
                     let a = v.projection.task.attempt?;
@@ -4661,7 +4661,7 @@ mod tests {
         // N-1: no `taskq` label, so 4.1.11 (same `is_task`) skips the issue; this version lists it as held
         assert_eq!(issues[0].labels, vec!["q-held"]);
         assert!(!service::is_task(&issues[0]) && service::is_held(&issues[0]));
-        let (views, _) = service::views(b, &mut HashMap::new(), &mut HashMap::new()).unwrap();
+        let (views, _) = service::views(b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap();
         assert_eq!(views[0].projection.task.state, State::Held);
         assert_eq!(fold(n, &entries(b, n).unwrap(), false).state, State::Held);
         run(&["add", "U", "--goal", "G", "--acceptance", "a", "--op-id", "req.1.1"]).unwrap();

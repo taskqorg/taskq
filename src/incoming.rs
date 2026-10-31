@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 
 const MONTH: i64 = 30 * 86400;
 const EVENT_READS: usize = 5;
+/// #2083: the longest between admission scans of every issue (§ 4 budget).
+const FULL_SCAN: i64 = 300;
 
 /// Observation stays off the service's heartbeat/admission path, including a slow or unavailable board.
 pub struct Reader {
@@ -60,9 +62,14 @@ pub struct History {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     failed: BTreeMap<u64, (i64, String)>,
     listed: Option<i64>,
-    // Newest issue update a scan returned: the list asks from it, so an unchanged board repeats one URL and answers 304 (#1985).
+    // Newest non-heartbeat issue update a scan returned: the `taskq` scan asks from it, so an unchanged board repeats one
+    // URL and answers 304 (#1985, #2083).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     newest: Option<i64>,
+    // Board time of the last scan of every issue (#2083): closed, label-removed and never-admitted issues, at least every
+    // FULL_SCAN; heartbeat writes change that reply, so each pass between asks for `taskq` issues only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    full: Option<i64>,
     through: Option<i64>,
     start: Option<i64>,
     missing: Vec<String>,
@@ -91,12 +98,16 @@ impl History {
         let floor = now - MONTH;
         if self.listed.is_some_and(|t|t>now) {self.missing=vec!["admission scan clock moved backwards".into()];return;}
         // The newest seen update is never after the last scan, so asking from it still covers every later update.
-        let after = self.newest.or(self.listed).map_or(floor, |t| (t - 30).max(floor));
-        let issues = match board.issues(Some(after)) {
+        let after = |t: Option<i64>| t.map_or(floor, |t| (t - 30).max(floor));
+        let full = self.full.is_none_or(|t| now - t >= FULL_SCAN || t > now);
+        let scan = if full { board.issues(Some(after(self.full.or(self.newest).or(self.listed)))) }
+            else { board.tasks(after(self.newest.or(self.listed))) };
+        let issues = match scan {
             Ok(issues) => issues,
             Err(e) => { self.missing = vec![format!("admission scan: {e}")]; return; }
         };
-        self.newest = issues.iter().map(|i| i.updated).filter(|t| *t <= now).chain(self.newest).max();
+        if full { self.full = Some(now); }
+        self.newest = issues.iter().filter(|i| !crate::service::is_host(i)).map(|i| i.updated).filter(|t| *t <= now).chain(self.newest).max();
         for issue in issues.iter().filter(|i| i.trusted && !crate::service::is_host(i)) {
             if let Some((updated,event))=self.seen.get_mut(&issue.number) {
                 // A settled earliest admission is immutable; comments and later label changes cannot create another.
@@ -129,7 +140,8 @@ impl History {
         // An unresolved source must be retried, including after its issue leaves the update overlap.
         if self.pending.is_empty() && self.failed.is_empty() {
             self.start = Some(self.start.unwrap_or(floor).max(floor));
-            self.through = Some(now);
+            // #2083: a scan of `taskq` issues proves nothing of other issues; coverage ends at the last scan of every issue
+            self.through = self.full.map(|t| t.min(now));
         } else if !self.pending.is_empty() {
             missing.push(format!("{} admission sources pending",self.pending.len()));
         }
@@ -200,7 +212,10 @@ mod tests {
             reads.borrow_mut().clear();
             h.refresh(board.as_ref(),now);
             let requests=reads.borrow();
-            assert!(requests[0].ends_with(&format!("/issues?state=all&per_page=100&since={}",crate::board::stamp(70))),
+            // #2083: between scans of every issue, which ask from the last one, the `taskq` scan repeats from the newest update
+            let task=format!("/issues?state=all&labels=taskq&per_page=100&since={}",crate::board::stamp(70));
+            let full=format!("/issues?state=all&per_page=100&since={}",crate::board::stamp(now-FULL_SCAN-30));
+            assert!(requests[0].ends_with(&task) || requests[0].ends_with(&full),
                 "an unresolved source cannot reset the list cursor, which repeats from the newest update (#1985): {}",requests[0]);
             assert!(requests.iter().filter(|u|u.contains("/events?")).count()<=5);
             assert!(!requests.iter().any(|u|u.contains("/issues/2/")),"a resolved source is not read again after restart");
@@ -216,7 +231,7 @@ mod tests {
         assert!(h.missing.iter().any(|s|s.contains("unavailable")));
         unavailable.set(false);
         h.refresh(board.as_ref(),now+100);
-        assert_eq!(h.through,Some(now+100));
+        assert!(h.through.is_some_and(|t|t>now+100-FULL_SCAN) && h.through==h.full,"coverage runs through the last scan of every issue");
         h=History::seed(&h.json(&board.url(0)),&board.url(0));
         reads.borrow_mut().clear();
         h.refresh(board.as_ref(),now+200);
@@ -313,21 +328,22 @@ mod tests {
         assert_eq!(restarted.through,Some(200));
         assert!(restarted.missing[0].contains("clock"));
         // Recent updates wait for settled event history, including after a cache round trip.
-        board.state.borrow_mut().clock=309;
+        board.state.borrow_mut().clock=489;
         let held=board.create("held","",&["q-held".into()]).unwrap();
-        restarted.refresh(&board,320);
+        restarted.refresh(&board,500);
         assert_eq!(restarted.through,Some(200));
         restarted=History::seed(&restarted.json(&board.url(0)),&board.url(0));
-        restarted.refresh(&board,400);
-        assert_eq!(restarted.through,Some(400));assert!(restarted.missing.is_empty());
-        board.state.borrow_mut().clock=449;
+        restarted.refresh(&board,600);
+        // #2083: this pass scans `taskq` issues only, so coverage ends at the scan of every issue that saw the draft
+        assert_eq!(restarted.through,Some(500));assert!(restarted.missing.is_empty());
+        board.state.borrow_mut().clock=649;
         board.labels(held,&["taskq".into()],&["q-held".into()]).unwrap();
-        restarted.refresh(&board,500);
-        assert_eq!(restarted.through,Some(400));
+        restarted.refresh(&board,700);
+        assert_eq!(restarted.through,Some(500));
         assert!(restarted.missing.iter().any(|s|s.contains("history unavailable")));
-        restarted.refresh(&board,MONTH+600);
+        restarted.refresh(&board,MONTH+700);
         assert!(restarted.pending.is_empty());assert!(restarted.seen.is_empty(),"the scan cache is month-bounded");
-        assert_eq!(restarted.through,Some(MONTH+600));
+        assert_eq!(restarted.through,Some(MONTH+700));
     }
 
     // Chain: M6. UX30-21: first label admission survives restarts, requeues, removal and closure; absent history is unknown.
@@ -358,8 +374,9 @@ mod tests {
         assert!(partial["missing"].to_string().contains(&format!("#{legacy}")));
         assert_eq!(partial["events"], h.json("board")["events"], "retain known lower bounds");
         board.state.borrow_mut().admissions.insert(legacy, Ok(Some((99, 350))));
-        rebuilt.refresh(&board, 500);
-        assert_eq!(rebuilt.json("board")["end"], 500);
+        // #2083: coverage ends at the next scan of every issue, at most FULL_SCAN after the last
+        rebuilt.refresh(&board, 300 + FULL_SCAN);
+        assert_eq!(rebuilt.json("board")["end"], 300 + FULL_SCAN);
         assert_eq!(rebuilt.json("board")["events"].as_array().unwrap().len(), 2);
     }
 }

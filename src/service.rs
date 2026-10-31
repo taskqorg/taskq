@@ -369,8 +369,17 @@ const SETTLE: i64 = 30;
 pub type CommentCache = HashMap<u64, (i64, i64, Vec<Comment>)>;
 
 /// Fold every open task (heartbeat issues and untrusted authors excluded).
-pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache) -> Result<(Vec<View>, Vec<Issue>), String> {
-    let issues = board.issues(None)?;
+pub fn views(board: &dyn Board, cache: &mut CommentCache, deps: &mut DepCache, ttl: i64) -> Result<(Vec<View>, Vec<Issue>), String> {
+    let mut issues = board.issues(None)?;
+    // #2083 § 3: a kept heartbeat is never newer than the board; one fresh when listed and past `ttl` now may have been
+    // written since, so it relists before a lease reads it stale. One already stale when listed relists no more.
+    if let Some(listed) = board.kept() {
+        let now = board.now()?;
+        if issues.iter().any(|h| is_host(h) && now - h.updated > ttl && listed - h.updated <= ttl) {
+            board.forget();
+            issues = board.issues(None)?;
+        }
+    }
     let open: HashSet<u64> = issues.iter().map(|i| i.number).collect();
     let (hosts, tasks): (Vec<Issue>, Vec<Issue>) = issues.into_iter().filter(|i| i.trusted).partition(is_host);
     let mut out = vec![];
@@ -830,7 +839,7 @@ impl<'a> Service<'a> {
     /// status.json and beats. No claim, resume, recovery, label or event write; ownership stays as last reported.
     pub fn observe(&mut self) -> Result<(), String> {
         self.unready();
-        let (views, hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
+        let (views, hosts) = views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
         let now = self.board.now()?;
         self.snapshot = Some(crate::snapshot::from_views("host", self.board, &self.cfg, now, &views, &hosts));
         self.copy_images();
@@ -1038,7 +1047,7 @@ impl<'a> Service<'a> {
         if self.ownership_known && (self.handoff_waits(false,false).is_empty()
             || self.tasks_read.is_some_and(|at|at.elapsed().as_secs()<self.cfg.poll.max(1))) {return Ok(());}
         self.ownership_known=false;
-        let (views,hosts)=views(self.board,&mut self.cache,&mut self.deps)?;
+        let (views,hosts)=views(self.board,&mut self.cache,&mut self.deps,self.cfg.ttl)?;
         let now=self.board.now()?;
         self.observe_ownership(&views)?;
         self.snapshot=Some(crate::snapshot::from_views("host",self.board,&self.cfg,now,&views,&hosts));
@@ -1538,14 +1547,14 @@ impl<'a> Service<'a> {
         let previous_fixes = std::mem::take(&mut self.label_fixes);
         let me = self.cfg.me.clone();
         let ttl = self.cfg.ttl;
-        let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps)?;
-        if self.release_before_boot(&views) { (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps)?; }
+        let (mut views, mut hosts) = views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
+        if self.release_before_boot(&views) { (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?; }
         // § 4 step 5 (#1950): a task reopened here is listed again before its live attempt could read as gone below
         let open: HashSet<u64> = views.iter().map(|v| v.issue.number).collect();
         self.unlisted.extend(self.listed.difference(&open).copied());
         self.listed = open;
         if self.unlisted_tasks() {
-            (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps)?;
+            (views, hosts) = self::views(self.board, &mut self.cache, &mut self.deps, self.cfg.ttl)?;
             self.listed = views.iter().map(|v| v.issue.number).collect();
         }
         let now = self.board.now()?;
@@ -4499,7 +4508,7 @@ Open: none")).unwrap();
             let c = cfg("local");
             let mut s = Service::new(&b, &c, "4.0.0", Box::new(move |_| Err(crate::runtime::StartError::io(Error::new(kind, "private failure text"), None))));
             s.agent_status = json!([{"runtime": "claude", "path": path, "login": login}]);
-            let v = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.remove(0);
+            let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
             s.claim(&v, "worker", "claude").unwrap();
             assert_eq!(task(&b, n).state, State::Ready);
             assert!(b.comments(n).unwrap().last().unwrap().body.contains("start failed: private failure text"));
@@ -4527,7 +4536,7 @@ Open: none")).unwrap();
                 *counted.borrow_mut() += 1;
                 Err(crate::runtime::over_cap(std::path::Path::new("/nonexistent"), 128 * 1024 + 5))
             }));
-            let v = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.remove(0);
+            let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
             s.claim(&v, role, "claude").unwrap();
             let t = task(&b, n);
             let a = t.attempt.unwrap();
@@ -4616,7 +4625,7 @@ Open: none")).unwrap();
             crate::incident::take_detected();
             let b = Fake::default();
             let n = b.create("task", "", &[TASK_LABEL.into()]).unwrap();
-            let v = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.remove(0);
+            let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
             if !missing { b.comment(n, "taskq: spawn worker claude:first other").unwrap(); }
             b.state.borrow_mut().hide_latest_comment = missing;
             let c = cfg("local");
@@ -5356,7 +5365,7 @@ Open: none")).unwrap();
         let (em, ew): (Exits, Exits) = Default::default();
         let (mut mac, mut win) = (service(&b, &cm, em.clone()), service(&b, &cw, ew.clone()));
         // mac reads the task in review before win's spawn lands: both hosts post a reviewer spawn for one result
-        let stale = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.into_iter().find(|v| v.issue.number == n).unwrap();
+        let stale = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.into_iter().find(|v| v.issue.number == n).unwrap();
         win.pass().unwrap();
         let r = task(&b, n).attempt.unwrap();
         let (labels, comments) = (b.issue(n).unwrap().labels, b.comments(n).unwrap().len());
@@ -6434,7 +6443,7 @@ Open: none";
             s.gui_checked = Some(std::time::Instant::now());
             s.full.insert("claude".into());
             s.hold = Some("fixture load hold".into());
-            let v = views(&b, &mut HashMap::new(), &mut HashMap::new()).unwrap().0.remove(0);
+            let v = views(&b, &mut HashMap::new(), &mut HashMap::new(), 300).unwrap().0.remove(0);
             s.claim(&v, "worker", "claude").unwrap();
             let a = task(&b, n).attempt.unwrap();
             assert_eq!(s.held.len(), 1);

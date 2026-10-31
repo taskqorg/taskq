@@ -461,7 +461,7 @@ fn identity(b: &dyn Board, cfg: &Config) -> Value {
 /// `taskq status`: one board read; a failed read is an incomplete snapshot with its reason, never zero tasks.
 pub fn read(b: &dyn Board, cfg: &Config, raw: &Value, only: &[String]) -> Snapshot {
     let attempt = || -> Res<Snapshot> {
-        let (mut views, hosts) = service::views(b, &mut HashMap::new(), &mut HashMap::new())?;
+        let (mut views, hosts) = service::views(b, &mut HashMap::new(), &mut HashMap::new(), cfg.ttl)?;
         views.retain(|v| in_scope(&v.issue, only));
         if let Some(who) = raw["assignee"].as_str() {
             let who = if who == "me" { b.me()? } else { who.to_string() };
