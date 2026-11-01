@@ -31,7 +31,7 @@ $reg = @(Get-ItemProperty 'HKCU:\Software\Python\PythonCore\*\InstallPath', 'HKL
 [ordered]@{
     hostname = $env:COMPUTERNAME; user = $env:USERNAME; os = [Environment]::OSVersion.VersionString
     console_user = (Get-CimInstance Win32_ComputerSystem).UserName
-    python = $py; py_launcher = $pyl; python_registered = $reg; node = Tool node; git = Tool git; claude = Tool claude; codex = Tool codex
+    python = $py; py_launcher = $pyl; python_registered = $reg; node = Tool node; npm = Tool npm; cargo = Tool cargo -V; git = Tool git; claude = Tool claude; codex = Tool codex
     codex_login = try { (& codex login status 2>&1 | Select-Object -Last 1) -as [string] } catch { 'unknown' }
     board_token_file = Test-Path "$Install\token"; permission_mode = $hostJson.permission_mode
     claude_trust_covering_parent = $trust; checkout_grants = $grants; taskq_scheduled_tasks = $tasks
