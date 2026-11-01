@@ -78,6 +78,17 @@ Preserve [PR #1267 at `3a19ecc3d96f39db81a1f9c25c65cd84f432d5a6`](https://github
 
 [§4 Filter](../taskq.md#4-service) owns preference, explicit owner pins and Claude-to-Codex fallback for workers/reviewers. Both candidates use the existing admission/grant boundary; runtime adapters and operator-session routing stay unchanged. A fallback is a new claim, never migration of active or unknown execution. Isolated service traces cover disabled/full Claude, CLI/login/quota refusals, both unavailable, pins and common gates; source/model proof does not qualify a native runtime. Staged admission uses a disposable board and installation, never a placeholder production task or host capacity edit. Dev delivery uses the existing green merge-result CI route; tested and deployed are separate claims (R12).
 
+#### Isolated native fallback launch (#2118)
+
+Source `b74e836614ea8026b11ea1508239b9cc40940b94`, macOS 27.2 arm64, installed Codex CLI 0.159.3. The signed test artifact `target/debug/deps/taskq-724e7071ecaf3ec8` had SHA-256 `dbf22cbf6cf8ac2dd4f95a635799672fd0766d476e0d03bc9070f02ca6fb0537`.
+Command: `cargo test --locked --bin taskq fallback_2118_native_admission_without_model -- --ignored --nocapture` — PASS, two native launches in 0.37s.
+
+The production service admission/claim path selected Codex with `fallback: claude disabled (limit 0); selected codex` for both worker and reviewer. Native identities were PID 10424 / creation `1793527183-340352` and PID 10425 / creation `1793527183-389945`. A second service pass kept each original attempt and exactly one launch. Owned termination confirmed both native processes absent. Scratch was removed; no live board task, host-policy change, service install or new grant occurred.
+
+The board and capacity were isolated fixtures (Claude 0, Codex 1). Login, CLI discovery, effective access and Codex options came from the existing host; launch used the production runtime command builder and actual installed executor. Effective access remained legacy native `workspace-write` with network enabled and the policy store outside its writable scope; the resolver reported no explicit operator grant. No model/effort/access setting changed. Stdin stayed open without input, so no prompt, model turn, tools or native session was submitted. This qualifies admission through native process launch and exit, not brief delivery, task completion or the installed host service. Telemetry collection was unavailable and stayed unknown. The earlier 34-case fixture remains model/adapter proof only.
+
+Tested is not deployed: normal PR review, green merge-result CI and the existing compatible dev delivery are still required. No installed version containing this candidate was observed.
+
 <a id="required-platform-runs"></a>
 
 ## Platform coverage and selected runs
