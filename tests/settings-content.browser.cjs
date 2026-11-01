@@ -27,7 +27,6 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await p.setContent(html);await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
    const go=async page=>{await p.evaluate(s=>taskq.receive(s),{...state,theme,page});};
    const text=()=>p.locator('.content').evaluate(e=>e.textContent);
-   const shot=async()=>{};
    // R28: one compact widget per route; a label and its value stay whole at 320 px
    await go('settings');
    const layout=await p.locator('.settings-widget').evaluateAll(es=>es.map(e=>{const a=e.children[1].getBoundingClientRect(),b=e.querySelector('.meta').getBoundingClientRect();return {label:e.children[1].textContent,display:getComputedStyle(e).display,overlap:Math.min(a.right,b.right)-Math.max(a.left,b.left)>1&&Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1};}));
@@ -41,7 +40,6 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    assert.equal(widgets.find(w=>w.label==='Agents and access').meta,'Claude signed in · Codex expired');
    assert.equal(widgets.find(w=>w.label==='Delivery').meta,'3 projects · 1 policy','equal values group');
    assert.equal(widgets.find(w=>w.label==='Work mode').meta,'3 projects · 3 unknown · capacity unavailable','R32: admission first, capacity apart');
-   await shot('settings');
    // R16/R17: one line per host, Claude and Codex apart; stale never 0; this host's expansion holds units and age
    await go('hosts');
    const lines=await p.locator('.host-line > summary').evaluateAll(es=>es.map(e=>[e.querySelector('.host-name').textContent,...e.querySelectorAll('.host-number')].map(x=>typeof x==='string'?x:x.textContent)));
@@ -50,24 +48,20 @@ const html=fs.readFileSync('build/web/tray.html','utf8');
    await p.locator('.host-line > summary',{hasText:'mac'}).click();
    assert.equal(await p.locator('.resource-meter meter').count(),2);
    assert.match(await p.locator('.resource-meters').innerText(),/CPU busy.*42%[\s\S]*Memory available.*62%/s);
-   await shot('hosts');
    // R18/R19/R29: account, not method; expiry; the sign-in route; access effective per project; no placeholder
    await go('agents');
    const t=await text();
    for(const s of ['Claude 2.1.3 · Signed in · owner@example.org','Codex 0.48.0 · Expired · account unknown','Codex · unknown: win heartbeat publishes no client version','Codex · unknown: fra heartbeat publishes no client version','Access unknown for Beta','taskq service permissions'])assert(t.includes(s),s);
    assert.equal(await p.locator('.content [data-route=agents]').count(),0,'no circular placeholder');
    await p.locator('.agent-signin > summary').nth(1).click();await p.locator('details.access > summary').first().click();
-   await shot('agents');
    // R20: one Appearance route with tray icon, text size and window previews; reduced motion keeps a still preview
    await go('appearance');
    assert.equal(await p.locator('.content .views button').count(),2);assert.equal(await p.locator('.content .growth-options button').count(),4);
    assert.equal(await p.locator('.content [data-set=font][data-v="20"]').evaluate(e=>getComputedStyle(e).fontSize),'20px','text size previews itself');
    assert.equal((await text()).includes('Reduced motion: growth previews show a still outline and arrow.'),theme==='dark');
-   await shot('appearance');
    // R30: the host service once, then each project's status age
    await go('services');
    assert.equal((await text()).split('Host service: running · PID 42').length-1,1,'one host service line');
-   await shot('services');
    assert.deepEqual(errors,[]);await p.close();
    // #1713 A1–A4 / TW1–TW2: Settings keeps its inner routes and Back focus; only an explicit review opens operations.
    for(const resources of [null,require('./fixtures/resource-controls.json').cases.find(c=>c.name.startsWith('host commands')).groups[0]]){
