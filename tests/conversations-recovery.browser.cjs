@@ -5,8 +5,8 @@ const html=fs.readFileSync(process.env.TASKQ_CONVERSATION_HTML||'build/web/works
 const board='https://example.org/invented/issues',thread='task:'+board+'/112';
 const draft={id:'invented-owner-2140',revision:1,root:'invented-root',title:'Independent draft',text:'Saved draft',caret:[2,4],scroll:0,files:[{id:'invented-file',name:'notes.md',mime:'text/markdown',bytes:2,hash:'0'.repeat(64)}]};
 const browserTask=runtime=>({n:112,title:'Existing local worker',revision:71,state:'doing',role:'worker',attempt:71,runtime,host:'invented-host',local_session:true,body_lazy:true,body_source_revision:71,history_count:0,executions:[{attempt:71,state:'running'}]});
-// A4: failed native storage must not make recovered task text depend on the old disk snapshot.
-async function taskRecovery(browser,kind){
+// A4/C2/C7: refused saves retain task edits and caret even when saved navigation mounts the field before recovery.
+async function taskRecovery(browser,kind,savedNavigation=false){
  const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
  try{
   const question=kind==='answer',task={...browserTask('codex'),body_lazy:false,...(question?{state:'ask',question:{text:'Problem: Choose a path',choices:[]}}:{})};
@@ -21,13 +21,18 @@ async function taskRecovery(browser,kind){
   await field.evaluate(e=>{e.focus();e.setSelectionRange(3,9);e.dispatchEvent(new Event('select',{bubbles:true}));});
   await page.getByText('Invented disk write refused',{exact:true}).waitFor();
   const recovery=await page.evaluate(()=>window.checkpoint);
+  if(savedNavigation){
+   state.workspace_navigation={schema:1,current:{page:'conversations',answer:{board,task:112,root:'invented-root'}},trail:[]};
+   state.conversations.navigation={list:'recent',threads:{selected:thread}};
+  }
   await mount(recovery);await field.waitFor();
   assert.equal(await field.inputValue(),'Unsaved '+kind+' draft','refused answer-local save must retain '+kind+' text');
-  assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),[3,9],kind+' caret');
+  assert.deepEqual(await field.evaluate(e=>[e.selectionStart,e.selectionEnd]),[3,9],kind+' caret'+(savedNavigation?' with saved navigation':''));
   assert(await field.evaluate(e=>document.activeElement===e),kind+' focus');
   assert.match(await page.locator('.answer-composer').innerText(),/notes.md/);
   assert(await page.getByText('Invented disk write refused',{exact:true}).isVisible(),'save refusal remains explicit after recovery');
   assert.equal(await page.evaluate(()=>sent.filter(m=>['answer','answer-local','conversation-action','reports','message-action'].includes(m.a)).length),0,'recovery is inert, including local saves');
+  if(process.env.TASKQ_EVIDENCE_2140&&savedNavigation&&question){fs.mkdirSync(process.env.TASKQ_EVIDENCE_2140,{recursive:true});await page.screenshot({path:process.env.TASKQ_EVIDENCE_2140+'/recovered-answer-selection.png'});}
   const op={id:'invented-pending-'+kind,task:112,revision:71,text:'Immutable '+kind,files:draft.files,...(!question?{action:'steer'}:{})};
   recovery.answers[key]={...recovery.answers[key],op,receipt:{state:'sending'}};
   await mount(recovery);await field.waitFor();
@@ -75,7 +80,7 @@ async function loadingRecovery(browser){
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
-  const regressions=await Promise.allSettled([taskRecovery(browser,'answer'),taskRecovery(browser,'steer'),loadingRecovery(browser)]);
+  const regressions=await Promise.allSettled(['answer','steer'].flatMap(kind=>[false,true].map(saved=>taskRecovery(browser,kind,saved))).concat(loadingRecovery(browser)));
   assert.deepEqual(regressions.filter(r=>r.status==='rejected').map(r=>r.reason.message),[]);
   const page=await browser.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));let cells=0;
   for(const runtime of ['codex','claude'])for(const theme of ['dark','light'])for(const font of [18,20])for(const width of [380,900]){

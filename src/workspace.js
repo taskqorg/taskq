@@ -252,7 +252,7 @@ const {create}=execution.module('workspace',{
     if(s.replyFileReceipt){answers.answerFileReceipt(s.replyFileReceipt);return;}
     if(s.viewStateError!==undefined||s.workspaceLocalError!==undefined){if(s.viewStateError!==undefined)view.navigationError=s.viewStateError;if(s.workspaceLocalError!==undefined)view.localError=s.workspaceLocalError;api.draw();return;}
     if(s.workspaceRecoveryReady){ui.send({a:'workspace-recovered'});recoveryText='';api.checkpoint();return;}
-    if(s.workspaceRecovery){answers.restoreRecovery(s.workspaceRecovery.answers);view.localError=s.workspaceRecovery.localError;conversations.restoreRecovery(s.workspaceRecovery.conversation);const v=require('./tray-view-state.js').normalize({schema:1,current:s.workspaceRecovery.navigation},snapshot.value||{},routes,'conversations');state.apply(v.current);api.draw();state.focus(v.current.focus);return;}
+    if(s.workspaceRecovery){answers.restoreRecovery(s.workspaceRecovery.answers);answerField=null;view.localError=s.workspaceRecovery.localError;conversations.restoreRecovery(s.workspaceRecovery.conversation);const v=require('./tray-view-state.js').normalize({schema:1,current:s.workspaceRecovery.navigation},snapshot.value||{},routes,'conversations');state.apply(v.current);api.draw();state.focus(v.current.focus);return;}
     if(s.open){const c=s.open;api.navigate(c.page,c);return;}
     // #1698 A1: only a status snapshot replaces S; the tray also forwards agentq replies and Completed history pages here
     if(Object.hasOwn(s,'agentqError')){operations.receive(s);return;}
