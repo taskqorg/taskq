@@ -224,7 +224,7 @@ mod tests {
     // Chain: R9 R12 §3 — existing policy gates external callers without changing policy or fabricating healthy reads.
     #[test]
     fn external_admission_keeps_each_existing_barrier() {
-        for case in ["runtime","project","aggregate","load","hold","recovery","config"] {
+        for case in ["runtime","project","aggregate","load","hold","recovery","config","project-config"] {
             let mut f=Fixture::new();
             let mut policy=json!({"limits":{"codex":2},"admission":{"max":2},"load_gate":{"enabled":false}});
             match case {
@@ -232,6 +232,7 @@ mod tests {
                 "project"=>fs::write(f.root.join("taskq.json"),r#"{"limits":{"codex":0}}"#).unwrap(),
                 "aggregate"=>policy["admission"]["max"]=json!(1),
                 "load"=>policy["load_gate"]["enabled"]=json!(true),
+                "project-config"=>fs::write(f.root.join("taskq.json"),"[]").unwrap(),
                 "hold"=>f.h.held=Some("operator emergency hold".into()),
                 "recovery"=>f.h.rebuilding=true,
                 _=>{},
@@ -243,8 +244,8 @@ mod tests {
                 f.h.sync(&f.root,vec![(1,77,"claude".into())]);
             }
             f.tick(Ok(true));let out=f.stored();assert_eq!(out["occupied"],false,"{case}: {out}");
-            assert_eq!(out["state"],if ["load","recovery","config"].contains(&case) {"unknown"}else{"busy"},"{case}: {out}");
-            let reason=out["reason"].as_str().unwrap();assert!(reason.contains(match case {"runtime"=>"host capacity","project"=>"project capacity","aggregate"=>"aggregate capacity","load"=>"sample","hold"=>"emergency hold","recovery"=>"recovery",_=>"host.json"}),"{case}: {out}");
+            assert_eq!(out["state"],if ["load","recovery","config","project-config"].contains(&case) {"unknown"}else{"busy"},"{case}: {out}");
+            let reason=out["reason"].as_str().unwrap();assert!(reason.contains(match case {"runtime"=>"host capacity","project"=>"project capacity","aggregate"=>"aggregate capacity","load"=>"sample","hold"=>"emergency hold","recovery"=>"recovery","project-config"=>"taskq.json",_=>"host.json"}),"{case}: {out}");
         }
     }
     // Chain: §3 R12 — duplicate/lost responses, foreign release, cancellation and restart reconcile one identity.
