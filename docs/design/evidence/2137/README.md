@@ -79,3 +79,18 @@ Final source `4b9c4eaa` scoped readback: `cargo test --locked --bin taskq servic
 ### Quota evidence through update cleanup
 
 The existing `platform::tests::sweep_keeps_the_allowlist_and_live_releases` regression now includes the pending quota journal and quota writer lock in its byte-preserved files. Before the fix, `cargo test --locked --bin taskq sweep_keeps_the_allowlist_and_live_releases` failed with `update lost accounts-state.pending.json`. The same command passes after adding both files to the existing install allowlist. Every prior owned-file, release, token, policy and native-recovery assertion remains. This closes an A7 restart/update gap: cleanup must not delete a failed quota observation or replace the shared lock identity. No installer or service was run against the live host.
+
+
+## Approved final candidate
+
+Source `658994031bb976fee221e8acc87d4df4bbab8358` includes the approved §8/§9 cutover and the update-sweep fix. The final canonical command `python3 scripts/check.py --base 0d050c51c2e1102c4b1a8d7af401f9beb362e54b` completed its Rust unit selection after 189.825s of the 900s budget: **847 passed, 7 sandbox-blocked, 40 ignored**. All service, routing, quota, golden and update-sweep cases passed. The seven protected app-server fixtures still refused temporary `.codex/config.toml` creation with `PermissionDenied: Operation not permitted`. The gate stopped there and is **not PASS**; those checks are not product failures or qualified native results.
+
+The downstream selections ran separately on the same source:
+
+- `cargo test --locked --test integration`: **22 passed, 1 sandbox-blocked, 1 ignored**. The remaining case refused nested `sandbox-exec` with `sandbox_apply: Operation not permitted`.
+- `TASKQ_SELFTEST_OFFLINE=1 cargo run --locked -- selftest`: **PASS**, 126 golden traces, owner-text formats and 8 committed staged telemetry observations. This used a temporary installation with no board read or native tool probe, through the canonical `test_environment` helper.
+- All 37 `tests/*.test.cjs` checks: **PASS**. README shot check/update and release-tag/exact-source release instruments: **PASS**.
+- Contract lint and rule-ID gate: **PASS**, including the accepted §8/§9 edits; `taskq.md` has 278 lines, 56,359 bytes and zero lint errors. Existing budget-headroom warnings remain.
+- The resource and Settings browser evidence above remains source-identical: no JavaScript, CSS, HTML, browser-test or package inputs changed after its 8 resource cells, 4 Home handoffs and 104 Settings cells passed. No visual recapture or native acceptance is claimed from the Rust/docs-only follow-up.
+
+No live policy, account, grant, task pin, installation or service was changed. Eight host fixture checks remain sandbox-blocked. Native providers, OS behavior and telemetry delivery remain unqualified; merge-result `merge_group` CI and reviewer publication remain required by R12/§7. The coordinated cutover is documented, not executed.
