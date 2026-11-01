@@ -282,101 +282,37 @@ pub fn attempt_log(root: &Path, role: &str, task: u64, attempt: u64) -> PathBuf 
     root.join(".taskq").join(format!("{p}{task}-{attempt}.log"))
 }
 
-/// Model use of the attempt log after byte `pos` (§ 4 Profiling): Claude assistant messages (calls, input tokens
-/// with cache reads and writes, output tokens, the model of most calls), Codex `turn.completed` input tokens (cached
-/// included) and output tokens (calls and model not reported). Context tokens split into uncached input, cache reads
-/// and cache writes; Codex's `input_tokens` include its `cached_input_tokens`, and Codex reports no cache writes.
+/// The attempt log's events after byte `pos`; None when unreadable.
+fn events(log: &Path, pos: u64) -> Option<Vec<serde_json::Value>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut bytes = Vec::new();
+    File::open(log).and_then(|mut f| f.seek(SeekFrom::Start(pos)).and_then(|_| f.read_to_end(&mut bytes))).ok()?;
+    Some(String::from_utf8_lossy(&bytes).lines().filter_map(|l| serde_json::from_str(l).ok()).collect())
+}
+
+/// Model use of the attempt log after byte `pos` (§ 4 Profiling), read by CoreQ `agent::usage`; context tokens are
+/// uncached input, cache reads and cache writes, and their sum.
 pub fn usage(log: &Path, pos: u64, rt: &str) -> crate::profile::Usage {
     use crate::profile::Usage;
-    use std::io::{Read, Seek, SeekFrom};
     if rt == "codex-app" { return Usage::Unknown("app-turn"); }
-    let mut text = String::new();
-    let Ok(mut f) = File::open(log) else { return Usage::Unknown("log-unreadable") };
-    if f.seek(SeekFrom::Start(pos)).and_then(|_| f.read_to_string(&mut text)).is_err() { return Usage::Unknown("log-unreadable"); }
-    let (mut ids, mut turns, mut models) = (std::collections::HashSet::new(), false, std::collections::BTreeMap::<String, u64>::new());
-    // tokens, input, cache read, cache write, output: a counted call without one makes its sum unknown, never smaller
-    let mut sums = [Some(0u64); 5];
-    for v in text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
-        let u = if v["type"] == "assistant" { &v["message"]["usage"] } else { &v["usage"] };
-        let sum = ["input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"].iter().filter_map(|k| u[k].as_u64()).sum::<u64>();
-        let counted = match v["type"].as_str() {
-            // one message spans several lines with the same id and usage
-            Some("assistant") => v["message"]["id"].as_str().is_some_and(|id| ids.insert(id.to_string())),
-            Some("turn.completed") => { turns = true; true }
-            _ => false,
-        };
-        if !counted { continue }
-        let codex = v["type"] == "turn.completed";
-        let input = u["input_tokens"].as_u64();
-        let read = u[if codex { "cached_input_tokens" } else { "cache_read_input_tokens" }].as_u64();
-        let call = [input.map(|_| sum),
-            if codex { input.zip(read).and_then(|(i, r)| i.checked_sub(r)) } else { input },
-            read,
-            if codex { Some(0) } else { u["cache_creation_input_tokens"].as_u64() },
-            u["output_tokens"].as_u64()];
-        for (s, c) in sums.iter_mut().zip(call) { *s = s.zip(c).map(|(a, b)| a + b) }
-        // a model id is a short identifier (DashQ metadata allowlist); anything else stays unreported
-        if let Some(m) = v["message"]["model"].as_str().filter(|m| m.len() <= 64 && m.chars().all(|c| c.is_ascii_alphanumeric() || "-._@".contains(c))) {
-            *models.entry(m.into()).or_default() += 1;
-        }
-    }
-    let [tokens, input, cache_read, cache_write, output] = sums;
-    let model = models.into_iter().max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).map(|m| m.0);
-    let calls = (!ids.is_empty()).then_some(ids.len() as u64);
-    if calls.is_some() || turns { Usage::Known { calls, tokens, model, input, cache_read, cache_write, output } }
-    else { Usage::Unknown("no-usage") }
+    let Some(events) = events(log, pos) else { return Usage::Unknown("log-unreadable") };
+    let u = coreq::agent::usage(&events);
+    if let Some(why) = u.unknown { return Usage::Unknown(why); }
+    let tokens = [u.input, u.cache_read, u.cache_write].into_iter().try_fold(0, |a, b| b.map(|b| a + b));
+    Usage::Known { calls: u.calls, tokens, model: u.model, input: u.input, cache_read: u.cache_read, cache_write: u.cache_write, output: u.output }
 }
 
 /// A usage or quota limit the runtime reported before any work started ([usage limit](docs/design/capacity.md#usage-limit)):
 /// `Some(reset)` with the reported reset (epoch seconds) when known; None after work started or without a limit.
-pub fn usage_limit(log: &Path) -> Option<Option<i64>> {
-    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
-    for v in text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
-        let kind = v["type"].as_str().unwrap_or_default();
-        if kind == "assistant" {
-            if v["apiError"] == "usage_limit_reached" || v["quotaLimits"]["status"] == "rejected" {
-                return Some(v["quotaLimits"]["resetsAt"].as_i64().or(v["apiErrorParams"]["rate_limit_info"]["resetsAt"].as_i64()));
-            }
-            return None;
-        }
-        if kind.starts_with("item.") { return None; }
-        // ponytail: Codex limit text matched by words; its format is unverified (R12), and it reports no reset
-        let message = v["message"].as_str().or(v["error"]["message"].as_str()).unwrap_or_default().to_lowercase();
-        if matches!(kind, "error" | "turn.failed") && message.contains("usage limit") { return Some(None); }
-    }
-    None
-}
+pub fn usage_limit(log: &Path) -> Option<Option<i64>> { coreq::agent::limit_reached(&events(log, 0)?) }
 
-/// A Codex login the auth server rejected (#1446): Codex's own stderr `ERROR codex_…` line or a top-level
-/// `error`/`turn.failed` event naming a rejected refresh token or a 401; worker output (`item.*`) never matches.
-/// Returns the reason; None when unreadable or absent.
+/// A Codex login the auth server rejected (#1446); None when unreadable or absent.
 pub fn auth_rejected(log: &Path) -> Option<String> {
-    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
-    text.lines().find_map(|l| {
-        let m = match serde_json::from_str::<serde_json::Value>(l) {
-            Ok(v) if matches!(v["type"].as_str(), Some("error" | "turn.failed")) => v["message"].as_str().or(v["error"]["message"].as_str()).unwrap_or_default().to_lowercase(),
-            Err(_) if l.contains("ERROR codex_") => l.to_lowercase(),
-            _ => return None,
-        };
-        if m.contains("refresh token") && (m.contains("already used") || m.contains("expired") || m.contains("revoked") || m.contains("invalid")) || m.contains("refresh_token_") {
-            Some("refresh token rejected".into())
-        } else if m.contains("401 unauthorized") || m.contains("auth error: 401") {
-            Some("401 Unauthorized".into())
-        } else { None }
-    })
+    coreq::agent::auth_rejected(&String::from_utf8_lossy(&std::fs::read(log).ok()?)).map(String::from)
 }
 
-/// A Codex turn that ended on a transient model failure (#1843, [transient model failure](docs/design/capacity.md#transient-model-failure)):
-/// the last `turn.completed`/`turn.failed` of the attempt log is a `turn.failed` naming model capacity. Returns its
-/// message; None when unreadable, absent or after a later completed turn.
-pub fn transient_failure(log: &Path) -> Option<String> {
-    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
-    let end = text.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-        .filter(|v| matches!(v["type"].as_str(), Some("turn.completed" | "turn.failed"))).last()?;
-    // ponytail: only the 2026-10-29 "Selected model is at capacity" text is verified (#1816, #1818); other overload texts stay `gone`
-    let m = end["error"]["message"].as_str().filter(|_| end["type"] == "turn.failed")?;
-    m.to_lowercase().contains("model is at capacity").then(|| m.to_string())
-}
+/// A Codex turn that ended on a transient model failure (#1843, [transient model failure](docs/design/capacity.md#transient-model-failure)).
+pub fn transient_failure(log: &Path) -> Option<String> { coreq::agent::transient_failure(&events(log, 0)?) }
 
 /// `<install>/login-off/<bin>` (#1446): line 1 the `last_refresh` of `auth.json` when the login was rejected, line 2
 /// the reason. It reads not logged in until a re-login changes `last_refresh`.
@@ -397,20 +333,10 @@ fn login_off(install: &Path, bin: &str, refreshed: Option<&str>) -> Option<Strin
     (at == refreshed.unwrap_or_default()).then(|| reason.trim().to_string()).filter(|r| !r.is_empty())
 }
 
-/// The final text of a turn: Claude's last `result`, else Codex's last `agent_message`.
-pub fn final_text(events: &[serde_json::Value]) -> Option<String> {
-    events.iter().rev().find_map(|v| {
-        if v["type"] == "result" { v["result"].as_str().map(String::from) }
-        else if v["type"] == "item.completed" && v["item"]["type"] == "agent_message" { v["item"]["text"].as_str().map(String::from) }
-        else { None }
-    })
-}
+pub use coreq::agent::{final_text, which, which_in, user_bin_path, codex_native};
 
 /// The worker's last message in an attempt log, for the `gone` reason (§ 4 step 1); None when unreadable.
-pub fn last_message(log: &Path) -> Option<String> {
-    let text = String::from_utf8_lossy(&std::fs::read(log).ok()?).into_owned();
-    final_text(&text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect::<Vec<_>>())
-}
+pub fn last_message(log: &Path) -> Option<String> { final_text(&events(log, 0)?) }
 
 /// Worker text as one public line (§ 4 step 1, § 7 rule 6): whitespace collapsed, absolute paths made relative to
 /// `root` or replaced by `<path>`, at most `max` characters ending in `…`. The full text stays in the attempt log.
@@ -537,46 +463,12 @@ impl Proc for CliTurn {
 
 /// Codex's thread id: the first `thread.started` line of the attempt log.
 pub fn codex_thread(log: &Path) -> Option<String> {
-    let f = File::open(log).ok()?;
-    BufReader::new(f).lines().map_while(Result::ok).find_map(|l| {
-        let v: serde_json::Value = serde_json::from_str(&l).ok()?;
-        (v["type"] == "thread.started").then(|| v["thread_id"].as_str().map(String::from)).flatten()
-    })
-}
-
-/// `name` on PATH; on Windows also `name.exe` and `name.cmd` (npm installs `.cmd` shims).
-pub fn which(name: &str) -> PathBuf {
-    which_in(name, &std::env::var_os("PATH").unwrap_or_default())
-}
-
-fn which_in(name: &str, path: &std::ffi::OsStr) -> PathBuf {
-    let exts: &[&str] = if cfg!(windows) { &[".exe", ".cmd", ""] } else { &[""] };
-    for dir in std::env::split_paths(path) {
-        for e in exts {
-            let p = dir.join(format!("{name}{e}"));
-            if p.is_file() {
-                return p;
-            }
-        }
-    }
-    PathBuf::from(name)
-}
-
-/// PATH with `<home>/.local/bin` appended when it is a directory PATH lacks; `None` when nothing changes.
-/// Linux user installs (codex, npm prefixes, pipx) land there, but a non-login shell, and so the systemd user unit
-/// CoreQ writes from the installer's PATH, may lack it: `which` then missed codex and spawn failed with os error 2 (#1393).
-pub fn user_bin_path(path: &std::ffi::OsStr, home: Option<&std::ffi::OsStr>) -> Option<std::ffi::OsString> {
-    let bin = Path::new(home.filter(|h| !h.is_empty())?).join(".local/bin");
-    let mut dirs: Vec<PathBuf> = std::env::split_paths(path).collect();
-    if !bin.is_dir() || dirs.contains(&bin) { return None; }
-    dirs.push(bin);
-    std::env::join_paths(dirs).ok()
+    coreq::agent::codex_thread(&String::from_utf8_lossy(&std::fs::read(log).ok()?))
 }
 
 /// Why `rt` cannot start here when its CLI does not resolve on PATH (§ 3: no claim, resume or reviewer).
 pub fn missing_cli(rt: &str) -> Option<String> {
-    let bin = if rt == "claude" { "claude" } else { "codex" };
-    (!which(bin).is_absolute()).then(|| format!("{bin} CLI not found on the service PATH"))
+    coreq::agent::missing_cli(if rt == "claude" { coreq::agent::Client::Claude } else { coreq::agent::Client::Codex })
 }
 
 /// § 6 setup check: the § 8 grant mode the owner gives `rt` on `os`; Claude has no Workspace enforcement off macOS.
@@ -584,37 +476,6 @@ pub fn grant_mode(os: &str, rt: &str) -> &'static str { if os == "macos" || rt =
 
 /// § 6 setup check: whether `rt`'s sandbox on `os` needs `<root>/.codex` (see `linux_sandbox::ready`).
 pub fn needs_codex_dir(os: &str, rt: &str) -> bool { os == "linux" && rt == "codex" }
-
-/// An npm launcher is not the executor: SIGKILL cannot reach the native child through Node.
-pub(crate) fn codex_native(bin: PathBuf) -> Result<PathBuf,String> {
-    if cfg!(windows) || !bin.exists() { return Ok(bin); }
-    let bin=bin.canonicalize().map_err(|e|format!("Codex executable unavailable: {e}"))?;
-    let native=|path:&Path|->Result<bool,String> {
-        let mut magic=[0;4];
-        File::open(path).and_then(|mut f|f.read_exact(&mut magic)).map_err(|e|format!("Codex executable unreadable: {e}"))?;
-        Ok(matches!(magic,[0x7f,b'E',b'L',b'F']|[0xcf,0xfa,0xed,0xfe]|[0xfe,0xed,0xfa,0xcf]|[0xce,0xfa,0xed,0xfe]|[0xfe,0xed,0xfa,0xce]|[0xca,0xfe,0xba,0xbe]|[0xbe,0xba,0xfe,0xca]))
-    };
-    if native(&bin)? { return Ok(bin); }
-    let package=bin.parent().filter(|p|p.file_name().is_some_and(|n|n=="bin")).and_then(Path::parent)
-        .filter(|_|bin.file_name().is_some_and(|n|n=="codex.js"))
-        .ok_or("Codex launcher ownership unsupported; select a native Codex executable")?;
-    let metadata:serde_json::Value=serde_json::from_reader(File::open(package.join("package.json")).map_err(|e|format!("Codex package unavailable: {e}"))?.take(64*1024))
-        .map_err(|e|format!("Codex package invalid: {e}"))?;
-    if metadata["name"]!="@openai/codex" { return Err("Codex launcher package identity differs".into()); }
-    let (platform,target)=match (std::env::consts::OS,std::env::consts::ARCH) {
-        ("macos","aarch64")=>("darwin-arm64","aarch64-apple-darwin"),
-        ("macos","x86_64")=>("darwin-x64","x86_64-apple-darwin"),
-        ("linux","aarch64")=>("linux-arm64","aarch64-unknown-linux-musl"),
-        ("linux","x86_64")=>("linux-x64","x86_64-unknown-linux-musl"),
-        _=>return Err("Codex native package unsupported on this platform".into()),
-    };
-    // Match Node's package lookup along the entrypoint's ancestors; never scan other installations.
-    let installed=package.ancestors().map(|p|p.join(format!("node_modules/@openai/codex-{platform}")))
-        .find(|p|p.join("package.json").is_file()).unwrap_or_else(||package.to_path_buf());
-    let executable=installed.join(format!("vendor/{target}/bin/codex"));
-    if !native(&executable)? { return Err("Codex package executor is not a native binary".into()); }
-    executable.canonicalize().map_err(|e|format!("Codex native executable unavailable: {e}"))
-}
 
 pub struct Env<'a> {
     /// Fresh board goal/acceptance and every ordered note; empty only for non-task instruments.
@@ -2228,21 +2089,11 @@ fn app_presence(text: &str, windows: bool) -> Result<bool, String> {
 }
 
 /// `$CODEX_HOME`, default `~/.codex`; a Windows service has no `HOME`.
-pub(crate) fn codex_home() -> Option<PathBuf> {
-    std::env::var_os("CODEX_HOME").map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(|h| Path::new(&h).join(".codex")))
-}
+pub(crate) fn codex_home() -> Option<PathBuf> { coreq::agent::base_home(coreq::agent::Client::Codex) }
 
-/// The thread's rollout file under `$CODEX_HOME/sessions` (default `~/.codex`; a Windows service has no `HOME`), or
-/// under a § 3 runtime account's home.
+/// The thread's rollout file in the Codex home or a § 3 runtime account's home.
 pub(crate) fn rollout(thread: &str) -> Option<PathBuf> {
-    fn find(dir: &Path, end: &str) -> Option<PathBuf> {
-        std::fs::read_dir(dir).ok()?.flatten().find_map(|e| {
-            let p = e.path();
-            if p.is_dir() { find(&p, end) } else { p.file_name()?.to_str()?.ends_with(end).then_some(p) }
-        })
-    }
-    crate::runtime::accounts::homes("codex").iter().find_map(|home| find(&home.join("sessions"), &format!("{thread}.jsonl")))
+    crate::runtime::accounts::homes("codex").iter().find_map(|home| coreq::agent::rollout(thread, Some(home)))
 }
 
 /// Volatile cursor over the native append-only history; restart rebuilds it without replaying work.
