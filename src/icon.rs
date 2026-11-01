@@ -169,7 +169,7 @@ pub fn svg(d:&Data,dark:bool)->String {
     let incoming=d.bins.iter().any(Bin::incoming_complete);
     let mut counters=Vec::new();
     let mut end=0.0f64;
-    for (i,(value,c)) in [(d.counts[0],p.work),(d.counts[1],p.ask),(d.counts[2].zip(d.blocked).map(|(a,b)|a.saturating_add(b)),p.muted)].into_iter().enumerate() {
+    for (i,(value,c)) in [(d.counts[2].zip(d.blocked).map(|(a,b)|a.saturating_add(b)),p.muted),(d.counts[1],p.ask),(d.counts[0],p.work)].into_iter().enumerate() {
         if value==Some(0) {continue;}
         let text=value.map_or("–".into(),|n|if n>99 {"99+".into()}else{n.to_string()});
         let (paths,width)=counter(&text,color(c));
@@ -476,6 +476,37 @@ mod tests {
         assert!(!vector.contains(r#"data-mark="new""#));
     }
 
+    // Chain: I1/I2/I6. Presentation order must not swap source values, sums or palette meanings.
+    #[test]
+    fn summary_counter_order_preserves_values_and_colors() {
+        for dark in [false,true] {
+            let p=palette(dark);
+            for (case,(counts,blocked,labels)) in [
+                ([Some(1),Some(2),Some(1),Some(0)],Some(2),["3","2","1"]),
+                ([Some(0);4],Some(0),["","",""]),
+                ([None;4],None,["–","–","–"]),
+                ([Some(100),Some(99),Some(98),Some(0)],Some(2),["99+","99","99+"]),
+                ([Some(10),Some(0),None,Some(0)],Some(3),["–","","10"]),
+            ].into_iter().enumerate() {
+                let vector=svg(&Data {counts,blocked,bins:vec![],paused:false},dark);
+                if let Ok(dir)=std::env::var("TASKQ_ICON_EVIDENCE") {
+                    let dir=std::path::Path::new(&dir);std::fs::create_dir_all(dir).unwrap();
+                    let name=format!("counter-{case}-{}",if dark {"dark"}else{"light"});
+                    std::fs::write(dir.join(format!("{name}.svg")),&vector).unwrap();
+                    for size in [44,256] {std::fs::write(dir.join(format!("{name}-{size}.png")),raster_slot(&vector,size).unwrap().png()).unwrap();}
+                }
+                let tree=resvg::usvg::Tree::from_str(&vector,&resvg::usvg::Options::default()).unwrap();
+                for (i,(label,color)) in labels.into_iter().zip([p.muted,p.ask,p.work]).enumerate() {
+                    let id=format!("counter-{i}");
+                    if label.is_empty() {assert!(tree.node_by_id(&id).is_none());continue;}
+                    let group=vector.split(&format!("id=\"{id}\"")).nth(1).unwrap();
+                    let paths=counter(label,hex(color)).0;
+                    assert!(group.split_once('>').unwrap().1.starts_with(&paths),"cell {i} must show {label} with its semantic color");
+                }
+            }
+        }
+    }
+
     // #1789 A1/A2: exact labels and measured ink must survive every position without collisions or clipping.
     #[test]
     fn exact_two_digit_counters_reclaim_space_before_widening() {
@@ -491,7 +522,7 @@ mod tests {
                     let mut right=0.0;
                     for i in 0..3 {
                         let node=tree.node_by_id(&format!("counter-{i}"));
-                        if data.counts[i]==Some(0) {assert!(node.is_none());continue;}
+                        if data.counts[[2,1,0][i]]==Some(0) {assert!(node.is_none());continue;}
                         let bounds=node.unwrap().abs_bounding_box();
                         if n>=10 {assert!(bounds.width()>7.0,"{n} must retain multiple glyphs, not an overflow plus: {bounds:?}");}
                         assert!(bounds.x()>=right && bounds.right()<=tree.size().width()-0.99,"separate in-bounds ink: {vector}");
