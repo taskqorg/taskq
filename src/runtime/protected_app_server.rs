@@ -69,6 +69,31 @@ mod tests {
         let text=json!({"schema":SCHEMA,"slot":{"binding":{"runtime":"codex"}},"policy_revision":29,"account":"default","grant":"workspace"}).to_string();
         assert!(Request::parse(&text).is_err());assert!(Request::parse(&"x".repeat(16385)).is_err());
     }
+    // Chain: R8 R9 R13 #2135 A1/A2: the existing Workspace/network request resolves without widening authority.
+    // Risk: rejecting approved host config, losing model/effort/account, or forwarding an unsupported override.
+    #[test]
+    fn protected_workspace_network_host_request_retains_authority_and_config() {
+        let f=Fixture::new();
+        let args=["-s","workspace-write","-c","sandbox_workspace_write.network_access=true"];
+        fs::write(f.dir.join("host.json"),json!({"codex":args}).to_string()).unwrap();
+        let p=f.plan().unwrap_or_else(|e|panic!("existing host Workspace/network request must resolve: {e}"));
+        assert_eq!(p.args,["-c","sandbox_mode=\"danger-full-access\"","-c","approval_policy=\"never\"","-c","sandbox_workspace_write.network_access=true"]);
+        assert_eq!(p.access.mode,"workspace");assert!(p.access.profile.as_ref().unwrap().contains("deny file-write"));
+        assert_eq!(p.authority["requested"],args.join(" "));
+        assert_eq!(p.authority["account"],"default");assert_eq!(p.authority["account_home"],json!(f.home.join(".codex")));
+        let profile=p.authority["profile_sha256"].clone();
+        fs::write(f.dir.join("host.json"),json!({"codex":["--sandbox","workspace-write","--config","sandbox_workspace_write.network_access=true","--model","invented-model","--config","model_reasoning_effort=high"]}).to_string()).unwrap();
+        let p=f.plan().unwrap();
+        assert_eq!(p.authority["profile_sha256"],profile);
+        assert_eq!(p.args,["-c","sandbox_mode=\"danger-full-access\"","-c","approval_policy=\"never\"","--config","sandbox_workspace_write.network_access=true","-c","model=\"invented-model\"","--config","model_reasoning_effort=high"]);
+        for config in ["sandbox_workspace_write.network_access=false","sandbox_workspace_write.network_access=true.extra","sandbox_workspace_write.network_access=\"true\"","sandbox_workspace_write.writable_roots=[]","sandbox_mode=\"danger-full-access\"","approval_policy=\"never\"","unknown=true"] {
+            fs::write(f.dir.join("host.json"),json!({"codex":["-s","workspace-write","-c",config]}).to_string()).unwrap();
+            assert!(f.plan().is_err(),"unsupported config must refuse: {config}");
+        }
+        for args in [vec!["-s","read-only"],vec!["-c"],vec!["--unknown"],vec!["--add-dir","/invented"]] {
+            fs::write(f.dir.join("host.json"),json!({"codex":args}).to_string()).unwrap();assert!(f.plan().is_err(),"{args:?}");
+        }
+    }
     // R9/R12 A2/A7: intent precedes spawn; interrupted/unknown/terminal records all consume the same launch.
     // Risk: restarting a supervisor replays an AssetQ operation or a stale PID is treated as live authority.
     #[test]
@@ -198,7 +223,7 @@ fn resolve(install:&Path,home:&Path,r:&Request,os:&str,bin:&Path)->Res<Plan> {
         "-s"|"--sandbox"=>{let v=it.next().ok_or("missing host sandbox request")?;if v!="danger-full-access"&&v!="workspace-write" {return Err("host sandbox narrowing is not qualified for app-server".into());}},
         "-m"|"--model"=>{let v=it.next().ok_or("missing host model")?;args.extend(["-c".into(),format!("model={}",serde_json::to_string(v).map_err(|_|"host model invalid")?)]);},
         "-c"|"--config"=>{let v=it.next().ok_or("missing host config request")?;
-            if !v.starts_with("model_reasoning_effort=") {return Err("unsupported host app-server config; existing paths unchanged".into());}
+            if !v.starts_with("model_reasoning_effort=")&&v!="sandbox_workspace_write.network_access=true" {return Err("unsupported host app-server config; existing paths unchanged".into());}
             args.extend([a.clone(),v.clone()]);},
         _=>return Err("unsupported host app-server arguments; existing paths unchanged".into()),
     }}
