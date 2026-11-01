@@ -60,8 +60,21 @@
 .task-row .question-shortcut{border:0;border-radius:6px;background:transparent;color:var(--ask);width:32px;height:32px;min-height:32px;display:inline-flex;align-items:center;justify-content:center;padding:0;margin:0}.question-cue{overflow-wrap:anywhere;line-height:1.4}.question-task-details{padding:8px 10px;margin:2px 0 6px;border-left:3px solid var(--ask);border-radius:6px;background:light-dark(#eff2f5,#303a43)}.question-task-details:focus{outline:none}.question-task-details .popover-heading>strong,.question-task-details .row-actions [data-a=workspace]{color:var(--ask)}.question-task-details .popover-heading strong{min-width:0}.question-task-details .task-more dd{overflow-wrap:anywhere}
 @media(pointer:coarse){.task-row .question-shortcut{min-height:44px;min-width:44px}}
 .settings-section{padding:0;border:0}
-/* #1661 R28: a Settings widget is one line, its live summary trails and wraps whole words */
-.menu .settings-widget{display:grid;grid-template-columns:var(--target) minmax(0,1fr);gap:0 4px;align-items:start;padding:3px 0}.settings-widget>.ui-icon{grid-column:1;grid-row:1/3;justify-self:center;align-self:start;margin-top:7px}.settings-widget>span:not(.ui-icon):not(.meta){grid-column:2;min-width:0;padding-top:3px;line-height:1.35}.settings-widget>.meta{grid-column:2;margin:0;text-align:left;min-width:0;overflow-wrap:anywhere;line-height:1.35;padding-bottom:4px}
+/* R28: component-owned rows beat the generic project :has flex selector. */
+.menu .project.settings-widget{display:grid;grid-template-columns:var(--target) minmax(0,1fr);gap:0 4px;align-items:start;padding:3px 0}
+.settings-widget>.ui-icon{grid-column:1;grid-row:1/3;justify-self:center;align-self:start;margin-top:7px}
+.menu .settings-widget>span:not(.ui-icon):not(.meta){grid-column:2;grid-row:1;min-width:0;padding-top:3px;line-height:1.35}
+.menu .settings-widget>.meta{grid-column:2;grid-row:2;margin:0;text-align:left;min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.35;padding-bottom:4px}
+.notification-row{display:flex;align-items:center;gap:4px;min-width:0;padding:3px 0}
+.notification-row>label{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:4px;flex:1;min-width:0}
+.menu .notification-row select{font:inherit;width:100%;min-width:0;padding:4px}
+.notification-row>button{flex:none}
+.access-grid{display:grid;grid-template-columns:repeat(var(--access-columns),minmax(0,1fr));gap:4px}
+.access-grid>details{min-width:0;overflow-wrap:anywhere}
+.menu .access-grid summary{white-space:normal;overflow-wrap:anywhere}
+.settings-project .project-shortcuts{display:flex;align-items:center;gap:4px;min-width:0}
+.settings-project .project-overview{flex:1;min-width:0;text-align:left;overflow-wrap:anywhere}
+.settings-project .project-actions{flex:none}
 .host-line .alert{color:var(--failed)}
 /* #1661 R30: a summary with mixed text keeps its words in reading order and wraps whole, never a one-letter column */
 .menu summary.line{display:block}
@@ -145,11 +158,9 @@
 
 .menu .group:has(>.section-heading){margin:0;padding:0;border:0}.task-group-heading>span:first-child{flex:1}
 
-.menu .settings-widget.short-value{grid-template-columns:var(--target) minmax(0,1fr) auto;align-items:center}
-.settings-widget.short-value>.ui-icon{grid-row:1;margin:0;align-self:center}.settings-widget.short-value>.meta{grid-column:3;padding:0;text-align:right;max-width:16ch}.settings-widget.short-value>span:not(.ui-icon):not(.meta){padding:0}
-
 /* Square disclosure slots stay inside their row when the arrow rotates. */
-.dashboard-status>summary:after,.menu .host-breakdown:after{width:1em;height:1em;line-height:1;display:flex;align-items:center;justify-content:center}
+.menu summary{grid-template-columns:auto minmax(0,1fr) 1em}
+.menu summary:after,.dashboard-status>summary:after,.menu .host-breakdown:after{width:1em;height:1em;line-height:1;display:flex;align-items:center;justify-content:center}
 /* M3/MP13: every task shares the list scroll and the question's raised surface. */
 .menu .task-inline-details{--task-accent:var(--muted);background:light-dark(#eff2f5,#303a43);border-left-color:var(--task-accent);color:light-dark(#243039,#eef2f5);overflow:visible}
 .task-inline-details.good{--task-accent:var(--work)}.task-inline-details.review{--task-accent:var(--review)}.task-inline-details.ask{--task-accent:var(--ask)}.task-inline-details.danger{--task-accent:var(--failed)}

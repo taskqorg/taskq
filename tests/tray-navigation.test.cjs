@@ -24,18 +24,18 @@ context.page='appearance';assert((context.routeBody()).includes('Text size · 20
 context.page='cadence';context.S.period='1d';context.S.history={bins:[],tz:'UTC',start:1,end:2,cap:1,since:null};assert((context.routeBody()).includes('hist'));
 context.page='agents';assert((context.routeBody()).includes('Unknown: no status.json'));
 context.S.projects=[{root:'/p',name:'alpha',host:'mac',version:null,age:null,focus:[],tasks:[]}];
-context.page='services';h=(context.routeBody());assert(h.includes('Host maintenance in workspace'));assert(!h.includes('data-a="restart"'));assert(h.includes('status unknown'));assert(h.includes('Service'));
+context.page='services';h=(context.routeBody());assert(h.includes('Host maintenance in workspace'));assert(!h.includes('data-a="restart"'));assert(h.includes('status unknown'));assert(h.includes('Host service: unknown'));assert(h.includes('Project observations'));
 context.page='about';h=(context.routeBody());assert(h.includes('version unknown'));assert(h.includes('status unknown'));
 // M14: OS denial reads Blocked with the OS setting and no test post; a project shows its override and effective mode
 const kinds={ask:'sound',close:'off',failed:'banner',gone:'banner'};
 context.S.notify={status:'blocked',host:kinds,projects:{'/p':{ask:[null,'sound'],close:['banner','banner'],failed:[null,'banner'],gone:[null,'banner']}}};
 context.page='notification-settings';h=(context.routeBody());
 assert(h.includes('Blocked by the OS'));assert(h.includes('data-a="notify-os"'));assert.equal((h.match(/notify-test[^>]*disabled/g)||[]).length,4);
-assert(h.includes('data-kind="ask" data-v="sound" aria-pressed="true"'));
+assert.match(h,/data-notify="ask"[^>]*value="sound"/);assert.match(h,/<option value="sound" selected>Sound/);
 context.S.notify.status='allowed';h=(context.routeBody());assert(!h.includes('notify-os'));assert(!/notify-test[^>]*disabled/.test(h));
 h=(context.notifyGroup({root:'/p'}));
 assert(h.includes('lucide-bell')&&!h.includes('◉'),'#1775 R43: project Notifications uses the catalog bell, not a text glyph');
-assert(h.includes('data-kind="close" data-root="/p" data-v="banner" aria-pressed="true"'));assert(h.includes('data-kind="ask" data-root="/p" data-v="inherit" aria-pressed="true"'));
+assert.match(h,/data-notify="close" data-root="\/p" value="banner"/);assert.match(h,/data-notify="ask" data-root="\/p" value="inherit"/);assert(h.includes('Effective: Banner'));assert(h.includes('Effective: Banner with sound'));
 // M14: OS clicks and historical closed-task links forward the exact source into Conversations, without a menu card.
 context.S={display:context.S.display,projects:[{root:'/p',name:'p',issues:'https://x/issues',tasks:[]}]};
 (context.page='home',context.openCard({root:'/p',n:8,kind:'close',title:'Ship it',sha:'a'.repeat(40)}));

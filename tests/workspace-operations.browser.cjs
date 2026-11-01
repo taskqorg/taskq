@@ -1,7 +1,7 @@
 // #1465 A1–A7 / V15/V28: placement, target, single-use Stop and unknown receipts.
 const fs=require('node:fs'),assert=require('node:assert/strict'),{chromium}=require('playwright');
 const root='/fixture/project',review={id:'review',action:'stop',instance:'original',roots:[root],issued_at:1000,expires_at:1300};
-const snapshot={stop_modes:true,font:16,theme:'dark',host:'fixture',now:1000,version:'invented',service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',host:'mac',alive:true,age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:'',history:[]},notify:{projects:{}},history:{bins:Array.from({length:6},(_,i)=>({start:i*1000/6,end:(i+1)*1000/6,counts:[0,0,0,0],missing:["fixture"],ongoing:false})),start:0,end:1000,tz:'UTC',since:null}};
+const snapshot={display:require('./fixtures/display-model.json').display,stop_modes:true,font:16,theme:'dark',host:'fixture',now:1000,version:'invented',service:{state:'running',pid:123,instance:'original',fresh:true},stop_review:review,full_stop_review:{...review,mode:'full'},projects:[{root,name:'Fixture project',mode:'run',host:'mac',alive:true,age:0,service_pid:123,host_instance:'original',restart_waits:['codex worker'],stop_progress:[],tasks:[],focus:['all'],labels:[],alive:true}],ai:{draft:'',history:[]},notify:{projects:{}},history:{bins:Array.from({length:6},(_,i)=>({start:i*1000/6,end:(i+1)*1000/6,counts:[0,0,0,0],missing:["fixture"],ongoing:false})),start:0,end:1000,tz:'UTC',since:null}};
 (async()=>{
  const browser=await chromium.launch(require('./browser.cjs')());
  try{
@@ -60,6 +60,27 @@ const snapshot={stop_modes:true,font:16,theme:'dark',host:'fixture',now:1000,ver
   await page.evaluate(()=>taskq.receive({open:{page:'operations',operation:'setup'}}));
   assert.match(await page.locator('.content').innerText(),/Choose a folder/);
   assert.deepEqual(errors,[]);
+  // #2096 A4/A7/A8: the existing consequential review remains reachable and effect-free in every geometry cell.
+  const resources=require('./fixtures/resource-controls.json').cases.find(c=>c.name.startsWith('host commands')).groups[0];
+  for(const theme of ['light','dark'])for(const font of [18,20])for(const width of [320,560]){
+   const p=await browser.newPage({viewport:{width,height:960}}),issues=[];p.on('pageerror',e=>issues.push(e.message));
+   await p.setContent(fs.readFileSync('build/web/workspace.html','utf8'));
+   await p.evaluate(()=>{window.messages=[];window.ipc={postMessage:m=>messages.push(JSON.parse(m))};});
+   const s={...snapshot,theme,font,projects:[{...snapshot.projects[0],resources,access:[{runtime:'codex',effective:'workspace',enforcement:'sandbox'}],capacity:{gate:'open',reasons:[]}}]};
+   await p.evaluate(s=>taskq.receive(s),s);
+   for(const operation of ['stop','recovery','resources','admission']){
+    await p.evaluate(operation=>taskq.receive({open:{page:'operations',operation}}),operation);
+    for(const expanded of [false,true]){
+     if(expanded)await p.locator('.content details').evaluateAll(es=>es.forEach(e=>e.open=true));
+     const clipping=await p.locator('.content').evaluate(c=>{const bounds=c.getBoundingClientRect();return [...c.querySelectorAll('button,a,input,select,summary')].filter(e=>e.checkVisibility()).filter(e=>{const r=e.getBoundingClientRect();return r.left<bounds.left-1||r.right>bounds.right+1||e.scrollWidth>e.clientWidth+1;}).map(e=>e.textContent.slice(0,70));});
+     assert.deepEqual(clipping,[],operation+' review '+width+'/'+font+'/'+theme+' expanded='+expanded);
+     assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth||document.querySelector('.content').scrollWidth>document.querySelector('.content').clientWidth+1),false);
+    }
+   }
+   assert.deepEqual(await p.evaluate(()=>messages.filter(m=>['stop','restart','uninstall','capacity','pause','resume','focus','recovery-apply','recovery-read','notify-test'].includes(m.a))),[],'opening/expanding reviews sends no effects');
+   assert.deepEqual(issues,[]);await p.close();
+  }
+  console.log('PASS #2096: 32 operation-review cells × collapsed/expanded, no clipping, horizontal scroll or effects');
   console.log('PASS workspace operation launch/Back, exact Full stop, single-use and unknown receipt fencing; native effects not exercised');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

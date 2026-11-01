@@ -16,7 +16,7 @@ assert(html.includes('Claude 2.1 · <span class="">Signed in</span><span class="
 assert(html.includes('Method: Claude subscription'),'the method stays in the details');
 assert(html.includes('Codex 2.1 · <span class="alert">Check failed</span><span class="meta"> · account unknown</span>'),'ChatGPT is a method, never the account');
 assert(html.includes('Expiry unknown'),'no expiry is invented');assert(html.includes('Expires '),'a supplied expiry is shown');
-assert(html.includes('Runtime client 2.1 · checked 5m ago'));assert(html.includes('Tray 4.1.0 · service 4.1.0 (2)'),'worker service versions apart from the runtime client');
+assert(html.includes('checked 5m ago'));assert.equal((html.match(/Claude 2.1/g)||[]).length,1,'A5: client version appears once, outside project access');assert(html.includes('Tray 4.1.0 · service 4.1.0 (2)'),'worker service versions apart from the runtime client');
 assert(/win · heartbeat [^<]* · clients unknown/.test(html),'a remote host shows heartbeat freshness only');
 assert(html.includes('Codex app · unknown: win heartbeat publishes no client version, sign-in, account or access'),'#1702 A3: missing source named');
 assert(html.includes('Claude: requested workspace-write · saved grant workspace-write · applied workspace-write · sandbox'));
@@ -46,7 +46,7 @@ assert.match(c.admissionText(),/^Mixed: alpha \(access\) · beta \(no reported b
 c.S.projects[1].alive=false;assert.match(c.admissionText(),/^Unknown:/,'stale never ready');
 c.S.projects=original;
 c.S.agents={at:900,fresh:true,rows:[row('codex','signed-in'),row('codex-app','signed-in',{version:'3.2'})]};
-c.S.projects[0].access.push({runtime:'codex-app',effective:'workspace'});c.page='agents';html=c.routeBody();assert(html.includes('Codex app 3.2 · <span'));assert(html.includes('Codex app 3.2 workspace'));assert(html.includes('Codex 2.1 refused'));
+c.S.projects[0].access.push({runtime:'codex-app',effective:'workspace'});c.page='agents';html=c.routeBody();assert(html.includes('Codex app 3.2 · <span'));assert(html.includes('Codex app · Workspace'));assert(html.includes('Codex · refused'));assert.equal((html.match(/Codex app 3.2/g)||[]).length,1,'A5: no client version repeated per project');
 // R32: Work mode shows the access facts themselves after admission, not a pointer to Agents
 const wm={operationController:true,S:c.S};require('./tray-harness.cjs').install(wm);html=wm.workPage();
 assert(html.indexOf('Admission · ')<html.indexOf('Codex: refused: host grant missing'),'admission first, then access');
@@ -72,4 +72,13 @@ c.S.opacity_mode='background';c.S.background_opacity=0;c.S.backing_strength=98;h
 assert(html.includes('Background only'),'Appearance must expose background-only transparency');
 assert.match(html,/id="background-opacity"[^>]*type="range"[^>]*min="0"[^>]*max="100"/);
 assert(!html.includes('id="backing-strength"'),'legacy backing must not constrain fills');
-assert(html.includes('Select Whole window'),'the inactive slider explains how to enable it');
+assert(!html.includes('id="menu-opacity"'),'F06: Background only renders no inactive whole-window editor');
+assert.equal((html.match(/type="range"/g)||[]).length,1,'F06: one active opacity slider');
+
+// #2096 A5/A6: missing observations stay unknown; no version duplication, policy edit or automatic test banner.
+c.S.notify={status:'request failed',failure:'OS request refused',host:{ask:'invalid'},projects:{alpha:{ask:[null,'sound']}}};
+c.page='notification-settings';html=c.routeBody();assert(html.includes('OS request refused'));assert(html.includes('Overrides unknown'));assert(html.includes('Effective: Unknown'));assert(html.includes('value="unknown"'));
+c.S.projects[0].access=[];assert(c.accessFacts().includes('Access unknown for alpha'),'empty access rows stay unknown');
+c.S.projects=[];c.S.agents=null;c.S.service={state:'exited',reason:'fixture exit'};
+for(const route of ['settings','appearance','notification-settings','cadence','hosts','work','agents','projects','delivery','services','recovery','about']){c.page=route;assert.notEqual(c.routeBody(),'','empty '+route+' remains explicit');}
+c.page='services';assert(c.routeBody().includes('fixture exit'));
