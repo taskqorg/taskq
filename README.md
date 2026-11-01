@@ -5,24 +5,42 @@
 
 ### Install
 
-Paste into Claude or Codex:
+Onboarding has three parts. Paste them into Claude or Codex, together or when the agent asks.
+
+**1. Install TaskQ**
 
 ```text
 Install taskq from https://github.com/taskqorg/taskq and set it up for this project.
 ```
 
-The agent confirms setup changes, installs TaskQ and connects your project board.
+**2. Name the project repository and allow its board**
+
+Name the exact repository and let TaskQ use its Issues as the task board:
+
+```text
+Use the existing repository <owner>/<name> and let TaskQ use its GitHub Issues as the task board.
+```
 
 <details>
 <summary>Starting a new project?</summary>
 
+Name the new project's purpose instead:
+
 ```text
-Install taskq from https://github.com/taskqorg/taskq and create project <name> from <idea or folder>.
+Create a new private repository <owner>/<name> for <purpose> and let TaskQ use its GitHub Issues as the task board.
 ```
 
-Replace `<name>` and `<idea or folder>` with your project.
-
 </details>
+
+**3. Optional: spec-driven development (SDD)**
+
+Connecting a project does not configure SDD. Ask for it explicitly:
+
+```text
+Also configure spec-driven development (SDD) for this project, as practiced across the TaskQ project tree.
+```
+
+Before any change the agent shows the account, repository, visibility and every external effect, and applies them only after you confirm. These examples do not replace that confirmation.
 
 Describe the work. Agents do it, a reviewer checks it, and you follow progress in TaskQ.
 
