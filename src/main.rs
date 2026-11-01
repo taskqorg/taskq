@@ -258,6 +258,13 @@ fn root_for(env: Option<PathBuf>, cwd: PathBuf) -> Res<PathBuf> {
     }
 }
 
+/// § 5 Board-only root: a root without `.git` holds no code checkout, so commands that would spawn a worker or tidy
+/// worktrees there refuse with one line naming the reason; the board commands run as in any root.
+fn needs_checkout(root: &Path, what: &str) -> Res<()> {
+    if root.join(".git").exists() { return Ok(()); }
+    Err(format!("{what}: board-only root: no code checkout (.git) here\nNext: run it in a checkout of this project on a host that serves it"))
+}
+
 fn hostname() -> String {
     // ponytail: first nonempty name per process (#1297: was one `hostname` child per call); a renamed host needs a service restart.
     static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -2659,6 +2666,8 @@ fn service(args: &Args) -> Res<()> {
             }else{recover_cmd(&root,args.flags.contains_key("apply"),args.flags.contains_key("json"))}
         },
         "install" => {
+            // § 5 Board-only root: a served root gets workers, and a worker needs a checkout
+            needs_checkout(&root, "service install")?;
             let (cfg, _, _) = check_load(&root)?;
             println!("{}",host::install_project(&cfg.install,&root)?);
             if let Some(l)=host_setup(&cfg) {println!("{l}");}
@@ -3161,7 +3170,7 @@ fn run(argv: &[String]) -> Res<()> {
             if roots.is_empty() { println!("cleanup: no registered project on this host"); }
             for root in roots {
                 println!("{}: {}", project_name(&root), root.display().to_string().trim_start_matches(r"\\?\"));
-                let lines = load(&root).and_then(|(cfg, raw)| {
+                let lines = needs_checkout(&root, "cleanup").and_then(|_| load(&root)).and_then(|(cfg, raw)| {
                     let b = cfg.board.open(&cfg.web_host, &cfg.repo, raw["label_schema"].as_str(), &platform::tool(&cfg.install))?;
                     Ok(cleanup_lines(&*b, &cfg, &a))
                 });
@@ -3687,6 +3696,7 @@ fn command(c: &Ctx, cmd: &str, a: &Args) -> Res<()> {
             Ok(())
         }
         "cleanup" => {
+            needs_checkout(root, "cleanup")?;
             for l in cleanup_lines(b, cfg, a) { println!("{l}"); }
             Ok(())
         }
@@ -4013,6 +4023,60 @@ mod tests {
         assert!(e.starts_with("TASKQ_ROOT ") && e.contains("is not the project of the current directory"), "{e}");
         assert_eq!(root_for(None, a.join(".worktrees/x")).unwrap(), a);
         fs::remove_dir_all(&t).unwrap();
+    }
+
+    // Chain: §5 Board-only root (#2093). Risk: a root with only taskq.json (PilotQ: code elsewhere) refuses a PM command,
+    // writes a checkout, or lets this host serve and spawn workers into a root without code.
+    #[test]
+    fn board_only_root_runs_pm_commands_and_refuses_checkout_work() {
+        let base = std::env::temp_dir().join(format!("taskq-board-only-{}", crate::runtime::uuid()));
+        let (root, install) = (base.join("root"), base.join("install"));
+        for d in [&root, &install] { fs::create_dir_all(d).unwrap(); }
+        fs::write(root.join("taskq.json"), r#"{"board":"github","repo":"invented/code-elsewhere"}"#).unwrap();
+        // invented board token (§ 9 `<install>/token`); the fake board reads none
+        fs::write(install.join("token"), "ghp_aaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        assert_eq!(root_for(None, root.clone()).unwrap(), root);
+        let (mut config, raw) = project_config(&root).unwrap();
+        config.install = install;
+        let c = Ctx { cfg: config, raw, board: Box::new(Fake::default()) };
+        let run = |words: &[&str]| { let v: Vec<String> = words.iter().map(|s| s.to_string()).collect(); command(&c, &v[0], &Args::parse(&v).unwrap()) };
+        let state = |n: u64| fold(n, &entries(&*c.board, n).unwrap(), false).state;
+        run(&["add", "Board-only fixture", "--goal", "Code lives elsewhere", "--acceptance", "The fixture closes"]).unwrap();
+        let n = c.board.issues(None).unwrap().iter().find(|i| i.title == "Board-only fixture").unwrap().number;
+        run(&["start", &n.to_string()]).unwrap();
+        assert_eq!(state(n), State::Ready);
+        // a host whose service serves the project runs the attempt
+        let attempt = c.board.comment(n, "taskq: spawn worker claude:fixture mac").unwrap();
+        run(&["steer", &n.to_string(), "--text", "Read the board-only note"]).unwrap();
+        c.board.comment(n, &core::entry("ask", &[], Some(attempt), "Done: not started\nProblem: which root?")).unwrap();
+        assert_eq!(state(n), State::Ask);
+        run(&["answer", &n.to_string(), "--text", "The board-only one"]).unwrap();
+        assert_eq!(state(n), State::Doing);
+        run(&["requeue", &n.to_string(), "--text", "Reason: retry on another host"]).unwrap();
+        assert_eq!(state(n), State::Ready);
+        run(&["later", &n.to_string(), "--text", "Reason: code host offline"]).unwrap();
+        assert_eq!(state(n), State::Later);
+        for read in [vec!["status"], vec!["inbox", "N"], vec!["issue", "N"]] {
+            let v: Vec<String> = read.iter().map(|w| if *w == "N" { n.to_string() } else { w.to_string() }).collect();
+            command(&c, &v[0], &Args::parse(&v).unwrap()).unwrap_or_else(|e| panic!("{v:?}: {e}"));
+        }
+        run(&["close", &n.to_string(), "--text", "Changed: none\nChecks: A1 ok\nOpen: none"]).unwrap();
+        assert_eq!(state(n), State::Closed);
+        let mut left: Vec<_> = fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        left.sort();
+        assert!(left.iter().all(|f| f == "taskq.json" || f == ".taskq"), "board commands write no checkout: {left:?}");
+        // A2: commands that need a checkout refuse with one line naming the reason
+        let e = run(&["cleanup"]).unwrap_err();
+        assert!(e.starts_with("cleanup: board-only root: no code checkout (.git) here\nNext: "), "{e}");
+        PROJECT_ROOT.set(Some(root.clone()));
+        let e = service(&Args::parse(&["service".into(), "install".into()]).unwrap()).unwrap_err();
+        PROJECT_ROOT.set(None);
+        assert!(e.starts_with("service install: board-only root"), "{e}");
+        assert_eq!(platform::error_text(&e, None).lines().count(), 2, "Error line names the reason, then Next (§ 5)");
+        assert!(host::projects(&c.cfg.install).unwrap_or_default().is_empty(), "nothing registered");
+        fs::create_dir(root.join(".git")).unwrap();
+        assert!(needs_checkout(&root, "cleanup").is_ok());
+        fs::remove_dir_all(&base).unwrap();
     }
 
     // Legacy migration input: test project timers independently of an installed host policy.
