@@ -407,6 +407,7 @@ def main():
     try:
         run(['git', 'diff', '--check', args.base if paths else 'HEAD'])
         run([sys.executable, 'scripts/check.test.py'])
+        run([sys.executable, 'scripts/live-probe.test.py'])
         # CI runs the rule gate once, in the plan job; local runs include it.
         failed = None if os.environ.get('GITHUB_ACTIONS') else rule_gate(args.base)
         if failed:
