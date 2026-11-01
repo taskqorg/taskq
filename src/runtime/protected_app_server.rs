@@ -107,6 +107,27 @@ mod tests {
             assert!(release_ready(&corrupt.ops["slot"]).is_err(),"{field}");
         }
     }
+    // Chain: R8 R9 R12 #2151 A2/A5 — output descriptors cannot read input before authority validation.
+    // Risk: a duplex native stdout bypasses the supervisor's input gate.
+    #[cfg(unix)]
+    #[test]
+    fn protected_native_output_cannot_read_ungated_input() {
+        use std::{io::Write,os::{fd::AsRawFd,unix::net::UnixStream},time::Duration};
+        let (mut consumer,mut supervisor)=UnixStream::pair().unwrap();
+        consumer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        supervisor.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        consumer.write_all(b"ungated native input").unwrap();
+        let (output,pump)=native_output(supervisor.try_clone().unwrap()).unwrap();
+        let mut output=fs::File::from(output);
+        let mut bytes=[0u8;20];
+        let read=unsafe{libc::read(output.as_raw_fd(),bytes.as_mut_ptr().cast(),bytes.len())};
+        assert_eq!(read,-1,"native output must not read queued, ungated input");
+        assert_eq!(std::io::Error::last_os_error().raw_os_error(),Some(libc::EBADF));
+        supervisor.read_exact(&mut bytes).unwrap();assert_eq!(&bytes,b"ungated native input");
+        output.write_all(b"native output").unwrap();drop(output);
+        let mut received=[0u8;13];consumer.read_exact(&mut received).unwrap();assert_eq!(&received,b"native output");
+        assert_eq!(pump.join().unwrap().unwrap(),13);
+    }
     struct Fixture {dir:PathBuf,root:PathBuf,home:PathBuf,bin:PathBuf,r:Request,p:policy::Policy}
     impl Drop for Fixture {fn drop(&mut self){let _=fs::remove_dir_all(&self.dir);}}
     impl Fixture {
@@ -555,6 +576,15 @@ fn sandbox_result(operation:&str,category:&str,result:i32,errno:Option<i32>,deni
     }Ok(())
 }
 
+#[cfg(any(target_os="macos",all(test,unix)))]
+fn native_output(mut socket:std::os::unix::net::UnixStream)->Res<(std::os::fd::OwnedFd,std::thread::JoinHandle<std::io::Result<u64>>)> {
+    let (mut reader,writer)=std::io::pipe().map_err(|_|"native output pipe unavailable; retain scope")?;
+    // Native code must never inherit the duplex socket that carries input before validation.
+    let pump=std::thread::Builder::new().spawn(move||std::io::copy(&mut reader,&mut socket))
+        .map_err(|_|"native output forwarding unavailable; retain scope")?;
+    Ok((writer.into(),pump))
+}
+
 pub(crate) fn versions_in_use(install:&Path)->Res<Vec<String>> {
     resources::try_with(install,|s| {
         s.ops.values().filter(|op|!op.bound["local_slot"]["launch"].is_null()&&op.receipt["occupied"]!=false)
@@ -710,7 +740,7 @@ mod mac {
         }
         println!("{receipt}");Ok(())
     }
-    pub(super) fn launch_native(install:&Path,home:&Path,r:&Request,key:&str,mut transport:std::io::BufReader<std::os::unix::net::UnixStream>,stderr:std::os::unix::net::UnixStream)->Res<()> {
+    pub(super) fn launch_native(install:&Path,home:&Path,r:&Request,key:&str,mut transport:std::io::BufReader<std::os::unix::net::UnixStream>,stdout:Stdio,stderr:Stdio)->Res<()> {
         let original=resources::within(install,resources::WAIT,|s|Ok(launch_record(s,key,r)?.clone()))?;
         let p=refresh(install,home,r,&original["authority"])?;
         let supervisor=coreq::process::identity(std::process::id()).map_err(|_|"supervisor identity unknown")?.ok_or("supervisor absent")?;
@@ -724,8 +754,7 @@ mod mac {
         let spec=runtime::optimized(agentq_runtime::agent::Spec{client:agentq_runtime::agent::Client::Codex,root:p.root.clone(),session:"-".into(),
             resume:false,args:p.args.iter().map(Into::into).collect(),home:Some(PathBuf::from(p.authority["account_home"].as_str().ok_or("account home unknown")?)),env:vec![]})?;
         let mut cmd=agentq_runtime::agent::app_server_command(cmd,&spec)?;
-        cmd.stdin(Stdio::piped()).stdout(Stdio::from(std::os::fd::OwnedFd::from(transport.get_ref().try_clone().map_err(|_|"scope stdout unavailable")?)))
-            .stderr(Stdio::from(std::os::fd::OwnedFd::from(stderr)));
+        cmd.stdin(Stdio::piped()).stdout(stdout).stderr(stderr);
         resources::within(install,resources::WAIT,|s|{external_slots::reserved(install,s,&r.slot,"codex")?;input_gate(s,key,r)})?;
         let mut child=cmd.spawn().map_err(|_|"native spawn outcome unknown; intent retained, never replay")?;
         let id=coreq::process::identity(child.id()).map_err(|_|"spawned native identity unknown; retain intent")?.ok_or("spawned native absent; retain intent")?;

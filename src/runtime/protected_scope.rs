@@ -153,7 +153,9 @@ pub(super) fn run(key:&str)->Res<()> {
     let c=counts(binding["coalition"].as_u64().ok_or("coalition unknown")?)?;
     if c[0].checked_sub(c[1])!=Some(1) {return Err("scope contains unbound work before native launch; retain occupancy".into());}
     let output=input.get_ref().try_clone().map_err(|_|"scope output unavailable")?;
-    let result=super::mac::launch_native(&install,&home,&r,key,input,errors);
+    let (stdout,stdout_pump)=native_output(output.try_clone().map_err(|_|"scope stdout unavailable")?)?;
+    let (stderr,stderr_pump)=native_output(errors)?;
+    let result=super::mac::launch_native(&install,&home,&r,key,input,Stdio::from(stdout),Stdio::from(stderr));
     resources::within(&install,resources::WAIT,|s| {
         launch_record(s,key,&r)?;
         let launch=&mut s.ops.get_mut(key).unwrap().bound["local_slot"]["launch"];
@@ -167,9 +169,17 @@ pub(super) fn run(key:&str)->Res<()> {
             coreq::process::terminate(&id).map_err(|_|"native stop unconfirmed; scope retained")?;
         }
     }
+    let mut pumps=Some([stdout_pump,stderr_pump]);
     loop {
         membership(&supervisor,&binding)?;
         let c=counts(binding["coalition"].as_u64().ok_or("coalition unknown")?)?;
+        if c[0].checked_sub(c[1])==Some(1) {
+            // Finish output before the certificate can authorize supervisor cleanup.
+            for pump in pumps.take().ok_or("native output drain already consumed; retain scope")? {
+                pump.join().map_err(|_|"native output forwarding interrupted; retain scope")?.map_err(|_|"native output forwarding failed; retain scope")?;
+            }
+            membership(&supervisor,&binding)?;
+        }
         let done=resources::within(&install,resources::WAIT,|s|certify(s,key,&r,&supervisor,&binding,c))?;
         if done {let _=output.shutdown(Shutdown::Both);break;}
         std::thread::sleep(Duration::from_millis(250));
