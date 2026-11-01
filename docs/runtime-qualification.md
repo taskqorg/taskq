@@ -464,6 +464,189 @@ CLI image handover relocates the existing `kids` record to `<install>/native/<SH
 
 This matrix describes the inspected candidate, not installed qualification. Stage 2 proves protocol transitions with fake adapters; stage 3 qualifies the native observations. An intent cursor identifies requested input, not delivery. Each adapter must distinguish requested, submitted/unknown, accepted and completed without replaying an unknown submission. The board remains the source of assignment and execution intent. No new journal is required by this matrix.
 
+Codex CLI writer refusal (R2/R9/R11/R12): bind a continuation's original input and expected thread to its exact execution before spawning. Only a nonzero native exit with the matching `Failed to create session` and `thread/resume` active-writer refusal, and no session/turn events or other output, proves pre-submission no-start. Preserve the input and use the existing bounded continuation retry; repeated refusals ask the owner to let any active app turn finish and close that thread in Codex. Never delete locks, force a resume, cancel another turn, restart the app or change runtime policy. Idle history and a lock file's presence or absence do not prove writer release or input acceptance. A partial, changed, unbound or ambiguous stream stays unknown. An earlier board Exit receipt remains Exit: do not rewrite it as no-start or retry its unaccepted input. The owner must inspect the exact pending input in the original thread and reconcile acceptance before authorizing recovery; closing an idle thread alone does not resolve that fence.
+
+Writer-refusal qualification (#2143): macOS 27.2, Codex CLI 0.159.3, native adapter source `1b114297` (the final candidate preserves those adapter bytes). Before the fix, `cargo test --locked --bin taskq codex_writer_refusal` failed with `Some(Exit)` instead of `Some(NoStart)`. The passing service chain covers the exact refusal, reduced-pass reap, unknown output, started turn, missing/duplicate binding and another execution's binding. It retains dirty work and undelivered input, bounds no-start retries at two, and forbids replay of unknown submission. It also exposed and fixes same-pass continuation from the view predating an unaccepted Exit; no new intent may be written from that stale view. This fence applies to the current attempt: the unchanged cancellation check requires an owner-authorized replacement to start in the same pass after native release. The existing CLI acceptance, continuation retry and immutable-release checks retain their protection.
+
+`cargo test --locked --bin taskq native_codex_writer_refusal_before_submission -- --ignored --exact runtime::tests::native_codex_writer_refusal_before_submission --nocapture` passed on that source. A disposable native app-server held a seeded, empty thread in an isolated unauthenticated home. Two native CLI resumes both exited nonzero with the pre-session writer refusal; the candidate adapter classified both as no-start, kept both input files and observed no acceptance. Native readback still showed zero turns in the original writer. The probe's temporary directory needs `--skip-git-repo-check`; its first run stopped at that guard and correctly produced no no-start classification. No model turn, app control, operator grant, runtime policy or real task submission was used.
+
+The original [agentq#190](https://github.com/taskqorg/agentq/issues/190) remains open/Doing: answer `6561174165`, execution `6561176475`, attempt `6560385070`, Exit receipt without acceptance. Read-only native history showed only the earlier completed turn, while native lock readback still found a writer for thread `01a197da-5a44-7042-92c5-4db61865df0b`. This reproduces the idle-versus-released distinction from [#158](https://github.com/taskqorg/taskq/issues/158) and the owner refusal from [#1664](https://github.com/taskqorg/taskq/issues/1664). Owner action: inspect the pending answer in that original Codex thread; let any active turn finish before closing only that thread. Reconcile exact input acceptance before authorizing recovery; do not send another copy merely because the thread is idle or closed. The candidate exposes this action while retaining the historical acceptance fence. Recovery of that real execution, native active model turns, installed-service restart and Windows/Linux remain unqualified. Its tree, branch, input and history were not changed by this investigation.
+
+Historical status prevention (R6, §3/§4): `historical_unaccepted_exit_reports_blocked_despite_renewed_lease` failed before with `stuck: false`. It now passes at a recent read, after a renewed lease and beyond the ordinary stuck interval: local status, a separate board snapshot and the heartbeat all expose the exact unaccepted Exit as unknown input recovery while retaining assignment. A quiet live worker stays unflagged, one stuck episode is logged, and the pending cursor, original session, Exit receipt and dirty work remain intact. This qualifies the source snapshot/heartbeat path with a fake board, not an installed service or PM notification transport. The installed `0d050c51` behavior reported in the owner steer is not changed by running these checks.
+
+Historical resume remains unsupported by the current execution protocol: the original Exit is immutable, acceptance is absent and that older CLI launch has no native input binding. Closing its writer alone cannot authorize a new execution. The unresolved decision is a scoped native refusal proof receipt permitting same-attempt/session recovery, or an owner-ended attempt followed by a new native session with the old history preserved. Neither option has been applied; no native acceptance may be fabricated and no unknown input may be replayed. The status fix exposes this ownership-versus-health distinction immediately rather than relying on an age threshold or a PM comment.
+
+### Historical writer refusal: decision draft for #2143
+
+**Approved conditional design; not implemented recovery or contract detail.** Source request:
+[#2143, final steer](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6561990402).
+The [owner selected option 1](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6562359732):
+the immediate blocked-status candidate `518daf54` under R6, §3, §4 and M3.13,
+plus the conditional protocol below. Its first step is attributable historical
+proof; approval does not supply missing evidence or authorize changing original
+receipts, controlling the app, or implementing a weaker recovery exception.
+
+The historical target is `taskqorg/agentq#190`, attempt `6560385070`, execution
+`6561176475`, input boundary `6561174165`, host `mac`, runtime `codex`, native
+thread `01a197da-5a44-7042-92c5-4db61865df0b`. These are the reported historical
+identities, not a fresh live read. Existing evidence has Exit without acceptance
+and no launch input binding. It does not yet satisfy the proof below.
+
+#### Proposed contract delta
+
+- **R1 and §3 Recovery:** permit one additional immutable board observation of
+  attributable pre-submission refusal for an exact execution already released
+  Exit. Keep that Exit and `accepted: false`; add a separate refusal-proof fact.
+  It resolves only that execution's input uncertainty, never its task state,
+  ownership lease, session, delivery cursor or another external side effect.
+- **R8 and §2 Executable behavioral model:** add the receipt projection and the
+  trace below before adapters. The §2 task transition table stays unchanged;
+  this is an execution observation like `accepted` and `released`.
+- **§3 and §4:** allow the normal same-attempt continuation retry to pass this
+  one input fence only after receipt readback. Count a proved refusal toward
+  the existing two-refusal bound. Retain every other unresolved-execution,
+  capacity, focus, load, policy and current-attempt check. No eager launch.
+- **§8 Compatibility:** require compatible services on every host serving this
+  board before emitting or consuming the new observation. Old hosts ignore its
+  kind and retain the input fence; mixed admission cannot safely proceed.
+  Do not downgrade while a live continuation depends on the new proof.
+- **R2/R9/R11/R12/R13 remain unchanged:** same attempt and native session only;
+  no grant/runtime/model/limit change, forced lock release, cancellation, restart,
+  owner attestation substituting for native evidence, or fabricated acceptance.
+
+Proposed wire form, emitted only by the owning service after native verification:
+
+```text
+taskq: input-refused 6561176475 attempt 6560385070
+<one canonical JSON proof object described below>
+op-id: input-refused-6561176475
+```
+
+The proof object's required fields and trust sources are:
+
+| Fields | Required source and verification |
+|---|---|
+| `version: 1`, `repo`, `task`, `attempt`, `execution`, `through`, `host`, `runtime`, `session` | Fresh trusted board intent, original assignment and inbox boundary; all must match the target above, with no intervening attempt replacement |
+| `release_comment` | First immutable trusted Exit receipt for this exact execution; verify it remains Exit and no `accepted` observation exists |
+| `account` | Original TaskQ account label from the native launch record, never credentials or inferred current default |
+| `process_identity`, `launch_record_sha256`, `log_sha256`, `log_start`, `log_end` | Preserved contemporaneous service/native launch evidence must bind this execution, account and thread to one CLI invocation and its complete output segment; verify PID creation identity and native process-tree termination, not PID absence alone |
+| `client_sha256`, `adapter_sha`, `verifier_sha` | Exact client and verifier source with native qualification of this refusal occurring before session creation/input submission; version strings alone do not qualify |
+| `proof: "codex-pre-session-active-writer"`, `exit_code` | Complete original output from the bound invocation: nonzero native exit, matching `Failed to create session` and `thread/resume` active-writer errors for the exact thread, with no session/turn events, other output, gaps or truncation |
+
+The service reads existing evidence without resuming a thread or acquiring its
+writer. It must show that the refused invocation never reached input submission;
+the absence of a user message in current history is insufficient. When original
+input binding is missing, a complete contemporaneous launch/output linkage is
+mandatory. Timestamps, matching error text or a newly written manifest alone
+cannot supply it. Hashes protect readback consistency, not authenticity.
+The board trusts the same service author as existing native receipts; the service
+trusts preserved native launch/output evidence, never a worker's assertion.
+Public receipts contain identities and digests only, no input text, credentials
+or private filesystem paths. Retain original artifacts under existing recovery
+retention; do not introduce another journal or rewrite old records.
+
+The pure projection validates schema, exact intent/attempt/cursor, Exit, absence
+of acceptance, and uniqueness. A duplicate proof is idempotent. A different proof
+for the same execution is conflicting evidence and holds admission. A later
+acceptance also holds admission as a contradiction; do not discard either fact.
+The native verifier validates the artifact claims before writing the observation.
+Unknown evidence at either boundary refuses the receipt and any retry.
+
+#### Proposed golden trace (not an executed test)
+
+| Event or observation | Expected projection and admission |
+|---|---|
+| Original spawn accepted and released; answer `6561174165`; executing `6561176475`; released Exit without acceptance | Doing; delivered cursor stays before the answer; ownership retained; blocked/nonrunning immediately |
+| Completed/idle history; app writer remains held, or its lock disappears | No change; no delivery and no new execution |
+| Unbound refusal text, missing launch linkage, truncated output, zero/signal exit, wrong account/thread/execution, or active turn events | No proof receipt; fence remains |
+| Exact verified `input-refused` receipt reads back | Exit unchanged; acceptance false; refusal proof attached only to `6561176475`; cursor unchanged; existing retry policy may consider one continuation |
+| Duplicate same receipt; stale/edited/foreign receipt | Duplicate changes nothing; invalid receipt ignored; never another native call from receipt retry |
+| App still refuses the normal continuation | Record the new execution separately; bounded no-start handling; never stop its writer |
+| Same-session continuation accepts the retained cumulative input once | Advance delivered cursor only from that new execution's native acceptance; duplicate delivery request sends nothing |
+| Acceptance appears for the old refused execution, conflicting proof, or another unresolved execution | Contradiction/unknown remains fenced; no continuation or replacement |
+
+After approval, implement this trace in the existing execution fixtures and run
+the normal gate plus exact-source isolated native qualification. Do not call
+this draft a passing golden trace or an installed-service qualification.
+
+#### Concrete decision and historical feasibility
+
+1. **Approve status and conditional native proof (recommended).** Approve the
+   R6/§3/§4/M3.13 candidate and the R1/R8/§2/§3/§4/§8 delta above. First gather
+   existing attributable evidence for the exact historical invocation read-only.
+   If any required field cannot be established, report it and keep #190 fenced;
+   approval never supplies missing proof. If proof qualifies, preserve its old
+   Exit and permit only the normal same-session continuation after all gates.
+   Gain: a narrowly testable recovery path. Cost: new protocol/cutover work, with
+   no promise that #190's old artifacts can meet its requirements.
+2. **Approve status only.** Approve R6/§3/§4/M3.13, reject the legacy delta and
+   retain #190's fence. Gain: immediate honest reporting with no new recovery
+   authority. Cost: historical delivery remains unresolved.
+
+Existing replay fails because `executing` requires every earlier input to be
+accepted or confirmed no-start; Exit does not meet either condition. Requeue or
+an owner-ended attempt changes task state but cannot resolve the old input's
+external side effect, even in a new session (§3/R11/R12). Closing or archiving
+only the old thread after any active turn finishes can release its writer; it
+does not resolve acceptance. #158's archive finding and #1664's owner-turn
+refusal do not grant a cross-client unlock or replay exception. Therefore this
+draft does not offer an owner-ended replacement as an already permitted repair.
+
+#### Original-source verification after read-scope approval
+
+[Owner answer `6562451325`](https://github.com/taskqorg/taskq/issues/2143#issuecomment-6562451325)
+authorized reading the exact original AgentQ launch/recovery/output/client
+artifacts. No AgentQ task work or state write was performed.
+
+The original attempt log is 898,297 bytes, SHA-256
+`0f3739918c58b12716f66b3b6844bbddee141e26f8ae41846cc426cb28d2a88a`.
+Its prior turn completes at line 71. A resume rules record occupies bytes
+896798–897788; the three native active-writer refusal lines occupy
+897788–898297, at `2026-11-01T17:11:21Z`. They name the expected native thread
+and include both required pre-session errors. There are no session/turn events
+after that resume marker. The original account record names `default`.
+
+This confirms the reported failure, but does not meet the approved receipt's
+attribution requirements: the file has no `taskq.input` or native launch binding
+and no marker for execution `6561176475`. The owning project's protected native
+recovery store has no row for that execution. Its current #190 row belongs to
+attempt `6562400888`, PID `47019` with its distinct native creation identity.
+The old PID/creation identity, original complete process-bound output range and
+original client artifact digest cannot be reconstructed from the old log or
+that current row. Three retained input files contain the pending answer text;
+none binds itself to that old execution. Do not select one by timestamp or
+matching content. The current client version is not the old artifact's digest.
+
+Fresh board readback also changes the recovery target: owner/PM requeue
+`6561958633` ended the original attempt, followed by spawns `6561967939` and
+`6562400888`. The last has native acceptance `6562402263`; local complete status
+reports its actual Codex child, and its log starts native session
+`01a19878-6576-7a81-9c51-e674909a0b40`. The original Exit `6561179427` is unchanged;
+no native acceptance or refusal-proof receipt was added for `6561176475`.
+The current work is a replacement, not proof of delivery of the old input or
+proof that this patch recovered it. This investigation did not cause those
+board transitions and does not retroactively qualify their safety.
+
+The approved protocol requires the same current attempt as well as complete
+native proof. Both conditions fail for this historical execution. No legacy
+importer or alternative attestation is implemented. Concrete safe action now:
+follow the existing replacement attempt; do not send the original pending answer
+again, resume the old thread, or release its writer to try to repair that old
+execution. Its unknown acceptance and immutable evidence remain preserved.
+This is the explicit unsupported historical case allowed by the selected
+conditional option, not a claim of successful same-session recovery.
+
+The original AgentQ root was read with its existing dirty `agentq/hooks.rs` on
+`main`; this worker neither edits nor checks out that tree. Preservation hashes
+of the original log, native history, dirty file and three candidate inputs are
+kept locally for final readback. Existing source regressions protect unbound
+refusal, active-turn, unknown output and duplicate binding; a signal-termination
+case additionally requires Exit/unknown, never inferred no-start.
+Before the signal guard, the same service regression failed with `Some(NoStart)`
+instead of `Some(Exit)` for exit sentinel `-1`. After requiring a positive native
+exit code, that regression passes with every prior refusal/unknown/active/duplicate
+case retained. A signal or zero code cannot supply the native refusal proof.
+
 | Adapter | Existing evidence | What it proves | Missing boundary and smallest change | Unknown and recovery action |
 |---|---|---|---|---|
 | Codex CLI | Board spawn/continuation; attempt log `thread.started`; owned child `try_wait`; native turn events; `kids` on Unix re-exec | Accepted board intent; session identity; owned child exit; attributable turn outcome | Launch checkpoint now binds the captured PID/creation identity to the exact execution and retries failed persistence while retaining the handle. Controlled macOS cold restart and released-row reconciliation are source-qualified; native client cancellation, descendants and per-OS readback remain unqualified | Crash between spawn and identity persistence remains unknown. Query the recorded native session/process; retain capacity and request operator verification if ownership/termination cannot be established. Direct-child exit alone proves nothing about arbitrary descendants or external effects |

@@ -56,6 +56,15 @@
           "labels": {"type": "array", "items": {"type": "string"}},
           "url": {"type": "string"},
           "revision": {"type": "integer"},
+          "executions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "release": {"enum": ["exit"], "description": "Unaccepted Exit with current pending input; native acceptance remains unknown."}
+              }
+            }
+          },
           "controls": {"type": "array", "items": {"type": "string"}},
           "verdict": {
             "description": "Fields of the accepted result text behind the current result (taskq.md § 7); null without a result.",

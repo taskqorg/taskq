@@ -127,11 +127,15 @@ pub(crate) fn execution_status(task:u64, x:&crate::core::Execution, hosts:&[boar
             }
         }
     }
-    let (state,reason)=verdict(&Signals {beat:beat.as_ref().map(|b|&b.0),..Default::default()});
-    let observed=beat.filter(|_|state!="unknown" || reason!=STALE).map(|b|b.1);
+    let recovery=(x.release==Some(core::Release::Exit)&&!x.accepted).then(||format!("agent exited; {}",runtime::acceptance_action(&x.runtime)));
+    let (state,reason)=if let Some(reason)=&recovery {verdict(&Signals {local:true,wait:Some(reason),..Default::default()})}
+        else {verdict(&Signals {beat:beat.as_ref().map(|b|&b.0),..Default::default()})};
+    let observed=recovery.as_ref().map(|_|now).or_else(||beat.filter(|_|state!="unknown" || reason!=STALE).map(|b|b.1));
     let status=ExecutionStatus {task,attempt:x.attempt,id:x.id,through:x.through,state:state.into(),reason};
     let mut value=serde_json::to_value(status).unwrap();
-    value["host"]=json!(x.host);value["runtime"]=json!(x.runtime);value["observed"]=json!(observed);value
+    value["host"]=json!(x.host);value["runtime"]=json!(x.runtime);value["observed"]=json!(observed);
+    if recovery.is_some() {value["release"]=json!("exit");}
+    value
 }
 
 #[derive(Default)]
@@ -286,8 +290,8 @@ fn board_admission(t: &Task, labels: &[String], deps: &[service::Blocker], hosts
 }
 
 /// Owner texts of a row's wait (docs/design/menu.md M3 Task row text, #1524); the raw reason stays in `execution_wait`.
-pub const WAIT_TEXTS: [&str; 6] = ["Waiting for a free slot", "Waiting for GUI access", "Waiting for the agent to accept input",
-    "Waiting for your answer", "Waiting for the previous run to end", "Run state unknown; see service log"];
+pub const WAIT_TEXTS: [&str; 7] = ["Waiting for a free slot", "Waiting for GUI access", "Waiting for the agent to accept input",
+    "Waiting for your answer", "Waiting for the previous run to end", "Run state unknown; see service log", "Agent exited; input recovery required"];
 
 /// #1820 owner text of a publication wait, followed by its age and reason.
 pub const PUBLICATION_WAIT: &str = "Publication waiting";
@@ -295,12 +299,21 @@ pub const PUBLICATION_WAIT: &str = "Publication waiting";
 /// The owner text of a raw wait diagnostic; text no class names reads as the previous run's end.
 pub fn wait_text(raw: &str) -> &'static str {
     let has = |w: &[&str]| w.iter().any(|w| raw.contains(w));
-    WAIT_TEXTS[if has(&["GUI"]) { 1 } else if has(&["admission"]) { 0 } else if has(&["owner answer"]) { 3 } else if has(&["input"]) { 2 }
+    WAIT_TEXTS[if has(&["agent exited;"]) { 6 } else if has(&["GUI"]) { 1 } else if has(&["admission"]) { 0 } else if has(&["owner answer"]) { 3 } else if has(&["input"]) { 2 }
         else if has(&["unknown", "stale", "missing", "unavailable", "deferred"]) { 5 } else { 4 }]
 }
 
 /// R6: no movement for this long marks a task stuck.
 pub const STUCK_AFTER: i64 = 2 * 3600;
+
+/// Assignment survives an unaccepted Exit; its pending input is blocked regardless of the host lease's age.
+pub(crate) fn input_recovery(v:&View)->Option<&core::Execution> {
+    let t=&v.projection.task;
+    if !matches!(t.state,State::Doing|State::Review) {return None;}
+    let attempt=t.attempt?;
+    if !t.inbox.iter().any(|id|*id>v.projection.delivered(attempt).unwrap_or(0)) {return None;}
+    v.projection.executions.iter().find(|x|x.attempt==attempt && x.release==Some(core::Release::Exit) && !x.accepted)
+}
 
 /// R6 stuck age of task `n` whose newest log entry is at `last`: observe only, never a gate.
 pub(crate) fn stuck(n: u64, t: &Task, deps: &[service::Blocker], last: i64, hosts: &[board::Issue], now: i64, ttl: i64) -> Option<i64> {
@@ -359,7 +372,9 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
     open.sort_by_key(|v| (service::priority(&v.issue), v.issue.number));
     let urls = session_urls(hosts);
     let tasks = open.into_iter().map(|v| {
-        let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none())
+        let recovery=input_recovery(v);
+        let last=v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created);
+        let executions:Vec<_>=v.projection.executions.iter().filter(|x|x.release.is_none() || recovery.is_some_and(|r|r.id==x.id))
             .map(|x| {
                 let mut value=execution_status(v.issue.number,x,hosts,observed,cfg.ttl);
                 // #1775 A3: `spawn reviewer` keeps `review`, so `changes` (state moves only) misses it; the current attempt's role is the fold's
@@ -379,10 +394,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         updated: v.comments.iter().filter(|c|c.trusted&&!c.edited).max_by_key(|c|c.id).map(|c|c.created).filter(|t|*t>0),
         execution_wait: executions.iter().find(|x|x["state"]!="running" || x["attempt"].as_u64()!=v.projection.task.attempt)
             .map(|x|format!("execution {} on {}: {}: {}",x["id"],x["host"].as_str().unwrap_or("?"),
-                x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable")))
-            .or_else(|| v.projection.executions.iter().find(|x| Some(x.attempt) == v.projection.task.attempt && !v.projection.task.inbox.is_empty()
-                && x.release == Some(crate::core::Release::Exit) && !x.accepted)
-                .map(|x| format!("execution {} on {}: input acceptance unknown; reconcile native input", x.id, x.host))),
+                x["state"].as_str().unwrap_or("unknown"),x["reason"].as_str().unwrap_or("observation unavailable"))),
         executions,
         accepted: v.projection.executions.iter().any(|x| Some(x.attempt) == v.projection.task.attempt && x.accepted),
         deps: v.blockers.clone(),
@@ -395,9 +407,7 @@ pub fn from_views(source: &'static str, b: &dyn Board, cfg: &Config, observed: i
         session_url: v.projection.task.attempt.zip(v.projection.task.session.as_deref().and_then(|s| s.rsplit(' ').next()))
             .filter(|_| v.projection.task.session.as_deref().is_some_and(|s| crate::runtime::remote_session(s).is_some()))
             .and_then(|(a, h)| urls.get(&(h.to_string(), a)).cloned()),
-        stuck: stuck(v.issue.number, &v.projection.task, &v.blockers,
-            v.comments.iter().filter(|c| c.trusted && c.body.starts_with("taskq: ")).map(|c| c.created).max().unwrap_or(v.issue.created),
-            hosts, observed, cfg.ttl),
+        stuck: recovery.map(|_|observed-last).or_else(||stuck(v.issue.number, &v.projection.task, &v.blockers,last,hosts, observed, cfg.ttl)),
         churn: churn(&v.comments, observed),
         verdict: v.projection.task.result.as_ref().and_then(|_| v.projection.changes.iter().rev()
             .find_map(|(id, _, _)| v.log.iter().find(|e| e.id == *id && e.body.starts_with("taskq: result "))))
@@ -1086,6 +1096,7 @@ link aa bb".into(), updated: 1000, trusted, ..Default::default() };
             ("spawn 3 not started on mac: input not accepted; lost spawn released no-start 300 s after the spawn", 2),
             ("execution 3 on mac: termination unconfirmed; reboot mac to prove exit", 4),
             ("execution 3 on hermes: termination unconfirmed; start the taskq service on hermes once, after a reboot if the run had started", 4),
+            ("execution 3 on mac: unknown: agent exited; input acceptance unknown; reconcile native input", 6),
         ];
         for (raw, k) in cases { assert_eq!(wait_text(raw), WAIT_TEXTS[k], "{raw}"); }
         // status text and row JSON: owner text only in the row, raw reason kept in --json
